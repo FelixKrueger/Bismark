@@ -1,26 +1,262 @@
-#!/usr/bin/perl
+#!/usr/bin/perl --
 use strict;
 use warnings;
 use IO::Handle;
 use Cwd;
 $|++;
+use Getopt::Long;
 
-############################################################################################################################################################
-### this script takes in FastA or FastQ files and aligns the reads to the mouse bisulfite genome. We are going to take sequence reads and transform the  ###
-### sequence into a bisulfite forward strand (C->T conversion) or into a bisulfite treated reverse strand (G->A conversion of the forward strand). We    ###
-### then align                                                                                                                                           ###
-### each of these reads to bisulfite treated forward strand index of the mouse genome (C -> T converted) and a bisulfite treated reverse strand index of ###
-### the mouse genome (G -> A conversion on the forward strand, by doing this alignments will produce the same positions).                                ###
-### These 4 instances of bowtie will be started in parallel.                                                                                             ###
-### Similar to the repeat analysis, we are then going to read in the sequence file again line by line in order to pull out the original sequence from    ###
-### the mouse genome and determine if there were any protected C's present or not. We are then going to print out the methylation calls into a final     ###
-### mapping file.                                                                                                                                        ###
-###                                                                                                                                                      ###
-### last modified on Jan 28, 2010                                                                                                                        ###
-############################################################################################################################################################
-### For Single-end analysis, the final BiSeq output of this script will be a single file in bowtie format (tab delimited) with all sequences which do
-### have a unique best alignment to any of the 4 possible strands of a bisulfite PCR product. It will be in the following format:
-### (1) seq name (2) {+ or -} (3) chromosome (4) position (5) observed sequence (6) genomic sequence (7) methylation call string
+
+my $bowtie_options;
+
+
+### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the . in the option name will cause Getopt::Long to fail
+foreach my $arg (@ARGV){
+  if ($arg eq '--solexa1.3-quals'){
+    $arg = '--phred64-quals';
+  }
+}
+
+process_command_line();
+
+sub process_command_line{
+  my @bowtie_options;
+  my $verbose;
+  my $help;
+  my $path_to_bowtie;
+  my $mates1;
+  my $mates2;
+  my $fastq;
+  my $fasta;
+  my $skip;
+  my $qupto;
+  my $trim5;
+  my $trim3;
+  my $phred64;
+  my $phred33;
+  my $solexa;
+  my $mismatches;
+  my $seed_length;
+  my $best;
+
+  my $command_line = GetOptions ('verbose' => \$verbose,
+				 'help|man' => \$help,
+				 '1=s' => \$mates1,
+				 '2=s' => \$mates2,
+				 'path_to_bowtie=s' => \$path_to_bowtie,
+				 'f|fasta' => \$fasta,
+				 'q|fastq' => \$fastq,
+				 's|skip=i' => \$skip,
+				 'u|qupto=i' => \$qupto,
+				 '5|trim5=i' => \$trim5,
+				 '3|trim3=i' => \$trim3,
+				 'phred33-quals' => \$phred33,
+				 'phred64-quals|solexa1' => \$phred64,
+				 'solexa-quals' => \$solexa,
+				 'n|seedmms=i' => \$mismatches,
+				 'l|seedlen=i' => \$seed_length,
+				 'best' => \$best,
+				);
+  ### EXIT ON ERROR if there were errors with any of the supplied options
+  unless ($command_line){
+    die "Please respecify command line options\n";
+  }
+  ### HELPFILE
+  if ($help){
+    print_helpfile();
+    exit;
+  }
+
+
+  ##################################
+  ### PROCESSING OPTIONS
+
+  ### PATH TO BOWTIE
+  ### if a special path to Bowtie was specified we will use that one, otherwise it is assumed that Bowtie is in the path
+  if ($path_to_bowtie){
+    unless ($path_to_bowtie =~ /\/$/){
+      $path_to_bowtie =~ s/$/\//;
+    }
+    if (-d $path_to_bowtie){
+      $path_to_bowtie = "${path_to_bowtie}bowtie";
+    }
+    else{
+      die "The path to bowtie provided ($path_to_bowtie) is invalid (not a directory)!\n";
+    }
+  }
+  else{
+    $path_to_bowtie = 'bowtie';
+  }
+  print "Path to Bowtie specified as: $path_to_bowtie\n";
+
+  push @bowtie_options,$path_to_bowtie;
+  print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+
+  ####################################
+  ### PROCESSING ARGUMENTS
+
+  ### GENOME FOLDER
+  my $genome_folder = shift @ARGV; # mandatory
+  unless ($genome_folder){
+    warn "Genome folder was not specified!\n";
+    print_helpfile();
+    exit;
+  }
+
+  ### checking that the genome folder, all subfolders and the required bowtie index files exist
+  unless ($genome_folder =~/\/$/){
+    $genome_folder =~ s/$/\//;
+  }
+  my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
+  my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
+  if (chdir $genome_folder){
+    print "Reference genome folder provided is $genome_folder\n";
+  }
+  else{
+    die "Failed to move to $genome_folder: $!\n";
+  }
+  ### checking the integrity of $CT_dir
+  chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+  my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
+  foreach my $file(@CT_bowtie_index){
+    unless (-f $file){
+      die "The bowtie index of the C->T converted genome seems to be faulty ($file). Please run Bismark_Genome_Preparation before running Bismark.pl.\n";
+    }
+  }
+  ### checking the integrity of $GA_dir
+  chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+  my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
+  foreach my $file(@GA_bowtie_index){
+    unless (-f $file){
+      die "The bowtie index of the C->T converted genome seems to be faulty ($file). Please run Bismark_Genome_Preparation before running Bismark.pl.\n";
+    }
+  }
+
+
+
+
+
+  ### INPUT OPTIONS
+
+  ### SEQUENCE FILE FORMAT
+  ### exits if both fastA and FastQ were specified
+  if ($fasta and $fastq){
+    die "Only one sequence filetype can be specified (fastA or fastQ)\n";
+  }
+
+  ### unless fastA is specified explicitely, fastQ sequence format is expected by default
+  if ($fasta){
+    print "FastA format specified\n";
+    push @bowtie_options, '-f';
+  }
+  elsif ($fastq){
+    print "FastQ format specified\n";
+    push @bowtie_options, '-q';
+  }
+  else{
+    $fastq=1;
+    print "FastQ format assumed (by default)\n";
+    push @bowtie_options, '-q';
+  }
+  print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+
+
+  ### SKIP the first <int> reads
+  if ($skip){
+    push @bowtie_options,"-s $skip";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+  ### UPTO
+  if ($qupto){
+    push @bowtie_options,"--qupto $qupto";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+
+  ### TRIM 5'-END
+  if ($trim5){
+    push @bowtie_options,"--trim5 $trim5";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+  ### TRIM 3'-END
+  if ($trim3){
+    push @bowtie_options,"--trim3 $trim3";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+
+  ### QUALITY VALUES
+  if (($phred33 and $phred64) or ($phred33 and $solexa) or ($phred64 and $solexa)){
+    die "You can only specify one type of quality value at a time! (--phred33-quals or --phred64-quals or --solexa-quals)";
+  }
+  if ($phred33){
+    # Phred quality values work only when -q is specified
+    unless ($fastq){
+      die "Phred quality values works only when -q (FASTQ) is specified\n";
+    }
+    push @bowtie_options,"--phred33-quals";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+  if ($phred64){
+    # Phred quality values work only when -q is specified
+    unless ($fastq){
+      die "Phred quality values work only when -q (FASTQ) is specified\n";
+    }
+    push @bowtie_options,"--phred64-quals";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+  if ($solexa){
+    # Solexa to Phred value conversion works only when -q is specified
+    unless ($fastq){
+      die "Conversion from Solexa to Phred quality values works only when -q (FASTQ) is specified\n";
+    }
+    push @bowtie_options,"--solexa-quals";
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+
+  ### ALIGNMENT OPTIONS
+
+  ### MISMATCHES
+  if ($mismatches){
+
+
+  }
+
+  ### REPORTING OPTIONS
+  # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments)
+  push @bowtie_options,"-k 2";
+  print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+
+  ### --BEST
+  if ($best){
+    push @bowtie_options,'--best';
+    print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  }
+
+  ### PAIRED-END MAPPING
+  if ($mates1){
+    my @mates1 = (split (',',$mates1));
+    die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
+    my @mates2 = (split(',',$mates2));
+    unless (scalar @mates1 == scalar @mates2){
+      die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
+    }
+    push @bowtie_options,"-1 $mates1";
+    push @bowtie_options,"-2 $mates2";
+  }
+  elsif ($mates2){
+    die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
+  }
+
+  ### SINGLE-END MAPPING
+  # Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
+  unless ($mates1 and $mates2){
+    my $singles = shift @ARGV;
+    my @single_files = (split(',',$singles));
+    push @bowtie_options,$singles;
+  }
+  print "bowtie-options so far: ",join (" ",@bowtie_options),"\n";
+  exit;
+}
+
 
 my @fhs; # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -1958,3 +2194,98 @@ sub reset_counters_and_fhs{
        );
 }
 
+sub print_helpfile{
+  print << 'HOW_TO';
+
+
+DESCRIPTION
+
+
+The following is a brief description of command line options and arguments to control the Bismark
+bisulfite mapping and methylation call script. Bismark takes in FastA or FastQ files and aligns the
+reads to a specified bisulfite genome. We are going to take sequence reads and transform the sequence
+into a bisulfite converted forward strand (C->T conversion) or into a bisulfite treated reverse strand
+(G->A conversion of the forward strand). We then align each of these reads to bisulfite treated forward
+strand index of the mouse genome (C -> T converted) and a bisulfite treated reverse strand index of the
+genome (G -> A conversion on the forward strand, by doing this alignments will produce the same positions).
+These 4 instances of bowtie will be run in parallel. We are then going to read in the sequence file again
+line by line to pull out the original sequence from the mouse genome and determine if there were any
+protected C's present or not. We are then going to print out the methylation calls into a final result file.
+
+For Single-end analysis, the final BiSeq output of this script will be a single file in bowtie format (tab delimited) with all sequences which do
+have a unique best alignment to any of the 4 possible strands of a bisulfite PCR product. It will be in the following format:
+(1) seq name (2) {+ or -} (3) chromosome (4) position (5) observed sequence (6) genomic sequence (7) methylation call string
+
+
+
+USAGE: Bismark.pl [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]
+
+
+ARGUMENTS:
+
+<genome_folder>          The full path to the folder containing the unmodified reference genome
+                         as well as the subfolders created by the Bismark_Genome_Preparation
+                         script (/Bisulfite_Genome/CT_conversion/ and /Bisulfite_Genome/GA_conversion/). 
+                         Bismark expects one or more fastA files in this folder (file extension: .fa).
+
+-1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
+                         "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
+                         correspond file-for-file and read-for-read with those specified in <mates2>.
+                         Reads may be a mix of different lengths.
+
+-2 <mates2>              Comma-separated list of files containing the #2 mates (filename usually includes
+                         "_2"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
+                         correspond file-for-file and read-for-read with those specified in <mates1>.
+                         Reads may be a mix of different lengths.
+
+<singles>                A comma-separated list of files containing the reads to be aligned (e.g. lane1.fq,
+                         lane2.fq,lane3.fq). Reads may be a mix of different lengths.
+
+
+OPTIONS:
+
+--help                   Displays this help file.
+
+
+Input:
+
+-q/--fastq               The query input files (specified as <mate1>,<mate2> or <singles> are FASTQ
+                         files (usually having extension .fg or .fastq). This is the default. See also
+                         --solexa-quals and --integer-quals.
+
+-f/--fasta               The query input files (specified as <mate1>,<mate2> or <singles> are FASTA
+                         files (usually havin extension .fa, .mfa, .fna or similar). All quality values
+                         are assumed to be 40 on the Phred scale.
+
+-s/--skip <int>          Skip (i.e. do not align) the first <int> reads or read pairs from the input.
+
+-u/--qupto <int>         Only aligns the first <int> reads or read pairs from the input. Default: no limit.
+
+-5/--trim5 <int>         Trim <int> bases from the high-quality (left) end of each read before alignment.
+                         Default: 0.
+
+-3/--trim3 <int>         Trim <int> bases from the low-quality (right) end of each read before alignment.
+                         Default: 0.
+
+--phred33-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 33. Default: on.
+
+--phred64-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 64. Default: off.
+
+--solexa-quals           Convert FASTQ qualities from solexa-scaled (which can be negative) to phred-scaled
+                         (which can't). The formula for conversion is: 
+                         phred-qual = 10 * log(1 + 10 ** (solexa-qual/10.0)) / log(10). Used with -q. This
+                         is usually the right option for use with (unconverted) reads emitted by the GA
+                         Pipeline versions prior to 1.3. Default: off.
+
+--solexa1.3-quals        Same as --phred64-quals. This is usually the right option for use with (unconverted)
+                         reads emitted by GA Pipeline version 1.3 or later. Default: off.
+
+--path_to_bowtie         The full path </../../> to the Bowtie installation on your system. If not specified
+                         it will be assumed that Bowtie is in the path.
+
+
+
+This script was last edited on 18 May 2010.
+
+HOW_TO
+}
