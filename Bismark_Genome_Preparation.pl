@@ -47,29 +47,14 @@ sub launch_bowtie_indexer{
   print "Bismark Genome Preparation - Step III: Launching the Bowtie indexer\n";
   print "Please be aware that this process can - depending on genome size - take up to several hours!\n";
   sleep(5);
-  unless ($path_to_bowtie){
-    while (1){
-      print "Please specify the path to your bowtie installation:\t";
-      $path_to_bowtie = <STDIN>;
-      chomp $path_to_bowtie;
-      if ($path_to_bowtie =~ /\S+/){
-	if (chdir $path_to_bowtie){
-	  last;
-	}
-	else{
-	  warn "There seems to be a problem with the path specified: $!\n";
-	}
-      }
-    }
+  ### if the path to bowtie was specfified explicitely 
+  if ($path_to_bowtie){
+    $path_to_bowtie =~ s/$/bowtie-build/;
   }
-
-  # append a trailing folder / if necessary
-  unless ($path_to_bowtie =~ /\/$/){
-    $path_to_bowtie =~ s/$/\//;
+  ### otherwise we assume that bowtie-build is in the path
+  else{
+    $path_to_bowtie = 'bowtie-build';
   }
-
-  # append bowtie-build to the bowtie path so we can use it later
-  $path_to_bowtie =~ s/$/bowtie-build/;
 
   $verbose and print "\n";
 
@@ -257,8 +242,7 @@ sub create_bisulfite_genome_folders{
       $verbose and print "Path to bowtie specified: $path_to_bowtie\n";
     }
     else{
-      $path_to_bowtie = '';
-      print "There was an error with the path to bowtie: $!. You will be prompted again later\n";
+      die "There was an error with the path to bowtie: $!\n";
     }
   }
 
