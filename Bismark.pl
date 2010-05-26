@@ -1578,7 +1578,7 @@ sub biTransformFastQFiles {
     print CTOT join ('',$identifier,$sequence_C_to_T,$identifier2,$quality_score);
     print GTOA join ('',$identifier,$sequence_G_to_A,$identifier2,$quality_score);
   }
-  print "\nCreated C -> T as well as G -> A converted versions of the FastA file $filename ($count sequences in total)\n\n";
+  print "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
   return ($C_to_T_infile,$G_to_A_infile);
 }
 
