@@ -115,20 +115,18 @@ foreach my $filename (@filenames){
 
 sub start_methylation_call_procedure_single_ends {
   my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+
+  ### printing all alignments to a results file
   my $outfile = $sequence_file;
   $outfile =~ s/^/Bismark_mapping_results_/;
   print "Writing bisulfite mapping results to $outfile\n\n";
-  open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!";
+  open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!\n";
 
-  #   my $CpG_outfile = $sequence_file;
-  #   $CpG_outfile =~ s/^/CpG_reads_/;
-  #   print "Writing all reads containing CpG information to $CpG_outfile\n";
-  #   open (CPG,'>',$CpG_outfile) or die "Failed to write to $CpG_outfile: $!";
-
-  #   my $no_CpG_containing_reads = $sequence_file;
-  #   $no_CpG_containing_reads =~ s/^/no_CpG_containing_reads_/;
-  #   print "Writing all reads which do not contain any CpGs to $no_CpG_containing_reads\n\n";
-  #   open (NOCPGATALL,'>',$no_CpG_containing_reads) or die "Failed to write to $no_CpG_containing_reads: $!";
+  ### printing alignment and methylation call summary to a report file
+  my $reportfile = $sequence_file;
+  $reportfile =~ s/^/Bismark_report_/;
+  open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
+  print REPORT "Bismark report for: $sequence_file\n\n";
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -148,20 +146,18 @@ sub start_methylation_call_procedure_single_ends {
 
 sub start_methylation_call_procedure_paired_ends {
   my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+
+  ### printing all alignments to a results file
   my $outfile = $sequence_file_1;
   $outfile =~ s/^/Bismark_paired-end_mapping_results_/;
   print "Writing bisulfite mapping results to $outfile\n\n";
   open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!";
 
-  #   my $CpG_outfile = $sequence_file_1;
-  #   $CpG_outfile =~ s/^/CpG_reads_/;
-  #   print "Writing all reads containing CpG information to $CpG_outfile\n";
-  #   open (CPG,'>',$CpG_outfile) or die "Failed to write to $CpG_outfile: $!";
-
-  #   my $no_CpG_containing_reads = $sequence_file_1;
-  #   $no_CpG_containing_reads =~ s/^/no_CpG_containing_reads_/;
-  #   print "Writing all reads which do not contain any CpGs to $no_CpG_containing_reads\n\n";
-  #   open (NOCPGATALL,'>',$no_CpG_containing_reads) or die "Failed to write to $no_CpG_containing_reads: $!";
+  ### printing alignment and methylation call summary to a report file
+  my $reportfile = $sequence_file_1;
+  $reportfile =~ s/^/Bismark_report_/;
+  open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
+  print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n\n";
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -185,41 +181,56 @@ sub print_final_analysis_report_single_end{
   ### deleting temporary C->T or G->A infiles
   my $deletion_successful =  unlink $C_to_T_infile,$G_to_A_infile;
   if ($deletion_successful == 2){
-    print "\nSuccessfully deleted the temporary files $C_to_T_infile and $G_to_A_infile\n\n";
+    warn "\nSuccessfully deleted the temporary files $C_to_T_infile and $G_to_A_infile\n\n";
   }
   else{
-    warn "Could not delete temporary files propeerly $!\n";
+    warn "Could not delete temporary files properly $!\n";
   }
+
   ### printing a final report for the alignment procedure
-  print "Final Alignment report\n",'='x22,"\n";
+  print REPORT "Final Alignment report\n",'='x22,"\n";
+  warn "Final Alignment report\n",'='x22,"\n";
   foreach my $index (0..$#fhs){
     print "$fhs[$index]->{name}\n";
     print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
     print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
   }
+
   ### printing a final report for the methylation call procedure
-  print "Sequences analysed in total:\t$counting{sequences_count}\n";
+  warn "Sequences analysed in total:\t$counting{sequences_count}\n";
+  print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
+
   my $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
-  print "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequences}%) \n";
+  print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequences}%) \n";
   ### percentage of low complexity reads overruled because of low complexity (thereby creating a bias for highly methylated reads),
   ### only calculating the percentage if there were any overruled alignments
   if ($counting{low_complexity_alignments_overruled_count}){
     my $percent_overruled_low_complexity_alignments = sprintf ("%.1f",$counting{low_complexity_alignments_overruled_count}*100/$counting{sequences_count});
-    print "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
+    print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
   }
-  print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
-  print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
-  print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+  print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
+  print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
+  print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+
   ### detailed information about Cs analysed
-  print "Final Cytosine Methylation Report\n",'='x33,"\n";
+  warn "Final Cytosine Methylation Report\n",'='x33,"\n";
   my $total_number_of_C = $counting{total_meC_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_C_count}+$counting{total_unmethylated_CpG_count};
-  print "Total number of C's analysed:\t$total_number_of_C\n";
-  print "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
-  print "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
-  print "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
-  print "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
-  my $percent_meC;
+  warn "Total number of C's analysed:\t$total_number_of_C\n";
+  warn "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
+  warn "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  warn "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
+  warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
+
+  print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
+  print REPORT "Total number of C's analysed:\t$total_number_of_C\n";
+  print REPORT "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
+  print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  print REPORT "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
+  print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
+
+
+ my $percent_meC;
   if (($counting{total_meC_count}+$counting{total_unmethylated_C_count}) > 0){
     $percent_meC = sprintf("%.1f",100*$counting{total_meC_count}/($counting{total_meC_count}+$counting{total_unmethylated_C_count}));
   }
@@ -229,17 +240,21 @@ sub print_final_analysis_report_single_end{
   }
   ### calculating methylated C percentage (non CpG context) if applicable
   if ($percent_meC){
-    print "C methylated but not in CpG context:\t${percent_meC}%\n";
+    warn "C methylated but not in CpG context:\t${percent_meC}%\n";
+    print REPORT "C methylated but not in CpG context:\t${percent_meC}%\n";
   }
   else{
-    print "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
+    warn "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
+    print REPORT "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
   }
   ### calculating methylated CpG percentage if applicable
   if ($percent_meCpG){
-    print "C methylated in CpG context:\t${percent_meCpG}%\n";
+    warn "C methylated in CpG context:\t${percent_meCpG}%\n";
+    print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
   }
   else{
-    print "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
+    warn "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
+    print REPORT "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
   }
 }
 
@@ -249,13 +264,15 @@ sub print_final_analysis_report_paired_ends{
   ### deleting temporary C->T or G->A infiles
   my $deletion_successful =  unlink $C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2;
   if ($deletion_successful == 4){
-    print "\nSuccessfully deleted the temporary files $C_to_T_infile_1, $G_to_A_infile_1, $C_to_T_infile_2 and $G_to_A_infile_2\n\n";
+    warn "\nSuccessfully deleted the temporary files $C_to_T_infile_1, $G_to_A_infile_1, $C_to_T_infile_2 and $G_to_A_infile_2\n\n";
   }
   else{
-    warn "Could not delete temporary files propeerly $!\n";
+    warn "Could not delete temporary files properly: $!\n";
   }
+
   ### printing a final report for the alignment procedure
-  print "Final Alignment report\n",'='x22,"\n";
+  warn "Final Alignment report\n",'='x22,"\n";
+  print REPORT "Final Alignment report\n",'='x22,"\n";
   foreach my $index (0..$#fhs){
     print "$fhs[$index]->{name}\n";
     print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
@@ -270,13 +287,20 @@ sub print_final_analysis_report_paired_ends{
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) top strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
   ### detailed information about Cs analysed
-  print "Final Cytosine Methylation Report\n",'='x33,"\n";
+  warn "Final Cytosine Methylation Report\n",'='x33,"\n";
+  print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
   my $total_number_of_C = $counting{total_meC_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_C_count}+$counting{total_unmethylated_CpG_count};
-  print "Total number of C's analysed:\t$total_number_of_C\n";
-  print "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
-  print "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
-  print "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
-  print "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
+  warn "Total number of C's analysed:\t$total_number_of_C\n";
+  warn "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
+  warn "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  warn "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
+  warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
+
+  print REPORT "Total number of C's analysed:\t$total_number_of_C\n";
+  print REPORT "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
+  print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  print REPORT "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
+  print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
   my $percent_meC;
   if (($counting{total_meC_count}+$counting{total_unmethylated_C_count}) > 0){
     $percent_meC = sprintf("%.1f",100*$counting{total_meC_count}/($counting{total_meC_count}+$counting{total_unmethylated_C_count}));
@@ -287,17 +311,21 @@ sub print_final_analysis_report_paired_ends{
   }
   ### calculating methylated C percentage (non CpG context) if applicable
   if ($percent_meC){
-    print "C methylated but not in CpG context:\t${percent_meC}%\n";
+    warn "C methylated but not in CpG context:\t${percent_meC}%\n";
+    print REPORT "C methylated but not in CpG context:\t${percent_meC}%\n";
   }
   else{
-    print "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
+    warn "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
+    print REPORT "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
   }
   ### calculating methylated CpG percentage if applicable
   if ($percent_meCpG){
-    print "C methylated in CpG context:\t${percent_meCpG}%\n";
+    warn "C methylated in CpG context:\t${percent_meCpG}%\n";
+    print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
   }
   else{
-    print "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
+    warn "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
+    print REPORT "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
   }
 }
 
@@ -1235,54 +1263,13 @@ sub print_bisulfite_mapping_result_single_end{
   ### writing every single mapped read and its methylation call to one comprehensive output file
   my $comprehensive_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
   print OUT "$comprehensive_bowtie_output\n";
-  #   ### We could also filter or sort different outputs based on the methylation state, for example sequences which contain at least 1 methylated CpG
-  #   ### or at least 1 methylated C but not in CpG context or similar. This can also be done starting from a complete output list as it is likely to
-  #   ### to depend very much on the individual application. Therefore printing out all of them now.
-  #   if ($methylation_call_params->{$identifier}->{methylation_call} =~ 'Z'){
-  #     $methylation_call_params->{$identifier}->{alignment_strand} = '+';
-  #     my $final_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
-  #     ### printing reads with at least one methylated CpG to the CPG filehandle in + orientation
-  #     print CPG "$final_bowtie_output\n";
-  #   }
-  #   ### a read can be counted as methylated CpG and non methylated CpG if it contains information about both
-  #   if ($methylation_call_params->{$identifier}->{methylation_call} =~ 'z'){
-  #     $methylation_call_params->{$identifier}->{alignment_strand} = '-';
-  #     my $final_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
-  #     ### printing reads with at least one fully converted CpG to the CPG filehandle in - orientation
-  #     print CPG "$final_bowtie_output\n";
-  #   }
-  #   if ($methylation_call_params->{$identifier}->{methylation_call} !~ 'z' and $methylation_call_params->{$identifier}->{methylation_call} !~ 'Z') {
-  #     ### printing to the NOCPGATALL filehandle if there was not a single CpG (methylated or unmethylated) in the read
-  #     my $final_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
-  #     print NOCPGATALL "$final_bowtie_output\n";
-  #   }
 }
 
 sub print_bisulfite_mapping_results_paired_ends{
   my ($identifier,$sequence_1,$sequence_2,$methylation_call_params)= @_;
-  #  my $comprehensive_bowtie_output = "$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\t$methylation_call_params->{$identifier}->{alignment_end}\t$methylation_call_params->{$identifier}->{index}\n$sequence_1\n$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}\n$methylation_call_params->{$identifier}->{methylation_call_1}\n$sequence_2\n$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}\n$methylation_call_params->{$identifier}->{methylation_call_2}\n\n";
-  my $comprehensive_BiSeq_mapping_output = "$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\t$methylation_call_params->{$identifier}->{alignment_end}\t$methylation_call_params->{$identifier}->{index}\n$sequence_1\n$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}\n$methylation_call_params->{$identifier}->{methylation_call_1}\n$sequence_2\n$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}\n$methylation_call_params->{$identifier}->{methylation_call_2}\n\n";
-
+  ### writing every single mapped read and its methylation call to one comprehensive output file
   my $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
   print OUT "$comprehensive_BiSeq_mapping_output_paired_ends\n";
-  if ($methylation_call_params->{$identifier}->{methylation_call_1} =~ 'Z' or $methylation_call_params->{$identifier}->{methylation_call_2} =~ 'Z'){
-    $methylation_call_params->{$identifier}->{alignment_read_1} = '+';
-    my $final_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
-    ### printing reads with at least one methylated CpG to the CPG filehandle in + orientation
-    print CPG "$final_bowtie_output\n";
-  }
-  ### a read can be counted as methylated CpG and non methylated CpG if it contains information about both
-  if ($methylation_call_params->{$identifier}->{methylation_call_1} =~ 'z' or $methylation_call_params->{$identifier}->{methylation_call_2} =~ 'z'){
-    $methylation_call_params->{$identifier}->{alignment_read_1} = '-';
-    my $final_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
-    ### printing reads with at least one fully converted CpG to the CPG filehandle in - orientation
-    print CPG "$final_bowtie_output\n";
-  }
-  if ($methylation_call_params->{$identifier}->{methylation_call_1} !~ 'z' and $methylation_call_params->{$identifier}->{methylation_call_2} !~ 'z' and $methylation_call_params->{$identifier}->{methylation_call_1} !~ 'Z' and $methylation_call_params->{$identifier}->{methylation_call_2} !~ 'Z'){
-    my $final_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
-    ### printing reads with fully converted CpGs (at least 1) to the CPG filehandle in - orientation
-    print NOCPGATALL "$final_bowtie_output\n";
-  }
 }
 
 sub extract_corresponding_genomic_sequence_single_end {
@@ -2043,7 +2030,7 @@ sub process_command_line{
     print "Reference genome folder provided is $genome_folder\n";
   }
   else{
-    die "Failed to move to $genome_folder: $!\n";
+    die "Failed to move to $genome_folder: $!\nUSAGE: Bismark.pl [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
   }
   ### checking the integrity of $CT_dir
   chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
