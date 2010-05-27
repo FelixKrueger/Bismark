@@ -126,7 +126,9 @@ sub start_methylation_call_procedure_single_ends {
   my $reportfile = $sequence_file;
   $reportfile =~ s/^/Bismark_report_/;
   open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file\n\n";
+  print REPORT "Bismark report for: $sequence_file\n";
+  print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -158,6 +160,7 @@ sub start_methylation_call_procedure_paired_ends {
   $reportfile =~ s/^/Bismark_report_/;
   open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n\n";
+  print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -201,7 +204,10 @@ sub print_final_analysis_report_single_end{
   print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
 
   my $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+
+  warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequences}%) \n";
   print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequences}%) \n";
+
   ### percentage of low complexity reads overruled because of low complexity (thereby creating a bias for highly methylated reads),
   ### only calculating the percentage if there were any overruled alignments
   if ($counting{low_complexity_alignments_overruled_count}){
@@ -249,11 +255,11 @@ sub print_final_analysis_report_single_end{
   }
   ### calculating methylated CpG percentage if applicable
   if ($percent_meCpG){
-    warn "C methylated in CpG context:\t${percent_meCpG}%\n";
+    warn "C methylated in CpG context:\t${percent_meCpG}%\n\n\n";
     print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
   }
   else{
-    warn "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
+    warn "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n\n\n";
     print REPORT "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
   }
 }
@@ -320,11 +326,11 @@ sub print_final_analysis_report_paired_ends{
   }
   ### calculating methylated CpG percentage if applicable
   if ($percent_meCpG){
-    warn "C methylated in CpG context:\t${percent_meCpG}%\n";
+    warn "C methylated in CpG context:\t${percent_meCpG}%\n\n\n";
     print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
   }
   else{
-    warn "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
+    warn "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n\n\n";
     print REPORT "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n";
   }
 }
