@@ -1966,6 +1966,8 @@ sub process_command_line{
   my $seed_length;
   my $best;
   my $sequence_format;
+  my $version;
+
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
 				 '2=s' => \$mates2,
@@ -1982,6 +1984,7 @@ sub process_command_line{
 				 'n|seedmms=i' => \$mismatches,
 				 'l|seedlen=i' => \$seed_length,
 				 'best' => \$best,
+				 'version' => \$version,
 				);
   ### EXIT ON ERROR if there were errors with any of the supplied options
   unless ($command_line){
@@ -1990,6 +1993,17 @@ sub process_command_line{
   ### HELPFILE
   if ($help){
     print_helpfile();
+    exit;
+  }
+  if ($version){
+    print << 'VERSION';
+   Bismark - Bisulfite Mapper and Methylation Caller.
+
+   Version: 0.1. Copyright 2010 Felix Krueger, Babraham Bioinformatics
+   www.bioinformatics.bbsrc.ac.uk/projects/
+
+
+VERSION
     exit;
   }
 
@@ -2299,6 +2313,7 @@ Other:
 
 -h/--help                Displays this help file.
 
+-v/--version             Display version information.
 
 This script was last edited on 18 May 2010.
 
