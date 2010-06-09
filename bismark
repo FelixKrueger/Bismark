@@ -6,6 +6,23 @@ use Cwd;
 $|++;
 use Getopt::Long;
 
+
+## This program is Copyright (C) 2010, Felix Krueger (felix.krueger@bbsrc.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
 my $parent_dir = getcwd;
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the . in the option name will cause Getopt::Long to fail
@@ -1957,8 +1974,6 @@ sub process_command_line{
   my $fasta;
   my $skip;
   my $qupto;
-  my $trim5;
-  my $trim3;
   my $phred64;
   my $phred33;
   my $solexa;
@@ -1976,8 +1991,6 @@ sub process_command_line{
 				 'q|fastq' => \$fastq,
 				 's|skip=i' => \$skip,
 				 'u|qupto=i' => \$qupto,
-				 '5|trim5=i' => \$trim5,
-				 '3|trim3=i' => \$trim3,
 				 'phred33-quals' => \$phred33,
 				 'phred64-quals|solexa1' => \$phred64,
 				 'solexa-quals' => \$solexa,
@@ -1997,10 +2010,12 @@ sub process_command_line{
   }
   if ($version){
     print << 'VERSION';
-   Bismark - Bisulfite Mapper and Methylation Caller.
+
+
+          Bismark - Bisulfite Mapper and Methylation Caller.
 
    Version: 0.1. Copyright 2010 Felix Krueger, Babraham Bioinformatics
-   www.bioinformatics.bbsrc.ac.uk/projects/
+              www.bioinformatics.bbsrc.ac.uk/projects/
 
 
 VERSION
@@ -2106,16 +2121,6 @@ VERSION
   ### UPTO
   if ($qupto){
     push @bowtie_options,"--qupto $qupto";
-  }
-
-  ### TRIM 5'-END
-  if ($trim5){
-    push @bowtie_options,"--trim5 $trim5";
-  }
-
-  ### TRIM 3'-END
-  if ($trim3){
-    push @bowtie_options,"--trim3 $trim3";
   }
 
   ### QUALITY VALUES
@@ -2260,12 +2265,6 @@ Input:
 -s/--skip <int>          Skip (i.e. do not align) the first <int> reads or read pairs from the input.
 
 -u/--qupto <int>         Only aligns the first <int> reads or read pairs from the input. Default: no limit.
-
--5/--trim5 <int>         Trim <int> bases from the high-quality (left) end of each read before alignment.
-                         Default: 0.
-
--3/--trim3 <int>         Trim <int> bases from the low-quality (right) end of each read before alignment.
-                         Default: 0.
 
 --phred33-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 33. Default: on.
 
