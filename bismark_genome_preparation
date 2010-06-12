@@ -317,7 +317,7 @@ The following is a brief description of command line options and arguments to co
 Bismark Genome Preparation script:
 
 
-USAGE: Bismark_Genome_Preparation.pl [options] <arguments>
+USAGE: bismark_genome_preparation [options] <arguments>
 
 
 OPTIONS:
@@ -336,7 +336,7 @@ OPTIONS:
 ARGUMENTS:
 
 <path_to_genome_folder>  The full path to the folder containing the genome to be bisulfite
-                         converted. At the current time Bismark_Genome_Preparation expects
+                         converted. At the current time Bismark Genome Preparation expects
                          one or more fastA files in the folder (with the file extension: .fa).
                          If the path is not provided as an argument you will be prompted for it.
 

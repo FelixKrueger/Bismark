@@ -730,8 +730,8 @@ sub print_helpfile{
 
 DESCRIPTION
 
-The following is a brief description of all options to control the script: 
-"strand_specific_C_methylation.pl". The script reads in a bisulfite read alignment
+The following is a brief description of all options to control the Bismark
+methylation extractor. The script reads in a bisulfite read alignment
 results file produced by the Bismark bisulfite mapper and extracts the methylation
 information for individual cytocines. This information is found in the methylation
 call field which looks like this:
@@ -768,7 +768,7 @@ generated. The output files are in the following format (tab delimited):
 <sequence_id>     <strand>      <chromosome>     <position>     <methylation call>
 
 
-USAGE: strand_specific_C_methylation.pl [options] <filenames>
+USAGE: methylation_extractor [options] <filenames>
 
 
 ARGUMENTS:

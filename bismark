@@ -2205,6 +2205,20 @@ sub print_helpfile{
   print << 'HOW_TO';
 
 
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License as published by
+     the Free Software Foundation, either version 3 of the License, or
+     (at your option) any later version.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+     GNU General Public License for more details.
+     You should have received a copy of the GNU General Public License
+     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+
 DESCRIPTION
 
 
@@ -2225,7 +2239,7 @@ have a unique best alignment to any of the 4 possible strands of a bisulfite PCR
 
 
 
-USAGE: Bismark.pl [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]
+USAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 
 ARGUMENTS:
