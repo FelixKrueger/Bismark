@@ -1273,12 +1273,17 @@ sub extract_corresponding_genomic_sequence_paired_ends {
    }
    ### the alignment_strand information is needed to determine which strand of the genomic sequence we are comparing the read against,
    ### the read_conversion information is needed to know whether we are looking for C->T or G->A substitutions
+
    $methylation_call_params->{$sequence_identifier}->{alignment_read_1} = $alignment_read_1;
    $methylation_call_params->{$sequence_identifier}->{alignment_read_2} = $alignment_read_2;
    $methylation_call_params->{$sequence_identifier}->{read_conversion_1} = $read_conversion_info_1;
    $methylation_call_params->{$sequence_identifier}->{read_conversion_2} = $read_conversion_info_2;
    $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
    $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
+
+
+
+
 }
 
 sub print_bisulfite_mapping_result_single_end{
@@ -1291,7 +1296,18 @@ sub print_bisulfite_mapping_result_single_end{
 sub print_bisulfite_mapping_results_paired_ends{
   my ($identifier,$sequence_1,$sequence_2,$methylation_call_params)= @_;
   ### writing every single mapped read and its methylation call to one comprehensive output file
-  my $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
+
+  ### I will add +1 bp to the starting position of paired-end reads, as bowtie reports the index and not the bp position. If bowtie changes its 
+  ### reporting to 1 in the future we will see a 1-off error
+  my $comprehensive_BiSeq_mapping_output_paired_ends;
+  ### I will now leave reads from Indexes 0 and 1 as they are, but swap read 1 and read 2 round if the index is 2 or 3. This servers the purpose that the
+  ### reads will be ordered from low to high positions on the chromosome
+  if ($methylation_call_params->{$identifier}->{index} == 0 or $methylation_call_params->{$identifier}->{index} == 1){
+    $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1}+1,$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
+  }
+  else {
+    $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1}+1,$methylation_call_params->{$identifier}->{alignment_end},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$methylation_call_params->{$identifier}->{index},$fhs[$methylation_call_params->{$identifier}->{index}]->{name},$fhs[$methylation_call_params->{$identifier}->{index}]->{strand_identity});
+  }
   print OUT "$comprehensive_BiSeq_mapping_output_paired_ends\n";
 }
 
