@@ -127,8 +127,8 @@ sub process_sequence_files {
 
   foreach my $filename(@filenames){
 
-    ### Extract chromosome number and sequence
-    my $chromosome_number = chromosome_number ($filename);
+    ### Extracting chromosome sequence
+    my $chromosome_number = extract_chromosome_number($filename);
     my $sequence = read_genomic_sequence($filename);
 
     my $bisulfite_CT_conversion_filename = "$CT_dir/$filename";
@@ -180,6 +180,22 @@ sub process_sequence_files {
   warn "\nStep II - Genome bisulfite conversions - completed\n\n\n";
 }
 
+sub extract_chromosome_number {
+  ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
+  my $filename = shift;
+  open (EXTRACT,$filename) or die "Failed to read from chromosome file $filename $!\n";
+  my $first_line = <EXTRACT>;
+  chomp $first_line; 
+  if ($first_line =~ s/^>//){
+    my ($chromosome_name) = split (/\s+/,$first_line);
+    close EXTRACT or die "Failed to close filehandle for $filename $!\n";
+    return $chromosome_name;
+  }
+  else{
+    die "The specified chromosome file doesn't seem to be in FASTA format as required! $!\n";
+  }
+}
+
 sub read_genomic_sequence {
   my $filename = shift;
   my $sequence;
@@ -194,15 +210,8 @@ sub read_genomic_sequence {
   return $sequence;
 }
 
-sub chromosome_number{
-  my $filename = shift;
-  if ($filename =~ /\.([^\.]+)\.fa$/){
-    return $1;
-  }
-  else{
-    die "Unable to extract chromosome number from $filename";
-  }
-}
+
+
 
 sub create_bisulfite_genome_folders{
 

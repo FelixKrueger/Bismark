@@ -518,8 +518,13 @@ sub check_bowtie_results_single_end{
 	### need to extract the chromosome number from the bowtie output (which is either XY_cf (complete forward) or XY_cr (complete reverse)
 	my ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,7];
 	chomp $mismatch_info;
-	my ($chromosome,$bisulfite_genome_strand) = split (/_/,$mapped_chromosome);	
-	$bisulfite_genome_strand =~ s/^c//;
+	my $chromosome;
+	if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
+	  $chromosome = $mapped_chromosome;
+	}
+	else{
+	  die "Chromosome number extraction failed for $mapped_chromosome $! \n";
+	}
 	### Now extracting the number of mismatches to the converted genome
 	my $number_of_mismatches;
 	if ($mismatch_info eq ''){
@@ -857,11 +862,24 @@ sub check_bowtie_results_paired_ends{
 	my ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,7];
 	chomp $mismatch_info_1;
 	chomp $mismatch_info_2;
-	### need to extract the chromosome number from the bowtie output (which is either XY_cf (complete forward) or XY_cr (complete reverse)
-	my ($chromosome_1,$bisulfite_genome_strand_1) = split (/_/,$mapped_chromosome_1);
-	my ($chromosome_2,$bisulfite_genome_strand_2) = split (/_/,$mapped_chromosome_2);
-	$bisulfite_genome_strand_1 =~ s/^c//;
-	$bisulfite_genome_strand_2 =~ s/^c//;
+	
+	### need to extract the chromosome number from the bowtie output (which is either XY_CT_converted or XY_GA_converted
+	my ($chromosome_1,$chromosome_2,$bisulfite_genome_strand_1,$bisulfite_genome_strand_2);
+	if ($mapped_chromosome_1 =~ /^(.+)_(CT|GA)_converted$/){
+	  $chromosome_1 = $1;
+	  $bisulfite_genome_strand_1 = $2;
+	}
+	else{
+	  die "Chromosome number extraction failed for $mapped_chromosome_1 $! \n";
+	}
+	if ($mapped_chromosome_2 =~ /^(.+)_(CT|GA)_converted$/){
+	  $chromosome_2 = $1;
+	  $bisulfite_genome_strand_2 = $2;
+	}
+	else{
+	  die "Chromosome number extraction failed for $mapped_chromosome_2 $! \n";
+	}
+	
 	### Now extracting the number of mismatches to the converted genome
 	my $number_of_mismatches_1;
 	my $number_of_mismatches_2;
@@ -1519,7 +1537,7 @@ sub read_genome_into_memory{
   chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
   print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
   while (my $chromosome_filename = <*.fa>){
-    my $chromosome_number = chromosome_number($chromosome_filename);
+    my $chromosome_number = extract_chromosome_number ($chromosome_filename);
     my $sequence = read_chromosomal_sequence($chromosome_filename);
     $chromosomes{$chromosome_number}= $sequence;
     print "chr $chromosome_number\t";
@@ -1527,6 +1545,23 @@ sub read_genome_into_memory{
   print "\n";
   chdir $cwd or die "Failed to move to directory $cwd\n";
 }
+
+sub extract_chromosome_number {
+  ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
+  my $filename = shift;
+  open (EXTRACT,$filename) or die "Failed to read from chromosome file $filename $!\n";
+  my $first_line = <EXTRACT>;
+  chomp $first_line;
+  if ($first_line =~ s/^>//){
+    my ($chromosome_name) = split (/\s+/,$first_line);
+    close EXTRACT or die "Failed to close filehandle for $filename $!\n";
+    return $chromosome_name;
+  }
+  else{
+    die "The specified chromosome file doesn't seem to be in FASTA format as required! $!\n";
+  }
+}
+
 
 sub read_chromosomal_sequence{
   my $filename = shift @_;
@@ -1540,16 +1575,6 @@ sub read_chromosomal_sequence{
   }
   close CHROMOSOME or die "Failed to close filehandle\n";
   return $sequence;
-}
-
-sub chromosome_number{
-  my $filename = shift @_;
-  if ($filename =~ /\.([^\.]+)\.fa$/){
-    return $1;
-  }
-  else{
-    die "Unable to extract the chromosome number: $filename!";
-  }
 }
 
 sub reverse_complement{
@@ -1886,7 +1911,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
     open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
-    my $_ = $fh->{fh}->getline();
+    $_ = $fh->{fh}->getline();
     if ($_) {
       my $id = (split(/\t/))[0]; # this is the first element of the bowtie output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
@@ -1915,7 +1940,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
-    my $_ = $fh->{fh}->getline();
+    $_ = $fh->{fh}->getline();
     if ($_) {
       my $id = (split(/\t/))[0]; # this is the first element of the bowtie output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
@@ -2030,7 +2055,7 @@ sub process_command_line{
 
           Bismark - Bisulfite Mapper and Methylation Caller.
 
-   Version: 0.1. Copyright 2010 Felix Krueger, Babraham Bioinformatics
+   Version: 0.11. Copyright 2010 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.bbsrc.ac.uk/projects/
 
 
@@ -2344,7 +2369,7 @@ Other:
 
 -v/--version             Display version information.
 
-This script was last edited on 18 May 2010.
+This script was last edited on 15 June 2010.
 
 HOW_TO
 }
