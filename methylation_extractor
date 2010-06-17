@@ -7,7 +7,9 @@ use Getopt::Long;
 
 my @filenames;
 my %counting;
+
 my %fhs;
+my $version = 'v0.1.2';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired);
@@ -20,6 +22,7 @@ sub process_commandline{
   my $genomic_fasta;
   my $full;
   my $report;
+  my $extractor_version;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'p|paired-end' => \$paired_end,
@@ -28,6 +31,7 @@ sub process_commandline{
 				 'ignore=i' => \$ignore,
 				 'comprehensive' => \$full,
 				 'report' => \$report,
+				 'version' => \$extractor_version,
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -40,6 +44,21 @@ sub process_commandline{
     print_helpfile();
     exit;
   }
+
+  if ($extractor_version){
+    print << "VERSION";
+
+
+                           Bismark Methylation Extractor
+
+   Bismark Extractor Version: $version Copyright 2010 Felix Krueger, Babraham Bioinformatics
+                      www.bioinformatics.bbsrc.ac.uk/projects/
+
+
+VERSION
+    exit;
+  }
+
 
   ### no files provided
   unless (@ARGV){
@@ -159,11 +178,13 @@ sub process_Bismark_results_file{
       $cpg_output =~ s/^/CpG_context_/;
       open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
       print "Writing result file containing methylation information for C in CpG context to $cpg_output\n";
+      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n";
 
       ### C in any other context than CpG
       $other_c_output =~ s/^/Non_CpG-context_/;
       open ($fhs{other_context},'>',$other_c_output) or die "Failed to write to $other_c_output $!\n";
       print "Writing result file containing methylation information for C in any other context to $other_c_output\n";
+      print {$fhs{other_context}} "Bismark methylation extractor version $version\n";
     }
 
     ### else we will write out 8 different output files, depending on where the (first) unique best alignment has been found
@@ -173,37 +194,45 @@ sub process_Bismark_results_file{
       $cpg_ot =~ s/^/CpG_OT_/;
       open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n";
       print "Writing result file containing methylation information for C in CpG context from the original forward strand to $cpg_ot\n";
+      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctot =~ s/^/CpG_CTOT_/;
       open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n";
       print "Writing result file containing methylation information for C in CpG context from the complementary to original forward strand to $cpg_ctot\n";
+      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctob =~ s/^/CpG_CTOB_/;
       open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n";
       print "Writing result file containing methylation information for C in CpG context from the complementary to original reverse strand to $cpg_ctob\n";
+      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       $cpg_ob =~ s/^/CpG_OB_/;
       open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n";
       print "Writing result file containing methylation information for C in CpG context from the original reverse strand to $cpg_ob\n";
-
+      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       ### For cytosines in CC, CT or CA context
       my $other_c_ot = my $other_c_ctot = my $other_c_ctob = my $other_c_ob = $filename;
+
       $other_c_ot =~ s/^/Other_C_OT_/;
       open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n";
       print "Writing result file containing methylation information for C in any other context from the original forward strand to $other_c_ot\n";
+      print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ctot =~ s/^/Other_C_CTOT_/;
       open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n";
       print "Writing result file containing methylation information for C in any other context from the complementary to original forward strand to $other_c_ctot\n";
+      print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ctob =~ s/^/Other_C_CTOB_/;
       open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n";
       print "Writing result file containing methylation information for C in any other context from the complementary to original reverse strand to $other_c_ctob\n";
+      print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ob =~ s/^/Other_C_OB_/;
       open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n";
       print "Writing result file containing methylation information for C in any other context from the original reverse strand to $other_c_ob\n";
+      print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n";
     }
 
     ### For repeat analyses or similar one can obtain a FastA output file with the genomic equivalent sequences for a bisulfite read position
@@ -219,23 +248,42 @@ sub process_Bismark_results_file{
 
     ### PROCESSING SINGLE-END RESULT FILES
     if ($single){
+      $_ = <IN>; ## discarding the Bismark version info
       while (<IN>){
 	++$line_count;
 	print "processed lines: $line_count\n" if ($line_count%500000==0);
 	
 	### $seq here is the chromosomal sequence (to use for the repeat analysis for example)
-	my ($id,$strand,$chrom,$start,$seq,$meth_call,$index,$conversion_info) = (split("\t"))[0,1,2,3,5,6,7,8];
+	my ($id,$strand,$chrom,$start,$seq,$meth_call,$read_conversion,$genome_conversion) = (split("\t"))[0,1,2,3,6,7,8,9];
 	### we need to remove 1 bp of the genomic sequence as we were extracting read+1 bp long fragments to make a methylation call at the first or
 	### last position
+	chomp $genome_conversion;
+	my $index;
 	if ($meth_call){
-	
+
+	  if ($read_conversion eq 'CT' and $genome_conversion eq 'CT'){
+	    $index = 0;
+	  }	
+	  elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){
+	    $index = 1;
+	  }
+	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){
+	    $index = 2;
+	  }
+	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){
+	    $index = 3;
+	  }
+	  else {
+	    die "Unexpected combination of read and genome conversion: $read_conversion / $genome_conversion\n";
+	  }
+
 	  ### We will need to discriminate between 1 extra base at the 5' end or at the 3' end
 	  ### removing most 3' base
-	  if ($conversion_info =~ /^CT/){
+	  if ($read_conversion =~ /^CT/){
 	    $seq = substr($seq,0,length($seq)-1);
 	  }	
 	  ### removing most 5' base
-	  elsif ($conversion_info =~ /^GA/){
+	  elsif ($read_conversion =~ /^GA/){
 	    $seq = substr($seq,1,length($seq)-1);
 	  }
 	  else{
@@ -262,17 +310,34 @@ sub process_Bismark_results_file{
 
     ### PROCESSING PAIRED-END RESULT FILES
     elsif ($paired){
+      $_ =<IN>; ## discarding the Bismark version info
       while (<IN>){
 	++$line_count;
 	print "processed line: $line_count\n" if ($line_count%500000==0);
 
 	
 	### $seq here is the chromosomal sequence (to use for the repeat analysis for example)
-	my ($id,$chrom,$start_read_1,$end_read_2,$seq_1,$meth_call_1,$seq_2,$meth_call_2,$index) = (split("\t"))[0,2,3,4,6,7,9,10,11];
-
+	my ($id,$strand,$chrom,$start_read_1,$end_read_2,$seq_1,$meth_call_1,$seq_2,$meth_call_2,$first_read_conversion,$genome_conversion) = (split("\t"))[0,1,2,3,4,6,7,9,10,11,12,13];
+	my $index;
+	chomp $genome_conversion;
+	if ($first_read_conversion eq 'CT' and $genome_conversion eq 'CT'){
+	  $index = 0;
+	}	
+	elsif ($first_read_conversion eq 'GA' and $genome_conversion eq 'GA'){
+	  $index = 1;
+	}
+	elsif ($first_read_conversion eq 'GA' and $genome_conversion eq 'CT'){
+	  $index = 2;
+	}
+	elsif ($first_read_conversion eq 'CT' and $genome_conversion eq 'GA'){
+	  $index = 3;
+	}
+	else {
+	  die "Unexpected combination of read and genome conversion: $first_read_conversion / $genome_conversion\n";
+	}
+	
 	### we need to remove 1 bp of the genomic sequence as we were extracting read+1 bp long fragments to make a methylation call at the
 	### first or last position
-	
 	
 	if ($index == 0 or $index == 2){
 	  $seq_1 = substr($seq_1,0,length($seq_1)-1);
@@ -284,26 +349,38 @@ sub process_Bismark_results_file{
 	}
 	
 	if ($meth_call_1 and $meth_call_2){
+	
+	  ### Clipping off the first <int> number of bases from the methylation call strings as specified with --ignore <int>
+	  if ($ignore){
+	    $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
+	    $meth_call_2 = substr($meth_call_2,$ignore,length($meth_call_2)-$ignore);
+	  }
+	
 	  my $end_read_1 = $start_read_1+length($seq_1)-1;
 	  my $start_read_2 = $end_read_2-length($seq_2)+1;
 	
-	  ## we first pass the first read which is always in + orientation on the forward strand
-	  print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id,'+',$index);
+	  if ($strand eq '+'){
+	    ## we first pass the first read which is in + orientation on the forward strand
+	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id,'+',$index);
+	    # we next pass the second read which is in - orientation on the reverse strand
+	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$end_read_2,$id,'-',$index);
+	  }
+	  else{
+	    ## we first pass the first read which is in - orientation on the reverse strand
+	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$end_read_2,$id,'-',$index);
+	    # we next pass the second read which is in - orientation on the reverse strand
+	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_1,$id,'+',$index);
+	  }
 	
-	  # we next pass the second read, which is always in - orientation on the reverse strand
-	  print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$end_read_2,$id,'-',$index);
-	}
-
-	### if $genomic_fasta has been specified we print out a FastA file with genomic equivalent sequences
-	if ($genomic_fasta){
-	  print FASTA ">${line_count}_seq_1\n";
-	  print FASTA "$seq_1\n";
-	  print FASTA ">${line_count}_seq_2\n";
-	  print FASTA "$seq_2\n";
-	}
-	
-	$methylation_call_strings_processed += 2; # paired-end = 2 methylation calls
-	
+	  ### if $genomic_fasta has been specified we print out a FastA file with genomic equivalent sequences
+	  if ($genomic_fasta){
+	    print FASTA ">${line_count}_seq_1\n";
+	    print FASTA "$seq_1\n";
+	    print FASTA ">${line_count}_seq_2\n";
+	    print FASTA "$seq_2\n";
+	  }
+	  $methylation_call_strings_processed += 2; # paired-end = 2 methylation calls
+	}	
       }
     }
     else{
@@ -519,7 +596,6 @@ sub print_individual_C_methylation_states_single_end{
   ### single-file CpG and other-context output
   if ($full){
     if ($strand eq '+'){
-      $start +=1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -542,7 +618,7 @@ sub print_individual_C_methylation_states_single_end{
       }
     }
     elsif($strand eq '-'){
-      $start += length($seq);
+      $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -572,7 +648,6 @@ sub print_individual_C_methylation_states_single_end{
   ### strand-specific methylation output
   else{
     if ($strand eq '+'){
-      $start +=1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -595,7 +670,7 @@ sub print_individual_C_methylation_states_single_end{
       }
     }
     elsif($strand eq '-'){
-      $start += length($seq);
+      $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
