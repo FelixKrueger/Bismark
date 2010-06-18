@@ -1,0 +1,53 @@
+RELEASE NOTES FOR Bismark v0.1.2
+--------------------------------
+
+The Bismark output files for single-end and paired-end reads have been
+modified so that they contain only vital information, thereby reducing 
+their file size and confusion. More details on the output format can be
+found at http://seqanswers.com/wiki/Custom_Bismark_output_format or in
+the README.txt. 
+
+Both Bismark and the Methylation Extractor now write out their version
+info into the first line of their output files so it is easier to track
+errors.
+
+Reads aligning to the very edges of chromosomes previously produced
+several error messages when trying to extract one additional bp to 
+determine if Cs are in CpG context. These reads (which are very few in
+in the datasets tested so far) will now be excluded from the methylation
+call analysis.
+
+
+RELEASE NOTES FOR Bismark v0.1.1
+--------------------------------
+
+Both the Bismark genome preparation as well as Bismark itself should
+now also run with genome FASTA files that do not look like Ensembl
+files (i.e. chr1.fa,chr.2.fa or similar will be fine, too). For the 
+moment it is still required however that the files end on '.fa' and 
+only one sequence entry is allowed per file. (Multiple fasta entries 
+per file will be supported soon). 
+
+
+RELEASE NOTES FOR Bismark v0.1
+------------------------------
+
+Bismark v0.1 is an initial beta release and as such is still a
+work in progress.
+
+We have successfully used Bismark for bisulfite mapping against
+various genomes (mouse NCBIM37, human NCBI36 and GRCh37, and Yeast 
+SGD1.01). In our tests the code appears to be working as expected.
+
+We have initially designed Bismark to support the kinds of analyses
+we require, thus if you have some ideas or suggestions which could
+be implemented please let us know.
+
+You can report feedback or bug reports either though our bug-
+reporting tool at:
+
+www.bioinformatics.bbsrc.ac.uk/bugzilla/
+
+...or directly to felix.krueger@bbsrc.ac.uk
+
+

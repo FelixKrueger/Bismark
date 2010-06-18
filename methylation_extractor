@@ -780,10 +780,23 @@ OPTIONS:
 --report                 Prints out a short methylation summary and the paramaters used to run
                          this script.
 
+--version                Displays version information.
+
 -h/--help                Displays this help file and exits.
 
 
-This script was last edited on 27 May 2010.
+OUTPUT:
+
+The output is in the form:
+
+<seq-ID> <methylation state> <chromosome> <start position (= end position)> <methylation call>
+
+Methylated cytosines will receive a '+' orientation, 
+unmethylated cytosines will receive a '-' orientation.
+
+
+
+This script was last edited on 17 June 2010.
 
 HOW_TO
 }

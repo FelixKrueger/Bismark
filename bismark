@@ -1096,11 +1096,11 @@ sub check_bowtie_results_paired_ends{
 
   ### check test to see if the genomic sequences we extracted has the same length as the observed sequences, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+1){
-    print "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
     return;
   }
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}) != length($sequence_2)+1){
-    print "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
     return;
   }
 
@@ -1241,16 +1241,12 @@ sub extract_corresponding_genomic_sequence_paired_ends {
      ### SEQUENCE 1 (this is always the forward hit, in this case it is read 1)
      ### for hits on the forward strand we need to capture 1 extra base at the 3' end
 
-     if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{start_seq_1}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1){
-       $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{start_seq_1},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1);
-     }
-     else{
-       $non_bisulfite_sequence_1 = '';
-     }
+     $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{start_seq_1},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1);
+
 
      ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is read 2)
      ### As the second conversion is GA we need to capture 1 base 3', so that it is a 5' base after reverse complementation
-     if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{start_seq_2}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1){
+     if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{start_seq_2}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})){
        $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1);
        ### the reverse strand sequence needs to be reverse complemented
        $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
@@ -1270,9 +1266,9 @@ sub extract_corresponding_genomic_sequence_paired_ends {
      $read_conversion_info_2 = 'CT';
      $genome_conversion = 'GA';
 
-     if ($methylation_call_params->{$sequence_identifier}->{start_seq_1}-1 > 0){
-       ### SEQUENCE 1 (this is always the forward hit, in this case it is read 1)
-       ### as we need to make the methylation call for the base 5' of the first base (GA conversion!) we need to capture 1 extra base at the 5' end
+     ### SEQUENCE 1 (this is always the forward hit, in this case it is read 1)
+     ### as we need to make the methylation call for the base 5' of the first base (GA conversion!) we need to capture 1 extra base at the 5' end
+     if ($methylation_call_params->{$sequence_identifier}->{start_seq_1} > 0){
        $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{start_seq_1}-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1);
      }
      else{
@@ -1281,15 +1277,9 @@ sub extract_corresponding_genomic_sequence_paired_ends {
 
      ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is read 2)
      ### As we are doing a CT comparison for the reverse strand we are taking 1 base extra at the 5' end, so it is a 3' base after reverse complementation
-
-     if ( (($methylation_call_params->{$sequence_identifier}->{start_seq_2})-1) > 0){
-       $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2})-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1);
-       ### the reverse strand sequence needs to be reverse complemented
-       $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
-     }
-     else{
-       $non_bisulfite_sequence_2 = '';
-     }
+     $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2})-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1);
+     ### the reverse strand sequence needs to be reverse complemented
+     $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
    }
 
    ### results from GA converted read 1 plus CT converted read 2 vs. CT converted genome (-/+ orientation alignments are reported only)
@@ -1305,24 +1295,21 @@ sub extract_corresponding_genomic_sequence_paired_ends {
      ### Here we switch the sequence information round!!  non_bisulfite_sequence_1 will later correspond to the read 1!!!!
      ### SEQUENCE 1 (this is always the forward hit, in this case it is READ 2), read 1 is in - orientation on the reverse strand
      ### As read 1 is GA converted we need to capture 1 extra 3' base which will be 1 extra 5' base after reverse complementation
-     if ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}} > ($methylation_call_params->{$sequence_identifier}->{start_seq_2})+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1){
-       $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1);
-       ### the reverse strand sequence needs to be reverse complemented
-       $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
-     }
-     else{
-       $non_bisulfite_sequence_1 = '';
-     }
+     $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1);
+     ### the reverse strand sequence needs to be reverse complemented
+     $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
+
      ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is READ 1)
      ### non_bisulfite_sequence_2 will later correspond to the read 2!!!!
      ### Read 2 is CT converted so we need to capture 1 extra 3' base
-     if($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}} > ($methylation_call_params->{$sequence_identifier}->{start_seq_1})+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1){
+     if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > ($methylation_call_params->{$sequence_identifier}->{start_seq_1})+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})){
        $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_1}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1);
      }
      else{
        $non_bisulfite_sequence_2 = '';
      }
    }
+
    ### results from CT converted read 1 plus GA converted read 2 vs. GA converted genome (-/+ orientation alignments are reported only)
    elsif ($methylation_call_params->{$sequence_identifier}->{index} == 3){
      ### [Index 3, sequence originated from the complementary to (converted) reverse strand]
@@ -1336,7 +1323,7 @@ sub extract_corresponding_genomic_sequence_paired_ends {
      ### Here we switch the sequence information round!!  non_bisulfite_sequence_1 will later correspond to the read 1!!!!
      ### SEQUENCE 1 (this is always the forward hit, in this case it is READ 2), read 1 is in - orientation on the reverse strand
      ### As read 1 is CT converted we need to capture 1 extra 5' base which will be 1 extra 3' base after reverse complementation
-     if ( ($methylation_call_params->{$sequence_identifier}->{start_seq_2})-1 > 0){
+     if ( ($methylation_call_params->{$sequence_identifier}->{start_seq_2}) > 0){
        $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2})-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1);
        ### the reverse strand sequence needs to be reverse complemented
        $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
@@ -1347,12 +1334,7 @@ sub extract_corresponding_genomic_sequence_paired_ends {
      ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is READ 1)
      ### non_bisulfite_sequence_2 will later correspond to the read 2!!!!
      ### Read 2 is GA converted so we need to capture 1 extra 5' base
-     if ( ($methylation_call_params->{$sequence_identifier}->{start_seq_1})-1 > 0) {
-       $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_1})-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1);
-     }
-     else {
-       $non_bisulfite_sequence_2 = '';
-     }
+     $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_1})-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1);
    }
    else{
      die "Too many bowtie result filehandles\n";
@@ -2475,7 +2457,41 @@ Other:
 
 -v/--version             Display version information.
 
-This script was last edited on 15 June 2010.
+
+OUTPUT:
+
+Single-end output format (tab-separated):
+
+ (1) <seq-ID>
+ (2) <read alignment strand>
+ (3) <chromosome>
+ (4) <start position>
+ (5) <end position>
+ (6) <observed bisulfite sequence>
+ (7) <equivalent genomic sequence>
+ (8) <methylation call>
+ (9) <read conversion
+(10) <genome conversion>
+
+
+Paired-end output format (tab-separated):
+ (1) <seq-ID>
+ (2) <read 1 alignment strand>
+ (3) <chromosome>
+ (4) <start position>
+ (5) <end position>
+ (6) <observed bisulfite sequence 1>
+ (7) <equivalent genomic sequence 1>
+ (8) <methylation call 1>
+ (9) <observed bisulfite sequence 2>
+(10) <equivalent genomic sequence 2>
+(11) <methylation call 2>
+(12) <read 1 conversion
+(13) <genome conversion>
+
+
+
+This script was last edited on 17 June 2010.
 
 HOW_TO
 }
