@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use Cwd;
+use File::Path qw(remove_tree);
 $|++;
 
 
@@ -47,7 +48,7 @@ sub launch_bowtie_indexer{
   print "Bismark Genome Preparation - Step III: Launching the Bowtie indexer\n";
   print "Please be aware that this process can - depending on genome size - take up to several hours!\n";
   sleep(5);
-  ### if the path to bowtie was specfified explicitely 
+  ### if the path to bowtie was specfified explicitely
   if ($path_to_bowtie){
     $path_to_bowtie =~ s/$/bowtie-build/;
   }
@@ -71,7 +72,7 @@ sub launch_bowtie_indexer{
     $verbose and print "Parent process: Starting to index C->T converted genome with the following command:\n\n";
     $verbose and print "$path_to_bowtie -f $file_list BS_CT\n\n";
     sleep (11);
-    exec ("$path_to_bowtie -f $file_list BS_CT");
+    exec ("$path_to_bowtie","-f","$file_list","BS_CT");
   }
 
   # child process
@@ -85,7 +86,7 @@ sub launch_bowtie_indexer{
     $verbose and print "$path_to_bowtie -f $file_list BS_GA\n\n";
     $verbose and print "(starting in 10 seconds)\n";
     sleep(10);
-    exec ("$path_to_bowtie -f $file_list BS_GA");
+    exec ("$path_to_bowtie","-f","$file_list","BS_GA");
   }
 
   # if the platform doesn't support the fork command we will run the indexing processes one after the other 
@@ -119,60 +120,96 @@ sub launch_bowtie_indexer{
 sub process_sequence_files {
 
   my ($total_CT_conversions,$total_GA_conversions) = (0,0);
-  $verbose and print "Bismark Genome Preparation - Step II: Bisulfite conversion of reference genome\n\n";
+  $verbose and print "Bismark Genome Preparation - Step II: Bisulfite converting reference genome\n\n";
   sleep (3);
 
   $verbose and print "conversions performed:\n";
   $verbose and print join("\t",'chromosome','C->T','G->A'),"\n";
 
   foreach my $filename(@filenames){
+    my ($chromosome_CT_conversions,$chromosome_GA_conversions) = (0,0);
+    open (IN,$filename) or die "Failed to read from sequence file $filename $!\n";
 
-    ### Extracting chromosome sequence
-    my $chromosome_number = extract_chromosome_number($filename);
-    my $sequence = read_genomic_sequence($filename);
+    ### first line needs to be a fastA header
+    my $first_line = <IN>;
+    chomp $first_line;
 
-    my $bisulfite_CT_conversion_filename = "$CT_dir/$filename";
-    $bisulfite_CT_conversion_filename =~ s/fa$/CT_conversion.fa/;
+    ### Extracting chromosome name from the FastA header
+    my $chromosome_name = extract_chromosome_name($first_line);
 
-    my $bisulfite_GA_conversion_filename = "$GA_dir/$filename";
-    $bisulfite_GA_conversion_filename =~ s/fa$/GA_conversion.fa/;
-
-    ### Writing the chromosome out into a C->T converted version (equals forward strand conversion)
-    # $verbose and warn "The forward strand sequence of chromosome $chromosome_number is now converted into a C->T bisulfite-treated version\n";
-
-    my $CT_sequence = $sequence;
-    my $CT_transliterations_performed = ($CT_sequence =~ tr/C/T/); # converts all Cs into Ts
-    $total_CT_conversions += $CT_transliterations_performed;
-
+    my $bisulfite_CT_conversion_filename = "$CT_dir/$chromosome_name";
+    $bisulfite_CT_conversion_filename =~ s/$/.CT_conversion.fa/;
     # $verbose and warn "Writing output to file $bisulfite_CT_conversion_filename\n";
     open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
-    print CT_CONVERT ">",$chromosome_number,"_CT_converted\n";
-    my $pos = 0;
-    while ($pos < length $CT_sequence){
-      print CT_CONVERT substr($CT_sequence,$pos,50),"\n";
-      $pos += 50;
-    }
-    close (CT_CONVERT) or die "Failed to close filehandle: $!\n";
+    print CT_CONVERT ">",$chromosome_name,"_CT_converted\n";
 
-    ### Writing the chromosome out in a G->A converted version of the forward strand (this is equivalent to reverse-
-    ### complementing the forward strand and then C->T converting it)
-    # $verbose and warn "The reverse strand sequence of chromosome $chromosome_number is now bisulfite-treated (G->A conversion of the forward strand)\n";
-
-    my $GA_sequence = $sequence;
-    my $GA_transliterations_performed = ($GA_sequence =~ tr/G/A/); # converts all Gs to As on the forward strand
-    $total_GA_conversions += $GA_transliterations_performed;
-
+    my $bisulfite_GA_conversion_filename = "$GA_dir/$chromosome_name";
+    $bisulfite_GA_conversion_filename =~ s/$/.GA_conversion.fa/;
     # $verbose and warn "Writing output to file $bisulfite_GA_conversion_filename\n";
     open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
-    print GA_CONVERT ">",$chromosome_number,"_GA_converted\n";
-    $pos = 0;
-    while ($pos < length $GA_sequence){
-      print GA_CONVERT substr($GA_sequence,$pos,50),"\n";
-      $pos += 50;
+    print GA_CONVERT ">",$chromosome_name,"_GA_converted\n";
+
+    while (<IN>){
+
+      ### in case the line is a new fastA header
+      if ($_ =~ /^>/){
+	### printing out the stats for the previous chromosome
+	$verbose and print join ("\t",$chromosome_name,$chromosome_CT_conversions,$chromosome_GA_conversions),"\n";
+	### resetting the chromosome transliteration counters
+	($chromosome_CT_conversions,$chromosome_GA_conversions) = (0,0);
+
+	### Extracting chromosome name from the additional FastA header
+	$chromosome_name = extract_chromosome_name($_);
+
+	my $bisulfite_CT_conversion_filename = "$CT_dir/$chromosome_name";
+	$bisulfite_CT_conversion_filename =~ s/$/.CT_conversion.fa/;
+	# $verbose and warn "Writing output to file $bisulfite_CT_conversion_filename\n";
+	open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
+	print CT_CONVERT ">",$chromosome_name,"_CT_converted\n";
+	
+	my $bisulfite_GA_conversion_filename = "$GA_dir/$chromosome_name";
+	$bisulfite_GA_conversion_filename =~ s/$/.GA_conversion.fa/;
+	# $verbose and warn "Writing output to file $bisulfite_GA_conversion_filename\n";
+	open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
+	print GA_CONVERT ">",$chromosome_name,"_GA_converted\n";
+      }
+
+      else{
+	my $sequence = uc$_;
+
+	### (I) First replacing all ambiguous sequence characters (such as M,S,R....) by N (G,A,T,C,N and the line endings \r and \n are added to a character group)
+
+	$sequence =~ s/[^ATCGN\n\r]/N/g;
+
+	### (II) Writing the chromosome out into a C->T converted version (equals forward strand conversion)
+
+	my $CT_sequence = $sequence;
+	my $CT_transliterations_performed = ($CT_sequence =~ tr/C/T/); # converts all Cs into Ts
+	$total_CT_conversions += $CT_transliterations_performed;
+	$chromosome_CT_conversions += $CT_transliterations_performed;
+	
+	print CT_CONVERT $CT_sequence;
+
+	### (III) Writing the chromosome out in a G->A converted version of the forward strand (this is equivalent to reverse-
+	### complementing the forward strand and then C->T converting it)
+
+	my $GA_sequence = $sequence;
+	my $GA_transliterations_performed = ($GA_sequence =~ tr/G/A/); # converts all Gs to As on the forward strand
+	$total_GA_conversions += $GA_transliterations_performed;
+	$chromosome_GA_conversions += $GA_transliterations_performed;
+	
+	print GA_CONVERT $GA_sequence;
+
+      }
+
     }
+
+    close (CT_CONVERT) or die "Failed to close filehandle: $!\n";
     close (GA_CONVERT) or die "Failed to close filehandle: $!\n";
-    $verbose and print join ("\t",$chromosome_number,$CT_transliterations_performed,$GA_transliterations_performed),"\n";
+    $verbose and print join ("\t",$chromosome_name,$chromosome_CT_conversions,$chromosome_GA_conversions),"\n";
+
   }
+
   print "\nTotal number of conversions performed:\n";
   print "C->T:\t$total_CT_conversions\n";
   print "G->A:\t$total_GA_conversions\n";
@@ -180,15 +217,14 @@ sub process_sequence_files {
   warn "\nStep II - Genome bisulfite conversions - completed\n\n\n";
 }
 
-sub extract_chromosome_number {
-  ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
-  my $filename = shift;
-  open (EXTRACT,$filename) or die "Failed to read from chromosome file $filename $!\n";
-  my $first_line = <EXTRACT>;
-  chomp $first_line; 
-  if ($first_line =~ s/^>//){
-    my ($chromosome_name) = split (/\s+/,$first_line);
-    close EXTRACT or die "Failed to close filehandle for $filename $!\n";
+sub extract_chromosome_name {
+
+  my $header = shift;
+
+  ## Bowtie extracts the first string after the initial > in the FASTA file, so we are doing this as well
+
+  if ($header =~ s/^>//){
+    my ($chromosome_name) = split (/\s+/,$header);
     return $chromosome_name;
   }
   else{
@@ -196,26 +232,10 @@ sub extract_chromosome_number {
   }
 }
 
-sub read_genomic_sequence {
-  my $filename = shift;
-  my $sequence;
-  # $verbose and warn "Now reading in sequence data from $filename\n";
-  open (IN,$filename) or die "Can't open $filename: $!";
-  $_ = <IN>; #removing FastA header
-  while (<IN>){
-    chomp;
-    $sequence .= uc$_;
-  }
-  # $verbose and print "The length of the sequence was ",length$sequence," bp\n";
-  return $sequence;
-}
-
-
-
-
 sub create_bisulfite_genome_folders{
 
   $verbose and print "Bismark Genome Preparation - Step I: Preparing folders\n\n";
+
   # Ensuring a genome folder has been specified
   if ($genome_folder){
     unless ($genome_folder =~ /\/$/){
@@ -257,8 +277,12 @@ sub create_bisulfite_genome_folders{
 
   chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
   # Exiting unless there are fastA files in the folder
+
   my @filenames = <*.fa>;
   die "The specified genome folder ($genome_folder) doesn't seem to contain any sequence files in fastA format!\n" unless (@filenames);
+
+  print "Bisulfite Genome Indexer version 0.1.3 (last modified 30 Jul 2010)\n\n ";
+  sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
   my $bisulfite_dir = "${genome_folder}Bisulfite_Genome/";
@@ -281,6 +305,8 @@ sub create_bisulfite_genome_folders{
 	}
       }
     }
+    # removing any existing files and subfolders in the bisulfite directory (the specified directory won't be deleted)
+    remove_tree($bisulfite_dir, {verbose => 1,keep_root => 1});
   }
 
   chdir $bisulfite_dir or die "Unable to move to $bisulfite_dir\n";
@@ -313,8 +339,8 @@ DESCRIPTION
 
 This script is supposed to convert a specified reference genome into two different bisulfite
 converted versions and index them for alignments with Bowtie. One bisulfite genome will have 
-all Cs converted to Ts (C->T), and the other will have all Gs converted to As (G->A). Both
-bisulfite genomes will be stored in subfolders within the reference genome folder. Once the 
+all Cs converted to Ts (C->T), and the one other will have all Gs converted to As (G->A). Both
+bisulfite genomes will be stored in subfolders within the reference genome folder. Once the
 bisulfite conversion has been completed the program will fork and launch two simultaneous
 versions of the bowtie indexer (bowtie-build). Be aware that the indexing process can take
 up to several hours; this will mainly depend on genome size and system resources.
@@ -351,7 +377,7 @@ ARGUMENTS:
 
 
 
-This script was last edited on 18 May 2010.
+This script was last edited on 30 July 2010.
 
 HOW_TO
 }
