@@ -9,8 +9,8 @@ my @filenames;
 my %counting;
 
 my %fhs;
-my $version = 'v0.1.2';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report) = process_commandline();
+my $version = 'v0.1.3';
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired);
 
@@ -23,6 +23,7 @@ sub process_commandline{
   my $full;
   my $report;
   my $extractor_version;
+  my $no_overlap;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'p|paired-end' => \$paired_end,
@@ -95,39 +96,50 @@ VERSION
   else{
     die "Please specify whether the supplied file(s) are in Bismark single-end or paired-end format\n\n";
   }
+  ### NO OVERLAP
+  if ($no_overlap){
+    unless ($paired_end){
+      die "The option '--no_overlap' can only be specified for paired-end input!\n";
+      $paired_end = 0;
+    }
+  }
+  else{
+    $no_overlap = 0;
+  }
 
+  ### COMPREHENSIVE OUTPUT
   if ($full){
     print "Strand-specific outputs will be skipped. Separate output files for Cs in CpG context or Cs in any other context will be generated (file sizes might become huge!)\n\n";
-
   }
   else{
     $full = 0;
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report);
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap);
 }
 
 
 
 sub process_Bismark_results_file{
-  my ($ignore,$single,$paired) = @_;
+  my ($ignore,$single,$paired,$no_overlap) = @_;
 
   if ($paired){
-    print "paired-end: $paired\n";
+    print "Paired-end input file specified\n";
   }
   if ($single){
-    print "single-end: $single\n";
+    print "Single-end input file specified\n";
   }
   if ($ignore){
-    print "ignore bases: $ignore\n";
+    print "Ignore $ignore bases\n";
   }
   if ($full){
-    print "comprehensive output specified\n";
+    print "Comprehensive output specified\n";
   }
   if ($genomic_fasta){
     print "Genomic equivalent sequences will be printed out in FastA format\n";
   }
-  #  sleep (5);
+  sleep (3);
+
   foreach my $filename (@filenames){
     %fhs = ();
     %counting =(
@@ -162,7 +174,10 @@ sub process_Bismark_results_file{
 	print REPORT "Output specified: comprehensive\n";
       }
       else{
-	print REPORT "Output: strand-specific (default)\n";
+	print REPORT "Output specified: strand-specific (default)\n";
+      }
+      if ($no_overlap){
+	print REPORT "No overlapping methylation calls specified\n";
       }
       if ($genomic_fasta){
 	print REPORT "Genomic equivalent sequences will be printed out in FastA format\n";
@@ -193,22 +208,22 @@ sub process_Bismark_results_file{
       ### For cytosines in CpG context
       $cpg_ot =~ s/^/CpG_OT_/;
       open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n";
-      print "Writing result file containing methylation information for C in CpG context from the original forward strand to $cpg_ot\n";
+      print "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n";
       print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctot =~ s/^/CpG_CTOT_/;
       open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n";
-      print "Writing result file containing methylation information for C in CpG context from the complementary to original forward strand to $cpg_ctot\n";
+      print "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n";
       print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctob =~ s/^/CpG_CTOB_/;
       open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n";
-      print "Writing result file containing methylation information for C in CpG context from the complementary to original reverse strand to $cpg_ctob\n";
+      print "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n";
       print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       $cpg_ob =~ s/^/CpG_OB_/;
       open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n";
-      print "Writing result file containing methylation information for C in CpG context from the original reverse strand to $cpg_ob\n";
+      print "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n";
       print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       ### For cytosines in CC, CT or CA context
@@ -216,22 +231,22 @@ sub process_Bismark_results_file{
 
       $other_c_ot =~ s/^/Other_C_OT_/;
       open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n";
-      print "Writing result file containing methylation information for C in any other context from the original forward strand to $other_c_ot\n";
+      print "Writing result file containing methylation information for C in any other context from the original top strand to $other_c_ot\n";
       print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ctot =~ s/^/Other_C_CTOT_/;
       open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n";
-      print "Writing result file containing methylation information for C in any other context from the complementary to original forward strand to $other_c_ctot\n";
+      print "Writing result file containing methylation information for C in any other context from the complementary to original top strand to $other_c_ctot\n";
       print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ctob =~ s/^/Other_C_CTOB_/;
       open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n";
-      print "Writing result file containing methylation information for C in any other context from the complementary to original reverse strand to $other_c_ctob\n";
+      print "Writing result file containing methylation information for C in any other context from the complementary to original bottom strand to $other_c_ctob\n";
       print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ob =~ s/^/Other_C_OB_/;
       open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n";
-      print "Writing result file containing methylation information for C in any other context from the original reverse strand to $other_c_ob\n";
+      print "Writing result file containing methylation information for C in any other context from the original bottom strand to $other_c_ob\n";
       print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n";
     }
 
@@ -248,26 +263,30 @@ sub process_Bismark_results_file{
 
     ### PROCESSING SINGLE-END RESULT FILES
     if ($single){
+
       $_ = <IN>; ## discarding the Bismark version info
+
       while (<IN>){
 	++$line_count;
 	print "processed lines: $line_count\n" if ($line_count%500000==0);
 	
 	### $seq here is the chromosomal sequence (to use for the repeat analysis for example)
 	my ($id,$strand,$chrom,$start,$seq,$meth_call,$read_conversion,$genome_conversion) = (split("\t"))[0,1,2,3,6,7,8,9];
+
 	### we need to remove 1 bp of the genomic sequence as we were extracting read+1 bp long fragments to make a methylation call at the first or
 	### last position
 	chomp $genome_conversion;
+
 	my $index;
 	if ($meth_call){
 
 	  if ($read_conversion eq 'CT' and $genome_conversion eq 'CT'){
 	    $index = 0;
 	  }	
-	  elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){
+	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){
 	    $index = 1;
 	  }
-	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){
+	  elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){
 	    $index = 2;
 	  }
 	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){
@@ -293,6 +312,17 @@ sub process_Bismark_results_file{
 	  ### Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
 	  if ($ignore){
 	    $meth_call = substr($meth_call,$ignore,length($meth_call)-$ignore);	
+	
+	    ### If we are clipping off some bases at the start we need to adjust the start position of the alignments accordingly!
+	    if ($strand eq '+'){
+	      $start += $ignore;
+	    }
+	    elsif ($strand eq '-'){
+	      $start += length($meth_call)-1;
+	    }
+	    else {
+	      die "Alignment did not have proper strand information: $strand\n";
+	    }
 	  }
 
 	  ### printing out the methylation state of every C in the read
@@ -310,7 +340,9 @@ sub process_Bismark_results_file{
 
     ### PROCESSING PAIRED-END RESULT FILES
     elsif ($paired){
+
       $_ =<IN>; ## discarding the Bismark version info
+
       while (<IN>){
 	++$line_count;
 	print "processed line: $line_count\n" if ($line_count%500000==0);
@@ -318,8 +350,10 @@ sub process_Bismark_results_file{
 	
 	### $seq here is the chromosomal sequence (to use for the repeat analysis for example)
 	my ($id,$strand,$chrom,$start_read_1,$end_read_2,$seq_1,$meth_call_1,$seq_2,$meth_call_2,$first_read_conversion,$genome_conversion) = (split("\t"))[0,1,2,3,4,6,7,9,10,11,12,13];
+
 	my $index;
 	chomp $genome_conversion;
+
 	if ($first_read_conversion eq 'CT' and $genome_conversion eq 'CT'){
 	  $index = 0;
 	}	
@@ -350,14 +384,19 @@ sub process_Bismark_results_file{
 	
 	if ($meth_call_1 and $meth_call_2){
 	
-	  ### Clipping off the first <int> number of bases from the methylation call strings as specified with --ignore <int>
+	  ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>'
 	  if ($ignore){
 	    $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
 	    $meth_call_2 = substr($meth_call_2,$ignore,length($meth_call_2)-$ignore);
-	  }
+
+	    ### we also need to adjust the start and end positions of the alignments accordingly if '--ignore' was specified
 	
-	  my $end_read_1 = $start_read_1+length($seq_1)-1;
-	  my $start_read_2 = $end_read_2-length($seq_2)+1;
+	    $start_read_1 += $ignore;
+	    $end_read_2   -= $ignore;
+	  }
+
+	  my $end_read_1 = $start_read_1+length($meth_call_1)-1;
+	  my $start_read_2 = $end_read_2-length($meth_call_2)+1;
 	
 	  if ($strand eq '+'){
 	    ## we first pass the first read which is in + orientation on the forward strand
@@ -368,7 +407,7 @@ sub process_Bismark_results_file{
 	  else{
 	    ## we first pass the first read which is in - orientation on the reverse strand
 	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$end_read_2,$id,'-',$index);
-	    # we next pass the second read which is in - orientation on the reverse strand
+	    # we next pass the second read which is in + orientation on the forward strand
 	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_1,$id,'+',$index);
 	  }
 	
@@ -397,42 +436,40 @@ sub process_Bismark_results_file{
 
 sub print_splitting_report{
   if ($report){
-     ### detailed information about Cs analysed
-  print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
+    ### detailed information about Cs analysed
+    print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
 
-  my $total_number_of_C = $counting{total_meC_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_C_count}+$counting{total_unmethylated_CpG_count};
-  print REPORT "Total number of C's analysed:\t$total_number_of_C\n";
-  print REPORT "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
-  print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
-  print REPORT "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
-  print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
+    my $total_number_of_C = $counting{total_meC_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_C_count}+$counting{total_unmethylated_CpG_count};
+    print REPORT "Total number of C's analysed:\t$total_number_of_C\n";
+    print REPORT "Total methylated C's in non-CpG context:\t$counting{total_meC_count}\n";
+    print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+    print REPORT "Total C to T conversions in non-CpG context:\t$counting{total_unmethylated_C_count}\n";
+    print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n\n";
 
-  my $percent_meC;
-  if (($counting{total_meC_count}+$counting{total_unmethylated_C_count}) > 0){
-    $percent_meC = sprintf("%.1f",100*$counting{total_meC_count}/($counting{total_meC_count}+$counting{total_unmethylated_C_count}));
-  }
-  my $percent_meCpG;
-  if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
-    $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
-  }
+    my $percent_meC;
+    if (($counting{total_meC_count}+$counting{total_unmethylated_C_count}) > 0){
+      $percent_meC = sprintf("%.1f",100*$counting{total_meC_count}/($counting{total_meC_count}+$counting{total_unmethylated_C_count}));
+    }
+    my $percent_meCpG;
+    if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
+      $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
+    }
 
-  ### calculating methylated C percentage (non-CpG context) if applicable
-  if ($percent_meC){
-    print REPORT "C methylated but not in CpG context:\t${percent_meC}%\n";
-  }
-  else{
-    print REPORT "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
-  }
+    ### calculating methylated C percentage (non-CpG context) if applicable
+    if ($percent_meC){
+      print REPORT "C methylated but not in CpG context:\t${percent_meC}%\n";
+    }
+    else{
+      print REPORT "Can't determine percentage of methylated Cs (not in CpG context) if value was 0\n";
+    }
 
-  ### calculating methylated CpG percentage if applicable
-  if ($percent_meCpG){
-    print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n\n\n";
-  }
-  else{
-    print REPORT "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n\n\n";
-  }
-
-
+    ### calculating methylated CpG percentage if applicable
+    if ($percent_meCpG){
+      print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n\n\n";
+    }
+    else{
+      print REPORT "Can't determine percentage of methylated Cs (in CpG context) if value was 0\n\n\n";
+    }
   }
 
   ### detailed information about Cs analysed
@@ -580,6 +617,7 @@ sub print_individual_C_methylation_states_single_end{
 
   my ($meth_call,$chrom,$start,$id,$seq,$strand,$filehandle_index) = @_;
   my @methylation_calls = split(//,$meth_call);
+
   ############################################################
   ### . for bases not involving cytosines                  ###
   ### C for methylated C (was protected)                   ###
@@ -618,7 +656,6 @@ sub print_individual_C_methylation_states_single_end{
       }
     }
     elsif($strand eq '-'){
-      $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -762,6 +799,13 @@ OPTIONS:
                          read data. Specifying either --paired-end or --single-end is
                          mandatory.
 
+--no_overlap             For paired-end reads it is theoretically possible that read_1 and
+                         read_2 overlap. This option avoids scoring overlapping methylation
+                         calls twice. Whilst this removes a bias towards more methylation calls
+                         towards the center of sequenced fragments it can de facto remove
+                         a good proportion of the data.
+
+
 --fasta                  Chosing this option will print out the genomic sequences that
                          correspond to the bisulfite mapped reads in FastA format.
                          This might be useful for certain applications where the
@@ -792,11 +836,11 @@ The output is in the form:
 <seq-ID> <methylation state> <chromosome> <start position (= end position)> <methylation call>
 
 Methylated cytosines will receive a '+' orientation, 
-unmethylated cytosines will receive a '-' orientation.
+Unmethylated cytosines will receive a '-' orientation.
 
 
 
-This script was last edited on 17 June 2010.
+This script was last edited on 04 August 2010.
 
 HOW_TO
 }

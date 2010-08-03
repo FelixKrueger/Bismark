@@ -101,7 +101,7 @@ sub launch_bowtie_indexer{
     my $file_list = join (',',@fasta_files);
     $verbose and print "$file_list\n\n";
     sleep(2);
-    system ("$path_to_bowtie -f $file_list BS_CT");
+    system ("$path_to_bowtie","-f","$file_list","BS_CT");
     @fasta_files=();
     $file_list= '';
 
@@ -112,7 +112,7 @@ sub launch_bowtie_indexer{
     $file_list = join (',',@fasta_files);
     $verbose and print "$file_list\n\n";
     sleep(2);
-    exec ("$path_to_bowtie -f $file_list BS_GA");
+    exec ("$path_to_bowtie","-f","$file_list","BS_GA");
   }
 }
 
