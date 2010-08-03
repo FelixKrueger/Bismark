@@ -12,7 +12,7 @@ my %fhs;
 my $version = 'v0.1.3';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap) = process_commandline();
 
-process_Bismark_results_file($ignore,$single,$paired);
+process_Bismark_results_file($ignore,$single,$paired,$no_overlap);
 
 sub process_commandline{
   my $help;
@@ -33,6 +33,7 @@ sub process_commandline{
 				 'comprehensive' => \$full,
 				 'report' => \$report,
 				 'version' => \$extractor_version,
+				 'no_overlap' => \$no_overlap
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -96,12 +97,10 @@ VERSION
   else{
     die "Please specify whether the supplied file(s) are in Bismark single-end or paired-end format\n\n";
   }
+
   ### NO OVERLAP
   if ($no_overlap){
-    unless ($paired_end){
-      die "The option '--no_overlap' can only be specified for paired-end input!\n";
-      $paired_end = 0;
-    }
+    die "The option '--no_overlap' can only be specified for paired-end input!\n" unless ($paired_end);
   }
   else{
     $no_overlap = 0;
@@ -137,6 +136,9 @@ sub process_Bismark_results_file{
   }
   if ($genomic_fasta){
     print "Genomic equivalent sequences will be printed out in FastA format\n";
+  }
+  if ($no_overlap){
+    print "No overlapping paired-end sequences specified\n";
   }
   sleep (3);
 
@@ -400,15 +402,23 @@ sub process_Bismark_results_file{
 	
 	  if ($strand eq '+'){
 	    ## we first pass the first read which is in + orientation on the forward strand
-	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id,'+',$index);
+	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id,'+',$index,0,0);
+	
 	    # we next pass the second read which is in - orientation on the reverse strand
-	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$end_read_2,$id,'-',$index);
+
+	    ### if --no_overlap was specified we also pass the end of read 1. If read 2 starts to overlap with read 1 we can stop extracting methylation calls from read 2
+
+	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$end_read_2,$id,'-',$index,$no_overlap,$end_read_1);
 	  }
 	  else{
 	    ## we first pass the first read which is in - orientation on the reverse strand
-	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$end_read_2,$id,'-',$index);
+	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$end_read_2,$id,'-',$index,0,0);
+
 	    # we next pass the second read which is in + orientation on the forward strand
-	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_1,$id,'+',$index);
+
+	    ### if --no_overlap was specified we also pass the end of read 2. If read 2 starts to overlap with read 1 we will stop extracting methylation calls from read 2
+
+	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_1,$id,'+',$index,$no_overlap,$start_read_2);
 	  }
 	
 	  ### if $genomic_fasta has been specified we print out a FastA file with genomic equivalent sequences
@@ -509,7 +519,7 @@ sub print_splitting_report{
 }
 
 sub print_individual_C_methylation_states_paired_end_files{
-  my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index) = @_;
+  my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index,$no_overlap,$end_read_1) = @_;
   my @methylation_calls = split(//,$meth_call);
   ############################################################
   ### . for bases not involving cytosines                  ###
@@ -524,90 +534,222 @@ sub print_individual_C_methylation_states_paired_end_files{
   my $unmethylated_C_count = 0;
   my $unmethylated_CpG_count = 0;
 
-  ### single-file CpG and other-context output
-  if ($full){
-    if ($strand eq '+') {
-      for my $index (0..$#methylation_calls) {
-	if ($methylation_calls[$index] eq 'C') {
-	  $counting{total_meC_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	} elsif ($methylation_calls[$index] eq 'c') {
-	  $counting{total_unmethylated_C_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	} elsif ($methylation_calls[$index] eq 'Z') {
-	  $counting{total_meCpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	} elsif ($methylation_calls[$index] eq 'z') {
-	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+  if ($no_overlap){
+
+    ### single-file CpG and other-context output
+    if ($full){
+      if ($strand eq '+') {
+	for my $index (0..$#methylation_calls) {
+
+
+	  ### Returning as soon as the methylation calls start overlapping
+	  if ($start+$index >= $end_read_1){
+	    return;
+	  }
+
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
 	}
       }
-    }
-    elsif ($strand eq '-') {
-      for my $index (0..$#methylation_calls) {
-	if ($methylation_calls[$index] eq 'C') {
-	  $counting{total_meC_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'c') {
-	  $counting{total_unmethylated_C_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
-	  $counting{total_meCpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
-	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+      elsif ($strand eq '-') {
+	for my $index (0..$#methylation_calls) {
+
+	  ### Returning as soon as the methylation calls start overlapping
+	  if ($start-$index <= $end_read_1){
+	    return;
+	  }
+
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
 	}
       }
+      else {
+	die "This cannot happen $!\n";
+      }
     }
-    else {
-      die "This cannot happen $!\n";
+
+    ### strand-specific methylation output
+    else{
+      if ($strand eq '+') {
+	for my $index (0..$#methylation_calls) {
+
+	  ### Returning as soon as the methylation calls start overlapping
+	  if ($start+$index >= $end_read_1){
+	    return;
+	  }
+
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	}
+      }
+      elsif ($strand eq '-') {
+	for my $index (0..$#methylation_calls) {
+
+	  ### Returning as soon as the methylation calls start overlapping
+	  if ($start-$index <= $end_read_1){
+	    return;
+	  }
+	
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	}
+      }
+      else {
+	die "This cannot happen $!\n";
+      }
     }
   }
-  ### strand-specific methylation output
-  else{
-    if ($strand eq '+') {
-      for my $index (0..$#methylation_calls) {
-	if ($methylation_calls[$index] eq 'C') {
-	  $counting{total_meC_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	} elsif ($methylation_calls[$index] eq 'c') {
-	  $counting{total_unmethylated_C_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	} elsif ($methylation_calls[$index] eq 'Z') {
-	  $counting{total_meCpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	} elsif ($methylation_calls[$index] eq 'z') {
-	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+
+  ### this is the normal paired-end procedure allowing overlaps and using every single C position
+  else {
+    ### single-file CpG and other-context output
+    if ($full){
+      if ($strand eq '+') {
+	for my $index (0..$#methylation_calls) {
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
 	}
       }
-    }
-    elsif ($strand eq '-') {
-      for my $index (0..$#methylation_calls) {
-	if ($methylation_calls[$index] eq 'C') {
-	  $counting{total_meC_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'c') {
-	  $counting{total_unmethylated_C_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
-	  $counting{total_meCpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
-	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+      elsif ($strand eq '-') {
+	for my $index (0..$#methylation_calls) {
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
 	}
       }
+      else {
+	die "This cannot happen $!\n";
+      }
     }
-    else {
-      die "This cannot happen $!\n";
+
+    ### strand-specific methylation output
+    else{
+      if ($strand eq '+') {
+	for my $index (0..$#methylation_calls) {
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	}
+      }
+      elsif ($strand eq '-') {
+	for my $index (0..$#methylation_calls) {
+	  if ($methylation_calls[$index] eq 'C') {
+	    $counting{total_meC_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'c') {
+	    $counting{total_unmethylated_C_count}++;
+	    print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq 'z') {
+	    $counting{total_unmethylated_CpG_count}++;
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	  }
+	}
+      }
+      else {
+	die "This cannot happen $!\n";
+      }
     }
   }
 }
