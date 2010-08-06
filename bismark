@@ -1513,12 +1513,10 @@ sub methylation_call{
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C, methylated, in CpG context
 	  }
-	  elsif ($downstream_base =~ /[CATN]/){
-	    ++$methyl_C_count;
-	    push @match,'C'; # protected C, methylated, not CpG context
-	  }
 	  else{
-	    die "Genomic sequence contained unexpected base: $downstream_base\n";
+	    ++$methyl_C_count;
+	    warn "Genomic sequence contained unexpected base: $downstream_base. Non-CpG context assumed.\n";
+	    push @match,'C'; # protected C, methylated, not CpG context
 	  }
 	}
 	else{
@@ -1535,12 +1533,10 @@ sub methylation_call{
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C, not methylated, in CpG context
 	  }
-	  elsif ($downstream_base =~ /[CATN]/){
+	  else{
+	    warn "Genomic sequence contained unexpected base: $downstream_base. Non-CpG context assumed.\n";
 	    ++$unmethylated_C_count;
 	    push @match,'c'; # converted C, not methylated, not CpG context
-	  }
-	  else{
-	    die "Genomic sequence contained unexpected base: $downstream_base\n";
 	  }
 	}
 	### all other mismatches are not of interest for a methylation call
@@ -1565,12 +1561,10 @@ sub methylation_call{
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C on opposing strand, methylated, in CpG context
 	  }
-	  elsif ($upstream_base =~ /[GATN]/){
+	  else{
+	    warn "Genomic sequence contained unexpected base: $upstream_base. Non-CpG context assumed.\n";
 	    ++$methyl_C_count;
 	    push @match,'C'; # protected C on opposing strand, methylated, not CpG context
-	  }
-	  else{
-	    die "Genomic sequence contained unexpected base: $upstream_base\n";
 	  }
 	}
 	else{
@@ -1588,12 +1582,10 @@ sub methylation_call{
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C on opposing strand, not methylated, in CpG context
 	  }
-	  elsif ($upstream_base =~ /[GATN]/){
+	  else{
 	    ++$unmethylated_C_count;
 	    push @match,'c'; # converted C on opposing strand, not methylated, not CpG context
-	  }
-	  else{
-	    die "Genomic sequence contained unexpected base: $upstream_base\n";
+	    warn "Genomic sequence contained unexpected base: $upstream_base. Non-CpG context assumed.\n";
 	  }
 	}
 	### all other mismatches are not of interest for a methylation call
