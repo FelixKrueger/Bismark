@@ -1515,7 +1515,6 @@ sub methylation_call{
 	  }
 	  else{
 	    ++$methyl_C_count;
-	    warn "Genomic sequence contained unexpected base: $downstream_base. Non-CpG context assumed.\n";
 	    push @match,'C'; # protected C, methylated, not CpG context
 	  }
 	}
@@ -1534,7 +1533,6 @@ sub methylation_call{
 	    push @match,'z'; # converted C, not methylated, in CpG context
 	  }
 	  else{
-	    warn "Genomic sequence contained unexpected base: $downstream_base. Non-CpG context assumed.\n";
 	    ++$unmethylated_C_count;
 	    push @match,'c'; # converted C, not methylated, not CpG context
 	  }
@@ -1562,7 +1560,6 @@ sub methylation_call{
 	    push @match,'Z'; # protected C on opposing strand, methylated, in CpG context
 	  }
 	  else{
-	    warn "Genomic sequence contained unexpected base: $upstream_base. Non-CpG context assumed.\n";
 	    ++$methyl_C_count;
 	    push @match,'C'; # protected C on opposing strand, methylated, not CpG context
 	  }
@@ -1585,7 +1582,6 @@ sub methylation_call{
 	  else{
 	    ++$unmethylated_C_count;
 	    push @match,'c'; # converted C on opposing strand, not methylated, not CpG context
-	    warn "Genomic sequence contained unexpected base: $upstream_base. Non-CpG context assumed.\n";
 	  }
 	}
 	### all other mismatches are not of interest for a methylation call
