@@ -1,3 +1,16 @@
+RELEASE NOTES FOR Bismark v0.1.4
+--------------------------------
+
+The Bismark alignment process would previously grind to a halt when it
+encountered DNA ambiguity bases in the reference genome sequence (R,M...)
+while trying to determine the sequence context of (un-)methylated Cs.
+This behaviour has now been changed so that everything else than a C in
+CpG context was will now be treated as C in not-CpG context.
+
+Fixed a bug whereby the single-end strand-specific output got two of 
+the four possible strands mixed up (fixed properly this time).  
+
+
 RELEASE NOTES FOR Bismark v0.1.3
 --------------------------------
 

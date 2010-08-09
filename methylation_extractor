@@ -9,7 +9,7 @@ my @filenames;
 my %counting;
 
 my %fhs;
-my $version = 'v0.1.3';
+my $version = 'v0.1.4';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired,$no_overlap);
@@ -282,17 +282,17 @@ sub process_Bismark_results_file{
 	my $index;
 	if ($meth_call){
 
-	  if ($read_conversion eq 'CT' and $genome_conversion eq 'CT'){
+	  if ($read_conversion eq 'CT' and $genome_conversion eq 'CT'){ ## original top strand
 	    $index = 0;
 	  }	
-	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){
+	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){ ## complementary to original top strand
 	    $index = 1;
 	  }
-	  elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){
-	    $index = 2;
-	  }
-	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){
+	  elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){ ## original bottom strand
 	    $index = 3;
+	  }
+	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){ ## comlementary to original bottom strand
+	    $index = 2;
 	  }
 	  else {
 	    die "Unexpected combination of read and genome conversion: $read_conversion / $genome_conversion\n";

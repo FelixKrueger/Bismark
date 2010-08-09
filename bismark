@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.1.3';
+my $bismark_version = 'v0.1.4';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -2269,11 +2269,11 @@ VERSION
   ### ALIGNMENT OPTIONS
 
   ### MISMATCHES
-  if ($mismatches){
+  if (defined $mismatches){
     push @bowtie_options,"-n $mismatches";
   }
   ### SEED LENGTH
-  if ($seed_length){
+  if (defined $seed_length){
     push @bowtie_options,"-l $seed_length";
   }
 
@@ -2315,6 +2315,7 @@ VERSION
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
   my $bowtie_options = join (' ',@bowtie_options);
+  print "$bowtie_options\n\n\n\n\n";
   return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options);
 }
 
