@@ -1,3 +1,11 @@
+RELEASE NOTES FOR Bismark v0.1.5
+--------------------------------
+
+Fixed a bug where specifying "-n 0" as alignment parameter would not 
+be executed properly.
+
+
+
 RELEASE NOTES FOR Bismark v0.1.4
 --------------------------------
 

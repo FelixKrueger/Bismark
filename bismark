@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.1.4';
+my $bismark_version = 'v0.1.6';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -1664,8 +1664,8 @@ sub biTransformFastAFiles {
   my $filename = shift;
   open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
   my $C_to_T_infile = my $G_to_A_infile = $filename;
-  $C_to_T_infile =~ s/\.fa$/_C_to_T.fa/;
-  $G_to_A_infile =~ s/\.fa$/_G_to_A.fa/;
+  $C_to_T_infile =~ s/$/_C_to_T.fa/;
+  $G_to_A_infile =~ s/$/_G_to_A.fa/;
   print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
   print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
   open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
@@ -2315,7 +2315,6 @@ VERSION
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
   my $bowtie_options = join (' ',@bowtie_options);
-  print "$bowtie_options\n\n\n\n\n";
   return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options);
 }
 
