@@ -97,7 +97,7 @@ You can see all options by typing "bismark --help".
 
 In the current version, it is required that the current working directory does
 also contain the sequence files to be analysed (this is likely to change in the
-next release). Bismark produces a comprehensive output file as well as a mapping 
+next release). Bismark produces one comprehensive output file as well as a mapping 
 report file for each sequence file or each set of paired-end sequence files.
 
 
@@ -105,11 +105,11 @@ report file for each sequence file or each set of paired-end sequence files.
 
 This is the final step in the Bismark methylation analysis. This script operates
 on Bismark result files and extracts the methylation calls for every single C
-analysed. In the current version Bismark discriminates only between cytosines in 
-CpG context or in any other context. The methylation extractor comes with a few
+analysed. In the current version Bismark discriminates between cytosines in 
+CpG, CHG or CHH context. The methylation extractor comes with a few
 options, such as ignoring the first x number of positions in the methylation
 call string e.g. to remove a restriction enzyme site, or print a large, 
-comprehensive output file for cytosines in CpG or in any other context (this
+comprehensive output file for cytosines in CpG, CHG or CHH context (this
 might produce files with several hundred million lines!). 
  
 

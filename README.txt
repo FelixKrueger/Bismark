@@ -6,7 +6,7 @@ of DNA leaves methylated cytosines untouched, however non-methylated
 cytosines are converted into uracils; this conversion renders mapping
 of these sequences to a reference genome challenging.
 
-Bismark is a new tool for the time-efficient analysis of BS-seq data. 
+Bismark is a tool for the time-efficient analysis of BS-seq data. 
 Bismark is a software package written in Perl that is based on the 
 short read aligner Bowtie. All associated files can be downloaded at:
 
@@ -19,9 +19,9 @@ Bismark supports both single-end and paired-end read mapping in either
 fastA or fastQ format, while retaining much of the flexibility of 
 Bowtie (adjust the seed length, number of mismatches, --best...). 
 Sequence reads are first transformed into fully bisulfite-converted 
-forward (C > T) and reverse reads (G > A conversion of the forward
+forward (C->T) and reverse reads (G->A conversion of the forward
 strand), before aligning them to similarly converted versions of the 
-genome (also C>T and G>A). Sequence reads that produce a unique best 
+genome (also C->T and G->A). Sequence reads that produce a unique best 
 alignment from the four alignment processes against the bisulfite 
 genome (which are running in parallel), are then compared to the normal 
 genomic sequence and the methylation state of all cytosine positions in 
@@ -31,8 +31,9 @@ the read is determined.
 
 What does the output look like?
 
-In the first instance, Bismark produces a comprehensive output file which 
-can either be imported into a genome viewer (e.g. SeqMonk using the Bismark
+In the first instance, Bismark produces one comprehensive output file for
+each input file or set of paired-end input files which can either be 
+imported into a genome viewer (e.g. SeqMonk using the Bismark
 import filter option) or be further mined by downstream scripts.
 
 The single-end output contains the following information:
@@ -96,18 +97,19 @@ CT
 CT
 
 
-In the current version, Bismark discriminates between cytosines in CpG 
-context or in non-CpG context. 
+In the latest version, Bismark discriminates between cytosines in CpG,
+CHG or CHH context (the latter two can be merged into a single non-CpG 
+context in the methylation extractor if desired). 
 
 Bismark comes with a supplementary methylation extractor script that 
 operates on Bismark result files and extracts the methylation call 
 for every single C analysed. It comes with a few options, such as 
 ignoring the first <int> number of positions in the methylation call string, 
 e.g. to remove a restriction enzyme site. The position of every single C
-will be written out to a new output file, depending on context (CpG or 
-any other), whereby methylated Cs will be labelled as forward reads, 
+will be written out to a new output file, depending on context (CpG, CHG 
+or CHH), whereby methylated Cs will be labelled as forward reads, 
 non-methylated Cs as reverse reads. These positions can then be imported 
-into a genome viewer (e.g. SeqMonkk, this time using the generic text import
+into a genome viewer (e.g. SeqMonk, this time using the generic text import
 filter) and data analysis can commence. This output is regularly analysed 
 by the researchers at our institute themselves!
   
