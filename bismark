@@ -1653,8 +1653,8 @@ sub methylation_call{
 
   #################################################################
   ### . for bases not involving cytosines                       ###
-  ### C for methylated C in CHG context (was protected)         ###
-  ### c for not methylated C in CHG context (was converted)     ###
+  ### X for methylated C in CHG context (was protected)         ###
+  ### x for not methylated C in CHG context (was converted)     ###
   ### H for methylated C in CHH context (was protected)         ###
   ### h for not methylated C in CHH context (was converted)     ###
   ### Z for methylated C in CpG context (was protected)         ###
@@ -2736,7 +2736,8 @@ ARGUMENTS:
 -1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
                          "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
                          correspond file-for-file and read-for-read with those specified in <mates2>.
-                         Reads may be a mix of different lengths.
+                         Reads may be a mix of different lengths. Bismark will produce one mapping result
+                         and one report file per paired-end input file pair. 
 
 -2 <mates2>              Comma-separated list of files containing the #2 mates (filename usually includes
                          "_2"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
@@ -2744,7 +2745,8 @@ ARGUMENTS:
                          Reads may be a mix of different lengths.
 
 <singles>                A comma-separated list of files containing the reads to be aligned (e.g. lane1.fq,
-                         lane2.fq,lane3.fq). Reads may be a mix of different lengths.
+                         lane2.fq,lane3.fq). Reads may be a mix of different lengths. Bismark will produce
+                         one mapping result and one report file per input file.  
 
 
 OPTIONS:

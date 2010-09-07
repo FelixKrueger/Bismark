@@ -698,8 +698,8 @@ sub print_individual_C_methylation_states_paired_end_files{
 
   #################################################################
   ### . for bases not involving cytosines                       ###
-  ### C for methylated C in CHG context (was protected)         ###
-  ### c for not methylated C in CHG context (was converted)     ###
+  ### X for methylated C in CHG context (was protected)         ###
+  ### x for not methylated C in CHG context (was converted)     ###
   ### H for methylated C in CHH context (was protected)         ###
   ### h for not methylated C in CHH context (was converted)     ###
   ### Z for methylated C in CpG context (was protected)         ###
@@ -748,10 +748,14 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	    }
+	    elsif ($methylation_calls[$index] eq '.'){}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	    }
 	  }
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
-	  
+	
 	    ### Returning as soon as the methylation calls start overlapping
 	    if ($start-$index <= $end_read_1) {
 	      return;
@@ -775,6 +779,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    } elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }
 	  }
 	} else {
@@ -810,6 +818,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    } elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }	
 	  }
 	} elsif ($strand eq '-') {
@@ -838,6 +850,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    } elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }
 	  }
 	} else {
@@ -872,6 +888,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	    }
 	  }
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
@@ -893,6 +913,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    } elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
+	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }
 	  }
 	} else {
@@ -924,6 +948,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	    }
 	  }
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
@@ -946,6 +974,10 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      $counting{total_unmethylated_CHH_count}++;
 	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	    }
+	    elsif ($methylation_calls[$index] eq '.') {}
+	    else{
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	    }
 	  }
 	} else {
 	  die "This cannot happen $!\n";
@@ -958,154 +990,146 @@ sub print_individual_C_methylation_states_paired_end_files{
   ### THIS IS THE DEFAULT 3-CONTEXT OUTPUT ###
   ############################################
 
-  elsif ($no_overlap){
+  elsif ($no_overlap) {
 
     ### single-file CpG, CHG and CHH context output
-    if ($full){
+    if ($full) {
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 	
 	  ### Returning as soon as the methylation calls start overlapping
-	  if ($start+$index >= $end_read_1){
+	  if ($start+$index >= $end_read_1) {
 	    return;
 	  }
 	
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      elsif ($strand eq '-') {
+      } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 
 	  ### Returning as soon as the methylation calls start overlapping
-	  if ($start-$index <= $end_read_1){
+	  if ($start-$index <= $end_read_1) {
 	    return;
 	  }
 
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      else {
+      } else {
 	die "This cannot happen $!\n";
       }
     }
 
     ### strand-specific methylation output
-    else{
+    else {
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 
 	  ### Returning as soon as the methylation calls start overlapping
-	  if ($start+$index >= $end_read_1){
+	  if ($start+$index >= $end_read_1) {
 	    return;
 	  }
 
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
+	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }	
 	}
-      }
-      elsif ($strand eq '-') {
+      } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 
 	  ### Returning as soon as the methylation calls start overlapping
-	  if ($start-$index <= $end_read_1){
+	  if ($start-$index <= $end_read_1) {
 	    return;
 	  }
 	
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      else {
+      } else {
 	die "This cannot happen $!\n";
       }
     }
@@ -1114,127 +1138,119 @@ sub print_individual_C_methylation_states_paired_end_files{
   ### this is the default paired-end procedure allowing overlaps and using every single C position
   else {
     ### single-file CpG, CHG and CHH context output
-    if ($full){
+    if ($full) {
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      elsif ($strand eq '-') {
+      } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      else {
+      } else {
 	die "This cannot happen $!\n";
       }
     }
 
     ### strand-specific methylation output
-    else{
+    else {
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      elsif ($strand eq '-') {
+      } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'x') {
+	  } elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
 	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'Z') {
+	  } elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'z') {
+	  } elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
 	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'H') {
+	  } elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	  }
-	  elsif ($methylation_calls[$index] eq 'h') {
+	  } elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
 	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	  }
+	  elsif ($methylation_calls[$index] eq '.') {}
+	  else{
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  }
 	}
-      }
-      else {
+      } else {
 	die "This cannot happen $!\n";
       }
     }
@@ -1250,8 +1266,8 @@ sub print_individual_C_methylation_states_single_end{
 
   #################################################################
   ### . for bases not involving cytosines                       ###
-  ### C for methylated C in CHG context (was protected)         ###
-  ### c for not methylated C in CHG context (was converted)     ###
+  ### X for methylated C in CHG context (was protected)         ###
+  ### x for not methylated C in CHG context (was converted)     ###
   ### H for methylated C in CHH context (was protected)         ###
   ### h for not methylated C in CHH context (was converted)     ###
   ### Z for methylated C in CpG context (was protected)         ###
@@ -1268,272 +1284,257 @@ sub print_individual_C_methylation_states_single_end{
   ### THIS IS THE CpG and Non-CpG SECTION (OPTIONAL)
 
   ### single-file CpG and other-context output
-  if ($full and $merge_non_CpG){
-    if ($strand eq '+'){
+  if ($full and $merge_non_CpG) {
+    if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {
+	}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    elsif($strand eq '-'){
+    } elsif ($strand eq '-') {
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    else{
+    } else {
       die "This cannot happen (or at least it shouldn't....)$!\n";
     }
   }
 
   ### strand-specific methylation output
-  elsif ($merge_non_CpG){
-    if ($strand eq '+'){
+  elsif ($merge_non_CpG) {
+    if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    elsif ($strand eq '-'){
+    } elsif ($strand eq '-') {
       $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    else{
+    } else {
       die "This cannot happen (or at least it shouldn't....) $!\n";
     }
   }
 
   ### THIS IS THE 3-CONTEXT (CpG, CHG and CHH) DEFAULT SECTION
 
-  elsif ($full){
-    if ($strand eq '+'){
+  elsif ($full) {
+    if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    elsif($strand eq '-'){
+    } elsif ($strand eq '-') {
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    else{
+    } else {
       die "This cannot happen (or at least it shouldn't....)$!\n";
     }
   }
 
   ### strand-specific methylation output
-  else{
-    if ($strand eq '+'){
+  else {
+    if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    elsif ($strand eq '-'){
+    } elsif ($strand eq '-') {
       $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X'){
+	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
 	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
+	} elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
 	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
+	} elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
+	} elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
 	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
+	} elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
 	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index,$methylation_calls[$index]),"\n";
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
+	} elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
 	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index,$methylation_calls[$index]),"\n";
 	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	else{
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	}
       }
-    }
-    else{
+    } else {
       die "This cannot happen (orat least it shouldn't....) $!\n";
     }
   }
@@ -1553,8 +1554,8 @@ information for individual cytosines. This information is found in the methylati
 call field which can contain the following characters:
 
        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-       ~~~   C   for methylated C in CHG context (was protected)     ~~~
-       ~~~   c   for not methylated C CHG (was converted)            ~~~
+       ~~~   X   for methylated C in CHG context (was protected)     ~~~
+       ~~~   x   for not methylated C CHG (was converted)            ~~~
        ~~~   H   for methylated C in CHH context (was protected)     ~~~
        ~~~   h   for not methylated C in CHH context (was converted) ~~~
        ~~~   Z   for methylated C in CpG context (was protected)     ~~~

@@ -1,3 +1,47 @@
+RELEASE NOTES FOR Bismark v0.2.0
+--------------------------------
+
+Bismark
+
+Non-CpG context is now subdivided into cytosines in CHG and CHH context,
+whereby H can be either A, T or C. This change also means that the genomic 
+sequence a bisulfite read is compared against must be 2 bp longer than the 
+actual read itself; this genomic sequence is also reported in the Bismark 
+mapping results file. Cytosines in non-CpG context received the following
+new characters in the methylation call string to avoid confusion with older
+Bismark files:
+
+CHG-context: X / x (methylated / unmethylated)
+CHH-context: H / h (methylated / unmethylated)
+ 
+ 
+Due to recent changes in the Bowtie source code, Bismark produced lots 
+of warnings ('chunk memory exhausted...'). To counteract this problem 
+Bismark will now understand the additional option '--chunkmbs <int>' (to 
+increase the memory allocation for individual alignments from 64 (default)
+to any integer). These errors were especially frequent in --best mode or for 
+paired-end alignments. Bismark will also understand the '--quiet' option
+to suppress memory chunk exhaustion (and other) warnings.  
+
+FastA files do no longer require the file ending ".fa".
+
+Fixed an issues so that Bismark will no longer tolerate chromosomes with
+same name when reading the genome into memory.  
+
+
+Methylation Extractor
+
+The methylation extractor will by default distinguish between cytosines in
+the three contexts CpG, CHG or CHH. If this is not needed, CHG and CHH context 
+can be merged into 'non-CpG' context by specifying '--merge_non_CpG'.
+
+Due to the fundamental changes in v0.2.0 (CHG and CHH context methylation 
+calls) the methylation extractor will require that the Bismark mapping result
+file was generated with the same Bismark version (the Bismark version is
+contained within the first line of the mapping result file).
+
+
+
 RELEASE NOTES FOR Bismark v0.1.5
 --------------------------------
 
@@ -17,6 +61,7 @@ CpG context was will now be treated as C in not-CpG context.
 
 Fixed a bug whereby the single-end strand-specific output got two of 
 the four possible strands mixed up (fixed properly this time).  
+
 
 
 RELEASE NOTES FOR Bismark v0.1.3
@@ -82,6 +127,7 @@ in the datasets tested so far) will now be excluded from the methylation
 call analysis.
 
 
+
 RELEASE NOTES FOR Bismark v0.1.1
 --------------------------------
 
@@ -91,6 +137,7 @@ files (i.e. chr1.fa,chr.2.fa or similar will be fine, too). For the
 moment it is still required however that the files end on '.fa' and 
 only one sequence entry is allowed per file. (Multiple fasta entries 
 per file will be supported soon). 
+
 
 
 RELEASE NOTES FOR Bismark v0.1
