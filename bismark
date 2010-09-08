@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.2.0';
+my $bismark_version = 'v0.2.1';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -1721,56 +1721,75 @@ sub methylation_call{
 }
 
 sub read_genome_into_memory{
-  ## working directoy
-  my $cwd = shift;
-  ## reading in and storing the specified genome in the %chromosomes hash
-  chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
-  print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
-  while (my $chromosome_filename = <*.fa>){
-    my $chromosome_number = extract_chromosome_number ($chromosome_filename);
-    my $sequence = read_chromosomal_sequence($chromosome_filename);
-    if (exists $chromosomes{$chromosome_number}){
-      print "chr $chromosome_number (",length $sequence ," bp)\t";
-      die "Exiting because chromosome number already exists. Please make sure all chromosomes have a unique name.\n";
-    }      
-    else{
-      $chromosomes{$chromosome_number} = $sequence;
-    }                 
-    print "chr $chromosome_number (",length $sequence ," bp)\t";
+    ## working directoy
+    my $cwd = shift;
+    ## reading in and storing the specified genome in the %chromosomes hash
+    chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
+    print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
+    
+    my @chromosome_filenames =  <*.fa>;
+    foreach my $chromosome_filename (@chromosome_filenames){
+
+	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+	### first line needs to be a fastA header
+	my $first_line = <CHR_IN>;
+	chomp $first_line;
+	
+	### Extracting chromosome name from the FastA header
+	my $chromosome_name = extract_chromosome_name($first_line);
+	
+	my $sequence;
+	while (<CHR_IN>){
+	    chomp;	  
+	    if ($_ =~ /^>/){
+		### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
+		if (exists $chromosomes{$chromosome_name}){
+		    print "chr $chromosome_name (",length $sequence ," bp)\n";
+		    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+		}      
+		else {
+		    if (length($sequence) == 0){
+			warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+		    }
+		    print "chr $chromosome_name (",length $sequence ," bp)\n";
+		    $chromosomes{$chromosome_name} = $sequence;
+		}   
+		### resetting the sequence variable
+		$sequence = '';
+		### setting new chromosome name
+		$chromosome_name = extract_chromosome_name($_);
+	    }
+	    else{
+		$sequence .= uc$_;
+	    }
+	}
+	
+	if (exists $chromosomes{$chromosome_name}){
+	    print "chr $chromosome_name (",length $sequence ," bp)\t";
+	    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+	}      
+	else{
+	    if (length($sequence) == 0){
+		warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
+	    }  
+	    print "chr $chromosome_name (",length $sequence ," bp)\n";
+	    $chromosomes{$chromosome_name} = $sequence;
+	}                
+    }    
     print "\n";
-  }    
-  chdir $cwd or die "Failed to move to directory $cwd\n";
-} 
-  
-sub extract_chromosome_number {
-  ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
-  my $filename = shift;
-  open (EXTRACT,$filename) or die "Failed to read from chromosome file $filename $!\n";
-  my $first_line = <EXTRACT>;
-  chomp $first_line;
-  if ($first_line =~ s/^>//){
-    my ($chromosome_name) = split (/\s+/,$first_line);
-    close EXTRACT or die "Failed to close filehandle for $filename $!\n";
-    return $chromosome_name;
-  }
-  else{
-    die "The specified chromosome file doesn't seem to be in FASTA format as required! $!\n";
-  }
+    chdir $cwd or die "Failed to move to directory $cwd\n";
 }
 
-
-sub read_chromosomal_sequence{
-  my $filename = shift @_;
-  my $sequence;
-  # warn "Reading sequence data from $filename\n";
-  open (CHROMOSOME,$filename)or die "Can't open $filename: $!";
-  $_ = <CHROMOSOME>;
-  while (<CHROMOSOME>){
-    chomp;
-    $sequence .= uc$_;
-  }
-  close CHROMOSOME or die "Failed to close filehandle\n";
-  return $sequence;
+sub extract_chromosome_name {
+    ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
+    my $fasta_header = shift;
+    if ($fasta_header =~ s/^>//){
+	my ($chromosome_name) = split (/\s+/,$fasta_header);
+	return $chromosome_name;
+    }
+    else{
+	die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
+    }
 }
 
 sub reverse_complement{
@@ -2623,7 +2642,7 @@ Paired-end output format (tab-separated):
 (13) <genome conversion>
 
 
-This script was last edited on 06 Sept 2010.
+This script was last edited on 08 Sept 2010.
 
 HOW_TO
 }

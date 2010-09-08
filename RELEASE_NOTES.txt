@@ -1,3 +1,9 @@
+RELEASE NOTES FOR Bismark v0.2.1
+--------------------------------
+
+Bismark will now handle multi-fasta-files as intended.
+
+
 RELEASE NOTES FOR Bismark v0.2.0
 --------------------------------
 
