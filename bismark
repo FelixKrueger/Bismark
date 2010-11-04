@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.2.2';
+my $bismark_version = 'v0.2.3';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -34,7 +34,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -54,7 +54,7 @@ foreach my $filename (@filenames){
     $fhs[3]->{name} = 'CTread1GAread2GAgenome';
     print "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
 
-    my ($filename_1,$filename_2) = (split (",",$filename));
+    my ($filename_1,$filename_2) = (split (/,/,$filename));
     print "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
 
     ### additional variables only for paired-end alignments
@@ -136,16 +136,21 @@ sub start_methylation_call_procedure_single_ends {
 
   ### printing all alignments to a results file
   my $outfile = $sequence_file;
-  $outfile =~ s/^/Bismark_mapping_results_/;
+  $outfile =~ s/$/_bismark.txt/;
   print "Writing bisulfite mapping results to $outfile\n\n";
   open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!\n";
   print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file;
-  $reportfile =~ s/^/Bismark_report_/;
+  $reportfile =~ s/$/_Bismark_mapping_report.txt/;
+
   open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
   print REPORT "Bismark report for: $sequence_file\n";
+
+  if ($directional){
+    print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored\n";
+  }
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 
 
@@ -170,16 +175,17 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### printing all alignments to a results file
   my $outfile = $sequence_file_1;
-  $outfile =~ s/^/Bismark_paired-end_mapping_results_/;
+  $outfile =~ s/$/_bismark_pe.txt/;
+
   print "Writing bisulfite mapping results to $outfile\n\n";
   open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!";
   print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file_1;
-  $reportfile =~ s/^/Bismark_report_/;
+  $reportfile =~ s/$/_Bismark_paired-end_mapping_report.txt/;
   open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n\n";
+  print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n";
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
@@ -212,12 +218,12 @@ sub print_final_analysis_report_single_end{
 
   ### printing a final report for the alignment procedure
   print REPORT "Final Alignment report\n",'='x22,"\n";
-  warn "Final Alignment report\n",'='x22,"\n";
-  foreach my $index (0..$#fhs){
-    print "$fhs[$index]->{name}\n";
-    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
-    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
-  }
+  print "Final Alignment report\n",'='x22,"\n";
+  #  foreach my $index (0..$#fhs){
+  #    print "$fhs[$index]->{name}\n";
+  #    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
+  #    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
+  #  }
 
   ### printing a final report for the methylation call procedure
   warn "Sequences analysed in total:\t$counting{sequences_count}\n";
@@ -225,27 +231,38 @@ sub print_final_analysis_report_single_end{
 
   my $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
 
-  warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequences}%)\n\n";
-  print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequences}%)\n";
+  warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n\n";
+  print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n";
 
   ### percentage of low complexity reads overruled because of low complexity (thereby creating a bias for highly methylated reads),
   ### only calculating the percentage if there were any overruled alignments
   if ($counting{low_complexity_alignments_overruled_count}){
     my $percent_overruled_low_complexity_alignments = sprintf ("%.1f",$counting{low_complexity_alignments_overruled_count}*100/$counting{sequences_count});
-    print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
+    #   print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
   }
+
+  print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
+  print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
+  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+
   print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
 
+  if ($directional){
+    print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
+    print REPORT "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
+  }
+
   ### detailed information about Cs analysed
   warn "Final Cytosine Methylation Report\n",'='x33,"\n";
   my $total_number_of_C = $counting{total_meCHH_count}+$counting{total_meCHG_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CpG_count};
   warn "Total number of C's analysed:\t$total_number_of_C\n\n";
-  warn "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  warn "Total methylated C's in CHH context:\t $counting{total_meCHH_count}\n\n";
+  warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
   warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
   warn "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
   warn "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
@@ -323,16 +340,25 @@ sub print_final_analysis_report_paired_ends{
   ### printing a final report for the alignment procedure
   warn "Final Alignment report\n",'='x22,"\n";
   print REPORT "Final Alignment report\n",'='x22,"\n";
-  foreach my $index (0..$#fhs){
-    print "$fhs[$index]->{name}\n";
-    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
-    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
-  }
+  #  foreach my $index (0..$#fhs){
+  #    print "$fhs[$index]->{name}\n";
+  #    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
+  #    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
+  #  }
+
+
+
   ### printing a final report for the methylation call procedure
   print "Sequences analysed in total:\t$counting{sequences_count}\n";
   my $percent_alignable_sequence_pairs = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
-  print "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequence_pairs}%)\n\n";
-  print REPORT "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\t(${percent_alignable_sequence_pairs}%) \n";
+  print "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}%\n\n";
+  print REPORT "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}% \n";
+
+  print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
+  print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
+  print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) top strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+
 
   print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
@@ -345,7 +371,7 @@ sub print_final_analysis_report_paired_ends{
 
   my $total_number_of_C = $counting{total_meCHG_count}+ $counting{total_meCHH_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CpG_count};
   warn "Total number of C's analysed:\t$total_number_of_C\n\n";
-  warn "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
   warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
   warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
@@ -353,7 +379,7 @@ sub print_final_analysis_report_paired_ends{
   warn "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
 
   print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
-  print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+  print REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
   print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
   print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
@@ -397,16 +423,14 @@ sub print_final_analysis_report_paired_ends{
 
   ### printing methylated C percentage in CHH context if applicable
   if ($percent_meCHH){
-    warn "C methylated in CHH context:\t${percent_meCHH}%\n";
-    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n";
+    warn "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
+    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
   }
   else{
     warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
     print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
   }
 
-
- 
 }
 
 sub process_single_end_fastA_file_for_methylation_call{
@@ -796,6 +820,18 @@ sub check_bowtie_results_single_end{
     $counting{unsuitable_sequence_count}++;
     return; # => exits to next sequence
   }
+
+  ### --DIRECTIONAL
+  ### If the option --directional has been specified the user wants to consider only alignments to the original top strand or the original bottom strand. We will therefore
+  ### discard all alignments to strands complementary to the original strands, as they should not exist in reality due to the library preparation protocol
+  if ($directional){
+    if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
+      #    warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
+      $counting{alignments_rejected_count}++;
+     return;
+   }
+  }
+
   ### If the sequence has not been rejected so far it will have a unique best alignment
   $counting{unique_best_alignment_count}++;
   extract_corresponding_genomic_sequence_single_end($identifier,$methylation_call_params);
@@ -2184,14 +2220,15 @@ sub reset_counters_and_fhs{
 	     unsuitable_sequence_count => 0,
 	     unique_best_alignment_count => 0,
 	     low_complexity_alignments_overruled_count => 0,
-	     CT_CT_count => 0, #(CT read/CT genome)
-	     CT_GA_count => 0, #(CT read/GA genome)
-	     GA_CT_count => 0, #(GA read/CT genome)
-	     GA_GA_count => 0, #(GA read/GA genome)
+	     CT_CT_count => 0, #(CT read/CT genome, original top strand)
+	     CT_GA_count => 0, #(CT read/GA genome, original bottom strand)
+	     GA_CT_count => 0, #(GA read/CT genome, complementary to original top strand)
+	     GA_GA_count => 0, #(GA read/GA genome, complementary to original bottom strand)
 	     CT_GA_CT_count => 0, #(CT read1/GA read2/CT genome)
 	     GA_CT_GA_count => 0, #(GA read1/CT read2/GA genome)
 	     GA_CT_CT_count => 0, #(GA read1/CT read2/CT genome)
 	     CT_GA_GA_count => 0, #(CT read1/GA read2/GA genome)
+	     alignments_rejected_count => 0, # only relevant if --directional was specified (single-end alignments only)
 	    );
   @fhs=(
 	{ name => 'CTreadCTgenome',
@@ -2242,27 +2279,29 @@ sub process_command_line{
   my $version;
   my $quiet;
   my $chunk;
-  
+  my $directional;
+
   my $command_line = GetOptions ('help|man' => \$help,
-       '1=s' => \$mates1,
-       '2=s' => \$mates2,
-       'path_to_bowtie=s' => \$path_to_bowtie,
-       'f|fasta' => \$fasta,
-       'q|fastq' => \$fastq,
-       's|skip=i' => \$skip,
-       'u|qupto=i' => \$qupto,
-       'phred33-quals' => \$phred33,
-       'phred64-quals|solexa1' => \$phred64,
-       'solexa-quals' => \$solexa,
-       'n|seedmms=i' => \$mismatches,
-       'l|seedlen=i' => \$seed_length,
-       'best' => \$best,
-       'version' => \$version,
-       'quiet' => \$quiet,
-       'chunkmbs=i' => \$chunk,
-       );
-  
-  
+				 '1=s' => \$mates1,
+				 '2=s' => \$mates2,
+				 'path_to_bowtie=s' => \$path_to_bowtie,
+				 'f|fasta' => \$fasta,
+				 'q|fastq' => \$fastq,
+				 's|skip=i' => \$skip,
+				 'u|qupto=i' => \$qupto,
+				 'phred33-quals' => \$phred33,
+				 'phred64-quals|solexa1' => \$phred64,
+				 'solexa-quals' => \$solexa,
+				 'n|seedmms=i' => \$mismatches,
+				 'l|seedlen=i' => \$seed_length,
+				 'no_best' => \$best,
+				 'version' => \$version,
+				 'quiet' => \$quiet,
+				 'chunkmbs=i' => \$chunk,
+				 'directional' => \$directional,
+				);
+
+
   ### EXIT ON ERROR if there were errors with any of the supplied options
   unless ($command_line){
     die "Please respecify command line options\n";
@@ -2429,15 +2468,16 @@ VERSION
   push @bowtie_options,'-k 2';
 
   ### --BEST
-  if ($best){
+  # --best will be the default option, specifying --no-best can turn it off (e.g. to speed up alignment process)
+  unless ($best){
     push @bowtie_options,'--best';
   }
 
   ### PAIRED-END MAPPING
   if ($mates1){
-    my @mates1 = (split (',',$mates1));
+    my @mates1 = (split (/,/,$mates1));
     die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
-    my @mates2 = (split(',',$mates2));
+    my @mates2 = (split(/,/,$mates2));
     unless (scalar @mates1 == scalar @mates2){
       die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
     }
@@ -2457,7 +2497,10 @@ VERSION
   my $singles;
   unless ($mates1 and $mates2){
     $singles = shift @ARGV;
-    @filenames = (split(',',$singles));
+    unless ($singles){
+      die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
+    }
+    @filenames = (split(/,/,$singles));
   }
 
   if ($quiet){
@@ -2470,7 +2513,22 @@ VERSION
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
   my $bowtie_options = join (' ',@bowtie_options);
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options);
+
+
+  ### STRAND-SPECIFIC LIBRARIES
+  if ($directional){
+    if ($singles){
+      print "Library was specified to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored.\n";
+    }
+    else{
+      die "The option '--directional' can only be specified for single-end reads!\n";
+    }
+  }
+  else{
+    $directional = 0;
+  }
+
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional);
 }
 
 sub print_helpfile{
@@ -2591,14 +2649,25 @@ Reporting:
                          will be used by default.
 
 --best                   Make Bowtie guarantee that reported singleton alignments are "best" in terms of stratum
-                         (i.e. number of mismatches, or mismatches in the seed in the case if -n mode) and in 
+                         (i.e. number of mismatches, or mismatches in the seed in the case if -n mode) and in
                          terms of the quality; e.g. a 1-mismatch alignment where the mismatch position has Phred
                          quality 40 is preferred over a 2-mismatch alignment where the mismatched positions both
                          have Phred quality 10. When --best is not specified, Bowtie may report alignments that
                          are sub-optimal in terms of stratum and/or quality (though an effort is made to report
                          the best alignment). --best mode also removes all strand bias. Note that --best does not
                          affect which alignments are considered "valid" by Bowtie, only which valid alignments
-                         are reported by Bowtie. Bowtie is about 1-2.5 times slower when --best is specified.
+                         are reported by Bowtie. Bowtie is about 1-2.5 times slower when --best is specified. 
+                         Default: on.
+
+--no_best                Disables the --best option which is on by default. This can speed up the alignment process,
+                         e.g. for testing purposes, but for credible results it is not recommended to disable --best.
+
+
+--directional            The user may specify if the sequencing library was constructed in a strand-specific manner.
+                         In this case the strands complementary to the original strands are merely theoretical and
+                         should not exist in reality. Thus, specifying --direction will only report alignments to
+                         the original top or bottom strands. This is the recommended option for sprand-specific
+                         libraries.
 
 --quiet                  Print nothing besides alignments.
 
@@ -2607,7 +2676,7 @@ Other:
 
 -h/--help                Displays this help file.
 
--v/--version             Display version information.
+-v/--version             Displays version information.
 
 
 OUTPUT:
@@ -2642,7 +2711,7 @@ Paired-end output format (tab-separated):
 (13) <genome conversion>
 
 
-This script was last edited on 08 Sept 2010.
+This script was last edited on 04 Nov 2010.
 
 HOW_TO
 }
