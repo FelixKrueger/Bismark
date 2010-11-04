@@ -2280,6 +2280,7 @@ sub process_command_line{
   my $quiet;
   my $chunk;
   my $directional;
+  my $ceiling;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -2299,6 +2300,7 @@ sub process_command_line{
 				 'quiet' => \$quiet,
 				 'chunkmbs=i' => \$chunk,
 				 'directional' => \$directional,
+				 'e|maqerr=i' => \$ceiling,
 				);
 
 
@@ -2462,6 +2464,11 @@ VERSION
   if (defined $seed_length){
     push @bowtie_options,"-l $seed_length";
   }
+  ### MISMATCH CEILING
+  if (defined $ceiling){
+    push @bowtie_options,"-e $ceiling";
+  }
+
 
   ### REPORTING OPTIONS
   # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments)
@@ -2634,6 +2641,10 @@ Alignment:
 
 -l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to 
                          which the -n ceiling applies. The default is 28.
+
+-e/--maqerr <int>        Maximum permitted total of quality values at all mismatched read positions throughout
+                         the entire alignment, not just in the "seed". The default is 70. Like Maq, bowtie rounds
+                         quality values to the nearest 10 and saturates at 30.
 
 --chunkmbs <int>         The number of megabytes of memory a given thread is given to store path descriptors in 
                          --best mode. Best-first search must keep track of many paths at once to ensure it is 
