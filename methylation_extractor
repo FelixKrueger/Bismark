@@ -9,7 +9,7 @@ my @filenames;
 my %counting;
 
 my %fhs;
-my $version = 'v0.2.1';
+my $version = 'v0.2.2';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired,$no_overlap);
@@ -166,6 +166,13 @@ sub process_Bismark_results_file{
     print "\nNow reading in Bismark result file $filename\n\n";
     open (IN,$filename) or die "Can't open file $!\n";
 
+    my $bismark_version = <IN>; ## discarding the Bismark version info
+    $bismark_version =~  s/Bismark version: //;
+    chomp $bismark_version;
+    unless ($version eq $bismark_version){
+      die "The methylation extractor and Bismark itself need to be of the same version!\n\nVersions used: methylation extractor: $version\nBismark: $bismark_version\n";
+    }
+    
     ### OPENING OUT-FILEHANDLES
     if ($report){
       my $report_filename = $filename;
@@ -381,13 +388,6 @@ sub process_Bismark_results_file{
     ### PROCESSING SINGLE-END RESULT FILES
     if ($single){
 
-      my $bismark_version = <IN>; ## discarding the Bismark version info
-      $bismark_version =~  s/Bismark version: //;
-      chomp $bismark_version;
-      unless ($version eq $bismark_version){
-	die "The methylation extractor and Bismark itself need to be of the same version!\n\nVersions used: methylation extractor: $version\nBismark: $bismark_version\n";
-      }
-
       while (<IN>){
 	++$line_count;
 	print "Processed lines: $line_count\n" if ($line_count%500000==0);
@@ -431,7 +431,7 @@ sub process_Bismark_results_file{
 	    die "We need the read conversion info to proceed with extracting the correct part of the genomic sequence\n";
 	  }
 
-	  ### Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
+          ### Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
 	  if ($ignore){
 	    $meth_call = substr($meth_call,$ignore,length($meth_call)-$ignore);	
 
@@ -1283,7 +1283,7 @@ sub print_individual_C_methylation_states_single_end{
 
   ### THIS IS THE CpG and Non-CpG SECTION (OPTIONAL)
 
-  ### single-file CpG and other-context output
+### single-file CpG and other-context output
   if ($full and $merge_non_CpG) {
     if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
@@ -1315,6 +1315,7 @@ sub print_individual_C_methylation_states_single_end{
 	}
       }
     } elsif ($strand eq '-') {
+      $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -1443,6 +1444,7 @@ sub print_individual_C_methylation_states_single_end{
 	}
       }
     } elsif ($strand eq '-') {
+      $start += length($seq)-1;
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -1659,7 +1661,7 @@ The output is in the form:
 * Unmethylated cytosines will receive a '-' orientation.
 
 
-This script was last edited on 06 September 2010.
+This script was last edited on 13 September 2010.
 
 HOW_TO
 }

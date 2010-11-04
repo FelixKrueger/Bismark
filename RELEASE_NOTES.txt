@@ -1,7 +1,16 @@
+RELEASE NOTES FOR Bismark v0.2.2
+--------------------------------
+
+Fixed a bug in the methylation extactor that would offset a subset of
+reverse mapped reads by a couple of bases. Positions should now be correct.
+
+
+
 RELEASE NOTES FOR Bismark v0.2.1
 --------------------------------
 
 Bismark will now handle multi-fasta-files as intended.
+
 
 
 RELEASE NOTES FOR Bismark v0.2.0
