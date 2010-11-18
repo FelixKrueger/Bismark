@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Cwd;
-use File::Path qw(remove_tree);
+use File::Path qw(rmtree);
 $|++;
 
 
@@ -281,7 +281,7 @@ sub create_bisulfite_genome_folders{
   my @filenames = <*.fa>;
   die "The specified genome folder ($genome_folder) doesn't seem to contain any sequence files in fastA format!\n" unless (@filenames);
 
-  print "Bisulfite Genome Indexer version 0.2.3 (last modified 30 Jul 2010)\n\n ";
+  print "Bisulfite Genome Indexer version 0.2.4 (last modified 15 Nov 2010)\n\n ";
   sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -306,7 +306,11 @@ sub create_bisulfite_genome_folders{
       }
     }
     # removing any existing files and subfolders in the bisulfite directory (the specified directory won't be deleted)
-    remove_tree($bisulfite_dir, {verbose => 1,keep_root => 1});
+    rmtree($bisulfite_dir, {verbose => 1,keep_root => 1});
+
+    unless (-d $bisulfite_dir){ #  had to add this after changing remove_tree to rmtree // suggested by Samantha Cooper @ Illumina
+      mkdir $bisulfite_dir or die "Unable to create directory $bisulfite_dir $!\n";
+    }
   }
 
   chdir $bisulfite_dir or die "Unable to move to $bisulfite_dir\n";

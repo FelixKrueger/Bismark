@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.2.3';
+my $bismark_version = 'v0.2.4';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -244,12 +244,12 @@ sub print_final_analysis_report_single_end{
   print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
 
   print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+  print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
 
   if ($directional){
     print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
@@ -357,13 +357,13 @@ sub print_final_analysis_report_paired_ends{
   print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) top strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+  print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
 
 
   print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print REPORT join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) top strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+  print REPORT join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
   ### detailed information about Cs analysed
 
   warn "Final Cytosine Methylation Report\n",'='x33,"\n";
