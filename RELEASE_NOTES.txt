@@ -1,3 +1,21 @@
+RELEASE NOTES FOR Bismark v0.2.4
+--------------------------------
+
+Bismark
+
+Added the new options -I/--minins <int> and -X/--maxins <int> to Bismark to
+allow the specification of minimum and maximum insert sizes for paired-end
+alignments.
+
+
+Bismark_genome_preparation
+
+Changed the remove_tree command in the File::Path core module rm_tree in the
+same module instead, as some older versions of Perl would throw an error
+otherwise.
+
+
+
 RELEASE NOTES FOR Bismark v0.2.3
 --------------------------------
 
@@ -24,6 +42,7 @@ reports will also end in .txt.
 
 The alignment and methylation summary reports have been slightly modified to 
 allow better readability.
+
 
 
 RELEASE NOTES FOR Bismark v0.2.2
