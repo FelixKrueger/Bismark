@@ -145,7 +145,7 @@ sub start_methylation_call_procedure_single_ends {
   my $reportfile = $sequence_file;
   $reportfile =~ s/$/_Bismark_mapping_report.txt/;
 
-  open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
+  open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file\n";
 
   if ($directional){
@@ -184,7 +184,7 @@ sub start_methylation_call_procedure_paired_ends {
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file_1;
   $reportfile =~ s/$/_Bismark_paired-end_mapping_report.txt/;
-  open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
+  open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n";
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 

@@ -24,7 +24,8 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.2.4';
+my $ASAP_version = 'v0.1.0';
+my $genome_folder;
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -34,9 +35,9 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional) = process_command_line();
+my ($genome_index_basename_1,$genome_index_basename_2,$path_to_bowtie,$sequence_file_format,$bowtie_options,$unmapped) = process_command_line();
 
-my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
+my @fhs;         # stores alignment process names, genome index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
 my %counting;    # counting various events
 
@@ -47,160 +48,147 @@ foreach my $filename (@filenames){
 
   ### PAIRED-END ALIGNMENTS
   if ($filename =~ ','){
-    my ($C_to_T_infile_1,$G_to_A_infile_1); # to be made from mate1 file
-    $fhs[0]->{name} = 'CTread1GAread2CTgenome';
-    $fhs[1]->{name} = 'GAread1CTread2GAgenome';
-    $fhs[2]->{name} = 'GAread1CTread2CTgenome';
-    $fhs[3]->{name} = 'CTread1GAread2GAgenome';
     print "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
 
     my ($filename_1,$filename_2) = (split (/,/,$filename));
     print "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
 
-    ### additional variables only for paired-end alignments
-    my ($C_to_T_infile_2,$G_to_A_infile_2); # to be made from mate2 file
+    $fhs[0]->{inputfile_1} = $filename_1;
+    $fhs[0]->{inputfile_2} = $filename_2;
+    $fhs[1]->{inputfile_1} = $filename_1;
+    $fhs[1]->{inputfile_2} = $filename_2;
 
     ### FastA format
     if ($sequence_file_format eq 'FASTA'){
-      print "Input files are in FastA format\n";
-      ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastAFiles ($filename_1);
-      ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastAFiles ($filename_2);
+      print "Input files are specified to be in FastA format\n";
 
-      $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
-      $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
-      $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
-      $fhs[1]->{inputfile_2} = $C_to_T_infile_2;
-      $fhs[2]->{inputfile_1} = $G_to_A_infile_1;
-      $fhs[2]->{inputfile_2} = $C_to_T_infile_2;
-      $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
-      $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
-
-      paired_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      ### Creating 2 different bowtie filehandles and storing the first entry
+      paired_end_align_fragments_fastA ($filename_1,$filename_2);
     }
 
     ### FastQ format
     else{
       print "Input files are in FastQ format\n";
-      ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles ($filename_1);
-      ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles ($filename_2);
 
-      $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
-      $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
-      $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
-      $fhs[1]->{inputfile_2} = $C_to_T_infile_2;
-      $fhs[2]->{inputfile_1} = $G_to_A_infile_1;
-      $fhs[2]->{inputfile_2} = $C_to_T_infile_2;
-      $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
-      $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
-
-      paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      ### Creating 2 different bowtie filehandles and storing the first entry
+      paired_end_align_fragments_fastQ ($filename_1,$filename_2);
     }
-    start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+    prepare_output_files_paired_end($filename_1,$filename_2);
   }
 
-  ### Else we are performing SINGLE-END ALIGNMENTS
+  ### else we are performing SINGLE-END ALIGNMENTS
   else{
     print "\nSingle-end alignments will be performed\n",'='x39,"\n\n";
-    ### Initialising bisulfite conversion filenames
-    my ($C_to_T_infile,$G_to_A_infile);
 
+    $fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $filename;
 
     ### FastA format
     if ($sequence_file_format eq 'FASTA'){
-      print "Inut file is in FastA format\n";
-      ($C_to_T_infile,$G_to_A_infile) = biTransformFastAFiles ($filename);
+      print "Input file is specified to be in FastA format\n";
 
-      $fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
-      $fhs[2]->{inputfile} = $fhs[3]->{inputfile} = $G_to_A_infile;
-
-      ### Creating 4 different bowtie filehandles and storing the first entry
-      single_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile,$G_to_A_infile);
+      ### Creating 2 different bowtie filehandles and storing the first entry
+      single_end_align_fragments_fastA ($filename);
     }
 
     ## FastQ format
     else{
       print "Input file is in FastQ format\n";
-      ($C_to_T_infile,$G_to_A_infile) = biTransformFastQFiles ($filename);
-      $fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
-      $fhs[2]->{inputfile} = $fhs[3]->{inputfile} = $G_to_A_infile;
 
-      ### Creating 4 different bowtie filehandles and storing the first entry
-      single_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile,$G_to_A_infile);
+      ### Creating 2 different bowtie filehandles and storing the first entry
+      single_end_align_fragments_fastQ ($filename);
     }
-    start_methylation_call_procedure_single_ends($filename,$C_to_T_infile,$G_to_A_infile);
+    prepare_output_files_single_end($filename);
   }
 }
 
-sub start_methylation_call_procedure_single_ends {
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+sub prepare_output_files_single_end {
+  my ($sequence_file) = @_;
 
-  ### printing all alignments to a results file
-  my $outfile = $sequence_file;
-  $outfile =~ s/$/_bismark.txt/;
-  print "Writing bisulfite mapping results to $outfile\n\n";
-  open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!\n";
-  print OUT "Bismark version: $bismark_version\n";
+  ### we print alignments to 3 result files:
+  ### genome 1-specific alignments
+  ### genome 2-specific alignments
+  ### aligned to both equally well
 
-  ### printing alignment and methylation call summary to a report file
+  if ($unmapped){
+    open (UNMAPPED,'>',$unmapped) or die "Failed to write to $unmapped: $!\n";
+    print "Unmapped sequences will be written to $unmapped\n";
+  }
+
+  ### creating outfiles
+  my $outfile_genome_1 = my $outfile_genome_2 = my $outfile_mixed = $sequence_file;
+
+  $outfile_genome_1 =~ s/$/_genome_1_specific.txt/;
+  print "Writing genome 1 specific alignments to $outfile_genome_1\n\n";
+  open (OUT_G1,'>',$outfile_genome_1) or die "Failed to write to $outfile_genome_1: $!\n";
+  print OUT_G1 "ASAP version: $ASAP_version\t$genome_index_basename_1\n";
+
+  $outfile_genome_2 =~ s/$/_genome_2_specific.txt/;
+  print "Writing genome 2 specific alignments to $outfile_genome_2\n\n";
+  open (OUT_G2,'>',$outfile_genome_2) or die "Failed to write to $outfile_genome_2: $!\n";
+  print OUT_G2 "ASAP version: $ASAP_version\t$genome_index_basename_2\n";
+
+  $outfile_mixed =~ s/$/_alignments_in_common.txt/;
+  print "Writing alignments genome 1 and genome 2 have in common to $outfile_mixed\n\n";
+  open (OUT_MIXED,'>',$outfile_mixed) or die "Failed to write to $outfile_mixed: $!\n";
+  print OUT_MIXED "ASAP version: $ASAP_version\talignments to both $genome_index_basename_1 and $genome_index_basename_2\n";
+
+  ### printing alignment summary to a report file
   my $reportfile = $sequence_file;
-  $reportfile =~ s/$/_Bismark_mapping_report.txt/;
+  $reportfile =~ s/$/_ASAP_report.txt/;
+  open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
+  print REPORT "ASAP for: $sequence_file\n";
+  print REPORT "Bowtie was run against the genomes\ngenome 1: $genome_index_basename_1\ngenome 2:$genome_index_basename_2\nwith the Bowtie options: $bowtie_options\n\n";
 
-  open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file\n";
-
-  if ($directional){
-    print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored\n";
-  }
-  print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
-
-
-  ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
-  unless (%chromosomes){
-    my $cwd = getcwd; # storing the path of the current working directory
-    print "Current working directory is: $cwd\n\n";
-    read_genome_into_memory($cwd);
-  }
   ### Input file is in FastA format
   if ($sequence_file_format eq 'FASTA'){
-    process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile);
+    process_fastA_file_single_end($sequence_file);
   }
   ### Input file is in FastQ format
   else{
-    process_single_end_fastQ_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile);
+    process_fastQ_file_single_end($sequence_file);
   }
 }
 
-sub start_methylation_call_procedure_paired_ends {
-  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+sub prepare_output_files_paired_end {
+  my ($sequence_file_1,$sequence_file_2) = @_;
 
-  ### printing all alignments to a results file
-  my $outfile = $sequence_file_1;
-  $outfile =~ s/$/_bismark_pe.txt/;
+  ### we print alignments to 3 result files:
+  ### genome 1-specific alignments
+  ### genome 2-specific alignments
+  ### aligned to both equally well
 
-  print "Writing bisulfite mapping results to $outfile\n\n";
-  open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!";
-  print OUT "Bismark version: $bismark_version\n";
+  ### creating outfiles
+  my $outfile_genome_1 = my $outfile_genome_2 = my $outfile_mixed = $sequence_file_1;
 
-  ### printing alignment and methylation call summary to a report file
+  $outfile_genome_1 =~ s/$/_genome_1_specific_pe.txt/;
+  print "Writing genome 1 specific alignments to $outfile_genome_1\n\n";
+  open (OUT_G1,'>',$outfile_genome_1) or die "Failed to write to $outfile_genome_1: $!\n";
+  print OUT_G1 "ASAP version: $ASAP_version\t$genome_index_basename_1\n";
+
+  $outfile_genome_2 =~ s/$/_genome_2_specific_pe.txt/;
+  print "Writing genome 2 specific alignments to $outfile_genome_2\n\n";
+  open (OUT_G2,'>',$outfile_genome_2) or die "Failed to write to $outfile_genome_2: $!\n";
+  print OUT_G2 "ASAP version: $ASAP_version\t$genome_index_basename_2\n";
+
+  $outfile_mixed =~ s/$/_alignments_in_common_pe.txt/;
+  print "Writing alignments genome 1 and genome 2 have in common to $outfile_mixed\n\n";
+  open (OUT_MIXED,'>',$outfile_mixed) or die "Failed to write to $outfile_mixed: $!\n";
+  print OUT_MIXED "ASAP version: $ASAP_version\talignments to both $genome_index_basename_1 and $genome_index_basename_2\n";
+
+  ### printing alignment summary to a report file
   my $reportfile = $sequence_file_1;
-  $reportfile =~ s/$/_Bismark_paired-end_mapping_report.txt/;
-  open (REPORT,'>',$reportfile) or die "Failed to write to $outfile: $!\n";
+  $reportfile =~ s/$/_ASAP_paired-end_report.txt/;
+  open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n";
-  print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  print REPORT "Bowtie was run against the genomes\ngenome 1: $genome_index_basename_1\ngenome 2:$genome_index_basename_2\nwith the Bowtie options: $bowtie_options\n\n";
 
-  ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
-  unless (%chromosomes){
-    my $cwd = getcwd; # storing the path of the current working directory
-    print "Current working directory is: $cwd\n\n";
-    read_genome_into_memory($cwd);
-  }
   ### Input files are in FastA format
   if ($sequence_file_format eq 'FASTA'){
-    process_fastA_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+    process_fastA_files_paired_end($sequence_file_1,$sequence_file_2);
   }
   ### Input files are in FastQ format
   else{
-    process_fastQ_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+    process_fastQ_files_paired_end($sequence_file_1,$sequence_file_2);
   }
 }
 
@@ -251,10 +239,10 @@ sub print_final_analysis_report_single_end{
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
 
-  if ($directional){
-    print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
-    print REPORT "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
-  }
+  #  if ($directional){
+  #    print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
+  #    print REPORT "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
+  #  }
 
   ### detailed information about Cs analysed
   warn "Final Cytosine Methylation Report\n",'='x33,"\n";
@@ -433,58 +421,53 @@ sub print_final_analysis_report_paired_ends{
 
 }
 
-sub process_single_end_fastA_file_for_methylation_call{
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
-  ### this is a FastA sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
-  ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
-  ### the C->T or G->A version
+sub process_single_end_fastA_file{
+  my ($sequence_file) = @_;
+
+  ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one or both of the two genomes
   open (IN,$sequence_file) or die $!;
   warn "\nReading in the sequence file $sequence_file\n";
   while (1) {
-    # last if ($counting{sequences_count} > 100);
     my $identifier = <IN>;
     my $sequence = <IN>;
     last unless ($identifier and $sequence);
-    $counting{sequences_count}++;
-    if ($counting{sequences_count}%100000==0) {
-      warn "Processed $counting{sequences_count} sequences so far\n";
-    }
-    chomp $sequence;
-    chomp $identifier;
-    $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
-    check_bowtie_results_single_end(uc$sequence,$identifier);
-  }
-  print "Processed $counting{sequences_count} sequences in total\n\n";
-  close IN or die "Failed to close filehandle $!";
-  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile);
-}
-
-sub process_single_end_fastQ_file_for_methylation_call{
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
-  ### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
-  ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
-  ### the C->T or G->A version
-  open (IN,$sequence_file) or die $!;
-  warn "\nReading in the sequence file $sequence_file\n";
-  while (1) {
-    #last if ($counting{sequences_count} > 100);
-    my $identifier = <IN>;
-    my $sequence = <IN>;
-    my $identifier_2 = <IN>;
-    my $quality_value = <IN>;
-    last unless ($identifier and $sequence and $identifier_2 and $quality_value);
     $counting{sequences_count}++;
     if ($counting{sequences_count}%1000000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
     }
     chomp $sequence;
     chomp $identifier;
-    $identifier =~ s/^\@//;	# deletes the @ at the beginning of Illumin FastQ headers
-    check_bowtie_results_single_end(uc$sequence,$identifier);
+    $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
   }
-  print "Processed $counting{sequences_count} sequences in total\n\n";
+  warn "Processed $counting{sequences_count} sequences from $sequence_file in total\n\n";
   close IN or die "Failed to close filehandle $!";
-  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile);
+  print_final_analysis_report_single_end();
+}
+
+sub process_single_end_fastQ_file{
+  my ($sequence_file) = @_;
+
+  ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one or both of the two genomes
+  open (IN,$sequence_file) or die $!;
+  warn "\nReading in the sequence file $sequence_file\n";
+  while (1) {
+    my $identifier = <IN>;
+    my $sequence = <IN>;
+    my $identifier_2 = <IN>;
+    my $quality_value = <IN>;
+    last unless ($identifier and $sequence and $identifier_2 and $quality_value);
+    $counting{sequences_count}++;
+    if ($counting{sequences_count}%10000==0) {
+      warn "Processed $counting{sequences_count} sequences so far\n";
+    }
+    chomp $sequence;
+    chomp $identifier;
+    $identifier =~ s/^\@//;	# deletes the @ at the beginning of Illumina FastQ headers
+  }
+  warn "Processed $counting{sequences_count} sequences from $sequence_file in total\n\n";
+  close IN or die "Failed to close filehandle $!";
+  exit;
+  print_final_analysis_report_single_end();
 }
 
 sub process_fastA_files_for_paired_end_methylation_calls{
@@ -824,13 +807,13 @@ sub check_bowtie_results_single_end{
   ### --DIRECTIONAL
   ### If the option --directional has been specified the user wants to consider only alignments to the original top strand or the original bottom strand. We will therefore
   ### discard all alignments to strands complementary to the original strands, as they should not exist in reality due to the library preparation protocol
-  if ($directional){
-    if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
-      #    warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
-      $counting{alignments_rejected_count}++;
-     return;
-   }
-  }
+  # if ($directional){
+  #   if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
+  #     #    warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
+  #     $counting{alignments_rejected_count}++;
+  #   return;
+  #  }
+  # }
 
   ### If the sequence has not been rejected so far it will have a unique best alignment
   $counting{unique_best_alignment_count}++;
@@ -1572,197 +1555,13 @@ sub extract_corresponding_genomic_sequence_single_end {
   $methylation_call_params->{$sequence_identifier}->{end_position} = $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence});
 }
 
-sub methylation_call{
-  ## this is the new methylation call sub handling CHH and CHG methylation
-  my ($identifier,$sequence_actually_observed,$genomic_sequence,$read_conversion) = @_;
-  ### splitting both the actually observed sequence and the genomic sequence up into single bases so we can compare them one by one
-  my @seq = split(//,$sequence_actually_observed);
-  my @genomic = split(//,$genomic_sequence);
-  #  print join ("\n",$identifier,$sequence_actually_observed,$genomic_sequence,$read_conversion),"\n";
-  ### Creating a match-string with different characters for non-cytosine bases (disregarding mismatches here), methyl-Cs or non-methyl Cs in either
-  ### CpG, CHH or CHG context
-
-  #################################################################
-  ### . for bases not involving cytosines                       ###
-  ### X for methylated C in CHG context (was protected)         ###
-  ### x for not methylated C in CHG context (was converted)     ###
-  ### H for methylated C in CHH context (was protected)         ###
-  ### h for not methylated C in CHH context (was converted)     ###
-  ### Z for methylated C in CpG context (was protected)         ###
-  ### z for not methylated C in CpG context (was converted)     ###
-  #################################################################
-
-  my @match =();
-  warn "length of \@seq: ",scalar @seq,"\tlength of \@genomic: ",scalar @genomic,"\n" unless (scalar @seq eq (scalar@genomic-2)); ## CHH changed to -2
-  my $methyl_CHH_count = 0;
-  my $methyl_CHG_count = 0;
-  my $methyl_CpG_count = 0;
-  my $unmethylated_CHH_count = 0;
-  my $unmethylated_CHG_count = 0;
-  my $unmethylated_CpG_count = 0;
-
-  if ($read_conversion eq 'CT'){
-    for my $index (0..$#seq) {
-      if ($seq[$index] eq $genomic[$index]) {
-	### The residue can only be a C if it was not converted to T, i.e. protected my methylation
-	if ($genomic[$index] eq 'C') {
-	  ### If the residue is a C we want to know if it was in CpG context or in any other context
-	  my $downstream_base = $genomic[$index+1];
-	
-	  if ($downstream_base eq 'G'){
-	    ++$methyl_CpG_count;
-	    push @match,'Z'; # protected C, methylated, in CpG context
-	  }
-	
-	  else {
-	    ### C in not in CpG-context, determining the second downstream base context
-	    my $second_downstream_base = $genomic[$index+2];
-	
-	    if ($second_downstream_base eq 'G'){
-	      ++$methyl_CHG_count;
-	      push @match,'X'; # protected C, methylated, in CHG context
-	    }
-	    else{
-	      ++$methyl_CHH_count;
-	      push @match,'H'; # protected C, methylated, in CHH context
-	    }
-	  }
-	}
-	else {
-	  push @match, '.';
-	}
-      }
-      elsif ($seq[$index] ne $genomic[$index]) {
-	### for the methylation call we are only interested in mismatches involving cytosines (in the genomic sequence) which were converted into Ts
-	### in the actually observed sequence
-	if ($genomic[$index] eq 'C' and $seq[$index] eq 'T') {
-	  ### If the residue was converted to T we want to know if it was in CpG, CHG or CHH  context
-	  my $downstream_base = $genomic[$index+1];
-	
-	  if ($downstream_base eq 'G'){
-	    ++$unmethylated_CpG_count;
-	    push @match,'z'; # converted C, not methylated, in CpG context
-	  }
-
-	  else{
-	    ### C in not in CpG-context, determining the second downstream base context
-	    my $second_downstream_base = $genomic[$index+2];
-	
-	    if ($second_downstream_base eq 'G'){
-	      ++$unmethylated_CHG_count;
-	      push @match,'x'; # converted C, not methylated, in CHG context
-	    }
-	    else{
-	      ++$unmethylated_CHH_count;
-	      push @match,'h'; # converted C, not methylated, in CHH context
-	    }
-	  }
-	}
-	### all other mismatches are not of interest for a methylation call
-	else {
-	  push @match,'.';
-	}
-      }
-      else{
-	die "There can be only 2 possibilities\n";
-      }
-    }
-  }
-  elsif ($read_conversion eq 'GA'){
-    for my $index (0..$#seq) {
-      if ($seq[$index] eq $genomic[$index+2]) {
-	### The residue can only be a G if the C on the other strand was not converted to T, i.e. protected my methylation
-	if ($genomic[$index+2] eq 'G') {
-	  ### If the residue is a G we want to know if the C on the other strand was in CpG, CHG or CHH context, therefore we need
-	  ### to look if the base upstream is a C
-
-	  my $upstream_base = $genomic[$index+1];
-	
-	  if ($upstream_base eq 'C'){
-	    ++$methyl_CpG_count;
-	    push @match,'Z'; # protected C on opposing strand, methylated, in CpG context
-	  }
-
-	  else{
-	    ### C in not in CpG-context, determining the second upstream base context
-	    my $second_upstream_base = $genomic[$index];
-	
-	    if ($second_upstream_base eq 'C'){
-	      ++$methyl_CHG_count;
-	      push @match,'X'; # protected C on opposing strand, methylated, in CHG context
-	    }
-	    else{
-	      ++$methyl_CHH_count;
-	      push @match,'H'; # protected C on opposing strand, methylated, in CHH context
-	    }
-	  }
-	}
-	else{
-	  push @match, '.';
-	}
-      }
-      elsif ($seq[$index] ne $genomic[$index+2]) {
-	### for the methylation call we are only interested in mismatches involving cytosines (in the genomic sequence) which were converted to Ts
-	### on the opposing strand, so G to A conversions in the actually observed sequence
-	if ($genomic[$index+2] eq 'G' and $seq[$index] eq 'A') {
-	  ### If the C residue on the opposing strand was converted to T then we will see an A in the currently observed sequence. We want to know if
-	  ### the C on the opposing strand was it was in CpG, CHG or CHH context, therefore we need to look one (or two) bases upstream!
-
-	  my $upstream_base = $genomic[$index+1];
-
-	  if ($upstream_base eq 'C'){
-	    ++$unmethylated_CpG_count;
-	    push @match,'z'; # converted C on opposing strand, not methylated, in CpG context
-	  }
-
-	  else{
-	    ### C in not in CpG-context, determining the second upstream base context
-	    my $second_upstream_base = $genomic[$index];
-	
-	    if ($second_upstream_base eq 'C'){
-	      ++$unmethylated_CHG_count;
-	      push @match,'x'; # converted C on opposing strand, not methylated, in CHG context
-	    }
-	    else{
-	      ++$unmethylated_CHH_count;
-	      push @match,'h'; # converted C on opposing strand, not methylated, in CHH context
-	    }
-	  }
-	}
-	### all other mismatches are not of interest for a methylation call
-	else {
-	  push @match,'.';
-	}
-      }
-      else{
-	die "There can be only 2 possibilities\n";
-      }
-    }
-  }
-  else{
-    die "Strand conversion info is required to perform a methylation call\n";
-  }
-
-  my $methylation_call = join ("",@match);
-
-  $counting{total_meCHH_count} += $methyl_CHH_count;
-  $counting{total_meCHG_count} += $methyl_CHG_count;
-  $counting{total_meCpG_count} += $methyl_CpG_count;
-  $counting{total_unmethylated_CHH_count} += $unmethylated_CHH_count;
-  $counting{total_unmethylated_CHG_count} += $unmethylated_CHG_count;
-  $counting{total_unmethylated_CpG_count} += $unmethylated_CpG_count;
-
-  # print "\n$sequence_actually_observed\n$genomic_sequence\n",@match,"\n$read_conversion\n\n";
-  return $methylation_call;
-}
-
 sub read_genome_into_memory{
     ## working directoy
     my $cwd = shift;
     ## reading in and storing the specified genome in the %chromosomes hash
     chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
     print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
-    
+
     my @chromosome_filenames =  <*.fa>;
     foreach my $chromosome_filename (@chromosome_filenames){
 
@@ -1782,14 +1581,14 @@ sub read_genome_into_memory{
 		if (exists $chromosomes{$chromosome_name}){
 		    print "chr $chromosome_name (",length $sequence ," bp)\n";
 		    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
-		}      
+		}
 		else {
 		    if (length($sequence) == 0){
 			warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
 		    }
 		    print "chr $chromosome_name (",length $sequence ," bp)\n";
 		    $chromosomes{$chromosome_name} = $sequence;
-		}   
+		}
 		### resetting the sequence variable
 		$sequence = '';
 		### setting new chromosome name
@@ -1803,15 +1602,15 @@ sub read_genome_into_memory{
 	if (exists $chromosomes{$chromosome_name}){
 	    print "chr $chromosome_name (",length $sequence ," bp)\t";
 	    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
-	}      
+	}
 	else{
 	    if (length($sequence) == 0){
 		warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
-	    }  
+	    }
 	    print "chr $chromosome_name (",length $sequence ," bp)\n";
 	    $chromosomes{$chromosome_name} = $sequence;
-	}                
-    }    
+	}
+    }
     print "\n";
     chdir $cwd or die "Failed to move to directory $cwd\n";
 }
@@ -1833,68 +1632,6 @@ sub reverse_complement{
   $sequence =~ tr/CATG/GTAC/;
   $sequence = reverse($sequence);
   return $sequence;
-}
-
-sub biTransformFastAFiles {
-  my $filename = shift;
-  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
-  my $C_to_T_infile = my $G_to_A_infile = $filename;
-  $C_to_T_infile =~ s/$/_C_to_T.fa/;
-  $G_to_A_infile =~ s/$/_G_to_A.fa/;
-  print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-  print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-  open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
-  open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
-  my $count =0;
-  while (1){
-    my $header = <IN>;
-    my $sequence= <IN>;
-    $sequence = uc$sequence; # make input file case insensitive
-    last unless ($header and $sequence);
-    ++$count;
-    ## small check if the sequence seems to be in FastA format
-    die "Input file doesn't seem to be in FastA format at sequence $count: $!\n" unless ($header =~ /^>.*/);
-    my $sequence_C_to_T = my $sequence_G_to_A = $sequence;
-    $sequence_C_to_T =~ tr/C/T/;
-    $sequence_G_to_A =~ tr/G/A/;
-    print CTOT "$header$sequence_C_to_T";
-    print GTOA "$header$sequence_G_to_A";
-  }
-  print "\nCreated C -> T as well as G -> A converted versions of the FastA file $filename ($count sequences in total)\n\n";
-  return ($C_to_T_infile,$G_to_A_infile);
-}
-
-sub biTransformFastQFiles {
-  my $filename = shift;
-  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
-  my $C_to_T_infile = my $G_to_A_infile = $filename;
-  $C_to_T_infile =~ s/$/_C_to_T.fastq/;
-  $G_to_A_infile =~ s/$/_G_to_A.fastq/;
-  print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-  print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-  open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
-  open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
-  my $count =0;
-  while (1){
-    my $identifier = <IN>;
-    my $sequence = <IN>;
-    my $identifier2 = <IN>;
-    my $quality_score = <IN>;
-    last unless ($identifier and $sequence and $identifier2 and $quality_score);
-    ++$count;
-    $sequence= uc$sequence; # make input file case insensitive
-    ## small check if the sequence file appears to be a FastQ file
-    if ($identifier !~ /^\@/ or $identifier2 !~ /^\+/){
-      die "Input file doesn't seem to be in FastQ format at sequence $count: $!\n";
-    }
-    my $sequence_C_to_T = my $sequence_G_to_A = $sequence;
-    $sequence_C_to_T =~ tr/C/T/;
-    $sequence_G_to_A =~ tr/G/A/;
-    print CTOT join ('',$identifier,$sequence_C_to_T,$identifier2,$quality_score);
-    print GTOA join ('',$identifier,$sequence_G_to_A,$identifier2,$quality_score);
-  }
-  print "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
-  return ($C_to_T_infile,$G_to_A_infile);
 }
 
 sub ensure_sensical_alignment_orientation_single_end{
@@ -2067,16 +1804,17 @@ sub ensure_sensical_alignment_orientation_paired_ends{
   }
 }
 
-sub paired_end_align_fragments_to_bisulfite_genome_fastA {
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-  print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
+sub paired_end_align_fragments_fastA {
+  my ($infile_1,$infile_2) = @_;
+  print "Input files are $infile_1 and $infile_2 (FastA)\n\n";
 
-  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## data structure above
-  warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  ## Now starting 2 instances of Bowtie feeding in the sequence file and aligning it to two different genomes. The first line of the bowtie output is read in and stored
+  ## in the data structure @fhs
+  warn "Now running 2 parallel instances of Bowtie against the two genomes\ngenome 1: $genome_index_basename_1\ngenome 2: $genome_index_basename_2\nspecified options: $bowtie_options\n\n";
+
   foreach my $fh (@fhs) {
     warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{genome_index} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     my $line_1 = $fh->{fh}->getline();
     my $line_2 = $fh->{fh}->getline();
@@ -2108,16 +1846,17 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
   }
 }
 
-sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-  print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
+sub paired_end_align_fragments_fastQ {
+  my ($infile_1,$infile_2) = @_;
+  print "Input files are $infile_1 and $infile_2 (FastQ)\n\n";
 
-  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## data structure above
-  warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  ## Now starting 2 instances of Bowtie feeding in the sequence file and aligning it to two different genomes. The first line of the bowtie output is read in and stored
+  ## in the data structure @fhs
+  warn "Now running 2 parallel instances of Bowtie against the two genomes\ngenome 1: $genome_index_basename_1\ngenome 2: $genome_index_basename_2\nspecified options: $bowtie_options\n\n";
+
   foreach my $fh (@fhs) {
     warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{genome_index} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     my $line_1 = $fh->{fh}->getline();
     my $line_2 = $fh->{fh}->getline();
@@ -2149,17 +1888,16 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   }
 }
 
-sub single_end_align_fragments_to_bisulfite_genome_fastA {
-  my $C_to_T_infile = shift;
-  my $G_to_A_infile = shift;
-  print "Input files are $C_to_T_infile and $G_to_A_infile (FastA)\n";
+sub single_end_align_fragments_fastA {
+  my $infile = shift;
+  print "Input file is $infile (FastA)\n\n";
 
-  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## data structure above
-  warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  ## Now starting 2 instances of Bowtie feeding in the sequence file and aligning it to two different genomes. The first line of the bowtie output is read in and stored
+  ## in the data structure @fhs
+  warn "Now running 2 parallel instances of Bowtie against the two genomes\ngenome 1: $genome_index_basename_1\ngenome 2: $genome_index_basename_2\nspecified options: $bowtie_options\n\n";
   foreach my $fh (@fhs) {
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting Bowtie for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{genome_index} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
@@ -2178,17 +1916,16 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
   }
 }
 
-sub single_end_align_fragments_to_bisulfite_genome_fastQ {
-  my $C_to_T_infile = shift;
-  my $G_to_A_infile = shift;
-  print "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n";
+sub single_end_align_fragments_fastQ {
+  my $infile = shift;
+  print "Input file is $infile (FastQ)\n\n";
 
-  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## the data structure above
-  warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  ## Now starting 2 instances of Bowtie feeding in the sequence file and aligning it to two different genomes. The first line of the bowtie output is read in and stored
+  ## in the data structure @fhs
+  warn "Now running 2 parallel instances of Bowtie against the two genomes\ngenome 1: $genome_index_basename_1\ngenome 2: $genome_index_basename_2\nspecified options: $bowtie_options\n\n";
   foreach my $fh (@fhs) {
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting Bowtie for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{genome_index} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
@@ -2209,51 +1946,20 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
 
 sub reset_counters_and_fhs{
   %counting=(
-	     total_meCHH_count => 0, # CHH change
-	     total_meCHG_count => 0, # CHH change
-	     total_meCpG_count => 0,
-	     total_unmethylated_CHH_count => 0, # CHH change
-	     total_unmethylated_CHG_count => 0, # CHH change
-	     total_unmethylated_CpG_count => 0,
 	     sequences_count => 0,
 	     no_single_alignment_found => 0,
 	     unsuitable_sequence_count => 0,
 	     unique_best_alignment_count => 0,
 	     low_complexity_alignments_overruled_count => 0,
-	     CT_CT_count => 0, #(CT read/CT genome, original top strand)
-	     CT_GA_count => 0, #(CT read/GA genome, original bottom strand)
-	     GA_CT_count => 0, #(GA read/CT genome, complementary to original top strand)
-	     GA_GA_count => 0, #(GA read/GA genome, complementary to original bottom strand)
-	     CT_GA_CT_count => 0, #(CT read1/GA read2/CT genome)
-	     GA_CT_GA_count => 0, #(GA read1/CT read2/GA genome)
-	     GA_CT_CT_count => 0, #(GA read1/CT read2/CT genome)
-	     CT_GA_GA_count => 0, #(CT read1/GA read2/GA genome)
-	     alignments_rejected_count => 0, # only relevant if --directional was specified (single-end alignments only)
 	    );
   @fhs=(
-	{ name => 'CTreadCTgenome',
-	  strand_identity => 'con ori forward',
-	  bisulfiteIndex => $CT_index_basename,
+	{ name => 'genome 1',
+	  genome_index => $genome_index_basename_1,
 	  seen => 0,
-	  wrong_strand => 0,
 	},
-	{ name => 'CTreadGAgenome',
-	  strand_identity => 'con ori reverse',
-	  bisulfiteIndex => $GA_index_basename,
+	{ name => 'genome 2',
+	  genome_index => $genome_index_basename_2,
 	  seen => 0,
-	  wrong_strand => 0,
-	},
-	{ name => 'GAreadCTgenome',
-	  strand_identity => 'compl ori con forward',
-	  bisulfiteIndex => $CT_index_basename,
-	  seen => 0,
-	  wrong_strand => 0,
-	},
-	{ name => 'GAreadGAgenome',
-	  strand_identity => 'compl ori con reverse',
-	  bisulfiteIndex => $GA_index_basename,
-	  seen => 0,
-	  wrong_strand => 0,
 	},
        );
 }
@@ -2279,10 +1985,12 @@ sub process_command_line{
   my $version;
   my $quiet;
   my $chunk;
-  my $directional;
   my $ceiling;
   my $maxins;
   my $minins;
+  my $indexname_1;
+  my $indexname_2;
+  my $unmapped;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -2301,10 +2009,12 @@ sub process_command_line{
 				 'version' => \$version,
 				 'quiet' => \$quiet,
 				 'chunkmbs=i' => \$chunk,
-				 'directional' => \$directional,
 				 'I|minins=i' => \$minins,
 				 'X|maxins=i' => \$maxins,
 				 'e|maqerr=i' => \$ceiling,
+				 'index_1=s' => \$indexname_1,
+				 'index_2=s' => \$indexname_2,
+				 'un|unmapped=s' => \$unmapped,
 				);
 
 
@@ -2321,9 +2031,9 @@ sub process_command_line{
     print << "VERSION";
 
 
-          Bismark - Bisulfite Mapper and Methylation Caller.
+          ASAP - Allele Specific Alignment Program
 
-   Bismark Version: $bismark_version Copyright 2010 Felix Krueger, Babraham Bioinformatics
+   ASAP version: $ASAP_version Copyright 2010 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.bbsrc.ac.uk/projects/
 
 
@@ -2356,45 +2066,28 @@ VERSION
   ####################################
   ### PROCESSING ARGUMENTS
 
-  ### GENOME FOLDER
-  my $genome_folder = shift @ARGV; # mandatory
-  unless ($genome_folder){
-    warn "Genome folder was not specified!\n";
-    print_helpfile();
+  ### GENOME INDEX BASENAMES
+
+  unless ($indexname_1 and $indexname_2){
+    warn "You need to specify the bowtie index basenames of the two genomes to be aligned against!\n";
     exit;
   }
 
-  ### checking that the genome folder, all subfolders and the required bowtie index files exist
-  unless ($genome_folder =~/\/$/){
-    $genome_folder =~ s/$/\//;
-  }
-  my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
-  my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
-  if (chdir $genome_folder){
-    print "Reference genome folder provided is $genome_folder\n";
-  }
-  else{
-    die "Failed to move to $genome_folder: $!\nUSAGE: Bismark.pl [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
-  }
-  ### checking the integrity of $CT_dir
-  chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-  my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
-  foreach my $file(@CT_bowtie_index){
-    unless (-f $file){
-      die "The bowtie index of the C->T converted genome seems to be faulty ($file). Please run Bismark_Genome_Preparation before running Bismark.pl.\n";
-    }
-  }
-  my $CT_index_basename = "${CT_dir}BS_CT";
-  ### checking the integrity of $GA_dir
-  chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-  my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
-  foreach my $file(@GA_bowtie_index){
-    unless (-f $file){
-      die "The bowtie index of the C->T converted genome seems to be faulty ($file). Please run Bismark_Genome_Preparation before running Bismark.pl.\n";
-    }
-  }
-  my $GA_index_basename = "${GA_dir}BS_GA";
+  ### checking that the required bowtie index files exist
 
+  my @bowtie_index_1 = ($indexname_1.'.1.ebwt',$indexname_1.'.2.ebwt',$indexname_1.'.3.ebwt',$indexname_1.'.4.ebwt',$indexname_1.'.rev.1.ebwt',$indexname_1.'.rev.2.ebwt');
+  foreach my $file(@bowtie_index_1){
+    unless (-f $file){
+      die "The bowtie index of the first genome seems to be faulty ($file). Please run bowtie-build before running ASAP\n";
+    }
+  }
+  ### checking the integrity of $GA_dir
+  my @bowtie_index_2 = ($indexname_2.'.1.ebwt',$indexname_2.'.2.ebwt',$indexname_2.'.3.ebwt',$indexname_2.'.4.ebwt',$indexname_2.'.rev.1.ebwt',$indexname_2.'.rev.2.ebwt');
+  foreach my $file(@bowtie_index_2){
+    unless (-f $file){
+      die "The bowtie index of the second genome seems to be faulty ($file). Please run bowtie-build before running ASAP\n";
+    }
+  }
 
   ### INPUT OPTIONS
 
@@ -2417,7 +2110,7 @@ VERSION
   }
   else{
     $fastq=1;
-    print "FastQ format assumed (by default)\n";
+    print "FastQ format assumed (default)\n";
     $sequence_format = 'FASTQ';
     push @bowtie_options, '-q';
   }
@@ -2474,7 +2167,7 @@ VERSION
   }
 
   ### REPORTING OPTIONS
-  # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments)
+  # Because of the way ASAP works we will always use the reporting option -k 2 (report up to 2 valid alignments)
   push @bowtie_options,'-k 2';
 
   ### --BEST
@@ -2508,7 +2201,7 @@ VERSION
   unless ($mates1 and $mates2){
     $singles = shift @ARGV;
     unless ($singles){
-      die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
+      die "\nNo filename supplied! Please specify one or more files for single-end ASAP mapping!\n";
     }
     @filenames = (split(/,/,$singles));
   }
@@ -2538,21 +2231,15 @@ VERSION
   ### SUMMARY OF ALL BOWTIE OPTIONS
   my $bowtie_options = join (' ',@bowtie_options);
 
-
-  ### STRAND-SPECIFIC LIBRARIES
-  if ($directional){
-    if ($singles){
-      print "Library was specified to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored.\n";
-    }
-    else{
-      die "The option '--directional' can only be specified for single-end reads!\n";
-    }
+  ### UNMAPPED SEQUENCE OUTPUT
+  if ($unmapped){
+    die "The file to output unmapped sequences already exists. Please give a new name\n" if (-e $unmapped);
   }
   else{
-    $directional = 0;
+    $unmapped = 0;
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional);
+  return ($indexname_1,$indexname_2,$path_to_bowtie,$sequence_format,$bowtie_options,$unmapped);
 }
 
 sub print_helpfile{
@@ -2591,21 +2278,22 @@ The final Bismark output of this script will be a single tab delimited file with
 a unique best alignment to any of the 4 possible strands of a bisulfite PCR product. The format is described 
 in more detail below.
 
-USAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
+USAGE: ASAP [options] <genome_index_1> <genome_index_2> {-1 <mates1> -2 <mates2> | <singles>}
 
 
 ARGUMENTS:
 
-<genome_folder>          The full path to the folder containing the unmodified reference genome
-                         as well as the subfolders created by the Bismark_Genome_Preparation
-                         script (/Bisulfite_Genome/CT_conversion/ and /Bisulfite_Genome/GA_conversion/). 
-                         Bismark expects one or more fastA files in this folder (file extension: .fa).
+<genome_index_1>         The full path to the bowtie index base name of genome 1 (e.g. 
+                         /data/genomes/mouse/mus_musculus/C57BL6).
+
+<genome_index_2>         The full path to the bowtie index base name of genome 2 (e.g.
+                         /data/genomes/mouse/mus_musculus/castaneus).
 
 -1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
                          "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
                          correspond file-for-file and read-for-read with those specified in <mates2>.
                          Reads may be a mix of different lengths. Bismark will produce one mapping result
-                         and one report file per paired-end input file pair. 
+                         and one report file per paired-end input file pair.
 
 -2 <mates2>              Comma-separated list of files containing the #2 mates (filename usually includes
                          "_2"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
@@ -2613,8 +2301,8 @@ ARGUMENTS:
                          Reads may be a mix of different lengths.
 
 <singles>                A comma-separated list of files containing the reads to be aligned (e.g. lane1.fq,
-                         lane2.fq,lane3.fq). Reads may be a mix of different lengths. Bismark will produce
-                         one mapping result and one report file per input file.  
+                         lane2.fq,lane3.fq). Reads may be a mix of different lengths. ASAP will produce
+                         one mapping result and one report file per input file.
 
 
 OPTIONS:
@@ -2654,9 +2342,9 @@ Input:
 Alignment:
 
 -n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", which is the first 20 
-                         base pairs of the read by default (see -l/--seedlen). This may be 0, 1, 2 or 3).
+                         base pairs of the read by default (see -l/--seedlen). This may be 0, 1, 2 or 3.
 
--l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to 
+-l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to
                          which the -n ceiling applies. The default is 28.
 
 -e/--maqerr <int>        Maximum permitted total of quality values at all mismatched read positions throughout
@@ -2682,7 +2370,7 @@ Alignment:
 
 Reporting:
 
--k <2>                   Due to the way Bismark works Bowtie will report up to 2 valid alignments. This option
+-k <2>                   Due to the way ASAP works Bowtie will report up to 2 valid alignments. This option
                          will be used by default.
 
 --best                   Make Bowtie guarantee that reported singleton alignments are "best" in terms of stratum
@@ -2699,13 +2387,6 @@ Reporting:
 --no_best                Disables the --best option which is on by default. This can speed up the alignment process,
                          e.g. for testing purposes, but for credible results it is not recommended to disable --best.
 
-
---directional            The user may specify if the sequencing library was constructed in a strand-specific manner.
-                         In this case the strands complementary to the original strands are merely theoretical and
-                         should not exist in reality. Thus, specifying --direction will only report alignments to
-                         the original top or bottom strands. This is the recommended option for sprand-specific
-                         libraries.
-
 --quiet                  Print nothing besides alignments.
 
 
@@ -2716,7 +2397,7 @@ Other:
 -v/--version             Displays version information.
 
 
-OUTPUT:
+OUTPUT: still to be decided
 
 Single-end output format (tab-separated):
 
@@ -2727,9 +2408,7 @@ Single-end output format (tab-separated):
  (5) <end position>
  (6) <observed bisulfite sequence>
  (7) <equivalent genomic sequence>
- (8) <methylation call>
  (9) <read conversion
-(10) <genome conversion>
 
 
 Paired-end output format (tab-separated):
@@ -2740,12 +2419,8 @@ Paired-end output format (tab-separated):
  (5) <end position>
  (6) <observed bisulfite sequence 1>
  (7) <equivalent genomic sequence 1>
- (8) <methylation call 1>
  (9) <observed bisulfite sequence 2>
 (10) <equivalent genomic sequence 2>
-(11) <methylation call 2>
-(12) <read 1 conversion
-(13) <genome conversion>
 
 
 This script was last edited on 04 Nov 2010.
