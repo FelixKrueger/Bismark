@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.2.4';
+my $bismark_version = 'v0.2.5';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -34,7 +34,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -148,6 +148,11 @@ sub start_methylation_call_procedure_single_ends {
   open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file\n";
 
+  if ($unmapped){
+    open (UNMAPPED,'>',$unmapped) or die "Failed to write to $unmapped: $!\n";
+    print "Unmapped sequences will be written to $unmapped\n";
+  }
+
   if ($directional){
     print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored\n";
   }
@@ -187,6 +192,17 @@ sub start_methylation_call_procedure_paired_ends {
   open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n";
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+
+
+  ### Unmapped read output
+  if ($unmapped){
+    my $unmapped_1 = my $unmapped_2 = $unmapped;
+    $unmapped_1 =~ s/(\.\w+)$/_1$1/;
+    $unmapped_2 =~ s/(\.\w+)$/_2$1/;
+    open (UNMAPPED_1,'>',$unmapped_1) or die "Failed to write to $unmapped_1: $!\n";
+    open (UNMAPPED_2,'>',$unmapped_2) or die "Failed to write to $unmapped_2: $!\n";
+    print "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
+  }
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -2283,6 +2299,7 @@ sub process_command_line{
   my $ceiling;
   my $maxins;
   my $minins;
+  my $unmapped;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -2305,6 +2322,7 @@ sub process_command_line{
 				 'I|minins=i' => \$minins,
 				 'X|maxins=i' => \$maxins,
 				 'e|maqerr=i' => \$ceiling,
+				 'un|unmapped=s' => \$unmapped,
 				);
 
 
@@ -2552,7 +2570,25 @@ VERSION
     $directional = 0;
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional);
+  ### UNMAPPED SEQUENCE OUTPUT
+  if ($unmapped){
+    unless ($unmapped =~ /\.\w+$/){
+      die "Please provide a filename for unmapped sequences in the format: filename.extension (e.g. unaligned.txt)\n";
+    }
+    die "The file to output unmapped sequences already exists. Please specify a new name\n" if (-e "$parent_dir/$unmapped");
+    if ($mates1 and $mates2){
+      my $un1 = my $un2 = $unmapped;
+      $un1 =~ s/(\.\w+)$/_1$1/;
+      $un2 =~ s/(\.\w+)$/_2$1/;
+      if (-e "$parent_dir/$un1" or -e "$parent_dir/$un2"){
+	die "The specified output files for unmapped sequences already exist. Please specify a new name\n";
+      }
+    }
+  }
+  else{
+    $unmapped = 0;
+  }
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped);
 }
 
 sub print_helpfile{
@@ -2708,6 +2744,13 @@ Reporting:
 
 --quiet                  Print nothing besides alignments.
 
+--un <filename>          Write all reads that could not be aligned to a file with name <filename>. Written reads will
+                         appear as they did in the input, without any translation of quality values that may have
+                         taken place within Bowtie. Paired-end reads will be written to two parallel files with _1
+                         and _2 inserted in the filename, e.g., if <filename> is unaligned.fq, the #1 and #2 mates
+                         that fail to align will be written to unaligned_1.fq and unaligned_2.fq respectively. Reads 
+                         with more than one valid alignments with the same number of lowest mismatches (ambiguous mapping)
+                         are also written to <filename>.
 
 Other:
 
@@ -2748,7 +2791,7 @@ Paired-end output format (tab-separated):
 (13) <genome conversion>
 
 
-This script was last edited on 04 Nov 2010.
+This script was last edited on 22 Dec 2010.
 
 HOW_TO
 }
