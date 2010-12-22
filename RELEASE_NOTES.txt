@@ -1,3 +1,18 @@
+RELEASE NOTES FOR Bismark v0.2.5
+--------------------------------
+
+Added the new option --un <filename> to Bismark which will write out all 
+reads failing to align uniquely to <filename> in the same format they were 
+provided (FastQ or FastA). This will inlcude both reads that do not
+produce any alignments and reads which are being rejected due to ambiguous
+mapping unless --ambiguous <filename> has been specified as well (see below).
+
+Added the new option --ambiguous <filename> to Bismark which will write out
+all reads that are being rejected due to ambiguous mapping. Reads which are
+reported by --ambiguous will not appear in the output of --un <filename>.
+
+
+
 RELEASE NOTES FOR Bismark v0.2.4
 --------------------------------
 

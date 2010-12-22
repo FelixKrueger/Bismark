@@ -233,11 +233,11 @@ sub process_single_end_fastA_file{
     chomp $sequence;
     chomp $identifier;
     $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
-      ### check if there is a valid alignment
-      my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
+    ### check if there is a valid alignment
+    my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
 
     # print the sequence to unmapped.out if --un was specified
-    if ($ungapped){
+    if ($unmapped){
       if ($return == 1){
 	print UNMAPPED ">$identifier\n";	
 	print UNMAPPED "$sequence\n";
@@ -274,7 +274,7 @@ sub process_single_end_fastQ_file{
     my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
 
     # print the sequence to unmapped.out if --un was specified
-    if ($ungapped){
+    if ($unmapped){
       if ($return == 1){
 	print UNMAPPED "@$identifier\n";	
 	print UNMAPPED "$sequence\n";
@@ -334,12 +334,12 @@ sub process_paired_end_fastA_files{
       my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
 
       # print the sequence to unmapped_1.out and unmapped_2.out if --un was specified
-      if ($ungapped){
+      if ($unmapped){
 	if ($return == 1){
 	  print UNMAPPED_1 ">$identifier\n";	
 	  print UNMAPPED_1 "$sequence_1\n";
-	  print UNMAPPED_2 ">$identifier_2";	
-	  print UNMAPPED_2 "$quality_value";
+	  print UNMAPPED_2 ">$identifier_2\n";	
+	  print UNMAPPED_2 "$quality_value\n";
 	}
       }
     }
@@ -408,8 +408,8 @@ sub process_paired_end_fastQ_files{
 	  # seq_1
 	  print UNMAPPED_1 $orig_identifier_1;	
 	  print UNMAPPED_1 "$sequence_1\n";
-	  print UNMAPPED_1 $ident_2;	
-	  print UNMAPPED_1 $quality_value;
+	  print UNMAPPED_1 $ident_1;	
+	  print UNMAPPED_1 $quality_value_1;
 	  # seq_2
 	  print UNMAPPED_2 $orig_identifier_2;	
 	  print UNMAPPED_2 "$sequence_2\n";

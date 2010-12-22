@@ -34,7 +34,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -152,6 +152,10 @@ sub start_methylation_call_procedure_single_ends {
     open (UNMAPPED,'>',$unmapped) or die "Failed to write to $unmapped: $!\n";
     print "Unmapped sequences will be written to $unmapped\n";
   }
+  if ($ambiguous){
+    open (AMBIG,'>',$ambiguous) or die "Failed to write to $ambiguous: $!\n";
+    print "Ambiguosly mapping sequences will be written to $ambiguous\n";
+  }
 
   if ($directional){
     print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored\n";
@@ -203,6 +207,16 @@ sub start_methylation_call_procedure_paired_ends {
     open (UNMAPPED_2,'>',$unmapped_2) or die "Failed to write to $unmapped_2: $!\n";
     print "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
   }
+
+  if ($ambiguous){
+    my $amb_1 = my $amb_2 = $ambiguous;
+    $amb_1 =~ s/(\.\w+)$/_1$1/;
+    $amb_2 =~ s/(\.\w+)$/_2$1/;
+    open (AMBIG_1,'>',$amb_1) or die "Failed to write to $amb_1: $!\n";
+    open (AMBIG_2,'>',$amb_2) or die "Failed to write to $amb_2: $!\n";
+    print "Ambiguously mapping sequences will be written to $amb_1 and $amb_2\n";
+  }
+
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -468,7 +482,22 @@ sub process_single_end_fastA_file_for_methylation_call{
     chomp $sequence;
     chomp $identifier;
     $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
-    check_bowtie_results_single_end(uc$sequence,$identifier);
+    my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
+    unless ($return){
+      $return = 0;
+    }
+
+    # print the sequence to ambiguous.out if --ambiguous was specified
+    if ($ambiguous and $return == 2){
+      print AMBIG ">$identifier\n";	
+      print AMBIG "$sequence\n";
+    }
+
+    # print the sequence to <unmapped.out> file if --un was specified
+    elsif ($unmapped and $return){
+      print UNMAPPED ">$identifier\n";	
+      print UNMAPPED "$sequence\n";
+    }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
   close IN or die "Failed to close filehandle $!";
@@ -496,7 +525,25 @@ sub process_single_end_fastQ_file_for_methylation_call{
     chomp $sequence;
     chomp $identifier;
     $identifier =~ s/^\@//;	# deletes the @ at the beginning of Illumin FastQ headers
-    check_bowtie_results_single_end(uc$sequence,$identifier);
+    my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
+    unless ($return){
+      $return = 0;
+    }
+    # print the sequence to ambiguous.out if --ambiguous was specified
+    if ($ambiguous and $return == 2){
+      print AMBIG "\@$identifier\n";	
+      print AMBIG "$sequence\n";
+      print AMBIG $identifier_2;	
+      print AMBIG $quality_value;
+    }
+
+    # print the sequence to <unmapped.out> file if --un was specified
+    elsif ($unmapped and $return){
+      print UNMAPPED "\@$identifier\n";	
+      print UNMAPPED "$sequence\n";
+      print UNMAPPED $identifier_2;	
+      print UNMAPPED $quality_value;
+    }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
   close IN or die "Failed to close filehandle $!";
@@ -525,6 +572,9 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     if ($counting{sequences_count}%100000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
     }
+    my $orig_identifier_1 = $identifier_1;
+    my $orig_identifier_2 = $identifier_2;
+
     chomp $sequence_1;
     chomp $identifier_1;
     chomp $sequence_2;
@@ -534,7 +584,26 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     $identifier_1 =~ s/\/[12]//; # deletes the 1/2 at the end
     $identifier_2 =~ s/\/[12]//;
     if ($identifier_1 eq $identifier_2){
-      check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+      unless ($return){
+	$return = 0;
+      }
+
+      # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
+      if ($ambiguous and $return == 2){
+	print AMBIG_1 $orig_identifier_1;	
+	print AMBIG_1 "$sequence_1\n";
+	print AMBIG_2 $orig_identifier_2;	
+	print AMBIG_2 "$sequence_2\n";
+      }
+
+      # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
+      elsif ($unmapped and $return){
+	print UNMAPPED_1 $orig_identifier_1;	
+	print UNMAPPED_1 "$sequence_1\n";
+	print UNMAPPED_2 $orig_identifier_2;	
+	print UNMAPPED_2 "$sequence_2\n";
+      }
     }
     else {
       die "Sequence IDs are not identical\n";
@@ -572,17 +641,53 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     if ($counting{sequences_count}%100000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
     }
-    #   last if ($counting{sequences_count} >100);
+
+    my $orig_identifier_1 = $identifier_1;
+    my $orig_identifier_2 = $identifier_2;
+
     chomp $sequence_1;
     chomp $identifier_1;
     chomp $sequence_2;
     chomp $identifier_2;
+
     $identifier_1 =~ s/^\@//;	 # deletes the @ at the beginning of Illumin FastQ headers
     $identifier_2 =~ s/^\@//;
     $identifier_1 =~ s/\/[12]//; # deletes the 1/2 at the end
     $identifier_2 =~ s/\/[12]//;
+
     if ($identifier_1 eq $identifier_2){
-      check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+      unless ($return){
+	$return = 0;
+      }
+
+      # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
+      if ($ambiguous and $return == 2){
+	# seq_1
+	print AMBIG_1 $orig_identifier_1;	
+	print AMBIG_1 "$sequence_1\n";
+	print AMBIG_1 $ident_1;	
+	print AMBIG_1 $quality_value_1;
+	# seq_2
+	print AMBIG_2 $orig_identifier_2;	
+	print AMBIG_2 "$sequence_2\n";
+	print AMBIG_2 $ident_2;	
+	print AMBIG_2 $quality_value_2;
+      }
+
+      # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
+      elsif ($unmapped and $return){
+	# seq_1
+	print UNMAPPED_1 $orig_identifier_1;	
+	print UNMAPPED_1 "$sequence_1\n";
+	print UNMAPPED_1 $ident_1;	
+	print UNMAPPED_1 $quality_value_1;
+	# seq_2
+	print UNMAPPED_2 $orig_identifier_2;	
+	print UNMAPPED_2 "$sequence_2\n";
+	print UNMAPPED_2 $ident_2;	
+	print UNMAPPED_2 $quality_value_2;
+      }
     }
     else {
       print "$identifier_1\t$identifier_2\n";
@@ -733,8 +838,9 @@ sub check_bowtie_results_single_end{
   ### if there was no single alignment found for a certain sequence we will continue with the next sequence in the sequence file
   unless(%mismatches){
     $counting{no_single_alignment_found}++;
-    return;
+    return 1; ### We will print this sequence out as unmapped sequence if --un unmapped.out has been specified
   }
+
   #######################################################################################################################################################
   #######################################################################################################################################################
   ### We are now looking if there is a unique best alignment for a certain sequence. This means we are sorting in ascending order and look at the     ###
@@ -834,7 +940,15 @@ sub check_bowtie_results_single_end{
   ### skipping the sequence completely if there were multiple alignments with the same amount of lowest mismatches found at different positions
   if ($sequence_fails == 1){
     $counting{unsuitable_sequence_count}++;
-    return; # => exits to next sequence
+    if ($ambiguous){
+      return 2; # => exits to next sequence, and prints it out to multiple_alignments.out if --ambiguous has been specified
+    }
+    if ($unmapped){
+      return 1; # => exits to next sequence, and prints it out to unmapped.out if --un has been specified
+    }
+    else{
+      return; # => exits to next sequence (default)
+    }
   }
 
   ### --DIRECTIONAL
@@ -1157,7 +1271,7 @@ sub check_bowtie_results_paired_ends{
   ### if there was no single alignment found for a certain sequence we will continue with the next sequence in the sequence file
   unless(%mismatches){
     $counting{no_single_alignment_found}++;
-    return;
+    return 1; ### We will print this sequence out as unmapped sequence if --un unmapped.out has been specified
   }
   ### Going to use the variable $sequence_pair_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
   my $sequence_pair_fails = 0;
@@ -1194,7 +1308,15 @@ sub check_bowtie_results_paired_ends{
   ### skipping the sequence completely if there were multiple alignments with the same amount of lowest mismatches found at different positions
   if ($sequence_pair_fails == 1){
     $counting{unsuitable_sequence_count}++;
-    return;
+    if ($ambiguous){
+      return 2; # => exits to next sequence pair, and prints both seqs out to multiple_alignments_1 and -2 if --ambiguous has been specified
+    }
+    if ($unmapped){
+      return 1; # => exits to next sequence pair, and prints both seqs out to unmapped_1 and _2  if --un has been specified
+    }
+    else{
+      return; # => exits to next sequence (default)
+    }
   }
   ### If the sequence has not been rejected so far it does have a unique best alignment
   $counting{unique_best_alignment_count}++;
@@ -1778,7 +1900,7 @@ sub read_genome_into_memory{
     ## reading in and storing the specified genome in the %chromosomes hash
     chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
     print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
-    
+
     my @chromosome_filenames =  <*.fa>;
     foreach my $chromosome_filename (@chromosome_filenames){
 
@@ -1792,20 +1914,20 @@ sub read_genome_into_memory{
 	
 	my $sequence;
 	while (<CHR_IN>){
-	    chomp;	  
+	    chomp;
 	    if ($_ =~ /^>/){
 		### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
 		if (exists $chromosomes{$chromosome_name}){
 		    print "chr $chromosome_name (",length $sequence ," bp)\n";
 		    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
-		}      
+		}
 		else {
 		    if (length($sequence) == 0){
 			warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
 		    }
 		    print "chr $chromosome_name (",length $sequence ," bp)\n";
 		    $chromosomes{$chromosome_name} = $sequence;
-		}   
+		}
 		### resetting the sequence variable
 		$sequence = '';
 		### setting new chromosome name
@@ -2300,6 +2422,7 @@ sub process_command_line{
   my $maxins;
   my $minins;
   my $unmapped;
+  my $multi_map;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -2323,6 +2446,7 @@ sub process_command_line{
 				 'X|maxins=i' => \$maxins,
 				 'e|maqerr=i' => \$ceiling,
 				 'un|unmapped=s' => \$unmapped,
+				 'ambiguous=s' => \$multi_map,
 				);
 
 
@@ -2588,7 +2712,27 @@ VERSION
   else{
     $unmapped = 0;
   }
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped);
+
+  ### AMBIGUOUS ALIGNMENT SEQUENCE OUTPUT
+  if ($multi_map){
+    unless ($multi_map =~ /\.\w+$/){
+      die "Please provide a filename for ambiguously mapping sequences in the format: filename.extension (e.g. multiple_alignments.txt)\n";
+    }
+    die "The file to output ambiguosly mapping sequences already exists. Please specify a new name\n" if (-e "$parent_dir/$multi_map");
+    if ($mates1 and $mates2){
+      my $multi1 = my $multi2 = $multi_map;
+      $multi1 =~ s/(\.\w+)$/_1$1/;
+      $multi2 =~ s/(\.\w+)$/_2$1/;
+      if (-e "$parent_dir/$multi1" or -e "$parent_dir/$multi2"){
+	die "The specified output files for ambiguously aligning sequences  ($multi1, $multi2) already exist. Please specify a new name\n";
+      }
+    }
+  }
+  else{
+    $multi_map = 0;
+  }
+
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map);
 }
 
 sub print_helpfile{
@@ -2736,6 +2880,8 @@ Reporting:
                          e.g. for testing purposes, but for credible results it is not recommended to disable --best.
 
 
+Output:
+
 --directional            The user may specify if the sequencing library was constructed in a strand-specific manner.
                          In this case the strands complementary to the original strands are merely theoretical and
                          should not exist in reality. Thus, specifying --direction will only report alignments to
@@ -2751,6 +2897,14 @@ Reporting:
                          that fail to align will be written to unaligned_1.fq and unaligned_2.fq respectively. Reads 
                          with more than one valid alignments with the same number of lowest mismatches (ambiguous mapping)
                          are also written to <filename>.
+
+--ambiguous <filename>   Write all reads which produce more than one valid alignment with the same number of lowest
+                         mismatches or other reads that fail to align uniquely to <filename> (in the form filename.extension).
+                         Written reads will appear as they did in the input, without any of the translation of quality
+                         values that may have taken place within bowtie. Paired-end reads will be written to two parallel
+                         files with _1 and _2 inserted in the filename, e.g., if <filename> is ambiguous.fq, the #1 and #2
+                         mates will be written to ambiguous_1.fq and ambiguous_2.fq respectively. These reads are not
+                         written to the file specified with --un.
 
 Other:
 
