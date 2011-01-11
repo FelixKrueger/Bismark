@@ -494,7 +494,7 @@ sub process_single_end_fastA_file_for_methylation_call{
     }
 
     # print the sequence to <unmapped.out> file if --un was specified
-    elsif ($unmapped and $return){
+    elsif ($unmapped and $return == 1){
       print UNMAPPED ">$identifier\n";	
       print UNMAPPED "$sequence\n";
     }
@@ -512,7 +512,6 @@ sub process_single_end_fastQ_file_for_methylation_call{
   open (IN,$sequence_file) or die $!;
   warn "\nReading in the sequence file $sequence_file\n";
   while (1) {
-    #last if ($counting{sequences_count} > 100);
     my $identifier = <IN>;
     my $sequence = <IN>;
     my $identifier_2 = <IN>;
@@ -538,7 +537,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
     }
 
     # print the sequence to <unmapped.out> file if --un was specified
-    elsif ($unmapped and $return){
+    elsif ($unmapped and $return == 1){
       print UNMAPPED "\@$identifier\n";	
       print UNMAPPED "$sequence\n";
       print UNMAPPED $identifier_2;	
@@ -598,7 +597,7 @@ sub process_fastA_files_for_paired_end_methylation_calls{
       }
 
       # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
-      elsif ($unmapped and $return){
+      elsif ($unmapped and $return == 1){
 	print UNMAPPED_1 $orig_identifier_1;	
 	print UNMAPPED_1 "$sequence_1\n";
 	print UNMAPPED_2 $orig_identifier_2;	
@@ -676,7 +675,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
       }
 
       # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
-      elsif ($unmapped and $return){
+      elsif ($unmapped and $return == 1){
 	# seq_1
 	print UNMAPPED_1 $orig_identifier_1;	
 	print UNMAPPED_1 "$sequence_1\n";
@@ -838,9 +837,13 @@ sub check_bowtie_results_single_end{
   ### if there was no single alignment found for a certain sequence we will continue with the next sequence in the sequence file
   unless(%mismatches){
     $counting{no_single_alignment_found}++;
-    return 1; ### We will print this sequence out as unmapped sequence if --un unmapped.out has been specified
+    if ($unmapped){
+      return 1; ### We will print this sequence out as unmapped sequence if --un unmapped.out has been specified
+    }
+    else{
+      return;
+    }
   }
-
   #######################################################################################################################################################
   #######################################################################################################################################################
   ### We are now looking if there is a unique best alignment for a certain sequence. This means we are sorting in ascending order and look at the     ###
@@ -947,7 +950,7 @@ sub check_bowtie_results_single_end{
       return 1; # => exits to next sequence, and prints it out to unmapped.out if --un has been specified
     }
     else{
-      return; # => exits to next sequence (default)
+      return 0; # => exits to next sequence (default)
     }
   }
 
@@ -958,8 +961,8 @@ sub check_bowtie_results_single_end{
     if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
       #    warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
       $counting{alignments_rejected_count}++;
-     return;
-   }
+      return 0;
+    }
   }
 
   ### If the sequence has not been rejected so far it will have a unique best alignment
@@ -968,13 +971,14 @@ sub check_bowtie_results_single_end{
   ### check test to see if the genomic sequence we extracted has the same length as the observed sequence+2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence}) != length($sequence)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position}\n";
-    return;
+    return 0;
   }
 
   ### otherwise we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
 
   print_bisulfite_mapping_result_single_end($identifier,$sequence,$methylation_call_params);
+  return 0; ## otherwise 1 will be returned by default, which would print the sequence to unmapped.out
 }
 
 sub determine_number_of_transliterations_performed{
@@ -1315,7 +1319,7 @@ sub check_bowtie_results_paired_ends{
       return 1; # => exits to next sequence pair, and prints both seqs out to unmapped_1 and _2  if --un has been specified
     }
     else{
-      return; # => exits to next sequence (default)
+      return 0; # => exits to next sequence (default)
     }
   }
   ### If the sequence has not been rejected so far it does have a unique best alignment
@@ -1325,11 +1329,11 @@ sub check_bowtie_results_paired_ends{
   ### check test to see if the genomic sequences we extracted has the same length as the observed sequences +2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
-    return;
+    return 0;
   }
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}) != length($sequence_2)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
-    return;
+    return 0;
   }
 
   ### otherwise we are set to perform the actual methylation call
@@ -1337,6 +1341,7 @@ sub check_bowtie_results_paired_ends{
   $methylation_call_params->{$identifier}->{methylation_call_2} = methylation_call($identifier,$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{read_conversion_2});
 
   print_bisulfite_mapping_results_paired_ends($identifier,$sequence_1,$sequence_2,$methylation_call_params);
+  return 0; ## otherwise 1 will be returned by default, which would print the sequence pair to unmapped_1 and _2
 }
 
 sub decide_whether_paired_end_alignment_is_valid{
