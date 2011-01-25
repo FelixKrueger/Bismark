@@ -318,7 +318,8 @@ sub process_single_end_fastQ_file{
 
   warn "Processed $counting{sequences_count} sequences from $sequence_file in total\n\n";
   close IN or die "Failed to close filehandle $!";
-  # print_final_analysis_report_single_end();
+
+  print_final_analysis_report_single_end();
 }
 
 
@@ -465,117 +466,33 @@ sub process_paired_end_fastQ_files{
 }
 
 
-# sub print_final_analysis_report_single_end{
-#   my ($C_to_T_infile,$G_to_A_infile) = @_;
-#   ### All sequences from the original sequence file have been analysed now
-#   ### deleting temporary C->T or G->A infiles
-#   my $deletion_successful =  unlink $C_to_T_infile,$G_to_A_infile;
-#   if ($deletion_successful == 2){
-#     warn "\nSuccessfully deleted the temporary files $C_to_T_infile and $G_to_A_infile\n\n";
-#   }
-#   else{
-#     warn "Could not delete temporary files properly $!\n";
-#   }
+sub print_final_analysis_report_single_end{#
 
-#   ### printing a final report for the alignment procedure
-#   print REPORT "Final Alignment report\n",'='x22,"\n";
-#   print "Final Alignment report\n",'='x22,"\n";
-#   #  foreach my $index (0..$#fhs){
-#   #    print "$fhs[$index]->{name}\n";
-#   #    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
-#   #    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
-#   #  }
+  print REPORT "Final Alignment report\n",'='x22,"\n";
+  print "Final Alignment report\n",'='x22,"\n";
 
-#   ### printing a final report for the methylation call procedure
-#   warn "Sequences analysed in total:\t$counting{sequences_count}\n";
-#   print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
+  print "unable to exract genomic sequence count:\t$counting{unable_to_extract_genomic_sequence_count}";
+  if ($dissimilar){
+    print "\n";
+  }
+  else{
+    print "\t(if this number is very high you might want to consider if you need to specify --dissimilar)\n";
+  }
+  print "Sequences did not map uniquely (3+ alignments) and were thus discarded:\t$counting{ambiguous_mapping_count}\n\n";
 
-#   my $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+  print "sequences specific for genome 1:\t$counting{genome_1_specific_count}\n";
+  print "sequences specific for genome 2:\t$counting{genome_2_specific_count}\n";
+  print "aligns to both genomes equally well:\t$counting{aligns_to_both_genomes_equally_well_count}\n";
 
-#   warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n\n";
-#   print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n";
-
-#   ### percentage of low complexity reads overruled because of low complexity (thereby creating a bias for highly methylated reads),
-#   ### only calculating the percentage if there were any overruled alignments
-#   if ($counting{low_complexity_alignments_overruled_count}){
-#     my $percent_overruled_low_complexity_alignments = sprintf ("%.1f",$counting{low_complexity_alignments_overruled_count}*100/$counting{sequences_count});
-#     #   print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
-#   }
-
-#   print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
-#   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
-#   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-#   print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
-
-#   print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
-#   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
-#   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-#   print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
-
-#   #  if ($directional){
-#   #    print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
-#   #    print REPORT "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
-#   #  }
-
-#   ### detailed information about Cs analysed
-#   warn "Final Cytosine Methylation Report\n",'='x33,"\n";
-#   my $total_number_of_C = $counting{total_meCHH_count}+$counting{total_meCHG_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CpG_count};
-#   warn "Total number of C's analysed:\t$total_number_of_C\n\n";
-#   warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
-#   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-#   warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
-#   warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-#   warn "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-#   warn "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
-# }
-
-# sub print_final_analysis_report_paired_ends{
-#   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-#   ### All sequences from the original sequence file have been analysed now
-#   ### deleting temporary C->T or G->A infiles
-#   my $deletion_successful =  unlink $C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2;
-#   if ($deletion_successful == 4){
-#     warn "\nSuccessfully deleted the temporary files $C_to_T_infile_1, $G_to_A_infile_1, $C_to_T_infile_2 and $G_to_A_infile_2\n\n";
-#   }
-#   else{
-#     warn "Could not delete temporary files properly: $!\n";
-#   }
-
-#   ### printing a final report for the alignment procedure
-#   warn "Final Alignment report\n",'='x22,"\n";
-#   print REPORT "Final Alignment report\n",'='x22,"\n";
-#   #  foreach my $index (0..$#fhs){
-#   #    print "$fhs[$index]->{name}\n";
-#   #    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
-#   #    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
-#   #  }
+  print "unsuitable sequence count:\t$counting{unsuitable_sequence_count}\n\n";
+  print "total sequences processed:\t$counting{sequences_count}\n";
 
 
+  print "sequences with no single alignment:\t$counting{no_single_alignment_found}\n\n";
+  my $percent_alignable_sequences = sprintf ("%.1f",($counting{genome_1_specific_count}+$counting{genome_2_specific_count}+$counting{aligns_to_both_genomes_equally_well_count})*100/$counting{sequences_count});
+  print "Mapping efficiency:\t${percent_alignable_sequences}%\n\n";
 
-#   ### printing a final report for the methylation call procedure
-#   print "Sequences analysed in total:\t$counting{sequences_count}\n";
-#   my $percent_alignable_sequence_pairs = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
-#   print "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}%\n\n";
-#   print REPORT "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}% \n";
-
-#   print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
-#   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
-#   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-#   print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
-
-
-#   print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
-#   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
-#   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-#   print REPORT join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t((converted) bottom strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
-#   ### detailed information about Cs analysed
-
-#   warn "Final Cytosine Methylation Report\n",'='x33,"\n";
-#   print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
-
-#   my $total_number_of_C = $counting{total_meCHG_count}+ $counting{total_meCHH_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CpG_count};
-
-# }
+}
 
 
 #######################################################################################################################################
@@ -601,7 +518,7 @@ sub check_bowtie_results_single_end{
       ### STEP I Now processing the alignment stored in last_line ###
       ###############################################################
 
-      ### need to extract the chromosome number from the bowtie output (which is either XY_cf (complete forward) or XY_cr (complete reverse)
+      ### extract some useful information from the Bowtie output
       my ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,7];
       chomp $mismatch_info;
 
@@ -696,12 +613,14 @@ sub check_bowtie_results_single_end{
     $counting{no_single_alignment_found}++;
     return 1; ### We will print this sequence out as unmapped sequence if --un unmapped.out has been specified
   }
-  foreach my $mm (sort keys %mismatches){
-    foreach my $alignment_position (keys %{$mismatches{$mm}} ){
- #     print $mismatches{$mm}->{$alignment_position}->{line};
-    }
-  }
- # print "\n";
+
+  #  foreach my $mm (sort keys %mismatches){
+  #    foreach my $alignment_position (keys %{$mismatches{$mm}} ){
+  #      print $mismatches{$mm}->{$alignment_position}->{line};
+  #    }
+  #  }
+  # print "\n";
+
   #######################################################################################################################################################
   ### We are now looking if there is a unique best alignment for a certain sequence. This means we are sorting in ascending order and look at the     ###
   ### sequence with the lowest amount of mismatches.                                                                                                  ###
@@ -710,10 +629,8 @@ sub check_bowtie_results_single_end{
   ### Going to use the variable $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
   my $sequence_fails = 0;
 
-
-  ### sort without $a<=>$b sorts alphabetically, so 0,1,2,3... will be sorted correctly
-  for my $mismatch_number (sort keys %mismatches){
-
+  ### sort in ascending order
+  for my $mismatch_number (sort {$a<=>$b} keys %mismatches){
     ### if there is only 1 entry in the hash with the lowest number of mismatches the sequence is unique to one of the genomes
     if (scalar keys %{$mismatches{$mismatch_number}} == 1){
 
@@ -855,15 +772,17 @@ sub check_bowtie_results_single_end{
 
 	  # read aligned uniquely best to genome 1
 	  if ($index == 0){
-	    #	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
-	    print join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    $counting{genome_1_specific_count}++;
+  #	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 	
 	  # read aligned uniquely best to genome 2
 	  elsif ($index == 1){
+	    $counting{genome_2_specific_count}++;
 	    #   print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
-	    print join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 	  else{
@@ -878,9 +797,27 @@ sub check_bowtie_results_single_end{
 	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line}))[0,1,2,3,4,7];
 	  my $end = $start+length($sequence)-1;
 
-	  my $genome_1_sequence = substr($genome_1{$chr},$start,length$sequence);
-	  my $genome_2_sequence = substr($genome_2{$chr},$start,length$sequence);
-
+	  my $genome_1_sequence;
+	  my $genome_2_sequence;
+	
+	  if ( length($genome_1{$chr}) >= $end){
+	    $genome_1_sequence  = substr($genome_1{$chr},$start,length$sequence);
+	  }
+	  else{
+	    # warn "Substring outside of string\n";
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    return;	
+	  }
+	
+	  if ( length($genome_2{$chr}) >= $end){
+	    $genome_2_sequence = substr($genome_2{$chr},$start,length$sequence);
+	  }
+	  else{
+	    #warn "Substring outside of string\n";
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    return;	
+	  }
+	
 	  ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
 	  if ($strand eq '-'){
 	    $genome_1_sequence = reverse_complement($genome_1_sequence);
@@ -908,7 +845,6 @@ sub check_bowtie_results_single_end{
 	  }
 	}
       }
-      $sequence_fails = 1; ### if the sequence did not get printed then we return 1 so it can be printed to unmapped.out
     }
 
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 2){
@@ -916,11 +852,6 @@ sub check_bowtie_results_single_end{
       ### (a) both sequence alignments come from the same genome (= $index) => thus the sequence can't be mapped uniquely and needs to be discarded
       ### (b) the sequence aligns equally well to the two genomes, but to different locations: the sequence will be discarded
       ### (c) the sequence aligns equally well to the two different genomes => the sequence alignment will be printed as alignments in common (OUT_MIXED)
-
-      ### the concept of homologous sequences is not supported for --dissimilar genomes. Thus there will be no common alignments output
-      if ($dissimilar){
-	return 1; ## can be printed out to unmapped.out if there is no unique match
-      }
 
       my $key_1;
       my $alignment_1;
@@ -951,6 +882,12 @@ sub check_bowtie_results_single_end{
       }
 
       elsif ($chr_1 eq $chr_2 and $pos_1 == $pos_2){
+	++$counting{aligns_to_both_genomes_equally_well_count};
+	### the concept of homologous sequences is not supported for --dissimilar genomes. Thus there will be no common alignments output
+	if ($dissimilar){
+	  return 1; ## can be printed out to unmapped.out if there is no unique match
+	}
+
 	### this is (c), we will print the read out to OUT_MIXED
 
 	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$alignment_1))[0,1,2,3,4,7];
@@ -965,20 +902,23 @@ sub check_bowtie_results_single_end{
 	  $genome_2_sequence = reverse_complement($genome_2_sequence);
 	}	
 	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info,$genome_2_sequence,$mismatch_info),"\n";
-	#	print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info,$genome_2_sequence,$mismatch_info),"\n";
+	print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info,$genome_2_sequence,$mismatch_info),"\n";
       }
       else{
 	die "Unexpected chr/pos/index combination \n\n";
       }
+      return 0; ## the sequence must have been either returned or printed out, and we want to only process the lowest nubmer of mismatches
     }
 
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 3 or scalar keys %{$mismatches{$mismatch_number}} == 4 ){
-      ### in any case, if there are 3 or 4 alignment positions for a given sequence we can't map it uniquely and discard the sequence
+      ++$counting{ambiguous_mapping_count};
+    ### in any case, if there are 3 or 4 alignment positions for a given sequence we can't map it uniquely and discard the sequence
       $sequence_fails = 1;
     }
     else{
       die "Unexpected number of elements with a lowest number of mismatches: ",scalar keys %{$mismatches{$mismatch_number}},"\n";
     }
+    last; ## unless we exited already we will exit the loop after we processed the sequence with the lowest number of mismatches
   }
 
   ### skipping the sequence completely if there were multiple alignments to the same genome with the same amount of lowest mismatches found at different positions
@@ -1424,8 +1364,11 @@ sub reset_counters_and_fhs{
 	     sequences_count => 0,
 	     no_single_alignment_found => 0,
 	     unsuitable_sequence_count => 0,
-	     unique_best_alignment_count => 0,
-	     low_complexity_alignments_overruled_count => 0,
+	     genome_1_specific_count => 0,
+	     genome_2_specific_count => 0,
+	     unable_to_extract_genomic_sequence_count => 0,
+	     aligns_to_both_genomes_equally_well_count => 0,
+	     ambiguous_mapping_count => 0,
 	    );
   @fhs=(
 	{ name => 'genome 1',

@@ -6,7 +6,7 @@ use File::Path qw(rmtree);
 $|++;
 
 
-## This program is Copyright (C) 2010, Felix Krueger (felix.krueger@bbsrc.ac.uk)
+## This program is Copyright (C) 2010-11, Felix Krueger (felix.krueger@bbsrc.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -276,12 +276,21 @@ sub create_bisulfite_genome_folders{
   }
 
   chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
+
+
   # Exiting unless there are fastA files in the folder
-
   my @filenames = <*.fa>;
-  die "The specified genome folder ($genome_folder) doesn't seem to contain any sequence files in fastA format!\n" unless (@filenames);
 
-  print "Bisulfite Genome Indexer version 0.2.5 (last modified 15 Nov 2010)\n\n ";
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  unless (@filenames){
+    @filenames =  <*.fasta>;
+  }
+
+  unless (@filenames){
+    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
+  }
+
+  print "Bisulfite Genome Indexer version 0.3.0 (last modified 24 Jan 2011)\n\n ";
   sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -381,7 +390,7 @@ ARGUMENTS:
 
 
 
-This script was last edited on 30 July 2010.
+This script was last edited on 24 Jan 2011.
 
 HOW_TO
 }

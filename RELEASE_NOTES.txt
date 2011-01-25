@@ -1,5 +1,38 @@
-RELEASE NOTES FOR Bismark v0.2.5
---------------------------------
+RELEASE NOTES FOR Bismark v0.3.0 (26 Jan 2011)
+----------------------------------------------
+
+The Bismark documentation received a complete overhaul. The Bismark User Guide
+replaces the previous documentation (INSTALL.txt and README.txt). It contains
+a Quick reference to get started quickly witout having to read the entire User
+Guide. In addition to that it also contains detailed information about BS-Seq
+in general, about how Bismark works, its output formats and discusses some of the
+available options. The Appendix section does now include all available options
+of all three scripts of the Bismark package (bismark_genome_preparation, bismark
+and methylation_extractor).
+
+We do now offer a BS-Seq test data set for download so that users can try Bismark
+out. The test data set consists of 10,000 sequences taken from a human shotgun 
+BS-Seq dataset (SRR020138, Lister et al. 2009). The sequences have been trimmed
+to 50 bp and its base call qualities are Phred33 encoded.
+
+Both the bismark_genome_preparation and bismark itself will now accept reference
+genome sequence files (in FastA format) with the file extension .fasta in addition
+to .fa.
+
+
+
+RELEASE NOTES FOR Bismark v0.2.6 (18 Jan 2011)
+----------------------------------------------
+
+Fixed a bug which might occur if the alignment parameters are set very laxly.
+This only affected alignments if 10 or more non-bisulfite mismatches are 
+tolerated (Please note that we would absolutely not recommend allowing that
+many mismatches for BS-Seq!!).
+ 
+
+
+RELEASE NOTES FOR Bismark v0.2.5 (22 Dec 2010)
+----------------------------------------------
 
 Added the new option --un <filename> to Bismark which will write out all 
 reads failing to align uniquely to <filename> in the same format they were 
@@ -13,8 +46,8 @@ reported by --ambiguous will not appear in the output of --un <filename>.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.4
---------------------------------
+RELEASE NOTES FOR Bismark v0.2.4 (18 Nov 2010)
+----------------------------------------------
 
 Bismark
 
@@ -31,8 +64,8 @@ otherwise.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.3
---------------------------------
+RELEASE NOTES FOR Bismark v0.2.3 (04 Nov 2010)
+----------------------------------------------
 
 Added the new option --directional to Bismark. If the BS-Seq library was
 constructed in a strand-specific way one would expect to see only sequences
@@ -60,23 +93,23 @@ allow better readability.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.2
---------------------------------
+RELEASE NOTES FOR Bismark v0.2.2 (13 Sep 2010)
+----------------------------------------------
 
 Fixed a bug in the methylation extactor that would offset a subset of
 reverse mapped reads by a couple of bases. Positions should now be correct.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.1
---------------------------------
+RELEASE NOTES FOR Bismark v0.2.1 (08 Sep 2010)
+----------------------------------------------
 
 Bismark will now handle multi-fasta-files as intended.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.0
---------------------------------
+RELEASE NOTES FOR Bismark v0.2.0 (07 Sep 2010)
+----------------------------------------------
 
 Bismark
 
@@ -119,16 +152,16 @@ contained within the first line of the mapping result file).
 
 
 
-RELEASE NOTES FOR Bismark v0.1.5
---------------------------------
+RELEASE NOTES FOR Bismark v0.1.5 (09 Aug 2010)
+----------------------------------------------
 
 Fixed a bug where specifying "-n 0" as alignment parameter would not 
 be executed properly.
 
 
 
-RELEASE NOTES FOR Bismark v0.1.4
---------------------------------
+RELEASE NOTES FOR Bismark v0.1.4 (06 Aug 2010)
+----------------------------------------------
 
 The Bismark alignment process would previously grind to a halt when it
 encountered DNA ambiguity bases in the reference genome sequence (R,M...)
@@ -141,8 +174,8 @@ the four possible strands mixed up (fixed properly this time).
 
 
 
-RELEASE NOTES FOR Bismark v0.1.3
---------------------------------
+RELEASE NOTES FOR Bismark v0.1.3 (03 Aug 2010)
+----------------------------------------------
 
 Bismark Genome Preparation
 
@@ -184,8 +217,8 @@ entirely possible) but rather just use the calls from one read.
 
 
 
-RELEASE NOTES FOR Bismark v0.1.2
---------------------------------
+RELEASE NOTES FOR Bismark v0.1.2 (17 Jun 2010)
+----------------------------------------------
 
 The Bismark output files for single-end and paired-end reads have been
 modified so that they contain only vital information, thereby reducing 
@@ -205,8 +238,8 @@ call analysis.
 
 
 
-RELEASE NOTES FOR Bismark v0.1.1
---------------------------------
+RELEASE NOTES FOR Bismark v0.1.1 (15 Jun 2010)
+----------------------------------------------
 
 Both the Bismark genome preparation as well as Bismark itself should
 now also run with genome FASTA files that do not look like Ensembl
@@ -217,8 +250,8 @@ per file will be supported soon).
 
 
 
-RELEASE NOTES FOR Bismark v0.1
-------------------------------
+RELEASE NOTES FOR Bismark v0.1 (14 Jun 2010)
+--------------------------------------------
 
 Bismark v0.1 is an initial beta release and as such is still a
 work in progress.

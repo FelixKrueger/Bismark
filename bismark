@@ -7,7 +7,7 @@ $|++;
 use Getopt::Long;
 
 
-## This program is Copyright (C) 2010, Felix Krueger (felix.krueger@bbsrc.ac.uk)
+## This program is Copyright (C) 2010-11, Felix Krueger (felix.krueger@bbsrc.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.2.5';
+my $bismark_version = 'v0.3.0';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -855,8 +855,8 @@ sub check_bowtie_results_single_end{
   my $sequence_fails = 0;
   ### Declaring an empty hash reference which will store all information we need for the methylation call
   my $methylation_call_params; # hash reference!
-  ### sort without $a<=>$b sorts alphabetically, so 0,1,2,3... will be sorted correctly
-  foreach my $mismatch_number (sort keys %mismatches){
+  ### sorting in ascending order
+  foreach my $mismatch_number (sort {$a<=>$b} keys %mismatches){
 
     ### if there is only 1 entry in the hash with the lowest number of mismatches we accept it as the best alignment
     if (scalar keys %{$mismatches{$mismatch_number}} == 1){
@@ -1284,7 +1284,7 @@ sub check_bowtie_results_paired_ends{
   ### We are now looking if there is a unique best alignment for a certain sequence. This means we are sorting in ascending order and look at the
   ### sequence with the lowest amount of mismatches. If there is only one single best position we are going to store the alignment information in the
   ### meth_call variables, if there are multiple hits with the same amount of (lowest) mismatches we are discarding the sequence altogether
-  foreach my $mismatch_number (sort keys %mismatches){
+  foreach my $mismatch_number (sort {$a<=>$b} keys %mismatches){
     #dev print "Number of mismatches: $mismatch_number\t$identifier\t$sequence_1\t$sequence_2\n";
     foreach my $entry (keys (%{$mismatches{$mismatch_number}}) ){
       #dev print "$mismatch_number\t$entry\t$mismatches{$mismatch_number}->{$entry}->{index}\n";
@@ -1907,6 +1907,16 @@ sub read_genome_into_memory{
     print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
 
     my @chromosome_filenames =  <*.fa>;
+
+    ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+    unless (@chromosome_filenames){
+      @chromosome_filenames =  <*.fasta>;
+    }
+
+    unless (@chromosome_filenames){
+      die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
+    }
+
     foreach my $chromosome_filename (@chromosome_filenames){
 
 	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
@@ -1946,15 +1956,15 @@ sub read_genome_into_memory{
 	if (exists $chromosomes{$chromosome_name}){
 	    print "chr $chromosome_name (",length $sequence ," bp)\t";
 	    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
-	}      
+	}
 	else{
 	    if (length($sequence) == 0){
 		warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
-	    }  
+	    }
 	    print "chr $chromosome_name (",length $sequence ," bp)\n";
 	    $chromosomes{$chromosome_name} = $sequence;
-	}                
-    }    
+	}
+    }
     print "\n";
     chdir $cwd or die "Failed to move to directory $cwd\n";
 }
@@ -1992,8 +2002,8 @@ sub biTransformFastAFiles {
   while (1){
     my $header = <IN>;
     my $sequence= <IN>;
+    last unless ($header and $sequence); 
     $sequence = uc$sequence; # make input file case insensitive
-    last unless ($header and $sequence);
     ++$count;
     ## small check if the sequence seems to be in FastA format
     die "Input file doesn't seem to be in FastA format at sequence $count: $!\n" unless ($header =~ /^>.*/);
@@ -2352,11 +2362,11 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
 
 sub reset_counters_and_fhs{
   %counting=(
-	     total_meCHH_count => 0, # CHH change
-	     total_meCHG_count => 0, # CHH change
+	     total_meCHH_count => 0,
+	     total_meCHG_count => 0,
 	     total_meCpG_count => 0,
-	     total_unmethylated_CHH_count => 0, # CHH change
-	     total_unmethylated_CHG_count => 0, # CHH change
+	     total_unmethylated_CHH_count => 0,
+	     total_unmethylated_CHG_count => 0,
 	     total_unmethylated_CpG_count => 0,
 	     sequences_count => 0,
 	     no_single_alignment_found => 0,
@@ -2470,7 +2480,7 @@ sub process_command_line{
 
           Bismark - Bisulfite Mapper and Methylation Caller.
 
-   Bismark Version: $bismark_version Copyright 2010 Felix Krueger, Babraham Bioinformatics
+   Bismark Version: $bismark_version Copyright 2010-11 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.bbsrc.ac.uk/projects/
 
 
@@ -2767,9 +2777,9 @@ reads to a specified bisulfite genome. We are going to take sequence reads and t
 into a bisulfite converted forward strand (C->T conversion) or into a bisulfite treated reverse strand
 (G->A conversion of the forward strand). We then align each of these reads to bisulfite treated forward
 strand index of the mouse genome (C->T converted) and a bisulfite treated reverse strand index of the
-genome (G->A conversion on the forward strand, by doing this alignments will produce the same positions).
+genome (G->A conversion of the forward strand, by doing this alignments will produce the same positions).
 These 4 instances of bowtie will be run in parallel. We are then going to read in the sequence file again
-line by line to pull out the original sequence from the mouse genome and determine if there were any
+sequence by sequence to pull out the original sequence from the genome and determine if there were any
 protected C's present or not. We are then going to print out the methylation calls into a final result file.
 
 The final Bismark output of this script will be a single tab delimited file with all sequences that have
@@ -2784,13 +2794,14 @@ ARGUMENTS:
 <genome_folder>          The full path to the folder containing the unmodified reference genome
                          as well as the subfolders created by the Bismark_Genome_Preparation
                          script (/Bisulfite_Genome/CT_conversion/ and /Bisulfite_Genome/GA_conversion/). 
-                         Bismark expects one or more fastA files in this folder (file extension: .fa).
+                         Bismark expects one or more fastA files in this folder (file extension: .fa
+                         or .fasta).
 
 -1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
                          "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
                          correspond file-for-file and read-for-read with those specified in <mates2>.
                          Reads may be a mix of different lengths. Bismark will produce one mapping result
-                         and one report file per paired-end input file pair. 
+                         and one report file per paired-end input file pair.
 
 -2 <mates2>              Comma-separated list of files containing the #2 mates (filename usually includes
                          "_2"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
@@ -2799,7 +2810,7 @@ ARGUMENTS:
 
 <singles>                A comma-separated list of files containing the reads to be aligned (e.g. lane1.fq,
                          lane2.fq,lane3.fq). Reads may be a mix of different lengths. Bismark will produce
-                         one mapping result and one report file per input file.  
+                         one mapping result and one report file per input file.
 
 
 OPTIONS:
@@ -2838,11 +2849,13 @@ Input:
 
 Alignment:
 
--n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", which is the first 20 
-                         base pairs of the read by default (see -l/--seedlen). This may be 0, 1, 2 or 3).
+-n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", i.e. the first L base pairs
+                         of the read (where L is set with -l/--seedlen). This may be 0, 1, 2 or 3 and the 
+                         default is 2.
 
 -l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to 
-                         which the -n ceiling applies. The default is 28.
+                         which the -n ceiling applies. The default is 28. Bowtie (and thus Bismark) is faster for
+                         larger values of -l.
 
 -e/--maqerr <int>        Maximum permitted total of quality values at all mismatched read positions throughout
                          the entire alignment, not just in the "seed". The default is 70. Like Maq, bowtie rounds
@@ -2950,7 +2963,7 @@ Paired-end output format (tab-separated):
 (13) <genome conversion>
 
 
-This script was last edited on 22 Dec 2010.
+This script was last edited on 25 Jan 2011.
 
 HOW_TO
 }
