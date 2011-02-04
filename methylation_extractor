@@ -9,7 +9,7 @@ my @filenames;
 my %counting;
 
 my %fhs;
-my $version = 'v0.3.0';
+my $version = 'v0.3.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired,$no_overlap);

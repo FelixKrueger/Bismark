@@ -1,3 +1,19 @@
+RELEASE NOTES FOR Bismark v0.3.1 (04 Feb 2011)
+----------------------------------------------
+
+The option '--directional' is now also working for paired-end alignments. If 
+the BS-Seq library was generated in a strand-specific way (i.e. only the
+(bisuflite converted versions) of the top and bottom strand are being sequenced),
+best alignments to the strands complementary to either the original top or bottom
+strands will be ignored. It is recommended to use this option for directional
+paired-end libraries.
+
+Fixed a strand-identity mix-up which was printed in the mapping summary report
+of paired-end alignmnents (this only concerned the report itself, alignments as
+such or the output of the methylation extractor were not affected).
+
+
+
 RELEASE NOTES FOR Bismark v0.3.0 (26 Jan 2011)
 ----------------------------------------------
 
