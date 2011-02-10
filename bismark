@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.3.1';
+my $bismark_version = 'v0.4.1';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -1082,7 +1082,15 @@ sub check_bowtie_results_paired_ends{
   my ($sequence_1,$sequence_2,$identifier) = @_;
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence pair aligned to a bisulfite converted genome
-  foreach my $index (0..$#fhs){
+
+
+  ### for paired end reads we are reporting alignments to the OT strand first (index 0), then the OB strand (index 3!!), similiar to the single end way.
+  ### alignments to the complementary strands are reported afterwards (CTOT got index 1, and CTOB got index 2).
+  ### This is needed so that alignments which either contain no single C or G or reads which contain only protected Cs are reported to the original strands (OT and OB)
+  ### Before the complementary strands. Remember that it does not make any difference for the methylation calls, but it will matter if alignment to the complementary
+  ### strands are not being reported by specifying --directional
+
+  foreach my $index (0,3,1,2){
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
     next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and $fhs[$index]->{last_seq_id});
     ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
@@ -2977,7 +2985,7 @@ Paired-end output format (tab-separated):
 (13) <genome conversion>
 
 
-This script was last edited on 04 Feb 2011.
+This script was last edited on 10 Feb 2011.
 
 HOW_TO
 }

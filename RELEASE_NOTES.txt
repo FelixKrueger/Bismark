@@ -1,4 +1,29 @@
-RELEASE NOTES FOR Bismark v0.3.1 (04 Feb 2011)
+RELEASE NOTES FOR Bismark v0.4.1 (10 Feb 2011)
+----------------------------------------------
+
+Bismark_genome_preparation:
+
+The Bismark genome preparation will now write both bisulfite converted versions
+of the genome to one multi-FastA file (MFA) file per genome by default. This allows
+indexing of newly assembled genomes with several thousands of chromosomes (and/or
+contigs or scaffolds). Trying to index genomes with 20,000-50,000 chromosomes
+previously exceeded the operating system limit of concatenting chromosome names into
+a list. Chromosomes can still be converted and written out individually by selecting
+the option --single. 
+
+Bismark
+
+Changed the way paired-end alignments are reported internally slightly. This means
+that sequences which produce two alignments to the exact same position in different
+alignment processes will now be preferentially assigned to the original top (OT)
+and orginal bottom (OB) strands, as intended. Previously, alignments were prefer-
+entially assigned to the CTOB strand before the OB strand. This was only relevant for
+alignments for which sequences did either not contain a single C or G, or if sequences
+showed a 100% protection, i.e. methylation, of all Cs and if --directional was selected.
+
+
+
+RELEASE NOTES FOR Bismark v0.4.0 (04 Feb 2011)
 ----------------------------------------------
 
 The option '--directional' is now also working for paired-end alignments. If 

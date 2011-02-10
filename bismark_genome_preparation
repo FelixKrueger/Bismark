@@ -27,9 +27,10 @@ my $help;
 my $man;
 my $yes_to_all;
 my $path_to_bowtie;
+my $multi_fasta;
+my $single_fasta;
 
-GetOptions ('verbose' => \$verbose, 'help' => \$help,'man' => \$man,'yes_to_all' => \$yes_to_all, 'path_to_bowtie:s' => \$path_to_bowtie);
-
+GetOptions ('verbose' => \$verbose, 'help' => \$help,'man' => \$man,'yes_to_all' => \$yes_to_all, 'path_to_bowtie:s' => \$path_to_bowtie,'single_fasta' => \$single_fasta);
 
 my $genome_folder = shift @ARGV; # mandatory
 my $CT_dir;
@@ -38,6 +39,16 @@ my $GA_dir;
 if ($help or $man){
   print_helpfile();
   exit;
+}
+
+if ($single_fasta){
+  print "Writing individual genomes out into single-entry fasta files (one per chromosome)\n\n";
+  $multi_fasta = 0;
+}
+else{
+  print "Writing bisulfite genomes out into a single MFA (multi FastA) file\n\n";
+  $single_fasta = 0;
+  $multi_fasta = 1;
 }
 
 my @filenames = create_bisulfite_genome_folders();
@@ -89,7 +100,7 @@ sub launch_bowtie_indexer{
     exec ("$path_to_bowtie","-f","$file_list","BS_GA");
   }
 
-  # if the platform doesn't support the fork command we will run the indexing processes one after the other 
+  # if the platform doesn't support the fork command we will run the indexing processes one after the other
   else{
     print "Forking process was not successful, therefore performing the indexing sequentially instead\n";
     sleep(10);
@@ -126,9 +137,24 @@ sub process_sequence_files {
   $verbose and print "conversions performed:\n";
   $verbose and print join("\t",'chromosome','C->T','G->A'),"\n";
 
+
+  ### If someone wants to index a genome which consists of thousands of contig and scaffold files we need to write the genome conversions into an MFA file
+  ### Otherwise the list of comma separated chromosomes we provide for bowtie-build will get too long for the kernel to handle
+  ### This is now the default option
+
+  if ($multi_fasta){
+    ### Here we just use one multi FastA file name, append .CT_conversion or .GA_conversion and print all sequence conversions into these files
+    my $bisulfite_CT_conversion_filename = "$CT_dir/genome_mfa.CT_conversion.fa";
+    open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
+
+    my $bisulfite_GA_conversion_filename = "$GA_dir/genome_mfa.GA_conversion.fa";
+    open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
+  }
+
   foreach my $filename(@filenames){
     my ($chromosome_CT_conversions,$chromosome_GA_conversions) = (0,0);
     open (IN,$filename) or die "Failed to read from sequence file $filename $!\n";
+    # warn "Reading chromosome information from $filename\n\n";
 
     ### first line needs to be a fastA header
     my $first_line = <IN>;
@@ -137,17 +163,20 @@ sub process_sequence_files {
     ### Extracting chromosome name from the FastA header
     my $chromosome_name = extract_chromosome_name($first_line);
 
-    my $bisulfite_CT_conversion_filename = "$CT_dir/$chromosome_name";
-    $bisulfite_CT_conversion_filename =~ s/$/.CT_conversion.fa/;
-    # $verbose and warn "Writing output to file $bisulfite_CT_conversion_filename\n";
-    open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
-    print CT_CONVERT ">",$chromosome_name,"_CT_converted\n";
+    ### alternatively, chromosomes can be written out into single-entry FastA files. This will only work for genomes with up to a few hundred chromosomes.
+    unless ($multi_fasta){
+      my $bisulfite_CT_conversion_filename = "$CT_dir/$chromosome_name";
+      $bisulfite_CT_conversion_filename =~ s/$/.CT_conversion.fa/;
+      open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
 
-    my $bisulfite_GA_conversion_filename = "$GA_dir/$chromosome_name";
-    $bisulfite_GA_conversion_filename =~ s/$/.GA_conversion.fa/;
-    # $verbose and warn "Writing output to file $bisulfite_GA_conversion_filename\n";
-    open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
-    print GA_CONVERT ">",$chromosome_name,"_GA_converted\n";
+      my $bisulfite_GA_conversion_filename = "$GA_dir/$chromosome_name";
+      $bisulfite_GA_conversion_filename =~ s/$/.GA_conversion.fa/;
+      open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
+    }
+
+    print CT_CONVERT ">",$chromosome_name,"_CT_converted\n"; # first entry
+    print GA_CONVERT ">",$chromosome_name,"_GA_converted\n"; # first entry
+
 
     while (<IN>){
 
@@ -157,20 +186,22 @@ sub process_sequence_files {
 	$verbose and print join ("\t",$chromosome_name,$chromosome_CT_conversions,$chromosome_GA_conversions),"\n";
 	### resetting the chromosome transliteration counters
 	($chromosome_CT_conversions,$chromosome_GA_conversions) = (0,0);
-
+	
 	### Extracting chromosome name from the additional FastA header
 	$chromosome_name = extract_chromosome_name($_);
 
-	my $bisulfite_CT_conversion_filename = "$CT_dir/$chromosome_name";
-	$bisulfite_CT_conversion_filename =~ s/$/.CT_conversion.fa/;
-	# $verbose and warn "Writing output to file $bisulfite_CT_conversion_filename\n";
-	open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
-	print CT_CONVERT ">",$chromosome_name,"_CT_converted\n";
+	### alternatively, chromosomes can be written out into single-entry FastA files. This will only work for genomes with up to a few hundred chromosomes.
+	unless ($multi_fasta){
+	  my $bisulfite_CT_conversion_filename = "$CT_dir/$chromosome_name";
+	  $bisulfite_CT_conversion_filename =~ s/$/.CT_conversion.fa/;
+	  open (CT_CONVERT,'>',$bisulfite_CT_conversion_filename) or die "Can't write to file $bisulfite_CT_conversion_filename: $!\n";
 	
-	my $bisulfite_GA_conversion_filename = "$GA_dir/$chromosome_name";
-	$bisulfite_GA_conversion_filename =~ s/$/.GA_conversion.fa/;
-	# $verbose and warn "Writing output to file $bisulfite_GA_conversion_filename\n";
-	open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
+	  my $bisulfite_GA_conversion_filename = "$GA_dir/$chromosome_name";
+	  $bisulfite_GA_conversion_filename =~ s/$/.GA_conversion.fa/;
+	  open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
+	}
+
+	print CT_CONVERT ">",$chromosome_name,"_CT_converted\n";
 	print GA_CONVERT ">",$chromosome_name,"_GA_converted\n";
       }
 
@@ -178,37 +209,35 @@ sub process_sequence_files {
 	my $sequence = uc$_;
 
 	### (I) First replacing all ambiguous sequence characters (such as M,S,R....) by N (G,A,T,C,N and the line endings \r and \n are added to a character group)
-
+	
 	$sequence =~ s/[^ATCGN\n\r]/N/g;
-
+	
 	### (II) Writing the chromosome out into a C->T converted version (equals forward strand conversion)
-
+	
 	my $CT_sequence = $sequence;
 	my $CT_transliterations_performed = ($CT_sequence =~ tr/C/T/); # converts all Cs into Ts
 	$total_CT_conversions += $CT_transliterations_performed;
 	$chromosome_CT_conversions += $CT_transliterations_performed;
 	
 	print CT_CONVERT $CT_sequence;
-
+	
 	### (III) Writing the chromosome out in a G->A converted version of the forward strand (this is equivalent to reverse-
 	### complementing the forward strand and then C->T converting it)
-
+	
 	my $GA_sequence = $sequence;
 	my $GA_transliterations_performed = ($GA_sequence =~ tr/G/A/); # converts all Gs to As on the forward strand
 	$total_GA_conversions += $GA_transliterations_performed;
 	$chromosome_GA_conversions += $GA_transliterations_performed;
 	
 	print GA_CONVERT $GA_sequence;
-
+	
       }
-
     }
-
-    close (CT_CONVERT) or die "Failed to close filehandle: $!\n";
-    close (GA_CONVERT) or die "Failed to close filehandle: $!\n";
     $verbose and print join ("\t",$chromosome_name,$chromosome_CT_conversions,$chromosome_GA_conversions),"\n";
-
   }
+  close (CT_CONVERT) or die "Failed to close filehandle: $!\n";
+  close (GA_CONVERT) or die "Failed to close filehandle: $!\n";
+
 
   print "\nTotal number of conversions performed:\n";
   print "C->T:\t$total_CT_conversions\n";
@@ -290,7 +319,7 @@ sub create_bisulfite_genome_folders{
     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
   }
 
-  print "Bisulfite Genome Indexer version 0.3.1 (last modified 24 Jan 2011)\n\n ";
+  print "Bisulfite Genome Indexer version 0.4.1 (last modified 10 Feb 2011)\n\n ";
   sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -370,15 +399,26 @@ USAGE: bismark_genome_preparation [options] <arguments>
 
 OPTIONS:
 
-[--help/--man]           Displays this help file.
+--help/--man             Displays this help file.
 
-[--verbose]              Print verbose output for more details or debugging.
+--verbose                Print verbose output for more details or debugging.
 
-[--yes/--yes_to_all]     Answer yes to safety related questions (such as "Are you sure you
+--yes/--yes_to_all       Answer yes to safety related questions (such as "Are you sure you
                          want to overwrite any existing folder called Bisulfite_Genomes?").
 
-[--path_to_bowtie]       The full path to the bowtie installation on your system. If the path 
+--path_to_bowtie         The full path to the bowtie installation on your system. If the path 
 </../../>                is not provided as an option you will be prompted for it later.
+
+
+--single_fasta           Instruct the Bowtie Indexer to write the converted genomes into
+                         single-entry FastA files instead of making one multi-FastA file (MFA)
+                         per chromosome. This might be useful if individual bisulfite converted
+                         chromosomes are needed (e.g. for debugging), however it can cause a
+                         problem with indexing if the number of chromosomes is vast (this is likely
+                         to be in the range of several thousand files; the operating system can
+                         only handle lists up to a certain length, and some newly assembled
+                         genomes may contain 20000-50000 contig of scaffold files which do exceed
+                         this list length limit).
 
 
 ARGUMENTS:
@@ -390,7 +430,6 @@ ARGUMENTS:
 
 
 
-This script was last edited on 24 Jan 2011.
-
+This script was last edited on 08 Feb 2011.
 HOW_TO
 }
