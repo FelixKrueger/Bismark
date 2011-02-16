@@ -290,6 +290,7 @@ sub process_single_end_fastQ_file{
     my $quality_value = <IN>;
 
     last unless ($identifier and $sequence and $identifier_2 and $quality_value);
+    #  last if ($counting{sequences_count} == 10);
 
     $counting{sequences_count}++;
     if ($counting{sequences_count}%1000000==0) {
@@ -478,7 +479,7 @@ sub print_final_analysis_report_single_end{
     print "\n";
   }
   else{
-    print "\t(if this number is very high you might want to consider if you need to specify --dissimilar)\n";
+    print "\t(if this number is very high you might want to consider specifying --dissimilar)\n";
   }
 
   print "Sequences did not map uniquely (3+ alignments) and were thus discarded:\t$counting{ambiguous_mapping_count}\n\n";
@@ -506,7 +507,6 @@ sub print_final_analysis_report_single_end{
 sub check_bowtie_results_single_end{
 
   my ($sequence,$identifier) = @_;
-
   my %mismatches = ();
 
   ### reading from the bowtie output filehandle to see if this sequence aligned to one of the two genomes
@@ -524,8 +524,9 @@ sub check_bowtie_results_single_end{
 
       ### extract some useful information from the Bowtie output
       chomp $fhs[$index]->{last_line};
-      my ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,7];
-      chomp $mismatch_info;
+
+      my ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line},-1))[0,1,2,3,4,7];
+
       ### Now extracting the number of mismatches
       my $number_of_mismatches;
       if ($mismatch_info eq ''){
@@ -536,7 +537,7 @@ sub check_bowtie_results_single_end{
 	$number_of_mismatches = scalar @mismatches;
       }
       else{
-	die "Something weird is going on with the mismatch field\n";
+	die "Something weird is going on with the mismatch field:\t>>> $mismatch_info  <<<\n";
       }
 
       ### creating a composite location variable from $mapped_chromosome, $position and $index and storing the alignment information in a temporary hash table
@@ -571,7 +572,7 @@ sub check_bowtie_results_single_end{
 
       ### reading the second reported alignment for a sequence. Resetting the variables to ensure they are fresh
       $id = $strand = $mapped_chromosome = $position = $bowtie_sequence = $mismatch_info = undef;
-      ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,7];
+      ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line},-1))[0,1,2,3,4,7];
 
       ### Now extracting the number of mismatches
       $number_of_mismatches = undef;
@@ -653,7 +654,7 @@ sub check_bowtie_results_single_end{
 
 	if ($dissimilar){
 
-	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line}))[0,1,2,3,4,7];
+	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
 	
 	  $start += 1; # bowtie alignments are 0 based
 	  my $end = $start+length($sequence);
@@ -802,7 +803,7 @@ sub check_bowtie_results_single_end{
 	### and print this sequence as well as its mismatch information to the output file (DEFAULT)
 
 	else{
-	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line}))[0,1,2,3,4,7];
+	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
 	  $start += 1; # bowtie alignments are 0 based
 	  my $end = $start+length($sequence);
 
@@ -812,39 +813,48 @@ sub check_bowtie_results_single_end{
 	  my $mismatch_info_2;
 	
 	  if ( length($genome_1{$chr}) >= $end){
-	    $genome_1_sequence  = substr($genome_1{$chr},$start,length$sequence);
+	    $genome_1_sequence  = substr($genome_1{$chr},$start-1,length$sequence); # for the substring we need to subtract 1 again
 	  }
 	  else{
 	    ++$counting{unable_to_extract_genomic_sequence_count};
-	    return;	
+	    warn "Unable to extract genomic sequence for $id chr: $chr, $start-$end\n";
+	    return 1; # can print this to unmapped if desired
 	  }
 	
 	  if ( length($genome_2{$chr}) >= $end){
-	    $genome_2_sequence = substr($genome_2{$chr},$start,length$sequence);
+	    $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence); # for the substring we need to subtract 1 again
 	  }
 	  else{
 	    ++$counting{unable_to_extract_genomic_sequence_count};
-	    return;	
+	    warn "Unable to extract genomic sequence for $id chr: $chr, $start-$end\n";
+	    return 1; # can print this to unmapped if desired	
 	  }
 	
 	  ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
 	  if ($strand eq '-'){
-	    $genome_1_sequence = reverse_complement($genome_1_sequence); ### Hmm, then the mismatch information will be off though!
+	    $genome_1_sequence = reverse_complement($genome_1_sequence);
 	    $genome_2_sequence = reverse_complement($genome_2_sequence);
+	    ### Hmm, then the mismatch information will be off though!
+	
+	    ######################
+	    #######################
+	    ################### adjust mismatch field
 	  }
-
+	
 	  # read aligned uniquely best to genome 1
 	  if ($index == 0){
-	    my $mismatch_info_1 = $mismatch_info;
-	    my $mismatch_info_2 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
+	    $counting{genome_1_specific_count}++;
+	    $mismatch_info_1 = $mismatch_info;
+	    $mismatch_info_2 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
 	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 
 	  # read aligned uniquely best to genome 2
 	  elsif ($index == 1){
-	    my $mismatch_info_1 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
-	    my $mismatch_info_2 = $mismatch_info;
+	    $counting{genome_2_specific_count}++;
+	    $mismatch_info_1 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
+	    $mismatch_info_2 = $mismatch_info;
 	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
@@ -858,6 +868,7 @@ sub check_bowtie_results_single_end{
     }
 
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 2){
+
       ### here we have to discriminate a few different cases:
       ### (a) both sequence alignments come from the same genome (= $index) => thus the sequence can't be mapped uniquely and needs to be discarded
       ### (b) the sequence aligns equally well to the two genomes, but to different locations: the sequence will be discarded
@@ -884,14 +895,14 @@ sub check_bowtie_results_single_end{
 
       if ($index_1 == $index_2){
 	### this is (a), read is not uniquely mappable
-	#	$sequence_fails = 1;
-	# ???	$counting{unsuitable_sequence_count}++;
+	++$counting{unsuitable_sequence_count};
+	++$counting{ambiguous_mapping_count};
 	return 1; # => exits to next sequence and prints it to unmapped.out if --un was specified
       }
+
       elsif ($chr_1 ne $chr_2 or $pos_1 != $pos_2){
-	### this is (b), read will be chucked#
-	#	$sequence_fails = 1;
-	# ???  $counting{unsuitable_sequence_count}++;
+	### this is (b), read will be chucked
+	$counting{unsuitable_sequence_count}++;
 	return 1; # => exits to next sequence and prints it to unmapped.out if --un was specified
       }
 
@@ -904,19 +915,26 @@ sub check_bowtie_results_single_end{
 
 	### this is (c), we will print the read out to OUT_MIXED
 
-	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$alignment_1))[0,1,2,3,4,7];
-	my $end = $start+length($sequence)-1;
+	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$alignment_1),-1)[0,1,2,3,4,7];
+	$start += 1;
+	my $end = $start+length($sequence);
 	
-	my $genome_1_sequence = substr($genome_1{$chr},$start,length$sequence);
-	my $genome_2_sequence = substr($genome_2{$chr},$start,length$sequence);
-	
+	my $genome_1_sequence = substr($genome_1{$chr},$start-1,length$sequence);
+	my $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence);
+	my $mismatch_info_1 = '';
+	my $mismatch_info_2 = '';
 	### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
 	if ($strand eq '-'){
 	  $genome_1_sequence = reverse_complement($genome_1_sequence);
 	  $genome_2_sequence = reverse_complement($genome_2_sequence);
+	  ### need to reverse the mismatch string here!!!!
+	  ########################
+	  ######################
+	  ########################
 	}	
-	#	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismtach_info_2),"\n";
-	print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info,$genome_2_sequence),"\n";
+
+	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	#	print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
       }
       else{
 	die "Unexpected chr/pos/index combination \n\n";
@@ -940,6 +958,12 @@ sub check_bowtie_results_single_end{
   }
 
   return 0; # sequence will not get printed to unmapped.out (1 would have been returned at a previous point already)
+
+}
+
+sub get_reverse_strand_mismatch_call{
+  my $old_mm_call = shift;
+
 
 }
 

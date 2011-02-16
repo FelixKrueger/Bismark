@@ -11,6 +11,8 @@ my $total_genome_length = 0; ## we need this later to generate random sequences
 
 my %chromosomes;
 my %seqs;
+my %seqs_colourspace;
+
 my @DNA_bases = ('A','T','C','G');
 
 my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace) = process_command_line();
@@ -24,7 +26,7 @@ sub run_sequence_generation{
   warn "sequence length:\t$sequence_length bp\n";
   warn "number of sequences being generated:\t$number_of_sequences\n";
   if ($colourspace){
-    warn "Sequences will be written out as both base-space and colour-space FastQ files\n";
+    warn "Sequences will be written out as both base space and colour space FastQ files\n";
   }
   warn "\n";
 
@@ -81,15 +83,19 @@ sub run_sequence_generation{
     introduce_adapter_dimers();
   }
 
-  generate_quality_values ();
-
   if ($number_of_SNPs > 0){
     introduce_SNPs();
   }
 
+  if ($colourspace){
+    transform_reads_to_colourspace();
+  }
+
+  generate_quality_values ();
+
   ### we won't introduce any additional erros if a specific number of SNPs has been specified or the error rate was set to 0%
   if ($error_rate == 0){
-    warn "No further sequencing errors will be intorduced as the error rate was set to $error_rate%\n\n";
+    warn "No further sequencing errors will be introduced as the error rate was set to $error_rate%\n\n";
   }
   elsif ($number_of_SNPs > 0){
     warn "To gauge the influence of $number_of_SNPs SNPs per sequence on the alignmentment results no additional sequencing errors will be introduced\n\n";
@@ -98,11 +104,26 @@ sub run_sequence_generation{
     introduce_sequencing_errors();
   }
 
-  print_sequences_out ();
+  print_sequences_out_basespace ();
 
+  if ($colourspace){
+    print_sequences_out_colourspace ();
+  }
 }
 
-
+sub transform_reads_to_colourspace{
+  warn "="x117,"\n";
+  warn "Now converting all sequences into colour space\n";
+  my $count  = 0;
+  foreach my $entry (keys %seqs){
+    ++$count;
+    my $seq = $seqs{$entry}->{sequence};
+    my $cs_seq = convert_basespace_to_colourspace($seq);
+    $seqs_colourspace{$entry}->{sequence} = $cs_seq;
+  }
+  warn "Successfully converted $count sequences into colour space\n";
+  warn "="x117,"\n\n";
+}
 
 
 sub introduce_adapter_dimers{
@@ -281,9 +302,9 @@ sub gaussian_rand {
 
 
 
-sub print_sequences_out{
+sub print_sequences_out_basespace{
   warn "="x117,"\n";
-  warn "Printing sequences out\n";
+  warn "Printing sequences out in base space\n";
   open (FASTQ,'>','simulated.fastq') or die $!;
   foreach my $entry (sort {$a<=>$b} keys %seqs){
     print FASTQ "@",$entry,"\n";
@@ -291,11 +312,24 @@ sub print_sequences_out{
     print FASTQ "+",$entry,"\n";
     print FASTQ "$seqs{$entry}->{qual}\n";
   }
-  warn "Printing out sequences completed\n";
+  warn "Printing out sequences in base space completed\n";
   close FASTQ or die "Unable to close filehandle: $!";
   warn "="x117,"\n\n";
 }
-
+sub print_sequences_out_colourspace{
+  warn "="x117,"\n";
+  warn "Printing sequences out in colour space\n";
+  open (COLOUR,'>','simulated_cs.fastq') or die $!;
+  foreach my $entry (sort {$a<=>$b} keys %seqs_colourspace){
+    print COLOUR "@",$entry,"\n";
+    print COLOUR "$seqs_colourspace{$entry}->{sequence}\n";
+    print COLOUR "+",$entry,"\n";
+    print COLOUR "$seqs_colourspace{$entry}->{qual}\n";
+  }
+  warn "Printing out sequences in colour space completed\n";
+  close COLOUR or die "Unable to close filehandle: $!";
+  warn "="x117,"\n\n";
+}
 
 
 
@@ -515,13 +549,21 @@ sub generate_quality_values{
       foreach (1..$length){
 	push @quals,$quality;
       }	
-    }
+      my $no_error_quality = join ("",@quals);
+      $seqs{$entry}->{qual} = $no_error_quality;
+      if ($colourspace){
+	$seqs_colourspace{$entry}->{qual} = $no_error_quality;
+      }
+   }
 
     ### Otherwise we will assume that the base call quality deteriorates over time. We will apply an exponential decay formula to the standard quality value $quality
     ### which is 40 by default or can be altered by the user
 
     else{
       $seqs{$entry}->{qual} = $error_quality;
+      if ($colourspace){
+	$seqs_colourspace{$entry}->{qual} = $error_quality;
+      }
     }
   }
 
@@ -709,8 +751,6 @@ sub generate_random_sequences {
     }
     my $seq = join ("",@seq);
 
-    my $cs_seq = convert_basespace_to_colourspace($seq);
-
     ++$count;
     $seqs{$count}->{sequence} = $seq;
   }
@@ -809,6 +849,97 @@ sub reverse_complement{
   my $rev_sequence = reverse($sequence);
   return $rev_sequence;
 }
+
+
+sub convert_basespace_to_colourspace{
+  my $seq = shift;
+  my @seq = split (//,$seq);
+
+  my @cspace;
+
+  my $first_base;
+  my $second_base;
+
+  foreach my $index (0..$#seq){
+
+    if ($index == 0) {
+      push @cspace, $seq[$index];
+      $first_base = $seq[$index];
+      next;
+    }
+
+    # from base 2 onwards
+    $second_base = $seq[$index];
+
+    if ($first_base eq 'A'){
+      if ($second_base eq 'A'){
+	push @cspace, 0;
+      }
+      if ($second_base eq 'C'){	
+	push @cspace, 1;
+      }
+      if ($second_base eq 'G'){
+	push @cspace, 2;
+      }
+      if ($second_base eq 'T'){
+	push @cspace, 3;
+      }
+    }
+
+    if ($first_base eq 'C'){
+      if ($second_base eq 'A'){
+	push @cspace, 1;
+      }
+      if ($second_base eq 'C'){	
+	push @cspace, 0;
+      }
+      if ($second_base eq 'G'){
+	push @cspace, 3;
+      }
+      if ($second_base eq 'T'){
+	push @cspace, 2;
+      }
+    }
+
+    if ($first_base eq 'G'){
+      if ($second_base eq 'A'){
+	push @cspace, 2;
+      }
+      if ($second_base eq 'C'){	
+	push @cspace, 3;
+      }
+      if ($second_base eq 'G'){
+	push @cspace, 0;
+      }
+      if ($second_base eq 'T'){
+	push @cspace, 1;
+      }
+    }
+
+    if ($first_base eq 'T'){
+      if ($second_base eq 'A'){
+	push @cspace, 3;
+      }
+      if ($second_base eq 'C'){	
+	push @cspace, 2;
+      }
+      if ($second_base eq 'G'){
+	push @cspace, 1;
+      }
+      if ($second_base eq 'T'){
+	push @cspace, 0;
+      }
+    }
+
+    $first_base = $second_base;
+
+  }
+  my $cspace_read = join ("",@cspace);
+  # warn "$seq\n$cspace_read\n\n";
+  return $cspace_read;
+}
+
+
 
 sub process_command_line{
   my $help;
@@ -1030,94 +1161,4 @@ BASIC ATTRIBUTES:
                                   colourspace takes place before any quality values or errors are introduced.
 
 HELP
-}
-
-
-sub convert_basespace_to_colourspace{
-  my $seq = shift;
-  my @seq = split (//,$seq);
-  print "length of \@seq is: ",scalar @seq,"\n";
-
-  my @cspace;
-
-  my $first_base;
-  my $second_base;
-
-  foreach my $index (0..$#seq){
-
-    if ($index == 0) {
-      push @cspace, $seq[$index];
-      $first_base = $seq[$index];
-      next;
-    }
-
-    # from base 2 onwards
-    $second_base = $seq[$index];
-
-    if ($first_base eq 'A'){
-      if ($second_base eq 'A'){
-	push @cspace, 0;
-      }
-      if ($second_base eq 'C'){	
-	push @cspace, 1;
-      }
-      if ($second_base eq 'G'){
-	push @cspace, 2;
-      }
-      if ($second_base eq 'T'){
-	push @cspace, 3;
-      }
-    }
-
-    if ($first_base eq 'C'){
-      if ($second_base eq 'A'){
-	push @cspace, 1;
-      }
-      if ($second_base eq 'C'){	
-	push @cspace, 0;
-      }
-      if ($second_base eq 'G'){
-	push @cspace, 3;
-      }
-      if ($second_base eq 'T'){
-	push @cspace, 2;
-      }
-    }
-
-    if ($first_base eq 'G'){
-      if ($second_base eq 'A'){
-	push @cspace, 2;
-      }
-      if ($second_base eq 'C'){	
-	push @cspace, 3;
-      }
-      if ($second_base eq 'G'){
-	push @cspace, 0;
-      }
-      if ($second_base eq 'T'){
-	push @cspace, 1;
-      }
-    }
-
-    if ($first_base eq 'T'){
-      if ($second_base eq 'A'){
-	push @cspace, 3;
-      }
-      if ($second_base eq 'C'){	
-	push @cspace, 2;
-      }
-      if ($second_base eq 'G'){
-	push @cspace, 1;
-      }
-      if ($second_base eq 'T'){
-	push @cspace, 0;
-      }
-    }
-
-    $first_base = $second_base;
-
-  }
-  my $cspace_read = join ("",@cspace);
-  warn "$seq\n$cspace_read\n\n";
-  return $cspace_read;
 }
