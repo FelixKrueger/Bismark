@@ -6,7 +6,6 @@ $|++;
 use Getopt::Long;
 
 my $parent_dir = getcwd;
-my $genome_folder = '/data/public/Genomes/Mouse/NCBIM37/';
 my $total_genome_length = 0; ## we need this later to generate random sequences
 
 my %chromosomes;
@@ -15,7 +14,7 @@ my %seqs_colourspace;
 
 my @DNA_bases = ('A','T','C','G');
 
-my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace) = process_command_line();
+my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder) = process_command_line();
 
 run_sequence_generation ();
 
@@ -66,7 +65,7 @@ sub run_sequence_generation{
     generate_random_sequences ();
   }
   else{
-    generate_mouse_sequences (); # DEFAULT
+    generate_genomic_sequences (); # DEFAULT
   }
 
   bisulfite_transform_sequences ();
@@ -87,21 +86,25 @@ sub run_sequence_generation{
     introduce_SNPs();
   }
 
+  generate_quality_values ();
+
   if ($colourspace){
     transform_reads_to_colourspace();
   }
 
-  generate_quality_values ();
-
   ### we won't introduce any additional erros if a specific number of SNPs has been specified or the error rate was set to 0%
-  if ($error_rate == 0){
-    warn "No further sequencing errors will be introduced as the error rate was set to $error_rate%\n\n";
-  }
-  elsif ($number_of_SNPs > 0){
+
+  if ($number_of_SNPs > 0){
     warn "To gauge the influence of $number_of_SNPs SNPs per sequence on the alignmentment results no additional sequencing errors will be introduced\n\n";
+  }
+  elsif($error_rate == 0){
+    warn "No further sequencing errors will be introduced as the error rate was set to $error_rate%\n\n";
   }
   else{
     introduce_sequencing_errors();
+    if ($colourspace){
+      introduce_sequencing_errors_colourspace ();
+    }
   }
 
   print_sequences_out_basespace ();
@@ -119,7 +122,10 @@ sub transform_reads_to_colourspace{
     ++$count;
     my $seq = $seqs{$entry}->{sequence};
     my $cs_seq = convert_basespace_to_colourspace($seq);
+    my $qual = $seqs{$entry}->{qual};
+
     $seqs_colourspace{$entry}->{sequence} = $cs_seq;
+    $seqs_colourspace{$entry}->{qual} = $qual;
   }
   warn "Successfully converted $count sequences into colour space\n";
   warn "="x117,"\n\n";
@@ -259,6 +265,9 @@ sub introduce_variable_length_adapter_contamination{
 
       ### replacing the last bases of the sequence with the substitution sequence
       substr($seq,-$sub_length,$sub_length,$sub_sequence);
+      if (length$seq < $sequence_length){
+	warn "The sequence is now only  ",length($seq)," bp long! $seq\n";
+      }
 
       ### replacing the old sequence with the new and modified sequence
       $seqs{$entry}->{sequence} = $seq;
@@ -304,7 +313,7 @@ sub gaussian_rand {
 
 sub print_sequences_out_basespace{
   warn "="x117,"\n";
-  warn "Printing sequences out in base space\n";
+  warn "Printing sequences in base space out to file\n>>> simulated.fastq <<<\n";
   open (FASTQ,'>','simulated.fastq') or die $!;
   foreach my $entry (sort {$a<=>$b} keys %seqs){
     print FASTQ "@",$entry,"\n";
@@ -316,9 +325,12 @@ sub print_sequences_out_basespace{
   close FASTQ or die "Unable to close filehandle: $!";
   warn "="x117,"\n\n";
 }
+
+
+
 sub print_sequences_out_colourspace{
   warn "="x117,"\n";
-  warn "Printing sequences out in colour space\n";
+  warn "Printing sequences in colour space out to file\n>>> simulated_cs.fastq <<<\n";
   open (COLOUR,'>','simulated_cs.fastq') or die $!;
   foreach my $entry (sort {$a<=>$b} keys %seqs_colourspace){
     print COLOUR "@",$entry,"\n";
@@ -495,6 +507,92 @@ sub introduce_sequencing_errors{
 
 
 
+sub introduce_sequencing_errors_colourspace{
+  warn "="x117,"\n";
+  warn "Now starting to introduce sequencing errors into the colour space data according to the error rate encoded by each base's Phred score\n";
+  my @colourspace_transitions = qw(0 1 2 3);
+
+  my $total_base_count = 0;
+  my $total_errors_introduced = 0;
+  my $count = 0;
+
+  foreach my $entry (keys %seqs_colourspace){
+    ++$count;
+
+    my @bases = split (//,$seqs_colourspace{$entry}->{sequence});
+    my @quals = split (//,$seqs_colourspace{$entry}->{qual});
+
+    foreach my $index (0..$#quals){
+      ++$total_base_count;
+      my $phred_score = convert_quality_string_into_phred_score ($quals[$index]);
+      my $error_rate = convert_phred_score_into_error_probability ($phred_score);
+
+      my $random  = int(rand(10000)+1);
+      $random /= 10000;
+
+      if ($random < $error_rate){
+
+	$random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @colourspace_transitions array
+
+	### in the special case that the index is 0 and we need to introduce a sequencing error we need to flip a base and not a colourspace transition
+	if ($index == 0){
+	  if ($bases[$index] eq 'A'){
+	    $random += 0;
+	  }
+	  elsif ($bases[$index] eq 'T'){
+	    $random += 1;
+	  }
+	  elsif ($bases[$index] eq 'C'){
+	    $random += 2;
+	  }
+	  elsif ($bases[$index] eq 'G'){
+	    $random += 3;
+	  }
+	  else{
+	    die "Starting base was $bases[$index]\n";
+	  }
+	  $random %= 4;
+	  # warn "replacing $bases[$index] with $DNA_bases[$random]\n";
+	  $bases[$index] = $DNA_bases[$random];
+
+	  ++$total_errors_introduced;
+	}
+	### in all other cases we introduce a single colourspace transition error
+	else{
+	  if ($bases[$index] eq '0'){
+	    $random += 0;
+	  }
+	  elsif ($bases[$index] eq '1'){
+	    $random += 1;
+	  }
+	  elsif ($bases[$index] eq '2'){
+	    $random += 2;
+	  }
+	  elsif ($bases[$index] eq '3'){
+	    $random += 3;
+	  }
+	  else{
+	    die "base transition was $bases[$index]\n";
+	  }
+	  $random %= 4;
+	  #  warn "replacing $bases[$index] with $colourspace_transitions[$random]\n";
+	  $bases[$index] = $colourspace_transitions[$random];
+
+	  ++$total_errors_introduced;
+
+	}
+      }
+    }
+    my $substituted_sequence = join ("",@bases);
+    # print "$seqs_colourspace{$entry}->{sequence}\n$substituted_sequence\n$seqs_colourspace{$entry}->{qual}\n\n";
+    $seqs_colourspace{$entry}->{sequence} = $substituted_sequence;
+  }
+
+  my $percentage = sprintf ("%.2f",($total_errors_introduced/$total_base_count*100));
+  warn "Sequences analysed in total:\t$count\nbp analysed in total:\t$total_base_count\nRandom transition errors introduced into colour space data in total:\t$total_errors_introduced (percentage: $percentage)\n";
+  warn "="x117,"\n\n";
+}
+
 
 sub generate_quality_values{
   warn "="x117,"\n";
@@ -549,21 +647,20 @@ sub generate_quality_values{
       foreach (1..$length){
 	push @quals,$quality;
       }	
+
+      foreach my $qual(@quals){
+	$qual = convert_phred_score_into_quality_string($qual);
+      }
+
       my $no_error_quality = join ("",@quals);
       $seqs{$entry}->{qual} = $no_error_quality;
-      if ($colourspace){
-	$seqs_colourspace{$entry}->{qual} = $no_error_quality;
-      }
-   }
+    }
 
     ### Otherwise we will assume that the base call quality deteriorates over time. We will apply an exponential decay formula to the standard quality value $quality
     ### which is 40 by default or can be altered by the user
 
     else{
       $seqs{$entry}->{qual} = $error_quality;
-      if ($colourspace){
-	$seqs_colourspace{$entry}->{qual} = $error_quality;
-      }
     }
   }
 
@@ -575,7 +672,7 @@ sub determine_slope_of_the_error_rate_curve{
   my $user_specified_error_rate = $error_rate/100;
 
   my $lower_limit = 1;  ## we start at 1 because this is a very flat curve
-  my $upper_limit = 1000; ## this is a curve with an extremely sharp drop
+  my $upper_limit = 1000000; ## this is a curve with an extremely sharp drop
   my $old_lower_limit = $lower_limit;
   my $old_upper_limit = $upper_limit;
 
@@ -584,19 +681,19 @@ sub determine_slope_of_the_error_rate_curve{
 
   while(1){
     $count++;
-    # print "iteration $count\n";
-    # print "\nnew lower limit:\t$lower_limit\n";
-    # print "new upper limit:\t$upper_limit\n\n";
+    #  print "iteration $count\n";
+    #  print "\nnew lower limit:\t$lower_limit\n";
+    #  print "new upper limit:\t$upper_limit\n\n";
 
     # determining mean error rate for lower limit
     $var = $lower_limit;
     my $error_rate_lower_limit = get_mean_error_rate($var);
-    # warn "The mean error per basepair for the lower limit was:\t$error_rate_lower_limit\tfor \$var:\t$var\n";
+    #  warn "The mean error per basepair for the lower limit was:\t$error_rate_lower_limit\tfor \$var:\t$var\n";
 
     # determining mean error rate for upper limit
     $var = $upper_limit;
     my $error_rate_upper_limit = get_mean_error_rate($var);;
-    # warn "The mean error per basepair for the upper limit was:\t$error_rate_upper_limit\tfor \$var:\t$var\n";
+    #  warn "The mean error per basepair for the upper limit was:\t$error_rate_upper_limit\tfor \$var:\t$var\n";
 
     # determining mean error rate for the half distance
 
@@ -635,6 +732,7 @@ sub determine_slope_of_the_error_rate_curve{
   return $var;
 }
 
+
 sub get_mean_error_rate{
   my $var = shift;
   #  print "using $var to calculate error rates\n";
@@ -666,17 +764,23 @@ sub get_mean_error_rate{
   return $mean_error_rate;
 }
 
+
+
 sub convert_phred_score_into_quality_string{
   my $qual = shift;
   $qual = chr($qual+33);
   return $qual;
 }
 
+
+
 sub convert_quality_string_into_phred_score{
   my $string = shift;
   my $qual = ord($string)-33;
   return $qual;
 }
+
+
 
 sub convert_phred_score_into_error_probability{
   my $qual = shift;
@@ -685,7 +789,8 @@ sub convert_phred_score_into_error_probability{
 }
 
 
-sub generate_mouse_sequences {
+
+sub generate_genomic_sequences {
   warn "="x117,"\n";
   read_genome_into_memory ();
   warn "Total length of the genome is $total_genome_length bp\n";
@@ -699,7 +804,7 @@ sub generate_mouse_sequences {
   my $minus = 0;
 
   until ($count == $number_of_sequences){
-    my $random = int(rand($total_genome_length))+1;
+    my $random = int(rand($total_genome_length)+1);
 
     my $chromosome_length = 0;
     foreach my $chr (sort keys %chromosomes){
@@ -732,6 +837,8 @@ sub generate_mouse_sequences {
   warn "Sequences were successfully generated (+ strand: $plus\t - strand: $minus)\n";
   warn "="x117,"\n\n";
 }
+
+
 
 sub generate_random_sequences {
   warn "="x117,"\n";
@@ -831,6 +938,8 @@ sub read_genome_into_memory{
   chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
 }
 
+
+
 sub extract_chromosome_name {
   ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
   my $fasta_header = shift;
@@ -843,12 +952,15 @@ sub extract_chromosome_name {
   }
 }
 
+
+
 sub reverse_complement{
   my $sequence = shift;
   $sequence =~ tr/CATG/GTAC/;
   my $rev_sequence = reverse($sequence);
   return $rev_sequence;
 }
+
 
 
 sub convert_basespace_to_colourspace{
@@ -948,7 +1060,7 @@ sub process_command_line{
   my $snps;
   my $error_rate;
   my $random;
-
+  my $genome_folder;
   my $fixed_length_adapter; ### replaces <int> bp at the end of each sequence
   my $variable_length_adapter;  ### replaces a variable amount of sequence at the end of some sequences
   my $adapter_dimer;  ### introduces <int> % of adapter dimers into the sequence simulation file
@@ -968,6 +1080,7 @@ sub process_command_line{
 				 'q|quality=i' => \$quality,
 				 'random' => \$random,
 				 'colourspace' => \$colourspace,
+				 'genome_folder' => \$genome_folder,
 				);
 
 
@@ -1026,8 +1139,8 @@ sub process_command_line{
 
   ### ERROR RATE
   if (defined $error_rate){
-    unless ($error_rate >= 0 and $error_rate <= 100){
-      die "Please select an error rate between 0 and 100(%)!\n";
+    unless ($error_rate >= 0 and $error_rate <= 60){
+      die "Please select an error rate between 0 and 60(%)!\n";
     }
   }
   else {
@@ -1102,9 +1215,19 @@ sub process_command_line{
     $colourspace = 0;
   }
 
-  ############################s########
-  ### PROCESSING ARGUMENTS
-  return ($length,$conversion_rate,$number_of_seqs,$error_rate,$snps,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace);
+  ### GENOME FOLDER
+  if ($genome_folder){
+    unless ($genome_folder =~/\/$/){
+      $genome_folder =~ s/$/\//;
+    }
+    warn "Genome folder was specified as $genome_folder\n";
+  }
+  else{
+    $genome_folder = '/data/public/Genomes/Mouse/NCBIM37/';
+    warn "Using the default genome folder /data/public/Genomes/Mouse/NCBIM37/ \n";
+  }
+
+  return ($length,$conversion_rate,$number_of_seqs,$error_rate,$snps,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder);
 }
 
 sub print_helpfile{
@@ -1119,7 +1242,14 @@ CONTAMINATIONS:
                                   assume an error rate of 0%, the default quality for all bases can be
                                   specified with (-q/--quality).
 
--e/--error_rate                   
+-e/--error_rate <float>           The error rate in %. This can be anything between 0 and 60%. If the error
+                                  rate is selected as 0%, no sequencing errors will be introduced (even though
+                                  a Phred score of 40 formally translates into an error rate of 0.01%). The
+                                  error rate will be a mean error rate per bp whereby the error curve follows
+                                  an exponential decay model. This means that an error rate of 0.1% will
+                                  - overall - introduce sequencing errors roughly every 1 in 1000 bases, whereby
+                                  the 5' end of a read is much less likely to harbour errors than
+                                  bases towards the 3' end.
 
 --adapter_dimer <int>             Include an <int> percentage of adapter dimers into the output file.
                                   We are using the Illumina Paired End PCR Primer 2 as adapter sequence.
@@ -1159,6 +1289,9 @@ BASIC ATTRIBUTES:
 --colourspace                     Using this option will print out all sequences in colour space as well
                                   as in base space FastQ format. Note that the conversion of base space to
                                   colourspace takes place before any quality values or errors are introduced.
+
+--genome_folder <path/to/folder>  Enter the genome folder you wish to use to extract sequences from. Default:
+                                  /data/public/Genomes/Mouse/NCBIM37/ .
 
 HELP
 }
