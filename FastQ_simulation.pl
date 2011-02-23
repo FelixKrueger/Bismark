@@ -14,7 +14,7 @@ my %seqs_colourspace;
 
 my @DNA_bases = ('A','T','C','G');
 
-my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder) = process_command_line();
+my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional) = process_command_line();
 
 run_sequence_generation ();
 
@@ -24,6 +24,9 @@ sub run_sequence_generation{
   warn "-"x50,"\n";
   warn "sequence length:\t$sequence_length bp\n";
   warn "number of sequences being generated:\t$number_of_sequences\n";
+  if ($non_directional){
+    warn "Non-directional sequences will be generated, i.e. sequences can originate from any of the four possible bisulfite PCR strands\n";
+  }
   if ($colourspace){
     warn "Sequences will be written out as both base space and colour space FastQ files\n";
   }
@@ -69,6 +72,10 @@ sub run_sequence_generation{
   }
 
   bisulfite_transform_sequences ();
+
+  if ($non_directional){
+    make_non_directional_sequences();
+  }
 
   if ($fixed_length_adapter){
     introduce_fixed_length_adapter_contamination ();
@@ -387,6 +394,35 @@ sub bisulfite_transform_sequences{
 
 
 
+sub make_non_directional_sequences{
+  warn "="x117,"\n";
+  warn "Now starting to transform bisulfite converted sequences into non-directional reads. All four possible strands will occur with roughly the same likelyhood\n";
+  sleep (2);
+
+  my $rc = 0;
+  my $count = 0;
+  foreach my $entry (keys %seqs){
+    ++$count;
+    my $seq = $seqs{$entry}->{sequence};
+
+    ### converting each C with an individual conversion rate (set globally)
+    my $random = int(rand(100)+1);
+	
+    if ($random <= 50){
+      $seq = reverse_complement($seq);
+      ++$rc;
+    }
+
+    # reassigning the sequence to %seqs
+    $seqs{$entry}->{sequence} = $seq;
+  }
+  my $percentage = sprintf ("%.2f",$rc*100/$count);
+  warn "Total sequences analysed: $count;\tSequences reverse complemented: $rc ($percentage%)\n";
+  warn "Introducing non-directionality completed\n";
+  warn "="x117,"\n\n";
+}
+
+
 
 sub introduce_SNPs{
   warn "="x117,"\n";
@@ -459,6 +495,10 @@ sub introduce_sequencing_errors{
 
     my @bases = split (//,$seqs{$entry}->{sequence});
     my @quals = split (//,$seqs{$entry}->{qual});
+
+    unless(scalar@bases == scalar @quals){
+      die "The sequence lenght (",scalar@bases,") and length of the quality string (",scalar@quals,") were different which mustn't happen!\n\n";
+    }
 
     foreach my $index (0..$#quals){
       ++$total_base_count;
@@ -816,6 +856,7 @@ sub generate_genomic_sequences {
 
 	# if the sequence contains any N's we are generating another random number without any Ns
 	last if ($seq =~ /n/i);
+	last if (length$seq != $sequence_length);
 
 	# otherwise we randomly choose either a forward or reverse sequence and then print it out
 	my $strand = int(rand(2)); # will produce either 0 or 1 with a 50:50 chance
@@ -842,7 +883,7 @@ sub generate_genomic_sequences {
 
 sub generate_random_sequences {
   warn "="x117,"\n";
-  warn "Now starting to generate $number_of_sequences sequences of $sequence_length bp with with totally random sequences\n";
+  warn "Now starting to generate $number_of_sequences sequences of $sequence_length bp with totally random sequences\n";
 
   my $count = 0;
   my $plus = 0;
@@ -1067,6 +1108,7 @@ sub process_command_line{
   my $number_of_seqs;
   my $quality;
   my $colourspace;
+  my $non_directional;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'l|length=i' => \$length,
@@ -1081,6 +1123,7 @@ sub process_command_line{
 				 'random' => \$random,
 				 'colourspace' => \$colourspace,
 				 'genome_folder' => \$genome_folder,
+				 'non_directional' => \$non_directional,
 				);
 
 
@@ -1227,7 +1270,11 @@ sub process_command_line{
     warn "Using the default genome folder /data/public/Genomes/Mouse/NCBIM37/ \n";
   }
 
-  return ($length,$conversion_rate,$number_of_seqs,$error_rate,$snps,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder);
+  unless ($non_directional){
+    $non_directional = 0;
+  }
+
+  return ($length,$conversion_rate,$number_of_seqs,$error_rate,$snps,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional);
 }
 
 sub print_helpfile{
@@ -1292,6 +1339,9 @@ BASIC ATTRIBUTES:
 
 --genome_folder <path/to/folder>  Enter the genome folder you wish to use to extract sequences from. Default:
                                   /data/public/Genomes/Mouse/NCBIM37/ .
+
+--non-directional                 The reads can orignate from any of the four possible strands produced by
+                                  bisulfite conversion and PCR amplification. Default: OFF.
 
 HELP
 }
