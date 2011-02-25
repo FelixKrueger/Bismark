@@ -14,7 +14,7 @@ my %seqs_colourspace;
 
 my @DNA_bases = ('A','T','C','G');
 
-my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional) = process_command_line();
+my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional,$CG_conversion_rate,$CH_conversion_rate) = process_command_line();
 
 run_sequence_generation ();
 
@@ -36,13 +36,20 @@ sub run_sequence_generation{
   warn "-"x50,"\n";
   warn "overall error rate:\t$error_rate%\n";
 
-  if ($conversion_rate ==0){
-    warn "\nPlease note that the bisulfite conversion rate was selected as:\t$conversion_rate %\n";
-    warn "This means that reads will not be converted at all and thus serve as simulated genomic FastQ sequences\n\n";
+  if (defined $conversion_rate){
+    if ($conversion_rate == 0){
+      warn "\nPlease note that the bisulfite conversion rate was selected as:\t$conversion_rate %\n";
+      warn "This means that reads will not be converted at all and thus serve as simulated genomic FastQ sequences\n\n";
+    }
+    else{
+      warn "bisulfite conversion rate:\t$conversion_rate%\n";
+    }
   }
-  else{
-    warn "bisulfite conversion rate:\t$conversion_rate%\n";
+  if (defined $CG_conversion_rate and defined $CH_conversion_rate){
+    warn "bisulfite conversion rate in CG-context:\t$CG_conversion_rate%\n";
+    warn "bisulfite conversion rate in CH-context:\t$CH_conversion_rate%\n";
   }
+
 
   if ($number_of_SNPs > 0){
     warn "SNPs to be introduced:\t$number_of_SNPs\n";
@@ -62,7 +69,7 @@ sub run_sequence_generation{
     warn "Introducing $adapter_dimer% of adapter dimers into the simulated dataset\n";
   }
   warn "\n\n";
-
+  sleep (5);
 
   if ($random){
     generate_random_sequences ();
@@ -71,7 +78,12 @@ sub run_sequence_generation{
     generate_genomic_sequences (); # DEFAULT
   }
 
-  bisulfite_transform_sequences ();
+  if (defined $CG_conversion_rate and defined $CH_conversion_rate){
+    bisulfite_transform_sequences_context_specifically ();
+  }
+  else{
+    bisulfite_transform_sequences_uniformly ();
+  }
 
   if ($non_directional){
     make_non_directional_sequences();
@@ -337,24 +349,41 @@ sub print_sequences_out_basespace{
 
 sub print_sequences_out_colourspace{
   warn "="x117,"\n";
-  warn "Printing sequences in colour space out to file\n>>> simulated_cs.fastq <<<\n";
-  open (COLOUR,'>','simulated_cs.fastq') or die $!;
+  warn "Printing sequences in colour space out to files\n>>> simulated.csfasta <<< and >>> simulated.QV.qual <<<\n";
+
+  open (READS,'>','simulated.csfasta') or die $!;
+  open (QUALS,'>','simulated.QV.qual') or die $!;
+
   foreach my $entry (sort {$a<=>$b} keys %seqs_colourspace){
-    print COLOUR "@",$entry,"\n";
-    print COLOUR "$seqs_colourspace{$entry}->{sequence}\n";
-    print COLOUR "+",$entry,"\n";
-    print COLOUR "$seqs_colourspace{$entry}->{qual}\n";
+    print READS ">$entry\n";
+    print READS "$seqs_colourspace{$entry}->{sequence}\n";
+
+    ### converting the quality value back to Phred score
+    my @quals = split (//,$seqs_colourspace{$entry}->{qual});
+
+    foreach my $index (0..$#quals){
+      $quals[$index] = convert_quality_string_into_phred_score ($quals[$index]);
+    }
+
+    my $qual = join (" ",@quals);
+
+    print QUALS ">$entry\n";
+    print QUALS "$qual\n";
   }
+
   warn "Printing out sequences in colour space completed\n";
-  close COLOUR or die "Unable to close filehandle: $!";
+
+  close READS or die "Unable to close filehandle: $!";
+  close QUALS or die "Unable to close filehandle: $!";
+
   warn "="x117,"\n\n";
 }
 
 
 
-sub bisulfite_transform_sequences{
+sub bisulfite_transform_sequences_uniformly{
   warn "="x117,"\n";
-  warn "Now starting bisulfite conversion with a conversion rate of $conversion_rate%\n";
+  warn "Now starting bisulfite conversion with a uniform conversion rate of $conversion_rate% for each C-context\n";
   sleep (2);
 
   my $total_C_count = 0;
@@ -371,7 +400,7 @@ sub bisulfite_transform_sequences{
       if ($base eq 'C'){
 	++$total_C_count;
 	### converting each C with an individual conversion rate (set globally)
-	my $random = int(rand(101));
+	my $random = int(rand(10000)+1)/100;
 	
 	if ($random <= $conversion_rate){
 	  ++$converted_C_count;
@@ -387,7 +416,77 @@ sub bisulfite_transform_sequences{
 
   }
   my $percentage = sprintf ("%.2f",$converted_C_count*100/$total_C_count);
-  warn "Total Cs analysed: $total_C_count;\tConverted Cs: $converted_C_count ($percentage%)\n";
+  warn "Total Cs analysed: $total_C_count\nConverted Cs: $converted_C_count ($percentage%)\n";
+  warn "Bisulfite conversion successfully completed\n";
+  warn "="x117,"\n\n";
+}
+
+
+sub bisulfite_transform_sequences_context_specifically{
+  warn "="x117,"\n";
+  warn "Now starting bisulfite conversion with a CG conversion rate of $CG_conversion_rate% and a CH conversion rate of $CH_conversion_rate%\n";
+  sleep (2);
+
+  my $total_C_count;
+  my $CG_count = 0;
+  my $CH_count = 0;
+
+  my $converted_CG_count = 0;
+  my $converted_CH_count = 0;
+
+  foreach my $entry (keys %seqs){
+    my $seq = $seqs{$entry}->{sequence};
+
+    my @bases = split (//,$seq);
+
+    foreach my $index (0..$#bases){
+
+      # only going to change Cs
+      if ($bases[$index] eq 'C'){
+	++$total_C_count;
+	### converting each C with an individual conversion rate (set globally for each context)
+	my $random = int(rand(10000)+1)/100;
+	
+	### if the C is at the last position we can't determine the sequence context (without going back to the genomic sequence) and will assume a non-CpG context for simplicity
+	if ( ($index+1) >= scalar@bases){
+	  ++$CH_count;
+	  if ($random <= $CH_conversion_rate){
+	    ++$converted_CH_count;
+	    $bases[$index] = 'T';
+	  }
+	}
+
+	### determining sequence context
+	else{
+	  if ( $bases[$index+1] eq 'G'){
+	    ++$CG_count;
+	    if ($random <= $CG_conversion_rate){
+	      ++$converted_CG_count;
+	      $bases[$index] = 'T';
+	    }
+	  }
+	  else {
+	    ### non-CpG context
+	    ++$CH_count;
+	    if ($random <= $CH_conversion_rate){
+	      ++$converted_CH_count;
+	      $bases[$index] = 'T';
+	    }
+
+	  }
+	}
+
+      }
+
+    }
+
+    my $bisulfite_converted_seq = join ("",@bases);
+    $seqs{$entry}->{sequence} = $bisulfite_converted_seq;
+
+  }
+  my $percentage_CG = sprintf ("%.2f",$converted_CG_count*100/$CG_count);
+  my $percentage_CH = sprintf ("%.2f",$converted_CH_count*100/$CH_count);
+  warn "Total Cs analysed: $total_C_count\nConverted Cs in CG context: $converted_CG_count ($percentage_CG%)\nConverted Cs in CH context: $converted_CH_count ($percentage_CH%)\n";
   warn "Bisulfite conversion successfully completed\n";
   warn "="x117,"\n\n";
 }
@@ -1008,20 +1107,13 @@ sub convert_basespace_to_colourspace{
   my $seq = shift;
   my @seq = split (//,$seq);
 
-  my @cspace;
+  my @cspace = 'T'; ### all colour space reads start with a T
 
-  my $first_base;
+  my $first_base = 'T';
   my $second_base;
 
   foreach my $index (0..$#seq){
 
-    if ($index == 0) {
-      push @cspace, $seq[$index];
-      $first_base = $seq[$index];
-      next;
-    }
-
-    # from base 2 onwards
     $second_base = $seq[$index];
 
     if ($first_base eq 'A'){
@@ -1109,6 +1201,8 @@ sub process_command_line{
   my $quality;
   my $colourspace;
   my $non_directional;
+  my $CG_conversion_rate;
+  my $CH_conversion_rate;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'l|length=i' => \$length,
@@ -1124,6 +1218,8 @@ sub process_command_line{
 				 'colourspace' => \$colourspace,
 				 'genome_folder' => \$genome_folder,
 				 'non_directional' => \$non_directional,
+				 'CG|CG_conversion=f' => \$CG_conversion_rate,
+				 'CH|CH_conversion=f' => \$CH_conversion_rate,
 				);
 
 
@@ -1160,15 +1256,46 @@ sub process_command_line{
     exit;
   }
 
-  if (defined $conversion_rate){
-    unless ($conversion_rate >= 0 and $conversion_rate <= 100){
-      die "Please specify the BS conversion rate as integer value between 1 and 100\n";
+
+  ### BISULFITE CONVERSION RATES
+
+  if (defined $CG_conversion_rate or defined $CH_conversion_rate){
+    ## conversion rates need to be set for each context individually
+    unless (defined $CG_conversion_rate and defined $CH_conversion_rate){
+      die "Please specify conversion rates for both CG- and non-CG context\n\n";
     }
+    if (defined $conversion_rate){
+      die "Please select either a uniform bisulfite conversionrate (-cr/--conversion_rate <float>)\nOR individual context-dependent conversion rates (-CG/--CG_conversion <float>, -CH/--CH_conversion <float>)\n\n";
+    }
+
+    ### ensuring the conversion rates are within sensible limits
+    unless ($CG_conversion_rate >= 0 and $CG_conversion_rate <= 100){
+      die "Please specify a CG-conversion rate between 0 and 100\n";
+    }
+    unless ($CH_conversion_rate >= 0 and $CH_conversion_rate <= 100){
+      die "Please specify a CH-conversion rate between 0 and 100\n";
+    }
+    ## setting the uniform conversionr ate to undef
+    $conversion_rate = undef;
+  }
+
+  elsif (defined $conversion_rate){
+    ### ensuring teh conversionr ate is within sensible limits
+    unless ($conversion_rate >= 0 and $conversion_rate <= 100){
+      die "Please specify a BS conversion rate value between 0 and 100\n";
+    }
+
+    $CH_conversion_rate = undef;
+    $CG_conversion_rate = undef;
   }
   else{
     ## otherwise we assume a 100 % conversion rate
     $conversion_rate = "100";
+
+    $CH_conversion_rate = undef;
+    $CG_conversion_rate = undef;
   }
+
 
   ### NUMBER OF SEQUENCES TO BE SIMULATED
   if (defined $number_of_seqs){
@@ -1274,7 +1401,7 @@ sub process_command_line{
     $non_directional = 0;
   }
 
-  return ($length,$conversion_rate,$number_of_seqs,$error_rate,$snps,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional);
+  return ($length,$conversion_rate,$number_of_seqs,$error_rate,$snps,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional,$CG_conversion_rate,$CH_conversion_rate);
 }
 
 sub print_helpfile{
@@ -1329,9 +1456,19 @@ BASIC ATTRIBUTES:
 -q/--quality                      The default quality for all positions if error rate is set to 0% or if
                                   SNPs are to be introduced. Default: 40.
 
--cr/--conversion_rate <int>       Bisulfite conversion rate as <int> %. This value can be anything between
+-cr/--conversion_rate <float>     A uniform bisulfite conversion rate of <float> %. This value can be anything between
                                   0 (no bisulfite conversion at all, thus standard simulated (genomic) sequences)
                                   and 100% (all cytosines will be converted into thymines).
+
+-CG/--CG_conversion <float>       Bisulfite conversion rate for cytosines in CG-context as <float> %. This value
+                                  can be anything between 0 (no bisulfite conversion at all) and 100% (all
+                                  CG-cytosines will be converted into thymines). Requires -CH/--CH_conversion
+                                  to be specified as well.
+
+-CH/--CH_conversion <float>       Bisulfite conversion rate for cytosines in CH-context as <float> %. This value
+                                  can be anything between 0 (no bisulfite conversion at all) and 100% (all
+                                  CH-cytosines will be converted into thymines). Requires -CG/--CG_conversion
+                                  to be specified as well.
 
 --colourspace                     Using this option will print out all sequences in colour space as well
                                   as in base space FastQ format. Note that the conversion of base space to

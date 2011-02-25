@@ -273,12 +273,12 @@ sub print_final_analysis_report_single_end{
     #   print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
   }
 
-  print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
 
-  print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print REPORT "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
@@ -386,13 +386,13 @@ sub print_final_analysis_report_paired_ends{
   print "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}%\n\n";
   print REPORT "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}% \n";
 
-  print "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t(complementary to (converted) top strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t((converted) bottom strand)"),"\n\n";
 
 
-  print REPORT "Sequence with no single alignment under any condition:\t$counting{no_single_alignment_found}\n";
+  print REPORT "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
   print REPORT join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t(complementary to (converted) top strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t((converted) bottom strand)"),"\n\n";
@@ -841,7 +841,7 @@ sub check_bowtie_results_single_end{
     }
     ### still within foreach index loop
   }
-  ### if there was no single alignment found for a certain sequence we will continue with the next sequence in the sequence file
+  ### if there was not a single alignment found for a certain sequence we will continue with the next sequence in the sequence file
   unless(%mismatches){
     $counting{no_single_alignment_found}++;
     if ($unmapped){
