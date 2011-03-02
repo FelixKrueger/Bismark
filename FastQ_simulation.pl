@@ -82,7 +82,7 @@ sub run_sequence_generation{
     bisulfite_transform_sequences_context_specifically ();
   }
   else{
-    bisulfite_transform_sequences_uniformly ();
+    bisulfite_transform_sequences_uniformly ()unless($conversion_rate == 0);
   }
 
   if ($non_directional){
@@ -352,7 +352,7 @@ sub print_sequences_out_colourspace{
   warn "Printing sequences in colour space out to files\n>>> simulated.csfasta <<< and >>> simulated.QV.qual <<<\n";
 
   open (READS,'>','simulated.csfasta') or die $!;
-  open (QUALS,'>','simulated.QV.qual') or die $!;
+  open (QUALS,'>','simulated_QV.qual') or die $!;
 
   foreach my $entry (sort {$a<=>$b} keys %seqs_colourspace){
     print READS ">$entry\n";
@@ -951,8 +951,9 @@ sub generate_genomic_sequences {
 
       if ( ($random+length($sequence_length)) < $chromosome_length){
 	# print "chromosome: $chr\t",$chromosome_length-$random,"\t";
+	last unless (length $chromosomes{$chr} > $chromosome_length-$random+$sequence_length);
 	my $seq = substr ($chromosomes{$chr},$chromosome_length-$random,$sequence_length);
-
+	
 	# if the sequence contains any N's we are generating another random number without any Ns
 	last if ($seq =~ /n/i);
 	last if (length$seq != $sequence_length);
@@ -1216,7 +1217,7 @@ sub process_command_line{
 				 'q|quality=i' => \$quality,
 				 'random' => \$random,
 				 'colourspace' => \$colourspace,
-				 'genome_folder' => \$genome_folder,
+				 'genome_folder=s' => \$genome_folder,
 				 'non_directional' => \$non_directional,
 				 'CG|CG_conversion=f' => \$CG_conversion_rate,
 				 'CH|CH_conversion=f' => \$CH_conversion_rate,
