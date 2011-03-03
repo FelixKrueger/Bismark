@@ -645,6 +645,7 @@ sub check_bowtie_results_single_end{
 
        	### we neeed to discriminate the following 2 cases:
 	### (a) genomes are dissimilar (e.g. one genome is only a single chromosome of another species). This needs to be specified by the --dissimilar option.
+
 	### (b) both genomes are essentially the same and differ only in a number of SNPs. This is the default option
 	
 	my $index = $mismatches{$mismatch_number}->{$unique_best_alignment}->{index};
@@ -667,13 +668,25 @@ sub check_bowtie_results_single_end{
 	  if ($index == 0){
 	    $genome_1_sequence = substr($genome_1{$chr},$start-1,length$sequence);
 	    $mismatch_info_1 = $mismatch_info;
+
+	    ### if the alignment came from the reverse strand we need to reverse complement the genomic sequence and the mismatch_call
+	    if ($strand eq '-'){
+	      $genome_1_sequence = reverse_complement($genome_1_sequence);
+	      $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
+	    }
 	  }
 	  elsif ($index == 1){
 	    $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence);
 	    $mismatch_info_2 = $mismatch_info;
+	
+	    ### if the alignment came from the reverse strand we need to reverse complement the genomic sequence and the mismatch_call
+	    if ($strand eq '-'){
+	      $genome_2_sequence = reverse_complement($genome_2_sequence);
+	      $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
+	    }
 	  }
 
-	  ### determining the best alignment for the other genome (if there is one at all)
+	  ### determining the best alignment for the other genome (if there is one at all within the limits of the alignment parameters set)
 
        	  my $key_1;          # first alignment to the other genome
 	  my $mm_1;	
@@ -686,7 +699,7 @@ sub check_bowtie_results_single_end{
 	  foreach my $mm (sort {$a<=>$b} keys %mismatches){
 
 	    next unless ($mm > $mismatch_number); # per definition the next best hit (if there is one) must have more mismatches than the unique best hit
-
+	
 	    foreach my $alignment_position (keys %{$mismatches{$mm}} ){
 
 	      my $ind = $mismatches{$mm}->{$alignment_position}->{index};
@@ -830,22 +843,23 @@ sub check_bowtie_results_single_end{
 	    return 1; # can print this to unmapped if desired	
 	  }
 	
-	  ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
-	  if ($strand eq '-'){
-	    $genome_1_sequence = reverse_complement($genome_1_sequence);
-	    $genome_2_sequence = reverse_complement($genome_2_sequence);
-	    ### Hmm, then the mismatch information will be off though!
-	
-	    ######################
-	    #######################
-	    ################### adjust mismatch field
-	  }
+
+
 	
 	  # read aligned uniquely best to genome 1
 	  if ($index == 0){
 	    $counting{genome_1_specific_count}++;
 	    $mismatch_info_1 = $mismatch_info;
 	    $mismatch_info_2 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
+	    ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
+	    if ($strand eq '-'){
+	      $genome_1_sequence = reverse_complement($genome_1_sequence);
+	      $genome_2_sequence = reverse_complement($genome_2_sequence);
+	      $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
+	    }
+
+	    $mismatch_info_2 = determine_read_mismatches_to_genomic_sequence($sequence,$genome_2_sequence);
+
 	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
@@ -855,6 +869,16 @@ sub check_bowtie_results_single_end{
 	    $counting{genome_2_specific_count}++;
 	    $mismatch_info_1 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
 	    $mismatch_info_2 = $mismatch_info;
+
+	    ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
+	    if ($strand eq '-'){
+	      $genome_1_sequence = reverse_complement($genome_1_sequence);
+	      $genome_2_sequence = reverse_complement($genome_2_sequence);
+	      $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
+	    }
+
+	    $mismatch_info_1 = determine_read_mismatches_to_genomic_sequence($sequence,$genome_1_sequence);
+	
 	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
@@ -915,31 +939,31 @@ sub check_bowtie_results_single_end{
 
 	### this is (c), we will print the read out to OUT_MIXED
 
-	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$alignment_1),-1)[0,1,2,3,4,7];
+	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info_1) = (split (/\t/,$alignment_1,-1))[0,1,2,3,4,7];
 	$start += 1;
 	my $end = $start+length($sequence);
+
+	my ($mismatch_info_2) = (split (/\t/,$alignment_2,-1))[7];
 	
 	my $genome_1_sequence = substr($genome_1{$chr},$start-1,length$sequence);
 	my $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence);
-	my $mismatch_info_1 = '';
-	my $mismatch_info_2 = '';
+
+
 	### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
 	if ($strand eq '-'){
 	  $genome_1_sequence = reverse_complement($genome_1_sequence);
 	  $genome_2_sequence = reverse_complement($genome_2_sequence);
-	  ### need to reverse the mismatch string here!!!!
-	  ########################
-	  ######################
-	  ########################
+	  $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
+	  $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
 	}	
 
 	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
-	#	print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	# print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
       }
       else{
-	die "Unexpected chr/pos/index combination \n\n";
+	die "Unexpected chr/pos/index combination\n\n";
       }
-      return 0; ## the sequence must have been either returned or printed out, and we want to only process the lowest nubmer of mismatches
+      return 0; ## the sequence must have been either returned or printed out, and we want to only process the lowest number of mismatches
     }
 
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 3 or scalar keys %{$mismatches{$mismatch_number}} == 4 ){
@@ -962,11 +986,67 @@ sub check_bowtie_results_single_end{
 }
 
 sub get_reverse_strand_mismatch_call{
+  my $seq = shift;
   my $old_mm_call = shift;
 
+  if ($old_mm_call eq ''){
+    return $old_mm_call;
+  }
+  else{
+    die "The mismatch field looks like this: $old_mm_call and can't be reverse complemented\n" unless ($old_mm_call =~ /^\d+/);
 
+    my @old_mismatches = split (/,/,$old_mm_call);
+    my @new_mismatches;
+
+    foreach my $mm (@old_mismatches){
+      my ($offset,$bases) = (split /:/,$mm); # the offset is based on the read, so it stays the same
+      my ($ref_base,$read_base) = (split />/,$bases);
+
+      unless ( (length $ref_base == 1) and (length $read_base == 1) ){
+	die "The reference ($ref_base) and read base ($read_base) fields caused an error\n";
+      }
+
+      ### generating mismatch info for the reverse strand
+      #   my $reverse_offset =  (length($seq))-1-$offset; # the offsets are 0 based, the read length is thus 1 bp longer
+
+      my $reverse_ref_base = $ref_base;
+      $reverse_ref_base =~ tr/GATC/CTAG/;
+      my $reverse_read_base = $read_base;
+      $reverse_read_base =~ tr/GATC/CTAG/;
+
+      #  print "$offset\t$ref_base\t$read_base\n$reverse_offset\t$reverse_ref_base\t$reverse_read_base\n\n";
+      my $reverse_mm = "${offset}:${reverse_ref_base}>${reverse_read_base}";
+
+      ### we are adding the mismatches to the beginning of the array so they are in the correct order when the sequence is displayed as its reverse complement
+      push @new_mismatches, $reverse_mm;
+    }
+
+    my $new_mm_call = join (",",@new_mismatches);
+    return $new_mm_call;
+  }
 }
 
+
+sub determine_read_mismatches_to_genomic_sequence{
+  my ($seq,$seq_2) = @_; ## seq_2 is the genomic sequence of the genome which had more mismatches than $seq to the best alignment genome
+
+  my @seq = split //,$seq;
+  my @seq_2 = split //,$seq_2;
+
+  unless (scalar@seq == scalar@seq_2){
+    die "Sequences $seq and $seq_2 are not of the same length!\n\n";
+  }
+  my @mismatches;
+
+  foreach my $index (0..$#seq){
+    unless ($seq[$index] eq $seq_2[$index]){
+      my $mm = "$index:$seq_2[$index]>$seq[$index]"; ## $seq_2[$index] is the reference genome base, $seq[$index] is the read base
+      push @mismatches,$mm;
+    }
+  }
+  my $mismatch_call = join (',',@mismatches);
+  return $mismatch_call;
+}
 
 # sub check_bowtie_results_paired_ends{
 #   my ($sequence_1,$sequence_2,$identifier) = @_;
