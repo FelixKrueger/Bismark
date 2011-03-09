@@ -221,11 +221,11 @@ sub prepare_output_files_paired_end {
 
   ### Input files are in FastA format
   if ($sequence_file_format eq 'FASTA'){
-    process_fastA_files_paired_end($sequence_file_1,$sequence_file_2);
+    process_paired_end_fastA_files($sequence_file_1,$sequence_file_2);
   }
   ### Input files are in FastQ format
   else{
-    process_fastQ_files_paired_end($sequence_file_1,$sequence_file_2);
+    process_paired_end_fastQ_files($sequence_file_1,$sequence_file_2);
   }
 }
 
@@ -1190,8 +1190,8 @@ sub check_bowtie_results_paired_ends{
       $id_1 = $strand_1 = $mapped_chromosome_1 = $position_1 = $bowtie_sequence_1 = $mismatch_info_1 = undef;
       $id_2 = $strand_2 = $mapped_chromosome_2 = $position_2 = $bowtie_sequence_2 = $mismatch_info_2 = undef;
 
-      ($id_1,$strand_1,$mapped_chromosome_1,$position_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,7];
-      ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,7];
+      ($id_1,$strand_1,$mapped_chromosome_1,$position_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$fhs[$index]->{last_line_1},-1))[0,1,2,3,4,7];
+      ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2},-1))[0,1,2,3,4,7];
 
       ### Now extracting the number of mismatches for the first sequence
       $number_of_mismatches_1 = undef;
@@ -1279,12 +1279,11 @@ sub check_bowtie_results_paired_ends{
     ### if there is only 1 entry in the hash with the lowest number of mismatches the sequence is unique to one of the genomes
     if (scalar keys %{$mismatches{$mismatch_number}} == 1){
 
-      ### unique best alignment here is in fact the composite chromosome:position:index string
+      ### unique best alignment here is in fact the composite chromosome:position_1:position_2:index string
       for my $unique_best_alignment (keys %{$mismatches{$mismatch_number}}){
 
        	### we neeed to discriminate the following 2 cases:
-	### (a) genomes are dissimilar (e.g. one genome is only a single chromosome of another species). This needs to be specified by the --dissimilar option.
-
+	### (a) genomes are dissimilar (e.g. one genome is only a single chromosome of another species). This needs to be specified with the --dissimilar option.
 	### (b) both genomes are essentially the same and differ only in a number of SNPs. This is the default option
 	
 	my $index = $mismatches{$mismatch_number}->{$unique_best_alignment}->{index};
@@ -1292,234 +1291,353 @@ sub check_bowtie_results_paired_ends{
 	### (a) if the genomes are dissimilar we are going to write out the genome-specific alignment and it's coordinates and will also write out the
 	### best alignment to the other genome and its mismatch information
 
-	if ($dissimilar){
+ 	if ($dissimilar){
 
-	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
+# 	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
 	
-	  $start += 1; # bowtie alignments are 0 based
-	  my $end = $start+length($sequence);
+# 	  $start += 1; # bowtie alignments are 0 based
+# 	  my $end = $start+length($sequence);
 
-	  my $genome_1_sequence;
-	  my $genome_2_sequence;
-	  my $mismatch_info_1;
-	  my $mismatch_info_2;
+# 	  my $genome_1_sequence;
+# 	  my $genome_2_sequence;
+# 	  my $mismatch_info_1;
+# 	  my $mismatch_info_2;
 	
-	  if ($index == 0){
-	    $genome_1_sequence = substr($genome_1{$chr},$start-1,length$sequence); # subtract -1 from the start position again
-	    $mismatch_info_1 = $mismatch_info;
+# 	  if ($index == 0){
+# 	    $genome_1_sequence = substr($genome_1{$chr},$start-1,length$sequence); # subtract -1 from the start position again
+# 	    $mismatch_info_1 = $mismatch_info;
 
-	    ### if the alignment came from the reverse strand we need to reverse complement the genomic sequence and the mismatch_call
-	    if ($strand eq '-'){
-	      $genome_1_sequence = reverse_complement($genome_1_sequence);
-	      $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
-	    }
-	  }
-	  elsif ($index == 1){
-	    $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence); # subtract -1 from the start position again
-	    $mismatch_info_2 = $mismatch_info;
+# 	    ### if the alignment came from the reverse strand we need to reverse complement the genomic sequence and the mismatch_call
+# 	    if ($strand eq '-'){
+# 	      $genome_1_sequence = reverse_complement($genome_1_sequence);
+# 	      $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
+# 	    }
+# 	  }
+# 	  elsif ($index == 1){
+# 	    $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence); # subtract -1 from the start position again
+# 	    $mismatch_info_2 = $mismatch_info;
 	
-	    ### if the alignment came from the reverse strand we need to reverse complement the genomic sequence and the mismatch_call
-	    if ($strand eq '-'){
-	      $genome_2_sequence = reverse_complement($genome_2_sequence);
-	      $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
-	    }
-	  }
+# 	    ### if the alignment came from the reverse strand we need to reverse complement the genomic sequence and the mismatch_call
+# 	    if ($strand eq '-'){
+# 	      $genome_2_sequence = reverse_complement($genome_2_sequence);
+# 	      $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
+# 	    }
+# 	  }
 
-	  ### determining the best alignment for the other genome (if there is one at all within the restrictions of the alignment parameters set)
+# 	  ### determining the best alignment for the other genome (if there is one at all within the restrictions of the alignment parameters set)
 	
-       	  my $key_1;          # first alignment to the other genome
-	  my $mm_1;	
-	  my $alignment_1;
+#        	  my $key_1;          # first alignment to the other genome
+# 	  my $mm_1;	
+# 	  my $alignment_1;
 	
-	  my $key_2;          # second alignment to the other genome
-	  my $mm_2;
-	  my $alignment_2;
+# 	  my $key_2;          # second alignment to the other genome
+# 	  my $mm_2;
+# 	  my $alignment_2;
 
-	  foreach my $mm (sort {$a<=>$b} keys %mismatches){
+# 	  foreach my $mm (sort {$a<=>$b} keys %mismatches){
 
-	    next unless ($mm > $mismatch_number); # per definition the next best hit (if there is one) must have more mismatches than the unique best hit
+# 	    next unless ($mm > $mismatch_number); # per definition the next best hit (if there is one) must have more mismatches than the unique best hit
 	
-	    foreach my $alignment_position (keys %{$mismatches{$mm}} ){
+# 	    foreach my $alignment_position (keys %{$mismatches{$mm}} ){
 
-	      my $ind = $mismatches{$mm}->{$alignment_position}->{index};
+# 	      my $ind = $mismatches{$mm}->{$alignment_position}->{index};
 
-	      next if ($ind == $index); ### this is the second hit to the same genome and not the first hit to the second genome
+# 	      next if ($ind == $index); ### this is the second hit to the same genome and not the first hit to the second genome
 
-	      ### assigning the first alignment to the second genome
-	      unless (defined $key_1){
-		$key_1 = $alignment_position;
-		$mm_1 = $mm;
-		$alignment_1 = $mismatches{$mm}->{$alignment_position}->{line};
-	      }
-	      ### assigning the second alignment to the second genome if there was already a first one
-	      else{
-		$key_2 = $alignment_position;
-		$mm_2 = $mm;
-		$alignment_2 = $mismatches{$mm}->{$alignment_position}->{line};
-	      }
-	    }
-	  }
+# 	      ### assigning the first alignment to the second genome
+# 	      unless (defined $key_1){
+# 		$key_1 = $alignment_position;
+# 		$mm_1 = $mm;
+# 		$alignment_1 = $mismatches{$mm}->{$alignment_position}->{line};
+# 	      }
+# 	      ### assigning the second alignment to the second genome if there was already a first one
+# 	      else{
+# 		$key_2 = $alignment_position;
+# 		$mm_2 = $mm;
+# 		$alignment_2 = $mismatches{$mm}->{$alignment_position}->{line};
+# 	      }
+# 	    }
+# 	  }
 
-	  ### Now looking for the best alignment to the second genome
+# 	  ### Now looking for the best alignment to the second genome
 
-	  if ($key_1){
-	    ### there is at least 1 hit to the other genome:
-	    # my ($chr_1,$pos_1,$index_1) = (split (/:/,$key_1));
-	    my ($strand_1,$chr_1,$start_1,$bowtie_seq_1,$m_info_1) = (split (/\t/,$alignment_1),-1)[1,2,3,4,7];
+# 	  if ($key_1){
+# 	    ### there is at least 1 hit to the other genome:
+# 	    # my ($chr_1,$pos_1,$index_1) = (split (/:/,$key_1));
+# 	    my ($strand_1,$chr_1,$start_1,$bowtie_seq_1,$m_info_1) = (split (/\t/,$alignment_1),-1)[1,2,3,4,7];
 
-	    $start_1 += 1; # bowtie alignments are 0 based
-	    my $end_1 = $start+length($sequence);
+# 	    $start_1 += 1; # bowtie alignments are 0 based
+# 	    my $end_1 = $start+length($sequence);
 
-	    if ($index == 0){
-	      $genome_2_sequence  = substr($genome_2{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
-	      $mismatch_info_2 = $m_info_1;
+# 	    if ($index == 0){
+# 	      $genome_2_sequence  = substr($genome_2{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
+# 	      $mismatch_info_2 = $m_info_1;
 	
-	      if ($strand_1 eq '-'){
-		$genome_2_sequence = reverse_complement($genome_2_sequence);
-		$mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
-	      }
-	    }
-	    elsif ($index == 1){
-	      $genome_1_sequence = substr($genome_1{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
-	      $mismatch_info_1 = $m_info_1;
+# 	      if ($strand_1 eq '-'){
+# 		$genome_2_sequence = reverse_complement($genome_2_sequence);
+# 		$mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
+# 	      }
+# 	    }
+# 	    elsif ($index == 1){
+# 	      $genome_1_sequence = substr($genome_1{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
+# 	      $mismatch_info_1 = $m_info_1;
 
-	      if ($strand_1 eq '-'){
-		$genome_1_sequence = reverse_complement($genome_1_sequence);
-		$mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
-	      }
-	    }
+# 	      if ($strand_1 eq '-'){
+# 		$genome_1_sequence = reverse_complement($genome_1_sequence);
+# 		$mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
+# 	      }
+# 	    }
 
-	    if ($key_2){
-	      ### there are 2 alignments to the other genome
-	      #  my ($chr_2,$pos_2,$index_2) = (split (/:/,$key_2));
-	      #  my ($bowtie_seq_2,$m_info_2) = (split (/\t/,$alignment_2))[4,7];
+# 	    if ($key_2){
+# 	      ### there are 2 alignments to the other genome
+# 	      #  my ($chr_2,$pos_2,$index_2) = (split (/:/,$key_2));
+# 	      #  my ($bowtie_seq_2,$m_info_2) = (split (/\t/,$alignment_2))[4,7];
 
 	
-	      ### if both alignments to the second genome have the same number of mismatches we will enter 'MULT' into the sequence and mismatch fields (non-unique alignments)
-	      if ($mm_1 == $mm_2){
-		if ($index == 0){
-		  $genome_2_sequence = 'MULT';
-		  $mismatch_info_2 = 'MULT';
-		}
-		elsif ($index == 1){
-		  $genome_1_sequence = 'MULT';
-		  $mismatch_info_1 = 'MULT';
-		}
-	      }
-	      elsif ($mm_1 < $mm_2){
-		### alignment_1 is the best alignment to the second genome
-		### we will just continue to use the other genome sequence and mismatch information as extracted above
-	      }
-	      else{
-		die "mm_1 ($mm_1) cannot be higher than mm_2 ($mm_2)\n";
-	      }
-	    }
+# 	      ### if both alignments to the second genome have the same number of mismatches we will enter 'MULT' into the sequence and mismatch fields (non-unique alignments)
+# 	      if ($mm_1 == $mm_2){
+# 		if ($index == 0){
+# 		  $genome_2_sequence = 'MULT';
+# 		  $mismatch_info_2 = 'MULT';
+# 		}
+# 		elsif ($index == 1){
+# 		  $genome_1_sequence = 'MULT';
+# 		  $mismatch_info_1 = 'MULT';
+# 		}
+# 	      }
+# 	      elsif ($mm_1 < $mm_2){
+# 		### alignment_1 is the best alignment to the second genome
+# 		### we will just continue to use the other genome sequence and mismatch information as extracted above
+# 	      }
+# 	      else{
+# 		die "mm_1 ($mm_1) cannot be higher than mm_2 ($mm_2)\n";
+# 	      }
+# 	    }
 
-	    else{
-	      ### there is only 1 hit to the second genome, which we will use to print out
-	      ### we will just continue to use the other genome sequence and mismatch information as extracted above
-	    }
-	  }
+# 	    else{
+# 	      ### there is only 1 hit to the second genome, which we will use to print out
+# 	      ### we will just continue to use the other genome sequence and mismatch information as extracted above
+# 	    }
+# 	  }
 	
-	  ### if there is no hit to the other genome we will enter N/A into the sequence and mismatch field for the other genome
-	  else{
-	    if ($index == 0){
-	      $genome_2_sequence = 'N/A';
-	      $mismatch_info_2 = 'N/A';
-	    }
-	    elsif ($index == 1){
-	      $genome_1_sequence = 'N/A';
-	      $mismatch_info_1 = 'N/A';
-	    }
-	  }
+# 	  ### if there is no hit to the other genome we will enter N/A into the sequence and mismatch field for the other genome
+# 	  else{
+# 	    if ($index == 0){
+# 	      $genome_2_sequence = 'N/A';
+# 	      $mismatch_info_2 = 'N/A';
+# 	    }
+# 	    elsif ($index == 1){
+# 	      $genome_1_sequence = 'N/A';
+# 	      $mismatch_info_1 = 'N/A';
+# 	    }
+# 	  }
 
-	  ### Printing the read out (still within the --dissimilar option)
+# 	  ### Printing the read out (still within the --dissimilar option)
 	
-	  # read aligned uniquely best to genome 1
-	  if ($index == 0){
-	    $counting{genome_1_specific_count}++;
-	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
-	    return 0; ## once we printed the sequence with the lowest number of mismatches we exit
-	  }
+# 	  # read aligned uniquely best to genome 1
+# 	  if ($index == 0){
+# 	    $counting{genome_1_specific_count}++;
+# 	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+# 	    return 0; ## once we printed the sequence with the lowest number of mismatches we exit
+# 	  }
 	
-	  # read aligned uniquely best to genome 2
-	  elsif ($index == 1){
-	    $counting{genome_2_specific_count}++;
-	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
-	    return 0; ## once we printed the sequence with the lowest number of mismatches we exit
-	  }
-	  else{
-	    die "\$index needs to be 1 or 2! (and was $index in this case....)\n";
-	  }
-       	}	
-	### (b) if the genomes differ only in a number of SNP positions we are going to extract the corresponding sequence at the position of the alignment in the other genome,
-	### and print this sequence as well as its mismatch information to the output file (DEFAULT)
+# 	  # read aligned uniquely best to genome 2
+# 	  elsif ($index == 1){
+# 	    $counting{genome_2_specific_count}++;
+# 	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+# 	    return 0; ## once we printed the sequence with the lowest number of mismatches we exit
+# 	  }
+# 	  else{
+# 	    die "\$index needs to be 1 or 2! (and was $index in this case....)\n";
+# 	  }
+	}
+	
+
+	### (b) if the genomes differ only in a number of SNP positions we are going to extract the corresponding sequences at the position of the alignment in the other genome,
+	### and print these sequences as well as their mismatch information to the output file (DEFAULT)
 
 	else{
-	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
-	  $start += 1; # bowtie alignments are 0 based
-	  my $end = $start+length($sequence);
+	  my ($id_1,$strand_1,$chr_1,$start_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line_1},-1))[0,1,2,3,4,7];
+	  my ($id_2,$strand_2,$chr_2,$start_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line_2},-1))[0,1,2,3,4,7];
 
-	  my $genome_1_sequence;
-	  my $genome_2_sequence;
-	  my $mismatch_info_1;
-	  my $mismatch_info_2;
-	
-	  if ( length($genome_1{$chr}) >= $end){
-	    $genome_1_sequence  = substr($genome_1{$chr},$start-1,length$sequence); # for the substring we need to subtract 1 again
+	  $start_1 += 1; # bowtie alignments are 0 based
+	  $start_2 += 1;
+
+	  my $end_1;
+	  my $end_2;
+
+	  if ($id_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand
+	    $end_1 = $start_1+length($sequence_1);
+	    $end_2 = $start_2+length($sequence_2);
 	  }
-	  else{
-	    ++$counting{unable_to_extract_genomic_sequence_count};
-	    warn "Unable to extract genomic sequence for $id chr: $chr, $start-$end\n";
-	    return 1; # can print this to unmapped if desired
-	  }
-	
-	  if ( length($genome_2{$chr}) >= $end){
-	    $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence); # for the substring we need to subtract 1 again
-	  }
-	  else{
-	    ++$counting{unable_to_extract_genomic_sequence_count};
-	    warn "Unable to extract genomic sequence for $id chr: $chr, $start-$end\n";
-	    return 1; # can print this to unmapped if desired	
+	  elsif ($id_1 =~ /\/2$/){  # sequence_2 aligned to the forward strand
+	    $end_1 = $start_1+length($sequence_2);
+	    $end_2 = $start_2+length($sequence_1);
 	  }
 	
+	  my ($genome_1_sequence_1,$genome_1_sequence_2,$genome_2_sequence_1,$genome_2_sequence_2,$mismatch_info_1_1,$mismatch_info_1_2,$mismatch_info_2_1,$mismatch_info_2_2);
+	
+	  # extracting all genomic sequences
+	  if ($id_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand
+	    if ( length($genome_1{$chr_1}) >= $end_1){
+	      $genome_1_sequence_1  = substr($genome_1{$chr_1},$start_1-1,length$sequence_1); # for the substring we need to subtract 1 again
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+	
+	    if ( length($genome_1{$chr_2}) >= $end_2){
+	      $genome_1_sequence_2  = substr($genome_1{$chr_2},$start_2-1,length$sequence_2); # for the substring we need to subtract 1 again
+	      ### reverse complementing this sequence as the second pair is always on the reverse strand
+	      $genome_1_sequence_2 = reverse_complement($genome_1_sequence_2);
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	      return 1; # can print this to unmapped if desired
+	    }
 
+	    if ( length($genome_2{$chr_1}) >= $end_1){
+	      $genome_2_sequence_1  = substr($genome_2{$chr_1},$start_1-1,length$sequence_1); # for the substring we need to subtract 1 again
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+	
+	    if ( length($genome_2{$chr_2}) >= $end_2){
+	      $genome_2_sequence_2  = substr($genome_2{$chr_2},$start_2-1,length$sequence_2); # for the substring we need to subtract 1 again
+	      ### reverse complementing this sequence as the second pair is always on the reverse strand
+	      $genome_2_sequence_2 = reverse_complement($genome_2_sequence_2);
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+	  }
 
+	  else{ # sequence_2 aligned to the forward strand
+	    if ( length($genome_1{$chr_1}) >= $end_1){
+	      $genome_1_sequence_1  = substr($genome_1{$chr_1},$start_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+	
+	    if ( length($genome_1{$chr_2}) >= $end_2){
+	      $genome_1_sequence_2  = substr($genome_1{$chr_2},$start_2-1,length$sequence_1); # for the substring we need to subtract 1 again
+	      ### reverse complementing this sequence as the second pair is always on the reverse strand
+	      $genome_1_sequence_2 = reverse_complement($genome_1_sequence_2);
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+
+	    if ( length($genome_2{$chr_1}) >= $end_1){
+	      $genome_2_sequence_1  = substr($genome_2{$chr_1},$start_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+	
+	    if ( length($genome_2{$chr_2}) >= $end_2){
+	      $genome_2_sequence_2  = substr($genome_2{$chr_2},$start_2-1,length$sequence_1); # for the substring we need to subtract 1 again
+	      ### reverse complementing this sequence as the second pair is always on the reverse strand
+	      $genome_2_sequence_2 = reverse_complement($genome_2_sequence_2);
+	    }
+	    else{
+	      ++$counting{unable_to_extract_genomic_sequence_count};
+	      warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	      return 1; # can print this to unmapped if desired
+	    }
+	  }
 	
 	  # read aligned uniquely best to genome 1
 	  if ($index == 0){
 	    $counting{genome_1_specific_count}++;
-	    $mismatch_info_1 = $mismatch_info;
-	    $mismatch_info_2 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
-	    ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
-	    if ($strand eq '-'){
-	      $genome_1_sequence = reverse_complement($genome_1_sequence);
-	      $genome_2_sequence = reverse_complement($genome_2_sequence);
-	      $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
+
+	    $mismatch_info_1_1 = $mismatch_info_1;
+	    $mismatch_info_1_2 = $mismatch_info_2;
+		
+	    ### now determining mismatch info for the other genome
+	    if ($id_1 =~ /\/1$/){ # sequence_1 aligned to the forward strand
+	
+	      ### reverse complementing the mismatch info on the reverse strand (the second read) so that they are directly comparable with the sequence
+	      $mismatch_info_1_2 = get_reverse_strand_mismatch_call ($sequence_2,$mismatch_info_1_2);
+
+	      $mismatch_info_2_1 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_1);
+	      $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_2);
+	
+	      ### print out sequence_1 first
+	      print join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
 	    }
 
-	    $mismatch_info_2 = determine_read_mismatches_to_genomic_sequence($sequence,$genome_2_sequence);
+  	    elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
+	
+	      ### reverse complementing the mismatch info on the reverse strand (the second read) so that they are directly comparable with the sequence
+	      $mismatch_info_1_2 = get_reverse_strand_mismatch_call ($sequence_1,$mismatch_info_1_2);
 
-	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	      $mismatch_info_2_1 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_1);
+	      $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_2);
+
+	      ### print out sequence_2 first
+	      print join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	    }
+	
+	    else{
+	      die "The read identifiers are in an unexpected format and do not en on /1 and /2!\n";
+	    }
+	    ### OUT_G1
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 
 	  # read aligned uniquely best to genome 2
 	  elsif ($index == 1){
 	    $counting{genome_2_specific_count}++;
-	    $mismatch_info_1 = '';  # we'll leave this field blank for the moment and let people figure the SNP out themselves if needed
-	    $mismatch_info_2 = $mismatch_info;
 
-	    ### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
-	    if ($strand eq '-'){
-	      $genome_1_sequence = reverse_complement($genome_1_sequence);
-	      $genome_2_sequence = reverse_complement($genome_2_sequence);
-	      $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
+	    $mismatch_info_2_1 = $mismatch_info_1;
+	    $mismatch_info_2_2 = $mismatch_info_2;
+	
+	    ### now determining mismatch info for the other genome
+	    if ($id_1 =~ /\/1$/){ # sequence_1 aligned to the forward strand
+	
+	      ### reverse complementing the mismatch info on the reverse strand (always the second read) so that they are directly comparable with the sequence
+	      $mismatch_info_2_2 = get_reverse_strand_mismatch_call ($sequence_2,$mismatch_info_2_2);
+
+	      $mismatch_info_1_1 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_1);
+	      $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_2);
+	
+	      ### print out sequence_1 first
+	      print join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
 	    }
 
-	    $mismatch_info_1 = determine_read_mismatches_to_genomic_sequence($sequence,$genome_1_sequence);
+	    elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
+
+	      ### reverse complementing the mismatch info on the reverse strand (always the second read) so that they are directly comparable with the sequence
+	      $mismatch_info_2_2 = get_reverse_strand_mismatch_call ($sequence_1,$mismatch_info_2_2);
+
+	      $mismatch_info_1_1 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_1);
+	      $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_2);
+
+	      ### print out sequence_2 first
+	      print join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	    }
+
+	    else{
+	      die "The read identifiers are in an unexpected format and do not en on /1 and /2!\n";
+	    }
+	    ### OUT_G2
 	
-	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 
@@ -1533,78 +1651,182 @@ sub check_bowtie_results_paired_ends{
 
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 2){
 
-      ### here we have to discriminate a few different cases:
+      ### here we have to discriminate a several different cases:
       ### (a) both sequence alignments come from the same genome (= $index) => thus the sequence can't be mapped uniquely and needs to be discarded
-      ### (b) the sequence aligns equally well to the two genomes, but to different locations: the sequence will be discarded
-      ### (c) the sequence aligns equally well to the two different genomes => the sequence alignment will be printed as alignments in common (OUT_MIXED)
+      ### (b) the sequence pair aligns equally well to the two genomes, but to different locations: the sequence pair will be discarded
+      ### (c) the sequence pair aligns equally well to the two different genomes => the sequence alignment will be printed as alignments in common (OUT_MIXED)
 
-      my $key_1;
-      my $alignment_1;
-      my $key_2;
-      my $alignment_2;
+      my ($key_1,$alignment_1_1,$alignment_1_2,$key_2,$alignment_2_1,$alignment_2_2);
 
       foreach my $key (keys %{$mismatches{$mismatch_number}}){
 	unless ($key_1){
-	  $key_1 = $key;
-	  $alignment_1 = $mismatches{$mismatch_number}->{$key}->{line};
-	}
-	else{
-	  $key_2 = $key;
-	  $alignment_2 = $mismatches{$mismatch_number}->{$key}->{line};
+ 	  $key_1 = $key;
+ 	  $alignment_1_1 = $mismatches{$mismatch_number}->{$key}->{line_1};
+	  $alignment_1_2 = $mismatches{$mismatch_number}->{$key}->{line_2};
+ 	}
+ 	else{
+ 	  $key_2 = $key;
+ 	  $alignment_2_1 = $mismatches{$mismatch_number}->{$key}->{line_1};
+	  $alignment_2_2 = $mismatches{$mismatch_number}->{$key}->{line_2};
 	}
       }
 
-      my ($chr_1,$pos_1,$index_1) = (split (/:/,$key_1));
-      my ($chr_2,$pos_2,$index_2) = (split (/:/,$key_2));
+      my ($chr_1,$pos_1_1,$pos_1_2,$index_1) = (split (/:/,$key_1));
+      my ($chr_2,$pos_2_1,$pos_2_2,$index_2) = (split (/:/,$key_2));
 
       if ($index_1 == $index_2){
-	### this is (a), read is not uniquely mappable
-	++$counting{ambiguous_mapping_count};
-	return 1; # => exits to next sequence and prints it to unmapped.out if --un was specified
+ 	### this is (a), read is not uniquely mappable
+ 	++$counting{ambiguous_mapping_count};
+ 	return 1; # => exits to next sequence and prints it to unmapped.out if --un was specified
       }
 
-      elsif ($chr_1 ne $chr_2 or $pos_1 != $pos_2){
+      elsif ($chr_1 ne $chr_2 or $pos_1_1 != $pos_2_1 or $pos_1_2 != $pos_2_2){
 	### this is (b), read will be chucked
 	$counting{unsuitable_sequence_count}++;
-	return 1; # => exits to next sequence and prints it to unmapped.out if --un was specified
+ 	return 1; # => exits to next sequence and prints it to unmapped.out if --un was specified
       }
 
-      elsif ($chr_1 eq $chr_2 and $pos_1 == $pos_2){
+      elsif ($chr_1 eq $chr_2 and $pos_1_1 == $pos_2_1 and $pos_1_2 == $pos_2_2 ){
 
-	### the concept of homologous sequences is not supported for --dissimilar genomes. Thus there will be no common alignments output
-	if ($dissimilar){
-	  $counting{equivalent_sequences_dissimilar_count}++;
-	  return 1; ## can be printed out to unmapped.out if there is no unique match
-	}
+ 	### the concept of homologous sequences is not supported for --dissimilar genomes. Thus there will be no common alignments output
+ 	if ($dissimilar){
+ 	  $counting{equivalent_sequences_dissimilar_count}++;
+ 	  return 1; ## can be printed out to unmapped.out if there is no unique match
+ 	}
 	++$counting{aligns_to_both_genomes_equally_well_count};
 	
-	### this is (c), we will print the read out to OUT_MIXED
+ 	### this is (c), we will print the read out to OUT_MIXED
 
-	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info_1) = (split (/\t/,$alignment_1,-1))[0,1,2,3,4,7];
-	$start += 1;
-	my $end = $start+length($sequence);
+	my ($id_1,$strand_1,$chrom_1,$start_1,$mismatch_info_1) = (split (/\t/,$alignment_1_1,-1))[0,1,2,3,7];
+	my ($id_2,$strand_2,$chrom_2,$start_2,$mismatch_info_2) = (split (/\t/,$alignment_1_2,-1))[0,1,2,3,7];
 
-	my ($mismatch_info_2) = (split (/\t/,$alignment_2,-1))[7];
+	$start_1 += 1; # bowtie alignments are 0 based
+	$start_2 += 1;
+
+	my $end_1;
+	my $end_2;
+
+	if ($id_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand
+	  $end_1 = $start_1+length($sequence_1);
+	  $end_2 = $start_2+length($sequence_2);
+	}
+	elsif ($id_1 =~ /\/2$/){  # sequence_2 aligned to the forward strand
+	  $end_1 = $start_1+length($sequence_2);
+	  $end_2 = $start_2+length($sequence_1);
+	}
 	
-	my $genome_1_sequence = substr($genome_1{$chr},$start-1,length$sequence);
-	my $genome_2_sequence = substr($genome_2{$chr},$start-1,length$sequence);
+	my ($genome_1_sequence_1,$genome_1_sequence_2,$genome_2_sequence_1,$genome_2_sequence_2,$mismatch_info_1_1,$mismatch_info_1_2,$mismatch_info_2_1,$mismatch_info_2_2);
+	
+	# extracting all genomic sequences
+	if ($id_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand
+	  if ( length($genome_1{$chr_1}) >= $end_1){
+	    $genome_1_sequence_1  = substr($genome_1{$chr_1},$start_1-1,length$sequence_1); # for the substring we need to subtract 1 again
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	    return 1; # can print this to unmapped if desired
+	  }
 
+	  if ( length($genome_1{$chr_2}) >= $end_2){
+	    $genome_1_sequence_2  = substr($genome_1{$chr_2},$start_2-1,length$sequence_2); # for the substring we need to subtract 1 again
+	    ### reverse complementing this sequence as the second pair is always on the reverse strand
+	    $genome_1_sequence_2 = reverse_complement($genome_1_sequence_2);
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	    return 1; # can print this to unmapped if desired
+	  }
+	
+	  if ( length($genome_2{$chr_1}) >= $end_1){
+	    $genome_2_sequence_1  = substr($genome_2{$chr_1},$start_1-1,length$sequence_1); # for the substring we need to subtract 1 again
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	    return 1; # can print this to unmapped if desired
+	  }
+	
+	  if ( length($genome_2{$chr_2}) >= $end_2){
+	    $genome_2_sequence_2  = substr($genome_2{$chr_2},$start_2-1,length$sequence_2); # for the substring we need to subtract 1 again
+	    ### reverse complementing this sequence as the second pair is always on the reverse strand
+	    $genome_2_sequence_2 = reverse_complement($genome_2_sequence_2);
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	    return 1; # can print this to unmapped if desired
+	  }
+	}
 
-	### reverse complementing sequences on the reverse strand so that they are directly comparable with the sequence in the supplied sequence file ($sequence)
-	if ($strand eq '-'){
-	  $genome_1_sequence = reverse_complement($genome_1_sequence);
-	  $genome_2_sequence = reverse_complement($genome_2_sequence);
-	  $mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
-	  $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
-	}	
+	else{ # sequence_2 aligned to the forward strand
+	  if ( length($genome_1{$chr_1}) >= $end_1){
+	    $genome_1_sequence_1  = substr($genome_1{$chr_1},$start_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	    return 1; # can print this to unmapped if desired
+	  }
+	
+	  if ( length($genome_1{$chr_2}) >= $end_2){
+	    $genome_1_sequence_2  = substr($genome_1{$chr_2},$start_2-1,length$sequence_1); # for the substring we need to subtract 1 again
+	    ### reverse complementing this sequence as the second pair is always on the reverse strand
+	    $genome_1_sequence_2 = reverse_complement($genome_1_sequence_2);
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	    return 1; # can print this to unmapped if desired
+	  }
 
-	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
-	# print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	  if ( length($genome_2{$chr_1}) >= $end_1){
+	    $genome_2_sequence_1  = substr($genome_2{$chr_1},$start_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_1 chr: $chr_1, $start_1-$end_1\n";
+	    return 1; # can print this to unmapped if desired
+	  }
+	
+	  if ( length($genome_2{$chr_2}) >= $end_2){
+	    $genome_2_sequence_2  = substr($genome_2{$chr_2},$start_2-1,length$sequence_1); # for the substring we need to subtract 1 again
+	    ### reverse complementing this sequence as the second pair is always on the reverse strand
+	    $genome_2_sequence_2 = reverse_complement($genome_2_sequence_2);
+	  }
+	  else{
+	    ++$counting{unable_to_extract_genomic_sequence_count};
+	    warn "Unable to extract genomic sequence for $id_2 chr: $chr_2, $start_2-$end_2\n";
+	    return 1; # can print this to unmapped if desired
+	  }
+	}
+	
+	#### read alignment came from either genome, but as it has the same number of mismatches in the other genome and was found at the very same position
+	### we will use the mismatch information for both genome 1 and genome 2
+	
+	### now determining mismatch info
+	$mismatch_info_1_1 = $mismatch_info_2_1 = $mismatch_info_1;
+
+	$mismatch_info_1_2 = $mismatch_info_2;	
+	### reverse complementing the mismatch info on the reverse strand (the second read) so that they are directly comparable with the sequence
+	$mismatch_info_1_2 = $mismatch_info_2_2 = get_reverse_strand_mismatch_call ($sequence_2,$mismatch_info_1_2);
+	
+	if ($id_1 =~ /\/1$/){ # sequence_1 aligned to the forward strand
+	  ### printing out sequence_1 first
+	  print OUT_MIXED join ("\t",$identifier,$sequence_1,$sequence_2,'N',$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	}
+
+	elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
+	  ### printing out sequence_2 first
+	  print OUT_MIXED join ("\t",$identifier,$sequence_2,$sequence_1,'N',$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	}
+	
+	else{
+	  die "Unexpected chr/pos/index combination\n\n";
+	}
       }
-      else{
-	die "Unexpected chr/pos/index combination\n\n";
-      }
-      return 0; ## the sequence must have been either returned or printed out, and we want to only process the lowest number of mismatches
+      return 0; ## the sequence pair must have been either returned or printed out, and we want to only process the lowest number of mismatches
     }
 
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 3 or scalar keys %{$mismatches{$mismatch_number}} == 4 ){
@@ -1617,7 +1839,7 @@ sub check_bowtie_results_paired_ends{
       die "Unexpected number of elements with a lowest number of mismatches: ",scalar keys %{$mismatches{$mismatch_number}},"\n";
     }
 
-    last; # unless we exited already we will exit the loop after we processed the sequence with the lowest number of mismatches
+    last; # we will exit the loop after we processed the sequence with the lowest number of mismatches
 
   }
 
