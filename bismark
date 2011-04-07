@@ -163,7 +163,7 @@ sub start_methylation_call_procedure_single_ends {
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 
 
-  ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
+  ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
     my $cwd = getcwd; # storing the path of the current working directory
     print "Current working directory is: $cwd\n\n";

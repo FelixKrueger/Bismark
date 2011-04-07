@@ -128,30 +128,33 @@ sub prepare_output_files_single_end {
   ### creating outfiles
   my $outfile_genome_1 = my $outfile_genome_2 = my $outfile_mixed = $sequence_file;
 
-  $outfile_genome_1 =~ s/$/_genome_1_specific.txt/;
+  $outfile_genome_1 =~ s/$/_g1_specific_ASAP.txt/;
   print "Writing genome 1 specific alignments to $outfile_genome_1\n";
   open (OUT_G1,'>',$outfile_genome_1) or die "Failed to write to $outfile_genome_1: $!\n";
   print OUT_G1 "ASAP version: $ASAP_version\t$genome_index_basename_1\n";
 
-  $outfile_genome_2 =~ s/$/_genome_2_specific.txt/;
+  $outfile_genome_2 =~ s/$/_g2_specific_ASAP.txt/;
   print "Writing genome 2 specific alignments to $outfile_genome_2\n";
   open (OUT_G2,'>',$outfile_genome_2) or die "Failed to write to $outfile_genome_2: $!\n";
   print OUT_G2 "ASAP version: $ASAP_version\t$genome_index_basename_2\n";
 
-  $outfile_mixed =~ s/$/_alignments_in_common.txt/;
+  $outfile_mixed =~ s/$/_common_alignments_ASAP.txt/;
   print "Writing common alignments to $outfile_mixed\n\n";
   open (OUT_MIXED,'>',$outfile_mixed) or die "Failed to write to $outfile_mixed: $!\n";
   print OUT_MIXED "ASAP version: $ASAP_version\talignments to both $genome_index_basename_1 and $genome_index_basename_2\n";
 
   ### printing alignment summary to a report file
   my $reportfile = $sequence_file;
-  $reportfile =~ s/$/_ASAP_report.txt/;
+  $reportfile =~ s/$/_report_ASAP.txt/;
   open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "ASAP analysis of file: $sequence_file\n\n";
   print REPORT "Bowtie was run against the genomes\ngenome 1: $genome_index_basename_1\ngenome 2: $genome_index_basename_2\nusing options: $bowtie_options\n\n";
 
-  read_genome_1_into_memory($parent_dir);
-  read_genome_2_into_memory($parent_dir);
+  ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
+  unless (%genome_1 and %genome_2){
+    read_genome_1_into_memory($parent_dir);
+    read_genome_2_into_memory($parent_dir);
+  }
 
   ### Input file is in FastA format
   if ($sequence_file_format eq 'FASTA'){
@@ -194,24 +197,24 @@ sub prepare_output_files_paired_end {
     print "Unmapped sequences will be written to $unmapped_2\n";
   }
 
-  $outfile_genome_1 =~ s/$/_genome_1_specific_pe.txt/;
+  $outfile_genome_1 =~ s/$/_g1_specific_pe_ASAP.txt/;
   print "Writing genome 1 specific alignments to $outfile_genome_1\n";
   open (OUT_G1,'>',$outfile_genome_1) or die "Failed to write to $outfile_genome_1: $!\n";
   print OUT_G1 "ASAP version: $ASAP_version\t$genome_index_basename_1\n";
 
-  $outfile_genome_2 =~ s/$/_genome_2_specific_pe.txt/;
+  $outfile_genome_2 =~ s/$/_g2_specific_pe_ASAP.txt/;
   print "Writing genome 2 specific alignments to $outfile_genome_2\n";
   open (OUT_G2,'>',$outfile_genome_2) or die "Failed to write to $outfile_genome_2: $!\n";
   print OUT_G2 "ASAP version: $ASAP_version\t$genome_index_basename_2\n";
 
-  $outfile_mixed =~ s/$/_alignments_in_common_pe.txt/;
+  $outfile_mixed =~ s/$/_common_alignments_pe_ASAP.txt/;
   print "Writing common alignments to $outfile_mixed\n\n";
   open (OUT_MIXED,'>',$outfile_mixed) or die "Failed to write to $outfile_mixed: $!\n";
   print OUT_MIXED "ASAP version: $ASAP_version\talignments to both $genome_index_basename_1 and $genome_index_basename_2\n";
 
   ### printing alignment summary to a report file
   my $reportfile = $sequence_file_1;
-  $reportfile =~ s/$/_ASAP_paired-end_report.txt/;
+  $reportfile =~ s/$/_paired-end_report_ASAP.txt/;
   open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
   print REPORT "ASAP report for: $sequence_file_1 and $sequence_file_2\n";
   print REPORT "Bowtie was run against the genomes\ngenome 1: $genome_index_basename_1\ngenome 2:$genome_index_basename_2\nwith the Bowtie options: $bowtie_options\n\n";
@@ -391,7 +394,7 @@ sub process_paired_end_fastA_files{
   print "Processed $counting{sequences_count} sequences in total\n\n";
   close IN1 or die "Failed to close filehandle $!";
   close IN2 or die "Failed to close filehandle $!";
-  # print_final_analysis_report_paired_ends();
+  print_final_analysis_report_paired_end();
 }
 
 sub process_paired_end_fastQ_files{
@@ -464,8 +467,7 @@ sub process_paired_end_fastQ_files{
   close IN1 or die "Failed to close filehandle $!";
   close IN2 or die "Failed to close filehandle $!";
 
-  # print_final_analysis_report_paired_ends();
-
+  print_final_analysis_report_paired_end();
 }
 
 
@@ -528,6 +530,64 @@ sub print_final_analysis_report_single_end{
 }
 
 
+
+sub print_final_analysis_report_paired_end{
+
+  print REPORT "Final Alignment report\n",'='x22,"\n";
+  print "Final Alignment report\n",'='x22,"\n";
+
+  if ($dissimilar){
+    print "\nDissimilar genomes were selected. Sequences aligning equally well to both genomes will not be printed out\n\n";
+    print REPORT "\nDissimilar genomes were selected. Sequences aligning equally well to both genomes will not be printed out\n\n";
+  }
+
+  print "Sequences specific for genome 1:\t$counting{genome_1_specific_count}\n";
+  print "Sequences specific for genome 2:\t$counting{genome_2_specific_count}\n";
+
+  if ($dissimilar){
+    print "\n";
+    print REPORT "\n";
+  }
+  else{
+    print "Sequences aligning equally well to both genomes:\t$counting{aligns_to_both_genomes_equally_well_count}\n\n";
+  }
+
+  print REPORT "Sequences specific for genome 1:\t$counting{genome_1_specific_count}\n";
+  print REPORT "Sequences specific for genome 2:\t$counting{genome_2_specific_count}\n";
+
+  unless ($dissimilar){
+    print REPORT "Sequences aligning equally well to both genomes:\t$counting{aligns_to_both_genomes_equally_well_count}\n\n";
+  }
+
+  print "Sequences not mapping uniquely (3+ alignments which were thus discarded):\t$counting{ambiguous_mapping_count}\n";
+  print "Sequences aligning equally well but to different positions in both genomes:\t$counting{unsuitable_sequence_count}\n";
+
+  print REPORT "Sequences which did not map uniquely (3+ alignments which were thus discarded):\t$counting{ambiguous_mapping_count}\n";
+  print REPORT "Sequences aligning equally well but to different positions in the both genomes:\t$counting{unsuitable_sequence_count}\n";
+
+
+  print "Unable to extract genomic sequence count:\t$counting{unable_to_extract_genomic_sequence_count}";
+  print REPORT "Unable to extract genomic sequence count:\t$counting{unable_to_extract_genomic_sequence_count}";
+
+  if ($dissimilar){
+    print "\nSequences aligning equally well to both dissimilar genomes (not printed out):\t$counting{equivalent_sequences_dissimilar_count}\n\n";
+    print REPORT "\nSequences aligning equally well to both dissimlar genomes (not printed out):\t$counting{equivalent_sequences_dissimilar_count}\n\n";
+  }
+  else{
+    print "\t(if this number is very high you might want to consider specifying --dissimilar)\n";
+    print  REPORT "\t(if this number is very high you might want to consider specifying --dissimilar)\n";
+  }
+
+  print "Sequences with no alignments at all:\t$counting{no_single_alignment_found}\n\n";
+  print REPORT "Sequences with no alignments at all:\t$counting{no_single_alignment_found}\n\n";
+
+  print "Total sequences processed:\t$counting{sequences_count}\n\n";
+  print REPORT "Total sequences processed:\t$counting{sequences_count}\n\n";
+
+  my $percent_alignable_sequences = sprintf ("%.2f",($counting{genome_1_specific_count}+$counting{genome_2_specific_count}+$counting{aligns_to_both_genomes_equally_well_count})*100/$counting{sequences_count});
+  print "Overall mapping efficiency (uniquely placeable reads):\t$percent_alignable_sequences%\n\n";
+  print REPORT "Overall mapping efficiency (uniquely placeable reads):\t$percent_alignable_sequences%\n\n";
+}
 
 #######################################################################################################################################
 ### Checking bowtie results (single-end)
@@ -687,7 +747,7 @@ sub check_bowtie_results_single_end{
 	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
 	
 	  $start += 1; # bowtie alignments are 0 based
-	  my $end = $start+length($sequence);
+	  my $end = $start+length($sequence)-1;
 
 	  my $genome_1_sequence;
 	  my $genome_2_sequence;
@@ -758,8 +818,7 @@ sub check_bowtie_results_single_end{
 	    my ($strand_1,$chr_1,$start_1,$bowtie_seq_1,$m_info_1) = (split (/\t/,$alignment_1),-1)[1,2,3,4,7];
 
 	    $start_1 += 1; # bowtie alignments are 0 based
-	    my $end_1 = $start+length($sequence);
-
+	
 	    if ($index == 0){
 	      $genome_2_sequence  = substr($genome_2{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
 	      $mismatch_info_2 = $m_info_1;
@@ -848,7 +907,7 @@ sub check_bowtie_results_single_end{
 	else{
 	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
 	  $start += 1; # bowtie alignments are 0 based
-	  my $end = $start+length($sequence);
+	  my $end = $start+length($sequence)-1;
 
 	  my $genome_1_sequence;
 	  my $genome_2_sequence;
@@ -972,7 +1031,7 @@ sub check_bowtie_results_single_end{
 
 	my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info_1) = (split (/\t/,$alignment_1,-1))[0,1,2,3,4,7];
 	$start += 1;
-	my $end = $start+length($sequence);
+	my $end = $start+length($sequence)-1;
 
 	my ($mismatch_info_2) = (split (/\t/,$alignment_2,-1))[7];
 	
@@ -1302,12 +1361,12 @@ sub check_bowtie_results_paired_ends{
 	  my $end_2;
 
 	  if ($id_1 =~ /\/1$/){  # $sequence_1 aligned to the forward strand
-	    $end_1 = $start_1+length($sequence_1);
-	    $end_2 = $start_2+length($sequence_2);
+	    $end_1 = $start_1+length($sequence_1)-1;
+	    $end_2 = $start_2+length($sequence_2)-1;
 	  }
 	  elsif ($id_1 =~ /\/2$/){  # $sequence_2 aligned to the forward strand
-	    $end_1 = $start_1+length($sequence_2);
-	    $end_2 = $start_2+length($sequence_1);
+	    $end_1 = $start_1+length($sequence_2)-1;
+	    $end_2 = $start_2+length($sequence_1)-1;
 	  }
 	
 	  my ($genome_1_sequence_1,$genome_1_sequence_2,$genome_2_sequence_1,$genome_2_sequence_2,$mismatch_info_1_1,$mismatch_info_1_2,$mismatch_info_2_1,$mismatch_info_2_2);
@@ -1461,24 +1520,7 @@ sub check_bowtie_results_paired_ends{
 
  	  if ($key_1){
 	    ### there is at least 1 hit to the other genome:
-	    #	    if ($index == 0){
-	    # 	      $genome_2_sequence  = substr($genome_2{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
-	    # 	      $mismatch_info_2 = $m_info_1;
 	
-	    # 	      if ($strand_1 eq '-'){
-	    # 		$genome_2_sequence = reverse_complement($genome_2_sequence);
-	    # 		$mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
-	    # 	      }
-	    # 	    }
-	    # 	    elsif ($index == 1){
-	    # 	      $genome_1_sequence = substr($genome_1{$chr_1},$start_1-1,length$sequence); # for the substring we need to subtract 1 again
-	    # 	      $mismatch_info_1 = $m_info_1;
-	    # 	      if ($strand_1 eq '-'){
-	    # 		$genome_1_sequence = reverse_complement($genome_1_sequence);
-	    # 		$mismatch_info_1 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_1);
-	    # 	      }
-	    # 	    }
-
  	    if ($key_2){
  	      ### there are 2 alignments to the other genome
 	      #  my ($chr_2,$pos_2_1,$pos_2_2,$index_2) = (split (/:/,$key_2));
@@ -1521,19 +1563,23 @@ sub check_bowtie_results_paired_ends{
  	    $start_2_1 += 1; # bowtie alignments are 0 based
 	    $start_2_2 += 1;
 
-	   ### we are going to use display the alignment in the same way the unique best alignment is presented
+	    ### we are going to use display the alignment in the same way the unique best alignment is presented
 	    ### id_1 and id_2 have the information about which read mapped to which strand in the best alignment to the other genome
 
 	    if ($index == 0){ # the unique best alignment aligns to the first genome
 
 	      if ($id_1 =~ /\/1$/){ # sequence_1 of the unique hit aligned to the forward strand
-
+		
 		if ($id_key_2_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand of the other genome
 		  $genome_2_sequence_1  = substr($genome_2{$chr_2_1},$start_2_1-1,length$sequence_1); # for the substring we need to subtract 1 again
 
 		  $genome_2_sequence_2  = substr($genome_2{$chr_2_2},$start_2_2-1,length$sequence_2); # for the substring we need to subtract 1 again
 		  ### reverse complementing this sequence as the second pair is always on the reverse strand
 		  $genome_2_sequence_2 = reverse_complement($genome_2_sequence_2);
+
+		  $mismatch_info_2_1 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_1);
+		  $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_2);	
+		
 		}
 
 		elsif ($id_key_2_1 =~ /\/2$/){ # sequence_2 aligned to the forward strand
@@ -1542,12 +1588,46 @@ sub check_bowtie_results_paired_ends{
 		  $genome_2_sequence_1 = reverse_complement($genome_2_sequence_1);
 
 		  $genome_2_sequence_2  = substr($genome_2{$chr_2_1},$start_2_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+
+		  $mismatch_info_2_1 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_1);
+		  $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_2);	
+
 		}
 		else{
 		  die "The alignment to the other genome must end with /1 or /2\n";
 		}
-		$mismatch_info_2_1   = 'N/A';
-		$mismatch_info_2_2   = 'N/A';
+	
+	      }
+	
+	      else{ # sequence_2 of the unique hit aligned to the forward strand
+
+		if ($id_key_2_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand of the other genome
+
+		  $genome_2_sequence_1  = substr($genome_2{$chr_2_2},$start_2_2-1,length$sequence_2); # for the substring we need to subtract 1 again
+		  ### reverse complementing this sequence
+		  $genome_2_sequence_1 = reverse_complement($genome_2_sequence_1);
+		
+		  $genome_2_sequence_2  = substr($genome_2{$chr_2_1},$start_2_1-1,length$sequence_1); # for the substring we need to subtract 1 again
+		
+		  $mismatch_info_2_1 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_1);
+		  $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_2);	
+
+		}
+		
+		elsif ($id_key_2_1 =~ /\/2$/){ # sequence_2 aligned to the forward strand
+		  $genome_2_sequence_1  = substr($genome_2{$chr_2_1},$start_2_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+	
+		  $genome_2_sequence_2  = substr($genome_2{$chr_2_2},$start_2_2-1,length$sequence_1); # for the substring we need to subtract 1 again
+		  ### reverse complementing this sequence so we can compare the same sequences
+		  $genome_2_sequence_2 = reverse_complement($genome_2_sequence_2);
+
+		  $mismatch_info_2_1 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_1);
+		  $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_2);	
+
+		}
+		else{
+		  die "The alignment to the other genome must end with /1 or /2\n";
+		}
 	      }
 	    }
 	
@@ -1561,20 +1641,57 @@ sub check_bowtie_results_paired_ends{
 		  $genome_1_sequence_2  = substr($genome_1{$chr_2_2},$start_2_2-1,length$sequence_2); # for the substring we need to subtract 1 again
 		  ### reverse complementing this sequence so we can compare the same sequences in each field
 		  $genome_1_sequence_2 = reverse_complement($genome_1_sequence_2);
+		
+		  $mismatch_info_1_1 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_1);
+		  $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_2);		
+		
 		}
-
+		
 		elsif ($id_key_2_1 =~ /\/2$/){ # sequence_2 aligned to the forward strand
 		  $genome_1_sequence_1  = substr($genome_1{$chr_2_2},$start_2_2-1,length$sequence_1); # for the substring we need to subtract 1 again
 		  ### reverse complementing this sequence so we can compare the same sequences in each field
 		  $genome_1_sequence_1 = reverse_complement($genome_1_sequence_1);
 		
 		  $genome_1_sequence_2  = substr($genome_1{$chr_2_1},$start_2_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+		
+		  $mismatch_info_1_1 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_1);
+		  $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_2);		
+		
 		}
 		else{
 		  die "The alignment to the other genome must end with /1 or /2\n";
 		}
-		$mismatch_info_1_1   = 'N/A';
-		$mismatch_info_1_2   = 'N/A';
+	      }
+
+	      else{ # sequence_2 of the unique hit aligned to the forward strand
+
+		if ($id_key_2_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand of the other genome
+
+		  $genome_1_sequence_1  = substr($genome_1{$chr_2_2},$start_2_2-1,length$sequence_2); # for the substring we need to subtract 1 again
+		  ### reverse complementing this sequence
+		  $genome_1_sequence_1 = reverse_complement($genome_1_sequence_1);
+		
+		  $genome_1_sequence_2  = substr($genome_1{$chr_2_1},$start_2_1-1,length$sequence_1); # for the substring we need to subtract 1 again
+		
+		  $mismatch_info_1_1 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_1);
+		  $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_2);		
+		
+		}
+		
+		elsif ($id_key_2_1 =~ /\/2$/){ # sequence_2 aligned to the forward strand
+		  $genome_1_sequence_1  = substr($genome_1{$chr_2_1},$start_2_1-1,length$sequence_2); # for the substring we need to subtract 1 again
+	
+		  $genome_1_sequence_2  = substr($genome_1{$chr_2_2},$start_2_2-1,length$sequence_1); # for the substring we need to subtract 1 again
+		  ### reverse complementing this sequence so we can compare the same sequences
+		  $genome_1_sequence_2 = reverse_complement($genome_1_sequence_2);
+		
+		  $mismatch_info_1_1 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_1);
+		  $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_2);		
+		
+		}
+		else{
+		  die "The alignment to the other genome must end with /1 or /2\n";
+		}
 	      }
 	    }
 	  }
@@ -1654,12 +1771,12 @@ sub check_bowtie_results_paired_ends{
 	  my $end_2;
 
 	  if ($id_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand
-	    $end_1 = $start_1+length($sequence_1);
-	    $end_2 = $start_2+length($sequence_2);
+	    $end_1 = $start_1+length($sequence_1)-1;
+	    $end_2 = $start_2+length($sequence_2)-1;
 	  }
 	  elsif ($id_1 =~ /\/2$/){  # sequence_2 aligned to the forward strand
-	    $end_1 = $start_1+length($sequence_2);
-	    $end_2 = $start_2+length($sequence_1);
+	    $end_1 = $start_1+length($sequence_2)-1;
+	    $end_2 = $start_2+length($sequence_1)-1;
 	  }
 	
 	  my ($genome_1_sequence_1,$genome_1_sequence_2,$genome_2_sequence_1,$genome_2_sequence_2,$mismatch_info_1_1,$mismatch_info_1_2,$mismatch_info_2_1,$mismatch_info_2_2);
@@ -1893,12 +2010,12 @@ sub check_bowtie_results_paired_ends{
 	my $end_2;
 
 	if ($id_1 =~ /\/1$/){  # sequence_1 aligned to the forward strand
-	  $end_1 = $start_1+length($sequence_1);
-	  $end_2 = $start_2+length($sequence_2);
+	  $end_1 = $start_1+length($sequence_1)-1;
+	  $end_2 = $start_2+length($sequence_2)-1;
 	}
 	elsif ($id_1 =~ /\/2$/){  # sequence_2 aligned to the forward strand
-	  $end_1 = $start_1+length($sequence_2);
-	  $end_2 = $start_2+length($sequence_1);
+	  $end_1 = $start_1+length($sequence_2)-1;
+	  $end_2 = $start_2+length($sequence_1)-1;
 	}
 	
 	my ($genome_1_sequence_1,$genome_1_sequence_2,$genome_2_sequence_1,$genome_2_sequence_2,$mismatch_info_1_1,$mismatch_info_1_2,$mismatch_info_2_1,$mismatch_info_2_2);
