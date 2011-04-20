@@ -172,7 +172,7 @@ sub process_Bismark_results_file{
     unless ($version eq $bismark_version){
       die "The methylation extractor and Bismark itself need to be of the same version!\n\nVersions used: methylation extractor: $version\nBismark: $bismark_version\n";
     }
-    
+
     ### OPENING OUT-FILEHANDLES
     if ($report){
       my $report_filename = $filename;
@@ -411,7 +411,7 @@ sub process_Bismark_results_file{
 	  elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){ ## original bottom strand
 	    $index = 3;
 	  }
-	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){ ## comlementary to original bottom strand
+	  elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){ ## complementary to original bottom strand
 	    $index = 2;
 	  }
 	  else {
@@ -474,18 +474,18 @@ sub process_Bismark_results_file{
 
 	my $index;
 	chomp $genome_conversion;
-
+	
 	if ($first_read_conversion eq 'CT' and $genome_conversion eq 'CT'){
-	  $index = 0;
+	  $index = 0; ## this is OT
 	}	
 	elsif ($first_read_conversion eq 'GA' and $genome_conversion eq 'GA'){
-	  $index = 1;
+	  $index = 2; ## this is CTOB!!!
 	}
 	elsif ($first_read_conversion eq 'GA' and $genome_conversion eq 'CT'){
-	  $index = 2;
+	  $index = 1; ## this is CTOT!!!
 	}
 	elsif ($first_read_conversion eq 'CT' and $genome_conversion eq 'GA'){
-	  $index = 3;
+	  $index = 3; ## this is OB
 	}
 	else {
 	  die "Unexpected combination of read and genome conversion: $first_read_conversion / $genome_conversion\n";
@@ -691,7 +691,7 @@ sub print_splitting_report{
 }
 
 sub print_individual_C_methylation_states_paired_end_files{
-  ### This is the new version (v0.2.0) also handling CpG, CHG and CHH context
+  ### This is the new version (v0.2.0+) also handling CpG, CHG and CHH context
 
   my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index,$no_overlap,$end_read_1) = @_;
   my @methylation_calls = split(//,$meth_call);
@@ -1259,7 +1259,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 
 sub print_individual_C_methylation_states_single_end{
-  ### This is the new version (v0.2.0) handling CpG, CHG and CHH context
+  ### This is the new version (v0.2.0+) handling CpG, CHG and CHH context
 
   my ($meth_call,$chrom,$start,$id,$seq,$strand,$filehandle_index) = @_;
   my @methylation_calls = split(//,$meth_call);

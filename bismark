@@ -389,13 +389,13 @@ sub print_final_analysis_report_paired_ends{
   print "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t(complementary to (converted) top strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t((converted) bottom strand)"),"\n\n";
+  print join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t((converted) bottom strand)"),"\n\n";
 
 
   print REPORT "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print REPORT join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t(complementary to (converted) top strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t((converted) bottom strand)"),"\n\n";
+  print REPORT join ("\n","CT/GA/CT:\t$counting{CT_GA_CT_count}\t((converted) top strand)","GA/CT/CT:\t$counting{GA_CT_CT_count}\t(complementary to (converted) top strand)","GA/CT/GA:\t$counting{GA_CT_GA_count}\t(complementary to (converted) bottom strand)","CT/GA/GA:\t$counting{CT_GA_GA_count}\t((converted) bottom strand)"),"\n\n";
   ### detailed information about Cs analysed
 
   if ($directional){
@@ -1518,7 +1518,7 @@ sub extract_corresponding_genomic_sequence_paired_ends {
 
    ### results from GA converted read 1 plus CT converted read 2 vs. GA converted genome (+/- orientation alignments are reported only)
   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 1){
-    ### [Index 1, sequence originated from (converted) reverse strand]
+    ### [Index 1, sequence originated from complementary to (converted) reverse strand]
     $counting{GA_CT_GA_count}++;
     $alignment_read_1 = '+';
     $alignment_read_2 = '-';
@@ -1572,7 +1572,7 @@ sub extract_corresponding_genomic_sequence_paired_ends {
 
   ### results from CT converted read 1 plus GA converted read 2 vs. GA converted genome (-/+ orientation alignments are reported only)
   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 3){
-    ### [Index 3, sequence originated from the complementary to (converted) reverse strand]
+    ### [Index 3, sequence originated from the (converted) reverse strand]
     $counting{CT_GA_GA_count}++;
     $alignment_read_1 = '-';
     $alignment_read_2 = '+';
@@ -2404,10 +2404,10 @@ sub reset_counters_and_fhs{
 	     CT_GA_count => 0, #(CT read/GA genome, original bottom strand)
 	     GA_CT_count => 0, #(GA read/CT genome, complementary to original top strand)
 	     GA_GA_count => 0, #(GA read/GA genome, complementary to original bottom strand)
-	     CT_GA_CT_count => 0, #(CT read1/GA read2/CT genome)
-	     GA_CT_GA_count => 0, #(GA read1/CT read2/GA genome)
-	     GA_CT_CT_count => 0, #(GA read1/CT read2/CT genome)
-	     CT_GA_GA_count => 0, #(CT read1/GA read2/GA genome)
+	     CT_GA_CT_count => 0, #(CT read1/GA read2/CT genome, original top strand)
+	     GA_CT_GA_count => 0, #(GA read1/CT read2/GA genome, complementary to original bottom strand)
+	     GA_CT_CT_count => 0, #(GA read1/CT read2/CT genome, complementary to original top strand)
+	     CT_GA_GA_count => 0, #(CT read1/GA read2/GA genome, original bottom strand)
 	     alignments_rejected_count => 0, # only relevant if --directional was specified
 	    );
   @fhs=(
