@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.4.1';
+my $bismark_version = 'v0.5.0';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -34,7 +34,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -530,8 +530,9 @@ sub process_single_end_fastQ_file_for_methylation_call{
     }
     chomp $sequence;
     chomp $identifier;
+    chomp $quality_value;
     $identifier =~ s/^\@//;	# deletes the @ at the beginning of Illumin FastQ headers
-    my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
+    my $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value);
     unless ($return){
       $return = 0;
     }
@@ -655,6 +656,8 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     chomp $identifier_1;
     chomp $sequence_2;
     chomp $identifier_2;
+    chomp $quality_value_1;
+    chomp $quality_value_2;
 
     $identifier_1 =~ s/^\@//;	 # deletes the @ at the beginning of Illumin FastQ headers
     $identifier_2 =~ s/^\@//;
@@ -662,7 +665,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     $identifier_2 =~ s/\/[12]//;
 
     if ($identifier_1 eq $identifier_2){
-      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
       unless ($return){
 	$return = 0;
       }
@@ -696,7 +699,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
       }
     }
     else {
-      print "$identifier_1\t$identifier_2\n";
+      warn "$identifier_1\t$identifier_2\n";
       die "Sequence IDs are not identical\n $!";
     }
   }
@@ -707,7 +710,12 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 }
 
 sub check_bowtie_results_single_end{
-  my ($sequence,$identifier) = @_;
+  my ($sequence,$identifier,$quality_value) = @_;
+
+  unless ($quality_value){ # for FastA sequences do not have quality values
+    $quality_value = '';
+  }
+
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence aligned to a bisulfite converted genome
   foreach my $index (0..$#fhs){
@@ -984,7 +992,7 @@ sub check_bowtie_results_single_end{
   ### otherwise we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
 
-  print_bisulfite_mapping_result_single_end($identifier,$sequence,$methylation_call_params);
+  print_bisulfite_mapping_result_single_end($identifier,$sequence,$methylation_call_params,$quality_value);
   return 0; ## otherwise 1 will be returned by default, which would print the sequence to unmapped.out
 }
 
@@ -1079,7 +1087,12 @@ sub decide_whether_single_end_alignment_is_valid{
 }
 
 sub check_bowtie_results_paired_ends{
-  my ($sequence_1,$sequence_2,$identifier) = @_;
+  my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
+
+  unless ($quality_value_1 and $quality_value_2){ ### quality values are not given for FastA files, so they are initialised as empty strings
+    $quality_value_1 = $quality_value_2 = '';
+  }
+
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence pair aligned to a bisulfite converted genome
 
@@ -1367,7 +1380,7 @@ sub check_bowtie_results_paired_ends{
   $methylation_call_params->{$identifier}->{methylation_call_1} = methylation_call($identifier,$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{read_conversion_1});
   $methylation_call_params->{$identifier}->{methylation_call_2} = methylation_call($identifier,$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{read_conversion_2});
 
-  print_bisulfite_mapping_results_paired_ends($identifier,$sequence_1,$sequence_2,$methylation_call_params);
+  print_bisulfite_mapping_results_paired_ends($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2);
   return 0; ## otherwise 1 will be returned by default, which would print the sequence pair to unmapped_1 and _2
 }
 
@@ -1612,31 +1625,106 @@ sub extract_corresponding_genomic_sequence_paired_ends {
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
 }
 
+### PRINT SINGLE END RESULTS
+
 sub print_bisulfite_mapping_result_single_end{
-  my ($identifier,$sequence,$methylation_call_params)= @_;
+  my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
+
+  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+  if ($phred64){
+    $quality_value = convert_phred64_quals_to_phred33($quality_value);
+  }
+  elsif ($solexa){
+    $quality_value = convert_solexa_quals_to_phred33($quality_value);
+  }
+
   ### writing every single mapped read and its methylation call to one comprehensive output file
 
   ### I will add +1 bp to the starting position of single-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
   ### reporting to 1 in the future we will see a 1-off error
 
-  my $comprehensive_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position}+1,$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion});
+  my $comprehensive_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position}+1,$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
 
   print OUT "$comprehensive_bowtie_output\n";
 }
 
+### PRINT PAIRED END RESULTS
+
 sub print_bisulfite_mapping_results_paired_ends{
-  my ($identifier,$sequence_1,$sequence_2,$methylation_call_params)= @_;
+  my ($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2)= @_;
+
+  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+  if ($phred64){
+    $quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
+    $quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
+  }
+  elsif ($solexa){
+    $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
+    $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
+  }
+
   ### writing every single mapped read and its methylation call to one comprehensive output file
+
 
   ### I will add +1 bp to the starting position of paired-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
   ### reporting to 1 in the future we will see a 1-off error
 
-  my $comprehensive_BiSeq_mapping_output_paired_ends;
-
-  $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1}+1,$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{read_conversion_1},$methylation_call_params->{$identifier}->{genome_conversion});
+  my $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1}+1,$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{read_conversion_1},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value_1,$quality_value_2);
 
   print OUT "$comprehensive_BiSeq_mapping_output_paired_ends\n";
 }
+
+sub convert_phred64_quals_to_phred33{
+
+  my $qual = shift;
+  my @quals = split (//,$qual);
+  my @new_quals;
+
+  foreach my $index (0..$#quals){
+    my $phred_score = convert_phred64_quality_string_into_phred_score ($quals[$index]);
+    my $phred33_quality_string = convert_phred_score_into_phred33_quality_string ($phred_score);
+    $new_quals[$index] = $phred33_quality_string;
+  }
+
+  my $phred33_quality = join ("",@new_quals);
+  return $phred33_quality;
+}
+
+sub convert_solexa_quals_to_phred33{
+
+  my $qual = shift;
+  my @quals = split (//,$qual);
+  my @new_quals;
+
+  foreach my $index (0..$#quals){
+    my $phred_score = convert_solexa_pre1_3_quality_string_into_phred_score ($quals[$index]);
+    my $phred33_quality_string = convert_phred_score_into_phred33_quality_string ($phred_score);
+    $new_quals[$index] = $phred33_quality_string;
+  }
+
+  my $phred33_quality = join ("",@new_quals);
+  return $phred33_quality;
+}
+
+sub convert_phred_score_into_phred33_quality_string{
+  my $qual = shift;
+  $qual = chr($qual+33);
+  return $qual;
+}
+
+sub convert_phred64_quality_string_into_phred_score{
+  my $string = shift;
+  my $qual = ord($string)-64;
+  return $qual;
+}
+
+sub convert_solexa_pre1_3_quality_string_into_phred_score{
+  ### We will just use 59 as the offset here as all Phred Scores between 10 and 40 look exactly the same, there is only a minute difference for values between 0 and 10
+  my $string = shift;
+  my $qual = ord($string)-59;
+  return $qual;
+}
+
 
 sub extract_corresponding_genomic_sequence_single_end {
   my ($sequence_identifier,$methylation_call_params) = @_;
@@ -2634,12 +2722,19 @@ VERSION
     }
     push @bowtie_options,"--phred64-quals";
   }
+  else{
+    $phred64 = 0;
+  }
+
   if ($solexa){
     # Solexa to Phred value conversion works only when -q is specified
     unless ($fastq){
       die "Conversion from Solexa to Phred quality values works only when -q (FASTQ) is specified\n";
     }
     push @bowtie_options,"--solexa-quals";
+  }
+  else{
+    $solexa = 0;
   }
 
   ### ALIGNMENT OPTIONS
@@ -2769,7 +2864,7 @@ VERSION
     $multi_map = 0;
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa);
 }
 
 sub print_helpfile{
@@ -2967,6 +3062,7 @@ Single-end output format (tab-separated):
  (8) <methylation call>
  (9) <read conversion
 (10) <genome conversion>
+(11) <read quality score (Phred33)>
 
 
 Paired-end output format (tab-separated):
@@ -2983,9 +3079,10 @@ Paired-end output format (tab-separated):
 (11) <methylation call 2>
 (12) <read 1 conversion
 (13) <genome conversion>
+(14) <read 1 quality score (Phred33)>
+(15) <read 2 quality score (Phred33)>
 
-
-This script was last edited on 10 Feb 2011.
+This script was last edited on 20 Apr 2011.
 
 HOW_TO
 }
