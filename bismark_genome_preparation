@@ -22,6 +22,8 @@ $|++;
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use Getopt::Long;
+use Cwd;
+
 my $verbose;
 my $help;
 my $man;
@@ -272,7 +274,14 @@ sub create_bisulfite_genome_folders{
     }
     $verbose and print "Path to genome folder specified: $genome_folder\n";
     chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
+
+    # making the genome folder path abolsolute so it won't break if the path was specified relative
+    $genome_folder = getcwd;
+    unless ($genome_folder =~ /\/$/){
+      $genome_folder =~ s/$/\//;
+    }
   }
+
   else{
     $verbose and print "Genome folder was not provided as argument ";
     while (1){
@@ -319,7 +328,7 @@ sub create_bisulfite_genome_folders{
     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
   }
 
-  print "Bisulfite Genome Indexer version 0.4.1 (last modified 10 Feb 2011)\n\n ";
+  print "Bisulfite Genome Indexer version 0.5.1 (last modified 11 May 2011)\n\n";
   sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -423,10 +432,10 @@ OPTIONS:
 
 ARGUMENTS:
 
-<path_to_genome_folder>  The full path to the folder containing the genome to be bisulfite
-                         converted. At the current time Bismark Genome Preparation expects
-                         one or more fastA files in the folder (with the file extension: .fa).
-                         If the path is not provided as an argument you will be prompted for it.
+<path_to_genome_folder>  The path to the folder containing the genome to be bisulfite converted.
+                         At the current time Bismark Genome Preparation expects one or more fastA
+                         files in the folder (with the file extension: .fa or .fasta). If the path
+                         is not provided as an argument you will be prompted for it.
 
 
 

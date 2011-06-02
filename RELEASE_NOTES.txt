@@ -1,3 +1,44 @@
+RELEASE NOTES FOR Bismark v0.5.1 (05 May 2011)
+----------------------------------------------
+
+Bismark_genome_preparation:
+
+The genome folder can now be specified either as absolute or relative path.
+
+
+
+RELEASE NOTES FOR Bismark v0.5.0 (21 Apr 2011)
+----------------------------------------------
+
+Bismark
+
+Due to upcoming changes in the Illumina Casava 1.8 pipeline the FastQ output format
+for paired-end files will look different to earlier versions. If run in paired-end 
+mode, Bismark is now always appending /1 to all reads from the file specified by -1,
+/2 to all reads from the file specified by -2 while the sequences are converted into
+bisulfite sequences. This should ensure that pretty much any format will be aligned
+correctly.
+
+The Bismark single-end mapping output will now have an additional column at the end
+showing the basecall quality scores of the FastQ file to allow for quality filtering.
+The field is left blank for FastA input.
+
+The Bismark paired-end mapping output will now have two additional columns at the end
+showing the basecall quality scores of the FastQ files for read 1 and read 2 to allow
+for quality filtering. Both fields are left blank for FastA input.
+
+Fixed a bug for paired-end alignments whereby alignments to the CTOT strand were 
+incorrectly assigned to the CTOB strand and vice versa.
+
+
+Methylation Extractor 
+
+Fixed a bug for paired-end alignments whereby alignments to the CTOT strand were
+incorrectly assigned to the CTOB strand and vice versa.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.4.1 (10 Feb 2011)
 ----------------------------------------------
 

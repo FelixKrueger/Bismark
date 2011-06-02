@@ -94,6 +94,11 @@ sub run_sequence_generation{
     generate_genomic_sequences (); # DEFAULT
   }
 
+  ## need to introduce SNPs before bisulfite conversion takes place
+  if ($number_of_SNPs > 0){
+    introduce_SNPs();
+  }
+
   if (defined $CG_conversion_rate and defined $CH_conversion_rate){
     bisulfite_transform_sequences_context_specifically ();
   }
@@ -115,10 +120,6 @@ sub run_sequence_generation{
   ### Adapter dimers can theoretically be specified in addition to variable or fixed length adapter sequence contamination
   if($adapter_dimer){
     introduce_adapter_dimers();
-  }
-
-  if ($number_of_SNPs > 0){
-    introduce_SNPs();
   }
 
   generate_quality_values ();

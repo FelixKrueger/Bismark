@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.5.0';
+my $bismark_version = 'v0.5.1';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -63,8 +63,8 @@ foreach my $filename (@filenames){
     ### FastA format
     if ($sequence_file_format eq 'FASTA'){
       print "Input files are in FastA format\n";
-      ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastAFiles ($filename_1);
-      ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastAFiles ($filename_2);
+      ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
+      ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastAFiles_paired_end ($filename_2,2); # also passing the read number
 
       $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
       $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -81,8 +81,8 @@ foreach my $filename (@filenames){
     ### FastQ format
     else{
       print "Input files are in FastQ format\n";
-      ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles ($filename_1);
-      ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles ($filename_2);
+      ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
+      ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2); # also passing the read number
 
       $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
       $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -586,36 +586,31 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     chomp $identifier_1;
     chomp $sequence_2;
     chomp $identifier_2;
+
     $identifier_1 =~ s/^>//; # deletes the > at the beginning of FastA headers
-    $identifier_2 =~ s/^>//;
-    $identifier_1 =~ s/\/[12]//; # deletes the 1/2 at the end
-    $identifier_2 =~ s/\/[12]//;
-    if ($identifier_1 eq $identifier_2){
-      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
-      unless ($return){
-	$return = 0;
-      }
 
-      # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
-      if ($ambiguous and $return == 2){
-	print AMBIG_1 $orig_identifier_1;	
-	print AMBIG_1 "$sequence_1\n";
-	print AMBIG_2 $orig_identifier_2;	
-	print AMBIG_2 "$sequence_2\n";
-      }
-
-      # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
-      elsif ($unmapped and $return == 1){
-	print UNMAPPED_1 $orig_identifier_1;	
-	print UNMAPPED_1 "$sequence_1\n";
-	print UNMAPPED_2 $orig_identifier_2;	
-	print UNMAPPED_2 "$sequence_2\n";
-      }
+    my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+    unless ($return){
+      $return = 0;
     }
-    else {
-      die "Sequence IDs are not identical\n";
+
+    # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
+    if ($ambiguous and $return == 2){
+      print AMBIG_1 $orig_identifier_1;	
+      print AMBIG_1 "$sequence_1\n";
+      print AMBIG_2 $orig_identifier_2;	
+      print AMBIG_2 "$sequence_2\n";
+    }
+
+    # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
+    elsif ($unmapped and $return == 1){
+      print UNMAPPED_1 $orig_identifier_1;	
+      print UNMAPPED_1 "$sequence_1\n";
+      print UNMAPPED_2 $orig_identifier_2;	
+      print UNMAPPED_2 "$sequence_2\n";
     }
   }
+
   print "Processed $counting{sequences_count} sequences in total\n\n";
   close IN1 or die "Failed to close filehandle $!";
   close IN2 or die "Failed to close filehandle $!";
@@ -659,50 +654,42 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     chomp $quality_value_1;
     chomp $quality_value_2;
 
-    $identifier_1 =~ s/^\@//;	 # deletes the @ at the beginning of Illumin FastQ headers
-    $identifier_2 =~ s/^\@//;
-    $identifier_1 =~ s/\/[12]//; # deletes the 1/2 at the end
-    $identifier_2 =~ s/\/[12]//;
+    $identifier_1 =~ s/^\@//;	 # deletes the @ at the beginning of the FastQ ID
 
-    if ($identifier_1 eq $identifier_2){
-      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
-      unless ($return){
-	$return = 0;
-      }
-
-      # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
-      if ($ambiguous and $return == 2){
-	# seq_1
-	print AMBIG_1 $orig_identifier_1;	
-	print AMBIG_1 "$sequence_1\n";
-	print AMBIG_1 $ident_1;	
-	print AMBIG_1 $quality_value_1;
-	# seq_2
-	print AMBIG_2 $orig_identifier_2;	
-	print AMBIG_2 "$sequence_2\n";
-	print AMBIG_2 $ident_2;	
-	print AMBIG_2 $quality_value_2;
-      }
-
-      # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
-      elsif ($unmapped and $return == 1){
-	# seq_1
-	print UNMAPPED_1 $orig_identifier_1;	
-	print UNMAPPED_1 "$sequence_1\n";
-	print UNMAPPED_1 $ident_1;	
-	print UNMAPPED_1 $quality_value_1;
-	# seq_2
-	print UNMAPPED_2 $orig_identifier_2;	
-	print UNMAPPED_2 "$sequence_2\n";
-	print UNMAPPED_2 $ident_2;	
-	print UNMAPPED_2 $quality_value_2;
-      }
+    my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+    unless ($return){
+      $return = 0;
     }
-    else {
-      warn "$identifier_1\t$identifier_2\n";
-      die "Sequence IDs are not identical\n $!";
+
+    # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
+    if ($ambiguous and $return == 2){
+      # seq_1
+      print AMBIG_1 $orig_identifier_1;	
+      print AMBIG_1 "$sequence_1\n";
+      print AMBIG_1 $ident_1;	
+      print AMBIG_1 $quality_value_1;
+	# seq_2
+      print AMBIG_2 $orig_identifier_2;	
+      print AMBIG_2 "$sequence_2\n";
+      print AMBIG_2 $ident_2;	
+      print AMBIG_2 $quality_value_2;
+    }
+
+    # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
+    elsif ($unmapped and $return == 1){
+      # seq_1
+      print UNMAPPED_1 $orig_identifier_1;	
+      print UNMAPPED_1 "$sequence_1\n";
+      print UNMAPPED_1 $ident_1;	
+      print UNMAPPED_1 $quality_value_1;
+      # seq_2
+      print UNMAPPED_2 $orig_identifier_2;	
+      print UNMAPPED_2 "$sequence_2\n";
+      print UNMAPPED_2 $ident_2;	
+      print UNMAPPED_2 $quality_value_2;
     }
   }
+
   print "Processed $counting{sequences_count} sequences in total\n\n";
   close IN1 or die "Failed to close filehandle $!";
   close IN2 or die "Failed to close filehandle $!";
@@ -1092,6 +1079,7 @@ sub check_bowtie_results_paired_ends{
   unless ($quality_value_1 and $quality_value_2){ ### quality values are not given for FastA files, so they are initialised as empty strings
     $quality_value_1 = $quality_value_2 = '';
   }
+  #  print "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
 
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence pair aligned to a bisulfite converted genome
@@ -1108,6 +1096,8 @@ sub check_bowtie_results_paired_ends{
     next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and $fhs[$index]->{last_seq_id});
     ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
+      # print "$identifier\n$fhs[$index]->{last_seq_id}\n\n";
+
       ##################################################################################
       ### STEP I Processing the entry which is stored in last_line_1 and last_line_2 ###
       ##################################################################################
@@ -1187,13 +1177,21 @@ sub check_bowtie_results_paired_ends{
 	###################################################################################################################################################
 	my $newline_1 = $fhs[$index]->{fh}-> getline();
 	my $newline_2 = $fhs[$index]->{fh}-> getline();
+
 	if ($newline_1 and $newline_2){
 	  my ($seq_id_1) = split (/\t/,$newline_1);
 	  my ($seq_id_2) = split (/\t/,$newline_2);
-	  $seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	  $seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	  die "Seq IDs need to be identical\n" unless ($seq_id_1 eq $seq_id_2);
-	  $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+	
+	  if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
+	    $fhs[$index]->{last_seq_id} = $seq_id_1;
+	  }
+	  elsif ($seq_id_2 =~ s/\/1$//){ # removing the read /1 tag
+	    $fhs[$index]->{last_seq_id} = $seq_id_2;
+	  }
+	  else{
+	    die "Either read 1 or read 2 needs to end on '/1'\n";
+	  }
+	
 	  $fhs[$index]->{last_line_1} = $newline_1;
 	  $fhs[$index]->{last_line_2} = $newline_2;
 	}
@@ -1275,13 +1273,17 @@ sub check_bowtie_results_paired_ends{
 	  ###############################################################################################################################################
 	  $newline_1 = $fhs[$index]->{fh}-> getline();
 	  $newline_2 = $fhs[$index]->{fh}-> getline();
+
 	  if ($newline_1 and $newline_2){
 	    my ($seq_id_1) = split (/\t/,$newline_1);
 	    my ($seq_id_2) = split (/\t/,$newline_2);
-	    $seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	    $seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	    die "Seq IDs need to be identical\n" unless ($seq_id_1 eq $seq_id_2);
-	    $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+
+	    if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
+	      $fhs[$index]->{last_seq_id} = $seq_id_1;
+	    }
+	    if ($seq_id_2 =~ s/\/1$//){ # removing the read /1 tag
+	      $fhs[$index]->{last_seq_id} = $seq_id_2;
+	    }
 	    $fhs[$index]->{last_line_1} = $newline_1;
 	    $fhs[$index]->{last_line_2} = $newline_2;
 	  }
@@ -1392,10 +1394,11 @@ sub decide_whether_paired_end_alignment_is_valid{
   chomp $mismatch_info_2;
   my $seq_id_1 = $id_1;
   my $seq_id_2 = $id_2;
-  $seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-  $seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
+  $seq_id_1 =~ s/\/1$//; # removing the read /1
+  $seq_id_2 =~ s/\/1$//; # removing the read /1
+
   ### ensuring that the current entry is the correct sequence
-  if ($seq_id_1 eq $seq_id_2 and $seq_id_1 eq $identifier){
+  if ($seq_id_1 eq $identifier or $seq_id_2 eq $identifier){
     ### checking the orientation of the alignment. We need to discriminate between 8 different conditions, however only 4 of them are theoretically
     ### sensible alignments
     my $orientation = ensure_sensical_alignment_orientation_paired_ends ($index,$id_1,$strand_1,$id_2,$strand_2);
@@ -1411,18 +1414,29 @@ sub decide_whether_paired_end_alignment_is_valid{
 	### extract detailed information about the alignment again (from $newline_1 and $newline_2 this time)
 	($id_1,$strand_1) = (split (/\t/,$newline_1))[0,1];
 	($id_2,$strand_2) = (split (/\t/,$newline_2))[0,1];
+
+	my $seqid;
 	$seq_id_1 = $id_1;
 	$seq_id_2 = $id_2;
-	$seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	$seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
+	# we need to capture the first read (ending on /1)
+	if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
+	  $seqid = $seq_id_1;
+	}
+	elsif ($seq_id_2 =~ s/\/1$//){ # removing the read /1 tag
+	  $seqid = $seq_id_2;
+	}
+	else{
+	  die "One of the two reads needs to end on /1!!";
+	}
+	
 	### ensuring that the next entry is still the correct sequence
-	if ($seq_id_1 eq $seq_id_2 and $seq_id_1 eq $identifier){
+	if ($seq_id_1 eq $identifier or  $seq_id_2 eq $identifier){
 	  ### checking orientation again
 	  $orientation = ensure_sensical_alignment_orientation_paired_ends ($index,$id_1,$strand_1,$id_2,$strand_2);
 	  ### If the orientation was correct can we move on
 	  if ($orientation == 1){
 	    ### Writing the current sequence to last_line_1 and last_line_2
-	    $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+	    $fhs[$index]->{last_seq_id} = $seqid;
 	    $fhs[$index]->{last_line_1} = $newline_1;
 	    $fhs[$index]->{last_line_2} = $newline_2;
 	    return 1; ### 2nd possibility for a SEQUENCE-PAIR TO PASS
@@ -1435,13 +1449,22 @@ sub decide_whether_paired_end_alignment_is_valid{
 	    if ($newline_1 and $newline_2){
 	      ($seq_id_1) = split (/\t/,$newline_1);
 	      ($seq_id_2) = split (/\t/,$newline_2);
-	      $seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	      $seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	      die "Seq IDs need to be identical\n" unless ($seq_id_1 eq $seq_id_2);
+	
+	      $seqid = '';
+	      if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
+		$seqid = $seq_id_1;
+	      }
+	      elsif ($seq_id_2 =~ s/\/1$//){ # removing the read /1 tag
+		$seqid = $seq_id_2;
+	      }
+	      else{
+		die "One of the two reads needs to end on /1!!";
+	      }
+	
 	      ### check if the next 2 lines still have the same seq ID (must not happen), and if not overwrite the current seq-ID and bowtie output with
 	      ### the same fields of the just read next entry
-	      die "Same seq ID 3 or more times in a row!(should be 2 max)" if ($seq_id_1 eq $identifier);
-	      $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+	      die "Same seq ID 3 or more times in a row!(should be 2 max)" if ($seqid eq $identifier);
+	      $fhs[$index]->{last_seq_id} = $seqid;
 	      $fhs[$index]->{last_line_1} = $newline_1;
 	      $fhs[$index]->{last_line_2} = $newline_2;
 	      return 0; # not processing anything this round as the alignment currently stored in last_line_1 and _2 was in the wrong orientation
@@ -1460,7 +1483,7 @@ sub decide_whether_paired_end_alignment_is_valid{
 	}
 	### the sequence pair we just read in is already the next sequence pair to be analysed -> store it in @fhs
 	else{
-	  $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+	  $fhs[$index]->{last_seq_id} = $seqid;
 	  $fhs[$index]->{last_line_1} = $newline_1;
 	  $fhs[$index]->{last_line_2} = $newline_2;
 	  return 0; # processing the new alignment result only in the next round
@@ -1664,7 +1687,6 @@ sub print_bisulfite_mapping_results_paired_ends{
   }
 
   ### writing every single mapped read and its methylation call to one comprehensive output file
-
 
   ### I will add +1 bp to the starting position of paired-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
   ### reporting to 1 in the future we will see a 1-off error
@@ -2029,7 +2051,7 @@ sub read_genome_into_memory{
     }
 
     unless (@chromosome_filenames){
-      die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
+      die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
     }
 
     foreach my $chromosome_filename (@chromosome_filenames){
@@ -2117,7 +2139,7 @@ sub biTransformFastAFiles {
   while (1){
     my $header = <IN>;
     my $sequence= <IN>;
-    last unless ($header and $sequence); 
+    last unless ($header and $sequence);
     $sequence = uc$sequence; # make input file case insensitive
     ++$count;
     ## small check if the sequence seems to be in FastA format
@@ -2131,6 +2153,47 @@ sub biTransformFastAFiles {
   print "\nCreated C -> T as well as G -> A converted versions of the FastA file $filename ($count sequences in total)\n\n";
   return ($C_to_T_infile,$G_to_A_infile);
 }
+
+sub biTransformFastAFiles_paired_end {
+  my ($filename,$read_number) = @_;
+  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+  my $C_to_T_infile = my $G_to_A_infile = $filename;
+  $C_to_T_infile =~ s/$/_C_to_T.fa/;
+  $G_to_A_infile =~ s/$/_G_to_A.fa/;
+  print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
+  print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
+  open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
+  open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+  my $count =0;
+  while (1){
+    my $header = <IN>;
+    my $sequence= <IN>;
+    last unless ($header and $sequence);
+    $sequence = uc$sequence; # make input file case insensitive
+    ++$count;
+    ## small check if the sequence seems to be in FastA format
+    die "Input file doesn't seem to be in FastA format at sequence $count: $!\n" unless ($header =~ /^>.*/);
+
+    if ($read_number == 1){
+      $header =~ s/$/\/1/;
+    }
+    elsif ($read_number == 2){
+      $header =~ s/$/\/2/;
+    }
+    else{
+      die "Read number needs to be 1 or 2\n";
+    }
+
+    my $sequence_C_to_T = my $sequence_G_to_A = $sequence;
+    $sequence_C_to_T =~ tr/C/T/;
+    $sequence_G_to_A =~ tr/G/A/;
+    print CTOT "$header$sequence_C_to_T";
+    print GTOA "$header$sequence_G_to_A";
+  }
+  print "\nCreated C -> T as well as G -> A converted versions of the FastA file $filename ($count sequences in total)\n\n";
+  return ($C_to_T_infile,$G_to_A_infile);
+}
+
 
 sub biTransformFastQFiles {
   my $filename = shift;
@@ -2164,6 +2227,52 @@ sub biTransformFastQFiles {
   print "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
   return ($C_to_T_infile,$G_to_A_infile);
 }
+
+sub biTransformFastQFiles_paired_end {
+  my ($filename,$read_number) = @_;
+  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+  my $C_to_T_infile = my $G_to_A_infile = $filename;
+  $C_to_T_infile =~ s/$/_C_to_T.fastq/;
+  $G_to_A_infile =~ s/$/_G_to_A.fastq/;
+  print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
+  print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
+  open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
+  open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+  my $count =0;
+  while (1){
+    my $identifier = <IN>;
+    my $sequence = <IN>;
+    my $identifier2 = <IN>;
+    my $quality_score = <IN>;
+    last unless ($identifier and $sequence and $identifier2 and $quality_score);
+    ++$count;
+    $sequence= uc$sequence; # make input file case insensitive
+
+    ## small check if the sequence file appears to be a FastQ file
+    if ($identifier !~ /^\@/ or $identifier2 !~ /^\+/){
+      die "Input file doesn't seem to be in FastQ format at sequence $count: $!\n";
+    }
+    my $sequence_C_to_T = my $sequence_G_to_A = $sequence;
+
+    if ($read_number == 1){
+      $identifier =~ s/$/\/1/;
+    }
+    elsif ($read_number == 2){
+      $identifier =~ s/$/\/2/;
+    }
+    else{
+      die "Read number needs to be 1 or 2\n";
+    }
+
+    $sequence_C_to_T =~ tr/C/T/;
+    $sequence_G_to_A =~ tr/G/A/;
+    print CTOT join ('',$identifier,$sequence_C_to_T,$identifier2,$quality_score);
+    print GTOA join ('',$identifier,$sequence_G_to_A,$identifier2,$quality_score);
+  }
+  print "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
+  return ($C_to_T_infile,$G_to_A_infile);
+}
+
 
 sub ensure_sensical_alignment_orientation_single_end{
   my $index = shift; # index number if the sequence produced an alignment
@@ -2353,23 +2462,28 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
     if ($line_1 and $line_2) {
       my $id_1 = (split(/\t/),$line_1)[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
       my $id_2 = (split(/\t/),$line_2)[0]; # this is the first element of the second bowtie output line
-      $id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      $id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      if ($id_1 eq $id_2){
-	$fh->{last_seq_id} = $id_1; # either will do
+
+      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_1;
       }
-      else {
-	die "Sequence IDs do not match!\n"
+      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_2;
       }
-      $fh->{last_line_1} = $line_1; # this does contain the read 1 or read 2 tag
-      $fh->{last_line_2} = $line_2; # this does contain the read 1 or read 2 tag
+      else{
+	die "Either the first or the second id need to be read 1!\n";
+      }
+
+      $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
+      $fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
       warn "Found first alignment:\n$fh->{last_line_1}$fh->{last_line_2}";
     }
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
       print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-      $fh->{last_seq_id_1} = undef;
-      $fh->{last_seq_id_2} = undef;
+      $fh->{last_seq_id} = undef;
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
     }
@@ -2392,25 +2506,32 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 
     # if Bowtie produces an alignment we store the first line of the output
     if ($line_1 and $line_2) {
+
+      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
       my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
       my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-      $id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      $id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      if ($id_1 eq $id_2){
-	$fh->{last_seq_id} = $id_1; # either will do
+
+      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_1;
       }
-      else {
-	die "Sequence IDs do not match!\n"
+      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_2;
       }
-      $fh->{last_line_1} = $line_1; # this does contain the read 1 or read 2 tag
-      $fh->{last_line_2} = $line_2; # this does contain the read 1 or read 2 tag
+      else{
+	die "Either the first or the second id need to be read 1!\n";
+      }
+
+      $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
+      $fh->{last_line_2} = $line_2; # this contains read 1 or read 2
       warn "Found first alignment:\n$fh->{last_line_1}$fh->{last_line_2}";
     }
+
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
       print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-      $fh->{last_seq_id_1} = undef;
-      $fh->{last_seq_id_2} = undef;
+      $fh->{last_seq_id} = undef;
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
     }

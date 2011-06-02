@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_index_basename_1,$genome_index_basename_2,$genome_1,$genome_2,$path_to_bowtie,$sequence_file_format,$bowtie_options,$unmapped,$dissimilar) = process_command_line();
+my ($genome_index_basename_1,$genome_index_basename_2,$genome_1,$genome_2,$path_to_bowtie,$sequence_file_format,$bowtie_options,$unmapped,$dissimilar,$phred64,$solexa) = process_command_line();
 
 my @fhs;         # stores alignment process names, genome index location, bowtie filehandles and the number of times sequences produced an alignment
 my %counting;    # counting various events
@@ -302,11 +302,12 @@ sub process_single_end_fastQ_file{
 
     chomp $sequence;
     chomp $identifier;
+    chomp $quality_value;
 
     $identifier =~ s/^\@//;	# deletes the @ at the beginning of Illumina FastQ headers
 
     ### check if there is a valid alignment
-    my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
+    my $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value);
 
     unless ($return){
       $return = 0;
@@ -317,7 +318,7 @@ sub process_single_end_fastQ_file{
       print UNMAPPED '@',"$identifier\n";	
       print UNMAPPED "$sequence\n";
       print UNMAPPED $identifier_2;	
-      print UNMAPPED $quality_value;
+      print UNMAPPED "$quality_value\n";
     }
   }
 
@@ -414,13 +415,13 @@ sub process_paired_end_fastQ_files{
     my $identifier_1 = my $orig_identifier_1 = <IN1>;
     my $sequence_1 = <IN1>;
     my $ident_1 = <IN1>;         # not needed
-    my $quality_value_1 = <IN1>; # not needed
+    my $quality_value_1 = <IN1>;
 
     # reading from the second input file
     my $identifier_2 = my $orig_identifier_2 = <IN2>;
     my $sequence_2 = <IN2>;
     my $ident_2 = <IN2>;         # not needed
-    my $quality_value_2 = <IN2>; # not needed
+    my $quality_value_2 = <IN2>;
 
     last unless ($identifier_1 and $sequence_1 and $ident_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $ident_2 and $quality_value_2);
 
@@ -431,8 +432,11 @@ sub process_paired_end_fastQ_files{
 
     chomp $sequence_1;
     chomp $identifier_1;
+    chomp $quality_value_1;
+
     chomp $sequence_2;
     chomp $identifier_2;
+    chomp $quality_value_2;
 
     $identifier_1 =~ s/^\@//;	 # deletes the @ at the beginning of Illumina FastQ headers
     $identifier_2 =~ s/^\@//;
@@ -440,7 +444,7 @@ sub process_paired_end_fastQ_files{
     $identifier_2 =~ s/\/[12]//;
 
     if ($identifier_1 eq $identifier_2){
-      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+      my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
 
       # print the sequence to unmapped_1.out and unmapped_2.out if --un was specified
       if ($unmapped and $return == 1){
@@ -448,12 +452,12 @@ sub process_paired_end_fastQ_files{
 	print UNMAPPED_1 $orig_identifier_1;	
 	print UNMAPPED_1 "$sequence_1\n";
 	print UNMAPPED_1 $ident_1;	
-	print UNMAPPED_1 $quality_value_1;
+	print UNMAPPED_1 "$quality_value_1\n";
 	# seq_2
 	print UNMAPPED_2 $orig_identifier_2;	
 	print UNMAPPED_2 "$sequence_2\n";
 	print UNMAPPED_2 $ident_2;	
-	print UNMAPPED_2 $quality_value_2;
+	print UNMAPPED_2 "$quality_value_2\n";
       }
     }
 
@@ -595,8 +599,20 @@ sub print_final_analysis_report_paired_end{
 
 sub check_bowtie_results_single_end{
 
-  my ($sequence,$identifier) = @_;
+  my ($sequence,$identifier,$quality_value) = @_;
   my %mismatches = ();
+
+  unless ($quality_value){ # for FastA sequences do not have quality values
+    $quality_value = '';
+  }
+
+  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+  if ($phred64){
+    $quality_value = convert_phred64_quals_to_phred33($quality_value);
+  }
+  elsif ($solexa){
+    $quality_value = convert_solexa_quals_to_phred33($quality_value);
+  }
 
   ### reading from the bowtie output filehandle to see if this sequence aligned to one of the two genomes
   foreach my $index (0..$#fhs){
@@ -745,7 +761,7 @@ sub check_bowtie_results_single_end{
 	if ($dissimilar){
 
 	  my ($id,$strand,$chr,$start,$bowtie_sequence,$mismatch_info) = (split (/\t/,$mismatches{$mismatch_number}->{$unique_best_alignment}->{line},-1))[0,1,2,3,4,7];
-	
+
 	  $start += 1; # bowtie alignments are 0 based
 	  my $end = $start+length($sequence)-1;
 
@@ -887,14 +903,14 @@ sub check_bowtie_results_single_end{
 	  # read aligned uniquely best to genome 1
 	  if ($index == 0){
 	    $counting{genome_1_specific_count}++;
-	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2,$quality_value),"\n";
 	    return 0; ## once we printed the sequence with the lowest number of mismatches we exit
 	  }
 	
 	  # read aligned uniquely best to genome 2
 	  elsif ($index == 1){
 	    $counting{genome_2_specific_count}++;
-	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2,$quality_value),"\n";
 	    return 0; ## once we printed the sequence with the lowest number of mismatches we exit
 	  }
 	  else{
@@ -949,7 +965,7 @@ sub check_bowtie_results_single_end{
 
 	    $mismatch_info_2 = determine_read_mismatches_to_genomic_sequence($sequence,$genome_2_sequence);
 
-	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    print OUT_G1 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2,$quality_value),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 
@@ -968,7 +984,7 @@ sub check_bowtie_results_single_end{
 
 	    $mismatch_info_1 = determine_read_mismatches_to_genomic_sequence($sequence,$genome_1_sequence);
 	
-	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	    print OUT_G2 join ("\t",$id,$sequence,$index+1,$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2,$quality_value),"\n";
 	    return 0; ## if we printed the sequence with the lowest number of mismatches we exit
 	  }
 
@@ -1047,7 +1063,7 @@ sub check_bowtie_results_single_end{
 	  $mismatch_info_2 = get_reverse_strand_mismatch_call ($sequence,$mismatch_info_2);
 	}	
 
-	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
+	print OUT_MIXED join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2,$quality_value),"\n";
 	# print join ("\t",$id,$sequence,'N',$strand,$chr,$start,$end,$genome_1_sequence,$mismatch_info_1,$genome_2_sequence,$mismatch_info_2),"\n";
       }
       else{
@@ -1146,8 +1162,22 @@ sub determine_read_mismatches_to_genomic_sequence{
 
 sub check_bowtie_results_paired_ends{
 
-  my ($sequence_1,$sequence_2,$identifier) = @_;
+  my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
   my %mismatches = ();
+
+  unless ($quality_value_1 and $quality_value_2){ ### quality values are not given for FastA files, so they are initialised as empty strings
+    $quality_value_1 = $quality_value_2 = '';
+  }
+
+  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+  if ($phred64){
+    $quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
+    $quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
+  }
+  elsif ($solexa){
+    $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
+    $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
+  }
 
   ### reading from the bowtie output filehandles to see if this sequence pair aligned to one of the two genomes
   foreach my $index (0..$#fhs){
@@ -1721,13 +1751,13 @@ sub check_bowtie_results_paired_ends{
 	    if ($id_1 =~ /\/1$/){ # sequence_1 aligned to the forward strand
 	
 	      ### print out sequence_1 first
-	      print OUT_G1 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G1 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 	
 	    elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
 
 	      ### print out sequence_2 first  ## strand info = second read!
-	      print OUT_G1 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G1 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 
  	    return 0; ## once we printed the sequence with the lowest sum of mismatches we exit
@@ -1740,13 +1770,13 @@ sub check_bowtie_results_paired_ends{
 	    if ($id_1 =~ /\/1$/){ # sequence_1 aligned to the forward strand
 	
 	      ### print out sequence_1 first
-	      print OUT_G2 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G2 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 
 	    elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
 
 	      ### print out sequence_2 first ## strand info = second read!
-	      print OUT_G2 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G2 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 	
 	    return 0; ## once we printed the sequence pair with the lowest sum of mismatches we exit
@@ -1883,7 +1913,7 @@ sub check_bowtie_results_paired_ends{
 	      $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_2_sequence_2);
 	
 	      ### print out sequence_1 first
-	      print OUT_G1 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G1 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 
   	    elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
@@ -1895,7 +1925,7 @@ sub check_bowtie_results_paired_ends{
 	      $mismatch_info_2_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_2_sequence_2);
 
 	      ### print out sequence_2 first ## strand info = second read!
-	      print OUT_G1 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G1 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 	
 	    else{
@@ -1921,7 +1951,7 @@ sub check_bowtie_results_paired_ends{
 	      $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_2,$genome_1_sequence_2);
 	
 	      ### print out sequence_1 first
-	      print OUT_G2 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G2 join ("\t",$identifier,$sequence_1,$sequence_2,$index+1,$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 
 	    elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
@@ -1933,7 +1963,7 @@ sub check_bowtie_results_paired_ends{
 	      $mismatch_info_1_2 = determine_read_mismatches_to_genomic_sequence($sequence_1,$genome_1_sequence_2);
 
 	      ### print out sequence_2 first ## strand infor = second read
-	      print OUT_G2 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	      print OUT_G2 join ("\t",$identifier,$sequence_2,$sequence_1,$index+1,$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	    }
 
 	    else{
@@ -2117,12 +2147,12 @@ sub check_bowtie_results_paired_ends{
 	
 	if ($id_1 =~ /\/1$/){ # sequence_1 aligned to the forward strand
 	  ### printing out sequence_1 first
-	  print OUT_MIXED join ("\t",$identifier,$sequence_1,$sequence_2,'N',$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	  print OUT_MIXED join ("\t",$identifier,$sequence_1,$sequence_2,'N',$strand_1,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	}
 
 	elsif ($id_1 =~ /\/2$/){ # $sequence_2 aligned to the forward strand
 	  ### printing out sequence_2 first ## strand info = second read
-	  print OUT_MIXED join ("\t",$identifier,$sequence_2,$sequence_1,'N',$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,),"\n";
+	  print OUT_MIXED join ("\t",$identifier,$sequence_2,$sequence_1,'N',$strand_2,$chr_1,$start_1,$end_2,$genome_1_sequence_1,$mismatch_info_1_1,$genome_1_sequence_2,$mismatch_info_1_2,$genome_2_sequence_1,$mismatch_info_2_1,$genome_2_sequence_2,$mismatch_info_2_2,$quality_value_1,$quality_value_2),"\n";
 	}
 	
 	else{
@@ -2300,7 +2330,56 @@ sub single_end_align_fragments_fastQ {
   }
 }
 
+sub convert_phred64_quals_to_phred33{
 
+  my $qual = shift;
+  my @quals = split (//,$qual);
+  my @new_quals;
+
+  foreach my $index (0..$#quals){
+    my $phred_score = convert_phred64_quality_string_into_phred_score ($quals[$index]);
+    my $phred33_quality_string = convert_phred_score_into_phred33_quality_string ($phred_score);
+    $new_quals[$index] = $phred33_quality_string;
+  }
+
+  my $phred33_quality = join ("",@new_quals);
+  return $phred33_quality;
+}
+
+sub convert_solexa_quals_to_phred33{
+
+  my $qual = shift;
+  my @quals = split (//,$qual);
+  my @new_quals;
+
+  foreach my $index (0..$#quals){
+    my $phred_score = convert_solexa_pre1_3_quality_string_into_phred_score ($quals[$index]);
+    my $phred33_quality_string = convert_phred_score_into_phred33_quality_string ($phred_score);
+    $new_quals[$index] = $phred33_quality_string;
+  }
+
+  my $phred33_quality = join ("",@new_quals);
+  return $phred33_quality;
+}
+
+sub convert_phred_score_into_phred33_quality_string{
+  my $qual = shift;
+  $qual = chr($qual+33);
+  return $qual;
+}
+
+sub convert_phred64_quality_string_into_phred_score{
+  my $string = shift;
+  my $qual = ord($string)-64;
+  return $qual;
+}
+
+sub convert_solexa_pre1_3_quality_string_into_phred_score{
+  ### We will just use 59 as the offset here as all Phred Scores between 10 and 40 look exactly the same, there is only a minute difference for values between 0 and 10
+  my $string = shift;
+  my $qual = ord($string)-59;
+  return $qual;
+}
 
 #######################################################################################################################################
 ### Reset counters
@@ -2338,6 +2417,16 @@ sub read_genome_1_into_memory{
   print "Now reading in and storing sequence information of the genome specified in: $genome_1\n\n";
 
   my @chromosome_filenames =  <*.fa>;
+
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  unless (@chromosome_filenames){
+    @chromosome_filenames =  <*.fasta>;
+  }
+
+  unless (@chromosome_filenames){
+    die "The specified genome folder $genome_1 does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+  }
+
   foreach my $chromosome_filename (@chromosome_filenames){
 
 
@@ -2402,6 +2491,16 @@ sub read_genome_2_into_memory{
   print "Now reading in and storing sequence information of the genome specified in: $genome_2\n\n";
 
   my @chromosome_filenames =  <*.fa>;
+
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  unless (@chromosome_filenames){
+    @chromosome_filenames =  <*.fasta>;
+  }
+
+  unless (@chromosome_filenames){
+    die "The specified genome folder $genome_2 does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+  }
+
   foreach my $chromosome_filename (@chromosome_filenames){
 
     ### skipping the TopHat whole genome fasta file
@@ -2556,8 +2655,8 @@ sub process_command_line{
 
           ASAP - Allele Specific Alignment Program
 
-   ASAP version: $ASAP_version Copyright 2010 Felix Krueger, Babraham Bioinformatics
-              www.bioinformatics.bbsrc.ac.uk/projects/
+   ASAP version: $ASAP_version Copyright 2011 Felix Krueger, Babraham Bioinformatics
+              www.bioinformatics.bbsrc.ac.uk/projects/ASAP/
 
 
 VERSION
@@ -2700,12 +2799,19 @@ VERSION
     }
     push @bowtie_options,"--phred64-quals";
   }
+  else{
+    $phred64 = 0;
+  }
+
   if ($solexa){
     # Solexa to Phred value conversion works only when -q is specified
     unless ($fastq){
       die "Conversion from Solexa to Phred quality values works only when -q (FASTQ) is specified\n";
     }
     push @bowtie_options,"--solexa-quals";
+  }
+  else{
+    $solexa = 0;
   }
 
   ### ALIGNMENT OPTIONS
@@ -2816,7 +2922,7 @@ VERSION
     $dissimilar = 0;
   }
 
-  return ($indexname_1,$indexname_2,$genome_1,$genome_2,$path_to_bowtie,$sequence_format,$bowtie_options,$unmapped,$dissimilar);
+  return ($indexname_1,$indexname_2,$genome_1,$genome_2,$path_to_bowtie,$sequence_format,$bowtie_options,$unmapped,$dissimilar,$phred64,$solexa);
 }
 
 
@@ -2999,33 +3105,42 @@ OUTPUT:
 
 Single-end output format (tab-separated):
 
-  (1) <seq-ID>
-  (2) <sequence>
-  (3) <unique for genome>                 [1/2/N]
-  (4) <read alignment strand>             [+/-]
-  (5) <chromosome>
-  (6) <start position>
-  (7) <end position>
-  (8) <genome 1 sequence>
-  (9) <genome 1 mismatch info>            [blank if perfect match]
- (10) <genome 2 sequence>
- (11) <genome 2 mismatch info>            [blank if perfect match]
+  (1) seq-ID
+  (2) read sequence
+  (3) specific for genome                      [1/2/N]
+  (4) read alignment strand                    [+/-]
+  (5) alignment
+  (6) alignment start position
+  (7) alignment end position
+  (8) genome 1 sequence
+  (9) genome 1 mismatch info                   [blank if perfect match]
+ (10) genome 2 sequence
+ (11) genome 2 mismatch info                   [blank if perfect match]
+ (12) read quality score (Phred33 scale, Sanger encoding)
 
 Paired-end output format (tab-separated):
 
-  (1) <seq-ID>
-  (2) <sequence>
-  (3) <unique for genome>                 [1/2/N]
-  (4) <read alignment strand>             [+/-]
-  (5) <chromosome>
-  (6) <start position>
-  (7) <end position>
-  (8) <genome 1 sequence>
-  (9) <genome 1 mismatch info>            [blank if perfect match]
- (10) <genome 2 sequence>
- (11) <genome 2 mismatch info>            [blank if perfect match]
+  (1) seq-ID
+  (2) read 1 sequence
+  (3) read 2 sequence
+  (4) specific for genome                      [1/2/N]
+  (5) read 1 alignment strand                  [+/-]
+  (6) alignment chromosome
+  (7) alignment start position
+  (8) alignment end position
+  (9) genome 1 sequence 1
+ (10) genome 1 read 1 mismatch information     [blank if perfect match]
+ (11) genome 1 sequence 2
+ (12) genome 1 read 2 mismatch information     [blank if perfect match]
+ (13) genome 2 sequence 1
+ (14) genome 2 read 1 mismatch information     [blank if perfect match]
+ (15) genome 2 sequence 2
+ (16) genome 2 read 2 mismatch information     [blank if perfect match]
+ (17) read 1 quality score (Phred33 scale, Sanger encoding)
+ (18) read 2 quality score (Phred33 scale, Sanger encoding)
 
-This script was last edited on 12 Jan 2011.
+
+This script was last edited on 2 Jun 2011.
 
 HOW_TO
 }

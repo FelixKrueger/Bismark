@@ -3,13 +3,13 @@ use warnings;
 use strict;
 $|++;
 use Getopt::Long;
-
+use Cwd;
 
 my @filenames;
 my %counting;
 
 my %fhs;
-my $version = 'v0.4.1';
+my $version = 'v0.5.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired,$no_overlap);
@@ -169,8 +169,10 @@ sub process_Bismark_results_file{
     my $bismark_version = <IN>; ## discarding the Bismark version info
     $bismark_version =~  s/Bismark version: //;
     chomp $bismark_version;
+    $bismark_version =~ s/\r//; # replaces \r line feed
+
     unless ($version eq $bismark_version){
-      die "The methylation extractor and Bismark itself need to be of the same version!\n\nVersions used: methylation extractor: $version\nBismark: $bismark_version\n";
+      die "The methylation extractor and Bismark itself need to be of the same version!\n\nVersions used: methylation extractor: ' $version '\nBismark: ' $bismark_version '\n";
     }
 
     ### OPENING OUT-FILEHANDLES
@@ -1578,13 +1580,13 @@ strands a given bisulfite read aligned against:
              OB      original bottom strand
              CTOB    complementary to original bottom strand
 
-Thus, by default twelve individual output files are being generated per input file (unless 
---comprehensive is specified, see below). The output files can be imported into a genome 
+Thus, by default twelve individual output files are being generated per input file (unless
+--comprehensive is specified, see below). The output files can be imported into a genome
 viewing program, e.g. SeqMonk, and recombined into a single data group if desired (in fact
-unless the bisulfite reads were generated preserving directionality it doesn't make any 
+unless the bisulfite reads were generated preserving directionality it doesn't make any
 sense to look at the data in a strand-specific manner). Strand-specific output files can
 optionally be skipped, in which case only three output files for CpG, CHG or CHH context
-will be generated. For both the strand-specific and comprehensive outputs there is also 
+will be generated. For both the strand-specific and comprehensive outputs there is also
 the option to merge both non-CpG contexts (CHG and CHH) into one single non-CpG context.
 
 
@@ -1599,7 +1601,7 @@ USAGE: methylation_extractor [options] <filenames>
 ARGUMENTS:
 
 <filenames>              A space-separated list of result files in Bismark format from 
-                         which methylation information is extracted for every cytosine in 
+                         which methylation information is extracted for every cytosine in
                          the read.
 
 OPTIONS:
@@ -1661,7 +1663,7 @@ The output is in the form:
 * Unmethylated cytosines will receive a '-' orientation.
 
 
-This script was last edited on 13 September 2010.
+This script was last edited on 21 April 2011.
 
 HOW_TO
 }
