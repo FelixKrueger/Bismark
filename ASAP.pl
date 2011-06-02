@@ -25,7 +25,6 @@ use Getopt::Long;
 
 my $parent_dir = getcwd;
 my $ASAP_version = 'v0.1.0';
-my $genome_folder;
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -42,7 +41,6 @@ my %counting;    # counting various events
 
 my %genome_1;
 my %genome_2;
-my %chromosomes;
 
 foreach my $filename (@filenames){
   chdir $parent_dir or die "Unable to move to initial working directory $!\n";
@@ -1255,10 +1253,17 @@ sub check_bowtie_results_paired_ends{
 	chomp $newline_2;
 	my ($seq_id_1) = split (/\t/,$newline_1);
 	my ($seq_id_2) = split (/\t/,$newline_2);
-	$seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	$seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	die "Seq IDs need to be identical!\nID1:\t$seq_id_1\nID2:\t$seq_id_2\n" unless ($seq_id_1 eq $seq_id_2);
-	$fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+
+	if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
+	  $fhs[$index]->{last_seq_id} = $seq_id_1;
+	}
+	elsif ($seq_id_2 =~ s/\/1$//){ # removing the read /1 tag
+	  $fhs[$index]->{last_seq_id} = $seq_id_2;
+	}
+	else{
+	  die "Either read 1 or read 2 needs to end on '/1'\n";
+	}
+	
 	$fhs[$index]->{last_line_1} = $newline_1;
 	$fhs[$index]->{last_line_2} = $newline_2;
       }
@@ -1334,10 +1339,14 @@ sub check_bowtie_results_paired_ends{
 	chomp $newline_2;
 	my ($seq_id_1) = split (/\t/,$newline_1);
 	my ($seq_id_2) = split (/\t/,$newline_2);
-	$seq_id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	$seq_id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-	die "Seq IDs need to be identical!\nID1:\t$seq_id_1\nID2:\t$seq_id_2\n" unless ($seq_id_1 eq $seq_id_2);
-	$fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+
+	if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
+	  $fhs[$index]->{last_seq_id} = $seq_id_1;
+	}
+	if ($seq_id_2 =~ s/\/1$//){ # removing the read /1 tag
+	  $fhs[$index]->{last_seq_id} = $seq_id_2;
+	}
+
 	$fhs[$index]->{last_line_1} = $newline_1;
 	$fhs[$index]->{last_line_2} = $newline_2;
       }
@@ -2203,14 +2212,20 @@ sub paired_end_align_fragments_fastA {
     if ($line_1 and $line_2) {
       my $id_1 = (split(/\t/),$line_1)[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
       my $id_2 = (split(/\t/),$line_2)[0]; # this is the first element of the second bowtie output line
-      $id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      $id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      if ($id_1 eq $id_2){
-	$fh->{last_seq_id} = $id_1; # either will do
+
+      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_1;
       }
-      else {
-	die "Sequence IDs do not match!\n"
+      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_2;
       }
+      else{
+	die "Either the first or the second id need to be read 1!\n";
+      }
+
       $fh->{last_line_1} = $line_1; # this does contain the read 1 or read 2 tag
       $fh->{last_line_2} = $line_2; # this does contain the read 1 or read 2 tag
       warn "Found first alignment:\n$fh->{last_line_1}$fh->{last_line_2}";
@@ -2223,6 +2238,7 @@ sub paired_end_align_fragments_fastA {
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
     }
+    warn "\n";
   }
 }
 
@@ -2245,16 +2261,22 @@ sub paired_end_align_fragments_fastQ {
     if ($line_1 and $line_2) {
       my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
       my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-      $id_1 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      $id_2 =~ s/\/[12]//; # removing the read 1 or read 2 tag
-      if ($id_1 eq $id_2){
-	$fh->{last_seq_id} = $id_1; # either will do
+
+      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_1;
       }
-      else {
-	die "Sequence IDs do not match!\n"
+      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_2;
       }
-      $fh->{last_line_1} = $line_1; # this does contain the read 1 or read 2 tag
-      $fh->{last_line_2} = $line_2; # this does contain the read 1 or read 2 tag
+      else{
+	die "Either the first or the second id need to be read 1!\n";
+      }
+
+      $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
+      $fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
       warn "Found first alignment:\n$fh->{last_line_1}$fh->{last_line_2}";
     }
     # otherwise we just initialise last_seq_id and last_lines as undefined
@@ -2265,6 +2287,7 @@ sub paired_end_align_fragments_fastQ {
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
     }
+    warn "\n";
   }
 }
 
@@ -2299,6 +2322,7 @@ sub single_end_align_fragments_fastA {
       $fh->{last_seq_id} = undef;
       $fh->{last_line} = undef;
     }
+    warn "\n";
   }
 }
 
@@ -2327,6 +2351,7 @@ sub single_end_align_fragments_fastQ {
       $fh->{last_seq_id} = undef;
       $fh->{last_line} = undef;
     }
+    warn "\n";
   }
 }
 
@@ -2971,21 +2996,23 @@ USAGE: ASAP [options] --genome_1 </path/> --genome_2 </path/> --index_1 <genome_
 ARGUMENTS:
 
 --genome_1 <>            The full path to the folder containing reference genome 1. ASAP expects one or
-                         more FastA files in this folder (file extension: .fa).
+                         more FastA files in this folder (file extension: .fa or .fasta).
 
 --genome_2 <>            The full path to the folder containing reference genome 2. ASAP expects one or
-                         more FastA files in this folder (file extension: .fa).
+                         more FastA files in this folder (file extension: .fa or .fasta).
 
---index_1 <>             The full path to the bowtie index base name of genome 1 (e.g.
-                         /data/genomes/mouse/mus_musculus/C57BL6).
+--index_1 <>             The full path to the bowtie index basename of genome 1 (e.g.
+                         /data/genomes/mouse/mus_musculus/C57BL6). The basename is the name of any of
+                         the index files up to but not including the final .1.ebwt / .rev.1.ebwt / etc.
 
---index_2 <>             The full path to the bowtie index base name of genome 2 (e.g.
-                         /data/genomes/mouse/mus_musculus/castaneus).
+--index_2 <>             The full path to the bowtie index basename of genome 2 (e.g.
+                         /data/genomes/mouse/mus_musculus/castaneus). The basename is the name of any of
+                         the index files up to but not including the final .1.ebwt / .rev.1.ebwt / etc.
 
 -1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
                          "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
                          correspond file-for-file and read-for-read with those specified in <mates2>.
-                         Reads may be a mix of different lengths. Bismark will produce one mapping result
+                         Reads may be a mix of different lengths. ASAP will produce three mapping result
                          and one report file per paired-end input file pair.
 
 -2 <mates2>              Comma-separated list of files containing the #2 mates (filename usually includes
@@ -2994,8 +3021,8 @@ ARGUMENTS:
                          Reads may be a mix of different lengths.
 
 <singles>                A comma-separated list of files containing the reads to be aligned (e.g. lane1.fq,
-                         lane2.fq,lane3.fq). Reads may be a mix of different lengths. ASAP will produce
-                         one mapping result and one report file per input file.
+                         lane2.fastq,lane3.txt). Reads may be a mix of different lengths. ASAP will produce
+                         three mapping result and one report file per input file.
 
 
 OPTIONS:
@@ -3005,7 +3032,7 @@ Input:
 
 -q/--fastq               The query input files (specified as <mate1>,<mate2> or <singles> are FASTQ
                          files (usually having extension .fg or .fastq). This is the default. See also
-                         --solexa-quals and --integer-quals.
+                         --solexa-quals.
 
 -f/--fasta               The query input files (specified as <mate1>,<mate2> or <singles> are FASTA
                          files (usually havin extension .fa, .mfa, .fna or similar). All quality values
@@ -3020,7 +3047,7 @@ Input:
 --phred64-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 64. Default: off.
 
 --solexa-quals           Convert FASTQ qualities from solexa-scaled (which can be negative) to phred-scaled
-                         (which can't). The formula for conversion is: 
+                         (which can't). The formula for conversion is:
                          phred-qual = 10 * log(1 + 10 ** (solexa-qual/10.0)) / log(10). Used with -q. This
                          is usually the right option for use with (unconverted) reads emitted by the GA
                          Pipeline versions prior to 1.3. Default: off.
@@ -3038,8 +3065,9 @@ Input:
                          rearrangements). In such a case, ASAP will not attempt to extract the genomic sequence
                          at the corresponding position in the second genome, but will write out the first best
                          alignment to the second genome instead (if appplicable; if there was no best alignment
-                         genome 2 fields will be left blank). This option will not write any sequences to mixed
-                         output file as the concept of homologous sequences is not applicable.
+                         genome 2 fields will be left blank). This option will not write any sequences to an
+                         "alignments in common" output file as the concept of homologous sequences does not
+                         apply to this scenario.
 
 
 Alignment:
@@ -3074,7 +3102,7 @@ Alignment:
 Reporting:
 
 -k <2>                   Due to the way ASAP works Bowtie will report up to 2 valid alignments. This option
-                         will be used by default.
+                         will be used by default and cannot be changed.
 
 --best                   Make Bowtie guarantee that reported singleton alignments are "best" in terms of stratum
                          (i.e. number of mismatches, or mismatches in the seed in the case if -n mode) and in
@@ -3103,6 +3131,7 @@ Other:
 
 OUTPUT:
 
+
 Single-end output format (tab-separated):
 
   (1) seq-ID
@@ -3117,6 +3146,7 @@ Single-end output format (tab-separated):
  (10) genome 2 sequence
  (11) genome 2 mismatch info                   [blank if perfect match]
  (12) read quality score (Phred33 scale, Sanger encoding)
+
 
 Paired-end output format (tab-separated):
 

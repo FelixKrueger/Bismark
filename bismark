@@ -3058,7 +3058,7 @@ Input:
 
 -q/--fastq               The query input files (specified as <mate1>,<mate2> or <singles> are FASTQ
                          files (usually having extension .fg or .fastq). This is the default. See also
-                         --solexa-quals and --integer-quals.
+                         --solexa-quals.
 
 -f/--fasta               The query input files (specified as <mate1>,<mate2> or <singles> are FASTA
                          files (usually havin extension .fa, .mfa, .fna or similar). All quality values
