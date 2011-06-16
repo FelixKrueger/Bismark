@@ -1,9 +1,23 @@
-RELEASE NOTES FOR Bismark v0.5.1 (05 May 2011)
+RELEASE NOTES FOR Bismark v0.5.1 (16 June 2011)
 ----------------------------------------------
 
 Bismark_genome_preparation:
 
 The genome folder can now be specified either as absolute or relative path.
+
+
+Bismark
+
+Fixed a bug where a newline character was missing after the quality value in
+the FastQ unmapped read output.
+
+Fixed a bug which prevented paired-end read alignments in FastA format.
+
+
+Methylation Extractor
+
+The input file(s) can now also be specified with a relative path. The output
+files will be written into the current working directory.
 
 
 

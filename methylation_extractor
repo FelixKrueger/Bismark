@@ -7,12 +7,14 @@ use Cwd;
 
 my @filenames;
 my %counting;
+my $parent_dir = getcwd();
 
 my %fhs;
 my $version = 'v0.5.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired,$no_overlap);
+
 
 sub process_commandline{
   my $help;
@@ -175,14 +177,16 @@ sub process_Bismark_results_file{
       die "The methylation extractor and Bismark itself need to be of the same version!\n\nVersions used: methylation extractor: ' $version '\nBismark: ' $bismark_version '\n";
     }
 
+    my $output_filename = (split (/\//,$filename))[-1];
+
     ### OPENING OUT-FILEHANDLES
     if ($report){
-      my $report_filename = $filename;
+      my $report_filename = $output_filename;
       $report_filename =~ s/$/_splitting_report.txt/;
       open (REPORT,'>',$report_filename) or die "Failed to write to file $report_filename $!\n";
     }
     if ($report){
-      print REPORT "$filename\n\n";
+      print REPORT "$output_filename\n\n";
       print REPORT "Parameters used to extract methylation information:\n";
       if ($paired){
 	print REPORT "Bismark result file: paired-end\n";
@@ -216,7 +220,7 @@ sub process_Bismark_results_file{
 
     ### if --comprehensive AND --merge_non_CpG was specified we are only writing out one CpG-context and one Any-Other-context result file
     if ($full and $merge_non_CpG){
-      my $cpg_output = my $other_c_output = $filename;
+      my $cpg_output = my $other_c_output = $output_filename;
       ### C in CpG context
       $cpg_output =~ s/^/CpG_context_/;
       open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
@@ -233,7 +237,7 @@ sub process_Bismark_results_file{
     ### if only --merge_non_CpG was specified we will write out 8 different output files, depending on where the (first) unique best alignment has been found
     elsif ($merge_non_CpG){
 
-      my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $filename;
+      my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $output_filename;
 
       ### For cytosines in CpG context
       $cpg_ot =~ s/^/CpG_OT_/;
@@ -257,7 +261,7 @@ sub process_Bismark_results_file{
       print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       ### For cytosines in CC, CT or CA context
-      my $other_c_ot = my $other_c_ctot = my $other_c_ctob = my $other_c_ob = $filename;
+      my $other_c_ot = my $other_c_ctot = my $other_c_ctob = my $other_c_ob = $output_filename;
 
       $other_c_ot =~ s/^/Other_C_OT_/;
       open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n";
@@ -284,7 +288,7 @@ sub process_Bismark_results_file{
 
     ### if --comprehensive was specified we are only writing one file per context
     elsif ($full){
-      my $cpg_output = my $chg_output =  my $chh_output = $filename;
+      my $cpg_output = my $chg_output =  my $chh_output = $output_filename;
       ### C in CpG context
       $cpg_output =~ s/^/CpG_context_/;
       open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
@@ -305,7 +309,7 @@ sub process_Bismark_results_file{
 
     ### else we will write out 12 different output files, depending on where the (first) unique best alignment has been found
     else{
-      my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $filename;
+      my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $output_filename;
 
       ### For cytosines in CpG context
       $cpg_ot =~ s/^/CpG_OT_/;
@@ -329,7 +333,7 @@ sub process_Bismark_results_file{
       print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       ### For cytosines in CHG context
-      my $chg_ot = my $chg_ctot = my $chg_ctob = my $chg_ob = $filename;
+      my $chg_ot = my $chg_ctot = my $chg_ctob = my $chg_ob = $output_filename;
 
       $chg_ot =~ s/^/CHG_OT_/;
       open ($fhs{0}->{CHG},'>',$chg_ot) or die "Failed to write to $chg_ot $!\n";
@@ -352,7 +356,7 @@ sub process_Bismark_results_file{
       print {$fhs{3}->{CHG}} "Bismark methylation extractor version $version\n";
 
       ### For cytosines in CHH context
-      my $chh_ot = my $chh_ctot = my $chh_ctob = my $chh_ob = $filename;
+      my $chh_ot = my $chh_ctot = my $chh_ctob = my $chh_ob = $output_filename;
 
       $chh_ot =~ s/^/CHH_OT_/;
       open ($fhs{0}->{CHH},'>',$chh_ot) or die "Failed to write to $chh_ot $!\n";
@@ -377,7 +381,7 @@ sub process_Bismark_results_file{
 
     ### For repeat analyses or similar one can obtain a FastA output file with the genomic equivalent sequences for a bisulfite read position
     if ($genomic_fasta){
-      my $fasta = $filename;
+      my $fasta = $output_filename;
       $fasta =~ s/$/_genomic_equivalents.fa/;
       open (FASTA,'>',$fasta) or die "Can't write to file $fasta: $!\n";
     }
@@ -553,7 +557,7 @@ sub process_Bismark_results_file{
       die "Single-end or paired-end reads not specified properly: $!\n";
     }
 
-    print "Processed $line_count lines from $filename in total\n\n";
+    print "Processed $line_count lines from $output_filename in total\n\n";
     print "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
 
     print_splitting_report ();

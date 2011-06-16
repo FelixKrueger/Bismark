@@ -20,7 +20,7 @@ use Getopt::Long;
 ## GNU General Public License for more details.
 
 ## You should have received a copy of the GNU General Public License
-## along with this program.  If not, see <http://www.gnu.org/licenses/>.
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 
 my $parent_dir = getcwd;
@@ -549,7 +549,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
       print UNMAPPED "\@$identifier\n";	
       print UNMAPPED "$sequence\n";
       print UNMAPPED $identifier_2;	
-      print UNMAPPED $quality_value;
+      print UNMAPPED "$quality_value\n";
     }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
@@ -681,12 +681,12 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
       print UNMAPPED_1 $orig_identifier_1;	
       print UNMAPPED_1 "$sequence_1\n";
       print UNMAPPED_1 $ident_1;	
-      print UNMAPPED_1 $quality_value_1;
+      print UNMAPPED_1 "$quality_value_1\n";
       # seq_2
       print UNMAPPED_2 $orig_identifier_2;	
       print UNMAPPED_2 "$sequence_2\n";
       print UNMAPPED_2 $ident_2;	
-      print UNMAPPED_2 $quality_value_2;
+      print UNMAPPED_2 "$quality_value_2\n";
     }
   }
 
@@ -2460,8 +2460,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
 
     # if Bowtie produces an alignment we store the first line of the output
     if ($line_1 and $line_2) {
-      my $id_1 = (split(/\t/),$line_1)[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-      my $id_2 = (split(/\t/),$line_2)[0]; # this is the first element of the second bowtie output line
+      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
+      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
 
       ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
       ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
