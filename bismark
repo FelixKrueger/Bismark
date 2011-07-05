@@ -40,10 +40,14 @@ my @fhs;         # stores alignment process names, bisulfite index location, bow
 my %chromosomes; # stores the chromosome sequences of the mouse genome
 my %counting;    # counting various events
 
+my $seqID_contains_tabs;
+
 foreach my $filename (@filenames){
+
   chdir $parent_dir or die "Unable to move to initial working directory $!\n";
   ### resetting the counting hash and fhs
   reset_counters_and_fhs();
+  $seqID_contains_tabs = 0;
 
   ### PAIRED-END ALIGNMENTS
   if ($filename =~ ','){
@@ -353,8 +357,10 @@ sub print_final_analysis_report_single_end{
     print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
   }
 
-
-
+  if ($seqID_contains_tabs){
+    warn "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
+    print REPORT "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
+  }
 }
 
 sub print_final_analysis_report_paired_ends{
@@ -488,7 +494,9 @@ sub process_single_end_fastA_file_for_methylation_call{
     }
     chomp $sequence;
     chomp $identifier;
+
     $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
+
     my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
     unless ($return){
       $return = 0;
@@ -531,7 +539,9 @@ sub process_single_end_fastQ_file_for_methylation_call{
     chomp $sequence;
     chomp $identifier;
     chomp $quality_value;
-    $identifier =~ s/^\@//;	# deletes the @ at the beginning of Illumin FastQ headers
+
+    $identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
+
     my $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value);
     unless ($return){
       $return = 0;
@@ -654,7 +664,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     chomp $quality_value_1;
     chomp $quality_value_2;
 
-    $identifier_1 =~ s/^\@//;	 # deletes the @ at the beginning of the FastQ ID
+    $identifier_1 =~ s/^\@//;  # deletes the @ at the beginning of the FastQ ID
 
     my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
     unless ($return){
@@ -2142,7 +2152,13 @@ sub biTransformFastAFiles {
     last unless ($header and $sequence);
     $sequence = uc$sequence; # make input file case insensitive
     ++$count;
-    ## small check if the sequence seems to be in FastA format
+
+    # detecting if the input file contains tab stops, as this is likely to result in no alignments
+    if (index($header,"\t") != -1){
+      $seqID_contains_tabs++;
+    }
+
+    ### small check if the sequence seems to be in FastA format
     die "Input file doesn't seem to be in FastA format at sequence $count: $!\n" unless ($header =~ /^>.*/);
     my $sequence_C_to_T = my $sequence_G_to_A = $sequence;
     $sequence_C_to_T =~ tr/C/T/;
@@ -2171,6 +2187,12 @@ sub biTransformFastAFiles_paired_end {
     last unless ($header and $sequence);
     $sequence = uc$sequence; # make input file case insensitive
     ++$count;
+
+    # detecting if the input file contains tab stops, as this is likely to result in no alignments
+    if (index($header,"\t") != -1){
+      $seqID_contains_tabs++;
+    }
+
     ## small check if the sequence seems to be in FastA format
     die "Input file doesn't seem to be in FastA format at sequence $count: $!\n" unless ($header =~ /^>.*/);
 
@@ -2214,6 +2236,12 @@ sub biTransformFastQFiles {
     last unless ($identifier and $sequence and $identifier2 and $quality_score);
     ++$count;
     $sequence= uc$sequence; # make input file case insensitive
+
+    # detecting if the input file contains tab stops, as this is likely to result in no alignments
+    if (index($identifier,"\t") != -1){
+      $seqID_contains_tabs++;
+    }
+
     ## small check if the sequence file appears to be a FastQ file
     if ($identifier !~ /^\@/ or $identifier2 !~ /^\+/){
       die "Input file doesn't seem to be in FastQ format at sequence $count: $!\n";
@@ -2247,6 +2275,11 @@ sub biTransformFastQFiles_paired_end {
     last unless ($identifier and $sequence and $identifier2 and $quality_score);
     ++$count;
     $sequence= uc$sequence; # make input file case insensitive
+
+    # detecting if the input file contains tab stops, as this is likely to result in no alignments
+    if (index($identifier,"\t") != -1){
+      $seqID_contains_tabs++;
+    }
 
     ## small check if the sequence file appears to be a FastQ file
     if ($identifier !~ /^\@/ or $identifier2 !~ /^\+/){

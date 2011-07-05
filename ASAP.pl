@@ -3120,6 +3120,9 @@ Reporting:
 
 --quiet                  Print nothing besides alignments.
 
+--unmapped <filename>    Instructs ASAP to write out all sequences which did not yield a unique alignment (either
+                         not mappable or ambiguously mapping sequences) to <filename> in the same format as the
+                         inputfile. For paired-end alignments, two files (_1 and_2) will be generated.
 
 Other:
 

@@ -1,3 +1,16 @@
+RELEASE NOTES FOR Bismark v0.5.2 (04 Jul 2011)
+----------------------------------------------
+
+Bismark
+
+Sequence files with sequence ID names containing tab stops are truncated by Bowtie
+to the first element, which results in no sequence alignments. Bismark will detect
+whether the seqID field contains tab characters and print a warning at the end of
+the run (also into the log file). Simply replacing tabs with whitespaces in the
+seqID lines of the input file fixes this problem (e.g. with $id =~ s/\t/ /g; ).
+
+
+
 RELEASE NOTES FOR Bismark v0.5.1 (16 June 2011)
 ----------------------------------------------
 

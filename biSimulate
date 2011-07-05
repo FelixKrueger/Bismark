@@ -25,21 +25,31 @@ my $parent_dir = getcwd;
 my $total_genome_length = 0; ## we need this later to generate random sequences
 
 my %chromosomes;
-my %seqs; #single-end reads or read 1 of paired-end reads
-my %seqs_pairs; # read 2 of paired-end reads
+my %seqs;             # single-end reads or read 1 of paired-end reads
+my %seqs_pairs;       # read 2 of paired-end reads
 my %seqs_colourspace;
+my %counting =(
+	       non_directional => 0,
+	       uniform_converted => 0,
+	       uniform_total => 0,
+	       CH_converted => 0,
+	       CH_total => 0,
+	       CG_converted => 0,
+	       CG_total => 0,
+	       small => 0,
+	      );
 
 my @DNA_bases = ('A','T','C','G');
+my @gaussian; # will hold random fragment lengths
 
 my ($sequence_length,$conversion_rate,$number_of_sequences,$error_rate,$number_of_SNPs,$quality,$fixed_length_adapter,$variable_length_adapter,$adapter_dimer,$random,$colourspace,$genome_folder,$non_directional,$CG_conversion_rate,$CH_conversion_rate,$paired_end,$minfrag,$maxfrag) = process_command_line();
 
-run_sequence_generation ();
+print_onscreen_summary();
+run_sequence_generation();
 
-sub run_sequence_generation{
-
-  ### Printing on-screen summary
+sub print_onscreen_summary{
   warn "\nSelected general parameters:\n";
-  warn "-"x50,"\n";
+  warn "-"x100,"\n";
   if ($paired_end){
     warn "Paired-end reads selected. Fragment length will be $minfrag-$maxfrag bp\n";
   }
@@ -57,7 +67,7 @@ sub run_sequence_generation{
   warn "\n";
 
   warn "Possible sources of contamination:\n";
-  warn "-"x50,"\n";
+  warn "-"x100,"\n";
   warn "overall error rate:\t$error_rate%\n";
 
   if (defined $conversion_rate){
@@ -93,177 +103,276 @@ sub run_sequence_generation{
   }
   warn "\n\n";
   sleep (5);
+}
 
-  ### Simulation starting
+sub run_sequence_generation{
+
+  unless ($random){
+    read_genome_into_memory();
+  }
+
+  ### Starting simulation
+  my $count = 0;
+
+  my $plus_strand_total = 0;
+  my $minus_strand_total = 0;
+
+  my $fragment_length = $maxfrag-$minfrag;
+
+  ### GENERATE QUALITY STRING (this quality will be used for all sequences)
+  my $phred33_quality =  generate_quality_values ();
+
+  ### OPENING OUTPUT FILEHANDLES
+  if ($paired_end){
+    open (FASTQ_R1,'>','simulated_1.fastq') or die $!;
+    open (FASTQ_R2,'>','simulated_2.fastq') or die $!;
+  }
+  else{
+    open (FASTQ,'>','simulated.fastq') or die $!;
+  }
+
+  if ($colourspace){
+    if ($paired_end){
+      open (READS_R1,'>','simulated_1.csfasta') or die $!;
+      open (QUALS_R1,'>','simulated_1_QV.qual') or die $!;
+      open (READS_R2,'>','simulated_2.csfasta') or die $!;
+      open (QUALS_R2,'>','simulated_2_QV.qual') or die $!;
+    }
+    else{
+      open (READS,'>','simulated.csfasta') or die $!;
+      open (QUALS,'>','simulated_QV.qual') or die $!;
+    }
+  }
+
+  ### Taken from the FastQC contaminants list:
+  ### Illumina Paired End PCR Primer 2; sequence: CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT
+  my $adapter_sequence = 'CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT';
+  until (length $adapter_sequence > $sequence_length){
+    $adapter_sequence .= $adapter_sequence;
+  }
+  ### as one would be reading into the adapter from the opposite side we need to reverse complement the sequence
+  $adapter_sequence = reverse_complement($adapter_sequence);
+
+  if ($variable_length_adapter){
+    create_normal_random_numbers();
+  }
+
+  until ($count == $number_of_sequences){
+
+    if ($count%10000 == 0){
+      warn "$count sequences generated so far\n";
+    }
+
+    my $seq_1;
+    my $seq_2; # for paired-end reads
+
+    ### SEQUENCE GENERATION
+    if ($random){
+      $seq_1 = generate_random_sequences();
+      if ($paired_end){
+	$seq_2 = generate_random_sequences();
+      }
+
+      ### BISULFITE CONVERSION
+      if (defined $CG_conversion_rate and defined $CH_conversion_rate){
+	$seq_1 = bisulfite_transform_sequences_context_specifically($seq_1);
+	if ($paired_end){	
+	  $seq_2 = bisulfite_transform_sequences_context_specifically($seq_2);
+	}
+      }
+      else{
+	$seq_1 = bisulfite_transform_sequences_uniformly($seq_1) unless ($conversion_rate == 0);
+	if ($paired_end){
+	  $seq_2 = bisulfite_transform_sequences_uniformly($seq_2) unless ($conversion_rate == 0);
+	}
+      }
+    }
+    else{ # DEFAULT; This will extract genomic sequences
+
+      my $strand;
+      ### we need to take slightly different routes for single-end and paired-end sequences
+
+      ### PAIRED-ND
+      if ($paired_end){
+	($seq_1,$seq_2,$strand) = generate_genomic_sequences_paired_end($fragment_length);
+
+	if ($strand eq 'plus'){
+	  $plus_strand_total++;
+	}
+	else{
+	  $minus_strand_total++;
+	}
+	
+	### INTRODUCING SNPS
+	### we need to introduce SNPs before bisulfite conversion takes place
+	if ($number_of_SNPs > 0){
+	  $seq_1 = introduce_SNPs($seq_1);
+	  $seq_2 = introduce_SNPs($seq_2);
+	}
+	
+	### BISULFITE CONVERSION
+	if (defined $CG_conversion_rate and defined $CH_conversion_rate){
+	  $seq_1 = bisulfite_transform_sequences_context_specifically($seq_1);
+	  $seq_2 = bisulfite_transform_sequences_context_specifically($seq_2);
+	}
+	else{
+	  $seq_1 = bisulfite_transform_sequences_uniformly($seq_1) unless ($conversion_rate == 0);
+	  $seq_2 = bisulfite_transform_sequences_uniformly($seq_2) unless ($conversion_rate == 0);
+	}
+	### only now we are allowed to reverse complement seq_2
+  	$seq_2 = reverse_complement($seq_2); # reverse complementing the paired-end side
+      }
+
+      ### SINGLE-END
+      else{
+	($seq_1,$strand) = generate_genomic_sequences ();
+	
+	if ($strand eq 'plus'){
+	  $plus_strand_total++;
+	}
+	else{
+	  $minus_strand_total++;
+	}
+
+	### INTRODUCING SNPS
+	### we need to introduce SNPs before bisulfite conversion takes place
+	if ($number_of_SNPs > 0){
+	  $seq_1 = introduce_SNPs($seq_1);
+	}
+	### BISULFITE CONVERSION
+	if (defined $CG_conversion_rate and defined $CH_conversion_rate){
+	  $seq_1 = bisulfite_transform_sequences_context_specifically ($seq_1);
+	}
+	else{
+	  $seq_1 = bisulfite_transform_sequences_uniformly($seq_1) unless ($conversion_rate == 0);
+	}
+      }
+    }
+
+    ++$count;
+
+    ### NON-DIRECTIONAL LIBRARIES
+    if ($non_directional){
+      if ($paired_end){
+	($seq_1,$seq_2) = make_non_directional_sequences($seq_1,$seq_2);
+      }
+      else{
+	$seq_1 = make_non_directional_sequences($seq_1);
+      }
+    }
+
+    ### FIXED-LENGTH ADAPTER
+    if ($fixed_length_adapter){
+      $seq_1 = introduce_fixed_length_adapter_contamination($seq_1,$adapter_sequence);
+      if ($paired_end){
+	($seq_2)= introduce_fixed_length_adapter_contamination($seq_2,$adapter_sequence);
+      }
+    }
+    ### VARIABLE LENGTH ADAPTER
+    elsif ($variable_length_adapter){
+      if ($paired_end){
+	($seq_1,$seq_2) = introduce_variable_length_adapter_contamination ($seq_1,$seq_2,$adapter_sequence);
+      }
+      else{
+	($seq_1) = introduce_variable_length_adapter_contamination ($seq_1,undef,$adapter_sequence);
+      }
+    }
+
+    ### COLOURSPACE
+    my $seq_1_cs;
+    my $seq_2_cs;
+
+    if ($colourspace){
+      $seq_1_cs = convert_basespace_to_colourspace($seq_1);
+      if ($paired_end){
+	$seq_2_cs = convert_basespace_to_colourspace($seq_2);
+      }
+    }
+
+    ### INTRODUCING BASECALL ERRORS
+    ### we won't introduce any additional errors if a specific number of SNPs has been specified or the error rate was set to 0%
+    unless ( $error_rate == 0 or $number_of_SNPs > 0){
+
+      ### introducing errors into colourspace data is slightly different to basespace data
+      if ($colourspace){
+	$seq_1_cs = introduce_sequencing_errors_colourspace($seq_1_cs,$phred33_quality);
+	if ($paired_end){
+	  $seq_2_cs = introduce_sequencing_errors_colourspace($seq_2_cs,$phred33_quality)
+	}
+      }
+
+      ### base space errors (default)
+      $seq_1 = introduce_sequencing_errors($seq_1,$phred33_quality);
+      if ($paired_end){
+	$seq_2 = introduce_sequencing_errors($seq_2,$phred33_quality)
+      }
+    }
+
+    ### PRINTING OUT SEQUENCES IN BASES SPACE
+    if ($paired_end){
+      print_sequences_out_basespace($seq_1,$phred33_quality,$count,$seq_2);
+    }
+    else{
+      print_sequences_out_basespace($seq_1,$phred33_quality,$count,undef);
+    }
+
+    ### PRINTING OUT SEQUENCES IN COLOUR SPACE
+    if ($colourspace){
+      if ($paired_end){
+	print_sequences_out_colourspace ($seq_1_cs,$phred33_quality,$count,$seq_2_cs);
+      }
+      else{
+	print_sequences_out_colourspace ($seq_1_cs,$phred33_quality,$count,undef);
+      }
+    }
+  }
+
+  warn "\nFinal report:\n";
+  warn "-"x100,"\n";
   if ($random){
-    generate_random_sequences ();
+    warn "$count random sequences were successfully generated in total\n";
   }
   else{
-    generate_genomic_sequences (); # DEFAULT
-  }
-
-  ## need to introduce SNPs before bisulfite conversion takes place
-  if ($number_of_SNPs > 0){
-    introduce_SNPs();
-  }
-
-  if (defined $CG_conversion_rate and defined $CH_conversion_rate){
-    bisulfite_transform_sequences_context_specifically ();
-  }
-  else{
-    bisulfite_transform_sequences_uniformly ()unless($conversion_rate == 0);
+    warn "$count genomic sequences were successfully generated in total (+ strand: $plus_strand_total\t - strand: $minus_strand_total)\n";
   }
 
   if ($non_directional){
-    make_non_directional_sequences();
+    my $percentage_non_directional = sprintf ("%.2f",$counting{'non_directional'}*100/$count);
+    warn "Sequences reverse complemented (non-directional library): $counting{'non_directional'} ($percentage_non_directional%)\n\n";
   }
 
-  if ($fixed_length_adapter){
-    introduce_fixed_length_adapter_contamination ();
-  }
-  elsif ($variable_length_adapter){
-    introduce_variable_length_adapter_contamination ();
-  }
-
-  ### Adapter dimers can theoretically be specified in addition to variable or fixed length adapter sequence contamination
-  if($adapter_dimer){
-    introduce_adapter_dimers();
-  }
-
-  generate_quality_values ();
-
-  if ($colourspace){
-    transform_reads_to_colourspace();
-  }
-
-  ### we won't introduce any additional erros if a specific number of SNPs has been specified or the error rate was set to 0%
-
-  if ($number_of_SNPs > 0){
-    warn "To gauge the influence of $number_of_SNPs SNPs per sequence on the alignmentment results no additional sequencing errors will be introduced\n\n";
-  }
-  elsif($error_rate == 0){
-    warn "No further sequencing errors will be introduced as the error rate was set to $error_rate%\n\n";
+  if (defined $CG_conversion_rate and defined $CH_conversion_rate){
+    my $percentage_CG_conversion_rate = sprintf ("%.2f",$counting{'CG_converted'}*100/$counting{'CG_total'});
+    warn "Cytosines converted in CG-context: $percentage_CG_conversion_rate%\n";
+    my $percentage_CH_conversion_rate = sprintf ("%.2f",$counting{'CH_converted'}*100/$counting{'CH_total'});
+    warn "Cytosines converted in CH-context: $percentage_CH_conversion_rate%\n\n";
   }
   else{
-    introduce_sequencing_errors();
+    if ($conversion_rate == 0){
+      warn "No bisfulfite conversion performed\n";
+    }
+    else{
+      my $percentage_uniform_C_conversion = sprintf ("%.2f",$counting{'uniform_converted'}*100/$counting{'uniform_total'});
+      warn "Cytosines bisulfite converted in any context: $percentage_uniform_C_conversion%\n";
+    }
+  }
+
+  if ($variable_length_adapter){
+    my $percent_small = sprintf ("%.1f",$counting{'small'}*100/$count);
+    warn "$counting{'small'} elements were smaller than the sequence length $sequence_length ($percent_small%) and had some adapter sequence introduced\n";
+  }
+  unless ($error_rate == 0){
+    my $percentage_errors_introduced = sprintf ("%.2f",($counting{'total_errors_introduced'}/$counting{'total_base_count'}*100));
+    warn "Random sequencing errors introduced in total:\t$counting{'total_errors_introduced'} (of $counting{'total_base_count'} bp in total) (percentage: $percentage_errors_introduced)\n";
+
     if ($colourspace){
-      introduce_sequencing_errors_colourspace ();
+      my $percentage_errors_introduced_cs = sprintf ("%.2f",($counting{'total_errors_introduced_cs'}/$counting{'total_base_count_cs'}*100));
+      warn "Random sequencing errors introduced into color space reads in total:\t$counting{'total_errors_introduced_cs'} (of $counting{'total_base_count_cs'} bp in total) (percentage: $percentage_errors_introduced_cs)\n";
     }
   }
-
-  print_sequences_out_basespace ();
-
-  if ($colourspace){
-    print_sequences_out_colourspace ();
-  }
 }
 
-sub transform_reads_to_colourspace{
-  warn "="x117,"\n";
-  warn "Now converting all sequences into colour space\n";
-  my $count  = 0;
-  foreach my $entry (keys %seqs){
-    ++$count;
-    my $seq = $seqs{$entry}->{sequence};
-    my $cs_seq = convert_basespace_to_colourspace($seq);
-    my $qual = $seqs{$entry}->{qual};
-
-    $seqs_colourspace{$entry}->{sequence} = $cs_seq;
-    $seqs_colourspace{$entry}->{qual} = $qual;
-  }
-  warn "Successfully converted $count sequences into colour space\n";
-  warn "="x117,"\n\n";
-}
-
-
-sub introduce_adapter_dimers{
-  warn "="x117,"\n";
-  # for the purpose of this contamination it doesn't really matter which sequence it is exactly that causes the contamination
-  # so we will just concatenate the Illumina adapter sequence and take a substring equal to the length of the simulated sequences
-
-  ### Taken from the FastQC contaminants list:
-  ### Illumina Paired End PCR Primer 2; sequence: CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT
-  my $adapter_sequence = 'CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT';
-  until (length $adapter_sequence > $sequence_length){
-    $adapter_sequence .= $adapter_sequence;
-  }
-
-  ### as one would be reading into the adapter from the opposite side we need to reverse complement the sequence
-  $adapter_sequence = reverse_complement($adapter_sequence);
-
-  my $adapter_dimer_sequence = substr($adapter_sequence,0,$sequence_length);
-
-  ### determining how many sequences we want to replace with adapter dimers in total
-  my $max = int($number_of_sequences*$adapter_dimer/100);
-  my $count = 0;
-
-  warn "Now replacing $adapter_dimer% of all simulated sequences with adapter dimers\n";
-  # Now cycling through all sequences in the %seqs hash and introducing adapter sequence
-  foreach my $entry (keys %seqs){
-    ++$count;
-    $seqs{$entry}->{sequence} = $adapter_dimer_sequence;
-
-    if ($count >= $max){
-      last; # exiting once we have replaced enough sequences with adapater dimers
-    }
-  }
-  warn "Replaced $count sequences with the adapter dimer sequence > $adapter_dimer_sequence < in total\n";
-  warn "="x117,"\n\n";
-}
-
-
-
-
-sub introduce_fixed_length_adapter_contamination{
-  warn "="x117,"\n";
-  ### Taken from the FastQC contaminants list:
-  ### Illumina Paired End PCR Primer 2; sequence: CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT
-  my $adapter_sequence = 'CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT';
-  until (length $adapter_sequence > $sequence_length){
-    $adapter_sequence .= $adapter_sequence;
-  }
-  ### as one would be reading into the adapter from the opposite side we need to reverse complement the sequence
-  $adapter_sequence = reverse_complement($adapter_sequence);
-
-  ### we'll generate a fixed length adapter contamination for each sequence with the length $fixed_length_adapter which was set
-  ### with the option --fixed_length_adpater <int>
-
-  warn "Now introducing $fixed_length_adapter bp of Illumina adapter sequence at the 3' end of each sequence\n";
-  my $count = 0;
-  my $sub_sequence = substr($adapter_sequence,0,$fixed_length_adapter);
-
-  # Now cycling through all sequences in the %seqs hash and introducing adapter sequence
-  foreach my $entry (keys %seqs){
-    ++$count;
-    my $seq = $seqs{$entry}->{sequence};
-
-    ### replacing the last bases of the sequence with the substitution sequence
-    substr($seq,-$fixed_length_adapter,$fixed_length_adapter,$sub_sequence);
-
-    ### replacing the old sequence with the new and modified sequence
-    $seqs{$entry}->{sequence} = $seq;
-  }
-
-  warn "Replaced last $fixed_length_adapter bp of each sequence with the adapter sequence >$sub_sequence<\n";
-  warn "="x117,"\n\n";
-}
-
-
-
-
-sub introduce_variable_length_adapter_contamination{
-  warn "="x117,"\n";
-  ### Taken from the FastQC contaminants list:
-  ### Illumina Paired End PCR Primer 2; sequence: CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT
-  my $adapter_sequence = 'CAAGCAGAAGACGGCATACGAGATCGGTCTCGGCATTCCTGCTGAACCGCTCTTCCGATCT';
-
-  until (length $adapter_sequence > $sequence_length){
-    $adapter_sequence .= $adapter_sequence;
-  }
-
-  ### as one would be reading into the adapter from the opposite side we need to reverse complement the sequence
-  $adapter_sequence = reverse_complement($adapter_sequence);
-
+sub create_normal_random_numbers{
   ### we'll generate a random length of a adapter contamination for each sequence
   ### To do this we will first simulate insert sizes with a normal distribution (and not a uniform distribution!)
   ### with a user specified mean fragment length (such as 150 or 200 bp)
@@ -271,9 +380,7 @@ sub introduce_variable_length_adapter_contamination{
   my $mu = $variable_length_adapter; # this is the mean of the bell curve
   my $sigma = 60; # this is the variance (height of the bell curve)
 
-  my @gaussian; # will hold random fragment lengths
-
-  warn "Now generated random fragment sizes with a normal distribution (using the Marsaglia polar method)\n";
+  warn "Now generating random fragment sizes with a normal distribution (using the Marsaglia polar method)\n";
   warn "Mean fragment size (mu):\t$mu\t(user-specified)\nVariance (sigma):\t$sigma\t(fixed)\n";
 
   foreach (1..$number_of_sequences){
@@ -282,52 +389,70 @@ sub introduce_variable_length_adapter_contamination{
     $gauss = int($gauss+$mu);
     push @gaussian,$gauss;
   }
-
   warn "Generated ",scalar @gaussian," normally distributed random numbers\n\n";
+}
 
-  warn "Now analysing fragment lengths and replacing too short sequences with variable stretches of Illumina adapter sequence\n";
-  my $count = 0;
-  my $small = 0;
+sub introduce_fixed_length_adapter_contamination{
 
-  # Now cycling through all sequences in the %seqs hash and introducing adapter sequence if needed
-  foreach my $entry (keys %seqs){
-    my $fragment = shift @gaussian;
-    if ($fragment < 0){
-      $fragment = 0;
-    }
-    unless (defined $fragment){
-      warn "Exiting for fragment $fragment\n";
-      last;
-    }
+  my ($seq,$adapter_sequence) = @_;
 
-    ++$count;
-    if ($fragment < $sequence_length){
-      ++$small;
-      my $seq = $seqs{$entry}->{sequence};
-      my $sub_length = $sequence_length-$fragment;
-      my $sub_sequence = substr($adapter_sequence,0,$sub_length);
+  ### we'll generate a fixed length adapter contamination for each sequence with the length $fixed_length_adapter which was set
+  ### with the option --fixed_length_adpater <int>
 
-      ### replacing the last bases of the sequence with the substitution sequence
-      substr($seq,-$sub_length,$sub_length,$sub_sequence);
-      if (length$seq < $sequence_length){
-	warn "The sequence is now only  ",length($seq)," bp long! $seq\n";
-      }
+  my $sub_sequence = substr($adapter_sequence,0,$fixed_length_adapter);
 
-      ### replacing the old sequence with the new and modified sequence
-      $seqs{$entry}->{sequence} = $seq;
+  ### replacing the last bases of the sequence with the substitution sequence
+  substr($seq,-$fixed_length_adapter,$fixed_length_adapter,$sub_sequence);
 
-    }
-
-  }
-
-  my $percent = sprintf ("%.1f",$small*100/$count);
-
-  warn "$count elements analysed in total\n";
-  warn "$small elements were smaller than the sequence length $sequence_length ($percent%) and had some adapter sequence introduced\n";
-  warn "="x117,"\n\n";
+  return $seq;
 }
 
 
+
+sub introduce_variable_length_adapter_contamination{
+  my ($seq_1,$seq_2,$adapter_sequence) = @_;
+
+  # now taking a random fragment length from @gaussian
+  my $fragment = shift @gaussian;
+
+  die "Exiting for fragment $fragment\n"  unless (defined $fragment);
+
+  if ($fragment < 0){
+    $fragment = 0;
+  }
+
+  if ($fragment < $sequence_length){
+    ++$counting{'small'};
+    my $sub_length = $sequence_length-$fragment;
+    my $sub_sequence = substr($adapter_sequence,0,$sub_length);
+
+    ### replacing the last bases of the sequence with the substitution sequence
+    if ($paired_end){
+      substr($seq_1,-$sub_length,$sub_length,$sub_sequence);
+      substr($seq_2,-$sub_length,$sub_length,$sub_sequence);
+      if (length$seq_1 < $sequence_length){
+	warn "The sequence is now only  ",length($seq_1)," bp long! $seq_1\n";
+      }
+      if (length$seq_2 < $sequence_length){
+      	warn "The sequence is now only  ",length($seq_2)," bp long! $seq_2\n";
+      }
+
+    }
+    else{
+      substr($seq_1,-$sub_length,$sub_length,$sub_sequence);
+      if (length$seq_1 < $sequence_length){
+	warn "The sequence is now only  ",length($seq_1)," bp long! $seq_1\n";
+      }
+    }
+  }
+
+  if ($paired_end){
+    return ($seq_1,$seq_2);
+  }
+  else{
+    return ($seq_1);
+  }
+}
 
 
 sub gaussian_rand {
@@ -354,288 +479,327 @@ sub gaussian_rand {
 
 
 
-
 sub print_sequences_out_basespace{
-  warn "="x117,"\n";
-  warn "Printing sequences in base space out to file\n>>> simulated.fastq <<<\n";
-  open (FASTQ,'>','simulated.fastq') or die $!;
-  foreach my $entry (sort {$a<=>$b} keys %seqs){
-    print FASTQ "@",$entry,"\n";
-    print FASTQ "$seqs{$entry}->{sequence}\n";
-    print FASTQ "+",$entry,"\n";
-    print FASTQ "$seqs{$entry}->{qual}\n";
+
+  my ($seq_1,$qual,$count,$seq_2) = @_;
+
+  ### paired-end
+  if (defined $seq_2){
+    print FASTQ_R1 '@',$count,"_R1\n";
+    print FASTQ_R1 "$seq_1\n";
+    print FASTQ_R1 '+',$count,"_R1\n";
+    print FASTQ_R1 "$qual\n";
+
+    print FASTQ_R2 '@',$count,"_R2\n";
+    print FASTQ_R2 "$seq_2\n";
+    print FASTQ_R2 '+',$count,"_R2\n";
+    print FASTQ_R2 "$qual\n";
   }
-  warn "Printing out sequences in base space completed\n";
-  close FASTQ or die "Unable to close filehandle: $!";
-  warn "="x117,"\n\n";
+
+  ### single-end
+  else{
+    print FASTQ '@',$count,"\n";
+    print FASTQ "$seq_1\n";
+    print FASTQ '+',$count,"\n";
+    print FASTQ "$qual\n";
+  }
 }
 
 
 
 sub print_sequences_out_colourspace{
-  warn "="x117,"\n";
-  warn "Printing sequences in colour space out to files\n>>> simulated.csfasta <<< and >>> simulated.QV.qual <<<\n";
 
-  open (READS,'>','simulated.csfasta') or die $!;
-  open (QUALS,'>','simulated_QV.qual') or die $!;
+  my ($seq_1,$qual,$count,$seq_2) = @_;
 
-  foreach my $entry (sort {$a<=>$b} keys %seqs_colourspace){
-    print READS ">$entry\n";
-    print READS "$seqs_colourspace{$entry}->{sequence}\n";
+  ### converting the quality value back to Phred score (typical for colorspace
+  my @quals = split (//,$qual);
+  foreach my $index (0..$#quals){
+    $quals[$index] = convert_quality_string_into_phred_score($quals[$index]);
+  }
+  $qual = join (" ",@quals);
 
-    ### converting the quality value back to Phred score
-    my @quals = split (//,$seqs_colourspace{$entry}->{qual});
+  ### paired-end
+  if (defined $seq_2){
+    print READS_R1 ">$count\n";
+    print READS_R1 "$seq_1\n";
+    print QUALS_R1 ">$count\n";
+    print QUALS_R1 "$qual\n";
 
-    foreach my $index (0..$#quals){
-      $quals[$index] = convert_quality_string_into_phred_score ($quals[$index]);
-    }
-
-    my $qual = join (" ",@quals);
-
-    print QUALS ">$entry\n";
-    print QUALS "$qual\n";
+    print READS_R2 ">$count\n";
+    print READS_R2 "$seq_2\n";
+    print QUALS_R2 ">$count\n";
+    print QUALS_R2 "$qual\n";
   }
 
-  warn "Printing out sequences in colour space completed\n";
-
-  close READS or die "Unable to close filehandle: $!";
-  close QUALS or die "Unable to close filehandle: $!";
-
-  warn "="x117,"\n\n";
+  ### single-end
+  else{
+    print READS ">$count\n";
+    print READS "$seq_1\n";
+    print QUALS ">$count\n";
+    print QUALS "$qual\n";
+  }
 }
 
 
 
 sub bisulfite_transform_sequences_uniformly{
-  warn "="x117,"\n";
-  warn "Now starting bisulfite conversion with a uniform conversion rate of $conversion_rate% for each C-context\n";
-  sleep (2);
 
   my $total_C_count = 0;
   my $converted_C_count = 0;
 
-  foreach my $entry (keys %seqs){
-    my $seq = $seqs{$entry}->{sequence};
+  my $seq = shift;
 
-    my @bases = split (//,$seq);
+  my @bases = split (//,$seq);
 
-    foreach my $base (@bases){
+  foreach my $base (@bases){
 
-      # only going to change Cs
-      if ($base eq 'C'){
-	++$total_C_count;
-	### converting each C with an individual conversion rate (set globally)
-	my $random = int(rand(10000)+1)/100;
+    # only going to change Cs
+    if ($base eq 'C'){
+      ++$total_C_count;
+      ### converting each C with an individual conversion rate (set globally)
+      my $random = int(rand(10000)+1)/100;
 	
-	if ($random <= $conversion_rate){
-	  ++$converted_C_count;
-	  $base = 'T';
-	}
-
+      if ($random <= $conversion_rate){
+	++$converted_C_count;
+	$base = 'T';
       }
-
     }
-
-    my $bisulfite_converted_seq = join ("",@bases);
-    $seqs{$entry}->{sequence} = $bisulfite_converted_seq;
-
   }
-  my $percentage = sprintf ("%.2f",$converted_C_count*100/$total_C_count);
-  warn "Total Cs analysed: $total_C_count\nConverted Cs: $converted_C_count ($percentage%)\n";
-  warn "Bisulfite conversion successfully completed\n";
-  warn "="x117,"\n\n";
+
+  $counting{'uniform_converted'} += $converted_C_count;
+  $counting{'uniform_total'} += $total_C_count;
+
+  my $bisulfite_converted_seq = join ("",@bases);
+
+  return $bisulfite_converted_seq;
 }
 
 
 sub bisulfite_transform_sequences_context_specifically{
-  warn "="x117,"\n";
-  warn "Now starting bisulfite conversion with a CG conversion rate of $CG_conversion_rate% and a CH conversion rate of $CH_conversion_rate%\n";
-  sleep (2);
 
-  my $total_C_count;
-  my $CG_count = 0;
-  my $CH_count = 0;
+  my $seq = shift;
 
   my $converted_CG_count = 0;
+  my $total_CG_count = 0;
   my $converted_CH_count = 0;
+  my $total_CH_count = 0;
 
-  foreach my $entry (keys %seqs){
-    my $seq = $seqs{$entry}->{sequence};
+  my @bases = split (//,$seq);
 
-    my @bases = split (//,$seq);
+  foreach my $index (0..$#bases){
 
-    foreach my $index (0..$#bases){
+    # only going to change Cs
+    if ($bases[$index] eq 'C'){
 
-      # only going to change Cs
-      if ($bases[$index] eq 'C'){
-	++$total_C_count;
-	### converting each C with an individual conversion rate (set globally for each context)
-	my $random = int(rand(10000)+1)/100;
+      ### converting each C with an individual conversion rate (set globally for each context)
+      my $random = int(rand(10000)+1)/100;
 	
-	### if the C is at the last position we can't determine the sequence context (without going back to the genomic sequence) and will assume a non-CpG context for simplicity
-	if ( ($index+1) >= scalar@bases){
-	  ++$CH_count;
-	  if ($random <= $CH_conversion_rate){
-	    ++$converted_CH_count;
-	    $bases[$index] = 'T';
-	  }
+      ### if the C is at the last position we can't determine the sequence context (without going back to the genomic sequence) and will assume a non-CpG context for simplicity
+      if ( ($index+1) >= scalar@bases){
+
+	$total_CH_count++;
+
+	if ($random <= $CH_conversion_rate){
+	  $converted_CH_count++;
+	  $bases[$index] = 'T';
 	}
-
-	### determining sequence context
-	else{
-	  if ( $bases[$index+1] eq 'G'){
-	    ++$CG_count;
-	    if ($random <= $CG_conversion_rate){
-	      ++$converted_CG_count;
-	      $bases[$index] = 'T';
-	    }
-	  }
-	  else {
-	    ### non-CpG context
-	    ++$CH_count;
-	    if ($random <= $CH_conversion_rate){
-	      ++$converted_CH_count;
-	      $bases[$index] = 'T';
-	    }
-
-	  }
-	}
-
       }
 
+      ### determining sequence context
+      else{
+	if ( $bases[$index+1] eq 'G'){
+	  $total_CG_count++;
+	  if ($random <= $CG_conversion_rate){
+	    $bases[$index] = 'T';
+	    $converted_CG_count++;
+	  }
+	}
+	else {
+	  ### non-CpG context
+	  $total_CH_count++;
+	  if ($random <= $CH_conversion_rate){
+	    $bases[$index] = 'T';
+	    $converted_CH_count++;
+	  }
+	}
+      }
     }
-
-    my $bisulfite_converted_seq = join ("",@bases);
-    $seqs{$entry}->{sequence} = $bisulfite_converted_seq;
-
   }
-  my $percentage_CG = sprintf ("%.2f",$converted_CG_count*100/$CG_count);
-  my $percentage_CH = sprintf ("%.2f",$converted_CH_count*100/$CH_count);
-  warn "Total Cs analysed: $total_C_count\nConverted Cs in CG context: $converted_CG_count ($percentage_CG%)\nConverted Cs in CH context: $converted_CH_count ($percentage_CH%)\n";
-  warn "Bisulfite conversion successfully completed\n";
-  warn "="x117,"\n\n";
+
+  $counting{'CG_converted'} += $converted_CG_count;
+  $counting{'CG_total'} += $total_CG_count;
+  $counting{'CH_converted'} += $converted_CH_count;
+  $counting{'CH_total'} += $total_CH_count;
+
+  my $bisulfite_converted_seq = join ("",@bases);
+  return $bisulfite_converted_seq;
 }
 
 
 
 sub make_non_directional_sequences{
-  warn "="x117,"\n";
-  warn "Now starting to transform bisulfite converted sequences into non-directional reads. All four possible strands will occur with roughly the same likelyhood\n";
-  sleep (2);
-
-  my $rc = 0;
-  my $count = 0;
-  foreach my $entry (keys %seqs){
-    ++$count;
-    my $seq = $seqs{$entry}->{sequence};
-
-    ### converting each C with an individual conversion rate (set globally)
-    my $random = int(rand(100)+1);
-	
-    if ($random <= 50){
-      $seq = reverse_complement($seq);
-      ++$rc;
-    }
-
-    # reassigning the sequence to %seqs
-    $seqs{$entry}->{sequence} = $seq;
+  my $seq_1 = shift;
+  my $seq_2;
+  if ($paired_end){
+    $seq_2 = shift;
   }
-  my $percentage = sprintf ("%.2f",$rc*100/$count);
-  warn "Total sequences analysed: $count;\tSequences reverse complemented: $rc ($percentage%)\n";
-  warn "Introducing non-directionality completed\n";
-  warn "="x117,"\n\n";
+
+  my $random = int(rand(100)+1);
+	
+  if ($random <= 50){
+    $seq_1 = reverse_complement($seq_1);
+    if ($paired_end){
+      $seq_2 = reverse_complement($seq_2);
+    }
+    ++$counting{'non_directional'};
+  }
+  if ($paired_end){
+    return ($seq_1,$seq_2);
+  }
+  else{
+    return $seq_1;
+  }
+
 }
 
 
 
 sub introduce_SNPs{
-  warn "="x117,"\n";
-  warn "Now starting to introduce $number_of_SNPs SNPs per read\n";
-  my $total = 0;
-  foreach my $entry (sort {$a<=>$b} keys %seqs){
-    my $seq = $seqs{$entry}->{sequence};
+  my $seq = shift;
 
-    my @bases = split (//,$seq);
+  my @bases = split (//,$seq);
 
-    ### first determining the positions at which a SNP will be introduced
-    my %snps;
-    my $SNP_position_count = 0;
+  ### first determining the positions at which a SNP will be introduced
+  my %snps;
+  my $SNP_position_count = 0;
 
-    while ($SNP_position_count < $number_of_SNPs){
-      my $random= int(rand(length($seq))); # this will be a number between 0 and the read length-1, which we can use directly as index positions
-      unless (exists $snps{$random}){
-	$snps{$random} = 1;
-	++$SNP_position_count;
-      }
+  while ($SNP_position_count < $number_of_SNPs){
+    my $random= int(rand(length($seq))); # this will be a number between 0 and the read length-1, which we can use directly as index positions
+    unless (exists $snps{$random}){
+      $snps{$random} = 1;
+      ++$SNP_position_count;
     }
+  }
 
-    # SNPs will be introduced at the positions stored in %snps
-    foreach my $position (sort {$a<=>$b} keys %snps){
-      my $random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @DNA_bases array
-      my $base_to_be_substituted = $bases[$position];
+  # SNPs will be introduced at the positions stored in %snps
+  foreach my $position (keys %snps){
+    my $random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @DNA_bases array
+    my $base_to_be_substituted = $bases[$position];
 
-      if ($base_to_be_substituted eq 'A'){
-	$random += 0;
-      }
-      elsif ($base_to_be_substituted eq 'T'){
-	$random += 1;
-      }
-      elsif ($base_to_be_substituted eq 'C'){
+    if ($base_to_be_substituted eq 'A'){
+      $random += 0;
+    }
+    elsif ($base_to_be_substituted eq 'T'){
+      $random += 1;
+    }
+    elsif ($base_to_be_substituted eq 'C'){
 	$random += 2;
       }
-      elsif ($base_to_be_substituted eq 'G'){
-	$random += 3;
-      }
-      else{
-	die "base was $base_to_be_substituted\n";
-      }
-      $random %= 4;
-
-      $bases[$position] = $DNA_bases[$random];
-      ++$total;
+    elsif ($base_to_be_substituted eq 'G'){
+      $random += 3;
     }
+    else{
+      die "base was $base_to_be_substituted\n";
+    }
+    $random %= 4;
 
-    my $substituted_sequence = join ("",@bases);
-    # print "$seq\n$substituted_sequence\n\n";
-    $seqs{$entry}->{sequence} = $substituted_sequence;
+    $bases[$position] = $DNA_bases[$random];
   }
-  warn "Introducing SNPs successfully completed ($total in total)\n";
-  warn "="x117,"\n\n";
+
+  my $substituted_sequence = join ("",@bases);
+
+  return  $substituted_sequence;
 }
 
 
 
 
 sub introduce_sequencing_errors{
-  warn "="x117,"\n";
-  warn "Now starting to introduce sequencing errors according to the error rate encoded by each base's Phred score\n";
 
   my $total_base_count = 0;
   my $total_errors_introduced = 0;
   my $count = 0;
+  my ($seq,$qual) = @_;
 
-  foreach my $entry (keys %seqs){
-    ++$count;
+  my @bases = split (//,$seq);
+  my @quals = split (//,$qual);
 
-    my @bases = split (//,$seqs{$entry}->{sequence});
-    my @quals = split (//,$seqs{$entry}->{qual});
+  unless(scalar@bases == scalar @quals){
+    die "The sequence lenght (",scalar@bases,") and length of the quality string (",scalar@quals,") were different which mustn't happen!\n\n";
+  }
 
-    unless(scalar@bases == scalar @quals){
-      die "The sequence lenght (",scalar@bases,") and length of the quality string (",scalar@quals,") were different which mustn't happen!\n\n";
+  foreach my $index (0..$#quals){
+    ++$total_base_count;
+    my $phred_score = convert_quality_string_into_phred_score ($quals[$index]);
+    my $error_rate = convert_phred_score_into_error_probability ($phred_score);
+
+    my $random  = int(rand(10000)+1);
+    $random /= 10000;
+
+    if ($random < $error_rate){
+
+      $random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @DNA_bases array
+
+      if ($bases[$index] eq 'A'){
+	$random += 0;
+      }
+      elsif ($bases[$index] eq 'T'){
+	$random += 1;
+      }
+      elsif ($bases[$index] eq 'C'){
+	$random += 2;
+      }
+      elsif ($bases[$index] eq 'G'){
+	$random += 3;
+      }
+      else{
+	die "base was $bases[$index]\n";
+      }
+      $random %= 4;
+
+      # warn "replacing $bases[$index] with $DNA_bases[$random]\n";
+      $bases[$index] = $DNA_bases[$random];
+
+      ++$total_errors_introduced;
     }
+  }
+  my $substituted_sequence = join ("",@bases);
+  # print "$seq\n$substituted_sequence\n$qual\n\n";
+  $counting{'total_base_count'} += $total_base_count;
+  $counting{'total_errors_introduced'} += $total_errors_introduced;
 
-    foreach my $index (0..$#quals){
-      ++$total_base_count;
-      my $phred_score = convert_quality_string_into_phred_score ($quals[$index]);
-      my $error_rate = convert_phred_score_into_error_probability ($phred_score);
+  return $substituted_sequence;
+}
 
-      my $random  = int(rand(10000)+1);
-      $random /= 10000;
 
-      if ($random < $error_rate){
 
-	$random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @DNA_bases array
+sub introduce_sequencing_errors_colourspace{
 
+  my ($seq,$qual) = @_;
+
+  my @colourspace_transitions = qw(0 1 2 3);
+
+  my $total_base_count = 0;
+  my $total_errors_introduced = 0;
+
+  my @bases = split (//,$seq);
+  my @quals = split (//,$qual);
+
+  foreach my $index (0..$#quals){
+    ++$total_base_count;
+    my $phred_score = convert_quality_string_into_phred_score ($quals[$index]);
+    my $error_rate = convert_phred_score_into_error_probability ($phred_score);
+
+    my $random  = int(rand(10000)+1);
+    $random /= 10000;
+
+    if ($random < $error_rate){
+      ++$total_errors_introduced;
+
+      $random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @colourspace_transitions array
+
+      ### in the special case that the index is 0 and we need to introduce a sequencing error we need to flip a base and not a colourspace transition
+      if ($index == 0){
 	if ($bases[$index] eq 'A'){
 	  $random += 0;
 	}
@@ -649,126 +813,72 @@ sub introduce_sequencing_errors{
 	  $random += 3;
 	}
 	else{
-	  die "base was $bases[$index]\n";
+	  die "Starting base was $bases[$index]\n";
 	}
 	$random %= 4;
-
 	# warn "replacing $bases[$index] with $DNA_bases[$random]\n";
 	$bases[$index] = $DNA_bases[$random];
-
-       	++$total_errors_introduced;
       }
-    }
-    my $substituted_sequence = join ("",@bases);
-    # print "$seqs{$entry}->{sequence}\n$substituted_sequence\n$seqs{$entry}->{qual}\n\n";
-    $seqs{$entry}->{sequence} = $substituted_sequence;
-  }
-
-  my $percentage = sprintf ("%.2f",($total_errors_introduced/$total_base_count*100));
-  warn "Sequences analysed in total:\t$count\nbp analysed in total:\t$total_base_count\nRandom sequencing errors introduced in total:\t$total_errors_introduced (percentage: $percentage)\n";
-  warn "="x117,"\n\n";
-}
-
-
-
-sub introduce_sequencing_errors_colourspace{
-  warn "="x117,"\n";
-  warn "Now starting to introduce sequencing errors into the colour space data according to the error rate encoded by each base's Phred score\n";
-  my @colourspace_transitions = qw(0 1 2 3);
-
-  my $total_base_count = 0;
-  my $total_errors_introduced = 0;
-  my $count = 0;
-
-  foreach my $entry (keys %seqs_colourspace){
-    ++$count;
-
-    my @bases = split (//,$seqs_colourspace{$entry}->{sequence});
-    my @quals = split (//,$seqs_colourspace{$entry}->{qual});
-
-    foreach my $index (0..$#quals){
-      ++$total_base_count;
-      my $phred_score = convert_quality_string_into_phred_score ($quals[$index]);
-      my $error_rate = convert_phred_score_into_error_probability ($phred_score);
-
-      my $random  = int(rand(10000)+1);
-      $random /= 10000;
-
-      if ($random < $error_rate){
-
-	$random = int(rand(3)+1); # will generate a random number between 1 and 3 which we will add to the number index of the number in the @colourspace_transitions array
-
-	### in the special case that the index is 0 and we need to introduce a sequencing error we need to flip a base and not a colourspace transition
-	if ($index == 0){
-	  if ($bases[$index] eq 'A'){
-	    $random += 0;
-	  }
-	  elsif ($bases[$index] eq 'T'){
-	    $random += 1;
-	  }
-	  elsif ($bases[$index] eq 'C'){
-	    $random += 2;
-	  }
-	  elsif ($bases[$index] eq 'G'){
-	    $random += 3;
-	  }
-	  else{
-	    die "Starting base was $bases[$index]\n";
-	  }
-	  $random %= 4;
-	  # warn "replacing $bases[$index] with $DNA_bases[$random]\n";
-	  $bases[$index] = $DNA_bases[$random];
-
-	  ++$total_errors_introduced;
+      ### in all other cases we introduce a single colourspace transition error
+      else{
+	if ($bases[$index] eq '0'){
+	  $random += 0;
 	}
-	### in all other cases we introduce a single colourspace transition error
+	elsif ($bases[$index] eq '1'){
+	  $random += 1;
+	}
+	elsif ($bases[$index] eq '2'){
+	  $random += 2;
+	}
+	elsif ($bases[$index] eq '3'){
+	  $random += 3;
+	}
 	else{
-	  if ($bases[$index] eq '0'){
-	    $random += 0;
-	  }
-	  elsif ($bases[$index] eq '1'){
-	    $random += 1;
-	  }
-	  elsif ($bases[$index] eq '2'){
-	    $random += 2;
-	  }
-	  elsif ($bases[$index] eq '3'){
-	    $random += 3;
-	  }
-	  else{
-	    die "base transition was $bases[$index]\n";
-	  }
-	  $random %= 4;
-	  #  warn "replacing $bases[$index] with $colourspace_transitions[$random]\n";
-	  $bases[$index] = $colourspace_transitions[$random];
-
-	  ++$total_errors_introduced;
-
+	  die "base transition was $bases[$index]\n";
 	}
+	$random %= 4;
+	#  warn "replacing $bases[$index] with $colourspace_transitions[$random]\n";
+	$bases[$index] = $colourspace_transitions[$random];
       }
     }
-    my $substituted_sequence = join ("",@bases);
-    # print "$seqs_colourspace{$entry}->{sequence}\n$substituted_sequence\n$seqs_colourspace{$entry}->{qual}\n\n";
-    $seqs_colourspace{$entry}->{sequence} = $substituted_sequence;
   }
+  my $substituted_sequence = join ("",@bases);
 
-  my $percentage = sprintf ("%.2f",($total_errors_introduced/$total_base_count*100));
-  warn "Sequences analysed in total:\t$count\nbp analysed in total:\t$total_base_count\nRandom transition errors introduced into colour space data in total:\t$total_errors_introduced (percentage: $percentage)\n";
-  warn "="x117,"\n\n";
+  $counting{'total_base_count_cs'} += $total_base_count;
+  $counting{'total_errors_introduced_cs'} += $total_errors_introduced;
+
+  return $substituted_sequence;
 }
 
 
 sub generate_quality_values{
-  warn "="x117,"\n";
-  my $var;
-  my $error_quality;
 
+  my ($var);
+
+  ### NO ERROR RATE SPECIFIED
   if ($error_rate == 0){
-    warn "Starting to generate quality values with a constant Phred score of $quality\n";
+    warn "Quality values will be constant throughout with a Phred score of $quality\n";
+
+    my @quals;
+
+    ### if no error rate was specified we will use a constant quality score for all bases ($quality), which was either determined by the user or which is 40 by default
+    foreach (1..$sequence_length){
+      push @quals,$quality;
+    }
+	
+    foreach my $qual(@quals){
+      $qual = convert_phred_score_into_quality_string($qual);
+    }
+
+    my $no_error_quality = join ("",@quals);
+    return $no_error_quality;
   }
+
+  ### ERROR RATE WAS SPECIFIED
   else{
     warn "Generating quality values with a user defined decaying per-bp error rate of $error_rate%\n";
     warn "Starting to work out the slope of the error curve\n";
+
     $var = determine_slope_of_the_error_rate_curve();
 
     warn "Error rates per bp will be modelled according to the formula:\n";
@@ -785,9 +895,7 @@ sub generate_quality_values{
       if ($decayed_quality < 2){
 	$decayed_quality = 2;
       }
-
       push @quals,$decayed_quality;
-
     }	
 
     ### converting the Phred Scale values into ASCII strings (currently Phred33 format)
@@ -797,40 +905,11 @@ sub generate_quality_values{
       $qual = convert_phred_score_into_quality_string($qual);
     }
 
-    $error_quality = join ("",@quals);
-
+    my $error_quality = join ("",@quals);
+    return $error_quality;
   }
-
-  foreach my $entry (keys %seqs){
-    my $length = length($seqs{$entry}->{sequence});
-
-    my @quals;
-
-    ### if no error rate was specified we will use a constant quality score for all bases ($quality), which was either determined by the user or which is 40 by default
-    if ($error_rate == 0){
-      foreach (1..$length){
-	push @quals,$quality;
-      }	
-
-      foreach my $qual(@quals){
-	$qual = convert_phred_score_into_quality_string($qual);
-      }
-
-      my $no_error_quality = join ("",@quals);
-      $seqs{$entry}->{qual} = $no_error_quality;
-    }
-
-    ### Otherwise we will assume that the base call quality deteriorates over time. We will apply an exponential decay formula to the standard quality value $quality
-    ### which is 40 by default or can be altered by the user
-
-    else{
-      $seqs{$entry}->{qual} = $error_quality;
-    }
-  }
-
-  print "Successfully generated quality values for ",scalar keys %seqs," sequences\n";
-  warn "="x117,"\n\n";
 }
+
 
 sub determine_slope_of_the_error_rate_curve{
   my $user_specified_error_rate = $error_rate/100;
@@ -936,15 +1015,11 @@ sub convert_phred_score_into_quality_string{
   return $qual;
 }
 
-
-
 sub convert_quality_string_into_phred_score{
   my $string = shift;
   my $qual = ord($string)-33;
   return $qual;
 }
-
-
 
 sub convert_phred_score_into_error_probability{
   my $qual = shift;
@@ -955,71 +1030,64 @@ sub convert_phred_score_into_error_probability{
 
 
 sub generate_genomic_sequences {
-  warn "="x117,"\n";
-  read_genome_into_memory ();
-  warn "Total length of the genome is $total_genome_length bp\n";
-  warn "="x117,"\n\n";
 
-  warn "="x117,"\n";
-  warn "Now starting to generate $number_of_sequences sequences of length $sequence_length bp\n";
-
-  my $count = 0;
+  my $sequence;
   my $plus = 0;
   my $minus = 0;
+  my $valid =0;
 
-  until ($count == $number_of_sequences){
+  until ($valid == 1){
     my $random = int(rand($total_genome_length)+1);
 
     my $chromosome_length = 0;
+
+    # finding out which chromosome has been hit
     foreach my $chr (sort keys %chromosomes){
       $chromosome_length += length ($chromosomes{$chr});
 
       if ( ($random+length($sequence_length)) < $chromosome_length){
-	# print "chromosome: $chr\t",$chromosome_length-$random,"\t";
 	last unless (length $chromosomes{$chr} > $chromosome_length-$random+$sequence_length);
-	my $seq = substr ($chromosomes{$chr},$chromosome_length-$random,$sequence_length);
+	$sequence = substr ($chromosomes{$chr},$chromosome_length-$random,$sequence_length);
 	
 	# if the sequence contains any N's we are generating another random number without any Ns
-	last if ($seq =~ /n/i);
-	last if (length$seq != $sequence_length);
+	last if ($sequence =~ /n/i);
+	last if (length($sequence) != $sequence_length);
 
-	# otherwise we randomly choose either a forward or reverse sequence and then print it out
+	# otherwise we randomly choose either a forward or reverse sequence and then return it
 	my $strand = int(rand(2)); # will produce either 0 or 1 with a 50:50 chance
 	
 	if ($strand == 0){
+	  $sequence = reverse_complement($sequence);
 	  ++$minus;
-	  $seq = reverse_complement($seq);
 	}	
 	else{
 	  ++$plus;
 	}
 	
-	++$count;
-	$seqs{$count}->{sequence} = $seq;
-	last; # exiting once we printed a sequence
+	++$valid;
+	last; # exiting once we found a valid sequence
       }
     }
   }
-  warn "Sequences were successfully generated (+ strand: $plus\t - strand: $minus)\n";
-  warn "="x117,"\n\n";
+  if($plus == 1){
+    return ($sequence,'plus');
+  }
+  else{
+    return ($sequence,'minus');
+  }
 }
 
 sub generate_genomic_sequences_paired_end {
-  warn "="x117,"\n";
-  read_genome_into_memory ();
-  warn "Total length of the genome is $total_genome_length bp\n";
-  warn "="x117,"\n\n";
 
-  warn "="x117,"\n";
-  warn "Now starting to generate $number_of_sequences paired-end sequences of length $sequence_length bp (fragment length between $minfrag and $maxfrag bp)\n";
+  my $fragment_length = shift;
 
-  my $count = 0;
+  my $seq_1;
+  my $seq_2;
   my $plus = 0;
   my $minus = 0;
+  my $valid = 0;
 
-  my $fragment_length = $maxfrag-$minfrag;
-
-  until ($count == $number_of_sequences){
+  until ($valid == 1){
     my $random = int(rand($total_genome_length)+1);
 
     my $chromosome_length = 0;
@@ -1027,59 +1095,57 @@ sub generate_genomic_sequences_paired_end {
       $chromosome_length += length ($chromosomes{$chr});
 
       if ( ($random+length($fragment_length)) < $chromosome_length){
-	# print "chromosome: $chr\t",$chromosome_length-$random,"\t";
-	last unless (length $chromosomes{$chr} > $chromosome_length-$random+$fragment_length);
-	my $seq_1 = substr ($chromosomes{$chr},$chromosome_length-$random,$sequence_length);
-	my $seq_2 = substr ($chromosomes{$chr},$chromosome_length-$random,$sequence_length);
-	# if the sequence contains any N's we are generating another random number without any Ns
-	last if ($seq =~ /n/i);
-	last if (length$seq != $sequence_length);
 
-	# otherwise we randomly choose either a forward or reverse sequence and then print it out
+ 	last unless (length $chromosomes{$chr} > $chromosome_length-$random+$fragment_length);
+
+	$seq_1 = substr ($chromosomes{$chr},$chromosome_length-$random,$sequence_length);
+	$seq_2 = substr ($chromosomes{$chr},$chromosome_length-$random+$fragment_length-$sequence_length,$sequence_length);
+
+	### we can only reverse complement seq_2 once the BS-conversion has taken place! (and after SNPs have been introduced)
+
+	# if the sequences contain any N's we are generating another random number
+	last if ($seq_1 =~ /n/i or $seq_2 =~ /n/i);
+ 	last if (length$seq_1 != $sequence_length or length$seq_2 != $sequence_length);
+	
+ 	# otherwise we randomly choose either a forward or reverse strand for sequence 1 and return it
 	my $strand = int(rand(2)); # will produce either 0 or 1 with a 50:50 chance
 	
-	if ($strand == 0){
+ 	if ($strand == 0){
+	  my $temp = reverse_complement($seq_1);
+	  $seq_1 = reverse_complement($seq_2);
+	  $seq_2 = $temp;
 	  ++$minus;
-	  $seq = reverse_complement($seq);
-	}	
+  	}	
 	else{
 	  ++$plus;
 	}
 	
-	++$count;
-	$seqs{$count}->{sequence} = $seq;
-	last; # exiting once we printed a sequence
+	++$valid;
+	last; # exiting once we found a valid sequence pair
       }
     }
   }
-  warn "Sequences were successfully generated (+ strand: $plus\t - strand: $minus)\n";
-  warn "="x117,"\n\n";
+  if($plus == 1){
+    return ($seq_1,$seq_2,'plus');
+  }
+  else{
+    return ($seq_1,$seq_2,'minus');
+  }
 }
 
 
 sub generate_random_sequences {
-  warn "="x117,"\n";
-  warn "Now starting to generate $number_of_sequences sequences of $sequence_length bp with totally random sequences\n";
 
-  my $count = 0;
-  my $plus = 0;
-  my $minus = 0;
+  my @seq;
 
-  until ($count == $number_of_sequences){
-
-    my @seq;
-
-    for (1..$sequence_length){
-      my $random = int(rand(4));
-      push @seq, $DNA_bases[$random];
-    }
-    my $seq = join ("",@seq);
-
-    ++$count;
-    $seqs{$count}->{sequence} = $seq;
+  for (1..$sequence_length){
+    my $random = int(rand(4));
+    push @seq, $DNA_bases[$random];
   }
-  warn "Generated $count random sequences in total\n";
-  warn "="x117,"\n\n";
+  my $seq = join ("",@seq);
+
+  return $seq;
+
 }
 
 sub read_genome_into_memory{
@@ -1158,7 +1224,7 @@ sub read_genome_into_memory{
 
 
 sub extract_chromosome_name {
-  ## Bowtie seems to extract the first string after the inition > in the FASTA file, so we are doing this as well
+  ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
   my $fasta_header = shift;
   if ($fasta_header =~ s/^>//){
     my ($chromosome_name) = split (/\s+/,$fasta_header);
@@ -1257,7 +1323,6 @@ sub convert_basespace_to_colourspace{
 
   }
   my $cspace_read = join ("",@cspace);
-  # warn "$seq\n$cspace_read\n\n";
   return $cspace_read;
 }
 
