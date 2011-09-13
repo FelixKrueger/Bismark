@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.5.1';
+my $bismark_version = 'v0.5.3';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -280,12 +280,12 @@ sub print_final_analysis_report_single_end{
   print "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
+  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
 
   print REPORT "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
   print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n\n";
   print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) bottom strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) top strand)"),"\n\n";
+  print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
 
   if ($directional){
     print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
@@ -2939,11 +2939,15 @@ VERSION
   # Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
   my $singles;
   unless ($mates1 and $mates2){
-    $singles = shift @ARGV;
+    $singles = join (',',@ARGV);
     unless ($singles){
       die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
     }
+    $singles =~ s/\s/,/g;
     @filenames = (split(/,/,$singles));
+    warn "\nFiles to be analysed:\n";
+    warn "@filenames\n\n";
+    sleep (3);
   }
 
   ### MININUM INSERT SIZE (PAIRED-END ONLY)
@@ -2966,6 +2970,9 @@ VERSION
   ### CHUNKMBS needed to be increased to avoid memory exhaustion warnings, particularly for --best (and paired-end) alignments
   if (defined $chunk){
     push @bowtie_options,"--chunkmbs $chunk";
+  }
+  else{
+    push @bowtie_options,"--chunkmbs 512"; ## setting the default to 512MB (up from 64 default)
   }
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
@@ -3079,9 +3086,9 @@ ARGUMENTS:
                          correspond file-for-file and read-for-read with those specified in <mates1>.
                          Reads may be a mix of different lengths.
 
-<singles>                A comma-separated list of files containing the reads to be aligned (e.g. lane1.fq,
-                         lane2.fq,lane3.fq). Reads may be a mix of different lengths. Bismark will produce
-                         one mapping result and one report file per input file.
+<singles>                A comma- or space-separated list of files containing the reads to be aligned (e.g.
+                         lane1.fq,lane2.fq lane3.fq). Reads may be a mix of different lengths. Bismark will
+                         produce one mapping result and one report file per input file.
 
 
 OPTIONS:
@@ -3137,7 +3144,7 @@ Alignment:
                          always extending the path with the lowest cumulative cost. Bowtie tries to minimize the 
                          memory impact of the descriptors, but they can still grow very large in some cases. If 
                          you receive an error message saying that chunk memory has been exhausted in --best mode,
-                         try adjusting this parameter up to dedicate more memory to the descriptors. Default: 64.
+                         try adjusting this parameter up to dedicate more memory to the descriptors. Default: 256.
 
 -I/--minins <int>        The minimum insert size for valid paired-end alignments. E.g. if -I 60 is specified and
                          a paired-end alignment consists of two 20-bp alignments in the appropriate orientation
@@ -3236,7 +3243,7 @@ Paired-end output format (tab-separated):
 (14) <read 1 quality score (Phred33)>
 (15) <read 2 quality score (Phred33)>
 
-This script was last edited on 20 Apr 2011.
+This script was last edited on 13 Sept 2011.
 
 HOW_TO
 }

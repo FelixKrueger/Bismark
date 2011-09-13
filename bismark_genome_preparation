@@ -328,7 +328,7 @@ sub create_bisulfite_genome_folders{
     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
   }
 
-  print "Bisulfite Genome Indexer version 0.5.1 (last modified 11 May 2011)\n\n";
+  print "Bisulfite Genome Indexer version 0.5.3 (last modified 11 May 2011)\n\n";
   sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -439,6 +439,6 @@ ARGUMENTS:
 
 
 
-This script was last edited on 08 Feb 2011.
+This script was last edited on 11 May 2011.
 HOW_TO
 }

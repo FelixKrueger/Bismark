@@ -1,13 +1,60 @@
-RELEASE NOTES FOR Bismark v0.5.2 (04 Jul 2011)
+RELEASE NOTES FOR Bismark v0.5.3 (13 Sep 2011)
 ----------------------------------------------
 
 Bismark
+
+The '--chunkmbs' default parameter was increased to 512 MB (up from 256 MB) to avoid
+memory exhaustion warnings.
+
+Corrected a mix-up of the strand origin names in the printed final alignment report:
+GA/CT is now correctly labelled as CTOT (complementary to (converted) top strand), and 
+GA/GA is now correctly labelled as CTOB (complementary to (converted) bottom strand).
+
+
+genome_methylation_bismark2bedGraph_v3.pl
+
+This new version fixes a bug in the methylation percentage which was introduced by
+implementing 0-based (bedGraph) coordinates. Many thanks to Michael A. Bentley for
+spotting this issue and for contributing this new version.
+
+
+bismark2SAM_v5.pl
+
+This new version of the bismark2SAM conversion script introduces adjusted bitwise FLAG
+values for non-directional single-end and for paired-end alignments. This is to better
+reflect the strand origin of a read or a read pair. E.g., alignments to the OT strand
+are always found in '+' orientation, whereas alignments to the CTOT strand are always found
+in a '-' orientation. Both these alignments will now get a FLAG value of '0' indicating that
+the read originated from the original top strand. A similar logic is also applied for
+alignments to other strands and for paired-end alignments. Thanks to Enrique Vidal for
+bringing this to my attention and for his contributions to this new version.
+
+
+
+RELEASE NOTES FOR Bismark v0.5.2 (16 Aug 2011)
+----------------------------------------------
+
+Bismark
+
+The '--chunkmbs' default parameter was increased to 256 MB (up from 64 MB) to avoid
+memory exhaustion warnings.
+
+Bismark will now accept single-end file names in both comma- and space-separated
+format.
 
 Sequence files with sequence ID names containing tab stops are truncated by Bowtie
 to the first element, which results in no sequence alignments. Bismark will detect
 whether the seqID field contains tab characters and print a warning at the end of
 the run (also into the log file). Simply replacing tabs with whitespaces in the
-seqID lines of the input file fixes this problem (e.g. with $id =~ s/\t/ /g; ).
+seqID lines of the input file fixes this problem (e.g. with $id =~ s/\t/ /g; ), 
+however this needs to be handled before invoking Bismark.
+
+
+Methylation Extractor
+
+Fixed a bug which resulted in offset methylation positions (by the read length)
+for single-end reverse strand alignments when the option '--ignore' was specified.
+
 
 
 

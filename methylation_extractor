@@ -10,7 +10,8 @@ my %counting;
 my $parent_dir = getcwd();
 
 my %fhs;
-my $version = 'v0.5.1';
+
+my $version = 'v0.5.3';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG) = process_commandline();
 
 process_Bismark_results_file($ignore,$single,$paired,$no_overlap);
@@ -1265,7 +1266,6 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 
 sub print_individual_C_methylation_states_single_end{
-  ### This is the new version (v0.2.0+) handling CpG, CHG and CHH context
 
   my ($meth_call,$chrom,$start,$id,$seq,$strand,$filehandle_index) = @_;
   my @methylation_calls = split(//,$meth_call);
@@ -1321,7 +1321,11 @@ sub print_individual_C_methylation_states_single_end{
 	}
       }
     } elsif ($strand eq '-') {
-      $start += length($seq)-1;
+
+      unless ($ignore){  ### if --ignore was specified the start position has already been corrected
+	$start += length($seq)-1;
+      }
+
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -1385,7 +1389,11 @@ sub print_individual_C_methylation_states_single_end{
 	}
       }
     } elsif ($strand eq '-') {
-      $start += length($seq)-1;
+
+      unless ($ignore){  ### if --ignore was specified the start position has already been corrected
+	$start += length($seq)-1;
+      }
+
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -1450,7 +1458,11 @@ sub print_individual_C_methylation_states_single_end{
 	}
       }
     } elsif ($strand eq '-') {
-      $start += length($seq)-1;
+
+      unless ($ignore){  ### if --ignore was specified the start position has already been corrected
+	$start += length($seq)-1;
+      }
+
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -1513,8 +1525,12 @@ sub print_individual_C_methylation_states_single_end{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
       }
-    } elsif ($strand eq '-') {
-      $start += length($seq)-1;
+    }elsif ($strand eq '-') {
+
+      unless ($ignore){  ### if --ignore was specified the start position has already been corrected
+	$start += length($seq)-1;
+      }
+
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
@@ -1667,7 +1683,7 @@ The output is in the form:
 * Unmethylated cytosines will receive a '-' orientation.
 
 
-This script was last edited on 21 April 2011.
+This script was last edited on 12 August 2011.
 
 HOW_TO
 }
