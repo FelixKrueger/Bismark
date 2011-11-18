@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.5.3';
+my $bismark_version = 'v0.5.4';
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -34,7 +34,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -142,23 +142,27 @@ sub start_methylation_call_procedure_single_ends {
   my $outfile = $sequence_file;
   $outfile =~ s/$/_bismark.txt/;
   print "Writing bisulfite mapping results to $outfile\n\n";
-  open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!\n";
+  open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file;
   $reportfile =~ s/$/_Bismark_mapping_report.txt/;
 
-  open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
+  open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file\n";
 
   if ($unmapped){
-    open (UNMAPPED,'>',$unmapped) or die "Failed to write to $unmapped: $!\n";
-    print "Unmapped sequences will be written to $unmapped\n";
+    my $unmapped_file = $sequence_file;
+    $unmapped_file =~ s/$/_unmapped_reads.txt/;
+    open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+    print "Unmapped sequences will be written to $unmapped_file\n";
   }
   if ($ambiguous){
-    open (AMBIG,'>',$ambiguous) or die "Failed to write to $ambiguous: $!\n";
-    print "Ambiguosly mapping sequences will be written to $ambiguous\n";
+    my $ambiguous_file = $sequence_file;
+    $ambiguous_file =~ s/$/_ambiguous_reads.txt/;
+    open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+    print "Ambiguosly mapping sequences will be written to $ambiguous_file\n";
   }
 
   if ($directional){
@@ -191,35 +195,38 @@ sub start_methylation_call_procedure_paired_ends {
   $outfile =~ s/$/_bismark_pe.txt/;
 
   print "Writing bisulfite mapping results to $outfile\n\n";
-  open (OUT,'>',$outfile) or die "Failed to write to $outfile: $!";
+  open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!";
   print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file_1;
   $reportfile =~ s/$/_Bismark_paired-end_mapping_report.txt/;
-  open (REPORT,'>',$reportfile) or die "Failed to write to $reportfile: $!\n";
+  open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n";
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 
 
   ### Unmapped read output
   if ($unmapped){
-    my $unmapped_1 = my $unmapped_2 = $unmapped;
-    $unmapped_1 =~ s/(\.\w+)$/_1$1/;
-    $unmapped_2 =~ s/(\.\w+)$/_2$1/;
-    open (UNMAPPED_1,'>',$unmapped_1) or die "Failed to write to $unmapped_1: $!\n";
-    open (UNMAPPED_2,'>',$unmapped_2) or die "Failed to write to $unmapped_2: $!\n";
+    my $unmapped_1 = $sequence_file_1;
+    my $unmapped_2 = $sequence_file_2;
+    $unmapped_1 =~ s/$/_unmapped_reads_1.txt/;
+    $unmapped_2 =~ s/$/_unmapped_reads_2.txt/;
+    open (UNMAPPED_1,'>',"$output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
+    open (UNMAPPED_2,'>',"$output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
     print "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
   }
 
   if ($ambiguous){
-    my $amb_1 = my $amb_2 = $ambiguous;
-    $amb_1 =~ s/(\.\w+)$/_1$1/;
-    $amb_2 =~ s/(\.\w+)$/_2$1/;
-    open (AMBIG_1,'>',$amb_1) or die "Failed to write to $amb_1: $!\n";
-    open (AMBIG_2,'>',$amb_2) or die "Failed to write to $amb_2: $!\n";
+    my $amb_1 = $sequence_file_1;
+    my $amb_2 = $sequence_file_2;
+    $amb_1 =~ s/$/_ambiguous_reads_1.txt/;
+    $amb_2 =~ s/$/_ambiguous_reads_2.txt/;
+    open (AMBIG_1,'>',"$output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
+    open (AMBIG_2,'>',"$output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
     print "Ambiguously mapping sequences will be written to $amb_1 and $amb_2\n";
   }
+
   if ($directional){
     print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored\n";
   }
@@ -384,10 +391,10 @@ sub print_final_analysis_report_paired_ends{
   #    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
   #  }
 
-
-
   ### printing a final report for the methylation call procedure
-  print "Sequences analysed in total:\t$counting{sequences_count}\n";
+  warn "Sequences analysed in total:\t$counting{sequences_count}\n";
+  print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
+
   my $percent_alignable_sequence_pairs = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
   print "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}%\n\n";
   print REPORT "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}% \n";
@@ -481,7 +488,15 @@ sub process_single_end_fastA_file_for_methylation_call{
   ### this is a FastA sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
   ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
   ### the C->T or G->A version
-  open (IN,$sequence_file) or die $!;
+
+  ### gzipped version of the infile
+  if ($sequence_file =~ /\.gz$/){
+    open (IN,"zcat $sequence_file |") or die $!;
+  }
+  else{
+    open (IN,$sequence_file) or die $!;
+  }
+
   warn "\nReading in the sequence file $sequence_file\n";
   while (1) {
     # last if ($counting{sequences_count} > 100);
@@ -524,7 +539,15 @@ sub process_single_end_fastQ_file_for_methylation_call{
   ### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
   ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
   ### the C->T or G->A version
-  open (IN,$sequence_file) or die $!;
+
+  ### gzipped version of the infile
+  if ($sequence_file =~ /\.gz$/){
+    open (IN,"zcat $sequence_file |") or die $!;
+  }
+  else{
+    open (IN,$sequence_file) or die $!;
+  }
+
   warn "\nReading in the sequence file $sequence_file\n";
   while (1) {
     my $identifier = <IN>;
@@ -551,7 +574,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
       print AMBIG "\@$identifier\n";	
       print AMBIG "$sequence\n";
       print AMBIG $identifier_2;	
-      print AMBIG $quality_value;
+      print AMBIG "$quality_value\n";
     }
 
     # print the sequence to <unmapped.out> file if --un was specified
@@ -573,8 +596,17 @@ sub process_fastA_files_for_paired_end_methylation_calls{
   ### make a methylation call. The sequence idetifier per definition needs to be the same for a sequence pair used for paired-end mapping.
   ### Now reading in the sequence files sequence by sequence and see if the current sequences produced an alignment to one (or both) of the
   ### converted genomes (either the C->T or G->A version)
-  open (IN1,$sequence_file_1) or die $!;
-  open (IN2,$sequence_file_2) or die $!;
+
+  ### gzipped version of the infiles
+  if ($sequence_file_1 =~ /\.gz$/ and $sequence_file_2 =~ /\.gz$/){
+    open (IN1,"zcat $sequence_file_1 |") or die "Failed to open zcat pipe to $sequence_file_1 $!\n";
+    open (IN2,"zcat $sequence_file_2 |") or die "Failed to open zcat pipe to $sequence_file_2 $!\n";
+  }
+  else{
+    open (IN1,$sequence_file_1) or die $!;
+    open (IN2,$sequence_file_2) or die $!;
+  }
+
   warn "\nReading in the sequence files $sequence_file_1 and $sequence_file_2\n";
   ### Both files are required to have the exact same number of sequences, therefore we can process the sequences jointly one by one
   while (1) {
@@ -633,8 +665,17 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
   ### make a methylation call. The sequence identifier per definition needs to be same for a sequence pair used for paired-end alignments.
   ### Now reading in the sequence files sequence by sequence and see if the current sequences produced a paired-end alignment to one (or both)
   ### of the converted genomes (either C->T or G->A version)
-  open (IN1,$sequence_file_1) or die $!;
-  open (IN2,$sequence_file_2) or die $!;
+
+  ### gzipped version of the infiles
+  if ($sequence_file_1 =~ /\.gz$/ and $sequence_file_2 =~ /\.gz$/){
+    open (IN1,"zcat $sequence_file_1 |") or die "Failed to open zcat pipe to $sequence_file_1 $!\n";
+    open (IN2,"zcat $sequence_file_2 |") or die "Failed to open zcat pipe to $sequence_file_2 $!\n";
+  }
+  else{
+    open (IN1,$sequence_file_1) or die $!;
+    open (IN2,$sequence_file_2) or die $!;
+  }
+
   warn "\nReading in the sequence files $sequence_file_1 and $sequence_file_2\n";
   ### Both files are required to have the exact same number of sequences, therefore we can process the sequences jointly one by one
   while (1) {
@@ -677,12 +718,12 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
       print AMBIG_1 $orig_identifier_1;	
       print AMBIG_1 "$sequence_1\n";
       print AMBIG_1 $ident_1;	
-      print AMBIG_1 $quality_value_1;
+      print AMBIG_1 "$quality_value_1\n";
 	# seq_2
       print AMBIG_2 $orig_identifier_2;	
       print AMBIG_2 "$sequence_2\n";
       print AMBIG_2 $ident_2;	
-      print AMBIG_2 $quality_value_2;
+      print AMBIG_2 "$quality_value_2\n";
     }
 
     # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
@@ -2137,7 +2178,15 @@ sub reverse_complement{
 
 sub biTransformFastAFiles {
   my $filename = shift;
-  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+
+  ### gzipped version of the infile
+  if ($filename =~ /\.gz$/){
+    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  }
+  else{
+    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fa/;
   $G_to_A_infile =~ s/$/_G_to_A.fa/;
@@ -2172,7 +2221,15 @@ sub biTransformFastAFiles {
 
 sub biTransformFastAFiles_paired_end {
   my ($filename,$read_number) = @_;
-  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+
+  ### gzipped version of the infile
+  if ($filename =~ /\.gz$/){
+    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  }
+  else{
+    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fa/;
   $G_to_A_infile =~ s/$/_G_to_A.fa/;
@@ -2219,7 +2276,15 @@ sub biTransformFastAFiles_paired_end {
 
 sub biTransformFastQFiles {
   my $filename = shift;
-  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+
+  ### gzipped version of the infile
+  if ($filename =~ /\.gz$/){
+    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  }
+  else{
+    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fastq/;
   $G_to_A_infile =~ s/$/_G_to_A.fastq/;
@@ -2258,7 +2323,15 @@ sub biTransformFastQFiles {
 
 sub biTransformFastQFiles_paired_end {
   my ($filename,$read_number) = @_;
-  open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+
+  ### gzipped version of the infile
+  if ($filename =~ /\.gz$/){
+    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  }
+  else{
+    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fastq/;
   $G_to_A_infile =~ s/$/_G_to_A.fastq/;
@@ -2707,6 +2780,7 @@ sub process_command_line{
   my $minins;
   my $unmapped;
   my $multi_map;
+  my $output_dir;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -2729,8 +2803,9 @@ sub process_command_line{
 				 'I|minins=i' => \$minins,
 				 'X|maxins=i' => \$maxins,
 				 'e|maqerr=i' => \$ceiling,
-				 'un|unmapped=s' => \$unmapped,
-				 'ambiguous=s' => \$multi_map,
+				 'un|unmapped' => \$unmapped,
+				 'ambiguous' => \$multi_map,
+				 'o|output_dir=s' => \$output_dir,
 				);
 
 
@@ -2794,14 +2869,22 @@ VERSION
   unless ($genome_folder =~/\/$/){
     $genome_folder =~ s/$/\//;
   }
-  my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
-  my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
+
   if (chdir $genome_folder){
-    print "Reference genome folder provided is $genome_folder\n";
+    my $absolute_genome_folder = getcwd; ## making the genome folder path absolute
+    unless ($absolute_genome_folder =~/\/$/){
+      $absolute_genome_folder =~ s/$/\//;
+    }
+    warn "Reference genome folder provided is $genome_folder\t(absolute path is '$absolute_genome_folder)'\n";
+    $genome_folder = $absolute_genome_folder;
   }
   else{
     die "Failed to move to $genome_folder: $!\nUSAGE: Bismark.pl [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
   }
+
+  my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
+  my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
+
   ### checking the integrity of $CT_dir
   chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
   my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
@@ -2988,44 +3071,44 @@ VERSION
   }
 
   ### UNMAPPED SEQUENCE OUTPUT
-  if ($unmapped){
-    unless ($unmapped =~ /\.\w+$/){
-      die "Please provide a filename for unmapped sequences in the format: filename.extension (e.g. unaligned.txt)\n";
-    }
-    die "The file to output unmapped sequences already exists. Please specify a new name\n" if (-e "$parent_dir/$unmapped");
-    if ($mates1 and $mates2){
-      my $un1 = my $un2 = $unmapped;
-      $un1 =~ s/(\.\w+)$/_1$1/;
-      $un2 =~ s/(\.\w+)$/_2$1/;
-      if (-e "$parent_dir/$un1" or -e "$parent_dir/$un2"){
-	die "The specified output files for unmapped sequences already exist. Please specify a new name\n";
-      }
-    }
-  }
-  else{
-    $unmapped = 0;
-  }
+  $unmapped = 0 unless ($unmapped);
+
 
   ### AMBIGUOUS ALIGNMENT SEQUENCE OUTPUT
-  if ($multi_map){
-    unless ($multi_map =~ /\.\w+$/){
-      die "Please provide a filename for ambiguously mapping sequences in the format: filename.extension (e.g. multiple_alignments.txt)\n";
+  $multi_map = 0 unless ($multi_map);
+
+
+  ### OUTPUT DIRECTORY
+
+  chdir $parent_dir or die "Failed to move back to current working directory\n";
+  if ($output_dir){
+    unless ($output_dir =~ /\/$/){
+      $output_dir =~ s/$/\//;
     }
-    die "The file to output ambiguosly mapping sequences already exists. Please specify a new name\n" if (-e "$parent_dir/$multi_map");
-    if ($mates1 and $mates2){
-      my $multi1 = my $multi2 = $multi_map;
-      $multi1 =~ s/(\.\w+)$/_1$1/;
-      $multi2 =~ s/(\.\w+)$/_2$1/;
-      if (-e "$parent_dir/$multi1" or -e "$parent_dir/$multi2"){
-	die "The specified output files for ambiguously aligning sequences  ($multi1, $multi2) already exist. Please specify a new name\n";
+
+    if (chdir $output_dir){
+      #  warn "directory exists already\n";
+      $output_dir = getcwd; #  making the path absolute
+      unless ($output_dir =~ /\/$/){
+	$output_dir =~ s/$/\//;
       }
     }
+    else{
+      mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
+      warn "Created output directory $output_dir!\n\n";
+      chdir $output_dir or die "Failed to move to $output_dir\n";
+      $output_dir = getcwd; #  making the path absolute
+      unless ($output_dir =~ /\/$/){
+	$output_dir =~ s/$/\//;
+      }
+    }
+    warn "Output will be written into the directory: $output_dir\n";
   }
   else{
-    $multi_map = 0;
+    $output_dir = '';
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir);
 }
 
 sub print_helpfile{
@@ -3069,11 +3152,11 @@ USAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 ARGUMENTS:
 
-<genome_folder>          The full path to the folder containing the unmodified reference genome
+<genome_folder>          The path to the folder containing the unmodified reference genome
                          as well as the subfolders created by the Bismark_Genome_Preparation
-                         script (/Bisulfite_Genome/CT_conversion/ and /Bisulfite_Genome/GA_conversion/). 
+                         script (/Bisulfite_Genome/CT_conversion/ and /Bisulfite_Genome/GA_conversion/).
                          Bismark expects one or more fastA files in this folder (file extension: .fa
-                         or .fasta).
+                         or .fasta). The path can be relative or absolute.
 
 -1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
                          "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
@@ -3144,7 +3227,7 @@ Alignment:
                          always extending the path with the lowest cumulative cost. Bowtie tries to minimize the 
                          memory impact of the descriptors, but they can still grow very large in some cases. If 
                          you receive an error message saying that chunk memory has been exhausted in --best mode,
-                         try adjusting this parameter up to dedicate more memory to the descriptors. Default: 256.
+                         try adjusting this parameter up to dedicate more memory to the descriptors. Default: 512.
 
 -I/--minins <int>        The minimum insert size for valid paired-end alignments. E.g. if -I 60 is specified and
                          a paired-end alignment consists of two 20-bp alignments in the appropriate orientation
@@ -3186,21 +3269,24 @@ Output:
 
 --quiet                  Print nothing besides alignments.
 
---un <filename>          Write all reads that could not be aligned to a file with name <filename>. Written reads will
+-un/--unmapped           Write all reads that could not be aligned to a file in the output directory. Written reads will
                          appear as they did in the input, without any translation of quality values that may have
-                         taken place within Bowtie. Paired-end reads will be written to two parallel files with _1
-                         and _2 inserted in the filename, e.g., if <filename> is unaligned.fq, the #1 and #2 mates
-                         that fail to align will be written to unaligned_1.fq and unaligned_2.fq respectively. Reads 
-                         with more than one valid alignments with the same number of lowest mismatches (ambiguous mapping)
-                         are also written to <filename>.
+                         taken place within Bowtie or Bismark. Paired-end reads will be written to two parallel files with _1
+                         and _2 inserted in their filenames, i.e. _unmapped_reads_1.txt and unmapped_reads_2.txt. Reads
+                         with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping)
+                         are also written to _unmapped_reads.txt unless the option --ambiguous is specified as well.
 
---ambiguous <filename>   Write all reads which produce more than one valid alignment with the same number of lowest
-                         mismatches or other reads that fail to align uniquely to <filename> (in the form filename.extension).
+--ambiguous              Write all reads which produce more than one valid alignment with the same number of lowest
+                         mismatches or other reads that fail to align uniquely to a file in the output directory.
                          Written reads will appear as they did in the input, without any of the translation of quality
-                         values that may have taken place within bowtie. Paired-end reads will be written to two parallel
-                         files with _1 and _2 inserted in the filename, e.g., if <filename> is ambiguous.fq, the #1 and #2
-                         mates will be written to ambiguous_1.fq and ambiguous_2.fq respectively. These reads are not
-                         written to the file specified with --un.
+                         values that may have taken place within Bowtie or Bismark. Paired-end reads will be written to two
+                         parallel files with _1 and _2 inserted in theit filenames, i.e. _ambiguous_reads_1.txt and
+                         _ambiguous_reads_2.txt. These reads are not written to the file specified with --un.
+
+-o/--output_dir <dir>    Write all output files into this directory. By default the output files will be written into
+                         the same folder as the input file. If the specified folder does not exist, Bismark will attempt
+                         to create it first. The path to the output folder can be either relative or absolute.
+
 
 Other:
 
@@ -3243,7 +3329,7 @@ Paired-end output format (tab-separated):
 (14) <read 1 quality score (Phred33)>
 (15) <read 2 quality score (Phred33)>
 
-This script was last edited on 13 Sept 2011.
+This script was last edited on 17 Oct 2011.
 
 HOW_TO
 }

@@ -1,3 +1,31 @@
+RELEASE NOTES FOR Bismark v0.5.4 (17 Oct 2011)
+----------------------------------------------
+
+Bismark
+
+Bismark will now accept input files in either normal, uncompressed or gzipped format 
+(files have to ending in .gz).
+
+Added the option -o/--output_dir <dir> to Bismark which lets you specify the folder
+for all Bismark output files instead of writing into the same folder as the input file(s).
+If the output directory does not exist already it will be created.
+
+The path to the genome folder can now be absolute or relative (e.g. ../genomes/mouse/).
+
+Changed the way unmapped or ambiguous reads are reported so that one output file (and/or
+ambiguous read file) is generated per input file. Their name will be derived from the
+input file name. For paired-end samples, the unmapped or ambiguous filenames can be
+discriminated by _1 and _2 in their file names.
+
+Added the number of sequences analysed in total to the paired-end report file (was only
+printed on screen previously).
+
+Fixed a bug for the FastQ output for ambiguous reads where quality scores were not followed
+by a new line.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.5.3 (13 Sep 2011)
 ----------------------------------------------
 
