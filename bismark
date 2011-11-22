@@ -34,7 +34,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -78,8 +78,12 @@ foreach my $filename (@filenames){
       $fhs[2]->{inputfile_2} = $C_to_T_infile_2;
       $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
       $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
-
-      paired_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      if ($bowtie2){
+	paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      }
+      else{
+	paired_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      }
     }
 
     ### FastQ format
@@ -97,7 +101,12 @@ foreach my $filename (@filenames){
       $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
       $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 
-      paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      if ($bowtie2){
+	paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+      }
+      else{
+	paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);	
+      }
     }
     start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
   }
@@ -118,7 +127,12 @@ foreach my $filename (@filenames){
       $fhs[2]->{inputfile} = $fhs[3]->{inputfile} = $G_to_A_infile;
 
       ### Creating 4 different bowtie filehandles and storing the first entry
-      single_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile,$G_to_A_infile);
+      if ($bowtie2){
+	single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 ($C_to_T_infile,$G_to_A_infile);
+      }
+      else{
+	single_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile,$G_to_A_infile);
+      }
     }
 
     ## FastQ format
@@ -129,9 +143,16 @@ foreach my $filename (@filenames){
       $fhs[2]->{inputfile} = $fhs[3]->{inputfile} = $G_to_A_infile;
 
       ### Creating 4 different bowtie filehandles and storing the first entry
-      single_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile,$G_to_A_infile);
+      if ($bowtie2){
+	single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
+      }
+      else{
+	single_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile,$G_to_A_infile);
+      }
     }
+
     start_methylation_call_procedure_single_ends($filename,$C_to_T_infile,$G_to_A_infile);
+
   }
 }
 
@@ -140,18 +161,30 @@ sub start_methylation_call_procedure_single_ends {
 
   ### printing all alignments to a results file
   my $outfile = $sequence_file;
-  $outfile =~ s/$/_bismark.txt/;
+
+  if ($bowtie2){
+    $outfile =~ s/$/_bt2_bismark.txt/;
+  }
+  else{ # default
+    $outfile =~ s/$/_bismark.txt/;
+  }
   print "Writing bisulfite mapping results to $outfile\n\n";
   open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file;
-  $reportfile =~ s/$/_Bismark_mapping_report.txt/;
+  if ($bowtie2){
+    $reportfile =~ s/$/_bt2_Bismark_mapping_report.txt/;
+  }
+  else{
+    $reportfile =~ s/$/_Bismark_mapping_report.txt/;
+  }
 
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file\n";
 
+  # the Bismark/ Bowtie 2 output is in SAM format and includes all reads, so unmapped/ambiguous will be included as well
   if ($unmapped){
     my $unmapped_file = $sequence_file;
     $unmapped_file =~ s/$/_unmapped_reads.txt/;
@@ -2644,6 +2677,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   }
 }
 
+### Bowtie 1 (default) | SINGLE-END | FASTA
 sub single_end_align_fragments_to_bisulfite_genome_fastA {
   my $C_to_T_infile = shift;
   my $G_to_A_infile = shift;
@@ -2673,6 +2707,43 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
   }
 }
 
+### Bowtie 2 | SINGLE-END | FASTA
+sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
+  my $C_to_T_infile = shift;
+  my $G_to_A_infile = shift;
+  print "Input files are $C_to_T_infile and $G_to_A_infile (FastA)\n";
+
+  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+  ## data structure above
+  warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  foreach my $fh (@fhs) {
+    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+
+    ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
+    while (1){
+      $_ = $fh->{fh}->getline();
+      last unless ($_ =~ /^\@/); # SAM headers start with @
+    }
+
+    # Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+    if ($_) {
+      my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
+      $fh->{last_seq_id} = $id;
+      $fh->{last_line} = $_;
+      warn "Found first alignment:\t$fh->{last_line}\n";
+    }
+    # otherwise we just initialise last_seq_id and last_line as undefinded. This should only happen at the end of a file for Bowtie 2 output
+    else {
+      print "Found no alignment, assigning undef to last_seq_id and last_line\n";
+      $fh->{last_seq_id} = undef;
+      $fh->{last_line} = undef;
+    }
+  }
+}
+
+
+### Bowtie 1 (default) | SINGLE-END | FASTQ
 sub single_end_align_fragments_to_bisulfite_genome_fastQ {
   my $C_to_T_infile = shift;
   my $G_to_A_infile = shift;
@@ -2688,7 +2759,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
     if ($_) {
-      my $id = (split(/\t/))[0]; # this is the first element of the bowtie output (= the sequence identifier)
+      my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
       warn "Found first alignment:\t$fh->{last_line}\n";
@@ -2701,6 +2772,44 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     }
   }
 }
+
+### Bowtie 2 | SINGLE-END | FASTQ
+sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
+  my $C_to_T_infile = shift;
+  my $G_to_A_infile = shift;
+  print "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n";
+
+  ## Now starting 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+  ## the data structure above
+  warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  foreach my $fh (@fhs) {
+    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
+    warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
+
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+
+    ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
+    while (1){
+      $_ = $fh->{fh}->getline();
+      last unless ($_ =~ /^\@/); # SAM headers start with @
+    }
+
+    # Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+    if ($_) {
+      my $id = (split(/\t/))[0]; # this is the first element of the Bowtie 2 output (= the sequence identifier)
+      $fh->{last_seq_id} = $id;
+      $fh->{last_line} = $_;
+      warn "Found first alignment:\t$fh->{last_line}\n";
+    }
+    # otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
+    else {
+      print "Found no alignment, assigning undef to last_seq_id and last_line\n";
+      $fh->{last_seq_id} = undef;
+      $fh->{last_line} = undef;
+    }
+  }
+}
+
 
 sub reset_counters_and_fhs{
   %counting=(
@@ -2781,6 +2890,7 @@ sub process_command_line{
   my $unmapped;
   my $multi_map;
   my $output_dir;
+  my $bowtie2;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -2789,7 +2899,7 @@ sub process_command_line{
 				 'f|fasta' => \$fasta,
 				 'q|fastq' => \$fastq,
 				 's|skip=i' => \$skip,
-				 'u|qupto=i' => \$qupto,
+				 'u|upto=i' => \$qupto,
 				 'phred33-quals' => \$phred33,
 				 'phred64-quals|solexa1' => \$phred64,
 				 'solexa-quals' => \$solexa,
@@ -2806,6 +2916,7 @@ sub process_command_line{
 				 'un|unmapped' => \$unmapped,
 				 'ambiguous' => \$multi_map,
 				 'o|output_dir=s' => \$output_dir,
+				 'bowtie2' => \$bowtie2,
 				);
 
 
@@ -2836,23 +2947,37 @@ VERSION
   ##################################
   ### PROCESSING OPTIONS
 
+  unless ($bowtie2){
+    $bowtie2 = 0;
+  }
+
   ### PATH TO BOWTIE
-  ### if a special path to Bowtie was specified we will use that one, otherwise it is assumed that Bowtie is in the path
+  ### if a special path to Bowtie 1/2 was specified we will use that one, otherwise it is assumed that Bowtie 1/2 is in the PATH
   if ($path_to_bowtie){
     unless ($path_to_bowtie =~ /\/$/){
       $path_to_bowtie =~ s/$/\//;
     }
     if (-d $path_to_bowtie){
-      $path_to_bowtie = "${path_to_bowtie}bowtie";
+      if ($bowtie2){
+	$path_to_bowtie = "${path_to_bowtie}bowtie2";
+      }
+      else{
+	$path_to_bowtie = "${path_to_bowtie}bowtie";
+      }
     }
     else{
       die "The path to bowtie provided ($path_to_bowtie) is invalid (not a directory)!\n";
     }
   }
   else{
-    $path_to_bowtie = 'bowtie';
+    if ($bowtie2){
+      $path_to_bowtie = 'bowtie2';
+      warn "Path to Bowtie 2 specified as: $path_to_bowtie\n";  }
+    else{
+      $path_to_bowtie = 'bowtie';
+      warn "Path to Bowtie specified as: $path_to_bowtie\n";
+    }
   }
-  print "Path to Bowtie specified as: $path_to_bowtie\n";
 
   ####################################
   ### PROCESSING ARGUMENTS
@@ -2885,25 +3010,46 @@ VERSION
   my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
   my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
 
-  ### checking the integrity of $CT_dir
-  chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-  my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
-  foreach my $file(@CT_bowtie_index){
-    unless (-f $file){
-      die "The bowtie index of the C->T converted genome seems to be faulty ($file). Please run Bismark_Genome_Preparation before running Bismark.pl.\n";
+  if ($bowtie2){ ### Bowtie 2 (new)
+    ### checking the integrity of $CT_dir
+    chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+    my @CT_bowtie_index = ('BS_CT.1.bt2','BS_CT.2.bt2','BS_CT.3.bt2','BS_CT.4.bt2','BS_CT.rev.1.bt2','BS_CT.rev.2.bt2');
+    foreach my $file(@CT_bowtie_index){
+      unless (-f $file){
+	die "The Bowtie 2 index of the C->T converted genome seems to be faulty ($file). Please run the bismark_genome_preparation before running Bismark.\n";
+      }
+    }
+    ### checking the integrity of $GA_dir
+    chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+    my @GA_bowtie_index = ('BS_GA.1.bt2','BS_GA.2.bt2','BS_GA.3.bt2','BS_GA.4.bt2','BS_GA.rev.1.bt2','BS_GA.rev.2.bt2');
+    foreach my $file(@GA_bowtie_index){
+      unless (-f $file){
+	die "The Bowtie 2 index of the G->A converted genome seems to be faulty ($file). Please run bismark_genome_preparation before running Bismark.\n";
+      }
     }
   }
-  my $CT_index_basename = "${CT_dir}BS_CT";
-  ### checking the integrity of $GA_dir
-  chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-  my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
-  foreach my $file(@GA_bowtie_index){
-    unless (-f $file){
-      die "The bowtie index of the C->T converted genome seems to be faulty ($file). Please run Bismark_Genome_Preparation before running Bismark.pl.\n";
-    }
-  }
-  my $GA_index_basename = "${GA_dir}BS_GA";
 
+  else{ ### Bowtie 1 (default)
+    ### checking the integrity of $CT_dir
+    chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+    my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
+    foreach my $file(@CT_bowtie_index){
+      unless (-f $file){
+	die "The Bowtie index of the C->T converted genome seems to be faulty ($file). Please run bismark_genome_preparation before running Bismark.\n";
+      }
+    }
+    ### checking the integrity of $GA_dir
+    chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+    my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
+    foreach my $file(@GA_bowtie_index){
+      unless (-f $file){
+	die "The Bowtie index of the G->A converted genome seems to be faulty ($file). Please run bismark_genome_preparation before running Bismark.\n";
+      }
+    }
+  }
+
+  my $CT_index_basename = "${CT_dir}BS_CT";
+  my $GA_index_basename = "${GA_dir}BS_GA";
 
   ### INPUT OPTIONS
 
@@ -2938,32 +3084,50 @@ VERSION
 
   ### UPTO
   if ($qupto){
-    push @bowtie_options,"--qupto $qupto";
+    if ($bowtie2){
+      push @bowtie_options,"--upto $qupto"; ## slightly changed for Bowtie 2
+    }
+    else{
+      push @bowtie_options,"--qupto $qupto";
+    }
   }
 
   ### QUALITY VALUES
   if (($phred33 and $phred64) or ($phred33 and $solexa) or ($phred64 and $solexa)){
     die "You can only specify one type of quality value at a time! (--phred33-quals or --phred64-quals or --solexa-quals)";
   }
-  if ($phred33){
+  if ($phred33){ ## if nothing else is specified $phred33 will be used as default by both Bowtie 1 and 2.
     # Phred quality values work only when -q is specified
     unless ($fastq){
       die "Phred quality values works only when -q (FASTQ) is specified\n";
     }
-    push @bowtie_options,"--phred33-quals";
+    if ($bowtie2){
+      push @bowtie_options,"--phred33";
+    }
+    else{
+      push @bowtie_options,"--phred33-quals";
+    }
   }
   if ($phred64){
     # Phred quality values work only when -q is specified
     unless ($fastq){
       die "Phred quality values work only when -q (FASTQ) is specified\n";
     }
-    push @bowtie_options,"--phred64-quals";
+    if ($bowtie2){
+      push @bowtie_options,"--phred64";
+    }
+    else{
+      push @bowtie_options,"--phred64-quals";
+    }
   }
   else{
     $phred64 = 0;
   }
 
   if ($solexa){
+    if ($bowtie2){
+      die "The option '--solexa-quals' is not compatible with Bowtie 2. Please respecify!\n";
+    }
     # Solexa to Phred value conversion works only when -q is specified
     unless ($fastq){
       die "Conversion from Solexa to Phred quality values works only when -q (FASTQ) is specified\n";
@@ -2994,9 +3158,16 @@ VERSION
   push @bowtie_options,'-k 2';
 
   ### --BEST
-  # --best will be the default option, specifying --no-best can turn it off (e.g. to speed up alignment process)
-  unless ($best){
-    push @bowtie_options,'--best';
+  if ($bowtie2){
+    if ($best){    # Bowtie 2 does away with the concept of --best, so one can also not select --no-best when Bowtie 2 is to be used
+      die "The option --no-best is not compatible with Bowtie 2. Please respecify options\n";
+    }
+  }
+  else{
+    # --best is the default option for Bowtie 1, specifying --no-best can turn it off (e.g. to speed up alignment process)
+    unless ($best){
+      push @bowtie_options,'--best';
+    }
   }
 
   ### PAIRED-END MAPPING
@@ -3050,12 +3221,14 @@ VERSION
     push @bowtie_options,'--quiet';
   }
 
-  ### CHUNKMBS needed to be increased to avoid memory exhaustion warnings, particularly for --best (and paired-end) alignments
-  if (defined $chunk){
-    push @bowtie_options,"--chunkmbs $chunk";
-  }
-  else{
-    push @bowtie_options,"--chunkmbs 512"; ## setting the default to 512MB (up from 64 default)
+  ### CHUNKMBS needed to be increased to avoid memory exhaustion warnings for Bowtie 1, particularly for --best (and paired-end) alignments
+  unless ($bowtie2){ # Bowtie 2 does not have a chunkmbs option
+    if (defined $chunk){
+      push @bowtie_options,"--chunkmbs $chunk";
+    }
+    else{
+      push @bowtie_options,"--chunkmbs 512"; ## setting the default to 512MB (up from 64 default)
+    }
   }
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
@@ -3108,7 +3281,7 @@ VERSION
     $output_dir = '';
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2);
 }
 
 sub print_helpfile{
@@ -3189,7 +3362,7 @@ Input:
 
 -s/--skip <int>          Skip (i.e. do not align) the first <int> reads or read pairs from the input.
 
--u/--qupto <int>         Only aligns the first <int> reads or read pairs from the input. Default: no limit.
+-u/--upto <int>          Only aligns the first <int> reads or read pairs from the input. Default: no limit.
 
 --phred33-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 33. Default: on.
 
@@ -3199,16 +3372,18 @@ Input:
                          (which can't). The formula for conversion is: 
                          phred-qual = 10 * log(1 + 10 ** (solexa-qual/10.0)) / log(10). Used with -q. This
                          is usually the right option for use with (unconverted) reads emitted by the GA
-                         Pipeline versions prior to 1.3. Default: off.
+                         Pipeline versions prior to 1.3. Works only for Bowtie 1. Default: off.
 
 --solexa1.3-quals        Same as --phred64-quals. This is usually the right option for use with (unconverted)
                          reads emitted by GA Pipeline version 1.3 or later. Default: off.
 
 --path_to_bowtie         The full path </../../> to the Bowtie installation on your system. If not specified
-                         it will be assumed that Bowtie is in the path.
+                         it is assumed that Bowtie is in the PATH.
 
 
 Alignment:
+
+--bowtie2                Uses Bowtie 2 instead of Bowtie 1. Default: off.
 
 -n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", i.e. the first L base pairs
                          of the read (where L is set with -l/--seedlen). This may be 0, 1, 2 or 3 and the 
@@ -3329,7 +3504,7 @@ Paired-end output format (tab-separated):
 (14) <read 1 quality score (Phred33)>
 (15) <read 2 quality score (Phred33)>
 
-This script was last edited on 17 Oct 2011.
+This script was last edited on 18 Nov 2011.
 
 HOW_TO
 }

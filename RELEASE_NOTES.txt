@@ -1,3 +1,13 @@
+RELEASE NOTES FOR Bismark v0.6 (22 Nov 2011)
+----------------------------------------------
+
+bismark2SAM.pl
+
+The bismark2SAM conversion script (version 6) does now reverse the quality and methylation
+call strings if a sequence was reverse complemented for SAM output.
+
+
+
 RELEASE NOTES FOR Bismark v0.5.4 (17 Oct 2011)
 ----------------------------------------------
 
