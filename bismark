@@ -195,7 +195,7 @@ sub start_methylation_call_procedure_single_ends {
     my $ambiguous_file = $sequence_file;
     $ambiguous_file =~ s/$/_ambiguous_reads.txt/;
     open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
-    print "Ambiguosly mapping sequences will be written to $ambiguous_file\n";
+    print "Ambiguously mapping sequences will be written to $ambiguous_file\n";
   }
 
   if ($directional){
@@ -545,7 +545,14 @@ sub process_single_end_fastA_file_for_methylation_call{
 
     $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-    my $return = check_bowtie_results_single_end(uc$sequence,$identifier);
+    my $return;
+    if ($bowtie2){
+      $return = check_bowtie_results_single_end_bowtie2 (uc$sequence,$identifier);
+    }
+    else{
+      $return = check_bowtie_results_single_end(uc$sequence,$identifier); # default Bowtie 1
+    }
+
     unless ($return){
       $return = 0;
     }
@@ -598,10 +605,18 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
     $identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
 
-    my $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value);
+    my $return;
+    if ($bowtie2){
+      $return = check_bowtie_results_single_end_bowtie2 (uc$sequence,$identifier,$quality_value);
+    }
+    else{
+      $return = check_bowtie_results_single_end(uc$sequence,$identifier,$quality_value); # default Bowtie 1
+    }
+
     unless ($return){
       $return = 0;
     }
+
     # print the sequence to ambiguous.out if --ambiguous was specified
     if ($ambiguous and $return == 2){
       print AMBIG "\@$identifier\n";	
@@ -664,7 +679,14 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
     $identifier_1 =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-    my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1);
+    my $return;
+    if ($bowtie2){
+      check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1);
+    }
+    else{
+      check_bowtie_results_paired_ends (uc$sequence_1,uc$sequence_2,$identifier_1);
+    }
+
     unless ($return){
       $return = 0;
     }
@@ -740,7 +762,14 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
     $identifier_1 =~ s/^\@//;  # deletes the @ at the beginning of the FastQ ID
 
-    my $return = check_bowtie_results_paired_ends(uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+    my $return;
+    if ($bowtie2){
+      check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+    }
+    else{
+      check_bowtie_results_paired_ends (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+    }
+
     unless ($return){
       $return = 0;
     }
@@ -810,7 +839,7 @@ sub check_bowtie_results_single_end{
 	  $chromosome = $mapped_chromosome;
 	}
 	else{
-	  die "Chromosome number extraction failed for $mapped_chromosome $! \n";
+	  die "Chromosome number extraction failed for $mapped_chromosome\n";
 	}
 	### Now extracting the number of mismatches to the converted genome
 	my $number_of_mismatches;
@@ -867,7 +896,7 @@ sub check_bowtie_results_single_end{
 	    $chromosome = $mapped_chromosome;
 	  }
 	  else{
-	    die "Chromosome number extraction failed for $mapped_chromosome $! \n";
+	    die "Chromosome number extraction failed for $mapped_chromosome\n";
 	  }
 
 	  ### Now extracting the number of mismatches to the converted genome
@@ -1067,6 +1096,374 @@ sub check_bowtie_results_single_end{
   return 0; ## otherwise 1 will be returned by default, which would print the sequence to unmapped.out
 }
 
+sub check_bowtie_results_single_end_bowtie2 {
+  my ($sequence,$identifier,$quality_value) = @_;
+  ### Going to use the variable $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
+  my $sequence_fails = 0;
+  my $alignment_ambiguous = 0;
+
+  unless ($quality_value){ # for FastA sequences do not have quality values
+    $quality_value = '';
+  }
+
+  my %alignments = ();
+  ### reading from the bowtie output files to see if this sequence aligned to a bisulfite converted genome
+  foreach my $index (0..$#fhs){
+    ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
+    next unless ($fhs[$index]->{last_line} and $fhs[$index]->{last_seq_id});
+    ### if the sequence we are currently looking at produced an alignment we are doing various things with it
+    if ($fhs[$index]->{last_seq_id} eq $identifier) {
+
+      ## don't need this since we are going to use --norc
+      #  my $valid_alignment_found_1 = decide_whether_single_end_alignment_is_valid($index,$identifier);
+      ### sequences can fail at this point if there was only 1 seq in the wrong orientation, or if there were 2 seqs, both in the wrong orientation
+      ### we only continue to extract useful information about this alignment if 1 was returned
+
+      #  if ($valid_alignment_found_1 == 1){
+
+      ### Bowtie outputs which made it this far are in the correct orientation, so we can continue to analyse the alignment itself
+      ### need to extract the chromosome number from the Bowtie 2 output
+      my ($id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,5,9,10];
+
+      # print SAM file for an unmapped sequence
+      #  (1) Name of read that aligned
+      #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
+      #        1 The read is one of a pair
+      #        2 The alignment is one end of a proper paired-end alignment
+      #        4 The read has no reported alignments
+      #        8 The read is one of a pair and has no reported alignments
+      #       16 The alignment is to the reverse reference strand
+      #       32 The other mate in the paired-end alignment is aligned to the reverse reference strand
+      #       64 The read is mate 1 in a pair
+      #      128 The read is mate 2 in a pair
+      #  (3) Name of reference sequence where alignment occurs (unmapped reads have a *)
+      #  (4) 1-based offset into the forward reference strand where leftmost character of the alignment occurs (0 for unmapped reads)
+      #  (5) Mapping quality (255 means MAPQ is not available)
+      #  (6) CIGAR string representation of alignment (* if unavailable)
+      #  (7) Name of reference sequence where mate's alignment occurs. Set to = if the mate's reference sequence is the same as this alignment's, or * if there is no mate.
+      #  (8) 1-based offset into the forward reference strand where leftmost character of the mate's alignment occurs. Offset is 0 if there is no mate.
+      #  (9) Inferred fragment size. Size is negative if the mate's alignment occurs upstream of this alignment. Size is 0 if there is no mate.
+      # (10) Read sequence (reverse-complemented if aligned to the reverse strand)
+      # (11) ASCII-encoded read qualities (reverse-complemented if the read aligned to the reverse strand). The encoded quality values are on the Phred quality scale and the encoding is ASCII-offset by 33 (ASCII char !), similarly to a FASTQ file.
+      # (12) Optional fields. Fields are tab-separated. bowtie2 outputs zero or more of these optional fields for each alignment, depending on the type of the alignment:
+      # AS:i:<N> Alignment score. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if SAM record is for an aligned read.
+      # XS:i:<N> Alignment score for second-best alignment. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if the SAM record is for an aligned read and more than one alignment was found for the read.
+      # YS:i:<N> Alignment score for opposite mate in the paired-end alignment. Only present if the SAM record is for a read that aligned as part of a paired-end alignment.
+      # XN:i:<N> The number of ambiguous bases in the reference covering this alignment. Only present if SAM record is for an aligned read.
+      # XM:i:<N> The number of mismatches in the alignment. Only present if SAM record is for an aligned read.
+      # XO:i:<N> The number of gap opens, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
+      # XG:i:<N> The number of gap extensions, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
+      # NM:i:<N> The edit distance; that is, the minimal number of one-nucleotide edits (substitutions, insertions and deletions) needed to transform the read string into the reference string. Only present if SAM record is for an aligned read.
+      # YF:Z:<N> String indicating reason why the read was filtered out. See also: Filtering. Only appears for reads that were filtered out.
+      # MD:Z:<S> A string representation of the mismatched reference bases in the alignment. See SAM format specification for details. Only present if SAM record is for an aligned read.
+
+
+      ### If a sequence has no reported alignments there will be a single output line with a bit-wise flag value of 4. We can move on to the next Bowtie 2 instance and store its alignment
+      if ($flag == 4){
+	## reading in the next alignment, which must be the next sequence
+	my $newline = $fhs[$index]->{fh}-> getline();
+	if ($newline){
+	  chomp $newline;
+	  my ($seq_id) = split (/\t/,$newline);
+	  $fhs[$index]->{last_seq_id} = $seq_id;
+	  $fhs[$index]->{last_line} = $newline;
+	  if ($seq_id eq $identifier){
+	    die "Sequence with ID $identifier did not produce any alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
+	  }
+	  next; # next instance
+	}
+	else{
+	  # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+	  $fhs[$index]->{last_seq_id} = undef;
+	  $fhs[$index]->{last_line} = undef;
+	  next;
+	}
+      }
+
+      ## quality needs to be taken care of, e.g. reverse complementing....
+      if ($flag == 16){
+	$quality_value = reverse $quality_value;
+      }
+
+      # if there are one or more proper alignments we can extract the chromosome number
+      my $chromosome;
+      if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
+	$chromosome = $mapped_chromosome;
+      }
+      else{
+	die "Chromosome number extraction failed for $mapped_chromosome\n";
+      }
+					
+      #   print "$sequence\n";
+      #   print join ("\t",$id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual,$alignment_score),"\n";
+      #   print "$fhs[$index]->{last_line}\n";
+      my $genomic = substr($chromosomes{$chromosome},$position-1,50);
+      #   print "genomic sequence: $genomic\n";
+
+      ### We will use the optional field to determine the best alignments. Later on we extract the number of mismatches and/or indels from the MD:Z:<string> field
+      my ($alignment_score,$second_best,$MD_tag);
+
+      my @fields = split (/\t/,$fhs[$index]->{last_line});
+
+      foreach (11..$#fields){
+	# print $fields[$_],"\n";
+
+	if ($fields[$_] =~ /AS:i:(.*)/){
+	  $alignment_score = $1;
+	}
+	elsif ($fields[$_] =~ /XS:i:(.*)/){
+	  $second_best = $1;
+	}
+	elsif ($fields[$_] =~ /MD:Z:(.*)/){
+	  $MD_tag = $1;
+	}
+      }
+
+      #   warn "First  best alignment_score is: '$alignment_score'\n";
+      #   warn "MD tag is: '$MD_tag'\n";
+      die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag)!\n" unless (defined $alignment_score and defined $MD_tag);
+
+      if (defined $second_best){
+	# warn "second best alignment_score is: '$second_best'\n";
+
+	# If the first alignment score is the same as the alignment score of the second best hit we are going to boot this sequence altogether
+	if ($alignment_score == $second_best){
+	  ### report that the sequence has multiple hits with bitwise flag 256
+	  my $ambiguous_read_output = join("\t",$identifier,'256','*','0','255','*','*','0','0',$sequence,$quality_value);
+	  print OUT "$ambiguous_read_output\n";
+
+	  $alignment_ambiguous = 1;
+
+	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
+	  until ($fhs[$index]->{last_seq_id} ne $identifier){
+	    my $newline = $fhs[$index]->{fh}-> getline();
+	    if ($newline){
+	      chomp $newline;
+	      my ($seq_id) = split (/\t/,$newline);
+	      $fhs[$index]->{last_seq_id} = $seq_id;
+	      $fhs[$index]->{last_line} = $newline;
+	      #    print "$fhs[$index]->{last_line}\n";
+	    }
+	    else{
+	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+	      $fhs[$index]->{last_seq_id} = undef;
+	      $fhs[$index]->{last_line} = undef;
+	    }
+	  }
+	  #  print "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next one which is: $fhs[$index]->{last_seq_id}\n";
+	}
+      }
+      else{ # there is no second best hit, so we can just store this one and read in the next sequence
+	
+	### creating a composite location variable from $chromosome and $position and storing the alignment information in a temporary hash table
+	my $alignment_location = join (":",$chromosome,$position);
+	
+	### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+	### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
+	### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
+	### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
+
+	unless (exists $alignments{$alignment_location}){
+	  $alignments{$alignment_location}->{seq_id} = $id; 
+	  $alignments{$alignment_location}->{alignment_score} = $alignment_score;
+	  $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
+	  $alignments{$alignment_location}->{index} = $index;
+	  $alignments{$alignment_location}->{chromosome} = $chromosome;
+	  $alignments{$alignment_location}->{position} = $position;
+	  $alignments{$alignment_location}->{mismatch_info} = $MD_tag;
+	}
+	
+	my $newline = $fhs[$index]->{fh}-> getline();
+	if ($newline){
+	  chomp $newline;
+	  my ($seq_id) = split (/\t/,$newline);
+	  $fhs[$index]->{last_seq_id} = $seq_id;
+	  $fhs[$index]->{last_line} = $newline;
+	  if ($seq_id eq $identifier){
+	    die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
+	  }
+	}
+	else{
+	  # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+	  $fhs[$index]->{last_seq_id} = undef;
+	  $fhs[$index]->{last_line} = undef;
+	}
+      }
+    }
+  }
+
+  ### if the read produced several ambiguous alignments already now we returning now. If --ambiguous was specified the read sequence will be printed out.
+  if ($alignment_ambiguous == 1){
+    $counting{unsuitable_sequence_count}++;
+    if ($ambiguous){
+      return 2; # => exits to next sequence, and prints it out to multiple_alignments.out if --ambiguous has been specified
+    }
+    else{
+      return 0;
+    }
+  }
+
+  ### if there was no alignment found for a certain sequence at all we continue with the next sequence in the sequence file
+  unless(%alignments){
+    $counting{no_single_alignment_found}++;
+    my $unmapped_read_output = join("\t",$identifier,'4','*','0','255','*','*','0','0',$sequence,$quality_value);
+    print UNMAPPED "$unmapped_read_output\n";
+    if ($unmapped){
+      return 1; # => exits to next sequence, and prints it out to unmapped.out if --un was specified
+    }
+  }
+
+  #######################################################################################################################################################
+
+  ### If the sequence was not rejected so far we are now looking if there is a unique best alignment for it among several instances.  If there is only one
+  ### single best position we are going to store the alignment information in the $meth_call variable. If there are multiple hits with the same (highest)
+  ### alignment score we are discarding the sequence altogether
+
+  #######################################################################################################################################################
+
+  ### Declaring an empty hash reference which will store all information we need for the methylation call
+  my $methylation_call_params; # hash reference
+
+  ### print contents of %alignments for debugging
+  #  if (scalar keys %alignments > 1){
+  #    print "\n******\n";
+  #    foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
+  #      print "Loc:  $alignment_location\n";
+  #      print "ID:   $alignments{$alignment_location}->{seq_id}\n";
+  #      print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
+  #     print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
+  #     print "Index $alignments{$alignment_location}->{index}\n";
+  #     print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
+  #     print "pos:  $alignments{$alignment_location}->{position}\n";
+  #    print "MD:   $alignments{$alignment_location}->{mismatch_info}\n";
+  #  }
+  #  print "\n******\n";
+  #}
+
+  ### if there is only 1 entry in the hash with we accept it as the best alignment
+  if (scalar keys %alignments == 1){
+    for my $unique_best_alignment (keys %alignments){
+      $methylation_call_params->{$identifier}->{bowtie_sequence} = $alignments{$unique_best_alignment}->{bowtie_sequence};
+      $methylation_call_params->{$identifier}->{chromosome}      = $alignments{$unique_best_alignment}->{chromosome};
+      $methylation_call_params->{$identifier}->{position}        = $alignments{$unique_best_alignment}->{position};
+      $methylation_call_params->{$identifier}->{index}           = $alignments{$unique_best_alignment}->{index};
+    }
+  }
+
+  elsif (scalar keys %alignments == 3){
+    warn "There are 3 different alignments, oh my god!\n\n";
+    ### If there are 3 sequences with the same number of lowest mismatches we can discriminate 2 cases: (i) all 3 alignments are unique best hits and
+    ### come from different alignments processes (== indices) or (ii) one sequence alignment (== index) will give a unique best alignment, whereas a
+    ### second one will produce 2 (or potentially many) alignments for the same sequence but in a different conversion state or against a different genome
+    ### version (or both). This becomes especially relevant for highly converted sequences in which all Cs have been converted to Ts in the bisulfite
+    ### reaction. E.g.
+    ### CAGTCACGCGCGCGCG will become
+    ### TAGTTATGTGTGTGTG in the CT transformed version, which will ideally still give the correct alignment in the CT->CT alignment condition.
+    ### If the same read will then become G->A transformed as well however, the resulting sequence will look differently and potentially behave
+    ### differently in a GA->GA alignment and this depends on the methylation state of the original sequence!:
+    ### G->A conversion:
+    ### highly methylated: CAATCACACACACACA
+    ### highly converted : TAATTATATATATATA <== this sequence has a reduced complexity (only 2 bases left and not 3), and it is more likely to produce
+    ### an alignment with a low complexity genomic region than the one above. This would normally lead to the entire sequence being kicked out as the
+    ### there will be 3 alignments with the same number of lowest mismatches!! This in turn means that highly methylated and thereby not converted
+    ### sequences are more likely to pass the alignment step, thereby creating a bias for methylated reads compared to their non-methylated counterparts.
+    ### We do not want any bias, whatsoever. Therefore if we have 1 sequence producing a unique best alignment and the second and third conditions
+    ### producing alignments only after performing an additional (theoretical) conversion we want to keep the best alignment with the lowest number of
+    ### additional transliterations performed. Thus we want to have a look at the level of complexity of the sequences producing the alignment.
+    ### In the above example the number of transliterations required to transform the actual sequence
+    ### to the C->T version would be TAGTTATGTGTGTGTG -> TAGTTATGTGTGTGTG = 0; (assuming this gives the correct alignment)
+    ### in the G->A case it would be TAGTTATGTGTGTGTG -> TAATTATATATATATA = 6; (assuming this gives multiple wrong alignments)
+    ### if the sequence giving a unique best alignment required a lower number of transliterations than the second best sequence yielding alignments
+    ### while requiring a much higher number of transliterations, we are going to accept the unique best alignment with the lowest number of performed
+    ### transliterations. As a threshold that scales we will start with the number of tranliterations of the lowest best match x 2 must still be
+    ### smaller than the number of tranliterations of the second best sequence. Everything else will be flagged with $sequence_fails = 1 and discarded.
+    my @three_candidate_seqs;
+    foreach my $composite_location (keys %alignments){
+      my $transliterations_performed;
+      if ($alignments{$composite_location}->{index} == 0 or $alignments{$composite_location}->{index} == 1){
+	$transliterations_performed = determine_number_of_transliterations_performed($sequence,'CT');
+      }
+      elsif ($alignments{$composite_location}->{index} == 2 or $alignments{$composite_location}->{index} == 3){
+	$transliterations_performed = determine_number_of_transliterations_performed($sequence,'GA');
+      }
+      else{
+	die "unexpected index number range ('$alignments{$composite_location}->{index}') when determining number of transliterations performed\n";
+      }
+      push @three_candidate_seqs,{
+				  index => $alignments{$composite_location}->{index},
+				  alignment_score => $alignments{$composite_location}->{alignment_score},
+				  bowtie_sequence => $alignments{$composite_location}->{bowtie_sequence},
+				  chromosome => $alignments{$composite_location}->{chromosome},
+				  position => $alignments{$composite_location}->{position},
+				  seq_id => $alignments{$composite_location}->{seq_id},
+				  transliterations_performed => $transliterations_performed,
+				 };
+    }
+    ### sorting in ascending order for the lowest number of transliterations performed
+    @three_candidate_seqs = sort {$a->{transliterations_performed} <=> $b->{transliterations_performed}} @three_candidate_seqs;
+    my $first_array_element = $three_candidate_seqs[0]->{transliterations_performed};
+    my $second_array_element = $three_candidate_seqs[1]->{transliterations_performed};
+    # my $third_array_element = $three_candidate_seqs[2]->{transliterations_performed};
+
+    if (($first_array_element*2) < $second_array_element){
+      $counting{low_complexity_alignments_overruled_count}++;
+      ### taking the index with the unique best hit and over ruling low complexity alignments with 2 hits
+      $methylation_call_params->{$identifier}->{bowtie_sequence} = $three_candidate_seqs[0]->{bowtie_sequence};
+      $methylation_call_params->{$identifier}->{chromosome}      = $three_candidate_seqs[0]->{chromosome};
+      $methylation_call_params->{$identifier}->{position}        = $three_candidate_seqs[0]->{position};
+      $methylation_call_params->{$identifier}->{index}           = $three_candidate_seqs[0]->{index};
+      # warn "Overruled low complexity alignments! Using $first_array_element and disregarding $second_array_element and $third_array_element\n";
+    }
+    else{
+      $sequence_fails = 1;
+    }
+  }
+  else{
+    $sequence_fails = 1;
+  }
+
+  ### skipping the sequence completely if there were multiple alignments with the same amount of lowest mismatches found at different positions
+  if ($sequence_fails == 1){
+    $counting{unsuitable_sequence_count}++;
+    if ($ambiguous){
+      return 2; # => exits to next sequence, and prints it out to multiple_alignments.out if --ambiguous has been specified
+    }
+    if ($unmapped){
+      return 1; # => exits to next sequence, and prints it out to unmapped.out if --un has been specified
+    }
+    else{
+      return 0; # => exits to next sequence (default)
+    }
+  }
+
+  ### --DIRECTIONAL
+  ### If the option --directional has been specified the user wants to consider only alignments to the original top strand or the original bottom strand. We will therefore
+  ### discard all alignments to strands complementary to the original strands, as they should not exist in reality due to the library preparation protocol
+  if ($directional){
+    if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
+      #    warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
+      $counting{alignments_rejected_count}++;
+      return 0;
+    }
+  }
+
+  ### If the sequence has not been rejected so far it has a unique best alignment
+  $counting{unique_best_alignment_count}++;
+  #  extract_corresponding_genomic_sequence_single_end($identifier,$methylation_call_params);
+  ### check test to see if the genomic sequence we extracted has the same length as the observed sequence+2, and only then we perform the methylation call
+  #  if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence}) != length($sequence)+2){
+  #    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position}\n";
+  #    return 0;
+  #  }
+
+  ### otherwise we are set to perform the actual methylation call
+  #  $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
+  
+  #  print_bisulfite_mapping_result_single_end($identifier,$sequence,$methylation_call_params,$quality_value);
+  return 0; ## otherwise 1 will be returned by default, which would print the sequence to unmapped.out
+}
+
+
 sub determine_number_of_transliterations_performed{
   my ($sequence,$read_conversion) = @_;
   my $number_of_transliterations;
@@ -1084,7 +1481,42 @@ sub determine_number_of_transliterations_performed{
 
 sub decide_whether_single_end_alignment_is_valid{
   my ($index,$identifier) = @_;
-  my ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,7];
+  my ($id,$strand,$flag);
+
+  if ($bowtie2){ # extracting from SAM format
+    ($id,$flag) = (split (/\t/,$fhs[$index]->{last_line}))[0,1];
+
+      ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
+      ## FLAG: bitwise FLAG. Each bit is explained in the following table:
+
+      ## Bit    Description                                                Comment                                Value
+      ## 0x1    template having multiple segments in sequencing            0: single-end 1: paired end            value: 2^^0 (  1)
+      ## 0x2    each segment properly aligned according to the aligner     true only for paired-end alignments    value: 2^^1 (  2)
+      ## 0x4    segment unmapped                                           ---                                           ---
+      ## 0x8    next segment in the template unmapped                      ---                                           ---
+      ## 0x10   SEQ being reverse complemented                                                                    value: 2^^4 ( 16)
+      ## 0x20   SEQ of the next segment in the template being reversed                                            value: 2^^5 ( 32)
+      ## 0x40   the first segment in the template                          read 1                                 value: 2^^6 ( 64)
+      ## 0x80   the last segment in the template                           read 2                                 value: 2^^7 (128)
+      ## 0x100  secondary alignment                                        ---                                           ---
+      ## 0x200  not passing quality controls                               ---                                           ---
+      ## 0x400  PCR or optical duplicate                                   ---                                           ---
+
+    if ($flag == 0){
+      $strand = '+';
+    }
+    elsif  ($flag == 16){
+      $strand = '-';
+    }
+    else{
+      die "The bitwise flag value was invalid: $flag\n";
+    }
+  }
+
+  else{ # extracting from Bowtie 1 format
+    ($id,$strand) = (split (/\t/,$fhs[$index]->{last_line}))[0,1];
+  }
+
   ### ensuring that the entry is the correct sequence
   if (($id eq $fhs[$index]->{last_seq_id}) and ($id eq $identifier)){
     ### checking the orientation of the alignment. We need to discriminate between 8 different conditions, however only 4 of them are theoretically
@@ -1099,7 +1531,24 @@ sub decide_whether_single_end_alignment_is_valid{
       my $newline = $fhs[$index]->{fh}->getline();
       if ($newline){
 	### extract detailed information about the alignment again (from $newline this time)
-	($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$newline))[0,1,2,3,4,7];
+
+	if ($bowtie2){ # extracting from SAM format
+	  ($id,$flag) = (split (/\t/,$newline))[0,1];
+	
+	  if ($flag == 0){
+	    $strand = '+';
+	  }
+	  elsif  ($flag == 16){
+	    $strand = '-';
+	  }
+	  else{
+	    die "The bitwise flag value was invalid: $flag\n";
+	  }
+	}
+	else{ # extracting from Bowtie 1 output
+	  ($id,$strand) = (split (/\t/,$newline))[0,1];
+	}
+	
 	### ensuring that the next entry is still the correct sequence
 	if ($id eq $identifier){
 	  ### checking orientation again
@@ -1202,13 +1651,13 @@ sub check_bowtie_results_paired_ends{
 	  $chromosome_1 = $mapped_chromosome_1;
 	}	
 	else{
-	  die "Chromosome number extraction failed for $mapped_chromosome_1 $! \n";
+	  die "Chromosome number extraction failed for $mapped_chromosome_1\n";
 	}
 	if ($mapped_chromosome_2 =~ s/_(CT|GA)_converted$//){
 	  $chromosome_2 = $mapped_chromosome_2;
 	}
 	else{
-	  die "Chromosome number extraction failed for $mapped_chromosome_2 $! \n";
+	  die "Chromosome number extraction failed for $mapped_chromosome_2\n";
 	}
 	
 	### Now extracting the number of mismatches to the converted genome
@@ -1301,13 +1750,13 @@ sub check_bowtie_results_paired_ends{
 	    $chromosome_1 = $mapped_chromosome_1;
 	  }	
 	  else{
-	    die "Chromosome number extraction failed for $mapped_chromosome_1 $! \n";
+	    die "Chromosome number extraction failed for $mapped_chromosome_1\n";
 	  }
 	  if ($mapped_chromosome_2 =~ s/_(CT|GA)_converted$//){
 	    $chromosome_2 = $mapped_chromosome_2;
 	  }
 	  else{
-	    die "Chromosome number extraction failed for $mapped_chromosome_2 $! \n";
+	    die "Chromosome number extraction failed for $mapped_chromosome_2\n";
 	  }
 	
 	  $number_of_mismatches_1='';
@@ -2693,6 +3142,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
     if ($_) {
+      chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the bowtie output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
@@ -2728,6 +3178,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
 
     # Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
     if ($_) {
+      chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
@@ -2759,6 +3210,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
     if ($_) {
+      chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
@@ -2787,7 +3239,6 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
 
     open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
-
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
       $_ = $fh->{fh}->getline();
@@ -2796,6 +3247,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
     # Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
     if ($_) {
+      chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the Bowtie 2 output (= the sequence identifier)
       $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
@@ -2822,6 +3274,7 @@ sub reset_counters_and_fhs{
 	     sequences_count => 0,
 	     no_single_alignment_found => 0,
 	     unsuitable_sequence_count => 0,
+	     sequence_could_not_be_extracted_count => 0,
 	     unique_best_alignment_count => 0,
 	     low_complexity_alignments_overruled_count => 0,
 	     CT_CT_count => 0, #(CT read/CT genome, original top strand)
@@ -3154,13 +3607,19 @@ VERSION
   }
 
   ### REPORTING OPTIONS
-  # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments)
-  push @bowtie_options,'-k 2';
+
+  if ($bowtie2){
+    #    push @bowtie_options,'--norc'; ## The aligment are only carried out on the forward strand
+    push @bowtie_options,'-a';     ## the default behavior for Bowtie 2 is to report all alignments for a given sequence
+  }
+  else{ # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments) for Bowtie 1
+    push @bowtie_options,'-k 2';
+  }
 
   ### --BEST
   if ($bowtie2){
     if ($best){    # Bowtie 2 does away with the concept of --best, so one can also not select --no-best when Bowtie 2 is to be used
-      die "The option --no-best is not compatible with Bowtie 2. Please respecify options\n";
+      die "The option '--no-best' is not compatible with Bowtie 2. Please respecify options\n";
     }
   }
   else{
@@ -3227,9 +3686,10 @@ VERSION
       push @bowtie_options,"--chunkmbs $chunk";
     }
     else{
-      push @bowtie_options,"--chunkmbs 512"; ## setting the default to 512MB (up from 64 default)
+      push @bowtie_options,'--chunkmbs 512'; ## setting the default to 512MB (up from 64 default)
     }
   }
+
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
   my $bowtie_options = join (' ',@bowtie_options);
@@ -3245,7 +3705,6 @@ VERSION
 
   ### UNMAPPED SEQUENCE OUTPUT
   $unmapped = 0 unless ($unmapped);
-
 
   ### AMBIGUOUS ALIGNMENT SEQUENCE OUTPUT
   $multi_map = 0 unless ($multi_map);
@@ -3383,7 +3842,10 @@ Input:
 
 Alignment:
 
---bowtie2                Uses Bowtie 2 instead of Bowtie 1. Default: off.
+--bowtie2                Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
+                         alignments, i.e. searches for alignments involving all read characters (also called 
+                         untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
+                         and/or quality trimmed where appropriate. Default: off.
 
 -n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", i.e. the first L base pairs
                          of the read (where L is set with -l/--seedlen). This may be 0, 1, 2 or 3 and the 
