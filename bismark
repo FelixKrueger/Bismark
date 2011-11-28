@@ -1261,6 +1261,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 	    $alignments{$alignment_location}->{chromosome} = $chromosome;
 	    $alignments{$alignment_location}->{position} = $position;
 	    $alignments{$alignment_location}->{mismatch_info} = $MD_tag;
+	    $alignments{$alignment_location}->{CIGAR} = $cigar;
 	  }
 	
 	  ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
@@ -1298,6 +1299,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  $alignments{$alignment_location}->{chromosome} = $chromosome;
 	  $alignments{$alignment_location}->{position} = $position;
 	  $alignments{$alignment_location}->{mismatch_info} = $MD_tag;
+	  $alignments{$alignment_location}->{CIGAR} = $cigar;
 	}
 	
 	my $newline = $fhs[$index]->{fh}-> getline();
@@ -1386,6 +1388,7 @@ sub check_bowtie_results_single_end_bowtie2 {
       $methylation_call_params->{$identifier}->{index}           = $alignments{$unique_best_alignment}->{index};
       $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$unique_best_alignment}->{alignment_score};
       $methylation_call_params->{$identifier}->{mismatch_info}   = $alignments{$unique_best_alignment}->{mismatch_info};
+      $methylation_call_params->{$identifier}->{CIGAR}   = $alignments{$unique_best_alignment}->{CIGAR};
     }
   }
 
@@ -1417,6 +1420,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  $methylation_call_params->{$identifier}->{index}           = $alignments{$best_alignment_location}->{index};
 	  $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$best_alignment_location}->{alignment_score};
 	  $methylation_call_params->{$identifier}->{mismatch_info}   = $alignments{$best_alignment_location}->{mismatch_info};
+	  $methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$best_alignment_location}->{CIGAR};
 	  last; # exiting since the sequence produced a unique best alignment
 	}
       }
@@ -2399,7 +2403,8 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   my ($sequence_identifier,$methylation_call_params) = @_;
 
   my $MD_tag = $methylation_call_params->{$sequence_identifier}->{mismatch_info};
-  print "$sequence_identifier\tMD-Tag:$MD_tag\n";
+  my $cigar = $methylation_call_params->{$sequence_identifier}->{CIGAR};
+  print "$sequence_identifier\tMD-Tag:$MD_tag\t$cigar\n";
 
   ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
   ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
@@ -2414,6 +2419,43 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   my $non_bisulfite_sequence;
   ### depending on the conversion we want to make need to capture 1 extra base at the 3' end
 
+  my @cigar;
+  my $full_length;
+  my $end_point = $methylation_call_params->{$sequence_identifier}->{position}-1;
+
+  if($cigar =~ /^(\d+)M$/){
+    $end_point += $1 + 1;
+  }
+  elsif ($cigar =~ /[ID]/){ # sequence contains insertions or deletions
+    warn "Indels!!\n";
+    while ($cigar =~ /(\d+\w{1})/g){
+      push @cigar, $1;
+      my ($length,$operation) = (split (//,$1));
+      if ($operation eq 'M'){
+	$end_point += $length;
+      }
+      elsif ($operation eq 'I'){
+	# no need to do anything, the end coordinates relative to the genome is un-influenced by insertions
+      }
+      elsif ($operation eq 'D'){
+	# deletions need to be added in to the end position in the alignments
+	$end_point += $length;
+      }
+      else{
+	die "Illegal CIGAR operation found: $operation\n";
+      }
+    }
+    print join ("\t",@cigar),"\n";
+  }
+  elsif($cigar =~ /[NSHPX=]/){
+    warn "The CIGAR string contained illegal CIGAR operations: $cigar\n";
+  }
+  else{
+    warn "fine, full length it is\n";
+  }
+
+  ### Positions in SAM format are 1 based, so we need to subract 1 when getting substrings
+
   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
   if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
     ### [Index 0, sequence originated from (converted) forward strand]
@@ -2421,14 +2463,22 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     $alignment_strand = '+';
     $read_conversion_info = 'CT';
     $genome_conversion = 'CT';
-
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## CHH changed to +1
-      ### + 2 extra base at the 3' end
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
+    if ($full_length){
+      ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+      if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}-1+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## CHH changed to +1
+	### + 2 extra base at the 3' end
+	$non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2);
+      }
+      else{
+	$non_bisulfite_sequence = '';
+      }
+      print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
     }
-    else{
-      $non_bisulfite_sequence = '';
+    else{ # reads has indels
+      # in order to determine if the chromosome sequence is 2 bp longer than the end point of the sequence we need to determine the end point of the alignment
+      if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $end_point){
+	
+      }
     }
   }
 
