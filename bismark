@@ -163,7 +163,7 @@ sub start_methylation_call_procedure_single_ends {
   my $outfile = $sequence_file;
 
   if ($bowtie2){
-    $outfile =~ s/$/_bt2_bismark.txt/;
+    $outfile =~ s/$/_bt2_bismark.sam/;
   }
   else{ # default
     $outfile =~ s/$/_bismark.txt/;
@@ -815,10 +815,10 @@ sub check_bowtie_results_single_end{
   unless ($quality_value){ # for FastA sequences do not have quality values
     $quality_value = '';
   }
-
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence aligned to a bisulfite converted genome
   foreach my $index (0..$#fhs){
+
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
     next unless ($fhs[$index]->{last_line} and $fhs[$index]->{last_seq_id});
     ### if the sequence we are currently looking at produced an alignment we are doing various things with it
@@ -1101,14 +1101,16 @@ sub check_bowtie_results_single_end_bowtie2 {
   unless ($quality_value){ # for FastA sequences do not have quality values
     $quality_value = '';
   }
+  $identifier =~ s/\/[12]$//;
 
   ### Going to use the variable $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
   my $sequence_fails = 0;
   my $alignment_ambiguous = 0;
-
+  # print "$identifier\n";
   my %alignments = ();
   ### reading from the bowtie output filehandles
   foreach my $index (0..$#fhs){
+    # print "$fhs[$index]->{last_seq_id}\n";
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
     next unless ($fhs[$index]->{last_line} and $fhs[$index]->{last_seq_id});
     ### if the sequence we are currently looking at produced an alignment we are doing various things with it
@@ -1131,7 +1133,7 @@ sub check_bowtie_results_single_end_bowtie2 {
       #       32 The other mate in the paired-end alignment is aligned to the reverse reference strand
       #       64 The read is mate 1 in a pair
       #      128 The read is mate 2 in a pair
-      #      256 The read has mutltiple mapping states
+      #      256 The read has multiple mapping states
       #  (3) Name of reference sequence where alignment occurs (unmapped reads have a *)
       #  (4) 1-based offset into the forward reference strand where leftmost character of the alignment occurs (0 for unmapped reads)
       #  (5) Mapping quality (255 means MAPQ is not available)
@@ -1364,12 +1366,12 @@ sub check_bowtie_results_single_end_bowtie2 {
   my $methylation_call_params; # hash reference
 
   ### print contents of %alignments for debugging
-  #  if (scalar keys %alignments > 1){
-  #    print "\n******\n";
-  #    foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
-  #      print "Loc:  $alignment_location\n";
-  #      print "ID:   $alignments{$alignment_location}->{seq_id}\n";
-  #      print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
+  # if (scalar keys %alignments > 1){
+  #   print "\n******\n";
+  #   foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
+  #     print "Loc:  $alignment_location\n";
+  #     print "ID:   $alignments{$alignment_location}->{seq_id}\n";
+  #     print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
   #     print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
   #     print "Index $alignments{$alignment_location}->{index}\n";
   #     print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
@@ -1398,11 +1400,11 @@ sub check_bowtie_results_single_end_bowtie2 {
     my $best_alignment_score;
     my $best_alignment_location;
     foreach my $alignment_location (sort {$alignments{$b}->{alignment_score} <=> $alignments{$a}->{alignment_score}} keys %alignments){
-      print "$alignments{$alignment_location}->{alignment_score}\n";
+      # print "$alignments{$alignment_location}->{alignment_score}\n";
       unless (defined $best_alignment_score){
 	$best_alignment_score = $alignments{$alignment_location}->{alignment_score};
 	$best_alignment_location = $alignment_location;
-	print "setting best alignment score: $best_alignment_score\n";
+	# print "setting best alignment score: $best_alignment_score\n";
       }
       else{
 	### if the second best alignment has the same alignment score as the first one, the sequence will get booted
@@ -1413,7 +1415,6 @@ sub check_bowtie_results_single_end_bowtie2 {
 	}
 	### else we are going to store the best alignment for further processing
 	else{
-	  warn "OK accepting this hit\n";
 	  $methylation_call_params->{$identifier}->{bowtie_sequence} = $alignments{$best_alignment_location}->{bowtie_sequence};
 	  $methylation_call_params->{$identifier}->{chromosome}      = $alignments{$best_alignment_location}->{chromosome};
 	  $methylation_call_params->{$identifier}->{position}        = $alignments{$best_alignment_location}->{position};
@@ -1424,7 +1425,6 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  last; # exiting since the sequence produced a unique best alignment
 	}
       }
-      print "\n";
     }
   }
   else{
@@ -1434,11 +1434,16 @@ sub check_bowtie_results_single_end_bowtie2 {
   ### skipping the sequence completely if there were multiple alignments with the same best alignment score at different positions
   if ($sequence_fails == 1){
     $counting{unsuitable_sequence_count}++;
+
+    ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
+    my $ambiguous_read_output = join("\t",$identifier,'256','*','0','255','*','*','0','0',$sequence,$quality_value);
+    print OUT "$ambiguous_read_output\n";
+
     if ($ambiguous){
-      return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.txt if '--ambiguous' was specified
+      return 2; # => exits to next sequence, and prints it out (in FastQ format) to _ambiguous_reads.txt if '--ambiguous' was specified
     }
     elsif ($unmapped){
-      return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' has been specified
+      return 1; # => exits to next sequence, and prints it out (in FastQ format) to _unmapped_reads.txt if '--unmapped' has been specified
     }
     else{
       return 0; # => exits to next sequence (default)
@@ -1470,10 +1475,10 @@ sub check_bowtie_results_single_end_bowtie2 {
   }
 
   ### otherwise we are set to perform the actual methylation call
-  #  $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
+  $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
 
-  #  print_bisulfite_mapping_result_single_end($identifier,$sequence,$methylation_call_params,$quality_value);
-  return 0; ## otherwise 1 will be returned by default, which would print the sequence to unmapped.out
+  print_bisulfite_mapping_result_single_end_bowtie2 ($identifier,$sequence,$methylation_call_params,$quality_value);
+  return 0; ## if a sequence got this far we do not want to print it to unmapped or ambiguous.out
 }
 
 
@@ -2194,7 +2199,7 @@ sub extract_corresponding_genomic_sequence_paired_ends {
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
 }
 
-### PRINT SINGLE END RESULTS
+### PRINT SINGLE END RESULTS: Old Bowtie 1 output
 
 sub print_bisulfite_mapping_result_single_end{
   my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
@@ -2215,6 +2220,29 @@ sub print_bisulfite_mapping_result_single_end{
   my $comprehensive_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position}+1,$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
 
   print OUT "$comprehensive_bowtie_output\n";
+}
+
+### PRINT SINGLE END RESULTS: Bowtie 2 (SAM output)
+
+sub print_bisulfite_mapping_result_single_end_bowtie2{
+  my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
+
+  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+  if ($phred64){
+    $quality_value = convert_phred64_quals_to_phred33($quality_value);
+  }
+  elsif ($solexa){
+    $quality_value = convert_solexa_quals_to_phred33($quality_value);
+  }
+
+  ### writing every mapped read and its methylation call to the SAM output file (unmapped and ambiguous reads were already printed)
+
+  ### I will add +1 bp to the starting position of single-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
+  ### reporting to 1 in the future we will see a 1-off error
+  my $ambiguous_read_output = join("\t",$identifier,'256','*','0','255','*','*','0','0',$sequence,$quality_value);
+  my $bowtie2_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},'255',$methylation_call_params->{$identifier}->{CIGAR},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
+
+  print OUT "$bowtie2_output\n";
 }
 
 ### PRINT PAIRED END RESULTS
@@ -2404,7 +2432,6 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
 
   my $MD_tag = $methylation_call_params->{$sequence_identifier}->{mismatch_info};
   my $cigar = $methylation_call_params->{$sequence_identifier}->{CIGAR};
-  print "$sequence_identifier\tMD-Tag:$MD_tag\t$cigar\n";
 
   ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
   ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
@@ -2414,47 +2441,61 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   my $alignment_strand;
   my $read_conversion_info;
   my $genome_conversion;
-  ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end so that we can also make a CpG methylation call and
-  ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last position of the actually observed sequence
-  my $non_bisulfite_sequence;
-  ### depending on the conversion we want to make need to capture 1 extra base at the 3' end
-
-  my @cigar;
-  my $full_length;
-  my $end_point = $methylation_call_params->{$sequence_identifier}->{position}-1;
-
-  if($cigar =~ /^(\d+)M$/){
-    $end_point += $1 + 1;
-  }
-  elsif ($cigar =~ /[ID]/){ # sequence contains insertions or deletions
-    warn "Indels!!\n";
-    while ($cigar =~ /(\d+\w{1})/g){
-      push @cigar, $1;
-      my ($length,$operation) = (split (//,$1));
-      if ($operation eq 'M'){
-	$end_point += $length;
-      }
-      elsif ($operation eq 'I'){
-	# no need to do anything, the end coordinates relative to the genome is un-influenced by insertions
-      }
-      elsif ($operation eq 'D'){
-	# deletions need to be added in to the end position in the alignments
-	$end_point += $length;
-      }
-      else{
-	die "Illegal CIGAR operation found: $operation\n";
-      }
-    }
-    print join ("\t",@cigar),"\n";
-  }
-  elsif($cigar =~ /[NSHPX=]/){
-    warn "The CIGAR string contained illegal CIGAR operations: $cigar\n";
-  }
-  else{
-    warn "fine, full length it is\n";
-  }
+  ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end (or start) so that we can also make a CpG methylation call and
+  ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last (or first)  position of the actually observed sequence
+  my $non_bisulfite_sequence = '';
 
   ### Positions in SAM format are 1 based, so we need to subract 1 when getting substrings
+  my $pos = $methylation_call_params->{$sequence_identifier}->{position}-1;
+
+  # parsing CIGAR string
+  my @len = split (/\D+/,$cigar); # storing the length per operation
+  my @ops = split (/\d+/,$cigar); # storing the operation
+  shift @ops; # remove the empty first element
+  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+
+  ### If the sequence aligns best as CT converted reads vs. GA converted genome (OB, index 1) or GA converted reads vs. GA converted genome (CTOB, index 3)
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    return unless ( ($pos-2) > 0); # exiting with en empty genomic sequence otherwise
+    $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos-2,2);
+  }
+
+  foreach (0..$#len){
+    if ($ops[$_] eq 'M'){
+      #extracting genomic sequence
+      $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,$len[$_]);
+      # adjusting position
+      $pos += $len[$_];
+    }
+    elsif ($ops[$_] eq 'I'){ # insertion in the read sequence
+      # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
+      $non_bisulfite_sequence .= 'N' x $len[$_];
+      # warn "$non_bisulfite_sequence\n";
+      # position doesn't need to be adjusting
+    }
+    elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
+      # we do not add any genomic sequence but only adjust the position
+      $pos += $len[$_];
+    }
+    elsif($cigar =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
+      die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
+    }
+    else{
+      die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
+    }
+  }
+
+  ### If the sequence aligns best as CT converted reads vs. CT converted genome (OT, index 0) or GA converted reads vs. CT converted genome (CTOT, index 2)
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos+2); # exiting with en empty genomic sequence otherwise
+    $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,2);
+    # print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
+  }
+  # else{
+  #   print "  $methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
+  # }
 
   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
   if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
@@ -2463,23 +2504,6 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     $alignment_strand = '+';
     $read_conversion_info = 'CT';
     $genome_conversion = 'CT';
-    if ($full_length){
-      ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-      if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}-1+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## CHH changed to +1
-	### + 2 extra base at the 3' end
-	$non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-1,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2);
-      }
-      else{
-	$non_bisulfite_sequence = '';
-      }
-      print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
-    }
-    else{ # reads has indels
-      # in order to determine if the chromosome sequence is 2 bp longer than the end point of the sequence we need to determine the end point of the alignment
-      if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $end_point){
-	
-      }
-    }
   }
 
   ### results from CT converted reads vs. GA converted genome (- orientation alignments are reported only)
@@ -2490,16 +2514,8 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     $read_conversion_info = 'CT';
     $genome_conversion = 'GA';
 
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if ($methylation_call_params->{$sequence_identifier}->{position}-2 > 0){ ## CHH changed to -2
-      ### Extracting 2 extra 5' bases on forward strand which will become 2 extra 3' bases after reverse complementation
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
-      ## reverse complement!
-      $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
+    ### reverse complement!
+    $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
   }
 
   ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
@@ -2510,16 +2526,8 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     $read_conversion_info = 'GA';
     $genome_conversion = 'CT';
 
-    ### +2 extra bases on the forward strand 3', which will become 2 extra 5' bases after reverse complementation
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2){ ## CHH changed to +2
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
-      ## reverse complement!
-      $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
+    ### reverse complement!
+    $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
   }
 
   ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
@@ -2530,26 +2538,17 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     $read_conversion_info = 'GA';
     $genome_conversion = 'GA';
 
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if ($methylation_call_params->{$sequence_identifier}->{position}-2 > 0){ ## CHH changed to +2
-      ### +2 extra base at the 5' end as we are nominally checking the converted reverse strand
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
   }
   else{
-    die "Too many bowtie result filehandles\n";
+    die "Too many Bowtie 2 result filehandles\n";
   }
 
   $methylation_call_params->{$sequence_identifier}->{alignment_strand} = $alignment_strand;
   $methylation_call_params->{$sequence_identifier}->{read_conversion} = $read_conversion_info;
   $methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
-
-  ### at this point we can also determine the end position of a read
-  $methylation_call_params->{$sequence_identifier}->{end_position} = $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence});
+  ### the end position of a read is stored in $pos
+  $methylation_call_params->{$sequence_identifier}->{end_position} = $pos+1; # SAM offset is 1
 }
 
 ### METHYLATION CALL
@@ -3201,6 +3200,10 @@ sub ensure_sensical_alignment_orientation_paired_ends{
   }
 }
 
+#####################################################################################################################################################
+
+### Bowtie 1 (default) | PAIRED-END | FASTA
+
 sub paired_end_align_fragments_to_bisulfite_genome_fastA {
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
   print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
@@ -3246,8 +3249,116 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
     }
   }
 }
+### Bowtie 2 | PAIRED-END | FASTA
+
+sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
+  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+  print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
+
+  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+  ## data structure above
+  warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  foreach my $fh (@fhs) {
+    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2})\n";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+
+    my $line_1 = $fh->{fh}->getline();
+    my $line_2 = $fh->{fh}->getline();
+
+    # if Bowtie produces an alignment we store the first line of the output
+    if ($line_1 and $line_2) {
+      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
+      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
+
+      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_1;
+      }
+      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_2;
+      }
+      else{
+	die "Either the first or the second id need to be read 1!\n";
+      }
+
+      $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
+      $fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
+      warn "Found first alignment:\n$fh->{last_line_1}$fh->{last_line_2}";
+    }
+    # otherwise we just initialise last_seq_id and last_lines as undefined
+    else {
+      print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+      $fh->{last_seq_id} = undef;
+      $fh->{last_line_1} = undef;
+      $fh->{last_line_2} = undef;
+    }
+  }
+}
+
+### Bowtie 1 (default) | PAIRED-END | FASTQ
 
 sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
+  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+  print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
+
+  ## Now starting 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+  ## data structure above
+  warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  foreach my $fh (@fhs) {
+
+    my $bt_options = $bowtie_options;
+    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+    }
+    else {
+      $bt_options .= ' --nofw';
+    }
+
+    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2})\n";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+
+    my $line_1 = $fh->{fh}->getline();
+    my $line_2 = $fh->{fh}->getline();
+
+    # if Bowtie produces an alignment we store the first line of the output
+    if ($line_1 and $line_2) {
+
+      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
+      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
+
+      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_1;
+      }
+      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	$fh->{last_seq_id} = $id_2;
+      }
+      else{
+	die "Either the first or the second id need to be read 1!\n";
+      }
+
+      $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
+      $fh->{last_line_2} = $line_2; # this contains read 1 or read 2
+      warn "Found first alignment:\n$fh->{last_line_1}$fh->{last_line_2}";
+    }
+
+    # otherwise we just initialise last_seq_id and last_lines as undefined
+    else {
+      print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+      $fh->{last_seq_id} = undef;
+      $fh->{last_line_1} = undef;
+      $fh->{last_line_2} = undef;
+    }
+  }
+}
+
+### Bowtie 2 | PAIRED-END | FASTQ
+
+sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
   print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
 
@@ -3295,6 +3406,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   }
 }
 
+#####################################################################################################################################################
+
 ### Bowtie 1 (default) | SINGLE-END | FASTA
 sub single_end_align_fragments_to_bisulfite_genome_fastA {
   my $C_to_T_infile = shift;
@@ -3305,8 +3418,17 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
   ## data structure above
   warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   foreach my $fh (@fhs) {
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+
+    my $bt_options = $bowtie_options;
+    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+    }
+    else {
+      $bt_options .= ' --nofw';
+    }
+
+    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options: $bt_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
@@ -3336,8 +3458,16 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
   ## data structure above
   warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   foreach my $fh (@fhs) {
-    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    my $bt2_options = $bowtie_options;
+    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+      $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+    }
+    else {
+      $bt2_options .= ' --nofw';
+    }
+
+    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options: $bt2_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -3378,8 +3508,16 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
   ## the data structure above
   warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   foreach my $fh (@fhs) {
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    my $bt_options = $bowtie_options;
+    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+    }
+    else {
+      $bt_options .= ' --nofw';
+    }
+
+    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options: $bt_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
@@ -3409,10 +3547,17 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   ## the data structure above
   warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   foreach my $fh (@fhs) {
-    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile})\n";
+    my $bt2_options = $bowtie_options;
+    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+      $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+    }
+    else {
+      $bt2_options .= ' --nofw';
+    }
+    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options $bt2_options)\n";
     warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
 
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
       $_ = $fh->{fh}->getline();
@@ -3441,6 +3586,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   }
 }
 
+###########################################################################################################################################
 
 sub reset_counters_and_fhs{
   %counting=(
@@ -3788,9 +3934,9 @@ VERSION
   ### REPORTING OPTIONS
 
   if ($bowtie2){
-    # push @bowtie_options,'--norc'; ## The aligment are only carried out on the forward strand
-    push @bowtie_options,'-M 10';     ## the default behavior for Bowtie 2 is to report (and sort) up to 500 alignments for a given sequence
-    #    push @bowtie_options,'-a';     ## the default behavior for Bowtie 2 is to report all alignments for a given sequence
+    push @bowtie_options,'--ignore-quals'; ## All mismatches will receive penalty for mismatches as if they were of high quality, which is 6 by default
+    push @bowtie_options,'-M 10';    # the default behavior for Bowtie 2 is to report (and sort) up to 500 alignments for a given sequence
+    push @bowtie_options,'--mm';     ## the default behavior for Bowtie 2 is to report all alignments for a given sequence
   }
   else{ # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments) for Bowtie 1
     push @bowtie_options,'-k 2';
