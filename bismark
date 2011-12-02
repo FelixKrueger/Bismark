@@ -1500,7 +1500,9 @@ sub check_bowtie_results_single_end_bowtie2 {
 
   ### otherwise we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
-
+  print "$methylation_call_params->{$identifier}->{read_conversion}\n";
+  print "$sequence\n";
+  print "$methylation_call_params->{$identifier}->{unmodified_genomic_sequence}\n";
   print_bisulfite_mapping_result_single_end_bowtie2 ($identifier,$sequence,$methylation_call_params,$quality_value);
   return 0; ## if a sequence got this far we do not want to print it to unmapped or ambiguous.out
 }
@@ -1685,8 +1687,8 @@ sub check_bowtie_results_paired_ends{
       if ($valid_alignment_found == 1){
 	### Bowtie outputs which made it this far are in the correct orientation, so we can continue to analyse the alignment itself.
 	### we store the useful information in %mismatches
-	my ($id_1,$strand_1,$mapped_chromosome_1,$position_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,7];
-	my ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,7];
+	my ($id_1,$strand_1,$mapped_chromosome_1,$position_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$fhs[$index]->{last_line_1},-1))[0,1,2,3,4,7];
+	my ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2},-1))[0,1,2,3,4,7];
 	chomp $mismatch_info_1;
 	chomp $mismatch_info_2;
 	
@@ -2201,6 +2203,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
  	    $alignments{$alignment_location}->{mismatch_info_2} = $MD_tag_2;
 	    $alignments{$alignment_location}->{CIGAR_1} = $cigar_1;
 	    $alignments{$alignment_location}->{CIGAR_2} = $cigar_2;
+	    $alignments{$alignment_location}->{flag_1} = $flag_1;
+	    $alignments{$alignment_location}->{flag_2} = $flag_2;
  	  }
 	
  	  ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
@@ -2243,7 +2247,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
  	### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
 
 	unless (exists $alignments{$alignment_location}){
-	  $alignments{$alignment_location}->{seq_id} = $id_1; # either is fine 
+	  $alignments{$alignment_location}->{seq_id} = $id_1;
 	  $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
 	  $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
 	  $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
@@ -2257,6 +2261,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $alignments{$alignment_location}->{mismatch_info_2} = $MD_tag_2;
 	  $alignments{$alignment_location}->{CIGAR_1} = $cigar_1;
 	  $alignments{$alignment_location}->{CIGAR_2} = $cigar_2;
+	  $alignments{$alignment_location}->{flag_1} = $flag_1;
+	  $alignments{$alignment_location}->{flag_2} = $flag_2;
 	}
 	
 	# warn "added read \%alignments hash\n";
@@ -2350,19 +2356,21 @@ sub check_bowtie_results_paired_ends_bowtie2{
   #     print "\n******\n";
   #     foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
   #       print "Loc:  $alignment_location\n";
-  #       print "ID:   $alignments{$alignment_location}->{seq_id}\n";
-  #       print "AS_1:   $alignments{$alignment_location}->{alignment_score_1}\n";
-  #       print "AS_2:   $alignments{$alignment_location}->{alignment_score_2}\n";
-  #       print "Seq_1:  $alignments{$alignment_location}->{bowtie_sequence_1}\n";
-  #       print "Seq_2:  $alignments{$alignment_location}->{bowtie_sequence_2}\n";
-  #       print "Index $alignments{$alignment_location}->{index}\n";
-  #       print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
-  #       print "Pos_1:  $alignments{$alignment_location}->{position_1}\n";
-  #       print "Pos_2:  $alignments{$alignment_location}->{position_2}\n"; 
-  #       print "CIGAR_1:  $alignments{$alignment_location}->{CIGAR_1}\n";
-  #       print "CIGAR_2:  $alignments{$alignment_location}->{CIGAR_2}\n";
-  #       print "MD_1:   $alignments{$alignment_location}->{mismatch_info_1}\n";
-  #       print "MD_2:   $alignments{$alignment_location}->{mismatch_info_2}\n\n";
+  #       print "ID:      $alignments{$alignment_location}->{seq_id}\n";
+  #       print "AS_1:    $alignments{$alignment_location}->{alignment_score_1}\n";
+  #       print "AS_2:    $alignments{$alignment_location}->{alignment_score_2}\n";
+  #       print "Seq_1:   $alignments{$alignment_location}->{bowtie_sequence_1}\n";
+  #       print "Seq_2:   $alignments{$alignment_location}->{bowtie_sequence_2}\n";
+  #       print "Index    $alignments{$alignment_location}->{index}\n";
+  #       print "Chr:     $alignments{$alignment_location}->{chromosome}\n";
+  #       print "Pos_1:   $alignments{$alignment_location}->{position_1}\n";
+  #       print "Pos_2:   $alignments{$alignment_location}->{position_2}\n"; 
+  #       print "CIGAR_1: $alignments{$alignment_location}->{CIGAR_1}\n";
+  #       print "CIGAR_2: $alignments{$alignment_location}->{CIGAR_2}\n";
+  #       print "MD_1:    $alignments{$alignment_location}->{mismatch_info_1}\n";
+  #       print "MD_2:    $alignments{$alignment_location}->{mismatch_info_2}\n";
+  #       print "Flag 1:  $alignments{$alignment_location}->{flag_1}\n";
+  #       print "Flag 2:  $alignments{$alignment_location}->{flag_2}\n";
   #    }
   #    print "\n******\n";
   #  }
@@ -2383,6 +2391,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
       $methylation_call_params->{$identifier}->{mismatch_info_2}   = $alignments{$unique_best_alignment}->{mismatch_info_2};
       $methylation_call_params->{$identifier}->{CIGAR_1}           = $alignments{$unique_best_alignment}->{CIGAR_1};
       $methylation_call_params->{$identifier}->{CIGAR_2}           = $alignments{$unique_best_alignment}->{CIGAR_2};
+      $methylation_call_params->{$identifier}->{flag_1}            = $alignments{$unique_best_alignment}->{flag_1};
+      $methylation_call_params->{$identifier}->{flag_2}            = $alignments{$unique_best_alignment}->{flag_2};
     }
   }
 
@@ -2409,10 +2419,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	else{
 	  $methylation_call_params->{$identifier}->{bowtie_sequence_1} = $alignments{$best_alignment_location}->{bowtie_sequence_1};
 	  $methylation_call_params->{$identifier}->{bowtie_sequence_2} = $alignments{$best_alignment_location}->{bowtie_sequence_2};
-	  $methylation_call_params->{$identifier}->{chromosome}      = $alignments{$best_alignment_location}->{chromosome};
+	  $methylation_call_params->{$identifier}->{chromosome}        = $alignments{$best_alignment_location}->{chromosome};
 	  $methylation_call_params->{$identifier}->{position_1}        = $alignments{$best_alignment_location}->{position_1};
 	  $methylation_call_params->{$identifier}->{position_2}        = $alignments{$best_alignment_location}->{position_2};
-	  $methylation_call_params->{$identifier}->{index}           = $alignments{$best_alignment_location}->{index};
+	  $methylation_call_params->{$identifier}->{index}             = $alignments{$best_alignment_location}->{index};
 	  $methylation_call_params->{$identifier}->{alignment_score_1} = $alignments{$best_alignment_location}->{alignment_score_1};
 	  $methylation_call_params->{$identifier}->{alignment_score_2} = $alignments{$best_alignment_location}->{alignment_score_2};
 	  $methylation_call_params->{$identifier}->{sum_of_alignment_scores} = $alignments{$best_alignment_location}->{sum_of_alignment_scores};
@@ -2420,6 +2430,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $methylation_call_params->{$identifier}->{mismatch_info_2}   = $alignments{$best_alignment_location}->{mismatch_info_2};
 	  $methylation_call_params->{$identifier}->{CIGAR_1}           = $alignments{$best_alignment_location}->{CIGAR_1};
 	  $methylation_call_params->{$identifier}->{CIGAR_2}           = $alignments{$best_alignment_location}->{CIGAR_2};
+	  $methylation_call_params->{$identifier}->{flag_1}            = $alignments{$best_alignment_location}->{flag_1};
+	  $methylation_call_params->{$identifier}->{flag_2}            = $alignments{$best_alignment_location}->{flag_2};
 	  last; # exiting since the sequence produced a unique best alignment
 	}
       }
@@ -2468,21 +2480,25 @@ sub check_bowtie_results_paired_ends_bowtie2{
   extract_corresponding_genomic_sequence_paired_ends_bowtie2($identifier,$methylation_call_params);
 
   ### check test to see if the genomic sequences we extracted has the same length as the observed sequences +2, and only then we perform the methylation call
-  #  if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+2){
-  #    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
-  #    $counting{genomic_sequence_could_not_be_extracted_count}++;
-  #    return 0;
-  #  }
-  #  if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}) != length($sequence_2)+2){
-  #    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
-  #    $counting{genomic_sequence_could_not_be_extracted_count}++;
-  #    return 0;
-  #  }
+  if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+2){
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
+    $counting{genomic_sequence_could_not_be_extracted_count}++;
+    return 0;
+  }
+  if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}) != length($sequence_2)+2){
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
+    $counting{genomic_sequence_could_not_be_extracted_count}++;
+    return 0;
+  }
 
   ### now we are set to perform the actual methylation call
-  #  $methylation_call_params->{$identifier}->{methylation_call_1} = methylation_call($identifier,$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{read_conversion_1});
-  #  $methylation_call_params->{$identifier}->{methylation_call_2} = methylation_call($identifier,$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{read_conversion_2});
-
+  $methylation_call_params->{$identifier}->{methylation_call_1} = methylation_call($identifier,$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{read_conversion_1});
+  $methylation_call_params->{$identifier}->{methylation_call_2} = methylation_call($identifier,$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{read_conversion_2});
+  print "$methylation_call_params->{$identifier}->{read_conversion_2}\n";
+  print "  $sequence_2\n";
+  print "$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}\n";
+  print "  $methylation_call_params->{$identifier}->{methylation_call_2}\n";
+  
   #  print_bisulfite_mapping_results_paired_ends_bowtie2($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2);
   return 0; ## otherwise 1 will be returned by default, which would print the sequence pair to unmapped_1 and _2
 }
@@ -2491,8 +2507,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
 sub decide_whether_paired_end_alignment_is_valid{
   my ($index,$identifier) = @_;
-  my ($id_1,$strand_1,$mapped_chromosome_1,$position_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,7];
-  my ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,7];
+  my ($id_1,$strand_1,$mapped_chromosome_1,$position_1,$bowtie_sequence_1,$mismatch_info_1) = (split (/\t/,$fhs[$index]->{last_line_1},-1))[0,1,2,3,4,7];
+  my ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2},-1))[0,1,2,3,4,7];
   chomp $mismatch_info_1;
   chomp $mismatch_info_2;
   my $seq_id_1 = $id_1;
@@ -2640,7 +2656,7 @@ sub extract_corresponding_genomic_sequence_paired_ends {
     $read_conversion_info_2 = 'GA';
     $genome_conversion = 'CT';
     ### SEQUENCE 1 (this is always the forward hit, in this case it is read 1)
-    ### for hits on the forward strand we need to capture 1 extra base at the 3' end
+    ### for hits on the forward strand we need to capture 2 extra bases at the 3' end
 
     $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{start_seq_1},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+2); ##CHH change
 
@@ -2762,7 +2778,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
 
   my $cigar_1 = $methylation_call_params->{$sequence_identifier}->{CIGAR_1};
   my $cigar_2 = $methylation_call_params->{$sequence_identifier}->{CIGAR_2};
-
+  my $flag_1 =  $methylation_call_params->{$sequence_identifier}->{flag_1};
+  my $flag_2 =  $methylation_call_params->{$sequence_identifier}->{flag_2};
+#  print "$cigar_1\t$cigar_2\t$flag_1\t$flag_2\n";
   ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end (or start) so that we can also make a CpG methylation call and
   ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last (or first)  position of the actually observed sequence
 
@@ -2794,106 +2812,96 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   shift @ops_2; # remove the empty first element
   die "CIGAR 2 string contained a non-matching number of lengths and operations\n" unless (scalar @len_2 == scalar @ops_2);
 
+  ### Extracting read 1 genomic sequence ###
 
-  ### If the sequence aligns best as CT converted reads vs. GA converted genome (OB, index 1) or GA converted reads vs. GA converted genome (CTOB, index 3)
-  #   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
-  #     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-  #     return unless ( ($pos-2) > 0); # exiting with en empty genomic sequence otherwise
-  #     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos-2,2);
-  #   }
+  # extracting 2 additional bp at the 5' end (read 1)
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
+    # checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    return unless ( ($pos_1-2) > 0); # exiting with en empty genomic sequence otherwise
+    $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1-2,2);
+  }
 
   foreach (0..$#len_1){
     if ($ops_1[$_] eq 'M'){
       # extracting genomic sequence
       $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,$len_1[$_]);
+      #   warn "$non_bisulfite_sequence_1\n";
       # adjusting position
       $pos_1 += $len_1[$_];
     }
-    #     elsif ($ops[$_] eq 'I'){ # insertion in the read sequence
-    #       # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
-    #       $non_bisulfite_sequence .= 'N' x $len[$_];
-    #       # warn "$non_bisulfite_sequence\n";
-    #       # position doesn't need to be adjusting
-    #     }
-    #     elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
-    #       # we do not add any genomic sequence but only adjust the position
-    #       $pos += $len[$_];
-    #     }
-    #     elsif($cigar =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-    #       die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
-    # }
+    elsif ($ops_1[$_] eq 'I'){ # insertion in the read sequence
+      # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
+      $non_bisulfite_sequence_1 .= 'N' x $len_1[$_];
+      #    warn "$non_bisulfite_sequence_1\n";
+      # position doesn't need adjusting
+    }
+    elsif ($ops_1[$_] eq 'D'){ # deletion in the read sequence
+      # we do not add any genomic sequence but only adjust the position
+      #     warn "Just adjusting the position by: ",$len_1[$_],"bp\n";
+      $pos_1 += $len_1[$_];
+    }
+    elsif($cigar_1 =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
+      die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar_1\n";
+    }
     else{
-      die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
+      die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar_1\n";
     }
   }
 
-#   ### If the sequence aligns best as CT converted reads vs. CT converted genome (OT, index 0) or GA converted reads vs. CT converted genome (CTOT, index 2)
-#   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
-#     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-#     return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos+2); # exiting with en empty genomic sequence otherwise
-#     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,2);
-#     # print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
-#   }
-#   # else{
-#   #   print "  $methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
-#   # }
+  ### 3' end of read 1
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_1+2); # exiting with en empty genomic sequence otherwise
+    $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,2);
+  }
 
-#   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
-#   if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
-#     ### [Index 0, sequence originated from (converted) forward strand]
-#     $counting{CT_CT_count}++;
-#     $alignment_strand = '+';
-#     $read_conversion_info = 'CT';
-#     $genome_conversion = 'CT';
-#   }
 
-#   ### results from CT converted reads vs. GA converted genome (- orientation alignments are reported only)
-#   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 1){
-#     ### [Index 1, sequence originated from (converted) reverse strand]
-#     $counting{CT_GA_count}++;
-#     $alignment_strand = '-';
-#     $read_conversion_info = 'CT';
-#     $genome_conversion = 'GA';
+  ### Extracting read 2 genomic sequence ###
 
-#     ### reverse complement!
-#     $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
-#   }
+  ### 5' end of read 2
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    return unless ( ($pos_2-2) > 0); # exiting with en empty genomic sequence otherwise
+    $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2-2,2);
+  }
 
-#   ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
-#   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 2){
-#     ### [Index 2, sequence originated from complementary to (converted) forward strand]
-#     $counting{GA_CT_count}++;
-#     $alignment_strand = '-';
-#     $read_conversion_info = 'GA';
-#     $genome_conversion = 'CT';
+  foreach (0..$#len_2){
+    if ($ops_2[$_] eq 'M'){
+      # extracting genomic sequence
+      $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2,$len_2[$_]);
+      # warn "$non_bisulfite_sequence_2\n";
+      # adjusting position
+      $pos_2 += $len_2[$_];
+    }
+    elsif ($ops_2[$_] eq 'I'){ # insertion in the read sequence
+      # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
+      $non_bisulfite_sequence_2 .= 'N' x $len_2[$_];
+      # warn "$non_bisulfite_sequence_2\n";
+      # position doesn't need adjusting
+    }
+    elsif ($ops_2[$_] eq 'D'){ # deletion in the read sequence
+      # we do not add any genomic sequence but only adjust the position
+      # warn "Just adjusting the position by: ",$len_2[$_],"bp\n";
+      $pos_2 += $len_2[$_];
+    }
+    elsif($cigar_2 =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
+      die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar_2\n";
+    }
+    else{
+      die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar_2\n";
+    }
+  }
 
-#     ### reverse complement!
-#     $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
-#   }
+  ### 3' end of read 2
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_2+2); # exiting with en empty genomic sequence otherwise
+    $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2,2);
+  }
 
-#   ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
-#   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 3){
-#     ### [Index 3, sequence originated from complementary to (converted) reverse strand]
-#     $counting{GA_GA_count}++;
-#     $alignment_strand = '+';
-#     $read_conversion_info = 'GA';
-#     $genome_conversion = 'GA';
+  ### all paired-end alignments reported by Bowtie 2 have the Read 1 alignment first and the Read 2 alignment as the second one irrespective of whether read 1 or read 2 was
+  ### the + alignment. We also read in sequences read 1 then read 2 so they should correspond perfectly
 
-#   }
-#   else{
-#     die "Too many Bowtie 2 result filehandles\n";
-#   }
-
-#   $methylation_call_params->{$sequence_identifier}->{alignment_strand} = $alignment_strand;
-#   $methylation_call_params->{$sequence_identifier}->{read_conversion} = $read_conversion_info;
-#   $methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
-#   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
-#   ### the end position of a read is stored in $pos
-#   $methylation_call_params->{$sequence_identifier}->{end_position} = $pos+1; # SAM offset is 1
-
-  ### all alignments reported by bowtie have the + alignment first and the - alignment as the second one irrespective of whether read 1 or read 2 was
-  ### the + alignment. We however always read in sequences read 1 then read 2, so if read 2 is the + alignment we need to swap the extracted genomic
-  ### sequences around!
   ### results from CT converted read 1 plus GA converted read 2 vs. CT converted genome (+/- orientation alignments are reported only)
   if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
     ### [Index 0, sequence originated from (converted) forward strand]
@@ -2903,53 +2911,28 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     $read_conversion_info_1 = 'CT';
     $read_conversion_info_2 = 'GA';
     $genome_conversion = 'CT';
-    ### SEQUENCE 1 (this is always the forward hit, in this case it is read 1)
-    ### for hits on the forward strand we need to capture 1 extra base at the 3' end
+    ### Read 1 is always the forward hit
+    ### Read 2 is will always on the reverse strand, so it needs to be reverse complemented
+    $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
+  }
 
-    $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{start_seq_1},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+2); ##CHH change
-    
-    ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is read 2)
-    ### As the second conversion is GA we need to capture 1 base 3', so that it is a 5' base after reverse complementation
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{start_seq_2}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+1){ ## CHH change to +1
-
-      $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+2);
-      ### the reverse strand sequence needs to be reverse complemented
-      $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
-    }
-    else{
-       $non_bisulfite_sequence_2 = '';
-     }
-   }
-
-   ### results from GA converted read 1 plus CT converted read 2 vs. GA converted genome (+/- orientation alignments are reported only)
+  ### results from GA converted read 1 plus CT converted read 2 vs. GA converted genome (+/- orientation alignments are reported only)
   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 1){
-    ### [Index 1, sequence originated from complementary to (converted) reverse strand]
+    ### [Index 1, sequence originated from complementary to (converted) bottom strand]
     $counting{GA_CT_GA_count}++;
     $alignment_read_1 = '+';
     $alignment_read_2 = '-';
     $read_conversion_info_1 = 'GA';
     $read_conversion_info_2 = 'CT';
     $genome_conversion = 'GA';
-
-    ### SEQUENCE 1 (this is always the forward hit, in this case it is read 1)
-    ### as we need to make the methylation call for the base 5' of the first base (GA conversion!) we need to capture 2 extra bases at the 5' end
-    if ($methylation_call_params->{$sequence_identifier}->{start_seq_1}-1 > 0){ ## CHH change to -1
-      $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{start_seq_1}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+2); ### CHH change to -2/+2
-    }
-    else{
-      $non_bisulfite_sequence_1 = '';
-    }
-
-    ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is read 2)
-    ### As we are doing a CT comparison for the reverse strand we are taking 2 bases extra at the 5' end, so it is a 3' base after reverse complementation
-    $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2})-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+2); ### CHH change to -2/+2
-    ### the reverse strand sequence needs to be reverse complemented
+    ### Read 1 is always the forward hit
+    ### Read 2 is will always on the reverse strand, so it needs to be reverse complemented
     $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
   }
 
   ### results from GA converted read 1 plus CT converted read 2 vs. CT converted genome (-/+ orientation alignments are reported only)
   elsif ($methylation_call_params->{$sequence_identifier}->{index} == 2){
-    ### [Index 2, sequence originated from the complementary to (converted) forward strand]
+    ### [Index 2, sequence originated from the complementary to (converted) top strand]
     $counting{GA_CT_CT_count}++;
     $alignment_read_1 = '-';
     $alignment_read_2 = '+';
@@ -2957,22 +2940,8 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     $read_conversion_info_2 = 'CT';
     $genome_conversion = 'CT';
 
-    ### Here we switch the sequence information round!!  non_bisulfite_sequence_1 will later correspond to the read 1!!!!
-    ### SEQUENCE 1 (this is always the forward hit, in this case it is READ 2), read 1 is in - orientation on the reverse strand
-    ### As read 1 is GA converted we need to capture 2 extra 3' bases which will be 2 extra 5' base after reverse complementation
-    $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+2); ### CHH change to +2
-    ### the reverse strand sequence needs to be reverse complemented
+    ### Read 1 (the reverse strand) genomic sequence needs to be reverse complemented
     $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
-
-    ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is READ 1)
-    ### non_bisulfite_sequence_2 will later correspond to the read 2!!!!
-    ### Read 2 is CT converted so we need to capture 2 extra 3' bases
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > ($methylation_call_params->{$sequence_identifier}->{start_seq_1})+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+1){ ## CHH change to +1
-      $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_1}),length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+2); ## CHH changed from +1 to +2
-    }
-    else{
-      $non_bisulfite_sequence_2 = '';
-    }
   }
 
   ### results from CT converted read 1 plus GA converted read 2 vs. GA converted genome (-/+ orientation alignments are reported only)
@@ -2984,23 +2953,8 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     $read_conversion_info_1 = 'CT';
     $read_conversion_info_2 = 'GA';
     $genome_conversion = 'GA';
-
-    ### Here we switch the sequence information round!!  non_bisulfite_sequence_1 will later correspond to the read 1!!!!
-    ### SEQUENCE 1 (this is always the forward hit, in this case it is READ 2), read 1 is in - orientation on the reverse strand
-    ### As read 1 is CT converted we need to capture 2 extra 5' bases which will be 2 extra 3' base after reverse complementation
-    if ( ($methylation_call_params->{$sequence_identifier}->{start_seq_2}-1) > 0){ ## CHH changed to -1
-      $non_bisulfite_sequence_1 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_2})-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_2})+2); ### CHH changed to -2/+2
-      ### the reverse strand sequence needs to be reverse complemented
-      $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
-    }
-    else{
-      $non_bisulfite_sequence_1 = '';
-    }
-
-    ### SEQUENCE 2 (this will always be on the reverse strand, in this case it is READ 1)
-    ### non_bisulfite_sequence_2 will later correspond to the read 2!!!!
-    ### Read 2 is GA converted so we need to capture 2 extra 5' bases
-    $non_bisulfite_sequence_2 = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},($methylation_call_params->{$sequence_identifier}->{start_seq_1})-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence_1})+2); ### CHH changed to -2/+2
+    ### Read 1 (the reverse strand) genomic sequence needs to be reverse complemented
+    $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
   }
   else{
     die "Too many bowtie result filehandles\n";
@@ -3015,6 +2969,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   $methylation_call_params->{$sequence_identifier}->{read_conversion_2} = $read_conversion_info_2;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
+  ## the end position of a read is stored in $pos
+  $methylation_call_params->{$sequence_identifier}->{end_position_1} = $pos_1+1; # SAM offset is 1
+  $methylation_call_params->{$sequence_identifier}->{end_position_2} = $pos_2+1; # SAM offset is 1
 }
 
 #################################################
@@ -3313,9 +3270,8 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,2);
     # print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
   }
-  # else{
-  #   print "  $methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
-  # }
+
+
 
   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
   if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
@@ -3374,7 +3330,6 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
 ### METHYLATION CALL
 
 sub methylation_call{
-  ## this is the new methylation call sub handling CHH and CHG methylation
   my ($identifier,$sequence_actually_observed,$genomic_sequence,$read_conversion) = @_;
   ### splitting both the actually observed sequence and the genomic sequence up into single bases so we can compare them one by one
   my @seq = split(//,$sequence_actually_observed);
@@ -3470,6 +3425,8 @@ sub methylation_call{
     }
   }
   elsif ($read_conversion eq 'GA'){
+    # print join ("\n",'***',$identifier,$sequence_actually_observed,$genomic_sequence,$read_conversion,'***'),"\n";
+
     for my $index (0..$#seq) {
       if ($seq[$index] eq $genomic[$index+2]) {
 	### The residue can only be a G if the C on the other strand was not converted to T, i.e. protected my methylation
@@ -4865,7 +4822,9 @@ VERSION
       last unless ($mate1 and $mate2);
       push @filenames,"$mate1,$mate2";
     }
-    push @bowtie_options,'--no-mixed'; ## We always look for properly aligned pairs of reads
+    if ($bowtie2){
+      push @bowtie_options,'--no-mixed'; ## We always look for properly aligned pairs of reads
+    }
   }
   elsif ($mates2){
     die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
