@@ -25,6 +25,7 @@ use Getopt::Long;
 
 my $parent_dir = getcwd;
 my $bismark_version = 'v0.5.4';
+my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -162,16 +163,17 @@ sub start_methylation_call_procedure_single_ends {
   ### printing all alignments to a results file
   my $outfile = $sequence_file;
 
-  if ($bowtie2){
+  if ($bowtie2){ # SAM format is the default for Bowtie 2
     $outfile =~ s/$/_bt2_bismark.sam/;
   }
-  else{ # default
+  elsif ($vanilla){ # vanilla custom Bismark output single-end output (like Bismark versions 0.5.X)
     $outfile =~ s/$/_bismark.txt/;
+  }
+  else{ # SAM is the default output
+    $outfile =~ s/$/_bismark.sam/;
   }
   print "Writing bisulfite mapping results to $outfile\n\n";
   open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  generate_SAM_header();
-  print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file;
@@ -185,8 +187,7 @@ sub start_methylation_call_procedure_single_ends {
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file\n";
 
-  # the Bismark/ Bowtie 2 output is in SAM format and includes all reads, so unmapped/ambiguous will be included as well
-  if ($unmapped){
+   if ($unmapped){
     my $unmapped_file = $sequence_file;
     $unmapped_file =~ s/$/_unmapped_reads.txt/;
     open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
@@ -211,6 +212,11 @@ sub start_methylation_call_procedure_single_ends {
     print "Current working directory is: $cwd\n\n";
     read_genome_into_memory($cwd);
   }
+
+  unless ($vanilla){
+    generate_SAM_header();
+  }
+
   ### Input file is in FastA format
   if ($sequence_file_format eq 'FASTA'){
     process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile);
@@ -226,17 +232,18 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### printing all alignments to a results file
   my $outfile = $sequence_file_1;
-  if ($bowtie2){
+  if ($bowtie2){ # SAM format is the default Bowtie 2 output
+    $outfile =~ s/$/_bismark_bt2_pe.sam/;
+  }
+  elsif ($vanilla){ # vanilla custom Bismark paired-end output (like Bismark versions 0.5.X)
     $outfile =~ s/$/_bismark_bt2_pe.txt/;
   }
-  else{
-    $outfile =~ s/$/_bismark_pe.txt/;
+ else{ # SAM format is the default Bowtie 1 output
+    $outfile =~ s/$/_bismark_pe.sam/;
   }
 
   print "Writing bisulfite mapping results to $outfile\n\n";
   open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!";
-  generate_SAM_header();
-  print OUT "Bismark version: $bismark_version\n";
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $sequence_file_1;
@@ -283,6 +290,11 @@ sub start_methylation_call_procedure_paired_ends {
     print "Current working directory is: $cwd\n\n";
     read_genome_into_memory($cwd);
   }
+
+  unless ($vanilla){
+    generate_SAM_header();
+  }
+
   ### Input files are in FastA format
   if ($sequence_file_format eq 'FASTA'){
     process_fastA_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
@@ -1129,8 +1141,6 @@ sub check_bowtie_results_single_end_bowtie2 {
   }
   $identifier =~ s/\/[12]$//;
 
-  ### Going to use the variable $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
-  my $sequence_fails = 0;
   my $alignment_ambiguous = 0;
 
   my %alignments = ();
@@ -1199,12 +1209,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  next;
 	}
       }
-
-      ## quality needs to be taken care of, e.g. reverse complementing....
-      # if ($flag == 16){
-      #	$quality_value = reverse $quality_value;
-      # }
-
+   
       # if there are one or more proper alignments we can extract the chromosome number
       my $chromosome;
       if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
@@ -1213,16 +1218,9 @@ sub check_bowtie_results_single_end_bowtie2 {
       else{
 	die "Chromosome number extraction failed for $mapped_chromosome\n";
       }
-					
-      #   print "$sequence\n";
-      #   print join ("\t",$id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual,$alignment_score),"\n";
-      #   print "$fhs[$index]->{last_line}\n";
-      #  my $genomic = substr($chromosomes{$chromosome},$position-1,50);
-      #   print "genomic sequence: $genomic\n";
-
-      ### We will use the optional field to determine the best alignments. Later on we extract the number of mismatches and/or indels from the CIGAR string
+	  
+      ### We will use the optional field to determine the best alignment. Later on we extract the number of mismatches and/or indels from the CIGAR string
       my ($alignment_score,$second_best,$MD_tag);
-
       my @fields = split (/\t/,$fhs[$index]->{last_line});
 
       foreach (11..$#fields){
@@ -1246,9 +1244,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 
 	# If the first alignment score is the same as the alignment score of the second best hit we are going to boot this sequence altogether
 	if ($alignment_score == $second_best){
-
 	  $alignment_ambiguous = 1;
-
 	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
 	  until ($fhs[$index]->{last_seq_id} ne $identifier){
 	    my $newline = $fhs[$index]->{fh}-> getline();
@@ -1257,16 +1253,15 @@ sub check_bowtie_results_single_end_bowtie2 {
 	      my ($seq_id) = split (/\t/,$newline);
 	      $fhs[$index]->{last_seq_id} = $seq_id;
 	      $fhs[$index]->{last_line} = $newline;
-	      #    print "$fhs[$index]->{last_line}\n";
 	    }
 	    else{
 	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
 	      $fhs[$index]->{last_seq_id} = undef;
 	      $fhs[$index]->{last_line} = undef;
-	      last; # need to break free in case we have reached the end of the alignment output
+	      last; # break free in case we have reached the end of the alignment output
 	    }
 	  }
-	  #  warn "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next one which is: $fhs[$index]->{last_seq_id}\n";
+	  #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
 	}
 	else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
 
@@ -1284,8 +1279,8 @@ sub check_bowtie_results_single_end_bowtie2 {
 	    $alignments{$alignment_location}->{index} = $index;
 	    $alignments{$alignment_location}->{chromosome} = $chromosome;
 	    $alignments{$alignment_location}->{position} = $position;
-	    $alignments{$alignment_location}->{mismatch_info} = $MD_tag;
 	    $alignments{$alignment_location}->{CIGAR} = $cigar;
+	    $alignments{$alignment_location}->{MD_tag} = $MD_tag;
 	  }
 	
 	  ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
@@ -1301,10 +1296,10 @@ sub check_bowtie_results_single_end_bowtie2 {
 	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
 	      $fhs[$index]->{last_seq_id} = undef;
 	      $fhs[$index]->{last_line} = undef;
-	      last; # need to break free in case we have reached the end of the alignment output
+	      last; # break free in case we have reached the end of the alignment output
 	    }
 	  }
-	  #  warn "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next one which is: $fhs[$index]->{last_seq_id}\n";
+	  #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
 	}
       }
       else{ # there is no second best hit, so we can just store this one and read in the next sequence
@@ -1323,7 +1318,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  $alignments{$alignment_location}->{index} = $index;
 	  $alignments{$alignment_location}->{chromosome} = $chromosome;
 	  $alignments{$alignment_location}->{position} = $position;
-	  $alignments{$alignment_location}->{mismatch_info} = $MD_tag;
+	  $alignments{$alignment_location}->{MD_tag} = $MD_tag;
 	  $alignments{$alignment_location}->{CIGAR} = $cigar;
 	}
 	
@@ -1347,7 +1342,7 @@ sub check_bowtie_results_single_end_bowtie2 {
   }
 
 
-  ### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous was specified the read sequence will be printed out.
+  ### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous or --unmapped was specified the read sequence will be printed out.
   if ($alignment_ambiguous == 1){
     $counting{unsuitable_sequence_count}++;
     ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
@@ -1358,7 +1353,7 @@ sub check_bowtie_results_single_end_bowtie2 {
       return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.txt if '--ambiguous' was specified
     }
     elsif ($unmapped){
-      return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' was specified
+      return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' but not '--ambiguous' was specified
     }
     else{
       return 0;
@@ -1374,7 +1369,7 @@ sub check_bowtie_results_single_end_bowtie2 {
       return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' was specified
     }
     else{
-      return 0;
+      return 0; # default
     }
   }
 
@@ -1383,14 +1378,14 @@ sub check_bowtie_results_single_end_bowtie2 {
   ### If the sequence was not rejected so far we are now looking if there is a unique best alignment among all alignment instances. If there is only one
   ### single best position we are going to store the alignment information in the $meth_call variable. If there are multiple hits with the same (highest)
   ### alignment score we are discarding the sequence altogether.
-  ### For end-to-end alignments the maximum alignment score can be 0, each mismatch can receive penalties up to 6, and each gap receives penalties for opening (5)
-  ### and extending (3 per bp) the gap.
+  ### For end-to-end alignments the maximum alignment score can be 0, each mismatch can receive penalties up to 6, and each gap receives penalties for
+  ### opening (5) and extending (3 per bp) the gap.
 
   #######################################################################################################################################################
 
-  ### Declaring an empty hash reference which will store all information we need for the methylation call
-  my $methylation_call_params; # hash reference
-
+  my $methylation_call_params; # hash reference which will store all information we need for the methylation call
+  my $sequence_fails = 0; # Going to use $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
+ 
   ### print contents of %alignments for debugging
   # if (scalar keys %alignments > 1){
   #   print "\n******\n";
@@ -1415,8 +1410,8 @@ sub check_bowtie_results_single_end_bowtie2 {
       $methylation_call_params->{$identifier}->{position}        = $alignments{$unique_best_alignment}->{position};
       $methylation_call_params->{$identifier}->{index}           = $alignments{$unique_best_alignment}->{index};
       $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$unique_best_alignment}->{alignment_score};
-      $methylation_call_params->{$identifier}->{mismatch_info}   = $alignments{$unique_best_alignment}->{mismatch_info};
-      $methylation_call_params->{$identifier}->{CIGAR}   = $alignments{$unique_best_alignment}->{CIGAR};
+      $methylation_call_params->{$identifier}->{MD_tag}          = $alignments{$unique_best_alignment}->{MD_tag};
+      $methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$unique_best_alignment}->{CIGAR};
     }
   }
 
@@ -1435,9 +1430,9 @@ sub check_bowtie_results_single_end_bowtie2 {
       else{
 	### if the second best alignment has the same alignment score as the first one, the sequence will get booted
 	if ($alignments{$alignment_location}->{alignment_score} == $best_alignment_score){
-	  warn "Same alignment score, the sequence will get booted!\n";
+	  # warn "Same alignment score, the sequence will get booted!\n";
 	  $sequence_fails = 1;
-	  last; # exiting since we know that the sequence has ambiguous alignments
+	  last; # exiting after the second alignment since we know that the sequence has ambiguous alignments
 	}
 	### else we are going to store the best alignment for further processing
 	else{
@@ -1446,9 +1441,9 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  $methylation_call_params->{$identifier}->{position}        = $alignments{$best_alignment_location}->{position};
 	  $methylation_call_params->{$identifier}->{index}           = $alignments{$best_alignment_location}->{index};
 	  $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$best_alignment_location}->{alignment_score};
-	  $methylation_call_params->{$identifier}->{mismatch_info}   = $alignments{$best_alignment_location}->{mismatch_info};
+	  $methylation_call_params->{$identifier}->{MD_tag}          = $alignments{$best_alignment_location}->{MD_tag};
 	  $methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$best_alignment_location}->{CIGAR};
-	  last; # exiting since the sequence produced a unique best alignment
+	  last; # exiting after processing the second alignment since the sequence produced a unique best alignment
 	}
       }
     }
@@ -1469,7 +1464,7 @@ sub check_bowtie_results_single_end_bowtie2 {
       return 2; # => exits to next sequence, and prints it out (in FastQ format) to _ambiguous_reads.txt if '--ambiguous' was specified
     }
     elsif ($unmapped){
-      return 1; # => exits to next sequence, and prints it out (in FastQ format) to _unmapped_reads.txt if '--unmapped' has been specified
+      return 1; # => exits to next sequence, and prints it out (in FastQ format) to _unmapped_reads.txt if '--unmapped' but not '--ambiguous' was specified
     }
     else{
       return 0; # => exits to next sequence (default)
@@ -1502,9 +1497,6 @@ sub check_bowtie_results_single_end_bowtie2 {
 
   ### otherwise we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
-  print "$methylation_call_params->{$identifier}->{read_conversion}\n";
-  print "$sequence\n";
-  print "$methylation_call_params->{$identifier}->{unmodified_genomic_sequence}\n";
   print_bisulfite_mapping_result_single_end_bowtie2 ($identifier,$sequence,$methylation_call_params,$quality_value);
   return 0; ## if a sequence got this far we do not want to print it to unmapped or ambiguous.out
 }
@@ -1527,41 +1519,9 @@ sub determine_number_of_transliterations_performed{
 
 sub decide_whether_single_end_alignment_is_valid{
   my ($index,$identifier) = @_;
-  my ($id,$strand,$flag);
 
-  if ($bowtie2){ # extracting from SAM format
-    ($id,$flag) = (split (/\t/,$fhs[$index]->{last_line}))[0,1];
-
-      ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
-      ## FLAG: bitwise FLAG. Each bit is explained in the following table:
-
-      ## Bit    Description                                                Comment                                Value
-      ## 0x1    template having multiple segments in sequencing            0: single-end 1: paired end            value: 2^^0 (  1)
-      ## 0x2    each segment properly aligned according to the aligner     true only for paired-end alignments    value: 2^^1 (  2)
-      ## 0x4    segment unmapped                                           ---                                           ---
-      ## 0x8    next segment in the template unmapped                      ---                                           ---
-      ## 0x10   SEQ being reverse complemented                                                                    value: 2^^4 ( 16)
-      ## 0x20   SEQ of the next segment in the template being reversed                                            value: 2^^5 ( 32)
-      ## 0x40   the first segment in the template                          read 1                                 value: 2^^6 ( 64)
-      ## 0x80   the last segment in the template                           read 2                                 value: 2^^7 (128)
-      ## 0x100  secondary alignment                                        ---                                           ---
-      ## 0x200  not passing quality controls                               ---                                           ---
-      ## 0x400  PCR or optical duplicate                                   ---                                           ---
-
-    if ($flag == 0){
-      $strand = '+';
-    }
-    elsif  ($flag == 16){
-      $strand = '-';
-    }
-    else{
-      die "The bitwise flag value was invalid: $flag\n";
-    }
-  }
-
-  else{ # extracting from Bowtie 1 format
-    ($id,$strand) = (split (/\t/,$fhs[$index]->{last_line}))[0,1];
-  }
+  # extracting from Bowtie 1 format
+  my ($id,$strand) = (split (/\t/,$fhs[$index]->{last_line}))[0,1];
 
   ### ensuring that the entry is the correct sequence
   if (($id eq $fhs[$index]->{last_seq_id}) and ($id eq $identifier)){
@@ -1576,25 +1536,8 @@ sub decide_whether_single_end_alignment_is_valid{
     elsif($orientation == 0){
       my $newline = $fhs[$index]->{fh}->getline();
       if ($newline){
-	### extract detailed information about the alignment again (from $newline this time)
-
-	if ($bowtie2){ # extracting from SAM format
-	  ($id,$flag) = (split (/\t/,$newline))[0,1];
-	
-	  if ($flag == 0){
-	    $strand = '+';
-	  }
-	  elsif  ($flag == 16){
-	    $strand = '-';
-	  }
-	  else{
-	    die "The bitwise flag value was invalid: $flag\n";
-	  }
-	}
-	else{ # extracting from Bowtie 1 output
-	  ($id,$strand) = (split (/\t/,$newline))[0,1];
-	}
-	
+		($id,$strand) = (split (/\t/,$newline))[0,1];
+		
 	### ensuring that the next entry is still the correct sequence
 	if ($id eq $identifier){
 	  ### checking orientation again
@@ -1979,11 +1922,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
     $quality_value_1 = $quality_value_2 = '';
   }
   # print "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
-  my %mismatches;
   my %alignments;
-
-  ### Going to use the variable $sequence_pair_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
-  my $sequence_pair_fails = 0;
   my $alignment_ambiguous = 0;
 
   ### reading from the Bowtie 2 output filehandles
@@ -1991,8 +1930,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
   ### for paired end reads we are reporting alignments to the OT strand first (index 0), then the OB strand (index 3!!), similiar to the single end way.
   ### alignments to the complementary strands are reported afterwards (CTOT got index 1, and CTOB got index 2).
   ### This is needed so that alignments which either contain no single C or G or reads which contain only protected Cs are reported to the original strands (OT and OB)
-  ### Before the complementary strands. Remember that it does not make any difference for the methylation calls, but it will matter if alignment to the complementary
-  ### strands are not being reported by specifying --directional
+  ### Before the complementary strands. Remember that it does not make any difference for the methylation calls, but it will matter if alignments to the complementary
+  ### strands are not being reported when '--directional' is specified
 
   foreach my $index (0,3,1,2){
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
@@ -2003,13 +1942,13 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
       my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
       my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
-      #  print "Index: $index\n$fhs[$index]->{last_line_1}\n";
-      #  print "Index: $index\n$fhs[$index]->{last_line_2}\n";	
+      #  print "Index: $index\t$fhs[$index]->{last_line_1}\n";
+      #  print "Index: $index\t$fhs[$index]->{last_line_2}\n";	
       #  print join ("\t",$id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1),"\n";
       #  print join ("\t",$id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2),"\n";
       $id_1 =~ s/\/1$//;
       $id_2 =~ s/\/2$//;
-      #      print "$index\t$flag_1\t$flag_2\n";
+      
       #  SAM format specifications for Bowtie 2
       #  (1) Name of read that aligned
       #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
@@ -2043,7 +1982,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
       # YF:Z:<N> String indicating reason why the read was filtered out. See also: Filtering. Only appears for reads that were filtered out.
       # MD:Z:<S> A string representation of the mismatched reference bases in the alignment. See SAM format specification for details. Only present if SAM record is for an aligned read.
 
-      ### If a sequence has no reported alignments there will be a single output line per sequence with a bit-wise flag value of 71 for read 1 (1+4+8+64), or 141 for read 2 (1+4+8+128).
+      ### If a sequence has no reported alignments there will be a single output line per sequence with a bit-wise flag value of 77 for read 1 (1+4+8+64), or 141 for read 2 (1+4+8+128).
       ### We can store the next alignment and move on to the next Bowtie 2 instance
       if ($flag_1 == 77 and $flag_2 == 141){
 	## reading in the next alignment, which must be the next sequence
@@ -2061,9 +2000,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $fhs[$index]->{last_line_1} = $newline_1;
 	  $fhs[$index]->{last_line_2} = $newline_2;
 
-	  #	  print "current sequence ($identifier) did not map, reading in next sequence\n";
-	  #	  print "$index\t$fhs[$index]->{last_seq_id}\n";
-	  ##  print "$index\t$fhs[$index]->{last_line_1}\n";
+	  #	 print "current sequence ($identifier) did not map, reading in next sequence\n";
+	  #	 print "$index\t$fhs[$index]->{last_seq_id}\n";
+	  #  print "$index\t$fhs[$index]->{last_line_1}\n";
 	  #  print "$index\t$fhs[$index]->{last_line_2}\n";
 	  next; # next instance
 	}
@@ -2092,10 +2031,6 @@ sub check_bowtie_results_paired_ends_bowtie2{
       }
 
       die "Paired-end alignments need to be on the same chromosome\n" unless ($chromosome_1 eq $chromosome_2);
-
-      # die "Position 1 is higher than position 2" if ($position_1 > $position_2);
-
-      ## quality needs to be taken care of, e.g. reverse complementing...
 
       ### We will use the optional fields to determine the best alignments. Later on we extract the number of mismatches and/or indels from the CIGAR string
       my ($alignment_score_1,$alignment_score_2,$second_best_1,$second_best_2,$MD_tag_1,$MD_tag_2);
@@ -2132,8 +2067,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
       #  warn "First read 1 alignment score is: '$alignment_score_1'\n";
       #  warn "First read 2 alignment score is: '$alignment_score_2'\n";
-
-      #  warn "MD tag 1 is: '$MD_tag_2'\n";
+      #  warn "MD tag 1 is: '$MD_tag_1'\n";
       #  warn "MD tag 2 is: '$MD_tag_2'\n";
 
       ### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
@@ -2149,7 +2083,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	# If the first alignment score for the first read pair is the same as the alignment score of the second best hit we are going to boot this sequence pair altogether
 	if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
 	  $alignment_ambiguous = 1;
-	  print "This read will be cucked (XS==AS detected)!\n";
+	  # print "This read will be chucked (AS==XS detected)!\n";
 
  	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
  	  until ($fhs[$index]->{last_seq_id} ne $identifier){
@@ -2162,36 +2096,41 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	      my ($seq_id_2) = split (/\t/,$newline_2);
 	      $seq_id_1 =~ s/\/1$//;
 	      $seq_id_2 =~ s/\/2$//;
-	      # print "New Seq IDs:\t$seq_id_1\t$seq_id_1\n";
+	      # print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
 
 	      $fhs[$index]->{last_seq_id} = $seq_id_1;
 	      $fhs[$index]->{last_line_1} = $newline_1;
 	      $fhs[$index]->{last_line_2} = $newline_2;
- 	      # print "$fhs[$index]->{last_line}\n";
-	    }
+		}
  	    else{
  	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
  	      $fhs[$index]->{last_seq_id} = undef;
  	      $fhs[$index]->{last_line_1} = undef;
 	      $fhs[$index]->{last_line_2} = undef;
-	      last; # need to break free if the end of the alignment output was reached
+	      last; # break free if the end of the alignment output was reached
  	    }
  	  }
 	  #  if ($fhs[$index]->{last_seq_id}){
-	  #    warn "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next one which is: $fhs[$index]->{last_seq_id}\n";
+	  #    warn "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
 	  #  }
 	}
  	else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
 
-	  my $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
-	
- 	  ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+		my $alignment_location;
+		if ($position_1 <= $position_2){
+			$alignment_location = join(":",$chromosome_1,$position_1,$position_2);
+		}
+		elsif($position_2 < $position_1){	
+			$alignment_location = join(":",$chromosome_1,$position_2,$position_1);
+		}
+		
+ 	  ### If a sequence aligns to exactly the same location twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
  	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
  	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
- 	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
+ 	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB 
 	
 	  unless (exists $alignments{$alignment_location}){
-	    $alignments{$alignment_location}->{seq_id} = $id_1; # either is fine 
+	    $alignments{$alignment_location}->{seq_id} = $id_1;
  	    $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
 	    $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
 	    $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
@@ -2208,8 +2147,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	    $alignments{$alignment_location}->{flag_1} = $flag_1;
 	    $alignments{$alignment_location}->{flag_2} = $flag_2;
  	  }
+	# warn "added best of several alignments to \%alignments hash\n";
 	
- 	  ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
+ 	  ### now reading and discarding all (inferior) alignments of this read pair until we hit the next sequence
 	  until ($fhs[$index]->{last_seq_id} ne $identifier){
  	    my $newline_1 = $fhs[$index]->{fh}-> getline();
 	    my $newline_2 = $fhs[$index]->{fh}-> getline();
@@ -2220,23 +2160,23 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	      my ($seq_id_2) = split (/\t/,$newline_2);
 	      $seq_id_1 =~ s/\/1$//;
 	      $seq_id_2 =~ s/\/2$//;
-	      # print "New Seq IDs:\t$seq_id_1\t$seq_id_1\n";
+	      # print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
 
-	      $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+	      $fhs[$index]->{last_seq_id} = $seq_id_1;
 	      $fhs[$index]->{last_line_1} = $newline_1;
 	      $fhs[$index]->{last_line_2} = $newline_2;
 	    }
  	    else{
- 	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+ 	      # assigning undef to last_seq_id and last_line_1 and _2 and jumping to the next index (end of Bowtie 2 output)
  	      $fhs[$index]->{last_seq_id} = undef;
  	      $fhs[$index]->{last_line_1} = undef;
 	      $fhs[$index]->{last_line_2} = undef;
-	      last; # need to break free if the end of the alignment output was reached
+	      last; # break free if the end of the alignment output was reached
  	    }
 	  }
-	  if($fhs[$index]->{last_seq_id}){
-	    warn "Index: $index\tThis Seq-ID is $identifier, skipped all other alignments until the next one which is: $fhs[$index]->{last_seq_id}\n";
-	  }
+	  # if($fhs[$index]->{last_seq_id}){
+	  #   warn "Index: $index\tThis Seq-ID is $identifier, skipped all other alignments until the next ID was reached which is: $fhs[$index]->{last_seq_id}\n";
+	  # }
 	}	
       }
       else{ # there is no second best hit, so we can just store this one and read in the next sequence
@@ -2246,7 +2186,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
  	### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
  	### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
- 	### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
+ 	### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB 
 
 	unless (exists $alignments{$alignment_location}){
 	  $alignments{$alignment_location}->{seq_id} = $id_1;
@@ -2267,8 +2207,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $alignments{$alignment_location}->{flag_2} = $flag_2;
 	}
 	
-	# warn "added read \%alignments hash\n";
+	# warn "added unique alignment to \%alignments hash\n";
 
+	# Now reading and storing the next read pair
 	my $newline_1 = $fhs[$index]->{fh}-> getline();
 	my $newline_2 = $fhs[$index]->{fh}-> getline();
 	if ($newline_1 and $newline_2){
@@ -2278,14 +2219,11 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  my ($seq_id_2) = split (/\t/,$newline_2);
 	  $seq_id_1 =~ s/\/1$//;
 	  $seq_id_2 =~ s/\/2$//;
-	  # print "New Seq IDs:\t$seq_id_1\t$seq_id_1\n";
+	  # print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
 
-	  $fhs[$index]->{last_seq_id} = $seq_id_1; # either is fine
+	  $fhs[$index]->{last_seq_id} = $seq_id_1;
 	  $fhs[$index]->{last_line_1} = $newline_1;
 	  $fhs[$index]->{last_line_2} = $newline_2;
-
-	  # print "Adding the following read ID:\n";
-	  # print  "$fhs[$index]->{last_seq_id}\n";
 
 	  if ($seq_id_1 eq $identifier){
  	    die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
@@ -2301,34 +2239,34 @@ sub check_bowtie_results_paired_ends_bowtie2{
     }
   }
 
-  ### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous was specified the read sequence will be printed out in FastQ format
+  ### if the read produced several ambiguous alignments for a single instance of Bowtie 2 we can return already now. If --ambiguous was specified the read sequence will be printed out in FastQ format
   if ($alignment_ambiguous == 1){
     $counting{unsuitable_sequence_count}++;
     ### report that the sequence pair has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    my $ambiguous_read_output_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
-    my $ambiguous_read_output_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
-    print OUT "$ambiguous_read_output_1\n";
-    print OUT "$ambiguous_read_output_2\n";
+    my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
+    my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
+    print OUT "$ambiguous_read_1\n";
+    print OUT "$ambiguous_read_2\n";
 
     if ($ambiguous){
       return 2; # => exits to next sequence pair, and prints it out to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
     }
     elsif ($unmapped){
-      return 1; # => exits to next sequence pair, and prints it out to _unmapped_reads_1.txt and _unmapped_reads_2.txt if '--unmapped' was specified
+      return 1; # => exits to next sequence pair, and prints it out to _unmapped_reads_1.txt and _unmapped_reads_2.txt if '--unmapped' but not '--ambiguous' was specified
     }
     else{
       return 0;
     }
   }
 
-  ### if there was no alignment found for a certain sequence at all we continue with the next sequence in the sequence file
+  ### if no alignment was found for a certain sequence at all we continue with the next sequence in the sequence file
   unless (%alignments){
     $counting{no_single_alignment_found}++;
 
     my $unmapped_read_1 = join("\t",$identifier.'/1','77','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
     my $unmapped_read_2 = join("\t",$identifier.'/2','141','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
-    print "$unmapped_read_1\n";
-    print "$unmapped_read_2\n";
+    # print "$unmapped_read_1\n";
+    # print "$unmapped_read_2\n";
     print OUT "$unmapped_read_1\n";
     print OUT "$unmapped_read_2\n";
     if ($unmapped){
@@ -2344,14 +2282,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
   ### If the sequence pair was not rejected so far we are now looking if there is a unique best alignment among all alignment instances. If there is only one
   ### single best position we are going to store the alignment information in the $meth_call variable. If there are multiple hits with the same (highest)
   ### alignment score we are discarding the sequence pair altogether.
-  ### For end-to-end alignments the maximum alignment score can be 0, each mismatch can receive penalties of up to 6, and each gap receives penalties for opening (5)
+  ### For end-to-end alignments the maximum alignment score is 0, each mismatch receives a penalty of 6, and each gap receives penalties for opening (5)
   ### and extending (3 per bp) the gap.
 
   #######################################################################################################################################################
 
   ### Declaring an empty hash reference which will store all information we need for the methylation call
   my $methylation_call_params; # hash reference
-  my $sequence_fails = 0;
+  my $sequence_pair_fails = 0; # using $sequence_pair_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
 
   ### print contents of %alignments for debugging
   ##  if (scalar keys %alignments >= 1){
@@ -2377,7 +2315,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
   #    print "\n******\n";
   #  }
 
-  ### if there is only 1 entry in the hash with we accept it as the best alignment
+  ### if there is only 1 entry in the %alignments hash we accept it as the best alignment
   if (scalar keys %alignments == 1){
     for my $unique_best_alignment (keys %alignments){
       $methylation_call_params->{$identifier}->{bowtie_sequence_1} = $alignments{$unique_best_alignment}->{bowtie_sequence_1};
@@ -2399,22 +2337,22 @@ sub check_bowtie_results_paired_ends_bowtie2{
   }
 
   ### otherwise we are going to find out if there is a best match among the multiple alignments, or whether there are 2 or more equally good alignments (in which case
-  ### we boot the sequence altogether)
+  ### we boot the sequence pair altogether)
   elsif (scalar keys %alignments >= 2  and scalar keys %alignments <= 4){
     my $best_sum_of_alignment_scores;
     my $best_alignment_location;
     foreach my $alignment_location (sort {$alignments{$b}->{sum_of_alignment_scores} <=> $alignments{$a}->{sum_of_alignment_scores}} keys %alignments){
-      print "$alignments{$alignment_location}->{sum_of_alignment_scores}\n";
+      # print "$alignments{$alignment_location}->{sum_of_alignment_scores}\n";
       unless (defined $best_sum_of_alignment_scores){
 	$best_sum_of_alignment_scores = $alignments{$alignment_location}->{sum_of_alignment_scores};
 	$best_alignment_location = $alignment_location;
-	print "setting best alignment score: $best_sum_of_alignment_scores\n";
+	# print "setting best alignment score to: $best_sum_of_alignment_scores\n";
       }
       else{
 	### if the second best alignment has the same sum of alignment scores as the first one, the sequence pair will get booted
 	if ($alignments{$alignment_location}->{sum_of_alignment_scores} == $best_sum_of_alignment_scores){
-	  warn "Same sum of alignment scores for 2 different alignments, the sequence pair will get booted!\n";
-	  $sequence_fails = 1;
+	  # warn "Same sum of alignment scores for 2 different alignments, the sequence pair will get booted!\n";
+	  $sequence_pair_fails = 1;
 	  last; # exiting since we know that the sequence has ambiguous alignments
 	}
 	### else we are going to store the best alignment for further processing
@@ -2444,14 +2382,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
   }
 
   ### skipping the sequence completely if there were multiple alignments with the same best sum of alignment scores at different positions
-  if ($sequence_fails == 1){
+  if ($sequence_pair_fails == 1){
     $counting{unsuitable_sequence_count}++;
 
     ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
     my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
     my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
-    print "$ambiguous_read_1\n";
-    print "$ambiguous_read_2\n";
+    # print "$ambiguous_read_1\n";
+    # print "$ambiguous_read_2\n";
     print OUT "$ambiguous_read_1\n";
     print OUT "$ambiguous_read_2\n";
 
@@ -2459,7 +2397,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
       return 2; # => exits to next sequence pair, and prints it out (in FastQ format) to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
       }
     elsif ($unmapped){
-      return 1; # => exits to next sequence pair, and prints it out (in FastQ format) to _unmapped_reads_1.txt and _unmapped_reads_2.txt if '--unmapped' was specified
+      return 1; # => exits to next sequence pair, and prints it out (in FastQ format) to _unmapped_reads_1.txt and _unmapped_reads_2.txt if '--unmapped' but not '--ambiguous' was specified
     }
     else{
       return 0; # => exits to next sequence pair (default)
@@ -2481,7 +2419,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
   $counting{unique_best_alignment_count}++;
   extract_corresponding_genomic_sequence_paired_ends_bowtie2($identifier,$methylation_call_params);
 
-  ### check test to see if the genomic sequences we extracted has the same length as the observed sequences +2, and only then we perform the methylation call
+  ### check to see if the genomic sequences we extracted has the same length as the observed sequences +2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
     $counting{genomic_sequence_could_not_be_extracted_count}++;
@@ -2496,12 +2434,12 @@ sub check_bowtie_results_paired_ends_bowtie2{
   ### now we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call_1} = methylation_call($identifier,$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{read_conversion_1});
   $methylation_call_params->{$identifier}->{methylation_call_2} = methylation_call($identifier,$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{read_conversion_2});
-  print "$methylation_call_params->{$identifier}->{read_conversion_2}\n";
-  print "  $sequence_2\n";
-  print "$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}\n";
-  print "  $methylation_call_params->{$identifier}->{methylation_call_2}\n";
+  # print "$methylation_call_params->{$identifier}->{read_conversion_2}\n";
+  # print "  $sequence_2\n";
+  # print "$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}\n";
+  # print "  $methylation_call_params->{$identifier}->{methylation_call_2}\n";
   
-  #  print_bisulfite_mapping_results_paired_ends_bowtie2($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2);
+  # print_bisulfite_mapping_results_paired_ends_bowtie2($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2);
   return 0; ## otherwise 1 will be returned by default, which would print the sequence pair to unmapped_1 and _2
 }
 
@@ -2814,6 +2752,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   shift @ops_2; # remove the empty first element
   die "CIGAR 2 string contained a non-matching number of lengths and operations\n" unless (scalar @len_2 == scalar @ops_2);
 
+  my $indels_1 = 0; # addiong these to the hemming distance value (needed for the NM field in the final SAM output
+  my $indels_2 = 0;
+  
   ### Extracting read 1 genomic sequence ###
 
   # extracting 2 additional bp at the 5' end (read 1)
@@ -2836,11 +2777,13 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
       $non_bisulfite_sequence_1 .= 'N' x $len_1[$_];
       #    warn "$non_bisulfite_sequence_1\n";
       # position doesn't need adjusting
+	  $indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
     }
     elsif ($ops_1[$_] eq 'D'){ # deletion in the read sequence
       # we do not add any genomic sequence but only adjust the position
       #     warn "Just adjusting the position by: ",$len_1[$_],"bp\n";
       $pos_1 += $len_1[$_];
+	  $indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
     }
     elsif($cigar_1 =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
       die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar_1\n";
@@ -2880,11 +2823,13 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
       $non_bisulfite_sequence_2 .= 'N' x $len_2[$_];
       # warn "$non_bisulfite_sequence_2\n";
       # position doesn't need adjusting
+	  $indels_2 += $len_2[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
     }
     elsif ($ops_2[$_] eq 'D'){ # deletion in the read sequence
       # we do not add any genomic sequence but only adjust the position
       # warn "Just adjusting the position by: ",$len_2[$_],"bp\n";
       $pos_2 += $len_2[$_];
+	  $indels_2 += $len_2[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
     }
     elsif($cigar_2 =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
       die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar_2\n";
@@ -2974,11 +2919,13 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   ## the end position of a read is stored in $pos
   $methylation_call_params->{$sequence_identifier}->{end_position_1} = $pos_1+1; # SAM offset is 1
   $methylation_call_params->{$sequence_identifier}->{end_position_2} = $pos_2+1; # SAM offset is 1
+  $methylation_call_params->{$sequence_identifier}->{indels_1} = $indels_1;
+  $methylation_call_params->{$sequence_identifier}->{indels_2} = $indels_2;
 }
 
-#################################################
-### PRINT SINGLE END RESULTS: Old Bowtie 1 output
-#################################################
+##########################################
+### PRINT SINGLE END RESULTS: Bowtie 1 ###
+##########################################
 
 sub print_bisulfite_mapping_result_single_end{
   my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
@@ -2991,17 +2938,22 @@ sub print_bisulfite_mapping_result_single_end{
     $quality_value = convert_solexa_quals_to_phred33($quality_value);
   }
 
-  ### writing every single mapped read and its methylation call to one comprehensive output file
-
-  ### I will add +1 bp to the starting position of single-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
-  ### reporting to 1 in the future we will see a 1-off error
-
-  my $comprehensive_bowtie_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position}+1,$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
-
-  print OUT "$comprehensive_bowtie_output\n";
+  ### We will add +1 bp to the starting position of single-end reads, as Bowtie 1 reports the index and not the bp position. 
+  $methylation_call_params->{$identifier}->{position} += 1;
+	
+  ### writing every uniquely mapped read and its methylation call to the output file
+  if ($vanilla){
+    my $bowtie1_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
+    print OUT "$bowtie1_output\n";
+  }
+  else{ # SAM output, default since Bismark v1.0.0
+    single_end_SAM_output($identifier,$sequence,$methylation_call_params,$quality_value); # at the end of the script
+  }
 }
 
-### PRINT SINGLE END RESULTS: Bowtie 2 (SAM output)
+##########################################
+### PRINT SINGLE END RESULTS: Bowtie 2 ###
+##########################################
 
 sub print_bisulfite_mapping_result_single_end_bowtie2{
   my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
@@ -3015,16 +2967,12 @@ sub print_bisulfite_mapping_result_single_end_bowtie2{
   }
 
   ### writing every mapped read and its methylation call to the SAM output file (unmapped and ambiguous reads were already printed)
-
-  ### I will add +1 bp to the starting position of single-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
-  ### reporting to 1 in the future we will see a 1-off error
-  my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
-  my $bowtie2_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},'0',$methylation_call_params->{$identifier}->{CIGAR},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
-
-  print OUT "$bowtie2_output\n";
+	single_end_SAM_output($identifier,$sequence,$methylation_call_params,$quality_value); # at the end of the script
 }
 
-### PRINT PAIRED END RESULTS
+##########################################
+### PRINT PAIRED END ESULTS: Bowtie 1  ###
+##########################################
 
 sub print_bisulfite_mapping_results_paired_ends{
   my ($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2)= @_;
@@ -3039,16 +2987,44 @@ sub print_bisulfite_mapping_results_paired_ends{
     $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
   }
 
-  ### writing every single mapped read and its methylation call to one comprehensive output file
+  ### We will add +1 bp to the starting position of paired-end reads, as Bowtie 1 reports the index and not the bp position.
+  $methylation_call_params->{$identifier}->{start_seq_1} += 1;
+  $methylation_call_params->{$identifier}->{start_seq_2} += 1;
 
-  ### I will add +1 bp to the starting position of paired-end reads, as bowtie reports the index and not the bp position. If bowtie changes its
-  ### reporting to 1 in the future we will see a 1-off error
+  ### writing every single aligned read and its methylation call to the output file
+  if ($vanilla){	
+    my $bowtie1_output_paired_end = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{read_conversion_1},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value_1,$quality_value_2);
+    print OUT "$bowtie1_output_paired_end\n";
+  }
+  else{ # SAM output, default since Bismark v1.0.0
+    paired_end_SAM_output($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2); # at the end of the script
+  }
 
-  my $comprehensive_BiSeq_mapping_output_paired_ends = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1}+1,$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{read_conversion_1},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value_1,$quality_value_2);
-
-  print OUT "$comprehensive_BiSeq_mapping_output_paired_ends\n";
 }
 
+##########################################
+### PRINT PAIRED END ESULTS: Bowtie 2  ###
+##########################################
+
+sub print_bisulfite_mapping_results_paired_ends_bowtie2{
+  my ($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2)= @_;
+
+  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+  if ($phred64){
+    $quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
+    $quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
+  }
+  elsif ($solexa){
+    $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
+    $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
+  }
+
+  ### writing every single aligned read and its methylation call to the output file  (unmapped and ambiguous reads were already printed)
+  paired_end_SAM_output($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2); # at the end of the script
+
+}
+	
+	
 sub convert_phred64_quals_to_phred33{
 
   my $qual = shift;
@@ -3239,6 +3215,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
     return unless ( ($pos-2) > 0); # exiting with en empty genomic sequence otherwise
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos-2,2);
   }
+  my $indels = 0;	
 
   foreach (0..$#len){
     if ($ops[$_] eq 'M'){
@@ -3252,10 +3229,12 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
       $non_bisulfite_sequence .= 'N' x $len[$_];
       # warn "$non_bisulfite_sequence\n";
       # position doesn't need to be adjusting
+      $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
     }
     elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
       # we do not add any genomic sequence but only adjust the position
       $pos += $len[$_];
+      $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
     }
     elsif($cigar =~ tr/[NSHPX=]//){ # if these (for standard mapping) illegal characters exist we die
       die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
@@ -3327,6 +3306,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
   ### the end position of a read is stored in $pos
   $methylation_call_params->{$sequence_identifier}->{end_position} = $pos+1; # SAM offset is 1
+  $methylation_call_params->{$sequence_identifier}->{indels} = $indels;
 }
 
 ### METHYLATION CALL
@@ -4517,7 +4497,7 @@ sub process_command_line{
   my $version;
   my $quiet;
   my $chunk;
-  my $directional;
+  my $non_directional;
   my $ceiling;
   my $maxins;
   my $minins;
@@ -4544,7 +4524,7 @@ sub process_command_line{
 				 'version' => \$version,
 				 'quiet' => \$quiet,
 				 'chunkmbs=i' => \$chunk,
-				 'directional' => \$directional,
+				 'non_directional' => \$non_directional,
 				 'I|minins=i' => \$minins,
 				 'X|maxins=i' => \$maxins,
 				 'e|maqerr=i' => \$ceiling,
@@ -4571,7 +4551,7 @@ sub process_command_line{
 
           Bismark - Bisulfite Mapper and Methylation Caller.
 
-   Bismark Version: $bismark_version Copyright 2010-11 Felix Krueger, Babraham Bioinformatics
+   Bismark Version: $bismark_version Copyright 2010-12 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.bbsrc.ac.uk/projects/
 
 
@@ -4580,8 +4560,9 @@ VERSION
   }
 
 
-  ##################################
-  ### PROCESSING OPTIONS
+  ##########################
+  ### PROCESSING OPTIONS ###
+  ##########################
 
   unless ($bowtie2){
     $bowtie2 = 0;
@@ -4897,11 +4878,14 @@ VERSION
 
 
   ### STRAND-SPECIFIC LIBRARIES
-  if ($directional){
-    print "Library was specified to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored.\n";
+  my $directional;
+  if ($non_directional){
+    print "Library was specified to be not strand-specific (non-directional), therefore alignments to all four possible bisulfite strands (OT, CTOT, OB and CTOB) will be reported.\n";
+	$directional = 0;
   }
   else{
-    $directional = 0;
+    print "Library is assumed to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored.\n";
+	$directional = 1; # Changed this to being the default behaviour
   }
 
   ### UNMAPPED SEQUENCE OUTPUT
@@ -4943,6 +4927,323 @@ VERSION
 
   return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla);
 }
+
+
+
+sub generate_SAM_header{
+  print OUT "\@HD\tVN:1.0\tSO:unsorted\n";          # @HD = header, VN = version, SO = sort order
+  foreach my $chr (keys %chromosomes){
+    my $length = length ($chromosomes{$chr});
+    print OUT "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
+  }
+  print OUT "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";        # @PG = program, ID = unique identifier, PN = program name name, VN = program version
+}
+
+### I would like to thank the following individuals for their valuable contributions to the Bismark SAM output format:
+### O. Tam (Sep 2010), C. Whelan (2011), E. Vidal (2011), T. McBryan (2011), P. Hickey (2011)
+
+sub single_end_SAM_output{
+  my ($id,$actual_seq,$methylation_call_params,$qual) = @_;
+  my $strand            = $methylation_call_params->{$id}->{alignment_strand};
+  my $chr               = $methylation_call_params->{$id}->{chromosome};	
+  my $start             = $methylation_call_params->{$id}->{position};	
+  my $stop              = $methylation_call_params->{$id}->{end_position};	
+  my $ref_seq           = $methylation_call_params->{$id}->{unmodified_genomic_sequence};
+  my $methcall          = $methylation_call_params->{$id}->{methylation_call};
+  my $read_conversion   = $methylation_call_params->{$id}->{read_conversion};
+  my $genome_conversion = $methylation_call_params->{$id}->{genome_conversion};
+	
+  ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
+  ## FLAG: bitwise FLAG. Each bit is explained in the following table:
+  ## Bit    Description                                                Comment                                Value
+  ## 0x1    template has multiple segments in sequencing               0: single-end 1: paired end            value: 2**0 (  1)
+  ## 0x2    each segment properly aligned according to the aligner     true only for paired-end alignments    value: 2**1 (  2)
+  ## 0x4    segment unmapped                                           ---                                           ---
+  ## 0x8    next segment in the template unmapped                      ---                                           ---
+  ## 0x10   SEQ being reverse complemented                                                                    value: 2**4 ( 16)
+  ## 0x20   SEQ of the next segment in the template being reversed                                            value: 2**5 ( 32)
+  ## 0x40   the first segment in the template                          read 1                                 value: 2**6 ( 64)
+  ## 0x80   the last segment in the template                           read 2                                 value: 2**7 (128)
+  ## 0x100  secondary alignment                                        ---                                           ---
+  ## 0x200  not passing quality controls                               ---                                           ---
+  ## 0x400  PCR or optical duplicate                                   ---                                           ---
+
+  #####
+  my $flag;                                                           # FLAG variable used for SAM format.
+  if ($strand eq "+"){
+    if ($read_conversion eq 'CT' and $genome_conversion eq 'CT'){
+      $flag = 0;                                                      # 0 for "+" strand (OT)
+    }
+    elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){
+      $flag = 16;                                                     # 16 for "-" strand (CTOB, yields information for the original bottom strand)
+    }
+    else{
+      die "Unexpected strand and read/genome conversion: strand: $strand, read conversion: $read_conversion, genome_conversion: $genome_conversion\n\n";
+    }
+  }
+  elsif ($strand eq "-"){
+    if ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){
+      $flag = 16;                                                     # 16 for "-" strand (OB)
+    }
+    elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){
+      $flag = 0;                                                      # 0 for "+" strand (CTOT, yields information for the original top strand)
+    }
+    else{
+      die "Unexpected strand and read/genome conversion: strand: $strand, read conversion: $read_conversion, genome_conversion: $genome_conversion\n\n";
+    }
+  }
+  else{
+    die "Unexpected strand information: $strand\n\n";
+  }
+  #####
+  my $mapq = 255;                                                     # Assume mapping quality is unavailable
+  #####
+  my $cigar;
+  if ($bowtie2){
+    $cigar = $methylation_call_params->{$id}->{CIGAR};                # Actual CIGAR string
+    print "\n$cigar\n";
+  }
+  else{
+    $cigar = length($actual_seq) . "M";                               # Bowtie 1 output does not contain indels (only matches and mismatches)
+  }
+  #####	
+  my $rnext = "*";                                                    # Paired-end variable
+  #####
+  my $pnext = 0;                                                      # Paired-end variable
+  #####
+  my $tlen = 0;                                                       # Paired-end variable
+  #####
+  if ($read_conversion eq 'CT'){
+    $ref_seq = substr($ref_seq, 0, length($ref_seq) - 2);    # Removes additional nucleotides from the 3' end. This only works for the original top or bottom strands
+  }
+  else{
+    $ref_seq = substr($ref_seq, 2, length($ref_seq) - 2);    # Removes additional nucleotides from the 5' end. This works for the complementary strands in non-directional libraries
+  }
+
+  if ($strand eq '-'){
+    $actual_seq = revcomp($actual_seq);                               # Sequence represented on the forward genomic strand
+    $ref_seq = revcomp($ref_seq);                                     # Required for comparison with actual sequence
+    $qual = reverse $qual;                                            # if the sequence was reverse-complemented the quality string needs to be reversed as well
+  }
+  #####
+  my $hemming_dist = hemming_dist($actual_seq, $ref_seq);             # Edit distance to the reference, i.e. minimal number of one-nucleotide edits needed to transform the read string
+  print "$hemming_dist\n";                                                                 # into the reference string. hemming_dist() 
+  if ($bowtie2){
+    $hemming_dist += $methylation_call_params->{$id}->{indels};       # Adding the number of inserted/deleted bases which we parsed while getting the genomic sequence
+  }
+
+  my $NM_tag = "NM:i:$hemming_dist";                                  # Optional tag: edit distance based on nucleotide differences
+  #####
+  my $MD_tag;	
+
+  ### this needs to be adjusted for reverse complementary sequences	
+  if ($bowtie2){
+    $MD_tag = $methylation_call_params->{$id}->{MD_tag};
+  }
+  else{
+    $MD_tag = make_mismatch_string($actual_seq, $ref_seq);   # Optional tag: String to provide mismatch and indel information
+  }
+  #####
+  my $XM_tag;                                                # Optional tag: Methylation Call String
+  if ($strand eq '+'){
+    $XM_tag = "XM:Z:$methcall";
+  }
+  elsif ($strand eq '-'){
+    $XM_tag = 'XM:Z:'.reverse $methcall;                     # if the sequence was reverse-complemented the methylation call string needs to be reversed as well
+  }
+  #####
+  my $XR_tag = $read_conversion;                             # Optional tag: Read Conversion
+  #####
+  my $XG_tag = $genome_conversion;                           # Optional tag: Genome Conversion
+  #####
+
+  # SAM format: QNAME, FLAG, RNAME, 1-based START, MAPQ, CIGAR, MRNM, MPOS, ISIZE, SEQ, QUAL, optional fields
+  print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+}
+
+
+# sub paired_end_SAM_output{
+#   my ($id,$actual_seq_1,$actual_seq_2,$methylation_call_params,$qual_1,$qual_2) = @_;
+#   my $strand_1                = $methylation_call_params->{$id}->{alignment_strand_1};
+#   my $strand_2                = $methylation_call_params->{$id}->{alignment_strand_2};
+#   my $chr                     = $methylation_call_params->{$id}->{chromosome};	
+#   my $start                   = $methylation_call_params->{$id}->{position};	
+#   my $ref_seq_1               = $methylation_call_params->{$id}->{unmodified_genomic_sequence_1};
+#   my $ref_seq_2               = $methylation_call_params->{$id}->{unmodified_genomic_sequence_2};
+#   my $methcall_1              = $methylation_call_params->{$id}->{methylation_call_1};
+#   my $methcall_2              = $methylation_call_params->{$id}->{methylation_call_2};
+#   my $read_conversion_1       = $methylation_call_params->{$id}->{read_conversion_1};
+#   my $genome_conversion       = $methylation_call_params->{$id}->{genome_conversion};
+
+#   my $id_1 = $id.'/2';
+#   my $id_2 = $id.'/2';
+
+#   # Allows all degenerate nucleotide sequences in reference genome
+#   die "Reference sequence ($ref_seq1) contains invalid nucleotides!\n" if $ref_seq1 =~ /[^ACTGNRYMKSWBDHV]/i;
+#   die "Reference sequence ($ref_seq2) contains invalid nucleotides!\n" if $ref_seq2 =~ /[^ACTGNRYMKSWBDHV]/i;
+
+#   my $index; # used to store the srand origin of the alignment in a less convoluted way
+
+#   if ($read_conversion_1 eq 'CT' and $genome_conversion eq 'CT'){
+#     $index = 0; ## this is OT   (original top strand)
+#   }	
+#   elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'CT'){
+#     $index = 1; ## this is CTOT (complementary to OT)
+#   }
+#   elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'GA'){
+#     $index = 2; ## this is CTOB (complementary to OB)
+#   }
+#   elsif ($read_conversion_1 eq 'CT' and $genome_conversion eq 'GA'){
+#     $index = 3; ## this is OB   (original bottom)
+#   }
+#   else {
+#     die "Unexpected combination of read 1 and genome conversion: $read_conversion_1 / $genome_conversion\n";
+#   }
+	
+#   ### we need to remove 2 bp of the genomic sequence as we were extracting read + 2bp long fragments to make a methylation call at the
+#   ### first or last position.
+
+#   if ($index == 0 or $index == 3){ # OT or OB
+#     $ref_seq1 = substr($ref_seq1,0,length($ref_seq1)-2);
+#     $ref_seq2 = substr($ref_seq2,2,length($ref_seq2)-2);
+#   }
+#   else{ # CTOT or CTOB
+#     $ref_seq1 = substr($ref_seq1,2,length($ref_seq1)-2);
+#     $ref_seq2 = substr($ref_seq2,0,length($ref_seq2)-2);
+#   }
+
+#   ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
+#   ## FLAG: bitwise FLAG. Each bit is explained in the following table:
+
+#   ## Bit    Description                                                Comment                                Value
+#   ## 0x1    template having multiple segments in sequencing            0: single-end 1: paired end            value: 2^^0 (  1)
+#   ## 0x2    each segment properly aligned according to the aligner     true only for paired-end alignments    value: 2^^1 (  2)
+#   ## 0x4    segment unmapped                                           ---                                           ---
+#   ## 0x8    next segment in the template unmapped                      ---                                           ---
+#   ## 0x10   SEQ being reverse complemented                                                                    value: 2^^4 ( 16)
+#   ## 0x20   SEQ of the next segment in the template being reversed                                            value: 2^^5 ( 32)
+#   ## 0x40   the first segment in the template                          read 1                                 value: 2^^6 ( 64)
+#   ## 0x80   the last segment in the template                           read 2                                 value: 2^^7 (128)
+#   ## 0x100  secondary alignment                                        ---                                           ---
+#   ## 0x200  not passing quality controls                               ---                                           ---
+#   ## 0x400  PCR or optical duplicate                                   ---                                           ---
+
+#   ### Generate output for Read 1
+#   my $flag_1;                                                    # FLAG variable used for SAM format.
+
+#   ### These FLAGS take the strand identity into account, and were contributed by Enrique Vidal (13 Sept 2011)
+#   ($strand eq "+") ? ($flag1 = 67) : ($flag1 = 115);             #  67 if read 1 is positive strand (1+2+64)
+#                                                                     # 115 if read 1 is negative strand (1+2+16+32+64)
+#   my $read1start;
+#   ($strand eq "+") ? ($read1start = $start) : ($read1start = $stop - length($actual_seq1) + 1);
+
+#   my $mapq = 255;                                               # Assume mapping quality is unavailable
+#   my $cigar1 = length($actual_seq1) . "M";                      # Assume no indel during mapping (only matches and mismatches)
+#   my $mrnm = $chr;                                              # Chromosome of mate
+#   my $mpos1;       # Left-most position of mate
+#   ($strand eq '+') ? ($mpos1 = $stop - length($actual_seq2)+1) : ($mpos1 = $start);
+#   my $isize1;
+#   ($strand eq '+') ? ($isize1 = $stop - $start) : ($isize1 = $start - $stop);
+
+#   if ($strand eq '-'){
+#     $actual_seq1 = revcomp($actual_seq1);                       # Sequence represented on the forward genomic strand
+#     $ref_seq1 = revcomp($ref_seq1);                             # Required for comparison with actual sequence
+#     $qual1 = reverse $qual1;                                    # we need to reverse the quality string as well
+#   }
+
+#   my $hemming_dist = hemming_dist($actual_seq1,$ref_seq1);      
+#   $hemming_dist += $methylation_call_params->{$id}->{indels_1}; # Adding the number of inserted/deleted bases which we parsed while getting the genomic sequence
+#   my $NM_tag1 = "NM:i:$hemming_dist";                           # Optional tag: edit distance based on nucleotide differences
+#   my $MD_tag1 = make_mismatch_string($actual_seq1,$ref_seq1);   # Optional tag: String to provide mismatch and indel information. Expect only mismatches
+
+#   my $XM_tag1;                                                  # Optional tag: String to provide Methylation calls
+#   if ($strand eq '-'){
+#     $XM_tag1 = 'XM:Z:'.reverse $methcall1;                      # Needs to be reversed if the sequence was reverse complemented
+#   }
+#   elsif ($strand eq '+'){
+#     $XM_tag1 = "XM:Z:$methcall1";
+#   }
+#   else{
+#     die "Strand was neither + nor - but: $strand\n";
+#   }
+
+#   ### Generate output for Read 2
+#   my $flag2;                                                      # FLAG variable used for SAM format.
+
+#   ### These FLAGS take the strand identity into account, and were contributed by Enrique Vidal (13 Sept 2011)
+#   ($strand eq "+") ? ($flag2 = 131) : ($flag2 = 179);             # 131 if read 1 is positive strand (1+2+128)
+#                                                                      # 179 if read 1 is negative strand (1+2+16+32+128)
+#   my $read_2_start;
+#   ($strand eq "-") ? ($read_2_start = $start) : ($read_2_start = $stop - length($actual_seq_2) + 1);
+
+#   my $cigar_2 = length($actual_seq_2) . "M";                      # Assume no indel during mapping (only matches and mismatches)
+#   my $mpos_2;                                                     # Left-most position of mate
+#   ($strand eq "-") ?  ($mpos_2 = $stop - length($actual_seq_1)+1) : ($mpos_2 = $start);
+
+#   my $isize_2;
+#   $isize_2 = -1 * $isize_1;
+
+#   if ($strand eq '+'){
+#     $actual_seq_2 = revcomp($actual_seq_2);                       # Mate sequence represented on the forward genomic strand
+#     $ref_seq_2 = revcomp($ref_seq_2);                             # Required for comparison with actual sequence
+#     $qual_2 = reverse $qual_2;                                    # If the sequence gets reverse complemented we reverse the quality string as well
+#   }
+
+#   $hemming_dist = hemming_dist($actual_seq_2, $ref_seq_2);
+#   $hemming_dist += $methylation_call_params->{$id}->{indels_2};   # Adding the number of inserted/deleted bases which we parsed while getting the genomic sequence
+#   my $NM_tag_2 = "NM:i:$hemming_dist";                            # Optional tag: edit distance based on nucleotide differences
+#   my $MD_tag_2 = make_mismatch_string($actual_seq2, $ref_seq2);   # Optional tag: String to provide mismatch and indel information. Expect only mismatches
+
+#   my $XM_tag_2;                                                   # Optional tag: String to provide Methylation calls
+#   if ($strand eq '+'){
+#     $XM_tag_2 = 'XM:Z:'.reverse $methcall2;                       # Needs to be reversed if the sequence was reverse complemented
+#   }
+#   elsif ($strand eq '-'){
+#     $XM_tag_2 = "XM:Z:$methcall2";
+#   }
+#   else{
+#     die "Strand was neither + nor - but: $strand\n";
+#   }
+
+#   # SAM format: QNAME, FLAG, RNAME, 1-based START, MAPQ, CIGAR, MRNM, MPOS, ISIZE, SEQ, QUAL
+#   print OUT join("\t", ($id_1, $flag_1, $chr, $read_1_start, $mapq, $cigar_1, $mrnm, $mpos_1, $isize_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1)), "\n";
+#   print OUT join("\t", ($id_2, $flag_2, $chr, $read_2_start, $mapq, $cigar_2, $mrnm, $mpos_2, $isize_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2)), "\n";
+# }
+
+sub revcomp{
+  my $seq = shift or die "Missing seq to reverse complement\n";
+  $seq = reverse $seq;
+  $seq =~ tr/ACTGactg/TGACTGAC/;
+  return $seq;
+}
+
+sub hemming_dist{
+  my $string1 = shift or die "Missing string 1\n";
+  my $string2 = shift or die "Missing string 2\n";
+  my $hmm = ($string1 ^ $string2)=~ tr/[\0]/[\0]/;
+  print "'$hmm'\n"; # =~ tr/[\0]/[\0]/)\n";
+  return my $hd = length($string1) - (($string1 ^ $string2) =~ tr/[\0]/[\0]/);
+}
+
+sub make_mismatch_string{
+  my $actual_seq = shift or die "Missing actual sequence";
+  my $ref_seq = shift or die "Missing reference sequence";
+  my $MD_tag = "MD:Z:";
+  my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
+  my $prev_mm_pos = 0;
+  while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
+    my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
+    my $nuc_mm = substr($actual_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($actual_seq);  # Obtain nucleotide that was different from reference
+    $MD_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
+    $MD_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
+    $prev_mm_pos = pos($tmp);                            # Position of last mismatch
+  }
+  my $end_matches = length($actual_seq) - $prev_mm_pos;  # Provides number of matches from last mismatch till end of sequence
+  $MD_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
+  return $MD_tag;
+}
+
+
 
 sub print_helpfile{
   print << "HOW_TO";
@@ -5170,529 +5471,7 @@ Paired-end output format (tab-separated):
 (14) <read 1 quality score (Phred33)>
 (15) <read 2 quality score (Phred33)>
 
-This script was last edited on 18 Nov 2011.
+This script was last edited on 05 Dec 2011.
 
 HOW_TO
-}
-
-#!/usr/bin/perl -w
-#
-# Converts bismark mapping output to SAM format.
-# Usage: bismark_to_SAM.pl (-p) (-s) -c [chrom sizes file] -i [bismark mapping output] -o [SAM output]
-# Original script by O. Tam (2010), modified by C. Whelan
-
-### version 4 and 5 reworked by F. Krueger
-### The script does now handle and include read quality scores, and handles single-end non-directional
-### datasets. Both directional and non-directional paired-end alignments are now handled correctly. SAM
-### file sorting is now optional since BAM files can be sorted via samtools sort later on.
-
-### version 5 adds different bitwise FLAG values to the SAM output so that alignments to the OT and CTOT
-### and OB and CTOB strands are now flagging the strand they originated from better. Thanks to Enrique
-### Vidal for his contributions to improving this issue.
-
-### version 5_xm adds the methylation call as an additional field for easier downstream processing and also
-### appends .2 to the read ID of a second read for paired-end alignments. Thanks to Tony McBryan for adding
-### these features.
-
-### version 6: If sequences are reverse complemented for SAM output, the quality and methylation call strings
-### are now being reversed as well. Thanks to Peter Hickey for this suggestion. (22 Nov, 2011)
-
-
-
-#use Carp;
-my $version_info = '6 (Last edit: 22 Nov 2011)';
-
-# chrom_sizes_file Contains chromosome name used in mapping (column 1) and its length (column 2)
-my ($chrom_sizes_file,$bismark_infile,$sam_outfile,$is_paired_end,$sorting);
-#= parse_cmd_line();
-
-### Main program ###
-
-# verify_input_file();
-# generate_SAM_header();
-
-if($is_paired_end){
-  #  convert_pe_bismark_to_SAM();
-}
-else{
-  # convert_se_bismark_to_SAM();
-}
-
-### Subroutines ###
-
-sub parse_cmd_line{
-  my $help;
-  my $version;
-  my $chrom_sizes_file;
-  my $bismark_infile;
-  my $is_paired_end;
-  my $sorting;
-  my $sam_outfile;
-
-  my $command_line = GetOptions ('help' => \$help,
-				 'version' => \$version,
-				 'p|paired_end' => \$is_paired_end,
-				 's|sorting' => \$sorting,
-				 'o|outfile=s' => \$sam_outfile,
-				 'i|infile=s' => \$bismark_infile,
-				 'c|chrom_file=s' => \$chrom_sizes_file,
-				);
-
-  ### EXIT ON ERROR if there were errors with any of the supplied options
-  unless ($command_line){
-    warn "Please respecify command line options\n";
-    usage();
-  }
-
-  ### HELP OPTION
-  if ($help){
-    usage();
-  }
-
-  ### VERSION
-  if ($version){
-    die "\nbismark2SAM conversion script version:\t$version_info\n\t\tfor help type bismark2SAM.pl --help\n\n";
-  }
-
-  ### CHROMOSOME SIZES FILE
-  die "Please specifify a chrom_sizes file (-c chrom_sizes_file)\n" unless defined $chrom_sizes_file;
-
-  ### BISMARK INFILE
-  die "Please specify a Bismark infile (-i infile)\n" unless defined $bismark_infile;
-
-  ### PAIRED-END FLAG
-  unless ($is_paired_end){
-    $is_paired_end = 0;
-  }
-
-  ### SAM sorting
-  ### sorts the SAM output by chromosome and start position, not really needed since samtools sort will sort anyway
-  if ($sorting){
-    warn "\nSAM output will be sorted by chromosome and start position\n";
-  }
-  else{
-    $sorting = 0;
-  }
-
-  ### SAM OUTFILE
-  $sam_outfile = $bismark_infile . ".sam" unless defined $sam_outfile;
-
-  return ($chrom_sizes_file,$bismark_infile,$sam_outfile,$is_paired_end,$sorting);
-}
-
-
-sub generate_SAM_header{
-  print "\@HD\tVN:1.0\tSO:unsorted\n";          # @HD = header, VN = version, SO = sort order [technically sorted by chromosome and start coordinate]
-  foreach my $chr (keys %chromosomes){
-    my $length = length ($chromosomes{$chr});
-    print "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
-  }
-}
-
-sub convert_se_bismark_to_SAM{
-  my %seqs;
-
-  open my $ifh, "<", $bismark_infile or die "Cannot open input file ($bismark_infile). $!";
-
-  my $count = 0;
-
-  while(my $line = <$ifh>){
-    next if $line =~ /^Bismark version/; # first line
-    ++$count;
-    chomp $line;
-    my ($id,$strand,$chr,$start,$stop,$actual_seq,$ref_seq,$methcall,$read_conversion,$genome_conversion,$qual) = (split ("\t", $line))[0,1,2,3,4,5,6,7,8,9,10];
-
-    ### Input validations ###
-    die "Strand information ($strand) is incorrect in file ($bismark_infile) on line $.\n" if $strand =~ /[^\+\-]/;
-    die "Start position ($start) is not numeric in file ($bismark_infile) on line $.\n" if $start =~ /\D/;
-    die "End position ($stop) is not numeric in file ($bismark_infile) on line $.\n" if $stop =~ /\D/;
-
-    # Assumes bisulfite sequences has A,C,T,G and N only
-    die "Bisulfite sequence ($actual_seq) contains invalid nucleotides in file ($bismark_infile) on line $.\n" if $actual_seq =~ /[^ACTGNactgn]/;
-
-    # Allows all degenerate nucleotide sequences in reference genome
-    die "Reference sequence ($ref_seq) contains invalid nucleotides in file ($bismark_infile) on line $.\n" if $ref_seq =~ /[^ACTGNRYMKSWBDHVactgnrymkswbdhv]/;
-
-
-    ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
-    ## FLAG: bitwise FLAG. Each bit is explained in the following table:
-
-    ## Bit    Description                                                Comment                                Value
-    ## 0x1    template having multiple segments in sequencing            0: single-end 1: paired end            value: 2^^0 (  1)
-    ## 0x2    each segment properly aligned according to the aligner     true only for paired-end alignments    value: 2^^1 (  2)
-    ## 0x4    segment unmapped                                           ---                                           ---
-    ## 0x8    next segment in the template unmapped                      ---                                           ---
-    ## 0x10   SEQ being reverse complemented                                                                    value: 2^^4 ( 16)
-    ## 0x20   SEQ of the next segment in the template being reversed                                            value: 2^^5 ( 32)
-    ## 0x40   the first segment in the template                          read 1                                 value: 2^^6 ( 64)
-    ## 0x80   the last segment in the template                           read 2                                 value: 2^^7 (128)
-    ## 0x100  secondary alignment                                        ---                                           ---
-    ## 0x200  not passing quality controls                               ---                                           ---
-    ## 0x400  PCR or optical duplicate                                   ---                                           ---
-
-
-    my $flag;                                                 # FLAG variable used for SAM format.
-
-    if ($strand eq "+"){
-      if ($read_conversion eq 'CT' and $genome_conversion eq 'CT'){
-	$flag = 0;                                            # 0 for "+" strand (OT)
-      }
-      elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA'){
-	$flag = 16;                                           # 16 for "-" strand (CTOB, yields information for the original bottom strand)
-      }
-      else{
-	die "Unexpected strand and read/genome conversion: strand: $strand, read conversion: $read_conversion, genome_conversion: $genome_conversion\n\n";
-      }
-    }
-    elsif ($strand eq "-"){
-      if ($read_conversion eq 'CT' and $genome_conversion eq 'GA'){
-	$flag = 16;                                           # 16 for "-" strand (OB)
-      }
-      elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT'){
-	$flag = 0;                                           # 0 for "+" strand (CTOT, yields information for the original top strand)
-      }
-      else{
-	die "Unexpected strand and read/genome conversion: strand: $strand, read conversion: $read_conversion, genome_conversion: $genome_conversion\n\n";
-      }
-    }
-    else{
-      die "Unexpected strand information: $strand\n\n";
-    }
-
-
-    my $mapq = 255;                                           # Assume mapping quality is unavailable
-    my $cigar = length($actual_seq) . "M";                    # Assume no indel during mapping (only matches and mismatches)
-    my $mrnm = "*";                                           # Paired-end variable
-    my $mpos = 0;                                             # Paired-end variable
-    my $isize = 0;                                            # Paired-end variable
-    $actual_seq = revcomp($actual_seq) if $strand eq "-";     # Sequence represented on the forward genomic strand
-
-    if ($read_conversion eq 'CT'){
-      $ref_seq = substr($ref_seq, 0, length($ref_seq) - 2);   # Removes additional nucleotides from the 3' end. This only works for the original top or bottom strands
-    }
-    else{
-      $ref_seq = substr($ref_seq, 2, length($ref_seq) - 2);   # Removes additional nucleotides from the 5' end. This works for the complementary strands in non-directional libraries
-    }
-
-    if ($strand eq '-'){
-      $ref_seq = revcomp($ref_seq);                           # Required for comparison with actual sequence
-      $qual = reverse $qual;                                  # if the sequence was reverse-complemented the quality string needs to be reversed as well
-    }
-
-    my $hemming_dist = hemming_dist($actual_seq, $ref_seq);
-    my $NM_tag = "NM:i:$hemming_dist";                        # Optional tag: edit distance based on nucleotide differences
-    my $MD_tag = make_mismatch_string($actual_seq, $ref_seq); # Optional tag: String to provide mismatch and indel information. Expect only mismatches
-
-    my $XM_tag;                                               # Optional tag: String to provide Methylation calls
-    if ($strand eq '+'){
-      $XM_tag = "XM:Z:$methcall";
-    }
-    elsif ($strand eq '-'){
-      $XM_tag = 'XM:Z:'.reverse $methcall;                    # if the sequence was reverse-complemented the methylation call string needs to be reversed as well
-    }
-    else{
-      die "strand was neither + or -: $strand \n";
-    }
-
-    # SAM format: QNAME, FLAG, RNAME, 1-based START, MAPQ, CIGAR, MRNM, MPOS, ISIZE, SEQ, QUAL
-
-    if ($sorting){
-      $seqs{$count} = {
-		       id => $id,
-		       flag => $flag,
-		       chr => $chr,
-		       start => $start,
-		       mapq => $mapq,
-		       cigar => $cigar,
-		       mrnm => $mrnm,
-		       mpos => $mpos,
-		       isize => $isize,
-		       actual_seq => $actual_seq,
-		       qual => $qual,
-		       NM_tag => $NM_tag,
-		       MD_tag => $MD_tag,
-		       XM_tag => $XM_tag,			
-		      }
-	;
-    }
-    ### this is the defaultline-by-line SAM output
-    else{
-      print OUT join("\t", ($id, $flag, $chr, $start, $mapq, $cigar, $mrnm, $mpos, $isize, $actual_seq, $qual, $NM_tag, $MD_tag, $XM_tag)), "\n";
-    }
-  }
-
-  if ($sorting){
-    foreach my $seq (sort {$seqs{$a}->{chr} cmp $seqs{$b}->{chr} || $seqs{$a}->{start}<=>$seqs{$b}->{start} } keys %seqs){
-      print OUT join("\t", ($seqs{$seq}->{id}, $seqs{$seq}->{flag}, $seqs{$seq}->{chr}, $seqs{$seq}->{start}, $seqs{$seq}->{mapq}, $seqs{$seq}->{cigar},$seqs{$seq}->{mrnm}, $seqs{$seq}->{mpos}, $seqs{$seq}->{isize}, $seqs{$seq}->{actual_seq}, $seqs{$seq}->{qual}, $seqs{$seq}->{NM_tag}, $seqs{$seq}->{MD_tag}, $seqs{$seq}->{XM_tag})), "\n";
-    }
-  }
-}
-
-sub convert_pe_bismark_to_SAM{
-
-  my %seqs1;
-  my %seqs2;
-
-  open my $ifh, "<", $bismark_infile or die "Cannot open input file ($bismark_infile). $!";
-
-  my $count = 0;
-
-  while(my $line = <$ifh>){
-    next if $line =~ /^Bismark version/;
-    chomp $line;
-
-    $count++;
-
-    my ($id,$strand,$chr,$start,$stop,$actual_seq1,$ref_seq1,$methcall1,$actual_seq2,$ref_seq2,$methcall2,$first_read_conversion,$genome_conversion,$qual1,$qual2) = (split ("\t", $line))[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14];
-
-    my $id1 = $id;
-    chop($id);
-    my $id2 = $id."2";
-
-    ### Input validations ###
-    die "Strand information ($strand) is incorrect in file ($bismark_infile) on line $.\n" if $strand =~ /[^\+\-]/;
-    die "Start position ($start) is not numeric in file ($bismark_infile) on line $.\n" if $start =~ /\D/;
-    die "End position ($stop) is not numeric in file ($bismark_infile) on line $.\n" if $stop =~ /\D/;
-
-    # Assumes bisulfite sequences has A,C,T,G and N only
-    die "Bisulfite sequence ($actual_seq1) contains invalid nucleotides in file ($bismark_infile) on line $.\n" if $actual_seq1 =~ /[^ACTGNactgn]/;
-    die "Bisulfite sequence ($actual_seq2) contains invalid nucleotides in file ($bismark_infile) on line $.\n" if $actual_seq2 =~ /[^ACTGNactgn]/;
-
-    # Allows all degenerate nucleotide sequences in reference genome
-    die "Reference sequence ($ref_seq1) contains invalid nucleotides in file ($bismark_infile) on line $.\n" if $ref_seq1 =~ /[^ACTGNRYMKSWBDHVactgnrymkswbdhv]/;
-    die "Reference sequence ($ref_seq2) contains invalid nucleotides in file ($bismark_infile) on line $.\n" if $ref_seq2 =~ /[^ACTGNRYMKSWBDHVactgnrymkswbdhv]/;
-
-
-    my $index; # used to store the srand origin of the alignment in a less convoluted way
-
-
-    if ($first_read_conversion eq 'CT' and $genome_conversion eq 'CT'){
-      $index = 0; ## this is OT   (original top strand)
-    }	
-    elsif ($first_read_conversion eq 'GA' and $genome_conversion eq 'CT'){
-      $index = 1; ## this is CTOT (complementary to OT)
-    }
-    elsif ($first_read_conversion eq 'GA' and $genome_conversion eq 'GA'){
-      $index = 2; ## this is CTOB (complementary to OB)
-    }
-    elsif ($first_read_conversion eq 'CT' and $genome_conversion eq 'GA'){
-      $index = 3; ## this is OB   (original bottom)
-    }
-    else {
-      die "Unexpected combination of read and genome conversion: $first_read_conversion / $genome_conversion\n";
-    }
-	
-    ### we need to remove 2 bp of the genomic sequence as we were extracting read + 2bp long fragments to make a methylation call at the
-    ### first or last position.
-	
-    if ($index == 0 or $index == 3){ # OT or OB
-      $ref_seq1 = substr($ref_seq1,0,length($ref_seq1)-2);
-      $ref_seq2 = substr($ref_seq2,2,length($ref_seq2)-2);
-    }
-    else{ # CTOT or CTOB
-      $ref_seq1 = substr($ref_seq1,2,length($ref_seq1)-2);
-      $ref_seq2 = substr($ref_seq2,0,length($ref_seq2)-2);
-    }
-
-    ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
-    ## FLAG: bitwise FLAG. Each bit is explained in the following table:
-
-    ## Bit    Description                                                Comment                                Value
-    ## 0x1    template having multiple segments in sequencing            0: single-end 1: paired end            value: 2^^0 (  1)
-    ## 0x2    each segment properly aligned according to the aligner     true only for paired-end alignments    value: 2^^1 (  2)
-    ## 0x4    segment unmapped                                           ---                                           ---
-    ## 0x8    next segment in the template unmapped                      ---                                           ---
-    ## 0x10   SEQ being reverse complemented                                                                    value: 2^^4 ( 16)
-    ## 0x20   SEQ of the next segment in the template being reversed                                            value: 2^^5 ( 32)
-    ## 0x40   the first segment in the template                          read 1                                 value: 2^^6 ( 64)
-    ## 0x80   the last segment in the template                           read 2                                 value: 2^^7 (128)
-    ## 0x100  secondary alignment                                        ---                                           ---
-    ## 0x200  not passing quality controls                               ---                                           ---
-    ## 0x400  PCR or optical duplicate                                   ---                                           ---
-
-
-    ### Generate output for Read 1
-    my $flag1;                                                    # FLAG variable used for SAM format.
-
-    ### These FLAGS take the strand identity into account, and were contributed by Enrique Vidal (13 Sept 2011)
-    ($strand eq "+") ? ($flag1 = 67) : ($flag1 = 115);            #  67 if read 1 is positive strand (1+2+64)
-                                                                  # 115 if read 1 is negative strand (1+2+16+32+64)
-
-    my $read1start;
-    ($strand eq "+") ? ($read1start = $start) : ($read1start = $stop - length($actual_seq1) + 1);
-
-    my $mapq = 255;                                               # Assume mapping quality is unavailable
-    my $cigar1 = length($actual_seq1) . "M";                      # Assume no indel during mapping (only matches and mismatches)
-    my $mrnm = $chr;                                              # Chromosome of mate
-    my $mpos1;       # Left-most position of mate
-    ($strand eq '+') ? ($mpos1 = $stop - length($actual_seq2)+1) : ($mpos1 = $start);
-    my $isize1;
-    ($strand eq '+') ? ($isize1 = $stop - $start) : ($isize1 = $start - $stop);
-
-    if ($strand eq '-'){
-      $actual_seq1 = revcomp($actual_seq1);                       # Sequence represented on the forward genomic strand
-      $ref_seq1 = revcomp($ref_seq1);                             # Required for comparison with actual sequence
-      $qual1 = reverse $qual1;                                    # we need to reverse the quality string as well
-    }
-
-    my $hemming_dist = hemming_dist($actual_seq1,$ref_seq1);
-    my $NM_tag1 = "NM:i:$hemming_dist";                           # Optional tag: edit distance based on nucleotide differences
-    my $MD_tag1 = make_mismatch_string($actual_seq1,$ref_seq1);   # Optional tag: String to provide mismatch and indel information. Expect only mismatches
-
-    my $XM_tag1;                                                  # Optional tag: String to provide Methylation calls
-    if ($strand eq '-'){
-      $XM_tag1 = 'XM:Z:'.reverse $methcall1;                      # Needs to be reversed if the sequence was reverse complemented
-    }
-    elsif ($strand eq '+'){
-      $XM_tag1 = "XM:Z:$methcall1";
-    }
-    else{
-      die "Strand was neither + nor - but: $strand\n";
-    }
-
-
-    ### Generate output for Read 2
-    my $flag2;                                                    # FLAG variable used for SAM format.
-    # ($strand eq "+") ? ($flag2 = 147) : ($flag2 = 163);         # 147 if read 1 is positive strand, 163 if read 1 is negative strand  ### OLD VERSION
-
-    ### These FLAGS take the strand identity into account, and were contributed by Enrique Vidal (13 Sept 2011)
-    ($strand eq "+") ? ($flag2 = 131) : ($flag2 = 179);           # 131 if read 1 is positive strand (1+2+128)
-                                                                  # 179 if read 1 is negative strand (1+2+16+32+128)
-
-    my $read2start;
-    ($strand eq "-") ? ($read2start = $start) : ($read2start = $stop - length($actual_seq2) + 1);
-
-    my $cigar2 = length($actual_seq2) . "M";                      # Assume no indel during mapping (only matches and mismatches)
-    my $mpos2;                                                    # Left-most position of mate
-    ($strand eq "-") ?  ($mpos2 = $stop - length($actual_seq1)+1) : ($mpos2 = $start);
-
-    my $isize2;
-    $isize2 = -1 * $isize1;
-
-    if ($strand eq '+'){
-      $actual_seq2 = revcomp($actual_seq2);                       # Mate sequence represented on the forward genomic strand
-      $ref_seq2 = revcomp($ref_seq2);                             # Required for comparison with actual sequence
-      $qual2 = reverse $qual2;                                    # If the sequence gets reverse complemented we reverse the quality string as well
-    }
-
-    $hemming_dist = hemming_dist($actual_seq2, $ref_seq2);
-    my $NM_tag2 = "NM:i:$hemming_dist";                           # Optional tag: edit distance based on nucleotide differences
-    my $MD_tag2 = make_mismatch_string($actual_seq2, $ref_seq2);  # Optional tag: String to provide mismatch and indel information. Expect only mismatches
-
-    my $XM_tag2;                                                  # Optional tag: String to provide Methylation calls
-    if ($strand eq '+'){
-      $XM_tag2 = 'XM:Z:'.reverse $methcall2;                      # Needs to be reversed if the sequence was reverse complemented
-    }
-    elsif ($strand eq '-'){
-      $XM_tag2 = "XM:Z:$methcall2";
-    }
-    else{
-      die "Strand was neither + nor - but: $strand\n";
-    }
-
-
-    # SAM format: QNAME, FLAG, RNAME, 1-based START, MAPQ, CIGAR, MRNM, MPOS, ISIZE, SEQ, QUAL
-    if ($sorting){
-      $seqs1{$count} = {
-			id => $id1,
-			flag => $flag1,
-			chr => $chr,
-			start => $read1start,
-			mapq => $mapq,
-			cigar => $cigar1,
-			mrnm => $mrnm,
-			mpos => $mpos1,
-			isize => $isize1,
-			actual_seq => $actual_seq1,
-			qual => $qual1,
-			NM_tag => $NM_tag1,
-			MD_tag => $MD_tag1,
-			XM_tag => $XM_tag1,
-		       }
-	;
-
-      $seqs2{$count} = {
-			id => $id2,
-			flag => $flag2,
-			chr => $chr,
-			start => $read2start,
-			mapq => $mapq,
-			cigar => $cigar2,
-			mrnm => $mrnm,
-			mpos => $mpos2,
-			isize => $isize2,
-			actual_seq => $actual_seq2,
-			qual => $qual2,
-			NM_tag => $NM_tag2,
-			MD_tag => $MD_tag2,
-			XM_tag => $XM_tag2,
-		       }
-	;
-    }
-    else{ ### default
-      print OUT join("\t", ($id1, $flag1, $chr, $read1start, $mapq, $cigar1, $mrnm, $mpos1, $isize1, $actual_seq1, $qual1, $NM_tag1, $MD_tag1, $XM_tag1)), "\n";
-      print OUT join("\t", ($id2, $flag2, $chr, $read2start, $mapq, $cigar2, $mrnm, $mpos2, $isize2, $actual_seq2, $qual2, $NM_tag2, $MD_tag2, $XM_tag2)), "\n";
-    }
-  }
-
-  ## sorting output by chromosome and start position
-  if ($sorting){
-    foreach my $seq (sort {$seqs1{$a}->{chr} cmp $seqs1{$b}->{chr} || $seqs1{$a}->{start}<=>$seqs1{$b}->{start}} keys %seqs1){
-
-      ##seq1
-      print OUT join("\t", ($seqs1{$seq}->{id}, $seqs1{$seq}->{flag}, $seqs1{$seq}->{chr}, $seqs1{$seq}->{start}, $seqs1{$seq}->{mapq}, $seqs1{$seq}->{cigar},$seqs1{$seq}->{mrnm}, $seqs1{$seq}->{mpos}, $seqs1{$seq}->{isize}, $seqs1{$seq}->{actual_seq}, $seqs1{$seq}->{qual}, $seqs1{$seq}->{NM_tag}, $seqs1{$seq}->{MD_tag},$seqs1{$seq}->{XM_tag})), "\n";
-
-      ##seq2
-      print OUT join("\t", ($seqs2{$seq}->{id}, $seqs2{$seq}->{flag}, $seqs2{$seq}->{chr}, $seqs2{$seq}->{start}, $seqs2{$seq}->{mapq}, $seqs2{$seq}->{cigar},$seqs2{$seq}->{mrnm}, $seqs2{$seq}->{mpos}, $seqs2{$seq}->{isize}, $seqs2{$seq}->{actual_seq}, $seqs2{$seq}->{qual}, $seqs2{$seq}->{NM_tag}, $seqs2{$seq}->{MD_tag},$seqs1{$seq}->{XM_tag})), "\n";
-    }
-  }
-}
-
-sub revcomp{
-  my $seq = shift or die "Missing seq to reverse complement\n";
-  $seq = reverse $seq;
-  $seq =~ tr/ACTGactg/TGACtgac/;
-  return $seq;
-}
-
-sub hemming_dist{
-  my $string1 = shift or die "Missing string 1\n";
-  my $string2 = shift or die "Missing string 2\n";
-  return my $hd = length($string1) - (($string1 ^ $string2) =~ tr/[\0]/[\0]/);
-}
-
-sub make_mismatch_string{
-  my $actual_seq = shift or die "Missing actual sequence";
-  my $ref_seq = shift or die "Missing reference sequence";
-  my $MD_tag = "MD:Z:";
-  my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
-  my $prev_mm_pos = 0;
-  while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
-    my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-    my $nuc_mm = substr($actual_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($actual_seq);  # Obtain nucleotide that was different from reference
-    $MD_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
-    $MD_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
-    $prev_mm_pos = pos($tmp);                            # Position of last mismatch
-  }
-  my $end_matches = length($actual_seq) - $prev_mm_pos;  # Provides number of matches from last mismatch till end of sequence
-  $MD_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
-  return $MD_tag;
-}
-
-
-sub usage{
-  print <<EOF
-
-Usage:
-   bismark_to_SAM.pl (-p) -c [chrom sizes file] -i [bismark mapping output] -o [SAM output]
-
-  -p/paired_end                        -  paired-end bismark mapping results (default is single-end)
-  -s/sorting                           -  sorts the SAM output by chromosome and start position (optional)
-  -c/chrom_file [chrom sizes file]     -  file containing length of chromosomes/sequences used for Bowtie mapping
-  -i/infile [bismark mapping output]   -  file containing Bismark mapping output
-  -o/outfile [SAM output]              -  name for output file in SAM format (default: [input].sam)
-  --version                            -  display version information and quit
-
-EOF
-    ;
 }
