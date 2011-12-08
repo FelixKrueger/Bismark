@@ -5682,8 +5682,7 @@ Bowtie 2 Effort options:
 
 -D <int>                 Up to <int> consecutive seed extension attempts can "fail" before Bowtie 2 moves on, using
                          the alignments found so far. A seed extension "fails" if it does not yield a new best or a
-                         new second-best alignment. This limit is automatically adjusted up when -a is specified. 
-                         Default: 15.
+                         new second-best alignment. Default: 15.
 
 -R <int>                 <int> is the maximum number of times Bowtie 2 will "re-seed" reads with repetitive seeds.
                          When "re-seeding," Bowtie 2 simply chooses a new set of reads (same length, same number of
