@@ -1,5 +1,69 @@
-RELEASE NOTES FOR Bismark v0.6 (22 Nov 2011)
-----------------------------------------------
+RELEASE NOTES FOR Bismark v0.6.beta1 (08 Dec 2011)
+-------------------------------------------------
+
+Bismark_genome_preparation
+
+Added option '--bowtie2' to create Bowtie 2 indexes. Please note that Bowtie 1 and Bowtie 2
+indexes are not compatible. Bowtie 2 indexes can be safely written into the same folder
+already containing the Bowtie 1 indexes.
+
+
+Bismark
+
+Please make sure that BS-Seq data is checked for adapter contamination and/or poor quality
+base calls and appropriately trimmed before alignments are carried out. 
+
+Bowtie 1 mode (default)
+
+- Changed the default output format to SAM. Unaligned reads or ambiguous alignments are not
+reported into the output file. These can be written out to _unaligned_read or _ambiguous_read
+files in FastQ format if desired as usual. The 'old' Bismark output can still be obtained by
+specifying '--vanilla'.
+
+- Alignments are now in the former '--directional' mode by default, i.e. only alignments to
+the original top (OT) and original bottom (OB) strand will be reported. The full 4-strand
+output for non-directional libraries can be re-enabled by specifying '--non_directional'.
+
+- Alignments are now run with the Bowtie parameters '--norc' or '--nofw' where appropriate.
+This may result in a slightly increased mapping efficiency as less reads are removed due to
+non-sensical alignments.
+
+- The default value for paired-end maximum insert size (-X/--maxins) was increased to 500bp
+(up from 250bp).
+
+
+Bowtie 2 mode (optional by specifying '--bowtie2')
+
+- The options used for running Bowtie 2 are still to be considered experimental until we
+manage to figure out the most sensible way. Currently, these parameters are freely adjustable:
+
+-M <int>           (reporting the best out of <int> valid alignments)
+-N <int>           (multi-seed mismatches)
+-L <int>           (seed length)
+-D <int>           (maximum number of seed extension fail tries)
+-R <int>           (reseeding of repetitive alignments)
+--score-min <func> (setting minimum alignment score for valid alignments) 
+
+For correct and reliable methylation calls it is essential that bisulfite reads are aligned
+correctly without tolerating too many mismatches. Therefore, when using Bowtie 2 the option
+'--ignore-quals' is always on, meaning that a mismatch between the read and the genome will
+always receive a penalty of '6', and this penalty is not reduced by a low basecall quality.
+As mentioned above, poor quality data should be quality-trimmed before carrying out sequence
+alignments.
+
+- Paired-end alignments in Bowtie 2 are carried out using the options '--no-mixed' and 
+'--no-discordant'. This means that Bowtie 2 only looks for concordant paired-end alignments
+and does not automatically look for discordant alignments or single-end alignments in case it
+can't find any concordant paired-end alignments. The latter might change in a future release. 
+
+
+Relevant for both modes
+
+- added option '--no_sam_header', so that output files start with alignments straight away.
+This might be useful when large input files are split up into several smaller files and the
+output files are to be merged.
+
+
 
 bismark2SAM.pl
 

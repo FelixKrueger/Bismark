@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.5.4';
+my $bismark_version = 'v0.6.beta1';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -1352,8 +1352,8 @@ sub check_bowtie_results_single_end_bowtie2 {
   if ($alignment_ambiguous == 1){
     $counting{unsuitable_sequence_count}++;
     ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
-    print OUT "$ambiguous_read_output\n";
+    # my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
+    # print "$ambiguous_read_output\n";
 
     if ($ambiguous){
       return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.txt if '--ambiguous' was specified
@@ -1369,8 +1369,8 @@ sub check_bowtie_results_single_end_bowtie2 {
   ### if there was no alignment found for a certain sequence at all we continue with the next sequence in the sequence file
   unless(%alignments){
     $counting{no_single_alignment_found}++;
-    my $unmapped_read_output = join("\t",$identifier,'4','*','0','0','*','*','0','0',$sequence,$quality_value);
-    print OUT "$unmapped_read_output\n";
+    # my $unmapped_read_output = join("\t",$identifier,'4','*','0','0','*','*','0','0',$sequence,$quality_value);
+    # print  "$unmapped_read_output\n";
     if ($unmapped){
       return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' was specified
     }
@@ -1463,8 +1463,8 @@ sub check_bowtie_results_single_end_bowtie2 {
     $counting{unsuitable_sequence_count}++;
 
     ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
-    print OUT "$ambiguous_read_output\n";
+    # my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
+    # print OUT "$ambiguous_read_output\n";
 
     if ($ambiguous){
       return 2; # => exits to next sequence, and prints it out (in FastQ format) to _ambiguous_reads.txt if '--ambiguous' was specified
@@ -1954,7 +1954,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
       #  print join ("\t",$id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2),"\n";
       $id_1 =~ s/\/1$//;
       $id_2 =~ s/\/2$//;
-      
+
       #  SAM format specifications for Bowtie 2
       #  (1) Name of read that aligned
       #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
@@ -2006,8 +2006,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $fhs[$index]->{last_line_1} = $newline_1;
 	  $fhs[$index]->{last_line_2} = $newline_2;
 
-	  #	 print "current sequence ($identifier) did not map, reading in next sequence\n";
-	  #	 print "$index\t$fhs[$index]->{last_seq_id}\n";
+	  #  print "current sequence ($identifier) did not map, reading in next sequence\n";
+	  #  print "$index\t$fhs[$index]->{last_seq_id}\n";
 	  #  print "$index\t$fhs[$index]->{last_line_1}\n";
 	  #  print "$index\t$fhs[$index]->{last_line_2}\n";
 	  next; # next instance
@@ -2071,10 +2071,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
       die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
       die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
 
-      #  warn "First read 1 alignment score is: '$alignment_score_1'\n";
-      #  warn "First read 2 alignment score is: '$alignment_score_2'\n";
-      #  warn "MD tag 1 is: '$MD_tag_1'\n";
-      #  warn "MD tag 2 is: '$MD_tag_2'\n";
+      # warn "First read 1 alignment score is: '$alignment_score_1'\n";
+      # warn "First read 2 alignment score is: '$alignment_score_2'\n";
+      # warn "MD tag 1 is: '$MD_tag_1'\n";
+      # warn "MD tag 2 is: '$MD_tag_2'\n";
 
       ### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
       my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
@@ -2082,9 +2082,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
       if (defined $second_best_1 and defined $second_best_2){
 	my $sum_of_alignment_scores_second_best = $second_best_1 + $second_best_2;
-	#	warn "Second best alignment_score_1 is: '$second_best_1'\n";
-	#	warn "Second best alignment_score_2 is: '$second_best_2'\n";
-	#	warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
+	# warn "Second best alignment_score_1 is: '$second_best_1'\n";
+	# warn "Second best alignment_score_2 is: '$second_best_2'\n";
+	# warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
 
 	# If the first alignment score for the first read pair is the same as the alignment score of the second best hit we are going to boot this sequence pair altogether
 	if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
@@ -2121,15 +2121,15 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  #  }
 	}
  	else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
-
-		my $alignment_location;
-		if ($position_1 <= $position_2){
-			$alignment_location = join(":",$chromosome_1,$position_1,$position_2);
-		}
-		elsif($position_2 < $position_1){	
-			$alignment_location = join(":",$chromosome_1,$position_2,$position_1);
-		}
-		
+	
+	  my $alignment_location;
+	  if ($position_1 <= $position_2){
+	    $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
+	  }
+	  elsif($position_2 < $position_1){	
+	    $alignment_location = join(":",$chromosome_1,$position_2,$position_1);
+	  }
+	
  	  ### If a sequence aligns to exactly the same location twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
  	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
  	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
@@ -2153,7 +2153,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	    $alignments{$alignment_location}->{flag_1} = $flag_1;
 	    $alignments{$alignment_location}->{flag_2} = $flag_2;
  	  }
-	# warn "added best of several alignments to \%alignments hash\n";
+	  # warn "added best of several alignments to \%alignments hash\n";
 	
  	  ### now reading and discarding all (inferior) alignments of this read pair until we hit the next sequence
 	  until ($fhs[$index]->{last_seq_id} ne $identifier){
@@ -2188,7 +2188,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
       else{ # there is no second best hit, so we can just store this one and read in the next sequence
 	
 	my $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
-
+	# print "$alignment_location\n";
 	### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
  	### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
  	### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
@@ -2221,6 +2221,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	if ($newline_1 and $newline_2){
 	  chomp $newline_1;
 	  chomp $newline_2;
+	  # print "$newline_1\n";
+	  # print "$newline_2\n";
 	  my ($seq_id_1) = split (/\t/,$newline_1);
 	  my ($seq_id_2) = split (/\t/,$newline_2);
 	  $seq_id_1 =~ s/\/1$//;
@@ -2249,10 +2251,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
   if ($alignment_ambiguous == 1){
     $counting{unsuitable_sequence_count}++;
     ### report that the sequence pair has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
-    my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
-    print OUT "$ambiguous_read_1\n";
-    print OUT "$ambiguous_read_2\n";
+    #  my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
+    #  my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
+    #  print "$ambiguous_read_1\n";
+    #  print "$ambiguous_read_2\n";
 
     if ($ambiguous){
       return 2; # => exits to next sequence pair, and prints it out to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
@@ -2269,12 +2271,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
   unless (%alignments){
     $counting{no_single_alignment_found}++;
 
-    my $unmapped_read_1 = join("\t",$identifier.'/1','77','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
-    my $unmapped_read_2 = join("\t",$identifier.'/2','141','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
+    # my $unmapped_read_1 = join("\t",$identifier.'/1','77','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
+    # my $unmapped_read_2 = join("\t",$identifier.'/2','141','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
     # print "$unmapped_read_1\n";
     # print "$unmapped_read_2\n";
-    print OUT "$unmapped_read_1\n";
-    print OUT "$unmapped_read_2\n";
     if ($unmapped){
       return 1; # => exits to next sequence pair, and prints it out to _unmapped_reads_1.txt and _unmapped_read_2.txt if '--unmapped' was specified
     }
@@ -2392,12 +2392,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
     $counting{unsuitable_sequence_count}++;
 
     ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
-    my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
+    # my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
+    # my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
     # print "$ambiguous_read_1\n";
     # print "$ambiguous_read_2\n";
-    print OUT "$ambiguous_read_1\n";
-    print OUT "$ambiguous_read_2\n";
 
     if ($ambiguous){
       return 2; # => exits to next sequence pair, and prints it out (in FastQ format) to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
@@ -2766,7 +2764,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   # extracting 2 additional bp at the 5' end (read 1)
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
     # checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    return unless ( ($pos_1-2) > 0); # exiting with en empty genomic sequence otherwise
+    unless ( ($pos_1-2) > 0){# exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
+      return;
+    }
     $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1-2,2);
   }
 
@@ -2802,7 +2803,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   ### 3' end of read 1
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_1+2); # exiting with en empty genomic sequence otherwise
+    unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_1+2){# exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
+      return;
+    }
     $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,2);
   }
 
@@ -2812,7 +2816,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   ### 5' end of read 2
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    return unless ( ($pos_2-2) > 0); # exiting with en empty genomic sequence otherwise
+    unless ( ($pos_2-2) > 0){# exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
+      return;
+    }
     $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2-2,2);
   }
 
@@ -2848,7 +2855,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   ### 3' end of read 2
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_2+2); # exiting with en empty genomic sequence otherwise
+    unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_2+2){# exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
+      return;
+    }
     $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2,2);
   }
 
@@ -3217,7 +3227,10 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   ### If the sequence aligns best as CT converted reads vs. GA converted genome (OB, index 1) or GA converted reads vs. GA converted genome (CTOB, index 3)
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    return unless ( ($pos-2) > 0); # exiting with en empty genomic sequence otherwise
+    unless ( ($pos-2) > 0){ # exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+      return;
+    }
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos-2,2);
   }
   my $indels = 0;	
@@ -3252,7 +3265,10 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   ### If the sequence aligns best as CT converted reads vs. CT converted genome (OT, index 0) or GA converted reads vs. CT converted genome (CTOT, index 2)
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    return unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos+2); # exiting with en empty genomic sequence otherwise
+    unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos+2){ # exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+      return;
+    }
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,2);
     # print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
   }
@@ -3309,8 +3325,9 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2 {
   $methylation_call_params->{$sequence_identifier}->{read_conversion} = $read_conversion_info;
   $methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+
   ### the end position of a read is stored in $pos
-  $methylation_call_params->{$sequence_identifier}->{end_position} = $pos+1; # SAM offset is 1
+  $methylation_call_params->{$sequence_identifier}->{end_position} = $pos;
   $methylation_call_params->{$sequence_identifier}->{indels} = $indels;
 }
 
@@ -4512,6 +4529,10 @@ sub process_command_line{
   my $bowtie2;
   my $vanilla;
   my $sam_no_hd;
+  my $seed_extension_fails;
+  my $reseed_repetitive_seeds;
+  my $most_valid_alignments;
+  my $score_min;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -4540,6 +4561,10 @@ sub process_command_line{
 				 'bowtie2' => \$bowtie2,
 				 'vanilla' => \$vanilla,
 				 'sam-no-hd' => \$sam_no_hd,
+				 'D=i' => \$seed_extension_fails,
+				 'R=i' => \$reseed_repetitive_seeds,
+				 'score_min=s' => \$score_min,
+				 'most_valid_alignments=i' => \$most_valid_alignments,
 				);
 
 
@@ -4769,23 +4794,77 @@ VERSION
 
   ### MISMATCHES
   if (defined $mismatches){
-    push @bowtie_options,"-n $mismatches";
+    if ($bowtie2){
+      if ($mismatches == 0 or $mismatches == 1){
+	push @bowtie_options,"-N $mismatches";
+      }
+      else{
+	die "Please set the number of multiseed mismatches for Bowtie 2 with '-N <int>' (where <int> can be 0 or 1)\n";
+      }
+    }
+    else{
+      if ($mismatches >= 0 and $mismatches <= 3){
+	push @bowtie_options,"-n $mismatches";
+      }
+      else{
+	die "Please set the number of seed mismatches for Bowtie 1 with '-n <int>' (where <int> can be 0,1,2 or 3)\n";
+      }
+    }
   }
+
   ### SEED LENGTH
   if (defined $seed_length){
-    push @bowtie_options,"-l $seed_length";
+    if ($bowtie2){
+      push @bowtie_options,"-L $seed_length";
+    }
+    else{
+      push @bowtie_options,"-l $seed_length";
+    }
   }
+
   ### MISMATCH CEILING
   if (defined $ceiling){
+    die "The option '-e' is not compatible with Bowtie 2. Please respecify options\n" if ($bowtie2);
     push @bowtie_options,"-e $ceiling";
+  }
+
+
+  ### BOWTIE 2 EFFORT OPTIONS
+
+  ### CONSECUTIVE SEED EXTENSION FAILS
+  if (defined $seed_extension_fails){
+    die "The option '-D <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+    push @bowtie_options,"-D $seed_extension_fails";
+  }
+
+  ### RE-SEEDING REPETITIVE SEEDS
+  if (defined $reseed_repetitive_seeds){
+    die "The option '-R <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+    push @bowtie_options,"-R $reseed_repetitive_seeds";
+  }
+
+
+  ### BOWTIE 2 SCORING OPTIONS
+  if ($score_min){
+    die "The option '--score_min <func>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+    unless ($score_min =~ /^L,.+,.+$/){
+      die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+    }
+    push @bowtie_options,"--score-min $score_min";
   }
 
   ### REPORTING OPTIONS
 
   if ($bowtie2){
     push @bowtie_options,'--ignore-quals'; ## All mismatches will receive penalty for mismatches as if they were of high quality, which is 6 by default
-    push @bowtie_options,'-M 10';    # the default behavior for Bowtie 2 is to report (and sort) up to 500 alignments for a given sequence
-   }
+
+    if(defined $most_valid_alignments){
+      push @bowtie_options,"-M $most_valid_alignments";
+    }
+    else{
+      push @bowtie_options,'-M 10';    # the default behavior for Bowtie 2 is to report (and sort) up to 500 alignments for a given sequence
+    }
+  }
   else{ # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments) for Bowtie 1
     push @bowtie_options,'-k 2';
   }
@@ -4828,7 +4907,8 @@ VERSION
       push @filenames,"$mate1,$mate2";
     }
     if ($bowtie2){
-      push @bowtie_options,'--no-mixed'; ## We always look for properly aligned pairs of reads
+      push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
+      push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
     }
   }
   elsif ($mates2){
@@ -5389,18 +5469,19 @@ DESCRIPTION
 
 The following is a brief description of command line options and arguments to control the Bismark
 bisulfite mapper and methylation caller. Bismark takes in FastA or FastQ files and aligns the
-reads to a specified bisulfite genome. We are going to take sequence reads and transform the sequence
-into a bisulfite converted forward strand (C->T conversion) or into a bisulfite treated reverse strand
-(G->A conversion of the forward strand). We then align each of these reads to bisulfite treated forward
-strand index of the mouse genome (C->T converted) and a bisulfite treated reverse strand index of the
-genome (G->A conversion of the forward strand, by doing this alignments will produce the same positions).
-These 4 instances of bowtie will be run in parallel. We are then going to read in the sequence file again
-sequence by sequence to pull out the original sequence from the genome and determine if there were any
-protected C's present or not. We are then going to print out the methylation calls into a final result file.
+reads to a specified bisulfite genome. Sequence reads are transformed into a bisulfite converted forward strand
+version (C->T conversion) or into a bisulfite treated reverse strand (G->A conversion of the forward strand).
+Each of these reads are then aligned to bisulfite treated forward strand index of a reference genome
+(C->T converted) and a bisulfite treated reverse strand index of the genome (G->A conversion of the
+forward strand, by doing this alignments will produce the same positions). These 4 instances of Bowtie (1 or 2)
+are run in parallel. The sequence file(s) are then read in again sequence by sequence to pull out the original
+sequence from the genome and determine if there were any protected C's present or not. We are then going to
+print out the methylation calls into a final result file.
 
-The final Bismark output of this script will be a single tab delimited file with all sequences that have
-a unique best alignment to any of the 4 possible strands of a bisulfite PCR product. The format is described 
-in more detail below.
+The final output of Bismark is in SAM format by default. For Bowtie 1 one can alos choose to report the old 
+'vanilla' output format, which is a single tab delimited file with all sequences that have a unique best
+alignment to any of the 4 possible strands of a bisulfite PCR product. Both formats are described in more detail below.
+
 
 USAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
@@ -5459,35 +5540,32 @@ Input:
 --solexa1.3-quals        Same as --phred64-quals. This is usually the right option for use with (unconverted)
                          reads emitted by GA Pipeline version 1.3 or later. Default: off.
 
---path_to_bowtie         The full path </../../> to the Bowtie installation on your system. If not specified
-                         it is assumed that Bowtie is in the PATH.
+--path_to_bowtie         The full path </../../> to the Bowtie (1 or 2) installation on your system. If not
+                         specified it is assumed that Bowtie (1 or 2) is in the PATH.
 
 
 Alignment:
 
---bowtie2                Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
-                         alignments, i.e. searches for alignments involving all read characters (also called 
-                         untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
-                         and/or quality trimmed where appropriate. Default: off.
-
 -n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", i.e. the first L base pairs
                          of the read (where L is set with -l/--seedlen). This may be 0, 1, 2 or 3 and the 
-                         default is 2.
+                         default is 2. This option is only available for Bowtie 1 (for Bowtie 2 see -N).
 
--l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to 
+-l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to
                          which the -n ceiling applies. The default is 28. Bowtie (and thus Bismark) is faster for
-                         larger values of -l.
+                         larger values of -l. This option is only available for Bowtie 1 (for Bowtie 2 see -L).
 
 -e/--maqerr <int>        Maximum permitted total of quality values at all mismatched read positions throughout
                          the entire alignment, not just in the "seed". The default is 70. Like Maq, bowtie rounds
-                         quality values to the nearest 10 and saturates at 30.
+                         quality values to the nearest 10 and saturates at 30. This value is not relevant for
+                         Bowtie 2.
 
---chunkmbs <int>         The number of megabytes of memory a given thread is given to store path descriptors in 
-                         --best mode. Best-first search must keep track of many paths at once to ensure it is 
-                         always extending the path with the lowest cumulative cost. Bowtie tries to minimize the 
-                         memory impact of the descriptors, but they can still grow very large in some cases. If 
+--chunkmbs <int>         The number of megabytes of memory a given thread is given to store path descriptors in
+                         --best mode. Best-first search must keep track of many paths at once to ensure it is
+                         always extending the path with the lowest cumulative cost. Bowtie tries to minimize the
+                         memory impact of the descriptors, but they can still grow very large in some cases. If
                          you receive an error message saying that chunk memory has been exhausted in --best mode,
-                         try adjusting this parameter up to dedicate more memory to the descriptors. Default: 512.
+                         try adjusting this parameter up to dedicate more memory to the descriptors. This value
+                         is not relevant for Bowtie 2. Default: 512.
 
 -I/--minins <int>        The minimum insert size for valid paired-end alignments. E.g. if -I 60 is specified and
                          a paired-end alignment consists of two 20-bp alignments in the appropriate orientation
@@ -5499,7 +5577,8 @@ Alignment:
                          60-bp gap between them, that alignment is considered valid (as long as -I is also satisfied).
                          A 61-bp gap would not be valid in that case. Default: 500.
 
-Reporting:
+
+Bowtie 1 Reporting:
 
 -k <2>                   Due to the way Bismark works Bowtie will report up to 2 valid alignments. This option
                          will be used by default.
@@ -5521,19 +5600,20 @@ Reporting:
 
 Output:
 
---non-directional        The sequencing library was constructed in a non strand-specific manner, alignments to all four
+--non_directional        The sequencing library was constructed in a non strand-specific manner, alignments to all four
                          bisulfite strands will be reported. Default: OFF.
                          (The current Illumina protocol for BS-Seq is directional, in which case the strands complementary
                          to the original strands are merely theoretical and should not exist in reality. Reporting
                          directional alignments (which is the default) will only report alignments to the original top (OT)
                          or bottom (OB) strands. This is the recommended option for sprand-specific libraries.)
 
---sam-no-hd              Suppress SAM header lines (starting with @).
+--sam-no-hd              Suppress SAM header lines (starting with @). This might be useful when very large input files are
+                         split up into several smaller files to run concurrently and the output files are to be merged.
 
 --quiet                  Print nothing besides alignments.
 
---vanilla                Performs bisulfite mapping with Bowtie 1 and prints the 'old' output (Bismark 0.X) instead of
-                         SAM format output.
+--vanilla                Performs bisulfite mapping with Bowtie 1 and prints the 'old' output (as in Bismark 0.5.X) instead
+                         of SAM format output.
 
 -un/--unmapped           Write all reads that could not be aligned to a file in the output directory. Written reads will
                          appear as they did in the input, without any translation of quality values that may have
@@ -5561,7 +5641,79 @@ Other:
 -v/--version             Displays version information.
 
 
-OUTPUT:
+BOWTIE 2 SPECIFIC OPTIONS
+
+--bowtie2                Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
+                         alignments, i.e. searches for alignments involving all read characters (also called 
+                         untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
+                         and/or quality trimmed where appropriate. Default: off.
+
+Bowtie 2 alignment options:
+
+-N <int>                 Sets the number of mismatches to allowed in a seed alignment during multiseed alignment.
+                         Can be set to 0 or 1. Setting this higher makes alignment slower (often much slower)
+                         but increases sensitivity. Default: 0. This option is only available for Bowtie 2 (for
+                         Bowtie 1 see -n).
+
+-L <int>                 Sets the length of the seed substrings to align during multiseed alignment. Smaller values
+                         make alignment slower but more senstive. Default: the --sensitive preset of Bowtie 2 is
+                         used by default, which sets -L to 20. This option is only available for Bowtie 2 (for
+                         Bowtie 1 see -l).
+
+--ignore-quals           When calculating a mismatch penalty, always consider the quality value at the mismatched
+                         position to be the highest possible, regardless of the actual value. I.e. input is treated
+                         as though all quality values are high. This is also the default behavior when the input
+                         doesn't specify quality values (e.g. in -f mode). This option is invariable and on by default.
+
+
+Bowtie 2 paired-end options:
+
+--no-mixed               This option disables Bowtie 2's behavior to try to find alignments for the individual mates if
+                         it cannot find a concordant or discordant alignment for a pair. This option is invariable and
+                         and on by default.
+
+--no-discordant          Normally, Bowtie 2 looks for discordant alignments if it cannot find any concordant alignments.
+                         A discordant alignment is an alignment where both mates align uniquely, but that does not
+                         satisfy the paired-end constraints (--fr/--rf/--ff, -I, -X). This option disables that behavior
+                         and it is on by default.
+
+
+Bowtie 2 Effort options:
+
+-D <int>                 Up to <int> consecutive seed extension attempts can "fail" before Bowtie 2 moves on, using
+                         the alignments found so far. A seed extension "fails" if it does not yield a new best or a
+                         new second-best alignment. This limit is automatically adjusted up when -a is specified. 
+                         Default: 15.
+
+-R <int>                 <int> is the maximum number of times Bowtie 2 will "re-seed" reads with repetitive seeds.
+                         When "re-seeding," Bowtie 2 simply chooses a new set of reads (same length, same number of
+                         mismatches allowed) at different offsets and searches for more alignments. A read is considered
+                         to have repetitive seeds if the total number of seed hits divided by the number of seeds
+                         that aligned at least once is greater than 300. Default: 2.
+
+Bowtie 2 Scoring options:
+
+--score_min <func>       Sets a function governing the minimum alignment score needed for an alignment to be considered
+                         "valid" (i.e. good enough to report). This is a function of read length. For instance, specifying
+                         L,0,-0.6 sets the minimum-score function f to f(x) = 0 + -0.6 * x, where x is the read length.
+                         See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2. The default is
+                         L,0,-0.6.
+
+
+Bowtie 2 Reporting options:
+
+-most_valid_alignments <int> This is the Bowtie 2 parameter -M. Bowtie 2 searches for at most <int>+1 distinct, valid
+                         alignments for each read. The search terminates when it can't find more distinct valid alignments,
+                         or when it finds <int>+1 distinct alignments, whichever happens first. Only the best alignment
+                         is reported. Information from the other alignments is used to estimate mapping quality and to
+                         set SAM optional fields, such as AS:i and XS:i. Increasing -M makes Bowtie 2 slower, but
+                         increases the likelihood that it will pick the correct alignment for a read that aligns many
+                         places. For reads that have more than <int>+1 distinct, valid alignments, Bowtie 2 does not
+                         guarantee that the alignment reported is the best possible in terms of alignment score. -M is
+                         always used and its default value is set to 10.
+
+
+'VANILLA' Bismark  OUTPUT:
 
 Single-end output format (tab-separated):
 
@@ -5595,7 +5747,30 @@ Paired-end output format (tab-separated):
 (14) <read 1 quality score (Phred33)>
 (15) <read 2 quality score (Phred33)>
 
-This script was last edited on 05 Dec 2011.
+
+Bismark SAM OUTPUT (default):
+
+ (1) QNAME  (seq-ID)
+ (2) FLAG   (this flag tries to take the strand a bisulfite read originated from into account (this is different from ordinary DNA alignment flags!))
+ (3) RNAME  (chromosome)
+ (4) POS    (start position)
+ (5) MAPQ   (always 255)
+ (6) CIGAR
+ (7) RNEXT
+ (8) PNEXT
+ (9) TLEN
+(10) SEQ
+(11) QUAL   (Phred33 scale)
+(12) NM-tag (edit distance to the reference)
+(13) XX-tag (base-by-base mismatches to the reference. This does not include indels)
+(14) XM-tag (methylation call string)
+(15) XR-tag (read conversion state for the alignment)
+(16) XR-tag (genome conversion state for the alignment)
+
+Each read of paired-end alignments is written out in a separate line in the above format.
+
+
+This script was last edited on 08 Dec 2011.
 
 HOW_TO
 }
