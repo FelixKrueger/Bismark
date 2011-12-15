@@ -1,3 +1,20 @@
+RELEASE NOTES FOR Bismark v0.6.beta2 (15 Dec 2011)
+-------------------------------------------------
+
+Bismark
+
+Added a paralleliztion option for Bowtie 2 alignments with the option '-p'. Please note that
+this is only recommended if your system resources are plentyful. Please bear in mind that
+specifying for instance '-p 2' will already use 8 threads/cores for Bowtie2 plus 1 additional
+core for Bismark itself, and thereby consume more than 15GB of memory!
+
+This parallelization switch in Bismark also uses the Bowtie 2 option '--reorder', and thus 
+requires at least Bowtie 2 version 2.0.0-beta5 or higher (released on Dec 15, 2011).
+
+   
+
+
+
 RELEASE NOTES FOR Bismark v0.6.beta1 (08 Dec 2011)
 -------------------------------------------------
 
