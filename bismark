@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.6.beta2';
+my $bismark_version = 'v0.6.3';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -855,7 +855,7 @@ sub check_bowtie_results_single_end{
   foreach my $index (0..$#fhs){
 
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
-    next unless ($fhs[$index]->{last_line} and $fhs[$index]->{last_seq_id});
+    next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
     ### if the sequence we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
       ###############################################################
@@ -1153,9 +1153,13 @@ sub check_bowtie_results_single_end_bowtie2 {
 
   ### reading from the Bowtie 2 output filehandles
   foreach my $index (0..$#fhs){
+    #   print "Index: $index\n";
+    #    print "$fhs[$index]->{last_line}\n";
+    #    print "$fhs[$index]->{last_seq_id}\n\n";
 
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
-    next unless ($fhs[$index]->{last_line} and $fhs[$index]->{last_seq_id});
+    next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
+
     ### if the sequence we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
 
@@ -1347,7 +1351,6 @@ sub check_bowtie_results_single_end_bowtie2 {
     }
   }
 
-
   ### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous or --unmapped was specified the read sequence will be printed out.
   if ($alignment_ambiguous == 1){
     $counting{unsuitable_sequence_count}++;
@@ -1391,22 +1394,22 @@ sub check_bowtie_results_single_end_bowtie2 {
 
   my $methylation_call_params; # hash reference which will store all information we need for the methylation call
   my $sequence_fails = 0; # Going to use $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
- 
+
   ### print contents of %alignments for debugging
-  # if (scalar keys %alignments > 1){
-  #   print "\n******\n";
-  #   foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
-  #     print "Loc:  $alignment_location\n";
-  #     print "ID:   $alignments{$alignment_location}->{seq_id}\n";
-  #     print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
-  #     print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
-  #     print "Index $alignments{$alignment_location}->{index}\n";
-  #     print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
-  #     print "pos:  $alignments{$alignment_location}->{position}\n";
-  #    print "MD:   $alignments{$alignment_location}->{mismatch_info}\n\n";
-  #  }
-  #  print "\n******\n";
-  #}
+   if (scalar keys %alignments > 1){
+     print "\n******\n";
+    foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
+       print "Loc:  $alignment_location\n";
+       print "ID:   $alignments{$alignment_location}->{seq_id}\n";
+       print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
+       print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
+       print "Index $alignments{$alignment_location}->{index}\n";
+      print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
+       print "pos:  $alignments{$alignment_location}->{position}\n";
+      print "MD:   $alignments{$alignment_location}->{mismatch_info}\n\n";
+    }
+    print "\n******\n";
+  }
 
   ### if there is only 1 entry in the hash with we accept it as the best alignment
   if (scalar keys %alignments == 1){
@@ -1482,7 +1485,7 @@ sub check_bowtie_results_single_end_bowtie2 {
   ### discard all alignments to strands complementary to the original strands, as they should not exist in reality due to the library preparation protocol
   if ($directional){
     if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
-      #    warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
+      # warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
       $counting{alignments_rejected_count}++;
       return 0;
     }
@@ -1500,6 +1503,7 @@ sub check_bowtie_results_single_end_bowtie2 {
     $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
+
 
   ### otherwise we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
@@ -1624,7 +1628,7 @@ sub check_bowtie_results_paired_ends{
 
   foreach my $index (0,3,1,2){
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
-    next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and $fhs[$index]->{last_seq_id});
+    next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and defined $fhs[$index]->{last_seq_id});
     ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
       # print "$identifier\n$fhs[$index]->{last_seq_id}\n\n";
@@ -1941,7 +1945,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
   foreach my $index (0,3,1,2){
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
-    next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and $fhs[$index]->{last_seq_id});
+    next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and defined $fhs[$index]->{last_seq_id});
 
     ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
@@ -5175,7 +5179,7 @@ sub single_end_SAM_output{
 
   #####
 
-  my $XG_tag = "XG:Z:$genome_conversion";                             # Optional tag XR: Genome Conversion
+  my $XG_tag = "XG:Z:$genome_conversion";                             # Optional tag XG: Genome Conversion
 
   #####
 
@@ -5417,7 +5421,7 @@ sub paired_end_SAM_output{
 
   #####
 
-  my $XG_tag = "XG:Z:$genome_conversion";                              # Optional tag XR: Genome Conversion state; valid for both reads
+  my $XG_tag = "XG:Z:$genome_conversion";                              # Optional tag XG: Genome Conversion state; valid for both reads
 
   #####
 
@@ -5797,12 +5801,12 @@ Bismark SAM OUTPUT (default):
 (13) XX-tag (base-by-base mismatches to the reference. This does not include indels)
 (14) XM-tag (methylation call string)
 (15) XR-tag (read conversion state for the alignment)
-(16) XR-tag (genome conversion state for the alignment)
+(16) XG-tag (genome conversion state for the alignment)
 
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 16 Dec 2011.
+This script was last edited on 04 Jan 2012.
 
 HOW_TO
 }

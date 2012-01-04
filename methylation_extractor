@@ -11,7 +11,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.6.beta2';
+my $version = 'v0.6.3';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla) = process_commandline();
 
 process_Bismark_results_file();
@@ -474,6 +474,10 @@ sub process_Bismark_results_file{
 		die "Alignment did not have proper strand information: $strand\n";
 	      }
 	    }
+	    ### printing out the methylation state of every C in the read
+	    print_individual_C_methylation_states_single_end($meth_call,$chrom,$start,$id,$strand,$index);
+	
+	    ++$methylation_call_strings_processed; # 1 per single-end result
 	  }
 	}
       }
@@ -1888,7 +1892,7 @@ The output is in the form:
 * Unmethylated cytosines receive a '-' orientation.
 
 
-This script was last edited on 24 December 2011.
+This script was last edited on 04 January 2012.
 
 HOW_TO
 }
