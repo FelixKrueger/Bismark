@@ -1,3 +1,14 @@
+RELEASE NOTES FOR Bismark v0.6.beta3 (16 Dec 2011)
+-------------------------------------------------
+
+Bismark
+
+Changed the XX:Z: mismatch field in the SAM output to display mismatching nucleotides
+in the reference sequence (instead of in the read sequence).
+
+
+
+
 RELEASE NOTES FOR Bismark v0.6.beta2 (15 Dec 2011)
 -------------------------------------------------
 

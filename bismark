@@ -5451,12 +5451,12 @@ sub make_mismatch_string{
   my $prev_mm_pos = 0;
   while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
     my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-    my $nuc_mm = substr($actual_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($actual_seq);  # Obtain nucleotide that was different from reference
+    my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
     $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
     $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
     $prev_mm_pos = pos($tmp);                            # Position of last mismatch
   }
-  my $end_matches = length($actual_seq) - $prev_mm_pos;  # Provides number of matches from last mismatch till end of sequence
+  my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
   $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
   return $XX_tag;
 }
@@ -5802,7 +5802,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 15 Dec 2011.
+This script was last edited on 16 Dec 2011.
 
 HOW_TO
 }
