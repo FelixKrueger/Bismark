@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.6.3';
+my $bismark_version = 'v0.6.4';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -565,12 +565,24 @@ sub process_single_end_fastA_file_for_methylation_call{
     open (IN,$sequence_file) or die $!;
   }
 
+  my $count = 0;
+
   warn "\nReading in the sequence file $sequence_file\n";
   while (1) {
     # last if ($counting{sequences_count} > 100);
     my $identifier = <IN>;
     my $sequence = <IN>;
     last unless ($identifier and $sequence);
+
+    ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
     $counting{sequences_count}++;
     if ($counting{sequences_count}%100000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
@@ -623,6 +635,8 @@ sub process_single_end_fastQ_file_for_methylation_call{
     open (IN,$sequence_file) or die $!;
   }
 
+  my $count = 0;
+
   warn "\nReading in the sequence file $sequence_file\n";
   while (1) {
     my $identifier = <IN>;
@@ -630,7 +644,18 @@ sub process_single_end_fastQ_file_for_methylation_call{
     my $identifier_2 = <IN>;
     my $quality_value = <IN>;
     last unless ($identifier and $sequence and $identifier_2 and $quality_value);
+
+    ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
     $counting{sequences_count}++;
+
     if ($counting{sequences_count}%1000000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
     }
@@ -692,6 +717,9 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
   warn "\nReading in the sequence files $sequence_file_1 and $sequence_file_2\n";
   ### Both files are required to have the exact same number of sequences, therefore we can process the sequences jointly one by one
+
+  my $count = 0;
+
   while (1) {
     # reading from the first input file
     my $identifier_1 = <IN1>;
@@ -700,6 +728,16 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     my $identifier_2 = <IN2>;
     my $sequence_2 = <IN2>;
     last unless ($identifier_1 and $sequence_1 and $identifier_2 and $sequence_2);
+
+    ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
     $counting{sequences_count}++;
     if ($counting{sequences_count}%100000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
@@ -716,10 +754,10 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
     my $return;
     if ($bowtie2){
-      check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1);
+      $return = check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1);
     }
     else{
-      check_bowtie_results_paired_ends (uc$sequence_1,uc$sequence_2,$identifier_1);
+      $return = check_bowtie_results_paired_ends (uc$sequence_1,uc$sequence_2,$identifier_1);
     }
 
     unless ($return){
@@ -766,6 +804,8 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     open (IN2,$sequence_file_2) or die $!;
   }
 
+  my $count = 0;
+
   warn "\nReading in the sequence files $sequence_file_1 and $sequence_file_2\n";
   ### Both files are required to have the exact same number of sequences, therefore we can process the sequences jointly one by one
   while (1) {
@@ -780,6 +820,16 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     my $ident_2 = <IN2>;         # not needed
     my $quality_value_2 = <IN2>; # not needed
     last unless ($identifier_1 and $sequence_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $quality_value_2);
+
+    ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
     $counting{sequences_count}++;
     if ($counting{sequences_count}%100000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
@@ -799,10 +849,10 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
     my $return;
     if ($bowtie2){
-      check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+      $return = check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
     }
     else{
-      check_bowtie_results_paired_ends (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+      $return = check_bowtie_results_paired_ends (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
     }
 
     unless ($return){
@@ -847,9 +897,10 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 sub check_bowtie_results_single_end{
   my ($sequence,$identifier,$quality_value) = @_;
 
-  unless ($quality_value){ # for FastA sequences do not have quality values
-    $quality_value = '';
+  unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
+    $quality_value = 'I'x(length$sequence);
   }
+
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence aligned to a bisulfite converted genome
   foreach my $index (0..$#fhs){
@@ -1024,6 +1075,7 @@ sub check_bowtie_results_single_end{
 	$methylation_call_params->{$identifier}->{chromosome} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{chromosome};
 	$methylation_call_params->{$identifier}->{position} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{position};
 	$methylation_call_params->{$identifier}->{index} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{index};
+    	$methylation_call_params->{$identifier}->{number_of_mismatches} = $mismatch_number;
       }
     }
     elsif (scalar keys %{$mismatches{$mismatch_number}} == 3){
@@ -1087,6 +1139,7 @@ sub check_bowtie_results_single_end{
 	$methylation_call_params->{$identifier}->{chromosome} = $three_candidate_seqs[0]->{chromosome};
 	$methylation_call_params->{$identifier}->{position} = $three_candidate_seqs[0]->{position};
 	$methylation_call_params->{$identifier}->{index} = $three_candidate_seqs[0]->{index};
+	$methylation_call_params->{$identifier}->{number_of_mismatches} = $mismatch_number;
 	# print "Overruled low complexity alignments! Using $first_array_element and disregarding $second_array_element and $third_array_element\n";
       }
       else{
@@ -1130,6 +1183,7 @@ sub check_bowtie_results_single_end{
   ### check test to see if the genomic sequence we extracted has the same length as the observed sequence+2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence}) != length($sequence)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position}\n";
+    $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
 
@@ -1142,9 +1196,11 @@ sub check_bowtie_results_single_end{
 
 sub check_bowtie_results_single_end_bowtie2 {
   my ($sequence,$identifier,$quality_value) = @_;
-  unless ($quality_value){ # for FastA sequences do not have quality values
-    $quality_value = '';
+
+  unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
+    $quality_value = 'I'x(length$sequence);
   }
+
   $identifier =~ s/\/[12]$//;
 
   my $alignment_ambiguous = 0;
@@ -1219,7 +1275,7 @@ sub check_bowtie_results_single_end_bowtie2 {
 	  next;
 	}
       }
-   
+
       # if there are one or more proper alignments we can extract the chromosome number
       my $chromosome;
       if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
@@ -1396,20 +1452,20 @@ sub check_bowtie_results_single_end_bowtie2 {
   my $sequence_fails = 0; # Going to use $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
 
   ### print contents of %alignments for debugging
-   if (scalar keys %alignments > 1){
-     print "\n******\n";
-    foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
-       print "Loc:  $alignment_location\n";
-       print "ID:   $alignments{$alignment_location}->{seq_id}\n";
-       print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
-       print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
-       print "Index $alignments{$alignment_location}->{index}\n";
-      print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
-       print "pos:  $alignments{$alignment_location}->{position}\n";
-      print "MD:   $alignments{$alignment_location}->{mismatch_info}\n\n";
-    }
-    print "\n******\n";
-  }
+  #   if (scalar keys %alignments > 1){
+  #     print "\n******\n";
+  #     foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
+  #       print "Loc:  $alignment_location\n";
+  #       print "ID:   $alignments{$alignment_location}->{seq_id}\n";
+  #       print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
+  #       print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
+  #       print "Index $alignments{$alignment_location}->{index}\n";
+  #       print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
+  #       print "pos:  $alignments{$alignment_location}->{position}\n";
+  #       print "MD:   $alignments{$alignment_location}->{MD_tag}\n\n";
+  #     }
+  #     print "\n******\n";
+  #   }
 
   ### if there is only 1 entry in the hash with we accept it as the best alignment
   if (scalar keys %alignments == 1){
@@ -1611,9 +1667,14 @@ sub decide_whether_single_end_alignment_is_valid{
 sub check_bowtie_results_paired_ends{
   my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
 
-  unless ($quality_value_1 and $quality_value_2){ ### quality values are not given for FastA files, so they are initialised as empty strings
-    $quality_value_1 = $quality_value_2 = '';
+  ### quality values are not given for FastA files, so they are initialised with a Phred quality of 40
+  unless ($quality_value_1){
+    $quality_value_1 = 'I'x(length$sequence_1);
   }
+  unless ($quality_value_2){
+    $quality_value_2 = 'I'x(length$sequence_2);
+  }
+
   #  print "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
 
   my %mismatches = ();
@@ -1906,10 +1967,12 @@ sub check_bowtie_results_paired_ends{
   ### check test to see if the genomic sequences we extracted has the same length as the observed sequences +2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
+    $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}) != length($sequence_2)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
+    $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
 
@@ -1928,10 +1991,19 @@ sub check_bowtie_results_paired_ends{
 sub check_bowtie_results_paired_ends_bowtie2{
   my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
 
-  unless ($quality_value_1 and $quality_value_2){ ### quality values are not given for FastA files, so they are initialised as empty strings
-    $quality_value_1 = $quality_value_2 = '';
+  ### quality values are not given for FastA files, so they are initialised with a Phred quality of 40
+  unless ($quality_value_1){
+    $quality_value_1 = 'I'x(length$sequence_1);
   }
+
+  unless ($quality_value_2){
+    $quality_value_2 = 'I'x(length$sequence_2);
+  }
+
+
   # print "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
+
+
   my %alignments;
   my $alignment_ambiguous = 0;
 
@@ -2314,7 +2386,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
   #       print "Index    $alignments{$alignment_location}->{index}\n";
   #       print "Chr:     $alignments{$alignment_location}->{chromosome}\n";
   #       print "Pos_1:   $alignments{$alignment_location}->{position_1}\n";
-  #       print "Pos_2:   $alignments{$alignment_location}->{position_2}\n"; 
+  #       print "Pos_2:   $alignments{$alignment_location}->{position_2}\n";
   #       print "CIGAR_1: $alignments{$alignment_location}->{CIGAR_1}\n";
   #       print "CIGAR_2: $alignments{$alignment_location}->{CIGAR_2}\n";
   #       print "MD_1:    $alignments{$alignment_location}->{mismatch_info_1}\n";
@@ -3139,7 +3211,7 @@ sub extract_corresponding_genomic_sequence_single_end {
     $genome_conversion = 'GA';
 
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if ($methylation_call_params->{$sequence_identifier}->{position}-2 > 0){ ## CHH changed to -2
+    if ($methylation_call_params->{$sequence_identifier}->{position}-2 >= 0){ ## CHH changed to -2 # 02 02 2012 Changed this to >= from >
       ### Extracting 2 extra 5' bases on forward strand which will become 2 extra 3' bases after reverse complementation
       $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
       ## reverse complement!
@@ -3160,7 +3232,7 @@ sub extract_corresponding_genomic_sequence_single_end {
 
     ### +2 extra bases on the forward strand 3', which will become 2 extra 5' bases after reverse complementation
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2){ ## CHH changed to +2
+    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## changed to +1 on 02 02 2012
       $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
       ## reverse complement!
       $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
@@ -3179,7 +3251,7 @@ sub extract_corresponding_genomic_sequence_single_end {
     $genome_conversion = 'GA';
 
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if ($methylation_call_params->{$sequence_identifier}->{position}-2 > 0){ ## CHH changed to +2
+    if ($methylation_call_params->{$sequence_identifier}->{position}-2 >= 0){ ## CHH changed to +2 # 02 02 2012 Changed this to >= from >
       ### +2 extra base at the 5' end as we are nominally checking the converted reverse strand
       $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
     }
@@ -3622,6 +3694,15 @@ sub biTransformFastAFiles {
     open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
   }
 
+  if ($skip){
+    warn "Skipping the first $skip reads from $filename\n";
+    sleep (1);
+  }
+  if ($upto){
+    warn "Processing reads up to sequence no. $upto from $filename\n";
+    sleep (1);
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fa/;
   $G_to_A_infile =~ s/$/_G_to_A.fa/;
@@ -3629,13 +3710,22 @@ sub biTransformFastAFiles {
   print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
   open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
   open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
-  my $count =0;
+  my $count = 0;
   while (1){
     my $header = <IN>;
     my $sequence= <IN>;
     last unless ($header and $sequence);
-    $sequence = uc$sequence; # make input file case insensitive
+
     ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
+    $sequence = uc$sequence; # make input file case insensitive
 
     # detecting if the input file contains tab stops, as this is likely to result in no alignments
     if (index($header,"\t") != -1){
@@ -3665,6 +3755,15 @@ sub biTransformFastAFiles_paired_end {
     open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
   }
 
+  if ($skip){
+    warn "Skipping the first $skip reads from $filename\n";
+    sleep (1);
+  }
+  if ($upto){
+    warn "Processing reads up to sequence no. $upto from $filename\n";
+    sleep (1);
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fa/;
   $G_to_A_infile =~ s/$/_G_to_A.fa/;
@@ -3672,13 +3771,24 @@ sub biTransformFastAFiles_paired_end {
   print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
   open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
   open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
-  my $count =0;
+
+  my $count = 0;
+
   while (1){
     my $header = <IN>;
     my $sequence= <IN>;
     last unless ($header and $sequence);
-    $sequence = uc$sequence; # make input file case insensitive
+
     ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
+    $sequence = uc$sequence; # make input file case insensitive
 
     # detecting if the input file contains tab stops, as this is likely to result in no alignments
     if (index($header,"\t") != -1){
@@ -3730,6 +3840,15 @@ sub biTransformFastQFiles {
     open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
   }
 
+  if ($skip){
+    warn "Skipping the first $skip reads from $filename\n";
+    sleep (1);
+  }
+  if ($upto){
+    warn "Processing reads up to sequence no. $upto from $filename\n";
+    sleep (1);
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fastq/;
   $G_to_A_infile =~ s/$/_G_to_A.fastq/;
@@ -3737,7 +3856,7 @@ sub biTransformFastQFiles {
   print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
   open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
   open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
-  my $count =0;
+  my $count = 0;
   while (1){
     my $identifier = <IN>;
     my $sequence = <IN>;
@@ -3745,7 +3864,15 @@ sub biTransformFastQFiles {
     my $quality_score = <IN>;
     last unless ($identifier and $sequence and $identifier2 and $quality_score);
     ++$count;
-    $sequence= uc$sequence; # make input file case insensitive
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
+    $sequence = uc$sequence; # make input file case insensitive
 
     # detecting if the input file contains tab stops, as this is likely to result in no alignments
     if (index($identifier,"\t") != -1){
@@ -3777,6 +3904,15 @@ sub biTransformFastQFiles_paired_end {
     open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
   }
 
+  if ($skip){
+    warn "Skipping the first $skip reads from $filename\n";
+    sleep (1);
+  }
+  if ($upto){
+    warn "Processing reads up to sequence no. $upto from $filename\n";
+    sleep (1);
+  }
+
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fastq/;
   $G_to_A_infile =~ s/$/_G_to_A.fastq/;
@@ -3784,7 +3920,9 @@ sub biTransformFastQFiles_paired_end {
   print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
   open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
   open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
-  my $count =0;
+
+  my $count = 0;
+
   while (1){
     my $identifier = <IN>;
     my $sequence = <IN>;
@@ -3792,6 +3930,14 @@ sub biTransformFastQFiles_paired_end {
     my $quality_score = <IN>;
     last unless ($identifier and $sequence and $identifier2 and $quality_score);
     ++$count;
+
+    if ($skip){
+      next unless ($count > $skip);
+    }
+    if ($upto){
+      last if ($count > $upto);
+    }
+
     $sequence= uc$sequence; # make input file case insensitive
 
     # detecting if the input file contains tab stops, as this is likely to result in no alignments
@@ -4730,7 +4876,7 @@ VERSION
     push @bowtie_options, '-q';
   }
   else{
-    $fastq=1;
+    $fastq = 1;
     print "FastQ format assumed (by default)\n";
     $sequence_format = 'FASTQ';
     push @bowtie_options, '-q';
@@ -4738,16 +4884,18 @@ VERSION
 
   ### SKIP
   if ($skip){
-    push @bowtie_options,"-s $skip";
+    warn "Skipping the first $skip reads from the input file\n";
+    # push @bowtie_options,"-s $skip";
   }
 
   ### UPTO
   if ($qupto){
+    warn "Processing sequences up to read no. $qupto from the input file\n";
     if ($bowtie2){
-      push @bowtie_options,"--upto $qupto"; ## slightly changed for Bowtie 2
+      #      push @bowtie_options,"--upto $qupto"; ## slightly changed for Bowtie 2
     }
     else{
-      push @bowtie_options,"--qupto $qupto";
+      #     push @bowtie_options,"--qupto $qupto";
     }
   }
 
@@ -5036,7 +5184,7 @@ VERSION
     $output_dir = '';
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto);
 }
 
 
@@ -5063,7 +5211,7 @@ sub single_end_SAM_output{
   my $methcall          = $methylation_call_params->{$id}->{methylation_call};
   my $read_conversion   = $methylation_call_params->{$id}->{read_conversion};
   my $genome_conversion = $methylation_call_params->{$id}->{genome_conversion};
-	
+  my $number_of_mismatches = $methylation_call_params->{$id}->{number_of_mismatches};	
   ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
   ## FLAG: bitwise FLAG. Each bit is explained in the following table:
   ## Bit    Description                                                Comment                                Value
@@ -5806,7 +5954,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 04 Jan 2012.
+This script was last edited on 06 Feb 2012.
 
 HOW_TO
 }

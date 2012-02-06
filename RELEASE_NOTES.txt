@@ -1,5 +1,29 @@
+RELEASE NOTES FOR Bismark v0.6.4 (06 Feb 2012)
+----------------------------------------------
+
+Bismark
+
+For paired-end mode, the options --unmapped and --ambiguous do now output unaligned or 
+multiply aligned reads, respectively, to their correct output files as intended.
+ 
+Adjusted the options -u and -s so that only the non-skipped part of the input file will
+be transcribed and analysed. This allows splitting up very large files into smaller chunks to 
+allow parallel processing, e.g -s 10000000 -u 20000000 would analyse sequences 10000001 to
+20000000. The alignment report will be based on this reduced number of reads analysed.
+
+Sequences in FastA format do now receive Phred score qualities of 40 throughout (ASCII 'I') 
+to prevent the SAM to BAM conversion in SAMtools from failing.
+
+If a genomic sequence could not be extracted it will now also be counted and reported for
+use with Bowtie 1.
+
+Suppressed debugging warning meassages that were printed in error for Bowtie2 alignments
+(single-end only).
+
+
+
 RELEASE NOTES FOR Bismark v0.6.3 (04 Jan 2012)
---------------------------------------------------
+----------------------------------------------
 
 Bismark
 

@@ -11,7 +11,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.6.3';
+my $version = 'v0.6.4';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla) = process_commandline();
 
 process_Bismark_results_file();
