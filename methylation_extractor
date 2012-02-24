@@ -11,7 +11,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.6.4';
+my $version = 'v0.7.0';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla) = process_commandline();
 
 process_Bismark_results_file();
@@ -1892,7 +1892,7 @@ The output is in the form:
 * Unmethylated cytosines receive a '-' orientation.
 
 
-This script was last edited on 04 January 2012.
+This script was last modified on 04 January 2012.
 
 HOW_TO
 }

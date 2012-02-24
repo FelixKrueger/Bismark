@@ -33,7 +33,7 @@ my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
 
-my $bismark_version = 'v0.6.4';
+my $bismark_version = 'v0.7.0';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
@@ -59,7 +59,7 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-11 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-12 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.bbsrc.ac.uk/projects/
 
 VERSION
@@ -487,6 +487,6 @@ ARGUMENTS:
 
 
 
-This script was last edited on 18 Nov 2011.
+This script was last modified on 18 Nov 2011.
 HOW_TO
 }

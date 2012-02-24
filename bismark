@@ -47,7 +47,7 @@ foreach my $filename (@filenames){
 
   chdir $parent_dir or die "Unable to move to initial working directory $!\n";
   ### resetting the counting hash and fhs
-  reset_counters_and_fhs();
+  reset_counters_and_fhs($filename);
   $seqID_contains_tabs = 0;
 
   ### PAIRED-END ALIGNMENTS
@@ -4916,6 +4916,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 ###########################################################################################################################################
 
 sub reset_counters_and_fhs{
+  my $filename = shift;
   %counting=(
 	     total_meCHH_count => 0,
 	     total_meCHG_count => 0,
@@ -4940,7 +4941,54 @@ sub reset_counters_and_fhs{
 	     alignments_rejected_count => 0, # only relevant if --directional was specified
 	    );
 
-  @fhs=(
+  if ($directional){
+    if ($filename =~ ','){ # paired-end files
+      @fhs=(
+	    { name => 'CTreadCTgenome',
+	      strand_identity => 'con ori forward',
+	      bisulfiteIndex => $CT_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'CTreadGAgenome',
+	      strand_identity => 'con ori reverse',
+	      bisulfiteIndex => $GA_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'GAreadCTgenome',
+	      strand_identity => 'compl ori con forward',
+	      bisulfiteIndex => $CT_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'GAreadGAgenome',
+	    strand_identity => 'compl ori con reverse',
+	      bisulfiteIndex => $GA_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	   );
+    }
+    else{ # single-end files
+      @fhs=(
+	    { name => 'CTreadCTgenome',
+	      strand_identity => 'con ori forward',
+	      bisulfiteIndex => $CT_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'CTreadGAgenome',
+	      strand_identity => 'con ori reverse',
+	      bisulfiteIndex => $GA_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	   );
+    }
+  }
+  else{
+    @fhs=(
 	  { name => 'CTreadCTgenome',
 	    strand_identity => 'con ori forward',
 	    bisulfiteIndex => $CT_index_basename,
@@ -4965,7 +5013,8 @@ sub reset_counters_and_fhs{
 	    seen => 0,
 	    wrong_strand => 0,
 	  },
-       );
+	 );
+  }
 }
 
 
@@ -5326,6 +5375,11 @@ VERSION
       die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
     push @bowtie_options,"--score-min $score_min";
+  }
+  else{
+    if ($bowtie2){
+      push @bowtie_options,"--score-min L,0,-0.2"; # default setting, more stringent than normal Bowtie2
+    }
   }
 
   ### BOWTIE 2 PARALLELIZATION OPTIONS
@@ -5966,10 +6020,12 @@ Each of these reads are then aligned to bisulfite treated forward strand index o
 (C->T converted) and a bisulfite treated reverse strand index of the genome (G->A conversion of the
 forward strand, by doing this alignments will produce the same positions). These 4 instances of Bowtie (1 or 2)
 are run in parallel. The sequence file(s) are then read in again sequence by sequence to pull out the original
-sequence from the genome and determine if there were any protected C's present or not. We are then going to
-print out the methylation calls into a final result file.
+sequence from the genome and determine if there were any protected C's present or not.
 
-The final output of Bismark is in SAM format by default. For Bowtie 1 one can alos choose to report the old 
+As of version 0.7.0 Bismark will only run 2 alignment threads for OT and OB in parallel, the 4 strand mode can be
+re-enabled by using --non_directional.
+
+The final output of Bismark is in SAM format by default. For Bowtie 1 one can alos choose to report the old
 'vanilla' output format, which is a single tab delimited file with all sequences that have a unique best
 alignment to any of the 4 possible strands of a bisulfite PCR product. Both formats are described in more detail below.
 
@@ -6093,10 +6149,12 @@ Output:
 
 --non_directional        The sequencing library was constructed in a non strand-specific manner, alignments to all four
                          bisulfite strands will be reported. Default: OFF.
+
                          (The current Illumina protocol for BS-Seq is directional, in which case the strands complementary
-                         to the original strands are merely theoretical and should not exist in reality. Reporting
-                         directional alignments (which is the default) will only report alignments to the original top (OT)
-                         or bottom (OB) strands. This is the recommended option for sprand-specific libraries.)
+                         to the original strands are merely theoretical and should not exist in reality. Specifying directional
+                         alignments (which is the default) will only run 2 alignment threads to the original top (OT)
+                         or bottom (OB) strands in parallel and report these alignments. This is the recommended option
+                         for sprand-specific libraries).
 
 --sam-no-hd              Suppress SAM header lines (starting with @). This might be useful when very large input files are
                          split up into several smaller files to run concurrently and the output files are to be merged.
@@ -6201,9 +6259,9 @@ Bowtie 2 Scoring options:
 
 --score_min <func>       Sets a function governing the minimum alignment score needed for an alignment to be considered
                          "valid" (i.e. good enough to report). This is a function of read length. For instance, specifying
-                         L,0,-0.6 sets the minimum-score function f to f(x) = 0 + -0.6 * x, where x is the read length.
+                         L,0,-0.2 sets the minimum-score function f to f(x) = 0 + -0.2 * x, where x is the read length.
                          See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2. The default is
-                         L,0,-0.6.
+                         L,0,-0.2.
 
 
 Bowtie 2 Reporting options:
@@ -6276,7 +6334,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 06 Feb 2012.
+This script was last edited on 24 Feb 2012.
 
 HOW_TO
 }

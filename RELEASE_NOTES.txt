@@ -1,3 +1,30 @@
+RELEASE NOTES FOR Bismark v0.7.0 (24 Feb 2012)
+----------------------------------------------
+
+Bismark
+
+As a result of several requests we changed Bismark's behavior for "--directional" mode
+(which is on by default) to run only 2 parallel instances of Bowtie 1/2 to the original top
+(OT) and bottom (OB) strands, instead of 4 to all possible bisulfite strands. This change
+might result in faster alignment times (because reads from directional libraries don't
+typically align very well to the complementary strands) and possibly a somewhat increased
+mapping efficiency for directional libraries (because less reads get booted due to ambiguous
+mapping to the theoretical complementary strands).
+
+It is still possible to run the 4-alignment strand mode for any combination of input file(s)
+and choice of aligner by specifying --non_directional. If one wants to get an idea of the
+number of mismapping events one could run Bismark in --non_directional mode, look at the
+number of alignments to the CTOT or CTOB strands and then ignore the output to these 
+complementary strands via the methylation extractor.
+
+
+Changed the --score_min default function for Bowtie 2 alignments to a more stringent setting of
+"L,0,-0.2" instead of using the Bowtie2 default function (which was "L,0,-0.6"). Thanks to E.
+Harris for this suggestion.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.6.4 (06 Feb 2012)
 ----------------------------------------------
 
