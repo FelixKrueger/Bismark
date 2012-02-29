@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.0';
+my $bismark_version = 'v0.7.1';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -642,6 +642,8 @@ sub process_single_end_fastA_file_for_methylation_call{
     my $sequence = <IN>;
     last unless ($identifier and $sequence);
 
+    $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
+
     ++$count;
 
     if ($skip){
@@ -712,6 +714,8 @@ sub process_single_end_fastQ_file_for_methylation_call{
     my $identifier_2 = <IN>;
     my $quality_value = <IN>;
     last unless ($identifier and $sequence and $identifier_2 and $quality_value);
+
+    $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
 
     ++$count;
 
@@ -796,6 +800,9 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     my $identifier_2 = <IN2>;
     my $sequence_2 = <IN2>;
     last unless ($identifier_1 and $sequence_1 and $identifier_2 and $sequence_2);
+
+    $identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
+    $identifier_2 = fix_IDs($identifier_2);
 
     ++$count;
 
@@ -888,6 +895,9 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     my $ident_2 = <IN2>;         # not needed
     my $quality_value_2 = <IN2>; # not needed
     last unless ($identifier_1 and $sequence_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $quality_value_2);
+
+    $identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
+    $identifier_2 = fix_IDs($identifier_2);
 
     ++$count;
 
@@ -3788,6 +3798,8 @@ sub biTransformFastAFiles {
     my $sequence= <IN>;
     last unless ($header and $sequence);
 
+    $header = fix_IDs($header); # this is to avoid problems with truncated read ID when they contain white spaces
+
     ++$count;
 
     if ($skip){
@@ -3876,6 +3888,8 @@ sub biTransformFastAFiles_paired_end {
     my $header = <IN>;
     my $sequence= <IN>;
     last unless ($header and $sequence);
+
+    $header = fix_IDs($header); # this is to avoid problems with truncated read ID when they contain white spaces
 
     ++$count;
 
@@ -4000,6 +4014,9 @@ sub biTransformFastQFiles {
     my $identifier2 = <IN>;
     my $quality_score = <IN>;
     last unless ($identifier and $sequence and $identifier2 and $quality_score);
+
+    $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
+
     ++$count;
 
     if ($skip){
@@ -4096,6 +4113,8 @@ sub biTransformFastQFiles_paired_end {
     last unless ($identifier and $sequence and $identifier2 and $quality_score);
     ++$count;
 
+    $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
+
     if ($skip){
       next unless ($count > $skip);
     }
@@ -4177,6 +4196,11 @@ sub biTransformFastQFiles_paired_end {
   }
 }
 
+sub fix_IDs{
+  my $id = shift;
+  $id =~ s/[ \t]+/_/g; # replace spaces or tabs with underscores
+  return $id;
+}
 
 sub ensure_sensical_alignment_orientation_single_end{
   my $index = shift; # index number if the sequence produced an alignment
@@ -4414,7 +4438,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
 	$fh->{last_seq_id} = $id_2;
       }
       else{
-	die "Either the first or the second id need to be read 1!\n";
+	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
       }
 
       $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
@@ -4504,7 +4528,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
 	$fh->{last_seq_id} = $id_2;
       }
       else{
-	warn "Either the first or the second id need to be read 1!\n";
+	warn "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
       }
 
       $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
@@ -4583,7 +4607,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 	$fh->{last_seq_id} = $id_2;
       }
       else{
-	die "Either the first or the second id need to be read 1!\n";
+	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
       }
 
       $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
@@ -4674,7 +4698,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 	$fh->{last_seq_id} = $id_2;
       }
       else{
-	die "Either the first or the second id need to be read 1!\n";
+	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
       }
 
       $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
@@ -6334,7 +6358,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 24 Feb 2012.
+This script was last edited on 28 Feb 2012.
 
 HOW_TO
 }
