@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.1';
+my $bismark_version = 'v0.7.3';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -233,7 +233,7 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file\n";
+  print REPORT "Bismark report for: $sequence_file (version: $bismark_version)\n";
 
    if ($unmapped){
     my $unmapped_file = $sequence_file;
@@ -306,7 +306,7 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2\n";
+  print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2 (version: $bismark_version)\n";
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
 
 
@@ -687,8 +687,9 @@ sub process_single_end_fastA_file_for_methylation_call{
     }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
-  close IN or die "Failed to close filehandle $!";
+
   print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile);
+
 }
 
 sub process_single_end_fastQ_file_for_methylation_call{
@@ -766,8 +767,9 @@ sub process_single_end_fastQ_file_for_methylation_call{
     }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
-  close IN or die "Failed to close filehandle $!";
+
   print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile);
+
 }
 
 sub process_fastA_files_for_paired_end_methylation_calls{
@@ -857,9 +859,9 @@ sub process_fastA_files_for_paired_end_methylation_calls{
   }
 
   print "Processed $counting{sequences_count} sequences in total\n\n";
-  close IN1 or die "Failed to close filehandle $!";
-  close IN2 or die "Failed to close filehandle $!";
+
   print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+
 }
 
 sub process_fastQ_files_for_paired_end_methylation_calls{
@@ -967,9 +969,9 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
   }
 
   print "Processed $counting{sequences_count} sequences in total\n\n";
-  close IN1 or die "Failed to close filehandle $!";
-  close IN2 or die "Failed to close filehandle $!";
+
   print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+
 }
 
 sub check_bowtie_results_single_end{
@@ -1842,6 +1844,8 @@ sub check_bowtie_results_paired_ends{
 	  $mismatches{$sum_of_mismatches}->{$alignment_location}->{chromosome}=$chromosome_1; # either is fine
 	  $mismatches{$sum_of_mismatches}->{$alignment_location}->{start_seq_1}=$position_1;
 	  $mismatches{$sum_of_mismatches}->{$alignment_location}->{start_seq_2}=$position_2;
+	  $mismatches{$sum_of_mismatches}->{$alignment_location}->{number_of_mismatches_1} = $number_of_mismatches_1;
+	  $mismatches{$sum_of_mismatches}->{$alignment_location}->{number_of_mismatches_2} = $number_of_mismatches_2;
 	}
 	###################################################################################################################################################
 	### STEP II Now reading in the next 2 lines from the bowtie filehandle. If there are 2 next lines in the alignments filehandle it can either    ###
@@ -1941,6 +1945,8 @@ sub check_bowtie_results_paired_ends{
 	    $mismatches{$sum_of_mismatches}->{$alignment_location}->{chromosome}=$chromosome_1; # either is fine
 	    $mismatches{$sum_of_mismatches}->{$alignment_location}->{start_seq_1}=$position_1;
 	    $mismatches{$sum_of_mismatches}->{$alignment_location}->{start_seq_2}=$position_2;
+	    $mismatches{$sum_of_mismatches}->{$alignment_location}->{number_of_mismatches_1} = $number_of_mismatches_1;
+	    $mismatches{$sum_of_mismatches}->{$alignment_location}->{number_of_mismatches_2} = $number_of_mismatches_2;
 	  }
 	  ###############################################################################################################################################
 	  ### STEP III Now reading in two more lines. These have to be the next entry and we will just add assign them to last_line_1 and last_line_2 ###
@@ -2005,6 +2011,8 @@ sub check_bowtie_results_paired_ends{
 	$methylation_call_params->{$identifier}->{start_seq_2} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{start_seq_2};
 	$methylation_call_params->{$identifier}->{alignment_end} = ($mismatches{$mismatch_number}->{$unique_best_alignment}->{start_seq_2}+length($mismatches{$mismatch_number}->{$unique_best_alignment}->{bowtie_sequence_2}));
 	$methylation_call_params->{$identifier}->{index} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{index};
+     	$methylation_call_params->{$identifier}->{number_of_mismatches_1} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{number_of_mismatches_1};
+	$methylation_call_params->{$identifier}->{number_of_mismatches_2} = $mismatches{$mismatch_number}->{$unique_best_alignment}->{number_of_mismatches_2};
       }
     }
     else{
@@ -2222,8 +2230,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	}
       }
 
-      die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
-      die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
+      die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
+      die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
 
       # warn "First read 1 alignment score is: '$alignment_score_1'\n";
       # warn "First read 2 alignment score is: '$alignment_score_2'\n";
@@ -4093,7 +4101,7 @@ sub biTransformFastQFiles_paired_end {
       open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
     }
     else{
-      die "Read number needs to be 1 or 23, but was $read_number!\n\n";
+      die "Read number needs to be 1 or 2, but was $read_number!\n\n";
     }
   }
   else{
@@ -4123,11 +4131,6 @@ sub biTransformFastQFiles_paired_end {
     }
 
     $sequence= uc$sequence; # make input file case insensitive
-
-    # detecting if the input file contains tab stops, as this is likely to result in no alignments
-    if (index($identifier,"\t") != -1){
-      $seqID_contains_tabs++;
-    }
 
     ## small check if the sequence file appears to be a FastQ file
     if ($identifier !~ /^\@/ or $identifier2 !~ /^\+/){
@@ -5130,7 +5133,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
    Bismark Version: $bismark_version Copyright 2010-12 Felix Krueger, Babraham Bioinformatics
-              www.bioinformatics.bbsrc.ac.uk/projects/
+              www.bioinformatics.babraham.ac.uk/projects/
 
 
 VERSION
@@ -5748,6 +5751,8 @@ sub paired_end_SAM_output{
   my $read_conversion_1       = $methylation_call_params->{$id}->{read_conversion_1};
   my $read_conversion_2       = $methylation_call_params->{$id}->{read_conversion_2};
   my $genome_conversion       = $methylation_call_params->{$id}->{genome_conversion};
+  my $number_of_mismatches_1  = $methylation_call_params->{$id}->{number_of_mismatches_1}; # only needed for custom allele-specific output, not the default!
+  my $number_of_mismatches_2  = $methylation_call_params->{$id}->{number_of_mismatches_2};
 
   my $id_1 = $id.'/1';
   my $id_2 = $id.'/2';
@@ -5819,12 +5824,12 @@ sub paired_end_SAM_output{
   }
   else{ # Bowtie 1 output. $strand_1 stores the alignment of Read 1
     if ($strand_1 eq '+'){ # Read 1 aligns to the + strand
-      $end_read_1 = $methylation_call_params->{$id}->{start_seq_1} + length ($actual_seq_1);
+      $end_read_1 = $methylation_call_params->{$id}->{start_seq_1} + length ($actual_seq_1)-1;
       $end_read_2 = $methylation_call_params->{$id}->{alignment_end};
       }
     else{
       $end_read_1 = $methylation_call_params->{$id}->{alignment_end};
-      $end_read_2 = $methylation_call_params->{$id}->{start_seq_1} + length ($actual_seq_2);
+      $end_read_2 = $methylation_call_params->{$id}->{start_seq_1} + length ($actual_seq_2)-1;
     }
   }
 
@@ -5867,7 +5872,7 @@ sub paired_end_SAM_output{
   }
   elsif ($index == 3){    # OB
     $flag_1 = 115;                                                     # Read 1 is on the - strand, we score for OB  (1+2+16+32+64)
-    $flag_2 = 179;                                                     # Read 2 is on the - strand  (1+2+16+32+128)
+    $flag_2 = 179;                                                     # Read 2 is on the + strand  (1+2+16+32+128)
   }
 
   #####
@@ -5901,13 +5906,107 @@ sub paired_end_SAM_output{
 
   my $tlen_1;                                                          # signed observed Template LENgth (or inferred fragment size)
   my $tlen_2;
-  if ($end_read_2 >= $end_read_1){
-    $tlen_1 = $end_read_2 - $start_read_1 + 1;                         # Leftmost read has a + sign,
-    $tlen_2 = $start_read_1 - $end_read_2 - 1;                         # Rightmost read has a - sign
+
+  if ($bowtie2){
+
+    if ($start_read_1 <= $start_read_2){
+
+      # Read 1 alignment is leftmost
+
+      if ($end_read_2 >= $end_read_1){
+	
+	# ------------------------->     read 1   reads overlapping
+	#  <-------------------------    read 2
+	#
+	# or
+	#
+	# ------------------------->     read 1
+	#   <-----------------------     read 2   read 2 contained within read 1
+	#
+	# or
+	#
+	# ------------------------->     read 1   reads 1 and 2 exactly overlapping
+	# <-------------------------     read 2
+	#
+
+	# dovetailing of reads is not enabled for Bowtie 2 alignments
+
+	$tlen_1 = $end_read_2 - $start_read_1 + 1;                         # Leftmost read has a + sign,
+	$tlen_2 = $start_read_1 - $end_read_2 - 1;                         # Rightmost read has a - sign
+      }
+      elsif ($end_read_2 < $end_read_1){
+
+	# ------------------------->     read 1
+	#       <-----------             read 2   read 2 contained within read 1
+	#
+	# or
+	#
+	# ------------------------->     read 1
+	# <-----------                   read 2   read 2 contained within read 1
+
+	# start and end of read 2  are fully contained within read 1
+	$tlen_1 = 0;                                                       # Set as 0 when the information is unavailable
+	$tlen_2 = 0;                                                       # Set as 0 when the information is unavailable
+      }
+
+    }
+
+    elsif ($start_read_2 < $start_read_1){
+
+      if ($end_read_1 >= $end_read_2){
+
+      # Read 2 alignment is leftmost
+
+	# ------------------------->     read 2   reads overlapping
+	#  <-------------------------    read 1
+	#
+	# or
+	#
+	# ------------------------->     read 2
+	#   <-----------------------     read 1   read 1 contained within read 2
+	#
+	#
+
+	$tlen_2 = $end_read_1 - $start_read_2 + 1;                         # Leftmost read has a + sign,
+	$tlen_1 = $start_read_2 - $end_read_1 - 1;                         # Rightmost read has a - sign
+      }
+      elsif ($end_read_1 < $end_read_2){
+
+	# ------------------------->     read 2
+	#       <-----------             read 1   read 1 contained within read 2
+	#
+	# or
+	#
+	# ------------------------->     read 2
+	# <-----------                   read 1   read 1 contained within read 2
+	
+	# start and end of read 1  are fully contained within read 2
+	$tlen_1 = 0;                                                       # Set as 0 when the information is unavailable
+	$tlen_2 = 0;                                                       # Set as 0 when the information is unavailable
+      }
+    }
   }
-  else{
-    $tlen_2 = $end_read_1 - $start_read_2 + 1;                         # Leftmost read has a + sign,
-    $tlen_1 = $start_read_2 - $end_read_1 - 1;                         # Rightmost read has a - sign
+
+  else{ # Bowtie 1
+
+    if ($end_read_2 >= $end_read_1){
+      # Read 1 alignment is leftmost
+      # ------------------------->  read 1
+      #  <------------------------- read 2
+      # this is the most extreme case for Bowtie 1 alignments, reads do not contain each other, also no dovetailing
+
+      $tlen_1 = $end_read_2 - $start_read_1 + 1;                         # Leftmost read has a + sign,
+      $tlen_2 = $start_read_1 - $end_read_2 - 1;                         # Rightmost read has a - sign
+    }
+    else{
+      # Read 2 alignment is leftmost
+      # ------------------------->  read 2
+      #  <------------------------- read 1
+      # this is the most extreme case for Bowtie 1 alignments, reads do not contain each other, also no dovetailing
+
+      $tlen_2 = $end_read_1 - $start_read_2 + 1;                         # Leftmost read has a + sign,
+      $tlen_1 = $start_read_2 - $end_read_1 - 1;                         # Rightmost read has a - sign
+    }
   }
 
   #####
@@ -6358,7 +6457,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 28 Feb 2012.
+This script was last edited on 04 April 2012.
 
 HOW_TO
 }

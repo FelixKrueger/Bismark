@@ -11,7 +11,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.1';
+my $version = 'v0.7.3';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla) = process_commandline();
 
 process_Bismark_results_file();
@@ -60,7 +60,7 @@ sub process_commandline{
                            Bismark Methylation Extractor
 
    Bismark Extractor Version: $version Copyright 2010-12 Felix Krueger, Babraham Bioinformatics
-                      www.bioinformatics.bbsrc.ac.uk/projects/
+                    www.bioinformatics.babraham.ac.uk/projects/
 
 
 VERSION
@@ -250,12 +250,14 @@ sub process_Bismark_results_file{
       my $cpg_output = my $other_c_output = $output_filename;
       ### C in CpG context
       $cpg_output =~ s/^/CpG_context_/;
+      $cpg_output =~ s/$/.txt/ unless ($cpg_output =~ /\.txt$/);
       open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
       print "Writing result file containing methylation information for C in CpG context to $cpg_output\n";
       print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n";
 
       ### C in any other context than CpG
       $other_c_output =~ s/^/Non_CpG_context_/;
+      $other_c_output =~ s/$/.txt/ unless ($other_c_output =~ /\.txt$/);
       open ($fhs{other_context},'>',$other_c_output) or die "Failed to write to $other_c_output $!\n";
       print "Writing result file containing methylation information for C in any other context to $other_c_output\n";
       print {$fhs{other_context}} "Bismark methylation extractor version $version\n";
@@ -268,21 +270,25 @@ sub process_Bismark_results_file{
 
       ### For cytosines in CpG context
       $cpg_ot =~ s/^/CpG_OT_/;
+      $cpg_ot =~ s/$/.txt/ unless ($cpg_ot =~ /\.txt$/);
       open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n";
       print "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n";
       print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctot =~ s/^/CpG_CTOT_/;
+      $cpg_ctot =~ s/$/.txt/ unless ($cpg_ctot =~ /\.txt$/);
       open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n";
       print "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n";
       print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctob =~ s/^/CpG_CTOB_/;
+      $cpg_ctob =~ s/$/.txt/ unless ($cpg_ctob =~ /\.txt$/);
       open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n";
       print "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n";
       print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       $cpg_ob =~ s/^/CpG_OB_/;
+      $cpg_ob =~ s/$/.txt/ unless ($cpg_ob =~ /\.txt$/);
       open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n";
       print "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n";
       print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
@@ -291,21 +297,25 @@ sub process_Bismark_results_file{
       my $other_c_ot = my $other_c_ctot = my $other_c_ctob = my $other_c_ob = $output_filename;
 
       $other_c_ot =~ s/^/Non_CpG_OT_/;
+      $other_c_ot =~ s/$/.txt/ unless ($other_c_ot =~ /\.txt$/);
       open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n";
       print "Writing result file containing methylation information for C in any other context from the original top strand to $other_c_ot\n";
       print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ctot =~ s/^/Non_CpG_CTOT_/;
+      $other_c_ctot =~ s/$/.txt/ unless ($other_c_ctot =~ /\.txt$/);
       open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n";
       print "Writing result file containing methylation information for C in any other context from the complementary to original top strand to $other_c_ctot\n";
       print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ctob =~ s/^/Non_CpG_CTOB_/;
+      $other_c_ctob =~ s/$/.txt/ unless ($other_c_ctob =~ /\.txt$/);
       open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n";
       print "Writing result file containing methylation information for C in any other context from the complementary to original bottom strand to $other_c_ctob\n";
       print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n";
 
       $other_c_ob =~ s/^/Non_CpG_OB_/;
+      $other_c_ob =~ s/$/.txt/ unless ($other_c_ob =~ /\.txt$/);
       open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n";
       print "Writing result file containing methylation information for C in any other context from the original bottom strand to $other_c_ob\n\n";
       print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n";
@@ -318,18 +328,21 @@ sub process_Bismark_results_file{
       my $cpg_output = my $chg_output =  my $chh_output = $output_filename;
       ### C in CpG context
       $cpg_output =~ s/^/CpG_context_/;
+      $cpg_output =~ s/$/.txt/ unless ($cpg_output =~ /\.txt$/);
       open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
       print "Writing result file containing methylation information for C in CpG context to $cpg_output\n";
       print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n";
 
       ### C in CHG context
       $chg_output =~ s/^/CHG_context_/;
+      $chg_output =~ s/$/.txt/ unless ($chg_output =~ /\.txt$/);
       open ($fhs{CHG_context},'>',$chg_output) or die "Failed to write to $chg_output $!\n";
       print "Writing result file containing methylation information for C in CHG context to $chg_output\n";
       print {$fhs{CHG_context}} "Bismark methylation extractor version $version\n";
 
       ### C in CHH context
       $chh_output =~ s/^/CHH_context_/;
+      $chh_output =~ s/$/.txt/ unless ($chh_output =~ /\.txt$/);
       open ($fhs{CHH_context},'>',$chh_output) or die "Failed to write to $chh_output $!\n";
       print "Writing result file containing methylation information for C in CHH context to $chh_output\n";
       print {$fhs{CHH_context}} "Bismark methylation extractor version $version\n";   }
@@ -340,21 +353,25 @@ sub process_Bismark_results_file{
 
       ### For cytosines in CpG context
       $cpg_ot =~ s/^/CpG_OT_/;
+      $cpg_ot =~ s/$/.txt/ unless ($cpg_ot =~ /\.txt$/);
       open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n";
       print "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n";
       print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctot =~ s/^/CpG_CTOT_/;
+      $cpg_ctot =~ s/$/.txt/ unless ($cpg_ctot =~ /\.txt$/);
       open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n";
       print "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n";
       print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n";
 
       $cpg_ctob =~ s/^/CpG_CTOB_/;
+      $cpg_ctob =~ s/$/.txt/ unless ($cpg_ctob =~ /\.txt$/);
       open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n";
       print "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n";
       print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n";
 
       $cpg_ob =~ s/^/CpG_OB_/;
+      $cpg_ob =~ s/$/.txt/ unless ($cpg_ob =~ /\.txt$/);
       open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n";
       print "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n";
       print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
@@ -363,21 +380,25 @@ sub process_Bismark_results_file{
       my $chg_ot = my $chg_ctot = my $chg_ctob = my $chg_ob = $output_filename;
 
       $chg_ot =~ s/^/CHG_OT_/;
+      $chg_ot =~ s/$/.txt/ unless ($chg_ot =~ /\.txt$/);
       open ($fhs{0}->{CHG},'>',$chg_ot) or die "Failed to write to $chg_ot $!\n";
       print "Writing result file containing methylation information for C in CHG context from the original top strand to $chg_ot\n";
       print {$fhs{0}->{CHG}} "Bismark methylation extractor version $version\n";
 
       $chg_ctot =~ s/^/CHG_CTOT_/;
+      $chg_ctot =~ s/$/.txt/ unless ($chg_ctot =~ /\.txt$/);
       open ($fhs{1}->{CHG},'>',$chg_ctot) or die "Failed to write to $chg_ctot $!\n";
       print "Writing result file containing methylation information for C in CHG context from the complementary to original top strand to $chg_ctot\n";
       print {$fhs{1}->{CHG}} "Bismark methylation extractor version $version\n";
 
       $chg_ctob =~ s/^/CHG_CTOB_/;
+      $chg_ctob =~ s/$/.txt/ unless ($chg_ctob =~ /\.txt$/);
       open ($fhs{2}->{CHG},'>',$chg_ctob) or die "Failed to write to $chg_ctob $!\n";
       print "Writing result file containing methylation information for C in CHG context from the complementary to original bottom strand to $chg_ctob\n";
       print {$fhs{2}->{CHG}} "Bismark methylation extractor version $version\n";
 
       $chg_ob =~ s/^/CHG_OB_/;
+      $chg_ob =~ s/$/.txt/ unless ($chg_ob =~ /\.txt$/);
       open ($fhs{3}->{CHG},'>',$chg_ob) or die "Failed to write to $chg_ob $!\n";
       print "Writing result file containing methylation information for C in CHG context from the original bottom strand to $chg_ob\n\n";
       print {$fhs{3}->{CHG}} "Bismark methylation extractor version $version\n";
@@ -386,21 +407,25 @@ sub process_Bismark_results_file{
       my $chh_ot = my $chh_ctot = my $chh_ctob = my $chh_ob = $output_filename;
 
       $chh_ot =~ s/^/CHH_OT_/;
+      $chh_ot =~ s/$/.txt/ unless ($chh_ot =~ /\.txt$/);
       open ($fhs{0}->{CHH},'>',$chh_ot) or die "Failed to write to $chh_ot $!\n";
       print "Writing result file containing methylation information for C in CHH context from the original top strand to $chh_ot\n";
       print {$fhs{0}->{CHH}} "Bismark methylation extractor version $version\n";
 
       $chh_ctot =~ s/^/CHH_CTOT_/;
+      $chh_ctot =~ s/$/.txt/ unless ($chh_ctot =~ /\.txt$/);
       open ($fhs{1}->{CHH},'>',$chh_ctot) or die "Failed to write to $chh_ctot $!\n";
       print "Writing result file containing methylation information for C in CHH context from the complementary to original top strand to $chh_ctot\n";
       print {$fhs{1}->{CHH}} "Bismark methylation extractor version $version\n";
 
       $chh_ctob =~ s/^/CHH_CTOB_/;
+      $chh_ctob =~ s/$/.txt/ unless ($chh_ctob =~ /\.txt$/);
       open ($fhs{2}->{CHH},'>',$chh_ctob) or die "Failed to write to $chh_ctob $!\n";
       print "Writing result file containing methylation information for C in CHH context from the complementary to original bottom strand to $chh_ctob\n";
       print {$fhs{2}->{CHH}} "Bismark methylation extractor version $version\n";
 
       $chh_ob =~ s/^/CHH_OB_/;
+      $chh_ob =~ s/$/.txt/ unless ($chh_ob =~ /\.txt$/);
       open ($fhs{3}->{CHH},'>',$chh_ob) or die "Failed to write to $chh_ob $!\n";
       print "Writing result file containing methylation information for C in CHH context from the original bottom strand to $chh_ob\n\n";
       print {$fhs{3}->{CHH}} "Bismark methylation extractor version $version\n";
@@ -603,11 +628,14 @@ sub process_Bismark_results_file{
 	      $start_read_1 += $ignore;
 	      $end_read_2   -= $ignore;
 	    }
-	
-	    my $end_read_1 = $start_read_1+length($meth_call_1)-1;
-	    my $start_read_2 = $end_read_2-length($meth_call_2)+1;
-	
+	    my $end_read_1;
+	    my $start_read_2;
+
 	    if ($strand eq '+'){
+
+	      $end_read_1 = $start_read_1+length($meth_call_1)-1;
+	      $start_read_2 = $end_read_2-length($meth_call_2)+1;
+		
 	      ## we first pass the first read which is in + orientation on the forward strand
 	      print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id,'+',$index,0,0);
 	
@@ -617,6 +645,10 @@ sub process_Bismark_results_file{
 	    }
 	
 	    else{
+	
+	      $end_read_1 = $start_read_1+length($meth_call_2)-1; # read 1 is the second reported read!
+	      $start_read_2 = $end_read_2-length($meth_call_1)+1; # read 2 is the first reported read!
+
 	      ## we first pass the first read which is in - orientation on the reverse strand
 	      print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$end_read_2,$id,'-',$index,0,0);
 
@@ -1185,7 +1217,6 @@ sub print_individual_C_methylation_states_paired_end_files{
   ############################################
 
   elsif ($no_overlap) {
-
     ### single-file CpG, CHG and CHH context output
     if ($full) {
       if ($strand eq '+') {
@@ -1892,7 +1923,7 @@ The output is in the form:
 * Unmethylated cytosines receive a '-' orientation.
 
 
-This script was last modified on 04 January 2012.
+This script was last modified on 05 April 2012.
 
 HOW_TO
 }
