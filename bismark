@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -204,9 +204,10 @@ foreach my $filename (@filenames){
 
 sub start_methylation_call_procedure_single_ends {
   my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+  my ($dir,$filename) = $sequence_file =~ m/(.*\/)(.*)$/;
 
   ### printing all alignments to a results file
-  my $outfile = $sequence_file;
+  my $outfile = $filename;
 
   if ($bowtie2){ # SAM format is the default for Bowtie 2
     $outfile =~ s/$/_bt2_bismark.sam/;
@@ -217,14 +218,14 @@ sub start_methylation_call_procedure_single_ends {
   else{ # SAM is the default output
     $outfile =~ s/$/_bismark.sam/;
   }
-  print "Writing bisulfite mapping results to $outfile\n\n";
+  print "Writing bisulfite mapping results to $output_dir$outfile\n\n";
   open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   if ($vanilla){
     print OUT "Bismark version: $bismark_version\n";
   }
 
   ### printing alignment and methylation call summary to a report file
-  my $reportfile = $sequence_file;
+  my $reportfile = $filename;
   if ($bowtie2){
     $reportfile =~ s/$/_bt2_Bismark_mapping_report.txt/;
   }
@@ -235,17 +236,17 @@ sub start_methylation_call_procedure_single_ends {
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file (version: $bismark_version)\n";
 
-   if ($unmapped){
-    my $unmapped_file = $sequence_file;
+  if ($unmapped){
+    my $unmapped_file = $filename;
     $unmapped_file =~ s/$/_unmapped_reads.txt/;
     open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
-    print "Unmapped sequences will be written to $unmapped_file\n";
+    print "Unmapped sequences will be written to $output_dir$unmapped_file\n";
   }
   if ($ambiguous){
-    my $ambiguous_file = $sequence_file;
+    my $ambiguous_file = $filename;
     $ambiguous_file =~ s/$/_ambiguous_reads.txt/;
     open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
-    print "Ambiguously mapping sequences will be written to $ambiguous_file\n";
+    print "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
   }
 
   if ($directional){
@@ -278,8 +279,11 @@ sub start_methylation_call_procedure_single_ends {
 sub start_methylation_call_procedure_paired_ends {
   my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
 
+  my ($dir_1,$filename_1) = $sequence_file_1 =~ m/(.*\/)(.*)$/;
+  my ($dir_2,$filename_2) = $sequence_file_2 =~ m/(.*\/)(.*)$/;
+
   ### printing all alignments to a results file
-  my $outfile = $sequence_file_1;
+  my $outfile = $filename_1;
   if ($bowtie2){ # SAM format is the default Bowtie 2 output
     $outfile =~ s/$/_bismark_bt2_pe.sam/;
   }
@@ -297,7 +301,7 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
   ### printing alignment and methylation call summary to a report file
-  my $reportfile = $sequence_file_1;
+  my $reportfile = $filename_1;
   if ($bowtie2){
     $reportfile =~ s/$/_Bismark_bt2_paired-end_mapping_report.txt/;
   }
@@ -312,8 +316,8 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### Unmapped read output
   if ($unmapped){
-    my $unmapped_1 = $sequence_file_1;
-    my $unmapped_2 = $sequence_file_2;
+    my $unmapped_1 = $filename_1;
+    my $unmapped_2 = $filename_2;
     $unmapped_1 =~ s/$/_unmapped_reads_1.txt/;
     $unmapped_2 =~ s/$/_unmapped_reads_2.txt/;
     open (UNMAPPED_1,'>',"$output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
@@ -322,8 +326,8 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
   if ($ambiguous){
-    my $amb_1 = $sequence_file_1;
-    my $amb_2 = $sequence_file_2;
+    my $amb_1 = $filename_1;
+    my $amb_2 = $filename_2;
     $amb_1 =~ s/$/_ambiguous_reads_1.txt/;
     $amb_2 =~ s/$/_ambiguous_reads_2.txt/;
     open (AMBIG_1,'>',"$output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
@@ -362,9 +366,9 @@ sub print_final_analysis_report_single_end{
   ### deleting temporary C->T or G->A infiles
 
   if ($directional){
-    my $deletion_successful =  unlink $C_to_T_infile;
+    my $deletion_successful =  unlink "$temp_dir$C_to_T_infile";
     if ($deletion_successful == 1){
-      warn "\nSuccessfully deleted the temporary file $C_to_T_infile\n\n";
+      warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile\n\n";
     }
     else{
       warn "Could not delete temporary file $C_to_T_infile properly $!\n";
@@ -372,9 +376,9 @@ sub print_final_analysis_report_single_end{
   }
 
   else{
-    my $deletion_successful =  unlink $C_to_T_infile,$G_to_A_infile;
+    my $deletion_successful =  unlink "$temp_dir$C_to_T_infile","$temp_dir$G_to_A_infile";
     if ($deletion_successful == 2){
-      warn "\nSuccessfully deleted the temporary files $C_to_T_infile and $G_to_A_infile\n\n";
+      warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile and $temp_dir$G_to_A_infile\n\n";
     }
     else{
       warn "Could not delete temporary files properly $!\n";
@@ -498,18 +502,18 @@ sub print_final_analysis_report_paired_ends{
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
   ### All sequences from the original sequence file have been analysed now, therefore deleting temporary C->T or G->A infiles
   if ($directional){
-    my $deletion_successful =  unlink $C_to_T_infile_1,$G_to_A_infile_2;
+    my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_2";
     if ($deletion_successful == 2){
-      warn "\nSuccessfully deleted the temporary files $C_to_T_infile_1 and $G_to_A_infile_2\n\n";
+      warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_2\n\n";
     }
     else{
-      warn "Could not delete temporary files $C_to_T_infile_1 and $G_to_A_infile_2 properly: $!\n";
+      warn "Could not delete temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_2 properly: $!\n";
     }
   }
   else{
-    my $deletion_successful =  unlink $C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2;
+    my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_1","$temp_dir$C_to_T_infile_2","$temp_dir$G_to_A_infile_2";
     if ($deletion_successful == 4){
-      warn "\nSuccessfully deleted the temporary files $C_to_T_infile_1, $G_to_A_infile_1, $C_to_T_infile_2 and $G_to_A_infile_2\n\n";
+      warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1, $temp_dir$G_to_A_infile_1, $temp_dir$C_to_T_infile_2 and $temp_dir$G_to_A_infile_2\n\n";
     }
     else{
       warn "Could not delete temporary files properly: $!\n";
@@ -3770,34 +3774,35 @@ sub reverse_complement{
 }
 
 sub biTransformFastAFiles {
-  my $filename = shift;
+  my $file = shift;
+  my ($dir,$filename) = $file =~ m/(.*\/)(.*)$/;
 
   ### gzipped version of the infile
-  if ($filename =~ /\.gz$/){
-    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  if ($file =~ /\.gz$/){
+    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
-    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+    open (IN,$file) or die "Couldn't read from file $file: $!\n";
   }
 
   if ($skip){
-    warn "Skipping the first $skip reads from $filename\n";
+    warn "Skipping the first $skip reads from $file\n";
     sleep (1);
   }
   if ($upto){
-    warn "Processing reads up to sequence no. $upto from $filename\n";
+    warn "Processing reads up to sequence no. $upto from $file\n";
     sleep (1);
   }
 
   my $C_to_T_infile = my $G_to_A_infile = $filename;
   $C_to_T_infile =~ s/$/_C_to_T.fa/;
   $G_to_A_infile =~ s/$/_G_to_A.fa/;
-  print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-  open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
+  print "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+  open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
 
   unless ($directional){
-    print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-    open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+    print "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+    open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
   }
 
   my $count = 0;
@@ -3847,22 +3852,23 @@ sub biTransformFastAFiles {
 }
 
 sub biTransformFastAFiles_paired_end {
-  my ($filename,$read_number) = @_;
+  my ($file,$read_number) = @_;
+  my ($dir,$filename) = $file =~ m/(.*\/)(.*)$/;
 
   ### gzipped version of the infile
-  if ($filename =~ /\.gz$/){
-    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  if ($file =~ /\.gz$/){
+    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
-    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+    open (IN,$file) or die "Couldn't read from file $file: $!\n";
   }
 
   if ($skip){
-    warn "Skipping the first $skip reads from $filename\n";
+    warn "Skipping the first $skip reads from $file\n";
     sleep (1);
   }
   if ($upto){
-    warn "Processing reads up to sequence no. $upto from $filename\n";
+    warn "Processing reads up to sequence no. $upto from $file\n";
     sleep (1);
   }
 
@@ -3872,22 +3878,22 @@ sub biTransformFastAFiles_paired_end {
 
   if ($directional){
     if ($read_number == 1){
-      print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-      open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
+      print "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+      open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
     }
     elsif ($read_number == 2){
-      print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-      open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+      print "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+      open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
     }
     else{
       die "Read number needs to be 1 or 2, but was: $read_number\n\n";
     }
   }
   else{ # all four strand output
-    print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-    print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-    open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
-    open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+    print "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+    print "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+    open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
+    open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
   }
 
   my $count = 0;
@@ -3984,35 +3990,36 @@ sub biTransformFastAFiles_paired_end {
 
 
 sub biTransformFastQFiles {
-  my $filename = shift;
+  my $file = shift;
+  my ($dir,$filename) = $file =~ m/(.*\/)(.*)$/;
 
   ### gzipped version of the infile
-  if ($filename =~ /\.gz$/){
-    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  if ($file =~ /\.gz$/){
+    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
-    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+    open (IN,$file) or die "Couldn't read from file $file: $!\n";
   }
 
   if ($skip){
-    warn "Skipping the first $skip reads from $filename\n";
+    warn "Skipping the first $skip reads from $file\n";
     sleep (1);
   }
   if ($upto){
-    warn "Processing reads up to sequence no. $upto from $filename\n";
+    warn "Processing reads up to sequence no. $upto from $file\n";
     sleep (1);
   }
 
   my $C_to_T_infile = my $G_to_A_infile = $filename;
 
   $C_to_T_infile =~ s/$/_C_to_T.fastq/;
-  print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-  open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
+  print "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+  open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
 
   unless ($directional){
     $G_to_A_infile =~ s/$/_G_to_A.fastq/;
-    print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-    open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+    print "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+    open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
   }
 
   my $count = 0;
@@ -4068,22 +4075,23 @@ sub biTransformFastQFiles {
 }
 
 sub biTransformFastQFiles_paired_end {
-  my ($filename,$read_number) = @_;
+  my ($file,$read_number) = @_;
+  my ($dir,$filename) = $file =~ m/(.*\/)(.*)$/;
 
   ### gzipped version of the infile
-  if ($filename =~ /\.gz$/){
-    open (IN,"zcat $filename |") or die "Couldn't read from file $filename: $!\n";
+  if ($file =~ /\.gz$/){
+    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
-    open (IN,$filename) or die "Couldn't read from file $filename: $!\n";
+    open (IN,$file) or die "Couldn't read from file $file: $!\n";
   }
 
   if ($skip){
-    warn "Skipping the first $skip reads from $filename\n";
+    warn "Skipping the first $skip reads from $file\n";
     sleep (1);
   }
   if ($upto){
-    warn "Processing reads up to sequence no. $upto from $filename\n";
+    warn "Processing reads up to sequence no. $upto from $file\n";
     sleep (1);
   }
 
@@ -4093,22 +4101,22 @@ sub biTransformFastQFiles_paired_end {
 
   if ($directional){
     if ($read_number == 1){
-      print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-      open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
+      print "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+      open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
     }
     elsif ($read_number == 2){
-      print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-      open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+      print "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+      open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
     }
     else{
       die "Read number needs to be 1 or 2, but was $read_number!\n\n";
     }
   }
   else{
-    print "Writing a C -> T converted version of the input file $filename to $C_to_T_infile\n";
-    print "Writing a G -> A converted version of the input file $filename to $G_to_A_infile\n";
-    open (CTOT,'>',$C_to_T_infile) or die "Couldn't write to file $!\n";
-    open (GTOA,'>',$G_to_A_infile) or die "Couldn't write to file $!\n";
+    print "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+    print "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+    open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
+    open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
   }
 
   my $count = 0;
@@ -4418,8 +4426,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
       $bt_options .= ' --nofw';
     }
 
-    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2}, with the options: $bt_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     my $line_1 = $fh->{fh}->getline();
     my $line_2 = $fh->{fh}->getline();
@@ -4497,8 +4505,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
       $bt2_options .= ' --nofw';
     }
 
-    warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2}, with the options: $bt2_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -4587,8 +4595,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
       $bt_options .= ' --nofw';
     }
 
-    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2}, with the options: $bt_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt_options))\n";
+    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     my $line_1 = $fh->{fh}->getline();
     my $line_2 = $fh->{fh}->getline();
@@ -4667,8 +4675,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
       $bt2_options .= ' --nofw';
     }
 
-    warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $fh->{inputfile_1} and $fh->{inputfile_2}, with the options: $bt2_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -1 $fh->{inputfile_1} -2 $fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -4750,8 +4758,8 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
       $bt_options .= ' --nofw';
     }
 
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options: $bt_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
@@ -4800,8 +4808,8 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
       $bt2_options .= ' --nofw';
     }
 
-    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options: $bt2_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt2_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -4860,8 +4868,8 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
       $bt_options .= ' --nofw';
     }
 
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options: $bt_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt_options)\n";
+    open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
 
     # if Bowtie produces an alignment we store the first line of the output
     $_ = $fh->{fh}->getline();
@@ -4908,10 +4916,10 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     else {
       $bt2_options .= ' --nofw';
     }
-    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $fh->{inputfile} with options $bt2_options)\n";
+    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $bt2_options)\n";
     warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
 
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
       $_ = $fh->{fh}->getline();
@@ -5080,7 +5088,7 @@ sub process_command_line{
   my $most_valid_alignments;
   my $score_min;
   my $parallel;
-
+  my $temp_dir;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5114,6 +5122,7 @@ sub process_command_line{
 				 'score_min=s' => \$score_min,
 				 'most_valid_alignments=i' => \$most_valid_alignments,
 				 'p=i' => \$parallel,
+				 'temp_dir=s' => \$temp_dir,
 				);
 
 
@@ -5566,7 +5575,6 @@ VERSION
     }
 
     if (chdir $output_dir){
-      #  warn "directory exists already\n";
       $output_dir = getcwd; #  making the path absolute
       unless ($output_dir =~ /\/$/){
 	$output_dir =~ s/$/\//;
@@ -5587,7 +5595,38 @@ VERSION
     $output_dir = '';
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto);
+  ### TEMPORARY DIRECTORY for C->T and G->A transcribed files
+
+  chdir $parent_dir or die "Failed to move back to current working directory\n";
+  if ($temp_dir){
+    warn "\nUsing temp directory: $temp_dir\n";
+    unless ($temp_dir =~ /\/$/){
+      $temp_dir =~ s/$/\//;
+    }
+
+    if (chdir $temp_dir){
+      $temp_dir = getcwd; #  making the path absolute
+      unless ($temp_dir =~ /\/$/){
+	$temp_dir =~ s/$/\//;
+      }
+    }
+    else{
+      mkdir $temp_dir or die "Unable to create directory $temp_dir $!\n";
+      warn "Created temporary directory $temp_dir!\n\n";
+      chdir $temp_dir or die "Failed to move to $temp_dir\n";
+      $temp_dir = getcwd; #  making the path absolute
+      unless ($temp_dir =~ /\/$/){
+	$temp_dir =~ s/$/\//;
+      }
+    }
+    warn "Temporary files will be written into the directory: $temp_dir\n";
+  }
+  else{
+    $temp_dir = '';
+  }
+
+
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir);
 }
 
 
@@ -6302,8 +6341,13 @@ Output:
                          _ambiguous_reads_2.txt. These reads are not written to the file specified with --un.
 
 -o/--output_dir <dir>    Write all output files into this directory. By default the output files will be written into
-                         the same folder as the input file. If the specified folder does not exist, Bismark will attempt
+                         the same folder as the input file(s). If the specified folder does not exist, Bismark will attempt
                          to create it first. The path to the output folder can be either relative or absolute.
+
+--temp_dir <dir>         Write temporary files to this directory instead of into the same directory as the input files. If
+                         the specified folder does not exist, Bismark will attempt to create it first. The path to the
+                         temporary folder can be either relative or absolute.
+
 
 
 Other:
@@ -6457,7 +6501,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 04 April 2012.
+This script was last edited on 24 April 2012.
 
 HOW_TO
 }
