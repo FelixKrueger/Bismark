@@ -1,4 +1,52 @@
-RELEASE NOTES FOR Bismark v0.7.4 (25 Apr 2012)
+RELEASE NOTES FOR Bismark v0.7.6 ( 2012)
+----------------------------------------------
+
+Methylation extractor
+
+Changed the way in which the methylation extractor identifies the read and genome
+conversion flags in SAM output. This might become relevant if the Bismark SAM mapping output
+was compressed/decompressed with CRAM or Goby at some point, since these tools may change
+the order of the tags in a SAM entry. Thanks to Zachary Zeno for pointing this out and
+contributing a patch.
+
+
+
+RELEASE NOTES FOR Bismark v0.7.5 (16 Jul 2012)
+----------------------------------------------
+
+Bismark
+
+Trailing read ID segment number (e.g. /1,/2 or /3) are now removed internally for Bowtie 2
+alignments in paired-end mode as this might have caused no reads to align at all if the
+segment number was not 1 or 2. As of Bowtie 2 version 2.0.0-beta7 this behavior has been
+disabled for unpaired reads.
+
+The Bowtie 2 option -M is now deprecated (as of Bowtie 2 version 2.0.0-beta7). What used
+to be called -M mode is still the default mode, but adjusting the -M setting is deprecated.
+The options -D and -R should be used to adjust the effort expended to find valid alignments.
+The help text for the -M mode is still being displayed but may be removed in a subsequent
+release.
+
+Changed the default seed mismatch parameter (controlled by -n) to 1 (down from 2). This
+increases alignment speed noticably and typically produces very similar results for good
+quality read data. 
+
+Fixed a bug where the chromosomal sequence could not be extracted for very short genomic
+sequences for alignments with Bowtie 2.	
+
+
+Methylation extractor
+
+Does now read both raw and gzipped (.gz) Bismark mapping files.
+
+
+Deduplication script
+
+Does now read both raw and gzipped (.gz) Bismark mapping files.
+
+
+
+RELEASE NOTES FOR Bismark v0.7.4 (26 Apr 2012)
 ----------------------------------------------
 
 Bismark
