@@ -526,10 +526,32 @@ sub process_Bismark_results_file{
 	  # example read in SAM format
 	  # 1_R1/1	67	5	103172224	255	40M	=	103172417	233	AATATTTTTTTTATTTTAAAATGTGTATTGATTTAAATTT	IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII	NM:i:4	XX:Z:4T1T24TT7	XM:Z:....h.h........................hh.......	XR:Z:CT	XG:Z:CT
 	  ###
-	  my ($id,$chrom,$start,$meth_call,$read_conversion,$genome_conversion) = (split("\t"))[0,2,3,13,14,15];
-	  $meth_call =~ s/^XM:Z://;
-	  $read_conversion =~ s/^XR:Z://;
-	  $genome_conversion =~ s/^XG:Z://;	
+
+	  # my ($id,$chrom,$start,$meth_call,$read_conversion,$genome_conversion) = (split("\t"))[0,2,3,13,14,15];
+	  # $meth_call =~ s/^XM:Z://;
+	  # $read_conversion =~ s/^XR:Z://;
+	  # $genome_conversion =~ s/^XG:Z://;	
+
+	  my ($id,$chrom,$start) = (split("\t"))[0,2,3]; ### detecting the following SAM flags in case the SAM entry was shuffled by CRAM or Goby compression/decompression
+	  my $meth_call;  ### Thanks to Zachary Zeno for this solution
+	  my $read_conversion;
+	  my $genome_conversion;
+	
+	  while ( /(XM|XR|XG):Z:([^\t]+)/g ) {
+	    my $tag = $1;
+	    my $value = $2;
+
+	    if ($tag eq "XM"){
+	      $meth_call = $value;
+	    }
+	    elsif ($tag eq "XR") {
+	      $read_conversion = $value;
+	    }
+	    elsif ($tag eq "XG") {
+	      $genome_conversion = $value;
+	    }
+	  }
+
 	  my $strand;
 	  chomp $genome_conversion;
 	  # print "$meth_call\n$read_conversion\n$genome_conversion\n";
@@ -682,15 +704,56 @@ sub process_Bismark_results_file{
 	  # 1_R1/1	67	5	103172224	255	40M	=	103172417	233	AATATTTTTTTTATTTTAAAATGTGTATTGATTTAAATTT	IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII	NM:i:4	XX:Z:4T1T24TT7	XM:Z:....h.h........................hh.......	XR:Z:CT	XG:Z:CT
 	  # 1_R1/2	131	5	103172417	255	40M	=	103172224	-233	TATTTTTTTTTAGAGTATTTTTTAATGGTTATTAGATTTT	IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII	NM:i:6	XX:Z:T5T1T9T9T7T3	XM:Z:h.....h.h.........h.........h.......h...	XR:Z:GA	XG:Z:CT
 	
-	  my ($id_1,$chrom,$start_read_1,$meth_call_1,$first_read_conversion,$genome_conversion) = (split("\t"))[0,2,3,13,14,15];
+	  #  my ($id_1,$chrom,$start_read_1,$meth_call_1,$first_read_conversion,$genome_conversion) = (split("\t"))[0,2,3,13,14,15];
+
+	  my ($id_1,$chrom,$start_read_1) = (split("\t"))[0,2,3]; ### detecting the following SAM flags in case the SAM entry was shuffled by CRAM or Goby compression/decompression
+	  my $meth_call_1;
+	  my $first_read_conversion;
+	  my $genome_conversion;
+	
+	  while ( /(XM|XR|XG):Z:([^\t]+)/g ) {
+	    my $tag = $1;
+	    my $value = $2;
+
+	    if ($tag eq "XM"){
+	      $meth_call_1 = $value;
+	    }
+	    elsif ($tag eq "XR") {
+	      $first_read_conversion = $value;
+	    }
+	    elsif ($tag eq "XG") {
+	      $genome_conversion = $value;
+	    }
+	  }
+
 	  $_ = <IN>; # reading in the paired read
-	  my ($id_2,$start_read_2,$meth_call_2,$second_read_conversion) = (split("\t"))[0,3,13,14];
-	  $meth_call_1 =~ s/^XM:Z://;
-	  $meth_call_2 =~ s/^XM:Z://;
-	  $first_read_conversion =~ s/^XR:Z://;
-	  $second_read_conversion =~ s/^XR:Z://;
-	  $genome_conversion =~ s/^XG:Z://;	
-	  chomp $genome_conversion;	
+
+	  #  my ($id_2,$start_read_2,$meth_call_2,$second_read_conversion) = (split("\t"))[0,3,13,14];
+	  # $meth_call_1 =~ s/^XM:Z://;
+	  # $meth_call_2 =~ s/^XM:Z://;
+	  # $first_read_conversion =~ s/^XR:Z://;
+	  # $second_read_conversion =~ s/^XR:Z://;
+
+	  my ($id_2,$start_read_2) = (split("\t"))[0,3]; ### detecting the following SAM flags in case the SAM entry was shuffled by CRAM or Goby compression/decompression
+
+	  my $meth_call_2;
+	  my $second_read_conversion;
+	
+	  while ( /(XM|XR):Z:([^\t]+)/g ) {
+	    my $tag = $1;
+	    my $value = $2;
+
+	    if ($tag eq "XM"){
+	      $meth_call_2 = $value;
+	    }
+	    elsif ($tag eq "XR") {
+	      $second_read_conversion = $value;
+	    }
+	  }
+
+	  # $genome_conversion =~ s/^XG:Z://;	
+	  chomp $genome_conversion; # in case it captured a new line character	
+
 	  # print join ("\t",$meth_call_1,$meth_call_2,$first_read_conversion,$second_read_conversion,$genome_conversion),"\n";
 
 	  my $index;
