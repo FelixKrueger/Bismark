@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.5';
+my $bismark_version = 'v0.7.6';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -1300,7 +1300,7 @@ sub check_bowtie_results_single_end{
   return 0; ## otherwise 1 will be returned by default, which would print the sequence to unmapped.out
 }
 
-sub check_bowtie_results_single_end_bowtie2 {
+sub check_bowtie_results_single_end_bowtie2{
   my ($sequence,$identifier,$quality_value) = @_;
 
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
@@ -6565,7 +6565,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 16 July 2012.
+This script was last edited on 31 July 2012.
 
 HOW_TO
 }
