@@ -1,3 +1,47 @@
+RELEASE NOTES FOR Bismark v0.7.7 (20 Aug 2012)
+----------------------------------------------
+
+Bismark
+
+When reading in the genome file Bismark does now automatically remove \r line ending
+characters as well. This sometimes caused problems when genome files had been edited
+on Windows machines.
+
+Added support for the Bowtie 2 options '--rdg <int1>,<int2>' and '--rfg <int1>,<int2>'
+to adjust the gap open and extension penalties for both read and reference sequence.
+This might be useful for very special conditions (e.g. PacBio data...)
+
+
+Methylation extractor (changes contributed by B. Gruening)
+
+Added new function '-o/--output' to specify an output directory. This became necessary for
+better integration into Galaxy.
+
+Added new function '--no_header' to suppress the Bismark version header in the output files
+if plain alignment data is more desirable.  
+
+Renamed methylation extractor to bismark_methylation_extractor.
+
+
+
+
+UPDATE for genome_methylation2bedGraph script (23 Aug 2012)
+-----------------------------------------------------------
+
+Added an option '--split_by_chromosome' to enable sorting of very large files. The methylation
+extractor output is first written into temporary files chromosome by chromosome. These
+files are then sorted by position and deleted afterwards.
+
+Added an option '--counts' which adds 2 more lines to the bedGraph output file:
+
+      Column 5: count of methylated calls per position, and
+      Column 6: count of unmethylated calls per position. 
+
+Technically, this renders the output to be no longer in bedGraph format, but it might enable
+additional calculations with the output.
+
+
+
 RELEASE NOTES FOR Bismark v0.7.6 (31 Jul 2012)
 ----------------------------------------------
 

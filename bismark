@@ -7,7 +7,7 @@ $|++;
 use Getopt::Long;
 
 
-## This program is Copyright (C) 2010-12, Felix Krueger (felix.krueger@bbsrc.ac.uk)
+## This program is Copyright (C) 2010-12, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -3733,6 +3733,7 @@ sub read_genome_into_memory{
 	### first line needs to be a fastA header
 	my $first_line = <CHR_IN>;
 	chomp $first_line;
+	$first_line =~ s/\r//;
 	
 	### Extracting chromosome name from the FastA header
 	my $chromosome_name = extract_chromosome_name($first_line);
@@ -3740,6 +3741,7 @@ sub read_genome_into_memory{
 	my $sequence;
 	while (<CHR_IN>){
 	    chomp;
+	    $_ =~ s/\r//;
 	    if ($_ =~ /^>/){
 		### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
 		if (exists $chromosomes{$chromosome_name}){
@@ -5140,6 +5142,8 @@ sub process_command_line{
   my $score_min;
   my $parallel;
   my $temp_dir;
+  my $rdg;
+  my $rfg;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5174,6 +5178,8 @@ sub process_command_line{
 				 'most_valid_alignments=i' => \$most_valid_alignments,
 				 'p=i' => \$parallel,
 				 'temp_dir=s' => \$temp_dir,
+				 'rdg=s' => \$rdg,
+				 'rfg=s' => \$rfg,
 				);
 
 
@@ -5473,6 +5479,26 @@ VERSION
       push @bowtie_options,"--score-min L,0,-0.2"; # default setting, more stringent than normal Bowtie2
     }
   }
+
+  ### BOWTIE 2 READ GAP OPTIONS
+  if ($rdg){
+    die "The option '--rdg <int1>,<int2>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+    unless ($rdg =~ /^.+,.+$/){
+      die "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+    }
+    push @bowtie_options,"--rdg $rdg";
+  }
+
+  ### BOWTIE 2 REFERENCE GAP OPTIONS
+  if ($rfg){
+    die "The option '--rfg <int1>,<int2>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+    unless ($rfg =~ /^.+,.+$/){
+      die "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+    }
+    push @bowtie_options,"--rfg $rfg";
+  }
+
+
 
   ### BOWTIE 2 PARALLELIZATION OPTIONS
   if (defined $parallel){
@@ -6489,6 +6515,12 @@ Bowtie 2 Scoring options:
                          See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2. The default is
                          L,0,-0.2.
 
+--rdg <int1>,<int2>      Sets the read gap open (<int1>) and extend (<int2>) penalties. A read gap of length N gets a penalty
+                         of <int1> + N * <int2>. Default: 5, 3.
+
+--rfg <int1>,<int2>      Sets the reference gap open (<int1>) and extend (<int2>) penalties. A reference gap of length N gets
+                         a penalty of <int1> + N * <int2>. Default: 5, 3.
+
 
 Bowtie 2 Reporting options:
 
@@ -6565,7 +6597,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 31 July 2012.
+This script was last edited on 21 Aug 2012.
 
 HOW_TO
 }
