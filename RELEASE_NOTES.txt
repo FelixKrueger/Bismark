@@ -1,7 +1,8 @@
-RELEASE NOTES FOR Bismark v0.7.7 (20 Aug 2012)
+RELEASE NOTES FOR Bismark v0.7.7 (01 Oct 2012)
 ----------------------------------------------
 
 Bismark
+=======
 
 When reading in the genome file Bismark does now automatically remove \r line ending
 characters as well. This sometimes caused problems when genome files had been edited
@@ -12,7 +13,8 @@ to adjust the gap open and extension penalties for both read and reference seque
 This might be useful for very special conditions (e.g. PacBio data...)
 
 
-Methylation extractor (changes contributed by B. Gruening)
+Bismark methylation extractor
+=============================
 
 Added new function '-o/--output' to specify an output directory. This became necessary for
 better integration into Galaxy.
@@ -21,6 +23,53 @@ Added new function '--no_header' to suppress the Bismark version header in the o
 if plain alignment data is more desirable.  
 
 Renamed methylation extractor to bismark_methylation_extractor.
+
+
+bedGraph output:
+----------------
+
+Added option '--bedGraph' to produce a bedGraph output file once the methylation extraction
+has finished; this reports the genomic location of a cytosine and its methylation state (in %).
+This basically implements the finctionality of the script:
+genome_methylation_bismark2bedGraph.pl directly into the mbismark_methylation_extractor.
+The bedGraph output file is sorted by chromosomal positions. By default, only cytosines in
+CpG context will be sorted. The option '--CX_context' may be used to report all cyosines
+irrespective of sequence context (however this will take MUCH longer!).
+
+Implemented option '--cutoff threshold' to set the minimum number of times a methylation state
+has to be seen for that nucleotide before its methylation percentage is reported.
+
+Implemented option '--counts' which adds two additional columns to the bedGraph output file
+to enable further calculations:
+ 
+                     col 5: number of methylated calls
+                     col 6: number of unmethylated calls
+
+Implemented option '--CX_context' so that the sorted bedGraph output file contains information
+on every single cytosine that was covered in the experiment irrespective of its sequence context.
+
+
+Genome-wide cytosine methylation report output:
+-----------------------------------------------
+
+Added option '--cytosine_report' which produces a genome-wide methylation report for all cytosines
+in the genome. By default, the output uses 1-based chromosome coordinates (zero-based cords are
+optional) and reports CpG context only (all cytosine context is optional). The output considers
+all Cs on both forward and reverse strands and reports their position, strand, trinucleotide
+content and methylation state (counts are 0 if not covered).
+
+Option '--CX_context' applies to the cytosine report as well. The output file wil contain information
+on every single cytosine in the genome irrespective of its context. This applies to both forward
+and reverse strands.
+
+Implemented option '--zero_based' to use zero-based coordinates like used in e.g. bed files
+instead of 1-based coordinates.
+
+Implemented option '--genome_folder <FULL PATH>' to be used to extract sequences from. Accepted
+formats are FastA files ending with '.fa' or '.fasta'.
+
+Added an option '--split_by_chromosome' which writes the cytosine report output to individual
+chromosome files instead of to one single large file.
 
 
 

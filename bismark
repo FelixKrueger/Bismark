@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.6';
+my $bismark_version = 'v0.7.7';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -419,8 +419,14 @@ sub print_final_analysis_report_single_end{
   ### printing a final report for the methylation call procedure
   warn "Sequences analysed in total:\t$counting{sequences_count}\n";
   print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
+  my $percent_alignable_sequences;
 
-  my $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+  if ($counting{sequences_count} == 0){
+    $percent_alignable_sequences = 0;
+  }
+  else{
+    $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+  }
 
   warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n\n";
   print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n";
@@ -555,7 +561,13 @@ sub print_final_analysis_report_paired_ends{
   warn "Sequence pairs analysed in total:\t$counting{sequences_count}\n";
   print REPORT "Sequence pairs analysed in total:\t$counting{sequences_count}\n";
 
-  my $percent_alignable_sequence_pairs = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+  my $percent_alignable_sequence_pairs;
+  if ($counting{sequences_count} == 0){
+    $percent_alignable_sequence_pairs = 0;
+  }
+  else{
+    $percent_alignable_sequence_pairs = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+  }
   print "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}%\n\n";
   print REPORT "Number of paired-end alignments with a unique best hit:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequence_pairs}% \n";
 
