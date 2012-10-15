@@ -173,8 +173,7 @@ foreach my $filename (@filenames){
 
     my $bedGraph_output = $out;
     open (OUT,'>',$output_dir.$out) or die $!;
-    warn "Writing bedGraph to file: $out\n";
-    sleep (3);
+    # warn "Writing bedGraph to file: $out\n";
 
     process_bedGraph_output();
     close OUT or die $!;
@@ -2798,9 +2797,12 @@ sub process_bedGraph_output{
 
   ### deciding which files to use for bedGraph conversion
   foreach my $filename (@sorting_files){
-    if ($filename =~ /\/(.*)$/){ # if files are in a different output folder we extract the filename again
-      $filename = $1;
+    # warn "$filename\n";
+    if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
+      $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
+      # warn "$filename\n";
     }
+
     if ($CX_context){
       push @bedfiles,$filename;
     }
@@ -3028,17 +3030,24 @@ sub check_nonCpG_methylation_call{
 
 
 
-
-
-
 #######################################################################################################################################
 ### genome-wide cytosine methylation report - START
 #######################################################################################################################################
 
 sub generate_genome_wide_cytosine_report {
 
-  my $in = shift;
+  warn  "="x78,"\n";
+  warn "Methylation information will now be written into a genome-wide cytosine report\n";
+  warn  "="x78,"\n\n";
+  sleep (2);
 
+  ### changing to the output directory again
+  unless ($output_dir eq ''){ # default
+    chdir $output_dir or die "Failed to change directory to $output_dir\n";
+    # warn "Changed directory to $output_dir\n";
+  }
+
+  my $in = shift;
   open (IN,$in) or die $!;
 
   my $cytosine_out = shift;
@@ -3522,7 +3531,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 28 Sept 2012.
+This script was last modified on 02 Oct 2012.
 
 HOW_TO
 }

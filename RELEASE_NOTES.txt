@@ -1,4 +1,21 @@
-RELEASE NOTES FOR Bismark v0.7.7 (01 Oct 2012)
+RELEASE NOTES FOR Bismark v0.7.8 ( Oct 2012)
+----------------------------------------------
+
+Bismark
+=======
+
+Added an option '--non_bs_mm' which prints an extra column at the end of SAM files
+showing the number of non-nisulfite mismatches of a read. This option is not available
+for '--vanilla' format.
+
+Format for single-end reads: "XA:Z:mismatches"
+
+Format for paired-end reads: read 1: "XA:Z:mismatches"
+                             read 2: "XB:Z:mismatches"
+
+
+
+RELEASE NOTES FOR Bismark v0.7.7 (02 Oct 2012)
 ----------------------------------------------
 
 Bismark

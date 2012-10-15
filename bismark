@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -5156,6 +5156,7 @@ sub process_command_line{
   my $temp_dir;
   my $rdg;
   my $rfg;
+  my $non_bs_mm;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5192,6 +5193,7 @@ sub process_command_line{
 				 'temp_dir=s' => \$temp_dir,
 				 'rdg=s' => \$rdg,
 				 'rfg=s' => \$rfg,
+				 'non_bs_mm' => \$non_bs_mm,
 				);
 
 
@@ -5722,8 +5724,14 @@ VERSION
     $temp_dir = '';
   }
 
+  ### OPTIONAL NON-BS MISMATCH OUTPUT AS EXTRA COLUMN IN SAM FILE
+  if ($non_bs_mm){
+    if ($vanilla){
+      die "Option '--non_bs_mm' may only be specified for output in SAM format. Please respecify!\n";
+    }
+  }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm);
 }
 
 
@@ -5751,6 +5759,9 @@ sub single_end_SAM_output{
   my $read_conversion   = $methylation_call_params->{$id}->{read_conversion};
   my $genome_conversion = $methylation_call_params->{$id}->{genome_conversion};
   my $number_of_mismatches = $methylation_call_params->{$id}->{number_of_mismatches};	
+
+
+
   ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
   ## FLAG: bitwise FLAG. Each bit is explained in the following table:
   ## Bit    Description                                                Comment                                Value
@@ -5870,10 +5881,20 @@ sub single_end_SAM_output{
 
   #####
 
-  # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
-  print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$XX_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
-}
+  my $XA_tag = "XA:Z:$number_of_mismatches";
 
+  #####
+
+  # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
+  ### optionally print number of non-bisulfite mismatches
+  if ($non_bs_mm){
+    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$XX_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
+  }
+  else{ # default
+    # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
+    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$XX_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+  }
+}
 
 sub paired_end_SAM_output{
   my ($id,$actual_seq_1,$actual_seq_2,$methylation_call_params,$qual_1,$qual_2) = @_;
@@ -6208,9 +6229,20 @@ sub paired_end_SAM_output{
 
   #####
 
+  my $XA_tag = "XA:Z:$number_of_mismatches_1";
+  my $XB_tag = "XB:Z:$number_of_mismatches_2";
+
+
   # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
-  print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $XX_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
-  print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $XX_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+  ### optionally print number of non-bisulfite mismatches
+  if ($non_bs_mm){
+    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $XX_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$XA_tag)), "\n";
+    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $XX_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$XB_tag)), "\n";
+  }
+  else{ # default
+    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $XX_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
+    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $XX_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+  }
 }
 
 sub revcomp{
@@ -6445,6 +6477,11 @@ Output:
                          the specified folder does not exist, Bismark will attempt to create it first. The path to the
                          temporary folder can be either relative or absolute.
 
+--non_bs_mm              Optionally outputs an extra column specifying the number of non-bisulfite mismatches a read during the
+                         alignment step. This option is only available for SAM format. 
+                         The format for single-end reads and read 1 of paired-end reads is 'XA:Z:number of mismatches'
+                         and 'XB:Z:number of mismatches' for read 2 of paired-end reads.
+
 
 
 Other:
@@ -6605,11 +6642,12 @@ Bismark SAM OUTPUT (default):
 (14) XM-tag (methylation call string)
 (15) XR-tag (read conversion state for the alignment)
 (16) XG-tag (genome conversion state for the alignment)
+(17) XA/XB-tag (non-bisulfite mismatches) (optional!)
 
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 21 Aug 2012.
+This script was last edited on 11 Oct 2012.
 
 HOW_TO
 }
