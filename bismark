@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -5495,23 +5495,40 @@ VERSION
   }
 
   ### BOWTIE 2 READ GAP OPTIONS
+  my ($insertion_open,$insertion_extend,$deletion_open,$deletion_extend);
+
   if ($rdg){
     die "The option '--rdg <int1>,<int2>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    unless ($rdg =~ /^.+,.+$/){
+    if ($rdg =~ /^(\d+),(\d+)$/){
+      $deletion_open = $1;
+      $deletion_extend = $2;
+    }
+    else{
       die "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
     push @bowtie_options,"--rdg $rdg";
+  }
+  else{
+    $deletion_open = 5;
+    $deletion_extend = 3;
   }
 
   ### BOWTIE 2 REFERENCE GAP OPTIONS
   if ($rfg){
     die "The option '--rfg <int1>,<int2>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    unless ($rfg =~ /^.+,.+$/){
+    if ($rfg =~ /^(\d+),(\d+)$/){
+      $insertion_open = $1;
+      $insertion_extend = $2;
+    }
+    else{
       die "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
     push @bowtie_options,"--rfg $rfg";
   }
-
+  else{
+    $insertion_open = 5;
+    $insertion_extend = 3;
+  }
 
 
   ### BOWTIE 2 PARALLELIZATION OPTIONS
@@ -5731,7 +5748,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend);
 }
 
 
@@ -5758,9 +5775,13 @@ sub single_end_SAM_output{
   my $methcall          = $methylation_call_params->{$id}->{methylation_call};
   my $read_conversion   = $methylation_call_params->{$id}->{read_conversion};
   my $genome_conversion = $methylation_call_params->{$id}->{genome_conversion};
-  my $number_of_mismatches = $methylation_call_params->{$id}->{number_of_mismatches};	
-
-
+  my $number_of_mismatches;
+  if ($bowtie2){
+    $number_of_mismatches= $methylation_call_params->{$id}->{alignment_score};	
+  }
+  else{
+    $number_of_mismatches= $methylation_call_params->{$id}->{number_of_mismatches};
+  }
 
   ### This is a description of the bitwise FLAG field which needs to be set for the SAM file taken from: "The SAM Format Specification (v1.4-r985), September 7, 2011"
   ## FLAG: bitwise FLAG. Each bit is explained in the following table:
@@ -5881,6 +5902,57 @@ sub single_end_SAM_output{
 
   #####
 
+  # Optionally calculating number of mismatches for Bowtie 2 alignments
+
+  if ($non_bs_mm) {
+    if ($bowtie2) {
+
+      $number_of_mismatches =~ s/-//; # removing the minus sign	
+	
+	### if Bowtie 2 was used we need to analyse the CIGAR string whether the read contained any indels to determine the number of mismatches
+	if ($cigar =~ /(D|I)/) {
+	  # warn "$cigar\n";
+
+	  # parsing CIGAR string
+	  my @len = split (/\D+/,$cigar); # storing the length per operation
+	  my @ops = split (/\d+/,$cigar); # storing the operation
+	  shift @ops;		# remove the empty first element
+	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+	
+	  foreach (0..$#len) {
+	    if ($ops[$_] eq 'M') {
+	      # warn "skipping\n";
+	      next;		# irrelevant
+	    }
+	    elsif ($ops[$_] eq 'I') {	# insertion in the read sequence
+	      $number_of_mismatches -= $insertion_open;
+	      $number_of_mismatches -= $len[$_] * $insertion_extend;
+	      # warn "Insertion: Subtracting $ops[$_], length $len[$_], open: $insertion_open, extend: $insertion_extend\n";
+	    }
+	    elsif ($ops[$_] eq 'D') {	# deletion in the read sequence
+	      $number_of_mismatches -= $deletion_open;
+	      $number_of_mismatches -= $len[$_] * $deletion_extend;
+	      # warn "Deletion: Subtracting $ops[$_], length $len[$_], open: $deletion_open, extend: $deletion_extend\n";
+	    }
+	    elsif ($cigar =~ tr/[NSHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
+	      die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
+	    }
+	    else {
+	      die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar\n";
+	    }
+	  }
+	  # warn "Alignment score $number_of_mismatches\n";
+	  $number_of_mismatches = $number_of_mismatches/6;
+	  # print "Mismatches $number_of_mismatches\n\n";
+	}
+      else {
+	$number_of_mismatches = $number_of_mismatches/6;
+      }
+    }
+  }
+
+  ####
+
   my $XA_tag = "XA:Z:$number_of_mismatches";
 
   #####
@@ -5908,8 +5980,18 @@ sub paired_end_SAM_output{
   my $read_conversion_1       = $methylation_call_params->{$id}->{read_conversion_1};
   my $read_conversion_2       = $methylation_call_params->{$id}->{read_conversion_2};
   my $genome_conversion       = $methylation_call_params->{$id}->{genome_conversion};
-  my $number_of_mismatches_1  = $methylation_call_params->{$id}->{number_of_mismatches_1}; # only needed for custom allele-specific output, not the default!
-  my $number_of_mismatches_2  = $methylation_call_params->{$id}->{number_of_mismatches_2};
+
+  my $number_of_mismatches_1;
+  my $number_of_mismatches_2;
+
+  if ($bowtie2){
+    $number_of_mismatches_1  = $methylation_call_params->{$id}->{alignment_score_1}; # only needed for custom allele-specific output, not the default!
+    $number_of_mismatches_2  = $methylation_call_params->{$id}->{alignment_score_2};
+  }
+  else{
+    $number_of_mismatches_1  = $methylation_call_params->{$id}->{number_of_mismatches_1}; # only needed for custom allele-specific output, not the default!
+    $number_of_mismatches_2  = $methylation_call_params->{$id}->{number_of_mismatches_2};
+  }
 
   my $id_1 = $id.'/1';
   my $id_2 = $id.'/2';
@@ -6229,6 +6311,102 @@ sub paired_end_SAM_output{
 
   #####
 
+  # Optionally calculating number of mismatches for Bowtie 2 alignments
+
+  if ($non_bs_mm) {
+    if ($bowtie2) {
+
+      $number_of_mismatches_1 =~ s/-//; # removing the minus sign	
+      $number_of_mismatches_2 =~ s/-//;
+
+      ### if Bowtie 2 was used we need to analyse the CIGAR strings whether the reads contained any indels to determine the number of mismatches
+
+      ### CIGAR 1
+      if ($cigar_1 =~ /(D|I)/) {
+	# warn "$cigar_1\n";
+
+	# parsing CIGAR string
+	my @len = split (/\D+/,$cigar_1); # storing the length per operation
+	my @ops = split (/\d+/,$cigar_1); # storing the operation
+	shift @ops;		# remove the empty first element
+	die "CIGAR string '$cigar_1' contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+	
+	foreach (0..$#len) {
+	  if ($ops[$_] eq 'M') {
+	    # warn "skipping\n";
+	    next;		# irrelevant
+	  }
+	  elsif ($ops[$_] eq 'I') {	# insertion in the read sequence
+	    $number_of_mismatches_1 -= $insertion_open;
+	    $number_of_mismatches_1 -= $len[$_] * $insertion_extend;
+	    # warn "Insertion: Subtracting $ops[$_], length $len[$_], open: $insertion_open, extend: $insertion_extend\n";
+	  }
+	  elsif ($ops[$_] eq 'D') {	# deletion in the read sequence
+	    $number_of_mismatches_1 -= $deletion_open;
+	    $number_of_mismatches_1 -= $len[$_] * $deletion_extend;
+	    # warn "Deletion: Subtracting $ops[$_], length $len[$_], open: $deletion_open, extend: $deletion_extend\n";
+	  }
+	  elsif ($cigar_1 =~ tr/[NSHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
+	    die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar_1\n";
+	  }
+	  else {
+	    die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar_1\n";
+	  }
+	}
+
+	# warn "Alignment score $number_of_mismatches_1\n";
+	$number_of_mismatches_1 = $number_of_mismatches_1 / 6;
+	# print "Mismatches $number_of_mismatches_1\n\n";
+      }
+      else {
+	$number_of_mismatches_1 = $number_of_mismatches_1 / 6;
+      }
+
+      ### CIGAR 2
+      if ($cigar_2 =~ /(D|I)/) {
+	# warn "$cigar_2\n";
+
+	# parsing CIGAR string
+	my @len = split (/\D+/,$cigar_2); # storing the length per operation
+	my @ops = split (/\d+/,$cigar_2); # storing the operation
+	shift @ops;		# remove the empty first element
+	die "CIGAR string '$cigar_2' contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+	
+	foreach (0..$#len) {
+	  if ($ops[$_] eq 'M') {
+	    # warn "skipping\n";
+	    next; #irrelevant
+	  }
+	  elsif ($ops[$_] eq 'I') {	# insertion in the read sequence
+	    $number_of_mismatches_2 -= $insertion_open;
+	    $number_of_mismatches_2 -= $len[$_] * $insertion_extend;
+	    # warn "Insertion: Subtracting $ops[$_], length $len[$_], open: $insertion_open, extend: $insertion_extend\n";
+	  }
+	  elsif ($ops[$_] eq 'D') {	# deletion in the read sequence
+	    $number_of_mismatches_2 -= $deletion_open;
+	    $number_of_mismatches_2 -= $len[$_] * $deletion_extend;
+	    # warn "Deletion: Subtracting $ops[$_], length $len[$_], open: $deletion_open, extend: $deletion_extend\n";
+	  }
+	  elsif ($cigar_2 =~ tr/[NSHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
+	    die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I' and 'D': $cigar_2\n";
+	  }
+	  else {
+	    die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar_2\n";
+	  }
+	}
+
+	# warn "Alignment score $number_of_mismatches_2\n";
+	$number_of_mismatches_2 = $number_of_mismatches_2 / 6;
+	# print "Mismatches $number_of_mismatches_2\n\n";
+      }
+      else {
+	$number_of_mismatches_2 = $number_of_mismatches_2 / 6;
+      }
+    }
+  }
+
+  ####
+
   my $XA_tag = "XA:Z:$number_of_mismatches_1";
   my $XB_tag = "XB:Z:$number_of_mismatches_2";
 
@@ -6478,7 +6656,8 @@ Output:
                          temporary folder can be either relative or absolute.
 
 --non_bs_mm              Optionally outputs an extra column specifying the number of non-bisulfite mismatches a read during the
-                         alignment step. This option is only available for SAM format. 
+                         alignment step. This option is only available for SAM format. In Bowtie 2 context, this value is
+                         just the number of actual non-bisulfite mismatches and ignores potential insertions or deletions.
                          The format for single-end reads and read 1 of paired-end reads is 'XA:Z:number of mismatches'
                          and 'XB:Z:number of mismatches' for read 2 of paired-end reads.
 
@@ -6647,7 +6826,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 11 Oct 2012.
+This script was last edited on 15 Oct 2012.
 
 HOW_TO
 }
