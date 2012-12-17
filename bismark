@@ -1315,12 +1315,14 @@ sub check_bowtie_results_single_end{
 sub check_bowtie_results_single_end_bowtie2{
   my ($sequence,$identifier,$quality_value) = @_;
 
+
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
     $quality_value = 'I'x(length$sequence);
   }
 
   # as of version Bowtie 2 2.0.0 beta7, when input reads are unpaired, Bowtie 2 no longer removes the trailing /1 or /2 from the read name.
   # $identifier =~ s/\/[1234567890]+$//; # some sequencers don't just have /1 or /2 at the end of read IDs
+  # print "sequence $sequence\nid $identifier\nquality: '$quality_value'\n";
 
   my $alignment_ambiguous = 0;
 
@@ -1328,18 +1330,17 @@ sub check_bowtie_results_single_end_bowtie2{
 
   ### reading from the Bowtie 2 output filehandles
   foreach my $index (0..$#fhs){
-    # print "Index: $index\n";
-    # print "$fhs[$index]->{last_line}\n";
-    # print "$fhs[$index]->{last_seq_id}\n\n";
-
+    #    print "Index: $index\n";
+    #    print "$fhs[$index]->{last_line}\n";
+    #    print "$fhs[$index]->{last_seq_id}\n";
+    #    sleep (1);
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
     next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
     ### if the sequence we are currently looking at produced an alignment we are doing various things with it
     # print "last seq id: $fhs[$index]->{last_seq_id} and identifier: $identifier\n";
 
-   if ($fhs[$index]->{last_seq_id} eq $identifier) {
-
+    if ($fhs[$index]->{last_seq_id} eq $identifier) {
       #  SAM format specifications for Bowtie 2
       #  (1) Name of read that aligned
       #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
@@ -1405,7 +1406,7 @@ sub check_bowtie_results_single_end_bowtie2{
       else{
 	die "Chromosome number extraction failed for $mapped_chromosome\n";
       }
-	  
+
       ### We will use the optional field to determine the best alignment. Later on we extract the number of mismatches and/or indels from the CIGAR string
       my ($alignment_score,$second_best,$MD_tag);
       my @fields = split (/\t/,$fhs[$index]->{last_line});
@@ -1422,12 +1423,12 @@ sub check_bowtie_results_single_end_bowtie2{
 	}
       }
 
-      # warn "First  best alignment_score is: '$alignment_score'\n";
-      # warn "MD tag is: '$MD_tag'\n";
+      #      warn "First  best alignment_score is: '$alignment_score'\n";
+      #     warn "MD tag is: '$MD_tag'\n";
       die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag)!\n" unless (defined $alignment_score and defined $MD_tag);
 
       if (defined $second_best){
-	# warn "second best alignment_score is: '$second_best'\n";
+	#	warn "second best alignment_score is: '$second_best'\n\n";
 
 	# If the first alignment score is the same as the alignment score of the second best hit we are going to boot this sequence altogether
 	if ($alignment_score == $second_best){
@@ -6537,7 +6538,8 @@ Input:
 
 -f/--fasta               The query input files (specified as <mate1>,<mate2> or <singles> are FASTA
                          files (usually havin extension .fa, .mfa, .fna or similar). All quality values
-                         are assumed to be 40 on the Phred scale.
+                         are assumed to be 40 on the Phred scale. FASTA files are expected to contain both
+                         the read name and the sequence on a single line (and not spread over several lines).
 
 -s/--skip <int>          Skip (i.e. do not align) the first <int> reads or read pairs from the input.
 
@@ -6826,7 +6828,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 15 Oct 2012.
+This script was last edited on 17 Oct 2012.
 
 HOW_TO
 }

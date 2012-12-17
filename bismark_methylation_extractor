@@ -12,7 +12,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.7';
+my $version = 'v0.7.8';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome) = process_commandline();
 
 
@@ -103,7 +103,7 @@ if ($bedGraph){
   if ($cytosine_report){
     warn "\n\nSummarising genome-wide cytosine methylation report parameters:\n";
     warn '='x63,"\n";
-    warn "Generating comprehensive genome-wide cytosine report (output format: <Chromosome> <Start Position> <End Position> <Methylation Percentage> )\n";
+    warn "Generating comprehensive genome-wide cytosine report\n(output format: <Chromosome> <Position> <Strand> <count methylated> <count non-methylated>  <C-context>  <trinucleotide context> )\n";
 
 
     if ($CX_context){
@@ -166,14 +166,15 @@ foreach my $filename (@filenames){
   process_Bismark_results_file($filename);
 
   if ($bedGraph){
-    my $out = $filename;
+
+    my $out = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
+    $out =~ s/gz$//;
     $out =~ s/sam$//;
     $out =~ s/txt$//;
     $out =~ s/$/bedGraph/;
-
     my $bedGraph_output = $out;
-    open (OUT,'>',$output_dir.$out) or die $!;
-    # warn "Writing bedGraph to file: $out\n";
+    open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
+    # warn "Writing bedGraph to file: $bedGraph_output\n";
 
     process_bedGraph_output();
     close OUT or die $!;
@@ -414,7 +415,8 @@ sub process_Bismark_results_file{
   ### OPENING OUTPUT-FILEHANDLES
   if ($report) {
     my $report_filename = $output_filename;
-    $report_filename =~ s/[\.sam|\.txt]$//;
+    $report_filename =~ s/\.sam$//;
+    $report_filename =~ s/\.txt$//;
     $report_filename =~ s/$/_splitting_report.txt/;
     $report_filename = $output_dir . $report_filename;
     open (REPORT,'>',$report_filename) or die "Failed to write to file $report_filename $!\n";
@@ -2871,7 +2873,10 @@ sub process_bedGraph_output{
     while (<IN>) {
       chomp;
       my ($chr) = (split (/\t/))[2];
-	
+      # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
+      $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
+      # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
+
       unless (exists $temp_fhs{$chr}) {
 	open ($temp_fhs{$chr},'>','chr'.$chr.'.meth_extractor.temp') or die "Failed to open filehandle: $!";
       }
@@ -3531,7 +3536,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 02 Oct 2012.
+This script was last modified on 14 Nov 2012.
 
 HOW_TO
 }

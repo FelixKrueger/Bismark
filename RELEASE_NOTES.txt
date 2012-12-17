@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.7.8 ( Oct 2012)
+RELEASE NOTES FOR Bismark v0.7.8 (17 Oct 2012)
 ----------------------------------------------
 
 Bismark
@@ -12,6 +12,22 @@ Format for single-end reads: "XA:Z:mismatches"
 
 Format for paired-end reads: read 1: "XA:Z:mismatches"
                              read 2: "XB:Z:mismatches"
+
+If Bowtie 2 was used for alignments, the alignment score and CIGAR strings are processed
+to exclude potential insertions or deletions before the number of non-bisulfite mismatches
+is determined.
+
+
+Methylation Extractor
+=====================
+
+The input file(s) may now be specified with a file path which abrogates the need to be in
+the same directory as the input file(s) when calling the methylation extractor.
+
+Reference sequence files containing pipe ('|') characters were found to crash the methylation
+extractor as the chromosome name was used for filenames. These characters are now replaced
+with underscores '_' when the reads are sorted during the bedGraph step.
+
 
 
 
