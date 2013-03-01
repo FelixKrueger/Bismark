@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.7.8 (17 Oct 2012)
+\RELEASE NOTES FOR Bismark v0.7.8 (01 Mar 2013)
 ----------------------------------------------
 
 Bismark
@@ -18,6 +18,11 @@ to exclude potential insertions or deletions before the number of non-bisulfite 
 is determined.
 
 
+The mapping report file names were changed to _bismark_(SE/PE)_report.txt (Bowtie 1) or 
+bt2_bismark_(SE/PE)_report.txt (Bowtie 2) to keep it more uniform.
+
+
+
 Methylation Extractor
 =====================
 
@@ -27,6 +32,15 @@ the same directory as the input file(s) when calling the methylation extractor.
 Reference sequence files containing pipe ('|') characters were found to crash the methylation
 extractor as the chromosome name was used for filenames. These characters are now replaced
 with underscores '_' when the reads are sorted during the bedGraph step.
+
+Added a new funtion '--buffer_size <string>' for the bedGraph sort command to allow using
+more memory than the default (1024K). Allowed values are either a percentage of physical
+memory (e.g. 50%) or a number along with a multiplier in bytes (e.g. 500M, 50G etc).
+
+
+
+Updated the Bismark User Guide with sections for the bedGraph and genome-wide methylation
+report outputs and Appendix IV is now showing alignment stats for the test data.
 
 
 

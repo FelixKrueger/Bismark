@@ -6,6 +6,23 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
+
+
+## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
 my @filenames; # input files
 my %counting;
 my $parent_dir = getcwd();
@@ -13,7 +30,7 @@ my $parent_dir = getcwd();
 my %fhs;
 
 my $version = 'v0.7.8';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome) = process_commandline();
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -97,6 +114,14 @@ if ($bedGraph){
   if ($remove){
     warn "White spaces in read ID names will be removed prior to sorting\n";
   }
+
+  if (defined $sort_size){
+    warn "The bedGraph UNIX sort command will use the following memory setting:\t'$sort_size'\n";
+  }
+  else{
+    warn "The bedGraph UNIX sort command will use default memory settings\n";
+  }
+
 
   sleep (1);
 
@@ -215,6 +240,7 @@ sub process_commandline{
   my $CpG_only;
   my $CX_context;
   my $split_by_chromosome;
+  my $sort_size;
 
 
   my $command_line = GetOptions ('help|man' => \$help,
@@ -239,6 +265,7 @@ sub process_commandline{
 				 "zero_based" => \$zero,	
 				 "CX|CX_context" => \$CX_context,
 				 "split_by_chromosome" => \$split_by_chromosome,
+				 "buffer_size=s" => \$sort_size,
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -258,7 +285,7 @@ sub process_commandline{
 
                            Bismark Methylation Extractor
 
-   Bismark Extractor Version: $version Copyright 2010-12 Felix Krueger, Babraham Bioinformatics
+   Bismark Extractor Version: $version Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
 
@@ -345,6 +372,16 @@ VERSION
     $coverage_threshold = 1;
   }
 
+  ### SORT buffer size
+  if (defined $sort_size){
+    unless ($sort_size =~ /^\d+\%$/ or $sort_size =~ /^\d+(K|M|G|T)$/){
+      die "Please select a buffer size as percentage (e.g. --buffer_size 20%) or a number to be multiplied with K, M, G, T etc. (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line\n";
+    }
+  }
+  else{
+    $sort_size = '';
+  }
+
   if ($zero){
     die "Option '--zero' is only available if  '--cytosine_report' is specified as well. Please respecify\n" unless ($cytosine_report);
   }
@@ -376,7 +413,7 @@ VERSION
     warn "\n";
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome);
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size);
 }
 
 
@@ -2874,7 +2911,7 @@ sub process_bedGraph_output{
       chomp;
       my ($chr) = (split (/\t/))[2];
       # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
-      $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
+      $chr =~ s/|/_/g; # replacing pipe ('|') characters in the file names
       # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
 
       unless (exists $temp_fhs{$chr}) {
@@ -2896,8 +2933,13 @@ sub process_bedGraph_output{
   sleep (1);
 
   foreach my $in (@temp_files) {
-    warn "Sorting input file $in by positions\n";
-    open my $ifh, "sort -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+    if ($sort_size){
+      warn "Sorting input file $in by positions (using -S of '$sort_size')\n";
+    }
+    else{
+      warn "Sorting input file $in by positions (using default memory settings)\n";
+    }
+    open my $ifh, "sort -S $sort_size -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
     # print "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
 	
     ############################################# m.a.bentley - moved the variables out of the while loop to hold the current line data {
@@ -3487,6 +3529,11 @@ bedGraph specific options:
                          and may take a long time to sort (up to many hours). Default: OFF.
                          (i.e. Default = CpG context only).
 
+--buffer_size <string>   This allows you to specify the main memory sort buffer when sorting the methylation information.
+                         Either specify a percentage of physical memory by appending % (e.g. --buffer_size 50%) or
+			 a multiple of 1024 bytes, e.g. 'K' multiplies by 1024, 'M' by 1048576 and so on for 'T' etc. 
+                         (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line.
+                         Defaults to 1024K.
 
 
 Genome-wide cytosine methylation report specific options:
@@ -3528,6 +3575,10 @@ The bedGraph output (optional) looks like this (tab-delimited):
 ===============================================================
 <chromosome>  <start position>  <end position>  <methylation percentage>
 
+The bedGraph output with '--counts' specified looks like this (tab-delimited):
+
+<chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
+
 
 
 The genome-wide cytosine methylation output file is tab-delimited in the following format:
@@ -3536,7 +3587,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 14 Nov 2012.
+This script was last modified on 01 Mar 2013.
 
 HOW_TO
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# Count methylation of cytosine genome-wide from Bismark methylation caller output and generates a BedGraph
+# Count methylation of cytosine genome-wide from Bismark methylation caller output and generates a bedGraph
 
 # Script origninally created by O. Tam, modified by F. Krueger on 16 Mar 2011.
 # Corrected read coordinates to being 0 based, inspired by Timothy Hughes, 08 June 2011
@@ -73,6 +73,9 @@ if ($split){
   while (<IN>){
     chomp;
     my ($chr) = (split (/\t/))[2];
+
+    ### Replacing pipe characters ('|') in temporary filenames with underscores
+    $chr =~ s/|/_/g;
 
     unless (exists $fhs{$chr}){
       open ($fhs{$chr},'>','chr'.$chr.'.meth_extractor.temp') or die "Failed to open filehandle: $!";
@@ -270,7 +273,7 @@ sub usage{
 
 
 
-                          Script last modified: 17 Aug 2012.
+                          Script last modified: 28 Feb 2013.
 
 EOF
     ;
