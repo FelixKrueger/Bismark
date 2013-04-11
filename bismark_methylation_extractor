@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.8';
+my $version = 'v0.7.9';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size) = process_commandline();
 
 
@@ -119,7 +119,7 @@ if ($bedGraph){
     warn "The bedGraph UNIX sort command will use the following memory setting:\t'$sort_size'\n";
   }
   else{
-    warn "The bedGraph UNIX sort command will use default memory settings\n";
+    warn "Setting a default memory usage for the bedGraph UNIX sort command to 2GB\n";
   }
 
 
@@ -209,7 +209,10 @@ foreach my $filename (@filenames){
       my $cytosine_out = $out;
       $cytosine_out =~ s/bedGraph$//;
 
-      read_genome_into_memory();
+      ### reading in the genome unless it has already been done
+      unless (%chromosomes){
+	read_genome_into_memory();
+      }
       generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
     }
   }
@@ -379,7 +382,7 @@ VERSION
     }
   }
   else{
-    $sort_size = '';
+    $sort_size = '2G';
   }
 
   if ($zero){
@@ -2911,7 +2914,7 @@ sub process_bedGraph_output{
       chomp;
       my ($chr) = (split (/\t/))[2];
       # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
-      $chr =~ s/|/_/g; # replacing pipe ('|') characters in the file names
+      $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
       # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
 
       unless (exists $temp_fhs{$chr}) {
@@ -3533,7 +3536,7 @@ bedGraph specific options:
                          Either specify a percentage of physical memory by appending % (e.g. --buffer_size 50%) or
 			 a multiple of 1024 bytes, e.g. 'K' multiplies by 1024, 'M' by 1048576 and so on for 'T' etc. 
                          (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line.
-                         Defaults to 1024K.
+                         Defaults to 2G.
 
 
 Genome-wide cytosine methylation report specific options:
@@ -3587,7 +3590,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 01 Mar 2013.
+This script was last modified on 05 Mar 2013.
 
 HOW_TO
 }

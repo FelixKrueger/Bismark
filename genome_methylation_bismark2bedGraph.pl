@@ -16,12 +16,14 @@ my $remove;
 my $help;
 my $split;
 my $counts;
+my $sort_size;
 
 GetOptions("cutoff=i" => \$coverage_threshold,
 	   "remove_spaces" => \$remove,
 	   "h|help" => \$help,
 	   "s|split_by_chromosome" => \$split,
 	   "counts" => \$counts,
+	   "buffer_size=s" => \$sort_size,
 	  );
 if ($help){
   die usage();
@@ -30,6 +32,16 @@ if ($help){
 if(scalar @ARGV < 1){
   warn "Missing input file\n";
   die usage();
+}
+
+### SORT buffer size
+if (defined $sort_size){
+  unless ($sort_size =~ /^\d+\%$/ or $sort_size =~ /^\d+(K|M|G|T)$/){
+    die "Please select a buffer size as percentage (e.g. --buffer_size 20%) or a number to be multiplied with K, M, G, T etc. (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line\n";
+  }
+}
+else{
+  $sort_size = '2G';
 }
 
 my $infile = shift @ARGV;
@@ -75,7 +87,7 @@ if ($split){
     my ($chr) = (split (/\t/))[2];
 
     ### Replacing pipe characters ('|') in temporary filenames with underscores
-    $chr =~ s/|/_/g;
+    $chr =~ s/\|/_/g;
 
     unless (exists $fhs{$chr}){
       open ($fhs{$chr},'>','chr'.$chr.'.meth_extractor.temp') or die "Failed to open filehandle: $!";
@@ -104,8 +116,8 @@ sleep (5);
 
 
 foreach my $in (@temp_files){
-  warn "Sorting input file $in by positions\n";
-  open my $ifh, "sort -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+  warn "Sorting input file $in by positions (using a memory setting of '$sort_size')\n";
+  open my $ifh, "sort -S $sort_size -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
   # print "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
 
   ############################################# m.a.bentley - moved the variables out of the while loop to hold the current line data {
@@ -255,6 +267,13 @@ sub usage{
   --counts                -  Adds two additional columns to the output file to enable further calculations:
                              col 5: methylated calls
                              col 6: unmethylated calls
+
+  --buffer_size <string>  -  This allows you to specify the main memory sort buffer when sorting the methylation information.
+                             Either specify a percentage of physical memory by appending % (e.g. --buffer_size 50%) or
+			     a multiple of 1024 bytes, e.g. 'K' multiplies by 1024, 'M' by 1048576 and so on for 'T' etc. 
+                             (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line.
+                             Defaults to 2G.
+
 
   The output file is a tab-delimited bedGraph file with the following information:
 

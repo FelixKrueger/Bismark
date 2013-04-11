@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.8';
+my $bismark_version = 'v0.7.9';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -5158,6 +5158,8 @@ sub process_command_line{
   my $rdg;
   my $rfg;
   my $non_bs_mm;
+  my $samtools_path;
+  my $bam;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5195,6 +5197,8 @@ sub process_command_line{
 				 'rdg=s' => \$rdg,
 				 'rfg=s' => \$rfg,
 				 'non_bs_mm' => \$non_bs_mm,
+				 'samtools_path=s' => \$samtools_path,
+				 'bam' => \$bam,
 				);
 
 
@@ -5260,6 +5264,30 @@ VERSION
       warn "Path to Bowtie specified as: $path_to_bowtie\n";
     }
   }
+
+  ### OUTPUT REQUESTED AS BAM FILE
+  if ($bam){
+    ### PATH TO SAMTOOLS
+    if (defined $samtools_path){
+      warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
+    }
+
+    # Check whether Samtools is in the PATH if no path was supplied by the user
+    else{
+      if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
+	$samtools_path = `which samtools`;
+	chomp $samtools_path;
+	warn "Alignments will be written out in BAM format. Samtools found in PATH: '$samtools_path'\n";
+      }
+    }
+
+    unless (defined $samtools_path){
+      $bam = 0;
+      warn "Did not find Samtools on the system. Alignments will be written out in SAM format instead\n";
+    }
+    sleep (1);
+  }
+
 
   ####################################
   ### PROCESSING ARGUMENTS

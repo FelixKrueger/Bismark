@@ -1,4 +1,23 @@
-\RELEASE NOTES FOR Bismark v0.7.8 (01 Mar 2013)
+RELEASE NOTES FOR Bismark v0.7.9 (05 Mar 2013)
+----------------------------------------------
+
+Methylation Extractor
+=====================
+
+The new function '--buffer_size <string>' for the bedGraph sort command is set to the
+new default value of 2G (sort would die if this option was not set).
+
+The replacement of pipe ('|') characters in the name of reference chromosomes for the 
+bedGraph sorting step should now work as expected. 
+
+If multiple files are to be processed for genome-wide methylation reports in a single
+command, the reference genome is only read in once (instead of stopping due to the
+presence of several chromosomes with the same name...).
+
+
+
+
+RELEASE NOTES FOR Bismark v0.7.8 (01 Mar 2013)
 ----------------------------------------------
 
 Bismark
