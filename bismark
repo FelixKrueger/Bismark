@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.9';
+my $bismark_version = 'v0.7.10';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -124,19 +124,31 @@ foreach my $filename (@filenames){
 	  $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 	}
 	else{ # Bowtie 1 alignments
-	  ($C_to_T_infile_1) = biTransformFastQFiles_paired_end_bowtie1_gzip ($filename_1,$filename_2); # passing both reads at the same time
-	  # ($G_to_A_infile_2) = biTransformFastQFiles_paired_end_bowtie1 ($filename_2,2);
-	  # ($C_to_T_infile_1) = biTransformFastQFiles_paired_end_bowtie1 ($filename_1,1); # also passing the read number
-	  # ($G_to_A_infile_2) = biTransformFastQFiles_paired_end_bowtie1 ($filename_2,2);
+	  if ($gzip){
+	    ($C_to_T_infile_1) = biTransformFastQFiles_paired_end_bowtie1_gzip ($filename_1,$filename_2); # passing both reads at the same time
 	
-	  $fhs[0]->{inputfile_1} = $C_to_T_infile_1; # this file contains both read 1 and read 2 in tab delimited format
-	  $fhs[0]->{inputfile_2} = undef; # no longer needed
-	  $fhs[1]->{inputfile_1} = undef;
-	  $fhs[1]->{inputfile_2} = undef;
-	  $fhs[2]->{inputfile_1} = undef;
-	  $fhs[2]->{inputfile_2} = undef;
-	  $fhs[3]->{inputfile_1} = $C_to_T_infile_1; # this file contains both read 1 and read 2 in tab delimited format
-	  $fhs[3]->{inputfile_2} = undef; # no longer needed
+	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1; # this file contains both read 1 and read 2 in tab delimited format
+	    $fhs[0]->{inputfile_2} = undef; # no longer needed
+	    $fhs[1]->{inputfile_1} = undef;
+	    $fhs[1]->{inputfile_2} = undef;
+	    $fhs[2]->{inputfile_1} = undef;
+	    $fhs[2]->{inputfile_2} = undef;
+	    $fhs[3]->{inputfile_1} = $C_to_T_infile_1; # this file contains both read 1 and read 2 in tab delimited format
+	    $fhs[3]->{inputfile_2} = undef; # no longer needed
+	  }
+	  else{
+	    ($C_to_T_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
+	    ($G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
+	
+	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
+	    $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
+	    $fhs[1]->{inputfile_1} = undef;
+	    $fhs[1]->{inputfile_2} = undef;
+	    $fhs[2]->{inputfile_1} = undef;
+	    $fhs[2]->{inputfile_2} = undef;
+	    $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
+	    $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
+	  }
 	}
       }
       else{
@@ -154,24 +166,38 @@ foreach my $filename (@filenames){
 	  $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 	}
 	else{ # Bowtie 1 alignments
-	  ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end_bowtie1_gzip ($filename_1,$filename_2); # passing both reads at the same time
+	  if ($gzip){
+	    ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end_bowtie1_gzip ($filename_1,$filename_2); # passing both reads at the same time
 	
-	  $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
-	  $fhs[0]->{inputfile_2} = undef; # no longer needed
-	  $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
-	  $fhs[1]->{inputfile_2} = undef;
-	  $fhs[2]->{inputfile_1} = $G_to_A_infile_1;
-	  $fhs[2]->{inputfile_2} = undef;
-	  $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
-	  $fhs[3]->{inputfile_2} = undef; # no longer needed
+	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
+	    $fhs[0]->{inputfile_2} = undef; # not needed for compressed temp files
+	    $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
+	    $fhs[1]->{inputfile_2} = undef;
+	    $fhs[2]->{inputfile_1} = $G_to_A_infile_1;
+	    $fhs[2]->{inputfile_2} = undef;
+	    $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
+	    $fhs[3]->{inputfile_2} = undef; # not needed for compressed temp files
+	  }
+	  else{ #uncompressed temp files
+	    ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
+	    ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
+	
+	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
+	    $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
+	    $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
+	    $fhs[1]->{inputfile_2} = $C_to_T_infile_2;
+	    $fhs[2]->{inputfile_1} = $G_to_A_infile_1;
+	    $fhs[2]->{inputfile_2} = $C_to_T_infile_2;
+	    $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
+	    $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
+	  }
 	}
       }
       if ($bowtie2){
 	paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
       }
       else{
-	paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);	
-	# paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);	
+       	paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);	
       }
     }
     start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
@@ -179,14 +205,14 @@ foreach my $filename (@filenames){
 
   ### Else we are performing SINGLE-END ALIGNMENTS
   else{
-    print "\nSingle-end alignments will be performed\n",'='x39,"\n\n";
+    warn "\nSingle-end alignments will be performed\n",'='x39,"\n\n";
     ### Initialising bisulfite conversion filenames
     my ($C_to_T_infile,$G_to_A_infile);
 
 
     ### FastA format
     if ($sequence_file_format eq 'FASTA'){
-      print "Inut file is in FastA format\n";
+      warn "Inut file is in FastA format\n";
       if ($directional){
 	($C_to_T_infile) = biTransformFastAFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
@@ -208,7 +234,7 @@ foreach my $filename (@filenames){
 
     ## FastQ format
     else{
-      print "Input file is in FastQ format\n";
+      warn "Input file is in FastQ format\n";
       if ($directional){
 	($C_to_T_infile) = biTransformFastQFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
@@ -256,8 +282,24 @@ sub start_methylation_call_procedure_single_ends {
   else{ # SAM is the default output
     $outfile =~ s/$/_bismark.sam/;
   }
-  print "Writing bisulfite mapping results to $output_dir$outfile\n\n";
-  open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+
+  $bam = 0 unless (defined $bam);
+
+  if ($bam == 1){ ### Samtools is installed, writing out BAM directly
+    $outfile =~ s/sam/bam/;
+    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  }
+  elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
+    $outfile .= '.gz';
+    open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  }
+  else{ # uncompressed ouput, default
+    open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  }
+
+  warn "\n>>> Writing bisulfite mapping results to $output_dir$outfile <<<\n\n";
+  sleep(1);
+
   if ($vanilla){
     print OUT "Bismark version: $bismark_version\n";
   }
@@ -347,8 +389,23 @@ sub start_methylation_call_procedure_paired_ends {
     $outfile =~ s/$/_bismark_pe.sam/;
   }
 
-  print "Writing bisulfite mapping results to $outfile\n\n";
-  open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!";
+  $bam = 0 unless (defined $bam);
+
+  if ($bam == 1){ ### Samtools is installed, writing out BAM directly
+    $outfile =~ s/sam/bam/;
+    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  }
+  elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
+    $outfile .= '.gz';
+    open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  }
+  else{ # uncompressed ouput, default
+    open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  }
+
+  warn "\n>>> Writing bisulfite mapping results to $outfile <<<\n\n";
+  sleep(1);
+
   if ($vanilla){
     print OUT "Bismark version: $bismark_version\n";
   }
@@ -4933,8 +4990,14 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
       $bt_options .= ' --nofw';
     }
 
-    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1}, with the options: $bt_options))\n";
-    open ($fh->{fh},"zcat $temp_dir$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
+    if ($gzip){
+      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1}, with the options: $bt_options))\n";
+      open ($fh->{fh},"zcat $temp_dir$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
+    }
+    else{
+      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt_options))\n";
+      open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    }
 
     my $line_1 = $fh->{fh}->getline();
     my $line_2 = $fh->{fh}->getline();
@@ -5629,23 +5692,50 @@ VERSION
 
   ### OUTPUT REQUESTED AS BAM FILE
   if ($bam){
-    ### PATH TO SAMTOOLS
-    if (defined $samtools_path){
-      warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
+    if ($vanilla){
+      die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
     }
 
+    ### PATH TO SAMTOOLS
+    if (defined $samtools_path){
+      # if Samtools was specified as full command
+      if ($samtools_path =~ /samtools$/){
+	if (-e $samtools_path){
+	  # Samtools found. Replacing samtools to just leave the path information
+	  $samtools_path =~ s/samtools$//;
+	}
+	else{
+	  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	}
+      }
+      else{
+	unless ($samtools_path =~ /\/$/){
+	  $samtools_path =~ s/$/\//;
+	}
+   	if (-e $samtools_path.'samtools' ){
+	  # Samtools executable found
+	}
+	else{
+	  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	}
+      }
+
+      warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
+      $bam = 1;
+    }
     # Check whether Samtools is in the PATH if no path was supplied by the user
     else{
       if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
 	$samtools_path = `which samtools`;
 	chomp $samtools_path;
-	warn "Alignments will be written out in BAM format. Samtools found in PATH: '$samtools_path'\n";
+	warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n";
+	$bam = 1;
       }
     }
 
     unless (defined $samtools_path){
-      $bam = 0;
-      warn "Did not find Samtools on the system. Alignments will be written out in SAM format instead\n";
+      $bam = 2;
+      warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
     }
     sleep (1);
   }
@@ -7053,6 +7143,19 @@ Output:
                          The format for single-end reads and read 1 of paired-end reads is 'XA:Z:number of mismatches'
                          and 'XB:Z:number of mismatches' for read 2 of paired-end reads.
 
+--gzip                   Temporary bisulfite conversion files will be written out in a GZIP compressed form to save disk
+                         space. This option is available for most alignment modes but is not available for paired-end FastA
+                         files. This option might be somewhat slower than writing out uncompressed files, but this awaits
+                         further testing.
+
+--bam                    The output will be written into BAM format instead of the default SAM format. Bismark will
+                         attempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't
+                         been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,
+                         the SAM output will be compressed with GZIP instead (yielding an .sam.gz output file).
+
+--samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                         explicitly if Samtools is in the PATH already.
+
 
 
 Other:
@@ -7218,7 +7321,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 01 Mar 2013.
+This script was last edited on 14 April 2013.
 
 HOW_TO
 }
