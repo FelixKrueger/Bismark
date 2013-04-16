@@ -4557,7 +4557,7 @@ sub biTransformFastQFiles_paired_end_bowtie1_gzip {
     chomp $quality_score_2;
 
     $identifier_1 =~ s/^\@//;
-    # $identifier_1 =~ s/$/\/1/;
+    $identifier_1 =~ s/$/\/1/; #adding an extra /1 to the end which is being removed by Bowtie otherwise (which leads to no sequences alignments whatsoever)
 
     if ($skip){
       next unless ($count > $skip);
@@ -4991,11 +4991,11 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
     }
 
     if ($gzip){
-      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1}, with the options: $bt_options))\n";
-      open ($fh->{fh},"zcat $temp_dir$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
+      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1}, with the options: $bt_options)\n";
+      open ($fh->{fh},"zcat ${temp_dir}$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
     }
     else{
-      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt_options))\n";
+      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1} and ${temp_dir}$fh->{inputfile_2}, with the options: $bt_options))\n";
       open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
     }
 
@@ -5701,8 +5701,7 @@ VERSION
       # if Samtools was specified as full command
       if ($samtools_path =~ /samtools$/){
 	if (-e $samtools_path){
-	  # Samtools found. Replacing samtools to just leave the path information
-	  $samtools_path =~ s/samtools$//;
+	  # Samtools executable found
 	}
 	else{
 	  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
@@ -5712,7 +5711,8 @@ VERSION
 	unless ($samtools_path =~ /\/$/){
 	  $samtools_path =~ s/$/\//;
 	}
-   	if (-e $samtools_path.'samtools' ){
+	$samtools_path .= 'samtools';
+   	if (-e $samtools_path){
 	  # Samtools executable found
 	}
 	else{
@@ -7148,10 +7148,10 @@ Output:
                          files. This option might be somewhat slower than writing out uncompressed files, but this awaits
                          further testing.
 
---bam                    The output will be written into BAM format instead of the default SAM format. Bismark will
+--bam                    The output will be written out in BAM format instead of the default SAM format. Bismark will
                          attempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't
                          been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,
-                         the SAM output will be compressed with GZIP instead (yielding an .sam.gz output file).
+                         the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
 
 --samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                          explicitly if Samtools is in the PATH already.

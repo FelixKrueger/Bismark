@@ -1,3 +1,37 @@
+RELEASE NOTES FOR Bismark v0.7.10 (14 Apr 2013)
+----------------------------------------------
+
+Bismark
+=======
+
+Added new option '--gzip' that causes temporary bisulfite conversion files to be
+written out in a GZIP compressed form in order to save disk space. This option is
+available for most alignment modes but is not available for paired-end FastA files 
+(not many people use PE FastA files...). This option might be somewhat slower than
+writing out uncompressed files, but this awaits further testing.
+
+Added new option '--bam' that causes the output file to be written out in BAM format
+instead of the default SAM format. Bismark will attempt to use the path to Samtools
+that was specified with '--samtools_path', or, if it hasn't been specified explicitly,
+attempt to find Samtools in the PATH. If no installation of Samtools can be found
+the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
+
+Added new option '--samtools_path' to point Bismark to your Samtools installation, e.g.
+/home/user/samtools/. Does not need to be specified explicitly if Samtools is in the
+PATH.
+
+
+
+Methylation Extractor
+=====================
+
+The methylation extractor does now also read BAM files, however this requires a working
+copy of Samtools. For this we added the new option '--samtools_path' to point the Bismark
+methylation extractor to your Samtools installation, e.g. /home/user/samtools/. This does
+not need to be specified explicitly if Samtools is in the PATH.
+
+
+
 RELEASE NOTES FOR Bismark v0.7.9 (05 Mar 2013)
 ----------------------------------------------
 
