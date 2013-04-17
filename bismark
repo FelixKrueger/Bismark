@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -217,6 +217,9 @@ foreach my $filename (@filenames){
 	($C_to_T_infile) = biTransformFastAFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
       }
+      elsif($pbat){
+
+      }
       else{
 	($C_to_T_infile,$G_to_A_infile) = biTransformFastAFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
@@ -238,6 +241,9 @@ foreach my $filename (@filenames){
       if ($directional){
 	($C_to_T_infile) = biTransformFastQFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
+      }
+      elsif($pbat){
+
       }
       else{
 	($C_to_T_infile,$G_to_A_infile) = biTransformFastQFiles ($filename);
@@ -5511,6 +5517,52 @@ sub reset_counters_and_fhs{
 	   );
     }
   }
+  elsif($pbat){
+    if ($filename =~ ','){ # paired-end files
+      @fhs=(
+	    { name => 'CTreadCTgenome',
+	      strand_identity => 'con ori forward',
+	      bisulfiteIndex => $CT_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'CTreadGAgenome',
+	      strand_identity => 'con ori reverse',
+	      bisulfiteIndex => $GA_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'GAreadCTgenome',
+	      strand_identity => 'compl ori con forward',
+	      bisulfiteIndex => $CT_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'GAreadGAgenome',
+	    strand_identity => 'compl ori con reverse',
+	      bisulfiteIndex => $GA_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	   );
+    }
+    else{ # single-end files
+      @fhs=(
+	    { name => 'GAreadCTgenome',
+	      strand_identity => 'compl ori con forward',
+	      bisulfiteIndex => $CT_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	    { name => 'GAreadGAgenome',
+	      strand_identity => 'compl ori con reverse',
+	      bisulfiteIndex => $GA_index_basename,
+	      seen => 0,
+	      wrong_strand => 0,
+	    },
+	   );
+    }
+  }
   else{
     @fhs=(
 	  { name => 'CTreadCTgenome',
@@ -5584,6 +5636,7 @@ sub process_command_line{
   my $samtools_path;
   my $bam;
   my $gzip;
+  my $pbat;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5624,6 +5677,7 @@ sub process_command_line{
 				 'samtools_path=s' => \$samtools_path,
 				 'bam' => \$bam,
 				 'gzip' => \$gzip,
+				 'pbat' => \$pbat,
 				);
 
 
@@ -6146,14 +6200,20 @@ VERSION
   ### STRAND-SPECIFIC LIBRARIES
   my $directional;
   if ($non_directional){
-    print "Library was specified to be not strand-specific (non-directional), therefore alignments to all four possible bisulfite strands (OT, CTOT, OB and CTOB) will be reported.\n";
+    die "A library can only be specified to be either non-directional or a PBAT-Seq library. Please respecify!\n\n" if ($pbat);
+    warn "Library was specified to be not strand-specific (non-directional), therefore alignments to all four possible bisulfite strands (OT, CTOT, OB and CTOB) will be reported\n";
+    sleep (3);
+    $directional = 0;
+  }
+  elsif($pbat){
+    warn "Library was specified as PBAT-Seq (Post-Bisulfite Adapter Tagging), only performing alignments to the complementary strands (CTOT and CTOB)\n";
     sleep (3);
     $directional = 0;
   }
   else{
-    print "Library is assumed to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored (i.e. not performed!).\n";
+    warn "Library is assumed to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored (i.e. not performed!)\n";
     sleep (3);
-    $directional = 1; # Changed this to being the default behaviour
+    $directional = 1; # default behaviour
   }
 
   ### UNMAPPED SEQUENCE OUTPUT
@@ -7106,6 +7166,12 @@ Output:
                          alignments (which is the default) will only run 2 alignment threads to the original top (OT)
                          or bottom (OB) strands in parallel and report these alignments. This is the recommended option
                          for sprand-specific libraries).
+
+--pbat                   This options may be used for PBAT-Seq libraries (Post-Bisulfite Adapter Tagging; Kobayashi et al.,
+                         PLoS Genetics, 2012). This is essentially the exact opposite of alignments in 'directional' mode,
+                         as it will only launch two alignment threads to the CTOT and CTOB strands instead of the normal OT
+                         and OB ones. Use this option only if you are certain that your libraries were constructed following
+                         a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option).
 
 --sam-no-hd              Suppress SAM header lines (starting with @). This might be useful when very large input files are
                          split up into several smaller files to run concurrently and the output files are to be merged.

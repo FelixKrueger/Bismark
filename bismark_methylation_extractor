@@ -2694,6 +2694,12 @@ sub print_individual_C_methylation_states_single_end{
   my $unmethylated_CHH_count = 0;
   my $unmethylated_CpG_count = 0;
 
+  ### Checking whether the CIGAR string is a linear genomic match or whether if requires indel processing
+  #  if ($cigar =~ /^\d+M$/){
+  #    warn "See!? I told you so! $cigar\n";
+  #    sleep(1);
+  #  }
+
   my @len;
   my @ops;
   my $pos_offset = 0; # this is only relevant for SAM reads with insertions or deletions
@@ -2725,8 +2731,10 @@ sub print_individual_C_methylation_states_single_end{
   ### adjusting the start position for all reads mapping to the reverse strand
   if ($strand eq '-') {
 
-    @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
-    # print @comp_cigar,"\n";
+    if ($cigar){ # only needed for SAM files
+      @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
+      # print @comp_cigar,"\n";
+    }
 
     unless ($ignore){  ### if --ignore was specified the start position has already been corrected
 
