@@ -1880,13 +1880,17 @@ sub print_individual_C_methylation_states_paired_end_files{
   my $unmethylated_CHH_count = 0;
   my $unmethylated_CpG_count = 0;
 
-  my @len;
-  my @ops;
+
   my $pos_offset = 0; # this is only relevant for SAM reads with insertions or deletions
   my $cigar_offset = 0; # again, this is only relevant for SAM reads containing indels
   my @comp_cigar;
 
-  if ($cigar){ # parsing CIGAR string
+  ### Checking whether the CIGAR string is a linear genomic match or whether if requires indel processing
+  if ($cigar =~ /^\d+M$/){
+  }
+  else{ # parsing CIGAR string
+    my @len;
+    my @ops;
     @len = split (/\D+/,$cigar); # storing the length per operation
     @ops = split (/\d+/,$cigar); # storing the operation
     shift @ops; # remove the empty first element
@@ -1907,11 +1911,12 @@ sub print_individual_C_methylation_states_paired_end_files{
     # sleep (1);
   }
 
-
   if ($strand eq '-') {
 
     ### the  CIGAR string needs to be reversed, the methylation call has already been reversed above
-    @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
+    if (@comp_cigar){
+      @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
+    }
     #  print "reverse CIGAR string: @comp_cigar\n";
 
     ### the start position of paired-end files has already been corrected, see above
@@ -1928,7 +1933,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	if ($strand eq '+') {
 	  for my $index (0..$#methylation_calls) {
 	
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	      $cigar_offset += $cigar_mod;
@@ -1967,7 +1972,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
 	
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      $cigar_offset += $cigar_mod;
@@ -2013,7 +2018,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	if ($strand eq '+') {
 	  for my $index (0..$#methylation_calls) {
 
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	      $cigar_offset += $cigar_mod;
@@ -2052,7 +2057,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
 
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      $cigar_offset += $cigar_mod;
@@ -2102,7 +2107,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	if ($strand eq '+') {
 	  for my $index (0..$#methylation_calls) {
 
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	      $cigar_offset += $cigar_mod;
@@ -2136,7 +2141,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
 
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      $cigar_offset += $cigar_mod;
@@ -2178,7 +2183,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	if ($strand eq '+') {
 	  for my $index (0..$#methylation_calls) {
 
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	      $cigar_offset += $cigar_mod;
@@ -2212,7 +2217,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	} elsif ($strand eq '-') {
 	  for my $index (0..$#methylation_calls) {
 
-	    if ($cigar){ # only needed for SAM files
+	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	      $cigar_offset += $cigar_mod;
@@ -2260,7 +2265,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 	
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	    $cigar_offset += $cigar_mod;
@@ -2299,7 +2304,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    $cigar_offset += $cigar_mod;
@@ -2345,7 +2350,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	    $cigar_offset += $cigar_mod;
@@ -2384,7 +2389,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    $cigar_offset += $cigar_mod;
@@ -2433,7 +2438,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	    $cigar_offset += $cigar_mod;
@@ -2467,7 +2472,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    $cigar_offset += $cigar_mod;
@@ -2508,7 +2513,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       if ($strand eq '+') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	    $cigar_offset += $cigar_mod;
@@ -2542,7 +2547,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       } elsif ($strand eq '-') {
 	for my $index (0..$#methylation_calls) {
 
-	  if ($cigar){ # only needed for SAM files
+	  if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	    # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	    my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	    $cigar_offset += $cigar_mod;
@@ -2694,29 +2699,33 @@ sub print_individual_C_methylation_states_single_end{
   my $unmethylated_CHH_count = 0;
   my $unmethylated_CpG_count = 0;
 
-  ### Checking whether the CIGAR string is a linear genomic match or whether if requires indel processing
-  #  if ($cigar =~ /^\d+M$/){
-  #    warn "See!? I told you so! $cigar\n";
-  #    sleep(1);
-  #  }
-
-  my @len;
-  my @ops;
   my $pos_offset = 0; # this is only relevant for SAM reads with insertions or deletions
   my $cigar_offset = 0; # again, this is only relevant for SAM reads containing indels
 
   my @comp_cigar;
 
   if ($cigar){ # parsing CIGAR string
-    @len = split (/\D+/,$cigar); # storing the length per operation
-    @ops = split (/\d+/,$cigar); # storing the operation
-    shift @ops; # remove the empty first element
-    die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 
-    foreach my $index (0..$#len){
-      foreach (1..$len[$index]){
-	# print  "$ops[$index]";
-	push @comp_cigar, $ops[$index];
+    ### Checking whether the CIGAR string is a linear genomic match or whether if requires indel processing
+    if ($cigar =~ /^\d+M$/){
+      #  warn "See!? I told you so! $cigar\n";
+      # sleep(1);
+    }
+    else{
+
+      my @len;
+      my @ops;
+
+      @len = split (/\D+/,$cigar); # storing the length per operation
+      @ops = split (/\d+/,$cigar); # storing the operation
+      shift @ops; # remove the empty first element
+      die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+      
+      foreach my $index (0..$#len){
+	foreach (1..$len[$index]){
+	  # print  "$ops[$index]";
+	  push @comp_cigar, $ops[$index];
+	}
       }
     }
     # warn "\nDetected CIGAR string: $cigar\n";
@@ -2727,23 +2736,28 @@ sub print_individual_C_methylation_states_single_end{
     # print "$meth_call\n\n";
     # sleep (1);
   }
-
+  
   ### adjusting the start position for all reads mapping to the reverse strand
   if ($strand eq '-') {
 
-    if ($cigar){ # only needed for SAM files
+    if (@comp_cigar){ # only needed for SAM reads with InDels
       @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
       # print @comp_cigar,"\n";
     }
 
     unless ($ignore){  ### if --ignore was specified the start position has already been corrected
-
+      
       if ($cigar){ ### SAM format
-	my $MD_count = 0;
-	foreach (@comp_cigar){
-	  ++$MD_count if ($_ eq 'M' or $_ eq 'D'); # Matching bases or deletions affect the genomic position of the 3' ends of reads, insertions don't
+	if ($cigar =~ /^(\d+)M$/){ # linear match
+	  $start += $1 - 1;
 	}
-	$start += $MD_count - 1;
+	else{ # InDel read
+	  my $MD_count = 0;
+	  foreach (@comp_cigar){
+	    ++$MD_count if ($_ eq 'M' or $_ eq 'D'); # Matching bases or deletions affect the genomic position of the 3' ends of reads, insertions don't
+	  }
+	  $start += $MD_count - 1;
+	}
       }
       else{ ### vanilla format
 	$start += length($meth_call)-1;
@@ -2757,14 +2771,14 @@ sub print_individual_C_methylation_states_single_end{
   if ($full and $merge_non_CpG) {
     if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
-
-	if ($cigar){ # only needed for SAM files
+	
+	if ($cigar and @comp_cigar){ # only needed for SAM alignments with InDels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
 	}
-
+	
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 	if ($methylation_calls[$index] eq 'X') {
@@ -2804,7 +2818,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-	if ($cigar){ # only needed for SAM files
+	if ($cigar and @comp_cigar){ # only needed for SAM entries with InDels
 	  # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition-index: ",$start-$index,"\t";
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
@@ -2854,7 +2868,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-	if ($cigar){ # only needed for SAM files
+	if ($cigar and @comp_cigar){ # only needed for SAM reads with Indels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
@@ -2897,7 +2911,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-    	if ($cigar){ # only needed for SAM files
+    	if ($cigar and @comp_cigar){ # only needed for SAM reads with Indels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
@@ -2947,7 +2961,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-	if ($cigar){ # only needed for SAM files
+	if ($cigar and @comp_cigar){ # only needed for SAM reads with Indels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
@@ -2984,7 +2998,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-	if ($cigar){ # only needed for SAM files
+	if ($cigar and @comp_cigar){ # only needed for SAM reads with Indels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
@@ -3027,7 +3041,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-	if ($cigar){ # only needed for SAM files
+	if ($cigar and @comp_cigar){ # only needed for SAM reads with Indels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
@@ -3064,7 +3078,7 @@ sub print_individual_C_methylation_states_single_end{
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 
-	if ($cigar){ # only needed for SAM files
+	if ($cigar and @comp_cigar){ # only needed for SAM reads with Indels
 	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;

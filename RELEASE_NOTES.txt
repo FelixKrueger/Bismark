@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.7.10 (14 Apr 2013)
+RELEASE NOTES FOR Bismark v0.7.10 (18 Apr 2013)
 ----------------------------------------------
 
 Bismark
@@ -20,6 +20,12 @@ Added new option '--samtools_path' to point Bismark to your Samtools installatio
 /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the
 PATH.
 
+Added new option '--pbat' which may be used for PBAT-Seq libraries (Post-Bisulfite
+Adapter Tagging; Kobayashi et al., PLoS Genetics, 2012). This is essentially the exact
+opposite of alignments in 'directional' mode, as it will only launch two alignment
+threads to the CTOT and CTOB strands instead of the normal OT and OB ones. The option
+--pbat works only for single-end and paired-end FastQ files for use with Bowtie1 (and 
+uncompressed temporary files only).
 
 
 Methylation Extractor
@@ -29,6 +35,27 @@ The methylation extractor does now also read BAM files, however this requires a 
 copy of Samtools. For this we added the new option '--samtools_path' to point the Bismark
 methylation extractor to your Samtools installation, e.g. /home/user/samtools/. This does
 not need to be specified explicitly if Samtools is in the PATH.
+
+Added new option '--gzip' to write out the primary methylation extractor files (CpG_OT_...,
+CpG_OB_... etc) in a GZIP compressed form to save disk space. This option does not work
+on bedGraph and genome-wide cytosine reports as they are 'tiny' anyway.
+
+The methylation extractor does now treat InDel free reads differently than before which
+results in a ~60% increase in extraction speed for ungapped alignments in SAM format!
+
+
+Deduplication script
+====================
+
+The deduplication script does now also read BAM files, however this requires a working
+copy of Samtools. The new option '--samtools_path' may point the script to your Samtools
+installation, e.g. /home/user/samtools/. This does not need to be specified explicitly
+if Samtools is in the PATH.
+
+The deduplication script also received the new option '--bam' to write out deduplicated
+files directly in BAM format. If no installation of Samtools can be found the SAM output
+will be compressed with GZIP instead (yielding a .sam.gz output file).
+
 
 
 

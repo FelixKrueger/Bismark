@@ -59,17 +59,17 @@ foreach my $filename (@filenames){
     $fhs[2]->{name} = 'GAread1CTread2CTgenome';
     $fhs[3]->{name} = 'CTread1GAread2GAgenome';
 
-    print "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
+    warn "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
 
     my ($filename_1,$filename_2) = (split (/,/,$filename));
-    print "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
+    warn "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
 
     ### additional variables only for paired-end alignments
     my ($C_to_T_infile_2,$G_to_A_infile_2); # to be made from mate2 file
 
     ### FastA format
     if ($sequence_file_format eq 'FASTA'){
-      print "Input files are in FastA format\n";
+      warn "Input files are in FastA format\n";
 
       if ($directional){
 	($C_to_T_infile_1) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
@@ -108,7 +108,7 @@ foreach my $filename (@filenames){
 
     ### FastQ format
     else{
-      print "Input files are in FastQ format\n";
+      warn "Input files are in FastQ format\n";
       if ($directional){
 	if ($bowtie2){
 	  ($C_to_T_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
@@ -150,6 +150,20 @@ foreach my $filename (@filenames){
 	    $fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 	  }
 	}
+      }
+      elsif($pbat){ # PBAT-Seq
+	### At the moment we are only performing uncompressed FastQ alignments with Bowtie1
+	($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
+	($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
+	
+	$fhs[0]->{inputfile_1} = undef;
+	$fhs[0]->{inputfile_2} = undef;
+	$fhs[1]->{inputfile_1} = $G_to_A_infile_1;
+	$fhs[1]->{inputfile_2} = $C_to_T_infile_2;
+	$fhs[2]->{inputfile_1} = $G_to_A_infile_1;
+	$fhs[2]->{inputfile_2} = $C_to_T_infile_2;
+	$fhs[3]->{inputfile_1} = undef;
+	$fhs[3]->{inputfile_2} = undef;
       }
       else{
 	if ($bowtie2){
@@ -217,9 +231,6 @@ foreach my $filename (@filenames){
 	($C_to_T_infile) = biTransformFastAFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
       }
-      elsif($pbat){
-
-      }
       else{
 	($C_to_T_infile,$G_to_A_infile) = biTransformFastAFiles ($filename);
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
@@ -243,7 +254,8 @@ foreach my $filename (@filenames){
 	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $C_to_T_infile;
       }
       elsif($pbat){
-
+	($G_to_A_infile) = biTransformFastQFiles ($filename);
+	$fhs[0]->{inputfile} = $fhs[1]->{inputfile} = $G_to_A_infile; # PBAT-Seq only uses the G to A converted files
       }
       else{
 	($C_to_T_infile,$G_to_A_infile) = biTransformFastQFiles ($filename);
@@ -254,6 +266,9 @@ foreach my $filename (@filenames){
       ### Creating 4 different bowtie filehandles and storing the first entry
       if ($bowtie2){
 	single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
+      }
+      if ($pbat){
+	single_end_align_fragments_to_bisulfite_genome_fastQ (undef,$G_to_A_infile);
       }
       else{
 	single_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile,$G_to_A_infile);
@@ -490,7 +505,15 @@ sub print_final_analysis_report_single_end{
       warn "Could not delete temporary file $C_to_T_infile properly $!\n";
     }
   }
-
+  elsif ($pbat){
+    my $deletion_successful =  unlink "$temp_dir$G_to_A_infile";
+    if ($deletion_successful == 1){
+      warn "\nSuccessfully deleted the temporary file $temp_dir$G_to_A_infile\n\n";
+    }
+    else{
+      warn "Could not delete temporary file $G_to_A_infile properly $!\n";
+    }
+  }
   else{
     my $deletion_successful =  unlink "$temp_dir$C_to_T_infile","$temp_dir$G_to_A_infile";
     if ($deletion_successful == 2){
@@ -503,7 +526,7 @@ sub print_final_analysis_report_single_end{
 
   ### printing a final report for the alignment procedure
   print REPORT "Final Alignment report\n",'='x22,"\n";
-  print "Final Alignment report\n",'='x22,"\n";
+  warn "Final Alignment report\n",'='x22,"\n";
   #  foreach my $index (0..$#fhs){
   #    print "$fhs[$index]->{name}\n";
   #    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
@@ -1413,7 +1436,13 @@ sub check_bowtie_results_single_end{
 
   ### If the sequence has not been rejected so far it will have a unique best alignment
   $counting{unique_best_alignment_count}++;
-  extract_corresponding_genomic_sequence_single_end($identifier,$methylation_call_params);
+  if ($pbat){
+    extract_corresponding_genomic_sequence_single_end_pbat($identifier,$methylation_call_params);
+  }
+  else{
+    extract_corresponding_genomic_sequence_single_end($identifier,$methylation_call_params);
+  }
+
   ### check test to see if the genomic sequence we extracted has the same length as the observed sequence+2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence}) != length($sequence)+2){
     warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position}\n";
@@ -3516,6 +3545,112 @@ sub extract_corresponding_genomic_sequence_single_end {
   $methylation_call_params->{$sequence_identifier}->{end_position} = $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence});
 }
 
+sub extract_corresponding_genomic_sequence_single_end_pbat {
+  my ($sequence_identifier,$methylation_call_params) = @_;
+  ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
+  ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
+
+  ### the alignment_strand information is needed to determine which strand of the genomic sequence we are comparing the read against,
+  ### the read_conversion information is needed to know whether we are looking for C->T or G->A substitutions
+  my $alignment_strand;
+  my $read_conversion_info;
+  my $genome_conversion;
+  ### Also extracting the corresponding genomic sequence, +2 extra bases at the end so that we can also make a CpG methylation call and
+  ### in addition make differential calls for Cs non-CpG context, which will now be divided into CHG and CHH methylation,
+  ### if the C happens to be at the last position of the actually observed sequence
+  my $non_bisulfite_sequence;
+  ### depending on the conversion we want to make need to capture 1 extra base at the 3' end
+
+  my $pbat_index = $methylation_call_params->{$sequence_identifier}->{index} + 2; # (we are simply not running indexes 0 or 1!
+
+  ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
+  if ($pbat_index == 0){
+    ### [Index 0, sequence originated from (converted) forward strand]
+    $counting{CT_CT_count}++;
+    $alignment_strand = '+';
+    $read_conversion_info = 'CT';
+    $genome_conversion = 'CT';
+
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## CHH changed to +1
+      ### + 2 extra base at the 3' end
+      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
+    }
+    else{
+      $non_bisulfite_sequence = '';
+    }
+  }
+
+  ### results from CT converted reads vs. GA converted genome (- orientation alignments are reported only)
+  elsif ($pbat_index == 1){
+    ### [Index 1, sequence originated from (converted) reverse strand]
+    $counting{CT_GA_count}++;
+    $alignment_strand = '-';
+    $read_conversion_info = 'CT';
+    $genome_conversion = 'GA';
+
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    if ($methylation_call_params->{$sequence_identifier}->{position}-2 >= 0){ ## CHH changed to -2 # 02 02 2012 Changed this to >= from >
+      ### Extracting 2 extra 5' bases on forward strand which will become 2 extra 3' bases after reverse complementation
+      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
+      ## reverse complement!
+      $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
+    }
+    else{
+      $non_bisulfite_sequence = '';
+    }
+  }
+
+  ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
+  elsif ($pbat_index == 2){
+    ### [Index 2, sequence originated from complementary to (converted) forward strand]
+    $counting{GA_CT_count}++;
+    $alignment_strand = '-';
+    $read_conversion_info = 'GA';
+    $genome_conversion = 'CT';
+
+    ### +2 extra bases on the forward strand 3', which will become 2 extra 5' bases after reverse complementation
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## changed to +1 on 02 02 2012
+      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
+      ## reverse complement!
+      $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
+    }
+    else{
+      $non_bisulfite_sequence = '';
+    }
+  }
+
+  ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
+  elsif ($pbat_index == 3){
+    ### [Index 3, sequence originated from complementary to (converted) reverse strand]
+    $counting{GA_GA_count}++;
+    $alignment_strand = '+';
+    $read_conversion_info = 'GA';
+    $genome_conversion = 'GA';
+
+    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
+    if ($methylation_call_params->{$sequence_identifier}->{position}-2 >= 0){ ## CHH changed to +2 # 02 02 2012 Changed this to >= from >
+      ### +2 extra base at the 5' end as we are nominally checking the converted reverse strand
+      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
+    }
+    else{
+      $non_bisulfite_sequence = '';
+    }
+  }
+  else{
+    die "Too many bowtie result filehandles\n";
+  }
+
+  $methylation_call_params->{$sequence_identifier}->{alignment_strand} = $alignment_strand;
+  $methylation_call_params->{$sequence_identifier}->{read_conversion} = $read_conversion_info;
+  $methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
+  $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+
+  ### at this point we can also determine the end position of a read
+  $methylation_call_params->{$sequence_identifier}->{end_position} = $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence});
+}
+
 
 sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   my ($sequence_identifier,$methylation_call_params) = @_;
@@ -4215,23 +4350,7 @@ sub biTransformFastQFiles {
 
   my $C_to_T_infile = my $G_to_A_infile = $filename;
 
-  if ($gzip){
-    $C_to_T_infile =~ s/$/_C_to_T.fastq.gz/;
-  }
-  else{
-    $C_to_T_infile =~ s/$/_C_to_T.fastq/;
-  }
-
-  warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
-
-  if ($gzip){
-    open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
-  }
-  else{
-    open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n"; # uncompressed option
-  }
-
-  unless ($directional){
+  if ($pbat){ # PBAT-Seq
     if ($gzip){
       $G_to_A_infile =~ s/$/_G_to_A.fastq.gz/;
     }
@@ -4246,6 +4365,41 @@ sub biTransformFastQFiles {
     }
     else{
       open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
+    }
+  }
+  else{ # directional or non-directional
+    if ($gzip){
+      $C_to_T_infile =~ s/$/_C_to_T.fastq.gz/;
+    }
+    else{
+      $C_to_T_infile =~ s/$/_C_to_T.fastq/;
+    }
+
+    warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
+
+    if ($gzip){
+      open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+    }
+    else{
+      open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n"; # uncompressed option
+    }
+
+    unless ($directional){
+      if ($gzip){
+	$G_to_A_infile =~ s/$/_G_to_A.fastq.gz/;
+      }
+      else{
+	$G_to_A_infile =~ s/$/_G_to_A.fastq/;
+      }
+
+      warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
+
+      if ($gzip){
+	open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+      }
+      else{
+	open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
+      }
     }
   }
 
@@ -4282,24 +4436,37 @@ sub biTransformFastQFiles {
       }
     }
 
-    my $sequence_C_to_T = $sequence;
-    $sequence_C_to_T =~ tr/C/T/;
-    print CTOT join ('',$identifier,$sequence_C_to_T,$identifier2,$quality_score);
-
-    unless ($directional){
+    if ($pbat){
       my $sequence_G_to_A = $sequence;
       $sequence_G_to_A =~ tr/G/A/;
       print GTOA join ('',$identifier,$sequence_G_to_A,$identifier2,$quality_score);
     }
+    else{ # directional or non-directional
+      my $sequence_C_to_T = $sequence;
+      $sequence_C_to_T =~ tr/C/T/;
+      print CTOT join ('',$identifier,$sequence_C_to_T,$identifier2,$quality_score);
+
+      unless ($directional){
+	my $sequence_G_to_A = $sequence;
+	$sequence_G_to_A =~ tr/G/A/;
+	print GTOA join ('',$identifier,$sequence_G_to_A,$identifier2,$quality_score);
+      }
+    }
   }
-  close CTOT or die "Failed to close filehandle $!\n";
 
   if ($directional){
-    print "\nCreated C -> T converted versions of the FastQ file $filename ($count sequences in total)\n\n";
+    close CTOT or die "Failed to close filehandle $!\n";
+    warn "\nCreated C -> T converted version of the FastQ file $filename ($count sequences in total)\n\n";
+  }
+  elsif($pbat){
+    warn "\nCreated G -> A converted version of the FastQ file $filename ($count sequences in total)\n\n";
+    close GTOA or die "Failed to close filehandle $!\n";
+    return ($G_to_A_infile);
   }
   else{
+    close CTOT or die "Failed to close filehandle $!\n";
     close GTOA or die "Failed to close filehandle $!\n";
-    print "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
+    warn "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
   }
 
   return ($C_to_T_infile,$G_to_A_infile);
@@ -4964,13 +5131,16 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   if ($directional){
     warn "Input file is $C_to_T_infile_1 (FastQ)\n";
   }
+  elsif($pbat){
+    warn "Input file is $G_to_A_infile_1 (FastQ; PBAT-Seq)\n";
+  }
   else{
     warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 (FastQ)\n";
   }
 
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
   ## data structure above
-  if ($directional){
+  if ($directional or $pbat){
     warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
   else{
@@ -4979,12 +5149,12 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 
   foreach my $fh (@fhs) {
 
-    if ($directional){
+    if ($directional or $pbat){
       unless ($fh->{inputfile_1}){
 	$fh->{last_seq_id} = undef;
 	$fh->{last_line_1} = undef;
 	$fh->{last_line_2} = undef;
-	next;
+	next; # skipping unwanted filehandles
       }
     }
 
@@ -5002,6 +5172,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
     }
     else{
       warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1} and ${temp_dir}$fh->{inputfile_2}, with the options: $bt_options))\n";
+      sleep(5);
       open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
     }
 
@@ -5042,85 +5213,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
     }
   }
 }
-# ### Bowtie 1 (default) | PAIRED-END | FASTQ
 
-# sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
-#   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-#   if ($directional){
-#     print "Input files are $C_to_T_infile_1 $G_to_A_infile_2 (FastQ)\n";
-#   }
-#   else{
-#     print "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
-#   }
-
-#   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
-#   ## data structure above
-#   if ($directional){
-#     warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
-#   }
-#   else{
-#     warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
-#   }
-
-#   foreach my $fh (@fhs) {
-
-#     if ($directional){
-#       unless ($fh->{inputfile_1}){
-# 	$fh->{last_seq_id} = undef;
-# 	$fh->{last_line_1} = undef;
-# 	$fh->{last_line_2} = undef;
-# 	next;
-#       }
-#     }
-
-#     my $bt_options = $bowtie_options;
-#     if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
-#       $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-#     }
-#     else {
-#       $bt_options .= ' --nofw';
-#     }
-
-#     warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt_options))\n";
-#     open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
-
-#     my $line_1 = $fh->{fh}->getline();
-#     my $line_2 = $fh->{fh}->getline();
-
-#     # if Bowtie produces an alignment we store the first line of the output
-#     if ($line_1 and $line_2) {
-#       chomp $line_1;
-#       chomp $line_2;
-#       ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
-#       ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
-
-#       my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-#       my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-
-#       if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
-# 	$fh->{last_seq_id} = $id_1;
-#       }
-#       elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
-# 	$fh->{last_seq_id} = $id_2;
-#       }
-#       else{
-# 	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
-#       }
-
-#       $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
-#       $fh->{last_line_2} = $line_2; # this contains read 1 or read 2
-#       warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
-#     }
-
-#     # otherwise we just initialise last_seq_id and last_lines as undefined
-#     else {
-#       print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-#       $fh->{last_seq_id} = undef;
-#       $fh->{last_line_1} = undef;
-#       $fh->{last_line_2} = undef;
-#     }
-#   }
-# }
 ### Bowtie 2 | PAIRED-END | FASTQ
 
 sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
@@ -5336,13 +5429,17 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
   if ($directional){
     warn "Input file is $C_to_T_infile (FastQ)\n";
   }
+  elsif($pbat){
+    warn "Input file is $G_to_A_infile (FastQ)\n";
+  }
   else{
     warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n";
   }
 
+
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
   ## the data structure above
-  if ($directional){
+  if ($directional or $pbat){
     warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
   else{
@@ -5359,6 +5456,8 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     }
 
     warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt_options)\n";
+    sleep (5);
+
     if ($gzip){
       open ($fh->{fh},"zcat $temp_dir$fh->{inputfile} | $path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
     }
@@ -6206,6 +6305,10 @@ VERSION
     $directional = 0;
   }
   elsif($pbat){
+    die "The option --pbat is currently not compatible with --gzip. Please run alignments with uncompressed temporary files, i.e. lose the option --gzip\n" if ($gzip);
+    die "The option --pbat is currently not working for Bowtie 2. Please run alignments in default (i.e. Bowtie 1) mode!\n" if ($bowtie2);
+    die "The option --pbat is currently only working with FastQ files. Please respecify (i.e. lose the option -f)!\n" if ($fasta);
+
     warn "Library was specified as PBAT-Seq (Post-Bisulfite Adapter Tagging), only performing alignments to the complementary strands (CTOT and CTOB)\n";
     sleep (3);
     $directional = 0;
@@ -6289,7 +6392,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat);
 }
 
 
@@ -7171,7 +7274,9 @@ Output:
                          PLoS Genetics, 2012). This is essentially the exact opposite of alignments in 'directional' mode,
                          as it will only launch two alignment threads to the CTOT and CTOB strands instead of the normal OT
                          and OB ones. Use this option only if you are certain that your libraries were constructed following
-                         a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option).
+                         a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option). The option
+                         --pbat works only for single-end and paired-end FastQ files for use with Bowtie1 (uncompressed
+                         temporary files only).
 
 --sam-no-hd              Suppress SAM header lines (starting with @). This might be useful when very large input files are
                          split up into several smaller files to run concurrently and the output files are to be merged.
@@ -7387,7 +7492,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-This script was last edited on 14 April 2013.
+This script was last edited on 17 April 2013.
 
 HOW_TO
 }
