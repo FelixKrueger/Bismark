@@ -263,11 +263,11 @@ foreach my $filename (@filenames){
 	$fhs[2]->{inputfile} = $fhs[3]->{inputfile} = $G_to_A_infile;
       }
 
-      ### Creating 4 different bowtie filehandles and storing the first entry
+      ### Creating up to 4 different bowtie filehandles and storing the first entry
       if ($bowtie2){
 	single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
       }
-      if ($pbat){
+      elsif ($pbat){
 	single_end_align_fragments_to_bisulfite_genome_fastQ (undef,$G_to_A_infile);
       }
       else{
@@ -1035,7 +1035,9 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     }
   }
 
-  print "Processed $counting{sequences_count} sequences in total\n\n";
+  warn "Processed $counting{sequences_count} sequences in total\n\n";
+
+  close OUT or die $!;
 
   print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 
@@ -1145,7 +1147,9 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     }
   }
 
-  print "Processed $counting{sequences_count} sequences in total\n\n";
+  warn "Processed $counting{sequences_count} sequences in total\n\n";
+
+  close OUT or die $!;
 
   print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 
@@ -1475,10 +1479,10 @@ sub check_bowtie_results_single_end_bowtie2{
 
   ### reading from the Bowtie 2 output filehandles
   foreach my $index (0..$#fhs){
-    #    print "Index: $index\n";
-    #    print "$fhs[$index]->{last_line}\n";
-    #    print "$fhs[$index]->{last_seq_id}\n";
-    #    sleep (1);
+    #  print "Index: $index\n";
+    #   print "$fhs[$index]->{last_line}\n";
+    #   print "$fhs[$index]->{last_seq_id}\n";
+    sleep (1);
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
     next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -1942,7 +1946,7 @@ sub check_bowtie_results_paired_ends{
     $quality_value_2 = 'I'x(length$sequence_2);
   }
 
-  # warn "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
+  #  warn "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
   #  sleep (1);
   my %mismatches = ();
   ### reading from the bowtie output files to see if this sequence pair aligned to a bisulfite converted genome
@@ -5025,7 +5029,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
     }
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
@@ -5115,7 +5119,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
     }
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
@@ -5206,7 +5210,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
@@ -5297,7 +5301,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line_1} = undef;
       $fh->{last_line_2} = undef;
@@ -5355,7 +5359,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
     }
     # otherwise we just initialise last_seq_id and last_line as undefined
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_line\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line} = undef;
     }
@@ -5415,7 +5419,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
     }
     # otherwise we just initialise last_seq_id and last_line as undefinded. This should only happen at the end of a file for Bowtie 2 output
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_line\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line} = undef;
     }
@@ -5476,7 +5480,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     }
     # otherwise we just initialise last_seq_id and last_line as undefined
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_line\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line} = undef;
     }
@@ -5485,12 +5489,13 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
 
 ### Bowtie 2 | SINGLE-END | FASTQ
 sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
+
   my ($C_to_T_infile,$G_to_A_infile) = @_;
   if ($directional){
-    print "Input file is $C_to_T_infile (FastQ)\n\n";
+    warn "Input file is $C_to_T_infile (FastQ)\n\n";
   }
   else{
-    print "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
+    warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
   }
 
   ## Now starting up to 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
@@ -5501,8 +5506,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   else{
     warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
-
-  foreach my $fh (@fhs) {
+   foreach my $fh (@fhs) {
     my $bt2_options = $bowtie_options;
     if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
       $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
@@ -5517,6 +5521,8 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
       $_ = $fh->{fh}->getline();
+      # warn "$_\n";
+      # sleep(1);
       if ($_) {
 	last unless ($_ =~ /^\@/); # SAM headers start with @
       }
@@ -5532,10 +5538,11 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
       $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
       warn "Found first alignment:\t$fh->{last_line}\n";
+      # warn "storing $id and\n$_\n";
     }
     # otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
     else {
-      print "Found no alignment, assigning undef to last_seq_id and last_line\n";
+      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
       $fh->{last_seq_id} = undef;
       $fh->{last_line} = undef;
     }
@@ -6556,7 +6563,7 @@ sub single_end_SAM_output{
 	### if Bowtie 2 was used we need to analyse the CIGAR string whether the read contained any indels to determine the number of mismatches
 	if ($cigar =~ /(D|I)/) {
 	  # warn "$cigar\n";
-
+	  
 	  # parsing CIGAR string
 	  my @len = split (/\D+/,$cigar); # storing the length per operation
 	  my @ops = split (/\d+/,$cigar); # storing the operation
@@ -6586,12 +6593,17 @@ sub single_end_SAM_output{
 	    }
 	  }
 	  # warn "Alignment score $number_of_mismatches\n";
-	  $number_of_mismatches = $number_of_mismatches/6;
 	  # print "Mismatches $number_of_mismatches\n\n";
 	}
-      else {
-	$number_of_mismatches = $number_of_mismatches/6;
-      }
+      ### Now we have InDel corrected alignment scores
+
+      ### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, but normal mismatches receive -6. This might still break if the
+      ### sequence contained more than 5 Ns, but this should occur close to never
+
+      my $seq_N_count = $number_of_mismatches % 6; # modulo 6 will return the integer rest after the division
+      # warn "N count: $seq_N_count\n";
+      $number_of_mismatches = int ($number_of_mismatches / 6) + $seq_N_count;
+      # warn "MM    $number_of_mismatches\n";
     }
   }
 
@@ -6625,18 +6637,6 @@ sub paired_end_SAM_output{
   my $read_conversion_2       = $methylation_call_params->{$id}->{read_conversion_2};
   my $genome_conversion       = $methylation_call_params->{$id}->{genome_conversion};
 
-  my $number_of_mismatches_1;
-  my $number_of_mismatches_2;
-
-  if ($bowtie2){
-    $number_of_mismatches_1  = $methylation_call_params->{$id}->{alignment_score_1}; # only needed for custom allele-specific output, not the default!
-    $number_of_mismatches_2  = $methylation_call_params->{$id}->{alignment_score_2};
-  }
-  else{
-    $number_of_mismatches_1  = $methylation_call_params->{$id}->{number_of_mismatches_1}; # only needed for custom allele-specific output, not the default!
-    $number_of_mismatches_2  = $methylation_call_params->{$id}->{number_of_mismatches_2};
-  }
-
   my $id_1 = $id.'/1';
   my $id_2 = $id.'/2';
 
@@ -6661,6 +6661,26 @@ sub paired_end_SAM_output{
   else {
     die "Unexpected combination of read 1 and genome conversion: $read_conversion_1 / $genome_conversion\n";
   }
+
+  my $number_of_mismatches_1;
+  my $number_of_mismatches_2;
+
+  if ($bowtie2){ # Bowtie 2 reports always as read 1 then read 2, so this is fine
+    $number_of_mismatches_1  = $methylation_call_params->{$id}->{alignment_score_1}; # only needed for custom allele-specific output, not the default!
+    $number_of_mismatches_2  = $methylation_call_params->{$id}->{alignment_score_2};
+  }
+  else{ # Bowtie 1 reports always the leftmost read first. That means we have to reverse the strings if the first read aligned in reverse orientation
+    if ($index == 2 or $index == 3){ # CTOT or OB
+      $number_of_mismatches_1  = $methylation_call_params->{$id}->{number_of_mismatches_2}; # only needed for custom allele-specific output, not the default!
+      $number_of_mismatches_2  = $methylation_call_params->{$id}->{number_of_mismatches_1};
+    }
+    else{ # if the first read aligned in forward direction it is like for Bowtie 2
+      $number_of_mismatches_1  = $methylation_call_params->{$id}->{number_of_mismatches_1}; # only needed for custom allele-specific output, not the default!
+      $number_of_mismatches_2  = $methylation_call_params->{$id}->{number_of_mismatches_2};
+    }
+  }
+
+
 	
   ### we need to remove 2 bp of the genomic sequence as we were extracting read + 2bp long fragments to make a methylation call at the
   ### first or last position.
@@ -6999,11 +7019,7 @@ sub paired_end_SAM_output{
 	}
 
 	# warn "Alignment score $number_of_mismatches_1\n";
-	$number_of_mismatches_1 = $number_of_mismatches_1 / 6;
 	# print "Mismatches $number_of_mismatches_1\n\n";
-      }
-      else {
-	$number_of_mismatches_1 = $number_of_mismatches_1 / 6;
       }
 
       ### CIGAR 2
@@ -7038,14 +7054,23 @@ sub paired_end_SAM_output{
 	    die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I' and 'D': $cigar_2\n";
 	  }
 	}
+      }
 
-	# warn "Alignment score $number_of_mismatches_2\n";
-	$number_of_mismatches_2 = $number_of_mismatches_2 / 6;
-	# print "Mismatches $number_of_mismatches_2\n\n";
-      }
-      else {
-	$number_of_mismatches_2 = $number_of_mismatches_2 / 6;
-      }
+      ### Now we have InDel corrected Alignment scores
+
+      ### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, but normal mismatches receive -6. This might still break if the
+      ### sequence contained more than 5 Ns, but this should occur close to never
+
+      my $seq_1_N_count = $number_of_mismatches_1 % 6; # modulo 6 will return the integer rest after the division
+      my $seq_2_N_count = $number_of_mismatches_2 % 6;
+      #   warn "N count 1: $seq_1_N_count\n";
+      #   warn "N count 2: $seq_2_N_count\n";
+
+      $number_of_mismatches_1 = int ($number_of_mismatches_1 / 6) + $seq_1_N_count;
+      $number_of_mismatches_2 = int ($number_of_mismatches_2 / 6) + $seq_2_N_count;
+
+      # warn "MM1    $number_of_mismatches_1 \n";
+      # warn "MM2    $number_of_mismatches_2 \n";
     }
   }
 

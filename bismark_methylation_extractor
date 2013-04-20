@@ -5,8 +5,8 @@ $|++;
 use Getopt::Long;
 use Cwd;
 use Carp;
-
-
+use FindBin qw($Bin);
+use lib "$Bin/../lib";
 
 ## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
 
@@ -191,6 +191,18 @@ foreach my $filename (@filenames){
 
   process_Bismark_results_file($filename);
 
+  ### Closing all filehandles so that the Bismark methylation extractor output doesn't get truncated due to buffering issues
+  foreach my $fh (keys %fhs) {
+    if ($fh =~ /^[1230]$/) {
+      foreach my $context (keys %{$fhs{$fh}}) {
+	close $fhs{$fh}->{$context} or die $!;
+
+      }
+    } else {
+      close $fhs{$fh} or die $!;
+    }
+  }
+
   if ($bedGraph){
 
     my $out = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
@@ -198,25 +210,82 @@ foreach my $filename (@filenames){
     $out =~ s/sam$//;
     $out =~ s/bam$//;
     $out =~ s/txt$//;
-
     $out =~ s/$/bedGraph/;
-    my $bedGraph_output = $out;
-    open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
-    # warn "Writing bedGraph to file: $bedGraph_output\n";
 
-    process_bedGraph_output();
-    close OUT or die $!;
+
+
+    my $bedGraph_output = $out;
+    my @args;
+
+    if ($remove){
+      push @args, '--remove';
+    }
+    if ($CX_context){
+      push @args, '--CX_context';
+    }
+    if ($no_header){
+      push @args, '--no_header';
+    }
+    if ($counts){
+      push @args, "--counts";
+    }
+
+    push @args, "--buffer_size $sort_size";
+    push @args, "--cutoff $coverage_threshold";
+    push @args, "--output $bedGraph_output";
+    push @args, "--dir '$output_dir'";
+
+    ### adding all files to be sorted to @args
+    foreach my $f (@sorting_files){
+      push @args, $f;
+    }
+
+    #  print join "\t",@args,"\n";
+
+    system ("$Bin/bismark2bedGraph @args");
+
+    warn "Finished BedGraph conversion ...\n\n";
+    sleep(3);
+
+    # open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
+    # warn "Writing bedGraph to file: $bedGraph_output\n";
+    # process_bedGraph_output();
+    # close OUT or die $!;
 
     ### genome-wide cytosine methylation report requires bedGraph processing anyway
     if ($cytosine_report){
+      @args = (); # resetting @args
       my $cytosine_out = $out;
       $cytosine_out =~ s/bedGraph$//;
 
-      ### reading in the genome unless it has already been done
-      unless (%chromosomes){
-	read_genome_into_memory();
+      if ($CX_context){
+	$cytosine_out =~ s/$/CX_report.txt/;
       }
-      generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
+      else{
+	$cytosine_out =~ s/$/CpG_report.txt/;
+      }
+
+      push @args, "--output $cytosine_out";
+      push @args, "--dir '$output_dir'";
+      push @args, "--genome '$genome_folder'";
+      push @args, "--parent_dir '$parent_dir'";
+
+      if ($zero){
+	push @args, "--zero";
+      }
+      if ($CX_context){
+	push @args, '--CX_context';
+      }
+      if ($split_by_chromosome){
+	push @args, '--split_by_chromosome';
+      }
+
+      push @args, $bedGraph_output; # this will be the infile
+
+      system ("$Bin/bedGraph2cytosine @args");
+      # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
+      warn "\n\nFinished generating genome-wide cytosine report. Enjoy\n\n";
+      sleep(3);
     }
   }
 }
@@ -373,11 +442,13 @@ VERSION
     $remove = 0;
   }
 
-  ### COVERAGE THRESHOLD FOR gedGraph OUTPUT
-  unless (defined $coverage_threshold){
+  ### COVERAGE THRESHOLD FOR bedGraph OUTPUT
+  if (defined $coverage_threshold){
     unless ($coverage_threshold > 0){
       die "Please select a coverage greater than 0 (positive integers only)\n";
     }
+  }
+  else{
     $coverage_threshold = 1;
   }
 
@@ -397,6 +468,13 @@ VERSION
 
   if ($CX_context){
     die "Option '--CX_context' is only available if  '--cytosine_report' or '--bedGraph' is specified as well. Please respecify\n" unless ($cytosine_report or $bedGraph);
+  }
+  else{
+    $CX_context = 0;
+  }
+
+  unless ($counts){
+    $counts = 0;
   }
 
   if ($cytosine_report){
@@ -3121,270 +3199,272 @@ sub print_individual_C_methylation_states_single_end{
 ### bismark2bedGaph section - START
 #######################################################################################################################################
 
-sub process_bedGraph_output{
-  warn  "="x64,"\n";
-  warn "Methylation information will now be written into a bedGraph file\n";
-  warn  "="x64,"\n\n";
-  sleep (2);
+### has now been moved to the external script bismark2bedGraph
 
-  ### Closing all filehandles so that the Bismark methtylation extractor output doesn't get truncated due to buffering issues
-  foreach my $fh (keys %fhs) {
-    if ($fh =~ /^[1230]$/) {
-      foreach my $context (keys %{$fhs{$fh}}) {
-	close $fhs{$fh}->{$context} or die $!;
-      }
-    } else {
-      close $fhs{$fh} or die $!;
-    }
-  }
+# sub process_bedGraph_output{
+#   warn  "="x64,"\n";
+#   warn "Methylation information will now be written into a bedGraph file\n";
+#   warn  "="x64,"\n\n";
+#   sleep (2);
 
-  ### deciding which files to use for bedGraph conversion
-  foreach my $filename (@sorting_files){
-    # warn "$filename\n";
-    if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
-      $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
-      # warn "$filename\n";
-    }
+#   ### Closing all filehandles so that the Bismark methtylation extractor output doesn't get truncated due to buffering issues
+#   foreach my $fh (keys %fhs) {
+#     if ($fh =~ /^[1230]$/) {
+#       foreach my $context (keys %{$fhs{$fh}}) {
+# 	close $fhs{$fh}->{$context} or die $!;
+#       }
+#     } else {
+#       close $fhs{$fh} or die $!;
+#     }
+#   }
 
-    if ($CX_context){
-      push @bedfiles,$filename;
-    }
-    else{ ## CpG context only (default)
-      if ($filename =~ /^CpG_/){
-	push @bedfiles,$filename;
-      }
-      else{
-	# skipping CHH or CHG files
-      }
-    }
-  }
+#   ### deciding which files to use for bedGraph conversion
+#   foreach my $filename (@sorting_files){
+#     # warn "$filename\n";
+#     if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
+#       $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
+#       # warn "$filename\n";
+#     }
 
-  warn "Using the following files as Input:\n";
-  print join ("\t",@bedfiles),"\n\n";
-  sleep (2);
+#     if ($CX_context){
+#       push @bedfiles,$filename;
+#     }
+#     else{ ## CpG context only (default)
+#       if ($filename =~ /^CpG_/){
+# 	push @bedfiles,$filename;
+#       }
+#       else{
+# 	# skipping CHH or CHG files
+#       }
+#     }
+#   }
 
-  my %temp_fhs;
-  my @temp_files; # writing all context files (default CpG only) to these files prior to sorting
+#   warn "Using the following files as Input:\n";
+#   print join ("\t",@bedfiles),"\n\n";
+#   sleep (2);
 
-  ### changing to the output directory
-  unless ($output_dir eq ''){ # default
-    chdir $output_dir or die "Failed to change directory to $output_dir\n";
-    warn "Changed directory to $output_dir\n";
-  }
+#   my %temp_fhs;
+#   my @temp_files; # writing all context files (default CpG only) to these files prior to sorting
 
-  foreach my $infile (@bedfiles) {
+#   ### changing to the output directory
+#   unless ($output_dir eq ''){ # default
+#     chdir $output_dir or die "Failed to change directory to $output_dir\n";
+#     warn "Changed directory to $output_dir\n";
+#   }
 
-    if ($remove) {
-      warn "Now replacing whitespaces in the sequence ID field of the Bismark methylation extractor output $infile prior to bedGraph conversion\n\n";
+#   foreach my $infile (@bedfiles) {
 
-      if ($infile =~ /gz$/){
-	open (READ,"zcat $infile |") or die $!;
-      }
-      else{
-	open (READ,$infile) or die $!;
-      }
+#     if ($remove) {
+#       warn "Now replacing whitespaces in the sequence ID field of the Bismark methylation extractor output $infile prior to bedGraph conversion\n\n";
 
-      my $removed_spaces_outfile = $infile;
-      $removed_spaces_outfile =~ s/$/.spaces_removed.txt/;
+#       if ($infile =~ /gz$/){
+# 	open (READ,"zcat $infile |") or die $!;
+#       }
+#       else{
+# 	open (READ,$infile) or die $!;
+#       }
 
-      open (REM,'>',$output_dir.$removed_spaces_outfile) or die "Couldn't write to file $removed_spaces_outfile: $!\n";
+#       my $removed_spaces_outfile = $infile;
+#       $removed_spaces_outfile =~ s/$/.spaces_removed.txt/;
 
-      unless ($no_header){
-	$_ = <READ>;		### Bismark version header
-	print REM $_;		### Bismark version header
-      }
+#       open (REM,'>',$output_dir.$removed_spaces_outfile) or die "Couldn't write to file $removed_spaces_outfile: $!\n";
 
-      while (<READ>) {
-	chomp;
-	my ($id,$strand,$chr,$pos,$context) = (split (/\t/));
-	$id =~ s/\s+/_/g;
-	print REM join ("\t",$id,$strand,$chr,$pos,$context),"\n";
-      }
+#       unless ($no_header){
+# 	$_ = <READ>;		### Bismark version header
+# 	print REM $_;		### Bismark version header
+#       }
+
+#       while (<READ>) {
+# 	chomp;
+# 	my ($id,$strand,$chr,$pos,$context) = (split (/\t/));
+# 	$id =~ s/\s+/_/g;
+# 	print REM join ("\t",$id,$strand,$chr,$pos,$context),"\n";
+#       }
 	
-      close READ or die $!;
-      close REM or die $!;
+#       close READ or die $!;
+#       close REM or die $!;
 
-      ### changing the infile name to the new file without spaces
-      $infile = $removed_spaces_outfile;
-    }
+#       ### changing the infile name to the new file without spaces
+#       $infile = $removed_spaces_outfile;
+#     }
 
-    warn "Now writing methylation information for file $infile to individual files for each chromosome\n";
-    if ($infile =~ /gz$/){
-      open (IN,"zcat $infile |") or die $!;
-    }
-    else{
-      open (IN,$infile) or die $!;
-    }
+#     warn "Now writing methylation information for file $infile to individual files for each chromosome\n";
+#     if ($infile =~ /gz$/){
+#       open (IN,"zcat $infile |") or die $!;
+#     }
+#     else{
+#       open (IN,$infile) or die $!;
+#     }
 
-    ## always ignoring the version header
-    unless ($no_header){
-      $_ = <IN>;		### Bismark version header
-    }
+#     ## always ignoring the version header
+#     unless ($no_header){
+#       $_ = <IN>;		### Bismark version header
+#     }
 	
-    while (<IN>) {
-      chomp;
-      my ($chr) = (split (/\t/))[2];
-      # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
-      $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
-      # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
+#     while (<IN>) {
+#       chomp;
+#       my ($chr) = (split (/\t/))[2];
+#       # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
+#       $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
+#       # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
 
-      unless (exists $temp_fhs{$chr}) {
-	open ($temp_fhs{$chr},'>','chr'.$chr.'.meth_extractor.temp') or die "Failed to open filehandle: $!";
-      }
-      print {$temp_fhs{$chr}} "$_\n";
-    }
+#       unless (exists $temp_fhs{$chr}) {
+# 	open ($temp_fhs{$chr},'>','chr'.$chr.'.meth_extractor.temp') or die "Failed to open filehandle: $!";
+#       }
+#       print {$temp_fhs{$chr}} "$_\n";
+#     }
 
-    warn "Finished writing out individual chromosome files for $infile\n";
-  }
-  warn "\n";
+#     warn "Finished writing out individual chromosome files for $infile\n";
+#   }
+#   warn "\n";
 
-  @temp_files = <*.meth_extractor.temp>;
+#   @temp_files = <*.meth_extractor.temp>;
 
-  warn "Collecting temporary chromosome file information...\n";
-  sleep (1);
-  warn "processing the following input file(s):\n";
-  warn join ("\n",@temp_files),"\n\n";
-  sleep (1);
+#   warn "Collecting temporary chromosome file information...\n";
+#   sleep (1);
+#   warn "processing the following input file(s):\n";
+#   warn join ("\n",@temp_files),"\n\n";
+#   sleep (1);
 
-  foreach my $in (@temp_files) {
-    if ($sort_size){
-      warn "Sorting input file $in by positions (using -S of '$sort_size')\n";
-    }
-    else{
-      warn "Sorting input file $in by positions (using default memory settings)\n";
-    }
-    my $sort_dir = $output_dir;
-    if ($sort_dir eq ''){
-      $sort_dir = './';
-    }
-    open my $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
-    # print "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
+#   foreach my $in (@temp_files) {
+#     if ($sort_size){
+#       warn "Sorting input file $in by positions (using -S of '$sort_size')\n";
+#     }
+#     else{
+#       warn "Sorting input file $in by positions (using default memory settings)\n";
+#     }
+#     my $sort_dir = $output_dir;
+#     if ($sort_dir eq ''){
+#       $sort_dir = './';
+#     }
+#     open my $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+#     # print "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
 	
-    ############################################# m.a.bentley - moved the variables out of the while loop to hold the current line data {
+#     ############################################# m.a.bentley - moved the variables out of the while loop to hold the current line data {
 
-    my $name;
-    my $meth_state;
-    my $chr = "";
-    my $pos = 0;
-    my $meth_state2;
+#     my $name;
+#     my $meth_state;
+#     my $chr = "";
+#     my $pos = 0;
+#     my $meth_state2;
 
-    my $last_pos;
-    my $last_chr;
+#     my $last_pos;
+#     my $last_chr;
 	
-    #############################################  }
+#     #############################################  }
 	
-    while (my $line = <$ifh>) {
-      next if $line =~ /^Bismark/;
-      chomp $line;
+#     while (my $line = <$ifh>) {
+#       next if $line =~ /^Bismark/;
+#       chomp $line;
 
-      ########################################### m.a.bentley - (1) set the last_chr and last_pos variables early in the while loop, before the line split (2) removed unnecessary setting of same variables in if statement {
+#       ########################################### m.a.bentley - (1) set the last_chr and last_pos variables early in the while loop, before the line split (2) removed unnecessary setting of same variables in if statement {
 
-      $last_chr = $chr;
-      $last_pos = $pos;
-      ($name, $meth_state, $chr, $pos, $meth_state2) = split "\t", $line;
+#       $last_chr = $chr;
+#       $last_pos = $pos;
+#       ($name, $meth_state, $chr, $pos, $meth_state2) = split "\t", $line;
 
-      if (($last_pos ne $pos) || ($last_chr ne $chr)) {
-	generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
-	@methylcalls = qw (0 0 0);
-      }
+#       if (($last_pos ne $pos) || ($last_chr ne $chr)) {
+# 	generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
+# 	@methylcalls = qw (0 0 0);
+#       }
 
-      #############################################  }
+#       #############################################  }
 	
-      my $validated = validate_methylation_call($meth_state, $meth_state2);
-      unless($validated){
-	warn "Methylation state of sequence ($name) in file ($in) on line $. is inconsistent (meth_state is $meth_state, meth_state2 = $meth_state2)\n";
-	next;
-      }
-      if ($meth_state eq "+") {
-	$methylcalls[0]++;
-	$methylcalls[2]++;
-      } else {
-	$methylcalls[1]++;
-	$methylcalls[2]++;
-      }
-    }
+#       my $validated = validate_methylation_call($meth_state, $meth_state2);
+#       unless($validated){
+# 	warn "Methylation state of sequence ($name) in file ($in) on line $. is inconsistent (meth_state is $meth_state, meth_state2 = $meth_state2)\n";
+# 	next;
+#       }
+#       if ($meth_state eq "+") {
+# 	$methylcalls[0]++;
+# 	$methylcalls[2]++;
+#       } else {
+# 	$methylcalls[1]++;
+# 	$methylcalls[2]++;
+#       }
+#     }
 
-    ############################################# m.a.bentley - set the last_chr and last_pos variables for the last line in the file (outside the while loop's scope using the method i've implemented) {
+#     ############################################# m.a.bentley - set the last_chr and last_pos variables for the last line in the file (outside the while loop's scope using the method i've implemented) {
 	
-    $last_chr = $chr;
-    $last_pos = $pos;
-    if ($methylcalls[2] > 0) {
-      generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
-    }
-    #############################################  }
+#     $last_chr = $chr;
+#     $last_pos = $pos;
+#     if ($methylcalls[2] > 0) {
+#       generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
+#     }
+#     #############################################  }
 	
-    close $ifh or die $!;
+#     close $ifh or die $!;
 	
-    @methylcalls = qw (0 0 0); # resetting @methylcalls
+#     @methylcalls = qw (0 0 0); # resetting @methylcalls
 
-    ### deleting temporary files
-    my $delete = unlink $in;
-    if ($delete) {
-      warn "Successfully deleted the temporary input file $in\n\n";
-    }
-    else {
-      warn "The temporary inputfile $in could not be deleted $!\n\n";
-    }
-  }
-}
+#     ### deleting temporary files
+#     my $delete = unlink $in;
+#     if ($delete) {
+#       warn "Successfully deleted the temporary input file $in\n\n";
+#     }
+#     else {
+#       warn "The temporary inputfile $in could not be deleted $!\n\n";
+#     }
+#   }
+# }
 
-sub generate_output{
-  my $methcount = $methylcalls[0];
-  my $nonmethcount = $methylcalls[1];
-  my $totalcount = $methylcalls[2];
-  my $last_chr = shift;
-  my $last_pos = shift;
-  croak "Should not be generating output if there's no reads to this region" unless $totalcount > 0;
-  croak "Total counts ($totalcount) is not the sum of the methylated ($methcount) and unmethylated ($nonmethcount) counts" if $totalcount != ($methcount + $nonmethcount);
+# sub generate_output{
+#   my $methcount = $methylcalls[0];
+#   my $nonmethcount = $methylcalls[1];
+#   my $totalcount = $methylcalls[2];
+#   my $last_chr = shift;
+#   my $last_pos = shift;
+#   croak "Should not be generating output if there's no reads to this region" unless $totalcount > 0;
+#   croak "Total counts ($totalcount) is not the sum of the methylated ($methcount) and unmethylated ($nonmethcount) counts" if $totalcount != ($methcount + $nonmethcount);
 
-  ############################################# m.a.bentley - declare a new variable 'bed_pos' to distinguish from bismark positions (-1) - previous scripts modified the last_pos variable earlier in the script leading to problems in meth % calculation {
+#   ############################################# m.a.bentley - declare a new variable 'bed_pos' to distinguish from bismark positions (-1) - previous scripts modified the last_pos variable earlier in the script leading to problems in meth % calculation {
 
-  my $bed_pos = $last_pos -1; ### Bismark coordinates are 1 based whereas bedGraph coordinates are 0 based.
-  my $meth_percentage;
-  ($totalcount >= $coverage_threshold) ? ($meth_percentage = ($methcount/$totalcount) * 100) : ($meth_percentage = undef);
-  # $meth_percentage =~ s/(\.\d\d).+$/$1/ unless $meth_percentage =~ /^Below/;
-  if (defined $meth_percentage){
-    if ($counts){
-      print OUT "$last_chr\t$bed_pos\t$bed_pos\t$meth_percentage\t$methcount\t$nonmethcount\n";
-    }
-    else{
-      print OUT "$last_chr\t$bed_pos\t$bed_pos\t$meth_percentage\n";
-    }
-  }
-  #############################################  }
-}
+#   my $bed_pos = $last_pos -1; ### Bismark coordinates are 1 based whereas bedGraph coordinates are 0 based.
+#   my $meth_percentage;
+#   ($totalcount >= $coverage_threshold) ? ($meth_percentage = ($methcount/$totalcount) * 100) : ($meth_percentage = undef);
+#   # $meth_percentage =~ s/(\.\d\d).+$/$1/ unless $meth_percentage =~ /^Below/;
+#   if (defined $meth_percentage){
+#     if ($counts){
+#       print OUT "$last_chr\t$bed_pos\t$bed_pos\t$meth_percentage\t$methcount\t$nonmethcount\n";
+#     }
+#     else{
+#       print OUT "$last_chr\t$bed_pos\t$bed_pos\t$meth_percentage\n";
+#     }
+#   }
+#   #############################################  }
+# }
 
-sub validate_methylation_call{
-  my $meth_state = shift;
-  croak "Missing (+/-) methylation call" unless defined $meth_state;
-  my $meth_state2 = shift;
-  croak "Missing alphabetical methylation call" unless defined $meth_state2;
-  my $is_consistent;
-  ($meth_state2 =~ /^z/i) ? ($is_consistent = check_CpG_methylation_call($meth_state, $meth_state2)) 
-                          : ($is_consistent = check_nonCpG_methylation_call($meth_state,$meth_state2));
-  return 1 if $is_consistent;
-  return 0;
-}
+# sub validate_methylation_call{
+#   my $meth_state = shift;
+#   croak "Missing (+/-) methylation call" unless defined $meth_state;
+#   my $meth_state2 = shift;
+#   croak "Missing alphabetical methylation call" unless defined $meth_state2;
+#   my $is_consistent;
+#   ($meth_state2 =~ /^z/i) ? ($is_consistent = check_CpG_methylation_call($meth_state, $meth_state2)) 
+#                           : ($is_consistent = check_nonCpG_methylation_call($meth_state,$meth_state2));
+#   return 1 if $is_consistent;
+#   return 0;
+# }
 
-sub check_CpG_methylation_call{
-  my $meth1 = shift;
-  my $meth2 = shift;
-  return 1 if($meth1 eq "+" && $meth2 eq "Z");
-  return 1 if($meth1 eq "-" && $meth2 eq "z");
-  return 0;
-}
+# sub check_CpG_methylation_call{
+#   my $meth1 = shift;
+#   my $meth2 = shift;
+#   return 1 if($meth1 eq "+" && $meth2 eq "Z");
+#   return 1 if($meth1 eq "-" && $meth2 eq "z");
+#   return 0;
+# }
 
-sub check_nonCpG_methylation_call{
-  my $meth1 = shift;
-  my $meth2 = shift;
-  return 1 if($meth1 eq "+" && $meth2 eq "C");
-  return 1 if($meth1 eq "+" && $meth2 eq "X");
-  return 1 if($meth1 eq "+" && $meth2 eq "H");
-  return 1 if($meth1 eq "-" && $meth2 eq "c");
-  return 1 if($meth1 eq "-" && $meth2 eq "x");
-  return 1 if($meth1 eq "-" && $meth2 eq "h");
-  return 0;
-}
+# sub check_nonCpG_methylation_call{
+#   my $meth1 = shift;
+#   my $meth2 = shift;
+#   return 1 if($meth1 eq "+" && $meth2 eq "C");
+#   return 1 if($meth1 eq "+" && $meth2 eq "X");
+#   return 1 if($meth1 eq "+" && $meth2 eq "H");
+#   return 1 if($meth1 eq "-" && $meth2 eq "c");
+#   return 1 if($meth1 eq "-" && $meth2 eq "x");
+#   return 1 if($meth1 eq "-" && $meth2 eq "h");
+#   return 0;
+# }
 
 #######################################################################################################################################
 ### bismark2bedGaph section - END
@@ -3395,309 +3475,309 @@ sub check_nonCpG_methylation_call{
 
 
 
-#######################################################################################################################################
-### genome-wide cytosine methylation report - START
-#######################################################################################################################################
+# #######################################################################################################################################
+# ### genome-wide cytosine methylation report - START
+# #######################################################################################################################################
 
-sub generate_genome_wide_cytosine_report {
+# sub generate_genome_wide_cytosine_report {
 
-  warn  "="x78,"\n";
-  warn "Methylation information will now be written into a genome-wide cytosine report\n";
-  warn  "="x78,"\n\n";
-  sleep (2);
+#   warn  "="x78,"\n";
+#   warn "Methylation information will now be written into a genome-wide cytosine report\n";
+#   warn  "="x78,"\n\n";
+#   sleep (2);
 
-  ### changing to the output directory again
-  unless ($output_dir eq ''){ # default
-    chdir $output_dir or die "Failed to change directory to $output_dir\n";
-    # warn "Changed directory to $output_dir\n";
-  }
+#   ### changing to the output directory again
+#   unless ($output_dir eq ''){ # default
+#     chdir $output_dir or die "Failed to change directory to $output_dir\n";
+#     # warn "Changed directory to $output_dir\n";
+#   }
 
-  my $in = shift;
-  open (IN,$in) or die $!;
+#   my $in = shift;
+#   open (IN,$in) or die $!;
 
-  my $cytosine_out = shift;
+#   my $cytosine_out = shift;
 
-  if ($CX_context){
-    $cytosine_out =~ s/$/genome-wide_CX_report.txt/;
-  }
-  else{
-    $cytosine_out =~ s/$/genome_wide_CpG_report.txt/;
-  }
+#   if ($CX_context){
+#     $cytosine_out =~ s/$/genome-wide_CX_report.txt/;
+#   }
+#   else{
+#     $cytosine_out =~ s/$/genome_wide_CpG_report.txt/;
+#   }
 
-  ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
-  unless ($split_by_chromosome){ ### writing all output to a single file (default)
-    open (CYT,'>',$cytosine_out) or die $!;
-    warn "Writing genome-wide cytosine report to: $cytosine_out\n";
-    sleep (3);
-  }
+#   ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
+#   unless ($split_by_chromosome){ ### writing all output to a single file (default)
+#     open (CYT,'>',$cytosine_out) or die $!;
+#     warn "Writing genome-wide cytosine report to: $cytosine_out\n";
+#     sleep (3);
+#   }
 
-  my $last_chr;
-  my %chr; # storing reads for one chromosome at a time
+#   my $last_chr;
+#   my %chr; # storing reads for one chromosome at a time
 
-  my $count = 0;
-  while (<IN>){
-    chomp;
-    ++$count;
-    my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
+#   my $count = 0;
+#   while (<IN>){
+#     chomp;
+#     ++$count;
+#     my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
 
-    # defining the first chromosome
-    unless (defined $last_chr){
-      $last_chr = $chr;
-      # warn "Storing all covered cytosine positions for chromosome: $chr\n";
-    }
+#     # defining the first chromosome
+#     unless (defined $last_chr){
+#       $last_chr = $chr;
+#       # warn "Storing all covered cytosine positions for chromosome: $chr\n";
+#     }
 
-    if ($chr eq $last_chr){
-      $chr{$chr}->{$start}->{meth} = $meth;
-      $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
-    }
-    else{
-      warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+#     if ($chr eq $last_chr){
+#       $chr{$chr}->{$start}->{meth} = $meth;
+#       $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+#     }
+#     else{
+#       warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 
-      if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-	my $chromosome_out = $cytosine_out;
-	$chromosome_out =~ s/txt$/chr${last_chr}.txt/;
-      open (CYT,'>',$chromosome_out) or die $!;
-    }
+#       if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+# 	my $chromosome_out = $cytosine_out;
+# 	$chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+#       open (CYT,'>',$chromosome_out) or die $!;
+#     }
 
-      while ( $chromosomes{$last_chr} =~ /([CG])/g){
+#       while ( $chromosomes{$last_chr} =~ /([CG])/g){
 	
-	my $tri_nt = '';
-	my $context = '';
-	my $pos = pos$chromosomes{$last_chr};
+# 	my $tri_nt = '';
+# 	my $context = '';
+# 	my $pos = pos$chromosomes{$last_chr};
 	
-	my $strand;
-	my $meth = 0;
-	my $nonmeth = 0;
+# 	my $strand;
+# 	my $meth = 0;
+# 	my $nonmeth = 0;
 	
-	if ($1 eq 'C'){    # C on forward strand
-	  $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
-	  $strand = '+';
-	}
-	elsif ($1 eq 'G'){ # C on reverse strand
-	  $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
-	  $tri_nt = reverse $tri_nt;
-	  $tri_nt =~ tr/ACTG/TGAC/;
-	  $strand = '-';
-	}
-	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+# 	if ($1 eq 'C'){    # C on forward strand
+# 	  $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
+# 	  $strand = '+';
+# 	}
+# 	elsif ($1 eq 'G'){ # C on reverse strand
+# 	  $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+# 	  $tri_nt = reverse $tri_nt;
+# 	  $tri_nt =~ tr/ACTG/TGAC/;
+# 	  $strand = '-';
+# 	}
+# 	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
 
-	if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
-	  $meth =  $chr{$last_chr}->{$pos-1}->{meth};
-	  $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
-	}
+# 	if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
+# 	  $meth =  $chr{$last_chr}->{$pos-1}->{meth};
+# 	  $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
+# 	}
 
-	### determining cytosine context	
-	if ($tri_nt =~ /^CG/){
-	  $context = 'CG';
-	}
-	elsif ($tri_nt =~ /^C.{1}G$/){
-	  $context = 'CHG';
-	}
-	elsif ($tri_nt =~ /^C.{2}$/){
-	  $context = 'CHH';
-	}
-	else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
-	  warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
-	  next;
-	}
+# 	### determining cytosine context	
+# 	if ($tri_nt =~ /^CG/){
+# 	  $context = 'CG';
+# 	}
+# 	elsif ($tri_nt =~ /^C.{1}G$/){
+# 	  $context = 'CHG';
+# 	}
+# 	elsif ($tri_nt =~ /^C.{2}$/){
+# 	  $context = 'CHH';
+# 	}
+# 	else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+# 	  warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
+# 	  next;
+# 	}
 
-	if ($CpG_only){
-	  if ($tri_nt =~ /^CG/){ # CpG context is the default
-	    if ($zero){ # zero based coordinates
-	      $pos -= 1;
-	      print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	    }
-	    else{ # default
-	      print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	    }
-	  }
-	}
-	else{ ## all cytosines, specified with --CX
-	  if ($zero){ # zero based coordinates
-	    $pos -= 1;
-	    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	  }
-	  else{ # default
-	    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	  }
-	}
-      }
+# 	if ($CpG_only){
+# 	  if ($tri_nt =~ /^CG/){ # CpG context is the default
+# 	    if ($zero){ # zero based coordinates
+# 	      $pos -= 1;
+# 	      print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+# 	    }
+# 	    else{ # default
+# 	      print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+# 	    }
+# 	  }
+# 	}
+# 	else{ ## all cytosines, specified with --CX
+# 	  if ($zero){ # zero based coordinates
+# 	    $pos -= 1;
+# 	    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+# 	  }
+# 	  else{ # default
+# 	    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+# 	  }
+# 	}
+#       }
 
-      %chr = (); # resetting the hash
+#       %chr = (); # resetting the hash
 
-      # new first entry
-      $last_chr = $chr;
-      $chr{$chr}->{$start}->{meth} = $meth;
-      $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
-    }
-  }
+#       # new first entry
+#       $last_chr = $chr;
+#       $chr{$chr}->{$start}->{meth} = $meth;
+#       $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+#     }
+#   }
 
-  # Last found chromosome
-warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+#   # Last found chromosome
+# warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 
-if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-  my $chromosome_out = $cytosine_out;
-  $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
-  open (CYT,'>',$chromosome_out) or die $!;
-}
+# if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+#   my $chromosome_out = $cytosine_out;
+#   $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+#   open (CYT,'>',$chromosome_out) or die $!;
+# }
 
-  while ( $chromosomes{$last_chr} =~ /([CG])/g){
+#   while ( $chromosomes{$last_chr} =~ /([CG])/g){
 	
-    my $tri_nt;
-    my $context;
-    my $pos = pos$chromosomes{$last_chr};
+#     my $tri_nt;
+#     my $context;
+#     my $pos = pos$chromosomes{$last_chr};
 
-    my $strand;
-    my $meth = 0;
-    my $nonmeth = 0;
+#     my $strand;
+#     my $meth = 0;
+#     my $nonmeth = 0;
 
-    if ($1 eq 'C'){    # C on forward strand
-      $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
-      $strand = '+';
-    }
-    elsif ($1 eq 'G'){ # C on reverse strand
-      $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
-      $tri_nt = reverse $tri_nt;
-      $tri_nt =~ tr/ACTG/TGAC/;
-      $strand = '-';
-    }
+#     if ($1 eq 'C'){    # C on forward strand
+#       $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
+#       $strand = '+';
+#     }
+#     elsif ($1 eq 'G'){ # C on reverse strand
+#       $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+#       $tri_nt = reverse $tri_nt;
+#       $tri_nt =~ tr/ACTG/TGAC/;
+#       $strand = '-';
+#     }
 
-    if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
-      $meth =  $chr{$last_chr}->{$pos-1}->{meth};
-      $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
-    }
+#     if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
+#       $meth =  $chr{$last_chr}->{$pos-1}->{meth};
+#       $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
+#     }
 
-    next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+#     next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
 
-    ### determining cytosine context	
-    if ($tri_nt =~ /^CG/){
-      $context = 'CG';
-    }
-    elsif ($tri_nt =~ /^C.{1}G$/){
-      $context = 'CHG';
-    }
-    elsif ($tri_nt =~ /^C.{2}$/){
-      $context = 'CHH';
-    }
-    else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
-      warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
-      next;
-    }
+#     ### determining cytosine context	
+#     if ($tri_nt =~ /^CG/){
+#       $context = 'CG';
+#     }
+#     elsif ($tri_nt =~ /^C.{1}G$/){
+#       $context = 'CHG';
+#     }
+#     elsif ($tri_nt =~ /^C.{2}$/){
+#       $context = 'CHH';
+#     }
+#     else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+#       warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
+#       next;
+#     }
 	
-    if ($CpG_only){
-      if ($tri_nt =~ /^CG/){ # CpG context is the default
-	if ($zero){ # zero-based coordinates
-	  $pos -= 1;
-	  print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	}
-	else{ # default
-	  print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	}
-      }
-    }
-    else{ ## all cytosines, specified with --CX
-      if ($zero){ # zero based coordinates
-	$pos -= 1;
-	print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-      }
-      else{ # default
-	print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-      }
-    }
-  }
-  close CYT or die $!;
-}
+#     if ($CpG_only){
+#       if ($tri_nt =~ /^CG/){ # CpG context is the default
+# 	if ($zero){ # zero-based coordinates
+# 	  $pos -= 1;
+# 	  print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+# 	}
+# 	else{ # default
+# 	  print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+# 	}
+#       }
+#     }
+#     else{ ## all cytosines, specified with --CX
+#       if ($zero){ # zero based coordinates
+# 	$pos -= 1;
+# 	print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+#       }
+#       else{ # default
+# 	print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+#       }
+#     }
+#   }
+#   close CYT or die $!;
+# }
 
 
-sub read_genome_into_memory{
+# sub read_genome_into_memory{
 
-  ## reading in and storing the specified genome in the %chromosomes hash
-  chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
-  warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
+#   ## reading in and storing the specified genome in the %chromosomes hash
+#   chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
+#   warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
 
-  my @chromosome_filenames =  <*.fa>;
+#   my @chromosome_filenames =  <*.fa>;
 
-  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
-  unless (@chromosome_filenames){
-    @chromosome_filenames =  <*.fasta>;
-  }
-  unless (@chromosome_filenames){
-    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
-  }
+#   ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+#   unless (@chromosome_filenames){
+#     @chromosome_filenames =  <*.fasta>;
+#   }
+#   unless (@chromosome_filenames){
+#     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+#   }
 
-  foreach my $chromosome_filename (@chromosome_filenames){
+#   foreach my $chromosome_filename (@chromosome_filenames){
 
-    # skipping the tophat entire mouse genome fasta file
-    next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
+#     # skipping the tophat entire mouse genome fasta file
+#     next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
 
-    open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
-    ### first line needs to be a fastA header
-    my $first_line = <CHR_IN>;
-    chomp $first_line;
-    $first_line =~ s/\r//; # removing /r carriage returns
+#     open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+#     ### first line needs to be a fastA header
+#     my $first_line = <CHR_IN>;
+#     chomp $first_line;
+#     $first_line =~ s/\r//; # removing /r carriage returns
 
-    ### Extracting chromosome name from the FastA header
-    my $chromosome_name = extract_chromosome_name($first_line);
+#     ### Extracting chromosome name from the FastA header
+#     my $chromosome_name = extract_chromosome_name($first_line);
 	
-    my $sequence;
-    while (<CHR_IN>){
-      chomp;
-      $_ =~ s/\r//; # removing /r carriage returns
+#     my $sequence;
+#     while (<CHR_IN>){
+#       chomp;
+#       $_ =~ s/\r//; # removing /r carriage returns
 
-      if ($_ =~ /^>/){
-	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
-	if (exists $chromosomes{$chromosome_name}){
-	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
-	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
-	}
-	else {
-	  if (length($sequence) == 0){
-	    warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
-	  }
-	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
-	  $chromosomes{$chromosome_name} = $sequence;
-	}
-	### resetting the sequence variable
-	$sequence = '';
-	### setting new chromosome name
-	$chromosome_name = extract_chromosome_name($_);
-      }
-      else{
-	$sequence .= uc$_;
-      }
-    }
+#       if ($_ =~ /^>/){
+# 	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
+# 	if (exists $chromosomes{$chromosome_name}){
+# 	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+# 	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+# 	}
+# 	else {
+# 	  if (length($sequence) == 0){
+# 	    warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+# 	  }
+# 	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+# 	  $chromosomes{$chromosome_name} = $sequence;
+# 	}
+# 	### resetting the sequence variable
+# 	$sequence = '';
+# 	### setting new chromosome name
+# 	$chromosome_name = extract_chromosome_name($_);
+#       }
+#       else{
+# 	$sequence .= uc$_;
+#       }
+#     }
 
-    if (exists $chromosomes{$chromosome_name}){
-      warn "chr $chromosome_name (",length $sequence ," bp)\t";
-      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
-    }
-    else{
-      if (length($sequence) == 0){
-	warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
-      }
-      warn "chr $chromosome_name (",length $sequence ," bp)\n";
-      $chromosomes{$chromosome_name} = $sequence;
-    }
-  }
-  warn "\n";
-  chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
-}
+#     if (exists $chromosomes{$chromosome_name}){
+#       warn "chr $chromosome_name (",length $sequence ," bp)\t";
+#       die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+#     }
+#     else{
+#       if (length($sequence) == 0){
+# 	warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
+#       }
+#       warn "chr $chromosome_name (",length $sequence ," bp)\n";
+#       $chromosomes{$chromosome_name} = $sequence;
+#     }
+#   }
+#   warn "\n";
+#   chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
+# }
 
-sub extract_chromosome_name {
-  ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
-  my $fasta_header = shift;
-  if ($fasta_header =~ s/^>//){
-    my ($chromosome_name) = split (/\s+/,$fasta_header);
-    return $chromosome_name;
-  }
-  else{
-    die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
-  }
-}
+# sub extract_chromosome_name {
+#   ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
+#   my $fasta_header = shift;
+#   if ($fasta_header =~ s/^>//){
+#     my ($chromosome_name) = split (/\s+/,$fasta_header);
+#     return $chromosome_name;
+#   }
+#   else{
+#     die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
+#   }
+# }
 
-#######################################################################################################################################
-### genome-wide cytosine methylation report - END
-#######################################################################################################################################
+# #######################################################################################################################################
+# ### genome-wide cytosine methylation report - END
+# #######################################################################################################################################
 
 
 
@@ -3913,7 +3993,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 12 April 2013.
+This script was last modified on 19 April 2013.
 
 HOW_TO
 }

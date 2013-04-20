@@ -105,6 +105,7 @@ else{
     chomp $samtools_path;
   }
 }
+
 if ($bam){
   if (defined $samtools_path){
     $bam = 1;
@@ -113,6 +114,9 @@ if ($bam){
     warn "No Samtools found on your system, writing out a gzipped SAM file instead\n";
     $bam = 2;
   }
+}
+else{
+  $bam = 0;
 }
 
 
