@@ -20,8 +20,10 @@ use Carp;
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
 my %chromosomes;
-my @filenames;
+my $bedGraph2cytosine_version = 'v0.7.11';
+
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$bedGraph_infile,$cytosine_out) = process_commandline();
 
@@ -66,6 +68,7 @@ sub process_commandline{
   my $split_by_chromosome;
   my $cytosine_out;
   my $parent_dir;
+  my $version;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'dir=s' => \$output_dir,
@@ -75,6 +78,7 @@ sub process_commandline{
 				 "split_by_chromosome" => \$split_by_chromosome,
 				 'o|output=s' => \$cytosine_out,
 				 'parent_dir=s' => \$parent_dir,
+				 'version' => \$version,
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -88,6 +92,22 @@ sub process_commandline{
     exit;
   }
 
+  if ($version){
+    print << "VERSION";
+
+
+                      Bismark Methylation Extractor Module -
+                               bedGraph2cytosine
+
+                      Bismark Extractor Version: $bedGraph2cytosine_version
+              Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+
+
+VERSION
+    exit;
+  }
+
   ### no files provided
   unless (@ARGV){
     die "You need to provide a bedGraph --count file to create an individual C methylation output. Please respecify!\n";
@@ -97,6 +117,9 @@ sub process_commandline{
 
   unless ($parent_dir){
     $parent_dir = getcwd();
+  }
+  unless ($parent_dir =~ /\/$/){
+    $parent_dir =~ s/$/\//;
   }
 
   unless (defined $cytosine_out){
@@ -149,10 +172,10 @@ sub generate_genome_wide_cytosine_report {
 
   my $in = shift;
   if ($in =~ /gz$/){
-    open (IN,"zcat $in |") or die "Failed to read from gzippd file $in: $!\n";
+    open (IN,"zcat $parent_dir$in |") or die "Failed to read from gzippd file $parent_dir$in: $!\n";
   }
   else{
-    open (IN,$in) or die "Failed to read from file $in: $!\n";
+    open (IN,"$parent_dir$in") or die "Failed to read from file $parent_dir$in: $!\n";
   }
 
 
@@ -183,14 +206,19 @@ sub generate_genome_wide_cytosine_report {
       $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
     }
     else{
-      warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+      warn "Writing cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 
       if ($split_by_chromosome){ ## writing output to 1 file per chromosome
 	my $chromosome_out = $cytosine_out;
-	$chromosome_out =~ s/txt$/chr${last_chr}.txt/;
-      open (CYT,'>',$chromosome_out) or die $!;
+	if ($chromosome_out =~ /txt$/){
+	  $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+      }
+      else{
+	$chromosome_out =~ s/$/.chr${last_chr}.txt/;
     }
-
+    open (CYT,'>',$chromosome_out) or die $!;
+    # warn "Writing output for $last_chr to $chromosome_out\n";
+  }
       while ( $chromosomes{$last_chr} =~ /([CG])/g){
 	
 	my $tri_nt = '';
@@ -267,14 +295,20 @@ sub generate_genome_wide_cytosine_report {
   # Last found chromosome
   warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 
-  if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-    my $chromosome_out = $cytosine_out;
+if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+  my $chromosome_out = $cytosine_out;
+  if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
     $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
-  open (CYT,'>',$chromosome_out) or die $!;
+}
+else{ # user specified output file name
+  $chromosome_out =~ s/$/.chr${last_chr}.txt/;
+}
+open (CYT,'>',$chromosome_out) or die $!;
+# warn "Writing output for $last_chr to $chromosome_out\n";
 }
 
-while ( $chromosomes{$last_chr} =~ /([CG])/g){
-    
+  while ( $chromosomes{$last_chr} =~ /([CG])/g){
+
     my $tri_nt;
     my $context;
     my $pos = pos$chromosomes{$last_chr};

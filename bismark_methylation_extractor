@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.10';
+my $version = 'v0.7.11';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip) = process_commandline();
 
 
@@ -284,8 +284,7 @@ foreach my $filename (@filenames){
 
       system ("$Bin/bedGraph2cytosine @args");
       # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
-      warn "\n\nFinished generating genome-wide cytosine report. Enjoy\n\n";
-      sleep(3);
+      warn "\n\nFinished generating genome-wide cytosine report\n\n";
     }
   }
 }
@@ -363,7 +362,8 @@ sub process_commandline{
 
                            Bismark Methylation Extractor
 
-   Bismark Extractor Version: $version Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
+                      Bismark Extractor Version: $version
+              Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
 
@@ -3479,6 +3479,8 @@ sub print_individual_C_methylation_states_single_end{
 # ### genome-wide cytosine methylation report - START
 # #######################################################################################################################################
 
+### has now been moved to the external script bedGraph2cytosine
+
 # sub generate_genome_wide_cytosine_report {
 
 #   warn  "="x78,"\n";
@@ -3908,13 +3910,15 @@ bedGraph specific options:
 
 --bedGraph               After finishing the methylation extraction, the methylation output is written into a
                          sorted bedGraph file that reports the position of a given cytosine and its methylation 
-                         state (in %, seem details below). The methylation extractor output is temporarily split up into
+                         state (in %, see details below). The methylation extractor output is temporarily split up into
                          temporary files, one per chromosome (written into the current directory or folder
                          specified with -o/--output); these temp files are then used for sorting and deleted
                          afterwards. By default, only cytosines in CpG context will be sorted. The option
-                         '--CX_context' may be used to report all cyosines irrespective of sequence context
+                         '--CX_context' may be used to report all cytosines irrespective of sequence context
                          (this will take MUCH longer!). The default folder for temporary files during the sorting
-                         process is the output directory.
+                         process is the output directory. The bedGraph conversion step is performed by the external
+                         module 'bismark2bedGraph'; this script needs to reside in the same folder as the 
+                         bismark_methylation_extractor itself.
 
 
 --cutoff [threshold]     The minimum number of times a methylation state has to be seen for that nucleotide
@@ -3949,7 +3953,9 @@ Genome-wide cytosine methylation report specific options:
                          chromosome coordinates (zero-based cords are optional) and reports CpG context only (all
                          cytosine context is optional). The output considers all Cs on both forward and reverse strands and
                          reports their position, strand, trinucleotide content and methylation state (counts are 0 if not
-                         covered).
+                         covered). The cytsoine report conversion step is performed by the external module 
+                         'bedGraph2cytosine'; this script needs to reside in the same folder as the bismark_methylation_extractor
+                         itself.
 
 --CX/--CX_context        The output file contains information on every single cytosine in the genome irrespective of
                          its context. This applies to both forward and reverse strands. Please be aware that this will
@@ -3993,7 +3999,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 19 April 2013.
+This script was last modified on 21 April 2013.
 
 HOW_TO
 }

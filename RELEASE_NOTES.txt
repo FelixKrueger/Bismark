@@ -5,7 +5,7 @@ Bismark
 =======
 
 Fixed non-functional single-end alignments with Bowtie2 which were accidentally broken
-by introducing the option '--pbat' (an evil 'if' instead of 'elsif'...).
+by introducing the option '--pbat' in v0.7.10 (an evil 'if' instead of 'elsif'...).
 
 For paired-end alignments with Bowtie 1, the option '--non_bs_mm' would accidentally
 confuse the number of mismatches of read 1 and read 2 whenever the first read aligned
@@ -22,12 +22,26 @@ Methylation Extractor
 =====================
 
 To avoid duplication and keep code modular, the bedGraph conversion step invoked by
-the option '--bedGraph' has now been split out to the module 'bismark2bedGraph'. This
+the option '--bedGraph' is now been farmed out to the module 'bismark2bedGraph'. This
 script is independent of the methylation extractor and also works as a stand-alone tool
 from the methylation extractor output (compressed or gzip compressed files). To work
-well from within the methylation extractor this script needs to reside in the same
-folder as the 'bismark_methylation_extractor' itself.
+well from within the methylation extractor this script (which is now included in the
+Bismark package) needs to reside in the same folder as the 'bismark_methylation_extractor'
+itself.
 
+bismark2bedGraph
+
+Temporary chromosome files now have an input file name included in their file name to 
+enable parallel processing of several files in the same directory at the same time.
+
+
+To avoid duplication and keep code modular, the bedGraph to genome-wide cytosine methylation
+report step invoked by the option '--cytosine_report' has now been split out to the
+module 'bedGraph2cytosine'. This script is independent of the methylation extractor and
+also works as a stand-alone tool from the Bismark bedGraph '--counts' output (compressed
+or gzip compressed files). To work well from within the methylation extractor this 
+script (which is now included in the Bismark package) needs to reside in the same folder
+as the 'bismark_methylation_extractor' itself.
 
 
 Deduplication script
