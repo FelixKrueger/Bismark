@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.7.11';
+my $bismark2bedGraph_version = 'v0.7.12';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -168,6 +168,7 @@ foreach my $infile (@bedfiles) {
     # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
     unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
       open ($temp_fhs{$chr},'>',$infile.'.chr'.$chr.'.methXtractor.temp') or die "Failed to open filehandle: $!";
+      push @temp_files, $infile.'.chr'.$chr.'.methXtractor.temp'; # storing temp files as we open them instead
     }
     print {$temp_fhs{$chr}} "$_\n";
   }
@@ -176,7 +177,7 @@ foreach my $infile (@bedfiles) {
 }
 warn "\n";
 
-@temp_files = <*.methXtractor.temp>;
+# @temp_files = <*.methXtractor.temp>; # no longer using all temp files in the output folder as there might be old ones as well ...
 
 warn "Collecting temporary chromosome file information...\n";
 sleep (1);
@@ -500,7 +501,7 @@ The bedGraph output with '--counts' specified looks like this (tab-delimited, 0-
 Please note that the option '--counts' adds 2 additional columns, so it is technically no longer in bedGraph format!
 
 
-                          Script last modified: 22 April 2013
+                          Script last modified: 27 April 2013
 
 EOF
     ;

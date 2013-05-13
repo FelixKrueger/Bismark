@@ -10,6 +10,9 @@ use Getopt::Long;
 ### Note that this is not recommended for RRBS-type experiments!
 ### Added an automated report file Last modified: 11 Jan 2013
 
+### May 13, 2013
+### Changed the single-end trimming behavior so that only the start coordinate will be used. This avoids duplicate reads that have been trimmed to a varying extent
+### Changed the way of determining the end of reads in SAM format to using the CIGAR string if the read contains InDels
 
 my $help;
 my $representative;
@@ -225,36 +228,192 @@ foreach my $file (@filenames){
       }
 
       ++$count;
+      my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
 
-      my ($strand,$chr,$start,$end);
+      my ($strand,$chr,$start,$end,$cigar);
       my $line1;
 
       if ($vanilla){
 	($strand,$chr,$start,$end) = (split (/\t/))[1,2,3,4];
       }
       else{ # SAM format
-	($strand,$chr,$start,my $seq) = (split (/\t/))[1,2,3,9]; # we are assigning the FLAG value to $strand
+	($strand,$chr,$start,$cigar) = (split (/\t/))[1,2,3,5]; # we are assigning the FLAG value to $strand
+
 	### SAM single-end
 	if ($single){
-	  $end = $start + length($seq) - 1;
+
+	  if ($strand == 0 ){
+	    ### read aligned to the forward strand. No action needed
+	  }
+	  elsif ($strand == 16){
+	    ### read is on reverse strand
+	
+	    $start -= 1; # only need to adjust this once
+	
+	    # for InDel free matches we can simply use the M number in the CIGAR string
+	    if ($cigar =~ /^(\d+)M$/){ # linear match
+	      $start += $1;
+	    }
+
+	    else{
+	      # parsing CIGAR string
+	      my @len = split (/\D+/,$cigar); # storing the length per operation
+	      my @ops = split (/\d+/,$cigar); # storing the operation
+	      shift @ops; # remove the empty first element
+	      die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+
+	      # warn "CIGAR string; $cigar\n";
+	      ### determining end position of a read
+	      foreach my $index(0..$#len){
+		if ($ops[$index] eq 'M'){  # standard matching bases
+		  $start += $len[$index];
+		  # warn "Operation is 'M', adding $len[$index] bp\n";
+		}
+		elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+		  # warn "Operation is 'I', next\n";
+		}
+		elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+		  #  warn "Operation is 'D',adding $len[$index] bp\n";
+		  $start += $len[$index];
+		}
+		else{
+		  die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+		}
+	      }
+	    }
+	  }
+	  $composite = join (":",$strand,$chr,$start);
 	}
 	elsif($paired){
-	
+
 	  ### storing the current line
 	  $line1 = $_;
 
-	  ### reading in the next line
-	  $_ = <IN>;
-	  # the only thing we need is the end position
-	  my ($pos,$seq_2) = (split (/\t/))[3,9];
-	  $end = $pos + length($seq_2) - 1;
+	  my $read_conversion;
+	  my $genome_conversion;
+
+	  while ( /(XR|XG):Z:([^\t]+)/g ) {
+	    my $tag = $1;
+	    my $value = $2;
+
+	    if ($tag eq "XR") {
+	      $read_conversion = $value;
+	      $read_conversion =~ s/\r//;
+	    } elsif ($tag eq "XG") {
+	      $genome_conversion = $value;
+	      $genome_conversion =~ s/\r//;
+	      chomp $genome_conversion;
+	    }
+	  }
+	  die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $read_conversion);
+
+	
+	  my $index;
+	  if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
+	    $index = 0;
+	    $strand = '+';
+	  } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
+	    $index = 1;
+	    $strand = '-';
+	  } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
+	    $index = 2;
+	    $strand = '+';
+	  } elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
+	    $index = 3;
+	    $strand = '-';
+	  } else {
+	    die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
+	  }
+	
+	  # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
+	  if ($index == 0 or $index == 2){
+	
+	    ### reading in the next line
+	    $_ = <IN>;
+	    # the only thing we need is the end position
+	    ($end,my $cigar_2) = (split (/\t/))[3,5];
+
+	    $end -= 1; # only need to adjust this once
+	
+	    # for InDel free matches we can simply use the M number in the CIGAR string
+	    if ($cigar_2 =~ /^(\d+)M$/){ # linear match
+	      $end += $1;
+	    }
+	    else{
+	      # parsing CIGAR string
+	      my @len = split (/\D+/,$cigar_2); # storing the length per operation
+	      my @ops = split (/\d+/,$cigar_2); # storing the operation
+	      shift @ops; # remove the empty first element
+	      die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
+	
+	      # warn "CIGAR string; $cigar_2\n";
+	      ### determining end position of the read
+	      foreach my $index(0..$#len){
+		if ($ops[$index] eq 'M'){  # standard matching bases
+		  $end += $len[$index];
+		  # warn "Operation is 'M', adding $len[$index] bp\n";
+		}
+		elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+		  # warn "Operation is 'I', next\n";
+		}
+		elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+		  #  warn "Operation is 'D',adding $len[$index] bp\n";
+		  $end += $len[$index];
+		}
+		else{
+		  die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+		}
+	      }
+	    }
+	  }
+	  else{
+	    # else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
+
+	    $end = $start - 1; # need to adjust this only once
+	
+	    # for InDel free matches we can simply use the M number in the CIGAR string
+	    if ($cigar =~ /^(\d+)M$/){ # linear match
+	      $end += $1;
+	    }
+	    else{
+	      # parsing CIGAR string
+	      my @len = split (/\D+/,$cigar); # storing the length per operation
+	      my @ops = split (/\d+/,$cigar); # storing the operation
+	      shift @ops; # remove the empty first element
+	      die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
+	
+	      # warn "CIGAR string; $cigar\n";
+	      ### determining end position of the read
+	      foreach my $index(0..$#len){
+		if ($ops[$index] eq 'M'){  # standard matching bases
+		  $end += $len[$index];
+		  # warn "Operation is 'M', adding $len[$index] bp\n";
+		}
+		elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+		  # warn "Operation is 'I', next\n";
+		}
+		elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+		  # warn "Operation is 'D',adding $len[$index] bp\n";
+		  $end += $len[$index];
+		}
+		else{
+		  die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+		}
+	      }
+	    }
+	
+	    ### reading in the next line
+	    $_ = <IN>;
+	    # the only thing we need is the start position
+	    ($start) = (split (/\t/))[3];
+	  }
+	  $composite = join (":",$strand,$chr,$start,$end);
 	}
+	
 	else{
 	  die "Input must be single or paired-end\n";
 	}
       }
-
-      my $composite = join (":",$strand,$chr,$start,$end);
 
       if (exists $unique_seqs{$composite}){
 	++$removed;
@@ -276,12 +435,12 @@ foreach my $file (@filenames){
     my $percentage = sprintf("%.2f",$removed/$count*100);
 
     warn "\nTotal number of alignments analysed in $file:\t$count\n";
-    warn "Total number duplicated alignments removed:\t$removed ($percentage %)\n";
-    warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n";
+    warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+    warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
 
-    print REPORT "Total number of alignments analysed in $file:\t$count\n";
-    print REPORT "Total number duplicated alignments removed:\t$removed ($percentage %)\n";
-    print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n";
+    print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
+    print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+    print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
 
   }
 }
@@ -289,7 +448,9 @@ foreach my $file (@filenames){
 sub print_helpfile{
   print "\n",'='x111,"\n";
   print "\nThis script is supposed to remove alignments to the same position in the genome from the Bismark mapping output\n(both single and paired-end SAM files), which can arise by e.g. excessive PCR amplification. If sequences align\nto the same genomic position but on different strands they will be scored individually.\n\nNote that deduplication is not recommended for RRBS-type experiments!\n\nIn the default mode, the first alignment to a given position will be used irrespective of its methylation call\n(this is the fastest option, and as the alignments are not ordered in any way this is also near enough random).\n\n";
-  print "This script expects the Bismark output to be in SAM format (Bismark v0.6.x or higher). To deduplicate the old\ncustom Bismark output please specify --vanilla\n\n";
+  print "For single-end alignments only use the start-coordinate of a read will be used for deduplication.\n";
+  print "For paired-end alignments the start-coordinate of the first read and the end coordinate of the second\nread will be used for deduplication. ";
+  print "This script expects the Bismark output to be in SAM format\n(Bismark v0.6.x or higher). To deduplicate the oldcustom Bismark output please specify '--vanilla'.\n\n";
   print '='x111,"\n\n";
   print ">>> USAGE: ./deduplicate_bismark_alignment_output.pl [options] filename(s) <<<\n\n";
 
@@ -301,7 +462,7 @@ sub print_helpfile{
   print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n";
   print '='x111,"\n\n";
 
-  print "This script was last modified on April 16, 2013\n\n";
+  print "This script was last modified on May 13, 2013\n\n";
 }
 
 

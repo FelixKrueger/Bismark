@@ -33,7 +33,7 @@ my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
 
-my $bismark_version = 'v0.7.11';
+my $bismark_version = 'v0.7.12';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,

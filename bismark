@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.11';
+my $bismark_version = 'v0.7.12';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -1482,7 +1482,7 @@ sub check_bowtie_results_single_end_bowtie2{
     #  print "Index: $index\n";
     #   print "$fhs[$index]->{last_line}\n";
     #   print "$fhs[$index]->{last_seq_id}\n";
-    sleep (1);
+    # sleep (1);
     ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
     next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -5927,7 +5927,7 @@ VERSION
     $genome_folder = $absolute_genome_folder;
   }
   else{
-    die "Failed to move to $genome_folder: $!\nUSAGE: Bismark.pl [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
+    die "Failed to move to $genome_folder: $!\nUSAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
   }
 
   my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
@@ -7518,7 +7518,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 21 April 2013.
+Last edited on 10 May 2013.
 
 HOW_TO
 }

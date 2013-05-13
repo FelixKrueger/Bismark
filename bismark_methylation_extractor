@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.11';
+my $version = 'v0.7.12';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip) = process_commandline();
 
 
@@ -1791,9 +1791,10 @@ sub process_Bismark_results_file{
     die "Single-end or paired-end reads not specified properly\n";
   }
 
-  print "\n\nProcessed $line_count lines from $filename in total\n";
-  print "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
+  warn "\n\nProcessed $line_count lines from $filename in total\n";
+  warn "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
   if ($report) {
+    print REPORT "\n\nProcessed $line_count lines from $filename in total\n";
     print REPORT "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
   }
   print_splitting_report ();

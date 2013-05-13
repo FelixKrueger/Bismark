@@ -1,3 +1,24 @@
+RELEASE NOTES FOR Bismark v0.7.12 (10 May 2013)
+-----------------------------------------------
+
+Bismark
+=======
+
+Removed a rogue sleep(1) command that would slow down single-end Bowtie 2 alignments
+for a single lane of HiSeq (200M sequences) from ~1 day to 6 years and 4 months (roughly).
+
+
+bismark2bedGraph
+================
+
+bismark2bedGraph now keeps track of the temp files it just created instead of using
+all files in the output folder ending in ".methXtractor.temp". This lets you kick off
+the bedGraph conversion step from already sorted, individual methXtractor.temp files if
+desired.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.7.11 (22 Apr 2013)
 ----------------------------------------------
 
