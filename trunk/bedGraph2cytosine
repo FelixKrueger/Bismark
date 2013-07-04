@@ -1,0 +1,521 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+$|++;
+use Getopt::Long;
+use Cwd;
+use Carp;
+
+## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+my %chromosomes;
+my $bedGraph2cytosine_version = 'v0.7.12';
+
+
+my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$bedGraph_infile,$cytosine_out) = process_commandline();
+
+warn "Summary of parameters for genome-wide cytosine report:\n";
+warn '='x78,"\n";
+warn "bedGraph infile:\t\t$bedGraph_infile\n";
+warn "output directory:\t\t>$output_dir<\n";
+warn "parent directory:\t\t>$parent_dir<\n";
+warn "genome directory:\t\t>$genome_folder<\n";
+if ($CX_context){
+  warn "CX context:\t\t\tyes\n";
+}
+else{
+  warn "CX context:\t\t\tno (CpG context only, default)\n";
+}
+
+if ($zero){
+  warn "genome coordinates used:\t0-based\n";
+}
+else{
+  warn "genome coordinates used:\t1-based (default)\n";
+}
+if ($split_by_chromosome){
+  warn "split by chromosome:\t\tyes\n\n\n";
+}
+else{
+  warn "split by chromosome:\t\tno\n\n\n";
+}
+sleep (3);
+
+read_genome_into_memory();
+
+generate_genome_wide_cytosine_report($bedGraph_infile);
+
+sub process_commandline{
+  my $help;
+  my $output_dir;
+  my $genome_folder;
+  my $zero;
+  my $CpG_only;
+  my $CX_context;
+  my $split_by_chromosome;
+  my $cytosine_out;
+  my $parent_dir;
+  my $version;
+
+  my $command_line = GetOptions ('help|man' => \$help,
+				 'dir=s' => \$output_dir,
+				 'g|genome_folder=s' => \$genome_folder,
+				 "zero_based" => \$zero,	
+				 "CX|CX_context" => \$CX_context,
+				 "split_by_chromosome" => \$split_by_chromosome,
+				 'o|output=s' => \$cytosine_out,
+				 'parent_dir=s' => \$parent_dir,
+				 'version' => \$version,
+				);
+
+  ### EXIT ON ERROR if there were errors with any of the supplied options
+  unless ($command_line){
+    die "Please respecify command line options\n";
+  }
+
+  ### HELPFILE
+  if ($help){
+    print_helpfile();
+    exit;
+  }
+
+  if ($version){
+    print << "VERSION";
+
+
+                      Bismark Methylation Extractor Module -
+                               bedGraph2cytosine
+
+                      Bismark Extractor Version: $bedGraph2cytosine_version
+              Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+
+
+VERSION
+    exit;
+  }
+
+  ### no files provided
+  unless (@ARGV){
+    die "You need to provide a bedGraph --count file to create an individual C methylation output. Please respecify!\n";
+  }
+
+  my $bedGraph_infile = shift @ARGV;
+
+  unless ($parent_dir){
+    $parent_dir = getcwd();
+  }
+  unless ($parent_dir =~ /\/$/){
+    $parent_dir =~ s/$/\//;
+  }
+
+  unless (defined $cytosine_out){
+    die "Please provide the name of the output file using the option -o/--output filename\n";
+  }
+
+  ### OUTPUT DIR PATH
+  if (defined $output_dir){
+    unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
+      unless ($output_dir =~ /\/$/){
+	$output_dir =~ s/$/\//;
+      }
+    }
+  }
+  else{
+    $output_dir = '';
+  }
+
+  unless ($CX_context){
+    $CX_context = 0;
+  }
+
+  ### GENOME folder
+  if ($genome_folder){
+    unless ($genome_folder =~/\/$/){
+      $genome_folder =~ s/$/\//;
+    }
+  }
+  else{
+    die "Please specify a genome folder to proceed (full path only)\n";
+  }
+
+  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$bedGraph_infile,$cytosine_out);
+}
+
+
+
+sub generate_genome_wide_cytosine_report {
+
+  warn  "="x78,"\n";
+  warn "Methylation information will now be written into a genome-wide cytosine report\n";
+  warn  "="x78,"\n\n";
+  sleep (2);
+
+  ### changing to the output directory again
+  unless ($output_dir eq ''){ # default
+    chdir $output_dir or die "Failed to change directory to $output_dir\n";
+    # warn "Changed directory to $output_dir\n";
+  }
+
+  my $in = shift;
+  if ($in =~ /gz$/){
+    open (IN,"zcat $parent_dir$in |") or die "Failed to read from gzippd file $parent_dir$in: $!\n";
+  }
+  else{
+    open (IN,"$parent_dir$in") or die "Failed to read from file $parent_dir$in: $!\n";
+  }
+
+
+  ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
+  unless ($split_by_chromosome){ ### writing all output to a single file (default)
+    open (CYT,'>',$cytosine_out) or die $!;
+    warn ">>> Writing genome-wide cytosine report to: $cytosine_out <<<\n\n";
+    sleep (3);
+  }
+
+  my $last_chr;
+  my %chr; # storing reads for one chromosome at a time
+
+  my $count = 0;
+  while (<IN>){
+    chomp;
+    ++$count;
+    my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
+
+    # defining the first chromosome
+    unless (defined $last_chr){
+      $last_chr = $chr;
+      # warn "Storing all covered cytosine positions for chromosome: $chr\n";
+    }
+
+    if ($chr eq $last_chr){
+      $chr{$chr}->{$start}->{meth} = $meth;
+      $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+    }
+    else{
+      warn "Writing cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+
+      if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+	my $chromosome_out = $cytosine_out;
+	if ($chromosome_out =~ /txt$/){
+	  $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+      }
+      else{
+	$chromosome_out =~ s/$/.chr${last_chr}.txt/;
+    }
+    open (CYT,'>',$chromosome_out) or die $!;
+    # warn "Writing output for $last_chr to $chromosome_out\n";
+  }
+      while ( $chromosomes{$last_chr} =~ /([CG])/g){
+	
+	my $tri_nt = '';
+	my $context = '';
+	my $pos = pos$chromosomes{$last_chr};
+	
+	my $strand;
+	my $meth = 0;
+	my $nonmeth = 0;
+	
+	if ($1 eq 'C'){    # C on forward strand
+	  $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
+	  $strand = '+';
+	}
+	elsif ($1 eq 'G'){ # C on reverse strand
+	  $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+	  $tri_nt = reverse $tri_nt;
+	  $tri_nt =~ tr/ACTG/TGAC/;
+	  $strand = '-';
+	}
+	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+
+	if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
+	  $meth =  $chr{$last_chr}->{$pos-1}->{meth};
+	  $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
+	}
+
+	### determining cytosine context	
+	if ($tri_nt =~ /^CG/){
+	  $context = 'CG';
+	}
+	elsif ($tri_nt =~ /^C.{1}G$/){
+	  $context = 'CHG';
+	}
+	elsif ($tri_nt =~ /^C.{2}$/){
+	  $context = 'CHH';
+	}
+	else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+	  warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
+	  next;
+	}
+
+	if ($CpG_only){
+	  if ($tri_nt =~ /^CG/){ # CpG context is the default
+	    if ($zero){ # zero based coordinates
+	      $pos -= 1;
+	      print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	    }
+	    else{ # default
+	      print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	    }
+	  }
+	}
+	else{ ## all cytosines, specified with --CX
+	  if ($zero){ # zero based coordinates
+	    $pos -= 1;
+	    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	  }
+	  else{ # default
+	    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	  }
+	}
+      }
+
+      %chr = (); # resetting the hash
+
+      # new first entry
+      $last_chr = $chr;
+      $chr{$chr}->{$start}->{meth} = $meth;
+      $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+    }
+  }
+
+  # Last found chromosome
+  warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+
+if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+  my $chromosome_out = $cytosine_out;
+  if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
+    $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+}
+else{ # user specified output file name
+  $chromosome_out =~ s/$/.chr${last_chr}.txt/;
+}
+open (CYT,'>',$chromosome_out) or die $!;
+# warn "Writing output for $last_chr to $chromosome_out\n";
+}
+
+  while ( $chromosomes{$last_chr} =~ /([CG])/g){
+
+    my $tri_nt;
+    my $context;
+    my $pos = pos$chromosomes{$last_chr};
+
+    my $strand;
+    my $meth = 0;
+    my $nonmeth = 0;
+
+    if ($1 eq 'C'){    # C on forward strand
+      $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
+      $strand = '+';
+    }
+    elsif ($1 eq 'G'){ # C on reverse strand
+      $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+      $tri_nt = reverse $tri_nt;
+      $tri_nt =~ tr/ACTG/TGAC/;
+      $strand = '-';
+    }
+
+    if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
+      $meth =  $chr{$last_chr}->{$pos-1}->{meth};
+      $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
+    }
+
+    next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+
+    ### determining cytosine context	
+    if ($tri_nt =~ /^CG/){
+      $context = 'CG';
+    }
+    elsif ($tri_nt =~ /^C.{1}G$/){
+      $context = 'CHG';
+    }
+    elsif ($tri_nt =~ /^C.{2}$/){
+      $context = 'CHH';
+    }
+    else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+      warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
+      next;
+    }
+	
+    if ($CpG_only){
+      if ($tri_nt =~ /^CG/){ # CpG context is the default
+	if ($zero){ # zero-based coordinates
+	  $pos -= 1;
+	  print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	}
+	else{ # default
+	  print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	}
+      }
+    }
+    else{ ## all cytosines, specified with --CX
+      if ($zero){ # zero based coordinates
+	$pos -= 1;
+	print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+      }
+      else{ # default
+	print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+      }
+    }
+  }
+  close CYT or die $!;
+}
+
+
+sub read_genome_into_memory{
+
+  ## reading in and storing the specified genome in the %chromosomes hash
+  chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
+  warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
+
+  my @chromosome_filenames =  <*.fa>;
+
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  unless (@chromosome_filenames){
+    @chromosome_filenames =  <*.fasta>;
+  }
+  unless (@chromosome_filenames){
+    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+  }
+
+  foreach my $chromosome_filename (@chromosome_filenames){
+
+    # skipping the tophat entire mouse genome fasta file
+    next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
+
+    open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    ### first line needs to be a fastA header
+    my $first_line = <CHR_IN>;
+    chomp $first_line;
+    $first_line =~ s/\r//; # removing /r carriage returns
+
+    ### Extracting chromosome name from the FastA header
+    my $chromosome_name = extract_chromosome_name($first_line);
+	
+    my $sequence;
+    while (<CHR_IN>){
+      chomp;
+      $_ =~ s/\r//; # removing /r carriage returns
+
+      if ($_ =~ /^>/){
+	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
+	if (exists $chromosomes{$chromosome_name}){
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+	}
+	else {
+	  if (length($sequence) == 0){
+	    warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+	  }
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  $chromosomes{$chromosome_name} = $sequence;
+	}
+	### resetting the sequence variable
+	$sequence = '';
+	### setting new chromosome name
+	$chromosome_name = extract_chromosome_name($_);
+      }
+      else{
+	$sequence .= uc$_;
+      }
+    }
+
+    if (exists $chromosomes{$chromosome_name}){
+      warn "chr $chromosome_name (",length $sequence ," bp)\t";
+      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+    }
+    else{
+      if (length($sequence) == 0){
+	warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
+      }
+      warn "chr $chromosome_name (",length $sequence ," bp)\n";
+      $chromosomes{$chromosome_name} = $sequence;
+    }
+  }
+  warn "\n";
+  chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
+}
+
+sub extract_chromosome_name {
+  ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
+  my $fasta_header = shift;
+  if ($fasta_header =~ s/^>//){
+    my ($chromosome_name) = split (/\s+/,$fasta_header);
+    return $chromosome_name;
+  }
+  else{
+    die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
+  }
+}
+
+
+sub print_helpfile{
+
+  warn <<EOF
+
+  SYNOPSIS:
+
+  This script generates a cytosine methylation report for a genome of interest and a sorted methylation input file produced
+  by the script "bismark2bedGraph". By default, the output uses 1-based chromosome coordinates and reports CpG positions only
+  (for both strands).
+
+  The input file needs to have been generated with the script bismark2bedGraph while using the '--counts' option,
+  or otherwise be sorted by position and exactly in the following format:
+ 
+  <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count unmethylated>
+
+
+
+  USAGE: bedGraph2cytosine [options] -o <output> [input]
+
+
+-o/--output <filename>   Name of the output file, mandatory.
+
+--dir                    Output directory. Output is written to the current directory if not specified explicitly.
+
+--genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
+                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+
+-CX/--CX_context         The output file contains information on every single cytosine in the genome irrespective of
+                         its context. This applies to both forward and reverse strands. Please be aware that this will
+                         generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse.
+                         Default: OFF (i.e. Default = CpG context only).
+
+--zero_based             Uses zero-based coordinates like used in e.g. bed files instead of 1-based coordinates. Default: OFF.
+
+--genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
+                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+
+--split_by_chromosome    Writes the output into individual files for each chromosome instead of a single output file. Files
+                         will be named to include the input filename and the chromosome number.
+
+--help                   Displays this help message and exits
+
+
+OUTPUT FORMAT:
+
+The genome-wide cytosine methylation output file is tab-delimited in the following format:
+==========================================================================================
+<chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
+
+
+                          Script last modified: 21 April 2013
+
+EOF
+    ;
+  exit 1;
+}
+
