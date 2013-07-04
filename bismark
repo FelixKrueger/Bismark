@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -293,6 +293,10 @@ sub start_methylation_call_procedure_single_ends {
 
   ### printing all alignments to a results file
   my $outfile = $filename;
+  if ($prefix){
+    $outfile = "$prefix.$outfile";
+  }
+
 
   if ($bowtie2){ # SAM format is the default for Bowtie 2
     $outfile =~ s/$/_bt2_bismark.sam/;
@@ -327,6 +331,10 @@ sub start_methylation_call_procedure_single_ends {
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $filename;
+  if ($prefix){
+    $reportfile = "$prefix.$reportfile";
+  }
+
   if ($bowtie2){
     $reportfile =~ s/$/_bt2_bismark_SE_report.txt/;
   }
@@ -339,12 +347,19 @@ sub start_methylation_call_procedure_single_ends {
 
   if ($unmapped){
     my $unmapped_file = $filename;
+    if ($prefix){
+      $unmapped_file = "$prefix.$unmapped_file";
+    }
+
     $unmapped_file =~ s/$/_unmapped_reads.txt/;
     open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
     print "Unmapped sequences will be written to $output_dir$unmapped_file\n";
   }
   if ($ambiguous){
     my $ambiguous_file = $filename;
+    if ($prefix){
+      $ambiguous_file = "$prefix.$ambiguous_file";
+    }
     $ambiguous_file =~ s/$/_ambiguous_reads.txt/;
     open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
     print "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
@@ -399,7 +414,12 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
   ### printing all alignments to a results file
-  my $outfile = $filename_1;
+  my $outfile = $filename_1; 
+
+  if ($prefix){
+    $outfile = "$prefix.$outfile";
+  }
+
   if ($bowtie2){ # SAM format is the default Bowtie 2 output
     $outfile =~ s/$/_bismark_bt2_pe.sam/;
   }
@@ -433,6 +453,10 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $filename_1;
+  if ($prefix){
+    $reportfile = "$prefix.$reportfile";
+  }
+
   if ($bowtie2){
     $reportfile =~ s/$/_bismark_bt2_PE_report.txt/;
   }
@@ -449,6 +473,10 @@ sub start_methylation_call_procedure_paired_ends {
   if ($unmapped){
     my $unmapped_1 = $filename_1;
     my $unmapped_2 = $filename_2;
+    if ($prefix){
+      $unmapped_1 = "$prefix.$unmapped_1";
+      $unmapped_2 = "$prefix.$unmapped_2";
+    }
     $unmapped_1 =~ s/$/_unmapped_reads_1.txt/;
     $unmapped_2 =~ s/$/_unmapped_reads_2.txt/;
     open (UNMAPPED_1,'>',"$output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
@@ -459,6 +487,11 @@ sub start_methylation_call_procedure_paired_ends {
   if ($ambiguous){
     my $amb_1 = $filename_1;
     my $amb_2 = $filename_2;
+    if ($prefix){
+      $amb_1 = "$prefix.$amb_1";
+      $amb_2 = "$prefix.$amb_2";
+    }
+
     $amb_1 =~ s/$/_ambiguous_reads_1.txt/;
     $amb_2 =~ s/$/_ambiguous_reads_2.txt/;
     open (AMBIG_1,'>',"$output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
@@ -5743,6 +5776,7 @@ sub process_command_line{
   my $bam;
   my $gzip;
   my $pbat;
+  my $prefix;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5784,6 +5818,7 @@ sub process_command_line{
 				 'bam' => \$bam,
 				 'gzip' => \$gzip,
 				 'pbat' => \$pbat,
+				 'prefix=s' => \$prefix,
 				);
 
 
@@ -6400,7 +6435,18 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat);
+  ### PREFIX FOR OUTPUT FILES
+  if ($prefix){
+    # removing trailing dots
+
+    $prefix =~ s/\.+$//;
+
+    warn "Using the following prefix for output files: $prefix\n\n";
+    sleep(1);
+  }
+
+
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix);
 }
 
 
@@ -7353,6 +7399,8 @@ Output:
 --samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                          explicitly if Samtools is in the PATH already.
 
+--prefix <prefix>        Prefixes <prefix> to the output filenames. Trailing dots will be replaced by a single one. For
+                         example, '--prefix test' with 'file.fq' would result in the output file 'test.file.fq_bismark.sam' etc.
 
 
 Other:
@@ -7518,7 +7566,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 10 May 2013.
+Last edited on 27 June 2013.
 
 HOW_TO
 }
