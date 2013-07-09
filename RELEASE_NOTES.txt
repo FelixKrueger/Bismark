@@ -8,6 +8,8 @@ Added new option '--prefix <prefix>' to add <prefix> to the output filenames. Tr
 dots will be replaced by a single one. For example. '--prefix test' with 'file.fq'
 would result in the output file 'test.file.fq_bismark.sam' etc.
 
+Fixed a warning message that occurred when chromosomal sequences could not be extracted
+in paired-end Bowtie2 mode.
 
 
 

@@ -2811,12 +2811,12 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
   ### check to see if the genomic sequences we extracted has the same length as the observed sequences +2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1}) != length($sequence_1)+2){
-    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_1}\n";
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position_1}\n";
     $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2}) != length($sequence_2)+2){
-    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{start_seq_2}\n";
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position_2}\n";
     $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
@@ -3110,7 +3110,8 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   my $cigar_2 = $methylation_call_params->{$sequence_identifier}->{CIGAR_2};
   my $flag_1 =  $methylation_call_params->{$sequence_identifier}->{flag_1};
   my $flag_2 =  $methylation_call_params->{$sequence_identifier}->{flag_2};
-#  print "$cigar_1\t$cigar_2\t$flag_1\t$flag_2\n";
+  # print "$cigar_1\t$cigar_2\t$flag_1\t$flag_2\n";
+  # sleep(10);
   ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end (or start) so that we can also make a CpG methylation call and
   ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last (or first)  position of the actually observed sequence
 
@@ -3144,7 +3145,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
 
   my $indels_1 = 0; # addiong these to the hemming distance value (needed for the NM field in the final SAM output
   my $indels_2 = 0;
-  
+
   ### Extracting read 1 genomic sequence ###
 
   # extracting 2 additional bp at the 5' end (read 1)
@@ -3193,6 +3194,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
       return;
     }
+
     $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,2);
   }
 
@@ -3242,6 +3244,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos_2+2){# exiting with en empty genomic sequence otherwise
+      # need to set read 1 as well now to prevent warning
+      #  warn "'$non_bisulfite_sequence_1'\n'$non_bisulfite_sequence_2'\n\n";
+      #  sleep(5);
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
       return;
     }
