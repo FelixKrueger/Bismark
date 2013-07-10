@@ -674,7 +674,77 @@ sub print_final_analysis_report_single_end{
     warn "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
     print REPORT "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
   }
+
+  ############################################################################################################################################
+  ### create pie-chart with mapping stats
+  ###########################################################################################################################################
+
+  my $filename = shift;
+  my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
+  $pie_chart =~ s/gz$//;
+  $pie_chart =~ s/_C_to_T.fastq$//;
+  $pie_chart = $output_dir . $pie_chart . '_bismark_SE.alignment_overview.png';
+
+  #Check whether the module GD::Graph is installed
+  my $gd_graph_installed = 0;
+  eval{
+    require GD::Graph::pie;
+    GD::Graph::pie->import();
+  };
+
+  unless($@) {
+    $gd_graph_installed = 1;
+  }
+  else{
+    warn "Perl module GD::Graph::pie is not installed, skipping graphical alignment summary\n";
+    sleep(2);
+  }
+
+  if ($gd_graph_installed){
+    warn "Generating pie chart\n\n";
+    sleep(1);
+    my $graph = GD::Graph::pie->new(600,600);
+
+    my $percent_unaligned;
+    my $percent_multiple;
+    my $percent_unextractable;
+
+    if ($counting{sequences_count}){
+      $percent_unaligned = sprintf ("%.1f",$counting{no_single_alignment_found}*100/$counting{sequences_count});
+      $percent_multiple = sprintf ("%.1f",$counting{unsuitable_sequence_count}*100/$counting{sequences_count});
+      $percent_unextractable = sprintf ("%.1f",$counting{genomic_sequence_could_not_be_extracted_count}*100/$counting{sequences_count});
+    }
+    else{
+      $percent_unaligned = $percent_multiple = $percent_unextractable = 'N/A';
+    }
+
+    my @aln_stats = (
+		     ["Uniquely aligned $percent_alignable_sequences%","Unaligned $percent_unaligned%","Multiple alignments $percent_multiple%","sequence unextractable $percent_unextractable%"],
+		     [$counting{unique_best_alignment_count},$counting{no_single_alignment_found},$counting{unsuitable_sequence_count},$counting{genomic_sequence_could_not_be_extracted_count}],
+		    );
+
+    # push @{$mbias_read1[0]},$pos;
+
+    $graph->set( 
+		start_angle => 180,
+		'3d' => 0,
+		label => 'Alignment stats (single-end)',
+		suppress_angle => 2,    # Only label slices of sufficient size
+		transparent => 0,
+		dclrs => [ qw(red lorange dgreen cyan) ],
+	       ) or die $graph->error;
+
+    my $gd = $graph->plot(\@aln_stats) or die $graph->error;
+
+    open (PIE,'>',$pie_chart) or die "Failed to write to file for alignments pie chart: $!\n\n";
+    binmode PIE;
+    print PIE $gd->png;
+  }
+
+  warn "====================\nBismark run complete\n====================\n\n";
+
 }
+
 
 sub print_final_analysis_report_paired_ends{
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
@@ -826,6 +896,74 @@ sub print_final_analysis_report_paired_ends{
     warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
     print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
   }
+
+  ############################################################################################################################################
+  ### create pie-chart with mapping stats
+  ###########################################################################################################################################
+
+  my $filename = shift;
+  my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
+  $pie_chart =~ s/gz$//;
+  $pie_chart =~ s/_C_to_T.fastq$//;
+  $pie_chart = $output_dir . $pie_chart . '_bismark_PE.alignment_overview.png';
+
+  #Check whether the module GD::Graph is installed
+  my $gd_graph_installed = 0;
+  eval{
+    require GD::Graph::pie;
+    GD::Graph::pie->import();
+  };
+
+  unless($@) {
+    $gd_graph_installed = 1;
+  }
+  else{
+    warn "Perl module GD::Graph::pie is not installed, skipping graphical alignment summary\n";
+    sleep(2);
+  }
+
+  if ($gd_graph_installed){
+    warn "Generating pie chart\n\n";
+    sleep(1);
+    my $graph = GD::Graph::pie->new(600,600);
+
+    my $percent_unaligned;
+    my $percent_multiple;
+    my $percent_unextractable;
+
+    if ($counting{sequences_count}){
+      $percent_unaligned = sprintf ("%.1f",$counting{no_single_alignment_found}*100/$counting{sequences_count});
+      $percent_multiple = sprintf ("%.1f",$counting{unsuitable_sequence_count}*100/$counting{sequences_count});
+      $percent_unextractable = sprintf ("%.1f",$counting{genomic_sequence_could_not_be_extracted_count}*100/$counting{sequences_count});
+    }
+    else{
+      $percent_unaligned = $percent_multiple = $percent_unextractable = 'N/A';
+    }
+
+    my @aln_stats = (
+		     ["Uniquely aligned pairs $percent_alignable_sequence_pairs%","Unaligned $percent_unaligned%","Multiple alignments $percent_multiple%","sequence unextractable $percent_unextractable%"],
+		     [$counting{unique_best_alignment_count},$counting{no_single_alignment_found},$counting{unsuitable_sequence_count},$counting{genomic_sequence_could_not_be_extracted_count}],
+		    );
+
+    # push @{$mbias_read1[0]},$pos;
+
+    $graph->set( 
+		start_angle => 180,
+		'3d' => 0,
+		label => 'Alignment stats (paired-end)',
+		suppress_angle => 2,    # Only label slices of sufficient size
+		transparent => 0,
+		dclrs => [ qw(red lorange dgreen cyan) ],
+	       ) or die $graph->error;
+
+    my $gd = $graph->plot(\@aln_stats) or die $graph->error;
+
+    open (PIE,'>',$pie_chart) or die "Failed to write to file for alignments pie chart: $!\n\n";
+    binmode PIE;
+    print PIE $gd->png;
+  }
+
+  warn "====================\nBismark run complete\n====================\n\n";
 
 }
 

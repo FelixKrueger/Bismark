@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.7.13 (01 Jul 2013)
+RELEASE NOTES FOR Bismark v0.7.13 (10 Jul 2013)
 -----------------------------------------------
 
 Bismark
@@ -10,6 +10,25 @@ would result in the output file 'test.file.fq_bismark.sam' etc.
 
 Fixed a warning message that occurred when chromosomal sequences could not be extracted
 in paired-end Bowtie2 mode.
+
+Bismark will now generate a pie chart when the run has finished to get a quick overview
+of how many sequences aligned uniquely or sequences that did not align, either due to
+producing no alignment at all, multiple mapping or because it was impossible to extract
+the chromosomal sequence. Drawing this plot will require the GD::Graph Perl module; if it
+is not found on the system the plot will be skipped.
+
+
+Methylation Extractor
+=====================
+
+Upon completion, the methylation extractor will now produce an M-bias (methylation bias)
+plot, which shows the methylation proportion across each possible read position (described
+in:  Hansen et al., Genome Biology, 2012, 13:R83). The data for the M-bias plot will also
+be written into a text file (to generate graphs by alternative means) and drawn into a .png
+plot which  requires the GD::Graph Perl module; if GD::Graph cannot be found on the system,
+only the table will be printed.
+
+
 
 
 
