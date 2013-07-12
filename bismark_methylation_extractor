@@ -9,7 +9,6 @@ use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
 
-
 ## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
@@ -31,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.12_dev';
+my $version = 'v0.7.13';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip) = process_commandline();
 
 
@@ -193,6 +192,9 @@ foreach my $filename (@filenames){
 	     );
   @sorting_files = ();
   @bedfiles = ();
+  %mbias_1 = ();
+  %mbias_2 = ();
+
 
   process_Bismark_results_file($filename);
 
@@ -399,7 +401,7 @@ sub produce_mbias_plots{
 
       my $percent = '';
       if (($mbias_1{$context}->{$pos}->{meth} + $mbias_1{$context}->{$pos}->{un}) > 0){
-	$percent = sprintf("%.2f",$mbias_1{$context}->{$pos}->{meth} * 100/ ($mbias_1{$context}->{$pos}->{meth} + $mbias_1{$context}->{$pos}->{un}) );
+	$percent = sprintf("%.2f",$mbias_1{$context}->{$pos}->{meth} * 100/ ( $mbias_1{$context}->{$pos}->{meth} + $mbias_1{$context}->{$pos}->{un}) );
       }
       my $coverage = $mbias_1{$context}->{$pos}->{un} + $mbias_1{$context}->{$pos}->{meth};
 
@@ -408,41 +410,58 @@ sub produce_mbias_plots{
 
       if ($context eq 'CpG'){
 	push @{$mbias_read1[1]},$percent;
+	push @{$mbias_read1[4]},$coverage;
       }
       elsif ($context eq 'CHG'){
 	push @{$mbias_read1[2]},$percent;
+	push @{$mbias_read1[5]},$coverage;
       }
       elsif ($context eq 'CHH'){
     	push @{$mbias_read1[3]},$percent;
+	push @{$mbias_read1[6]},$coverage;
       }
     }
     print MBIAS "\n";
   }
 
   if ( $gd_graph_installed){
+
+    use GD::Graph::colour qw(:colours :lists :files :convert);
+    add_colour(nice_blue => [31,120,180]);
+    add_colour(nice_orange => [255,127,0]);
+    add_colour(nice_green => [51,160,44]);
+    add_colour(pale_blue => [153,204,255]);
+    add_colour(pale_orange => [255,204,153]);
+    add_colour(pale_green => [153,204,153]);
+
     $graph1->set(
 		 x_label              => 'position (bp)',
-		 y_label              => '% methylation',
+		 y1_label              => '% methylation',
+		 y2_label              => '# methylation calls',
 		 title                => $graph_title,
 		 line_width           => 2,
-		 y_max_value          => 100,
-		 y_min_value          => 0,
-		 y_label_skip         => 2,
 		 x_max_value          => $max_length_1,
 		 x_min_value          => 0,
 		 y_tick_number        => 10,
 		 y_label_skip         => 2,
+		 y1_max_value          => 100,
+		 y1_min_value          => 0,
+		 y_label_skip         => 2,
+		 y2_min_value          => 0,
 		 x_label_skip         => 5,
 		 x_label_position     => 0.5,
 		 x_tick_offset        => -1,
+		 two_axes             => 1,
+		 use_axis             => [1,1,1,2,2,2],
 		 legend_placement     => 'RC',
 		 legend_spacing       => 6,
 		 legend_marker_width  => 24,
 		 legend_marker_height => 18,
-		 dclrs              => [ qw(lblue orange green)],
+		 dclrs              => [ qw(nice_blue nice_orange nice_green pale_blue pale_orange pale_green)],
 		) or die $graph1->error;
 
-    $graph1->set_legend('CpG','CHG','CHH');
+    $graph1->set_legend('CpG','CHG','CHH','CpG calls','CHG calls','CHH calls');
+
     my $gd1 = $graph1->plot(\@mbias_read1) or die $graph1->error;
 
     open (MBIAS_G1,'>',$mbias_graph_1) or die "Failed to write to file for M-bias plot 1: $!\n\n";
@@ -478,41 +497,58 @@ sub produce_mbias_plots{
 	
 	if ($context eq 'CpG'){
 	  push @{$mbias_read2[1]},$percent;
+	  push @{$mbias_read2[4]},$coverage;
 	}
 	elsif ($context eq 'CHG'){
 	  push @{$mbias_read2[2]},$percent;
+	  push @{$mbias_read2[5]},$coverage;
 	}
 	elsif ($context eq 'CHH'){
 	  push @{$mbias_read2[3]},$percent;
+	  push @{$mbias_read2[6]},$coverage;
 	}
       }	
       print MBIAS "\n";
     }
 
     if ( $gd_graph_installed){
+
+      use GD::Graph::colour qw(:colours :lists :files :convert);
+      add_colour(nice_blue => [31,120,180]);
+      add_colour(nice_orange => [255,127,0]);
+      add_colour(nice_green => [51,160,44]);
+      add_colour(pale_blue => [153,204,255]);
+      add_colour(pale_orange => [255,204,153]);
+      add_colour(pale_green => [153,204,153]);
+
       $graph2->set(
 		   x_label              => 'position (bp)',
-		   y_label              => '% methylation',
-		   title                => 'M-bias (Read 2)',
 		   line_width           => 2,
-		   y_max_value          => 100,
-		   y_min_value          => 0,
-		   y_label_skip         => 2,
-		   x_max_value          => $max_length_2,
+		   x_max_value          => $max_length_1,
 		   x_min_value          => 0,
 		   y_tick_number        => 10,
 		   y_label_skip         => 2,
+		   y1_max_value          => 100,
+		   y1_min_value          => 0,
+		   y_label_skip         => 2,
+		   y2_min_value          => 0,
 		   x_label_skip         => 5,
 		   x_label_position     => 0.5,
 		   x_tick_offset        => -1,
+		   two_axes             => 1,
+		   use_axis             => [1,1,1,2,2,2],
 		   legend_placement     => 'RC',
 		   legend_spacing       => 6,
 		   legend_marker_width  => 24,
 		   legend_marker_height => 18,
-		   dclrs              => [ qw(lblue orange green)],
+		   dclrs                => [ qw(nice_blue nice_orange nice_green pale_blue pale_orange pale_green)],
+		   x_label              => 'position (bp)',
+		   y1_label             => '% methylation',
+		   y2_label             => '# calls',
+		   title                => 'M-bias (Read 2)',
 		  ) or die $graph2->error;
 
-      $graph2->set_legend('CpG','CHG','CHH');
+      $graph2->set_legend('CpG','CHG','CHH','CpG calls','CHG calls','CHH calls');
       my $gd2 = $graph2->plot(\@mbias_read2) or die $graph2->error;
 
       open (MBIAS_G2,'>',$mbias_graph_2) or die "Failed to write to file for M-bias plot 2: $!\n\n";
@@ -4371,7 +4407,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 09 July 2013.
+This script was last modified on 12 July 2013.
 
 HOW_TO
 }

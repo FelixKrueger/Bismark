@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.12';
+my $bismark_version = 'v0.7.13';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -683,7 +683,11 @@ sub print_final_analysis_report_single_end{
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;
-  $pie_chart = $output_dir . $pie_chart . '_bismark_SE.alignment_overview.png';
+  if ($prefix){
+    $pie_chart = "$prefix.$pie_chart";
+  }
+  $pie_chart = "${output_dir}${pie_chart}_bismark_SE.alignment_overview.png";
+
 
   #Check whether the module GD::Graph is installed
   my $gd_graph_installed = 0;
@@ -722,8 +726,6 @@ sub print_final_analysis_report_single_end{
 		     ["Uniquely aligned $percent_alignable_sequences%","Unaligned $percent_unaligned%","Multiple alignments $percent_multiple%","sequence unextractable $percent_unextractable%"],
 		     [$counting{unique_best_alignment_count},$counting{no_single_alignment_found},$counting{unsuitable_sequence_count},$counting{genomic_sequence_could_not_be_extracted_count}],
 		    );
-
-    # push @{$mbias_read1[0]},$pos;
 
     $graph->set( 
 		start_angle => 180,
@@ -905,7 +907,10 @@ sub print_final_analysis_report_paired_ends{
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;
-  $pie_chart = $output_dir . $pie_chart . '_bismark_PE.alignment_overview.png';
+  if ($prefix){
+    $pie_chart = "$prefix.$pie_chart";
+  }
+  $pie_chart = "${output_dir}${pie_chart}_bismark_PE.alignment_overview.png";
 
   #Check whether the module GD::Graph is installed
   my $gd_graph_installed = 0;
@@ -7710,7 +7715,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 27 June 2013.
+Last edited on 12 July 2013.
 
 HOW_TO
 }
