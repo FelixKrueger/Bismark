@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.7.13';
+my $bismark_version = 'v0.8.1';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -679,7 +679,7 @@ sub print_final_analysis_report_single_end{
   ### create pie-chart with mapping stats
   ###########################################################################################################################################
 
-  my $filename = shift;
+  my $filename = $C_to_T_infile;
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;
@@ -903,7 +903,7 @@ sub print_final_analysis_report_paired_ends{
   ### create pie-chart with mapping stats
   ###########################################################################################################################################
 
-  my $filename = shift;
+  my $filename = $C_to_T_infile_1;
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;

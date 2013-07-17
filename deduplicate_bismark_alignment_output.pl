@@ -14,6 +14,10 @@ use Getopt::Long;
 ### Changed the single-end trimming behavior so that only the start coordinate will be used. This avoids duplicate reads that have been trimmed to a varying extent
 ### Changed the way of determining the end of reads in SAM format to using the CIGAR string if the read contains InDels
 
+### 16 July 2013
+### Adding a new deduplication mode for barcoded RRBS-Seq
+
+
 my $help;
 my $representative;
 my $single;
@@ -21,7 +25,7 @@ my $paired;
 my $vanilla;
 my $samtools_path;
 my $bam;
-
+my $rrbs;
 
 my $command_line = GetOptions ('help' => \$help,
 			       'representative' => \$representative,
@@ -30,6 +34,7 @@ my $command_line = GetOptions ('help' => \$help,
 			       'vanilla' => \$vanilla,
 			       'samtools_path=s' => \$samtools_path,
 			       'bam' => \$bam,
+			       'barcode' => \$rrbs,
 			      );
 
 die "Please respecify command line options\n\n" unless ($command_line);
@@ -58,6 +63,11 @@ if ($paired){
     die "Please select either -s for single end files or -p for paired end files, but not both at the same time!\n\n";
   }
   if ($vanilla){
+
+    if ($rrbs){
+      die "Barcode deduplication only works with Bismark SAM (or BAM) output (in attempt to phase out the vanilla format)\n";
+    }
+
     warn "Processing paired-end custom Bismark output file(s):\n";
     warn join ("\t",@filenames),"\n\n";
   }
@@ -127,6 +137,10 @@ if ($representative){
   warn "\nIf there are several alignments to a single position in the genome the alignment with the most representative methylation call will be chosen (this might be the most highly amplified PCR product...)\n\n";
   sleep (2);
 }
+elsif($rrbs){
+  warn "\nIf the input is a multiplexed sample with several alignments to a single position in the genome, only alignments with a unique barcode will be chosen)\n\n";
+  sleep (2);
+}
 else{ # default; random (=first) alignment
   warn "\nIf there are several alignments to a single position in the genome the first alignment will be chosen. Since the input files are not in any way sorted this is a near-enough random selection of reads.\n\n";
   sleep (2);
@@ -149,6 +163,10 @@ foreach my $file (@filenames){
   ### for representative methylation calls we need to discriminate between single-end and paired-end files as the latter have 2 methylation call strings
   if($representative){
     deduplicate_representative($file);
+  }
+
+  elsif($rrbs){
+    deduplicate_barcoded_rrbs($file);
   }
 
   ### as the default option we simply write out the first read for a position and discard all others. This is the fastest option
@@ -433,17 +451,325 @@ foreach my $file (@filenames){
     }
 
     my $percentage = sprintf("%.2f",$removed/$count*100);
+    my $leftover = $count - $removed;
+    my $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
 
     warn "\nTotal number of alignments analysed in $file:\t$count\n";
     warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+    warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 
     print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
     print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
     print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
-
+    print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
   }
 }
+
+
+sub deduplicate_barcoded_rrbs{
+
+  my $file = shift;
+
+  my %unique_seqs;
+  my %positions;
+
+  if ($file =~ /\.gz$/){
+    open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+  }
+  elsif ($file =~ /\.bam$/){
+    open (IN,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+  }
+  else{
+    open (IN,$file) or die "Unable to read from $file: $!\n";
+  }
+
+  my $outfile = $file;
+  $outfile =~ s/\.gz$//;
+  $outfile =~ s/\.sam$//;
+  $outfile =~ s/\.bam$//;
+  $outfile =~ s/\.txt$//;
+
+  if ($vanilla){
+    $outfile =~ s/$/_dedup_RRBS.txt/;
+  }
+  else{
+    if ($bam == 1){
+      $outfile =~ s/$/.dedup_RRBS.bam/;
+    }
+    elsif ($bam == 2){
+      $outfile =~ s/$/.dedupRRBS.sam.gz/;
+    }
+    else{
+      $outfile =~ s/$/.dedup_RRBS.sam/;
+    }
+  }
+  if ($bam == 1){
+    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $outfile") or die "Failed to write to $outfile: $!\n";
+  }
+  elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
+    open (OUT,"| gzip -c - > $outfile") or die "Failed to write to $outfile: $!\n";
+  }
+  else{
+    open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
+  }
+
+  ### This mode only supports Bismark SAM output
+  my $count = 0;
+  my $unique_seqs = 0;
+  my $removed = 0;
+
+  while (<IN>){
+
+    if ($count == 0){
+      if ($_ =~ /^Bismark version:/){
+	warn "The file appears to be in the custom Bismark and not SAM format. Please see option --vanilla!\n";
+	sleep (2);
+	print_helpfile();
+	exit;
+      }
+    }
+
+    ### if this was a SAM file we ignore header lines
+    if (/^\@\w{2}\t/){
+      warn "skipping SAM header line:\t$_";
+      print OUT; # Printing the header lines again into the de-duplicated file
+      next;
+    }
+
+    ++$count;
+    my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
+    ### in this barcoded mode we also store the read barcode as additional means of assisting the deduplication
+    ### in effect the $composite string looks like this (separated by ':'):
+
+    ### FLAG:chromosome:start:barcode
+
+    my $end;
+    my $line1;
+
+    # SAM format
+    my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
+
+    $id =~ /:(\w+)$/;
+    my $barcode = $1;
+    unless ($barcode){
+      die "Failed to extract a barcode from the read ID (last element of each read ID needs to be the barcode sequence, e.g. ':CATG'\n\n";
+    }
+
+    ### SAM single-end
+    if ($single){
+
+      if ($strand == 0 ){
+	### read aligned to the forward strand. No action needed
+      }
+      elsif ($strand == 16){
+	### read is on reverse strand
+	
+	$start -= 1; # only need to adjust this once
+	
+	# for InDel free matches we can simply use the M number in the CIGAR string
+	if ($cigar =~ /^(\d+)M$/){ # linear match
+	  $start += $1;
+	}
+	else{
+	  # parsing CIGAR string
+	  my @len = split (/\D+/,$cigar); # storing the length per operation
+	  my @ops = split (/\d+/,$cigar); # storing the operation
+	  shift @ops; # remove the empty first element
+	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+
+	  # warn "CIGAR string; $cigar\n";
+	  ### determining end position of a read
+	  foreach my $index(0..$#len){
+	    if ($ops[$index] eq 'M'){  # standard matching bases
+	      $start += $len[$index];
+	      # warn "Operation is 'M', adding $len[$index] bp\n";
+	    }
+	    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+	      # warn "Operation is 'I', next\n";
+	    }
+	    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+	      #  warn "Operation is 'D',adding $len[$index] bp\n";
+	      $start += $len[$index];
+	    }
+	    else{
+	      die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+	    }
+	  }
+	}
+      }
+
+      ### Here we take the barcode sequence into consideration
+      $composite = join (":",$strand,$chr,$start,$barcode);
+      # warn "$composite\n\n";
+      # sleep(1);
+    }
+    elsif($paired){
+
+      ### storing the current line
+      $line1 = $_;
+
+      my $read_conversion;
+      my $genome_conversion;
+
+      while ( /(XR|XG):Z:([^\t]+)/g ) {
+	my $tag = $1;
+	my $value = $2;
+	
+	if ($tag eq "XR") {
+	  $read_conversion = $value;
+	  $read_conversion =~ s/\r//;
+	}
+	elsif ($tag eq "XG") {
+	  $genome_conversion = $value;
+	  $genome_conversion =~ s/\r//;
+	  chomp $genome_conversion;
+	}
+      }
+      die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $read_conversion);
+
+	
+      my $index;
+      if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
+	$index = 0;
+	$strand = '+';
+      } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
+	$index = 1;
+	$strand = '-';
+      } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
+	$index = 2;
+	$strand = '+';
+      } elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
+	$index = 3;
+	$strand = '-';
+      } else {
+	die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
+      }
+	
+      # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
+      if ($index == 0 or $index == 2){
+	
+	### reading in the next line
+	$_ = <IN>;
+	# the only thing we need is the end position
+	($end,my $cigar_2) = (split (/\t/))[3,5];
+
+	$end -= 1; # only need to adjust this once
+	
+	# for InDel free matches we can simply use the M number in the CIGAR string
+	if ($cigar_2 =~ /^(\d+)M$/){ # linear match
+	  $end += $1;
+	}
+	else{
+	  # parsing CIGAR string
+	  my @len = split (/\D+/,$cigar_2); # storing the length per operation
+	  my @ops = split (/\d+/,$cigar_2); # storing the operation
+	  shift @ops; # remove the empty first element
+	  die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
+	
+	  # warn "CIGAR string; $cigar_2\n";
+	  ### determining end position of the read
+	  foreach my $index(0..$#len){
+	    if ($ops[$index] eq 'M'){  # standard matching bases
+	      $end += $len[$index];
+	      # warn "Operation is 'M', adding $len[$index] bp\n";
+	    }
+	    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+	      # warn "Operation is 'I', next\n";
+	    }
+	    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+	      #  warn "Operation is 'D',adding $len[$index] bp\n";
+	      $end += $len[$index];
+	    }
+	    else{
+	      die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+	    }
+	  }
+	}
+      }
+      else{
+	# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
+	
+	$end = $start - 1; # need to adjust this only once
+	
+	# for InDel free matches we can simply use the M number in the CIGAR string
+	if ($cigar =~ /^(\d+)M$/){ # linear match
+	  $end += $1;
+	}
+	else{
+	  # parsing CIGAR string
+	  my @len = split (/\D+/,$cigar); # storing the length per operation
+	  my @ops = split (/\d+/,$cigar); # storing the operation
+	  shift @ops; # remove the empty first element
+	  die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
+	
+	  # warn "CIGAR string; $cigar\n";
+	  ### determining end position of the read
+	  foreach my $index(0..$#len){
+	    if ($ops[$index] eq 'M'){  # standard matching bases
+	      $end += $len[$index];
+	      # warn "Operation is 'M', adding $len[$index] bp\n";
+	    }
+	    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+	      # warn "Operation is 'I', next\n";
+	    }
+	    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+	      # warn "Operation is 'D',adding $len[$index] bp\n";
+	      $end += $len[$index];
+	    }
+	    else{
+	      die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+	    }
+	  }
+	}
+	
+	### reading in the next line
+	$_ = <IN>;
+	# the only thing we need is the start position
+	($start) = (split (/\t/))[3];
+      }
+
+      ### Here we take the barcode sequence into consideration
+      $composite = join (":",$strand,$chr,$start,$end,$barcode);
+    }
+    else{
+      die "Input must be single or paired-end\n";
+    }
+
+    if (exists $unique_seqs{$composite}){
+      ++$removed;
+      unless (exists $positions{$composite}){
+	$positions{$composite}++;
+      }
+    }
+    else{
+      if ($paired){
+	print OUT $line1; # printing first paired-end line for SAM output
+      }
+      print OUT; # printing single-end SAM alignment or second paired-end line
+      $unique_seqs{$composite}++;
+    }
+  }
+
+  my $percentage = sprintf("%.2f",$removed/$count*100);
+  my $leftover = $count - $removed;
+  my $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+
+  warn "\nTotal number of alignments analysed in $file:\t$count\n";
+  warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+  warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+  warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+
+
+  print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
+  print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+  print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+  print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+
+}
+
+
+
 
 sub print_helpfile{
   print "\n",'='x111,"\n";
@@ -455,15 +781,18 @@ sub print_helpfile{
   print ">>> USAGE: ./deduplicate_bismark_alignment_output.pl [options] filename(s) <<<\n\n";
 
   print "-s/--single\t\tdeduplicate single-end Bismark files (default format: SAM)\n";
-  print "-p/--paired\t\tdeduplicate paired-end Bismark files (default format: SAM)\n";
-  print "--vanilla\t\tThe input file is in the old custom Bismark format and not in SAM format\n";
+  print "-p/--paired\t\tdeduplicate paired-end Bismark files (default format: SAM)\n\n";
+  print "--vanilla\t\tThe input file is in the old custom Bismark format and not in SAM format\n\n";
   print "--representative\twill browse through all sequences and print out the sequence with the most representative\n                        (as in most frequent) methylation call for any given position. Note that this is very likely\n                        the most highly amplified PCR product for a given sequence\n\n";
-  print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).\n";
-  print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n";
+  print "--barcode\t\tIn addition to chromosome, start position and orientation this will also take a potential barcode into\n                        consideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
+  print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
+  print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
   print '='x111,"\n\n";
 
-  print "This script was last modified on May 13, 2013\n\n";
+  print "This script was last modified on July 17, 2013\n\n";
 }
+
+
 
 
 sub deduplicate_representative {

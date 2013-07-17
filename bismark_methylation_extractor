@@ -30,8 +30,8 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.7.13';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip) = process_commandline();
+my $version = 'v0.8.1';
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -71,9 +71,20 @@ elsif ($paired){
   }
 }
 
-if ($ignore){
-  warn "First $ignore bases will be disregarded when processing the methylation call string\n";
+if ($single){
+  if ($ignore){
+    warn "First $ignore bp will be disregarded when processing the methylation call string\n";
+  }
 }
+else{ ## paired-end
+  if ($ignore){
+    warn "First $ignore bp will be disregarded when processing the methylation call string of Read 1\n";
+  }
+  if ($ignore_r2){
+    warn "First $ignore_r2 bp will be disregarded when processing the methylation call string of Read 2\n";
+  }
+}
+
 
 if ($full){
   warn "Strand-specific outputs will be skipped. Separate output files for cytosines in CpG, CHG and CHH context will be generated\n";
@@ -430,9 +441,9 @@ sub produce_mbias_plots{
     add_colour(nice_blue => [31,120,180]);
     add_colour(nice_orange => [255,127,0]);
     add_colour(nice_green => [51,160,44]);
-    add_colour(pale_blue => [153,204,255]);
-    add_colour(pale_orange => [255,204,153]);
-    add_colour(pale_green => [153,204,153]);
+    add_colour(pale_blue => [153,206,227]);
+    add_colour(pale_orange => [253,204,138]);
+    add_colour(pale_green => [191,230,207]);
 
     $graph1->set(
 		 x_label              => 'position (bp)',
@@ -451,6 +462,8 @@ sub produce_mbias_plots{
 		 x_label_skip         => 5,
 		 x_label_position     => 0.5,
 		 x_tick_offset        => -1,
+		 bgclr                => 'white',
+		 transparent          => 0,
 		 two_axes             => 1,
 		 use_axis             => [1,1,1,2,2,2],
 		 legend_placement     => 'RC',
@@ -460,7 +473,7 @@ sub produce_mbias_plots{
 		 dclrs              => [ qw(nice_blue nice_orange nice_green pale_blue pale_orange pale_green)],
 		) or die $graph1->error;
 
-    $graph1->set_legend('CpG','CHG','CHH','CpG calls','CHG calls','CHH calls');
+    $graph1->set_legend('CpG methylation','CHG methylation','CHH methylation','CpG total calls','CHG total calls','CHH total calls');
 
     my $gd1 = $graph1->plot(\@mbias_read1) or die $graph1->error;
 
@@ -517,9 +530,9 @@ sub produce_mbias_plots{
       add_colour(nice_blue => [31,120,180]);
       add_colour(nice_orange => [255,127,0]);
       add_colour(nice_green => [51,160,44]);
-      add_colour(pale_blue => [153,204,255]);
-      add_colour(pale_orange => [255,204,153]);
-      add_colour(pale_green => [153,204,153]);
+      add_colour(pale_blue => [153,206,227]);
+      add_colour(pale_orange => [253,204,138]);
+      add_colour(pale_green => [191,230,207]);
 
       $graph2->set(
 		   x_label              => 'position (bp)',
@@ -535,6 +548,8 @@ sub produce_mbias_plots{
 		   x_label_skip         => 5,
 		   x_label_position     => 0.5,
 		   x_tick_offset        => -1,
+		   bgclr                => 'white',
+		   transparent          => 0,
 		   two_axes             => 1,
 		   use_axis             => [1,1,1,2,2,2],
 		   legend_placement     => 'RC',
@@ -548,7 +563,7 @@ sub produce_mbias_plots{
 		   title                => 'M-bias (Read 2)',
 		  ) or die $graph2->error;
 
-      $graph2->set_legend('CpG','CHG','CHH','CpG calls','CHG calls','CHH calls');
+      $graph2->set_legend('CpG methylation','CHG methylation','CHH methylation','CpG total calls','CHG total calls','CHH total calls');
       my $gd2 = $graph2->plot(\@mbias_read2) or die $graph2->error;
 
       open (MBIAS_G2,'>',$mbias_graph_2) or die "Failed to write to file for M-bias plot 2: $!\n\n";
@@ -564,6 +579,7 @@ sub process_commandline{
   my $single_end;
   my $paired_end;
   my $ignore;
+  my $ignore_r2;
   my $genomic_fasta;
   my $full;
   my $report;
@@ -592,6 +608,7 @@ sub process_commandline{
 				 's|single-end' => \$single_end,
 				 'fasta' => \$genomic_fasta,
 				 'ignore=i' => \$ignore,
+				 'ignore_r2=i' => \$ignore_r2,
 				 'comprehensive' => \$full,
 				 'report' => \$report,
 				 'version' => \$extractor_version,
@@ -653,6 +670,14 @@ VERSION
   unless ($ignore){
     $ignore = 0;
   }
+
+  if (defined $ignore_r2){
+    die "You can only specify --ignore_r2 for paired-end result files\n" unless ($paired_end);
+  }
+  else{
+    $ignore_r2 = 0;
+  }
+
   ### PRINT A REPORT
   unless ($report){
     $report = 0;
@@ -805,7 +830,7 @@ VERSION
     $samtools_path = '';
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip);
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2);
 }
 
 
@@ -878,9 +903,18 @@ sub process_Bismark_results_file{
 	print REPORT "Bismark result file: single-end (SAM format)\n"; # default
       }
     }
-
-    if ($ignore) {
-      print REPORT "Ignoring first $ignore bases\n";
+    if ($single){
+      if ($ignore) {
+	print REPORT "Ignoring first $ignore bp\n";
+      }
+    }
+    else{ # paired-end
+      if ($ignore) {
+	print REPORT "Ignoring first $ignore bp of Read 1\n";
+      }
+      if ($ignore_r2){
+	print REPORT "Ignoring first $ignore_r2 bp of Read 2\n";
+      }
     }
 
     if ($full) {
@@ -1596,6 +1630,7 @@ sub process_Bismark_results_file{
 	    # print "\n\n$meth_call\n";
 	    $meth_call = substr($meth_call,$ignore,length($meth_call)-$ignore);	
 	    # print "$meth_call\n";
+
 	    ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
 
 	    my @len = split (/\D+/,$cigar); # storing the length per operation
@@ -1713,14 +1748,20 @@ sub process_Bismark_results_file{
 	
 	if ($meth_call_1 and $meth_call_2) {
 	  ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>'
+
 	  if ($ignore) {
 	    $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
-	    $meth_call_2 = substr($meth_call_2,$ignore,length($meth_call_2)-$ignore);
-
+	
 	    ### we also need to adjust the start and end positions of the alignments accordingly if '--ignore' was specified
 	    $start_read_1 += $ignore;
-	    $end_read_2   -= $ignore;
 	  }
+	  if ($ignore_r2) {
+	    $meth_call_2 = substr($meth_call_2,$ignore_r2,length($meth_call_2)-$ignore_r2);
+	
+	    ### we also need to adjust the start and end positions of the alignments accordingly if '--ignore_r2' was specified
+	    $end_read_2   -= $ignore_r2;
+	  }
+
 	  my $end_read_1;
 	  my $start_read_2;
 
@@ -1752,7 +1793,8 @@ sub process_Bismark_results_file{
 	  $methylation_call_strings_processed += 2; # paired-end = 2 methylation calls
 	}	
       }
-    } else {	      # Bismark paired-end SAM output format (default)
+    }
+    else {	      # Bismark paired-end SAM output format (default)
       while (<IN>) {
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
 	if (/^\@/) {	     # skipping header lines (starting with @)
@@ -1882,20 +1924,19 @@ sub process_Bismark_results_file{
 	  # print "original CIGAR read 2: $cigar_2\n";
 	  # print "original CIGAR read 2: @comp_cigar_2\n";
 	
+
+
 	  if ($ignore) {
-	    ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>'	
+	    ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>' for read 1	
 	    ### the methylation calls have already been reversed where necessary
 	    $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
-	    $meth_call_2 = substr($meth_call_2,$ignore,length($meth_call_2)-$ignore);
-
-	    ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
 
 	    if ($strand eq '+') {
 		
 	      ### if the (read 1) strand information is '+', read 1 needs to be trimmed from the start
 	      my $D_count_1 = 0; # counting all deletions that affect the ignored genomic position for read 1, i.e. Deletions and insertions
 	      my $I_count_1 = 0;
-
+	      
 	      for (1..$ignore) {
 		my $op = shift @comp_cigar_1; # adjusting composite CIGAR string of read 1 by removing $ignore operations from the start
 		# print "$_ deleted $op\n";
@@ -1912,17 +1953,10 @@ sub process_Bismark_results_file{
 		
 	      $start_read_1 += $ignore + $D_count_1 - $I_count_1;
 	      # print "start read 1 $start_read_1\t ignore: $ignore\t D count 1: $D_count_1\tI_count 1: $I_count_1\n";
-	
-	      ### if the (read 1) strand information is '+', read 2 needs to be trimmed from the back
 
-	      for (1..$ignore) {
-		my $op = pop @comp_cigar_2; # adjusting composite CIGAR string by removing $ignore operations, here the last value of the array
-		while ($op eq 'D') { # repeating this for deletions (D)
-		  $op = pop @comp_cigar_2;
-		}
-	      }
 	      # the start position of reads mapping to the reverse strand is being adjusted further below
-	    } elsif ($strand eq '-') {
+	    }
+	    elsif ($strand eq '-') {
 	
 	      ### if the (read 1) strand information is '-', read 1 needs to be trimmed from the back
 	      for (1..$ignore) {
@@ -1933,11 +1967,35 @@ sub process_Bismark_results_file{
 	      }
 	      # the start position of reads mapping to the reverse strand is being adjusted further below
 
+	    }
+	  }
+
+	  if ($ignore_r2) {
+	    ### Clipping off the first <int> number of bases from the methylation call string as specified with '--ignore_r2 <int>' for read 2	
+	    ### the methylation calls have already been reversed where necessary
+	    $meth_call_2 = substr($meth_call_2,$ignore_r2,length($meth_call_2)-$ignore_r2);
+	
+	    ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
+	
+	    if ($strand eq '+') {
+		
+	      ### if the (read 1) strand information is '+', read 2 needs to be trimmed from the back
+
+	      for (1..$ignore_r2) {
+		my $op = pop @comp_cigar_2; # adjusting composite CIGAR string by removing $ignore operations, here the last value of the array
+		while ($op eq 'D') { # repeating this for deletions (D)
+		  $op = pop @comp_cigar_2;
+		}
+	      }
+	      # the start position of reads mapping to the reverse strand is being adjusted further below
+	    }
+	    elsif ($strand eq '-') {
+	
 	      ### if the (read 1) strand information is '-', read 2 needs to be trimmed from the start
 	      my $D_count_2 = 0; # counting all deletions that affect the ignored genomic position for read 2, i.e. Deletions and insertions
-	      my $I_count_2 = 0;
-		
-	      for (1..$ignore) {
+		      my $I_count_2 = 0;
+
+	      for (1..$ignore_r2) {
 		my $op = shift @comp_cigar_2; # adjusting composite CIGAR string of read 2 by removing $ignore operations from the start
 		# print "$_ deleted $op\n";
 		
@@ -1951,11 +2009,12 @@ sub process_Bismark_results_file{
 		}
 	      }
 		
-	      $start_read_2 += $ignore + $D_count_2 - $I_count_2;
-	      # print "start read 2 $start_read_2\t ignore: $ignore\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
-	
+	      $start_read_2 += $ignore_r2 + $D_count_2 - $I_count_2;
+	      # print "start read 2 $start_read_2\t ignore R2: $ignore_r2\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
 	    }
+	  }
 	
+	  if ($ignore){
 	    ### reconstituting shortened CIGAR string 1
 	    my $new_cigar_1;
 	    my $count_1 = 0;
@@ -1978,6 +2037,9 @@ sub process_Bismark_results_file{
 	    $new_cigar_1 .= "$count_1$last_op_1"; # appending the last operation and count
 	    $cigar_1 = $new_cigar_1;
 	    # print "ignore adjusted CIGAR 1 scalar: $cigar_1\n";
+	  }
+
+	  if ($ignore_r2){
 
 	    ### reconstituting shortened CIGAR string 2
 	    my $new_cigar_2;
@@ -1992,7 +2054,8 @@ sub process_Bismark_results_file{
 	      }
 	      if ($last_op_2 eq $op) {
 		++$count_2;
-	      } else {
+	      }
+	      else {
 		$new_cigar_2 .= "$count_2$last_op_2";
 		$last_op_2 = $op;
 		$count_2 = 1;
@@ -2000,9 +2063,10 @@ sub process_Bismark_results_file{
 	    }
 	    $new_cigar_2 .= "$count_2$last_op_2"; # appending the last operation and count
 	    $cigar_2 = $new_cigar_2;
-	    # print "ignore adjusted CIGAR 2 scalar: $cigar_2\n";
-
+	    # print "ignore_r2 adjusted CIGAR 2 scalar: $cigar_2\n";
 	  }
+	
+	  ### Adjusting CIGAR string and starting position of reads in reverse orientation which we will pass to the extraction subroutine later on
 	
 	  if ($strand eq '+') {
 	    ### adjusting the start position for all reads mapping to the reverse strand, in this case read 2
@@ -2021,7 +2085,8 @@ sub process_Bismark_results_file{
 
 	    $end_read_1 = $start_read_1 + $MD_count_1 - 1;
 	    $start_read_2 += $MD_count_2 - 1; ## Passing on the start position on the reverse strand
-	  } else {
+	  }
+	  else {
 	    ### adjusting the start position for all reads mapping to the reverse strand, in this case read 1
 	
 	    @comp_cigar_1  = reverse@comp_cigar_1; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
@@ -2034,7 +2099,6 @@ sub process_Bismark_results_file{
 
 	    $end_read_1 = $start_read_1;	
 	    $start_read_1 +=  $MD_count_1 - 1; ### Passing on the start position on the reverse strand
-
 	  }
 
 	  if ($strand eq '+') {
@@ -2047,7 +2111,7 @@ sub process_Bismark_results_file{
 	  } else {
 	    ## we first pass the first read which is in - orientation on the reverse strand
 	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id_1,'-',$index,0,0,$cigar_1,1);
-	    
+	
 	    # we next pass the second read which is in + orientation on the forward strand
 	    ### if --no_overlap was specified we also pass the end of read 1. If read 2 starts to overlap with read 1 we will stop extracting methylation calls from read 2
 	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_2,$id_2,'+',$index,$no_overlap,$end_read_1,$cigar_2,2);
@@ -4276,12 +4340,21 @@ OPTIONS:
                          proportion of the data. This option is highly recommended for paired-end
                          data.
 
---ignore <int>           Ignore the first <int> bp at the 5' end of each read when processing the
+--ignore <int>           Ignore the first <int> bp from the 5' end of Read 1 when processing the
                          methylation call string. This can remove e.g. a restriction enzyme site
-                         at the start of each read.
+                         at the start of each read or any other source of bias (e.g. PBAT-Seq data).
 
---comprehensive          Specifying this option will merge all four possible strand-specific 
-                         methylation info into context-dependent output files. The default 
+--ignore_r2 <int>        Ignore the first <int> bp from the 5' end of Read 2 of paired-end sequencing
+                         results only. Since the first couple of bases in Read 2 of BS-Seq experiments
+                         show a severe bias towards non-methylation as a result of end-repairing
+                         sonicated fragments with unmethylated cytosines (see M-bias plot), it is
+                         recommended that the first couple of bp of Read 2 are removed before
+                         starting downstream analysis. Please see the section on M-bias plots in the
+                         Bismark User Guide for more details.
+
+--comprehensive          Specifying this option will merge all four possible strand-specific
+                         methylation info into context-dependent output files. The default
+
                          contexts are:
                           - CpG context
                           - CHG context
@@ -4407,7 +4480,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 12 July 2013.
+This script was last modified on 16 July 2013.
 
 HOW_TO
 }

@@ -1,4 +1,32 @@
-RELEASE NOTES FOR Bismark v0.7.13 (12 Jul 2013)
+RELEASE NOTES FOR Bismark v0.8.1 (16 Jul 2013)
+-----------------------------------------------
+
+Bismark
+=======
+
+Changed the way in which the alignment overview file is being named to not generate a warning
+message.
+
+
+Methylation Extractor
+=====================
+
+Changed the function of '--ignore <int>' to ignore the first <int> bp from the 5' end of 
+single-end reads or Read 1 of paired-end files. In addition, added a new option '--ignore_r2 <int>' 
+to ignore the first <int> bp from the 5' end of Read 2 of paired-end files. Since the first
+couple of bases in Read 2 of BS-Seq experiments show a severe bias towards non-methylation 
+as a result of the end-repair of sonicated fragments with unmethylated cytosines (see M-bias plot),
+it is recommended that the the first couple of bp of Read 2 are removed before starting downstream
+analysis. Please see the section on M-bias plots in the Bismark User Guide for more details.
+
+Changed colours, legends and background colour of the M-bias plot, but I think Simon 
+is still not happy...
+
+
+
+
+
+RELEASE NOTES FOR Bismark v0.8.0 (12 Jul 2013)
 -----------------------------------------------
 
 Bismark
