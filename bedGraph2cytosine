@@ -22,7 +22,7 @@ use Carp;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my %chromosomes;
-my $bedGraph2cytosine_version = 'v0.8.1';
+my $bedGraph2cytosine_version = 'v0.8.2';
 
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$bedGraph_infile,$cytosine_out) = process_commandline();
@@ -65,6 +65,7 @@ sub process_commandline{
   my $zero;
   my $CpG_only;
   my $CX_context;
+
   my $split_by_chromosome;
   my $cytosine_out;
   my $parent_dir;
@@ -172,10 +173,10 @@ sub generate_genome_wide_cytosine_report {
 
   my $in = shift;
   if ($in =~ /gz$/){
-    open (IN,"zcat $parent_dir$in |") or die "Failed to read from gzippd file $parent_dir$in: $!\n";
+    open (IN,"zcat $in |") or die "Failed to read from gzippd file $in: $!\n";
   }
   else{
-    open (IN,"$parent_dir$in") or die "Failed to read from file $parent_dir$in: $!\n";
+    open (IN,"$in") or die "Failed to read from file $in: $!\n";
   }
 
 
@@ -512,7 +513,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                          Script last modified: 21 April 2013
+                          Script last modified: 24 July 2013
 
 EOF
     ;

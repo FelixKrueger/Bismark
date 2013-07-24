@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.8.1';
+my $bismark_version = 'v0.8.2';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -299,7 +299,7 @@ sub start_methylation_call_procedure_single_ends {
 
 
   if ($bowtie2){ # SAM format is the default for Bowtie 2
-    $outfile =~ s/$/_bt2_bismark.sam/;
+    $outfile =~ s/$/_bismark_bt2.sam/;
   }
   elsif ($vanilla){ # vanilla custom Bismark output single-end output (like Bismark versions 0.5.X)
     $outfile =~ s/$/_bismark.txt/;
@@ -336,7 +336,7 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   if ($bowtie2){
-    $reportfile =~ s/$/_bt2_bismark_SE_report.txt/;
+    $reportfile =~ s/$/_bismark_bt2_SE_report.txt/;
   }
   else{
     $reportfile =~ s/$/_bismark_SE_report.txt/;
@@ -7041,11 +7041,12 @@ sub paired_end_SAM_output{
 	# or
 	#
 	# ------------------------->     read 1
-	# <-----------                   read 2   read 2 contained within read 1
+	# <------------------------      read 2   read 2 contained within read 1
 
-	# start and end of read 2  are fully contained within read 1
-	$tlen_1 = 0;                                                       # Set as 0 when the information is unavailable
-	$tlen_2 = 0;                                                       # Set as 0 when the information is unavailable
+	# start and end of read 2  are fully contained within read 1, using the length of read 1 for the TLEN variable
+	$tlen_1 = $end_read_1 - $start_read_1 + 1;          # Set to length of read 1   Leftmost read has a + sign,
+	$tlen_2 = ($end_read_1 - $start_read_1 + 1) * -1;   # Set to length of read 1   Rightmost read has a - sign. well this is debatable. Changed this
+                                                            ### as a request by frozenlyse on SeqAnswers on 24 July 2013
       }
 
     }
@@ -7077,12 +7078,13 @@ sub paired_end_SAM_output{
 	# or
 	#
 	# ------------------------->     read 2
-	# <-----------                   read 1   read 1 contained within read 2
+	#  <------------------------      read 1   read 1 contained within read 2
 	
-	# start and end of read 1  are fully contained within read 2
-	$tlen_1 = 0;                                                       # Set as 0 when the information is unavailable
-	$tlen_2 = 0;                                                       # Set as 0 when the information is unavailable
-      }
+	# start and end of read 1  are fully contained within read 2, using the length of read 2 for the TLEN variable
+	$tlen_1 = ($end_read_2 - $start_read_2 + 1) * -1;          # Set to length of read 2   Shorter read receives a - sign,
+	$tlen_2 = $end_read_2 - $start_read_2 + 1;                 # Set to length of read 2   Longer read receives a +. Well this is debatable. Changed this
+	                                                           ### as a request by frozenlyse on SeqAnswers on 24 July 2013
+     }
     }
   }
 

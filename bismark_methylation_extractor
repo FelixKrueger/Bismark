@@ -30,8 +30,8 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.8.1';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2) = process_commandline();
+my $version = 'v0.8.2';
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -300,7 +300,7 @@ foreach my $filename (@filenames){
 	push @args, '--split_by_chromosome';
       }
 
-      push @args, $bedGraph_output; # this will be the infile
+      push @args, $output_dir . $bedGraph_output; # this will be the infile
 
       system ("$Bin/bedGraph2cytosine @args");
       # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
@@ -325,10 +325,9 @@ sub produce_mbias_plots{
 
   $mbias =~ s/$/M-bias.txt/;
 
-  open (MBIAS,'>',$mbias) or die "Failed to open file for the M-bias data\n\n";
+  open (MBIAS,'>',"$output_dir$mbias") or die "Failed to open file for the M-bias data\n\n";
 
-
- # determining maximum read length
+  # determining maximum read length
   my $max_length_1 = 0;
   my $max_length_2 = 0;
 
@@ -356,25 +355,37 @@ sub produce_mbias_plots{
   }
   # sleep(3);
 
-
-  # use GD::Graph::lines;
-
   my @mbias_read1;
   my @mbias_read2;
 
-  #Check whether the module GD::Graph is installed
+  #Check whether the module GD::Graph:lines is installed
   my $gd_graph_installed = 0;
   eval{
     require GD::Graph::lines;
     GD::Graph::lines->import();
   };
 
-  unless($@) {
+  unless($@) { # syntax or routine error variable, set if something goes wron in the last eval{ require ...}
     $gd_graph_installed = 1;
   }
   else{
     warn "Perl module GD::Graph::lines is not installed, skipping drawing M-bias plots (only writing out M-bias plot table)\n";
     sleep(2);
+  }
+
+  #Check whether the module GD::Graph::colour is installed
+  eval{
+    require GD::Graph::colour;
+    GD::Graph::colour->import();
+  };
+
+  unless($@) {
+    $gd_graph_installed = 1;
+  }
+  else{
+    warn "Perl module GD::Graph::colour not found, skipping drawing M-bias plots (only writing out M-bias plot table)\n";
+    sleep(2);
+    $gd_graph_installed = 0;
   }
 
   my $graph_title;
@@ -602,34 +613,36 @@ sub process_commandline{
   my $sort_size;
   my $samtools_path;
   my $gzip;
+  my $mbias_only;
 
-  my $command_line = GetOptions ('help|man' => \$help,
-				 'p|paired-end' => \$paired_end,
-				 's|single-end' => \$single_end,
-				 'fasta' => \$genomic_fasta,
-				 'ignore=i' => \$ignore,
-				 'ignore_r2=i' => \$ignore_r2,
-				 'comprehensive' => \$full,
-				 'report' => \$report,
-				 'version' => \$extractor_version,
-				 'no_overlap' => \$no_overlap,
-				 'merge_non_CpG' => \$merge_non_CpG, 
-				 'vanilla' => \$vanilla,
-				 'o|output=s' => \$output_dir,
-				 'no_header' => \$no_header,
-				 'bedGraph' => \$bedGraph,
-				 "cutoff=i" => \$coverage_threshold,
-				 "remove_spaces" => \$remove,
-				 "counts" => \$counts,
-				 "cytosine_report" => \$cytosine_report,
-				 'g|genome_folder=s' => \$genome_folder,
-				 "zero_based" => \$zero,	
-				 "CX|CX_context" => \$CX_context,
-				 "split_by_chromosome" => \$split_by_chromosome,
-				 "buffer_size=s" => \$sort_size,
-				 'samtools_path=s' => \$samtools_path,
-				 "gzip" => \$gzip,
-				);
+  my $command_line = GetOptions ('help|man'             => \$help,
+				 'p|paired-end'         => \$paired_end,
+				 's|single-end'         => \$single_end,
+				 'fasta'                => \$genomic_fasta,
+				 'ignore=i'             => \$ignore,
+				 'ignore_r2=i'          => \$ignore_r2,
+				 'comprehensive'        => \$full,
+				 'report'               => \$report,
+				 'version'              => \$extractor_version,
+				 'no_overlap'           => \$no_overlap,
+				 'merge_non_CpG'        => \$merge_non_CpG, 
+				 'vanilla'              => \$vanilla,
+				 'o|output=s'           => \$output_dir,
+				 'no_header'            => \$no_header,
+				 'bedGraph'             => \$bedGraph,
+				 "cutoff=i"             => \$coverage_threshold,
+				 "remove_spaces"        => \$remove,
+				 "counts"               => \$counts,
+				 "cytosine_report"      => \$cytosine_report,
+				 'g|genome_folder=s'    => \$genome_folder,
+				 "zero_based"           => \$zero,	
+				 "CX|CX_context"        => \$CX_context,
+				 "split_by_chromosome"  => \$split_by_chromosome,
+				 "buffer_size=s"        => \$sort_size,
+				 'samtools_path=s'      => \$samtools_path,
+				 "gzip"                 => \$gzip,
+				 "mbias_only"           => \$mbias_only,			
+	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
   unless ($command_line){
@@ -676,6 +689,23 @@ VERSION
   }
   else{
     $ignore_r2 = 0;
+  }
+
+  ### M-BIAS ONLY
+  if ($mbias_only){
+    if ($bedGraph){
+      die "Option '--mbias_only' skips all sorts of methylation extraction, including the bedGraph generation. Please respecify!\n";
+    }
+    if ($cytosine_report){
+      die "Option '--mbias_only' skips all sorts of methylation extraction, including the genome-wide cytosine methylation report generation. Please respecify!\n";
+    }
+    if ($merge_non_CpG){
+      warn "Option '--mbias_only' skips all sorts of methylation extraction, thus '--merge' won't have any effect\n";
+    }
+    if ($full){
+      warn "Option '--mbias_only' skips all sorts of methylation extraction, thus '--comprehensive' won't have any effect\n";
+    }
+    sleep(3);
   }
 
   ### PRINT A REPORT
@@ -830,7 +860,7 @@ VERSION
     $samtools_path = '';
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2);
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only);
 }
 
 
@@ -951,17 +981,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_output .= '.gz';
-      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n";
+      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
     }
     else{
-      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
+      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n";
+    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n" unless($mbias_only);
     push @sorting_files,$cpg_output;
 
     unless ($no_header) {
-      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n";
+      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     ### C in any other context than CpG
@@ -973,18 +1003,18 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $other_c_output .= '.gz';
-      open ($fhs{other_context},"| gzip -c - > $other_c_output") or die "Failed to write to $other_c_output $! \n";
+      open ($fhs{other_context},"| gzip -c - > $other_c_output") or die "Failed to write to $other_c_output $! \n" unless($mbias_only);
     }
     else{
-      open ($fhs{other_context},'>',$other_c_output) or die "Failed to write to $other_c_output $!\n";
+      open ($fhs{other_context},'>',$other_c_output) or die "Failed to write to $other_c_output $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in any other context to $other_c_output\n";
+    warn "Writing result file containing methylation information for C in any other context to $other_c_output\n" unless($mbias_only);
     push @sorting_files,$other_c_output;
 
 
     unless ($no_header) {
-      print {$fhs{other_context}} "Bismark methylation extractor version $version\n";
+      print {$fhs{other_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
   }
 
@@ -1002,17 +1032,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ot .= '.gz';
-      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n";
+      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n";
+      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n";
+    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n" unless($mbias_only);
     push @sorting_files,$cpg_ot;
 
     unless($no_header){
-      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $cpg_ctot =~ s/^/CpG_CTOT_/;
@@ -1023,17 +1053,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ctot .= '.gz';
-      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n";
+      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n";
+      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n";
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n" unless($mbias_only);
     push @sorting_files,$cpg_ctot;
 
     unless($no_header){
-      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $cpg_ctob =~ s/^/CpG_CTOB_/;
@@ -1044,17 +1074,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ctob .= '.gz';
-      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n";
+      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n";
+      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n";
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n" unless($mbias_only);
     push @sorting_files,$cpg_ctob;
 
     unless($no_header){
-      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n";
+      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $cpg_ob =~ s/^/CpG_OB_/;
@@ -1065,17 +1095,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ob .= '.gz';
-      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n";
+      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n";
+      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n";
+    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n" unless($mbias_only);
     push @sorting_files,$cpg_ob;
 
     unless($no_header){
-      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
+      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     ### For cytosines in Non-CpG (CC, CT or CA) context
@@ -1089,17 +1119,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $other_c_ot .= '.gz';
-      open ($fhs{0}->{other_c},"| gzip -c - > $other_c_ot") or die "Failed to write to $other_c_ot $!\n";
+      open ($fhs{0}->{other_c},"| gzip -c - > $other_c_ot") or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n";
+      open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in any other context from the original top strand to $other_c_ot\n";
+    warn "Writing result file containing methylation information for C in any other context from the original top strand to $other_c_ot\n" unless($mbias_only);
     push @sorting_files,$other_c_ot;
 
     unless($no_header){
-      print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n";
+      print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $other_c_ctot =~ s/^/Non_CpG_CTOT_/;
@@ -1110,17 +1140,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $other_c_ctot .= '.gz';
-      open ($fhs{1}->{other_c},"| gzip -c - > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n";
+      open ($fhs{1}->{other_c},"| gzip -c - > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n";
+      open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in any other context from the complementary to original top strand to $other_c_ctot\n";
+    warn "Writing result file containing methylation information for C in any other context from the complementary to original top strand to $other_c_ctot\n" unless($mbias_only);
     push @sorting_files,$other_c_ctot;
 
     unless($no_header){
-      print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n";
+      print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $other_c_ctob =~ s/^/Non_CpG_CTOB_/;
@@ -1131,17 +1161,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $other_c_ctob .= '.gz';
-      open ($fhs{2}->{other_c},"| gzip -c - > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n";
+      open ($fhs{2}->{other_c},"| gzip -c - > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n";
+      open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in any other context from the complementary to original bottom strand to $other_c_ctob\n";
+    warn "Writing result file containing methylation information for C in any other context from the complementary to original bottom strand to $other_c_ctob\n" unless($mbias_only);
     push @sorting_files,$other_c_ctob;
 
     unless($no_header){
-      print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n";
+      print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $other_c_ob =~ s/^/Non_CpG_OB_/;
@@ -1152,17 +1182,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $other_c_ob .= '.gz';
-      open ($fhs{3}->{other_c},"| gzip -c - > $other_c_ob") or die "Failed to write to $other_c_ob $!\n";
+      open ($fhs{3}->{other_c},"| gzip -c - > $other_c_ob") or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n";
+      open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in any other context from the original bottom strand to $other_c_ob\n\n";
+    warn "Writing result file containing methylation information for C in any other context from the original bottom strand to $other_c_ob\n\n" unless($mbias_only);
     push @sorting_files,$other_c_ob;
 
     unless($no_header){
-      print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n";
+      print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
   }
   ### THIS SECTION IS THE DEFAULT (CpG, CHG and CHH context)
@@ -1179,17 +1209,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_output .= '.gz';
-      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n";
+      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
     }
     else{
-      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n";
+      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n";
+    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n" unless($mbias_only);
     push @sorting_files,$cpg_output;
 
     unless($no_header){
-      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n";
+      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     ### C in CHG context
@@ -1201,17 +1231,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chg_output .= '.gz';
-      open ($fhs{CHG_context},"| gzip -c - > $chg_output") or die "Failed to write to $chg_output $!\n";
+      open ($fhs{CHG_context},"| gzip -c - > $chg_output") or die "Failed to write to $chg_output $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{CHG_context},'>',$chg_output) or die "Failed to write to $chg_output $!\n";
+      open ($fhs{CHG_context},'>',$chg_output) or die "Failed to write to $chg_output $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHG context to $chg_output\n";
+    warn "Writing result file containing methylation information for C in CHG context to $chg_output\n" unless($mbias_only);
     push @sorting_files,$chg_output;
 
     unless($no_header){
-      print {$fhs{CHG_context}} "Bismark methylation extractor version $version\n";
+      print {$fhs{CHG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     ### C in CHH context
@@ -1223,17 +1253,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chh_output .= '.gz';
-      open ($fhs{CHH_context},"| gzip -c - > $chh_output") or die "Failed to write to $chh_output $!\n";
+      open ($fhs{CHH_context},"| gzip -c - > $chh_output") or die "Failed to write to $chh_output $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{CHH_context},'>',$chh_output) or die "Failed to write to $chh_output $!\n";
+      open ($fhs{CHH_context},'>',$chh_output) or die "Failed to write to $chh_output $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHH context to $chh_output\n";
+    warn "Writing result file containing methylation information for C in CHH context to $chh_output\n" unless($mbias_only);
     push @sorting_files, $chh_output;
 
     unless($no_header){
-      print {$fhs{CHH_context}} "Bismark methylation extractor version $version\n";
+      print {$fhs{CHH_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
   }
   ### else we will write out 12 different output files, depending on where the (first) unique best alignment was found
@@ -1249,17 +1279,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ot .= '.gz';
-      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n";
+      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n";
+      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n";
+    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n" unless($mbias_only);
     push @sorting_files,$cpg_ot;
 
     unless($no_header){
-      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $cpg_ctot =~ s/^/CpG_CTOT_/;
@@ -1270,17 +1300,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ctot .= '.gz';
-      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n";
+      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n";
+      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n";
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n" unless($mbias_only);
     push @sorting_files,$cpg_ctot;
 
     unless($no_header){
-      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $cpg_ctob =~ s/^/CpG_CTOB_/;
@@ -1291,17 +1321,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ctob .= '.gz';
-      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n";
+      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n";
+      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n";
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n" unless($mbias_only);
     push @sorting_files,$cpg_ctob;
 
     unless($no_header){
-      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n";
+      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $cpg_ob =~ s/^/CpG_OB_/;
@@ -1312,17 +1342,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $cpg_ob .= '.gz';
-      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n";
+      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n";
+      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n";
+    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n" unless($mbias_only);
     push @sorting_files,$cpg_ob;
 
     unless($no_header){
-      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n";
+      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     ### For cytosines in CHG context
@@ -1336,17 +1366,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chg_ot .= '.gz';
-      open ($fhs{0}->{CHG},"| gzip -c - > $chg_ot") or die "Failed to write to $chg_ot $!\n";
+      open ($fhs{0}->{CHG},"| gzip -c - > $chg_ot") or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{0}->{CHG},'>',$chg_ot) or die "Failed to write to $chg_ot $!\n";
+      open ($fhs{0}->{CHG},'>',$chg_ot) or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHG context from the original top strand to $chg_ot\n";
+    warn "Writing result file containing methylation information for C in CHG context from the original top strand to $chg_ot\n" unless($mbias_only);
     push @sorting_files,$chg_ot;
 
     unless($no_header){
-      print {$fhs{0}->{CHG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{0}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $chg_ctot =~ s/^/CHG_CTOT_/;
@@ -1357,17 +1387,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chg_ctot .= '.gz';
-      open ($fhs{1}->{CHG},"| gzip -c - > $chg_ctot") or die "Failed to write to $chg_ctot $!\n";
+      open ($fhs{1}->{CHG},"| gzip -c - > $chg_ctot") or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{1}->{CHG},'>',$chg_ctot) or die "Failed to write to $chg_ctot $!\n";
+      open ($fhs{1}->{CHG},'>',$chg_ctot) or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHG context from the complementary to original top strand to $chg_ctot\n";
+    warn "Writing result file containing methylation information for C in CHG context from the complementary to original top strand to $chg_ctot\n" unless($mbias_only);
     push @sorting_files,$chg_ctot;
 
     unless($no_header){
-      print {$fhs{1}->{CHG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{1}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $chg_ctob =~ s/^/CHG_CTOB_/;
@@ -1378,17 +1408,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chg_ctob .= '.gz';
-      open ($fhs{2}->{CHG},"| gzip -c - > $chg_ctob") or die "Failed to write to $chg_ctob $!\n";
+      open ($fhs{2}->{CHG},"| gzip -c - > $chg_ctob") or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{2}->{CHG},'>',$chg_ctob) or die "Failed to write to $chg_ctob $!\n";
+      open ($fhs{2}->{CHG},'>',$chg_ctob) or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHG context from the complementary to original bottom strand to $chg_ctob\n";
+    warn "Writing result file containing methylation information for C in CHG context from the complementary to original bottom strand to $chg_ctob\n" unless($mbias_only);
     push @sorting_files,$chg_ctob;
 
     unless($no_header){
-      print {$fhs{2}->{CHG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{2}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $chg_ob =~ s/^/CHG_OB_/;
@@ -1399,17 +1429,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chg_ob .= '.gz';
-      open ($fhs{3}->{CHG},"| gzip -c - > $chg_ob") or die "Failed to write to $chg_ob $!\n";
+      open ($fhs{3}->{CHG},"| gzip -c - > $chg_ob") or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{3}->{CHG},'>',$chg_ob) or die "Failed to write to $chg_ob $!\n";
+      open ($fhs{3}->{CHG},'>',$chg_ob) or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHG context from the original bottom strand to $chg_ob\n\n";
+    warn "Writing result file containing methylation information for C in CHG context from the original bottom strand to $chg_ob\n\n" unless($mbias_only);
     push @sorting_files,$chg_ob;
 
     unless($no_header){
-      print {$fhs{3}->{CHG}} "Bismark methylation extractor version $version\n";
+      print {$fhs{3}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     ### For cytosines in CHH context
@@ -1423,17 +1453,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chh_ot .= '.gz';
-      open ($fhs{0}->{CHH},"| gzip -c - > $chh_ot") or die "Failed to write to $chh_ot $!\n";
+      open ($fhs{0}->{CHH},"| gzip -c - > $chh_ot") or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{0}->{CHH},'>',$chh_ot) or die "Failed to write to $chh_ot $!\n";
+      open ($fhs{0}->{CHH},'>',$chh_ot) or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHH context from the original top strand to $chh_ot\n";
+    warn "Writing result file containing methylation information for C in CHH context from the original top strand to $chh_ot\n" unless($mbias_only);
     push @sorting_files,$chh_ot;
 
     unless($no_header){
-      print {$fhs{0}->{CHH}} "Bismark methylation extractor version $version\n";
+      print {$fhs{0}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $chh_ctot =~ s/^/CHH_CTOT_/;
@@ -1444,17 +1474,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chh_ctot .= '.gz';
-      open ($fhs{1}->{CHH},"| gzip -c - > $chh_ctot") or die "Failed to write to $chh_ctot $!\n";
+      open ($fhs{1}->{CHH},"| gzip -c - > $chh_ctot") or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{1}->{CHH},'>',$chh_ctot) or die "Failed to write to $chh_ctot $!\n";
+      open ($fhs{1}->{CHH},'>',$chh_ctot) or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHH context from the complementary to original top strand to $chh_ctot\n";
+    warn "Writing result file containing methylation information for C in CHH context from the complementary to original top strand to $chh_ctot\n" unless($mbias_only);
     push @sorting_files,$chh_ctot;
 
     unless($no_header){
-      print {$fhs{1}->{CHH}} "Bismark methylation extractor version $version\n";
+      print {$fhs{1}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $chh_ctob =~ s/^/CHH_CTOB_/;
@@ -1465,17 +1495,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chh_ctob .= '.gz';
-      open ($fhs{2}->{CHH},"| gzip -c - > $chh_ctob") or die "Failed to write to $chh_ctob $!\n";
+      open ($fhs{2}->{CHH},"| gzip -c - > $chh_ctob") or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{2}->{CHH},'>',$chh_ctob) or die "Failed to write to $chh_ctob $!\n";
+      open ($fhs{2}->{CHH},'>',$chh_ctob) or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHH context from the complementary to original bottom strand to $chh_ctob\n";
+    warn "Writing result file containing methylation information for C in CHH context from the complementary to original bottom strand to $chh_ctob\n" unless($mbias_only);
     push @sorting_files,$chh_ctob;
 
     unless($no_header){
-      print {$fhs{2}->{CHH}} "Bismark methylation extractor version $version\n";
+      print {$fhs{2}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
 
     $chh_ob =~ s/^/CHH_OB_/;
@@ -1486,17 +1516,17 @@ sub process_Bismark_results_file{
 
     if ($gzip){
       $chh_ob .= '.gz';
-      open ($fhs{3}->{CHH},"| gzip -c - > $chh_ob") or die "Failed to write to $chh_ob $!\n";
+      open ($fhs{3}->{CHH},"| gzip -c - > $chh_ob") or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
     }
     else{
-      open ($fhs{3}->{CHH},'>',$chh_ob) or die "Failed to write to $chh_ob $!\n";
+      open ($fhs{3}->{CHH},'>',$chh_ob) or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
     }
 
-    warn "Writing result file containing methylation information for C in CHH context from the original bottom strand to $chh_ob\n\n";
+    warn "Writing result file containing methylation information for C in CHH context from the original bottom strand to $chh_ob\n\n" unless($mbias_only);
     push @sorting_files,$chh_ob;
 
     unless($no_header){
-      print {$fhs{3}->{CHH}} "Bismark methylation extractor version $version\n";
+      print {$fhs{3}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
     }
   }
 
@@ -2361,7 +2391,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2371,7 +2401,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2381,7 +2411,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2391,7 +2421,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2401,7 +2431,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2411,7 +2441,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2421,7 +2451,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq '.'){}
 	    else{
-	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
 	  }
 	}
@@ -2442,7 +2472,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2452,7 +2482,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2462,7 +2492,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2472,7 +2502,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2482,7 +2512,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2492,7 +2522,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2502,7 +2532,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
 	    else{
-	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
 	  }
 	} else {
@@ -2529,7 +2559,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2539,7 +2569,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2549,7 +2579,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2559,7 +2589,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2569,7 +2599,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2579,7 +2609,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2609,7 +2639,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2619,7 +2649,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2629,7 +2659,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2639,7 +2669,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2649,7 +2679,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2659,7 +2689,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2695,7 +2725,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2705,7 +2735,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2715,7 +2745,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2725,7 +2755,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2735,7 +2765,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2745,7 +2775,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2755,7 +2785,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
 	    else{
-	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
 	  }
 	} elsif ($strand eq '-') {
@@ -2770,7 +2800,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	       if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2780,7 +2810,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2790,7 +2820,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2800,7 +2830,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2810,7 +2840,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2820,7 +2850,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2830,7 +2860,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
 	    else{
-	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
 	  }
 	} else {
@@ -2853,7 +2883,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	       if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2863,7 +2893,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2873,7 +2903,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2883,7 +2913,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2893,7 +2923,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2903,7 +2933,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -2928,7 +2958,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	    if ($methylation_calls[$index] eq 'X') {
 	      $counting{total_meCHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
@@ -2938,7 +2968,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHG}->{$index+1}->{un}++;
 	      }
@@ -2948,7 +2978,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'Z') {
 	      $counting{total_meCpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
@@ -2958,7 +2988,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'z') {
 	      $counting{total_unmethylated_CpG_count}++;
-	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CpG}->{$index+1}->{un}++;
 	      }
@@ -2968,7 +2998,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'H') {
 	      $counting{total_meCHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{meth}++;
 	      }
@@ -2978,7 +3008,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	    elsif ($methylation_calls[$index] eq 'h') {
 	      $counting{total_unmethylated_CHH_count}++;
-	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	      print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	      if ($read_identity == 1){
 		$mbias_1{CHH}->{$index+1}->{un}++;
 	      }
@@ -3022,7 +3052,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3032,7 +3062,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3042,7 +3072,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3052,7 +3082,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3062,7 +3092,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3072,7 +3102,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  } 
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3102,7 +3132,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3112,7 +3142,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3122,7 +3152,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3132,7 +3162,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3142,7 +3172,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3152,7 +3182,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3189,7 +3219,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3199,7 +3229,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3209,7 +3239,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3219,7 +3249,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3229,7 +3259,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3239,7 +3269,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3269,7 +3299,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3279,7 +3309,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3289,7 +3319,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3299,7 +3329,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3309,7 +3339,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3319,7 +3349,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3354,7 +3384,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3364,7 +3394,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3374,7 +3404,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3384,7 +3414,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3394,7 +3424,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3404,7 +3434,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3429,7 +3459,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3439,7 +3469,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3449,7 +3479,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3459,7 +3489,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3469,7 +3499,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3479,7 +3509,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3511,7 +3541,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3521,7 +3551,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3531,7 +3561,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3541,7 +3571,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3551,7 +3581,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3561,7 +3591,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3586,7 +3616,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 
 	  if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{meth}++;
 	    }
@@ -3596,7 +3626,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHG}->{$index+1}->{un}++;
 	    }
@@ -3606,7 +3636,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'Z') {
 	    $counting{total_meCpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{meth}++;
 	    }
@@ -3616,7 +3646,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CpG}->{$index+1}->{un}++;
 	    }
@@ -3626,7 +3656,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{meth}++;
 	    }
@@ -3636,7 +3666,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	  }
 	  elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	    print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	    if ($read_identity == 1){
 	      $mbias_1{CHH}->{$index+1}->{un}++;
 	    }
@@ -3854,32 +3884,32 @@ sub print_individual_C_methylation_states_single_end{
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {
@@ -3904,32 +3934,32 @@ sub print_individual_C_methylation_states_single_end{
 
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.'){
@@ -3959,32 +3989,32 @@ sub print_individual_C_methylation_states_single_end{
 
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {
@@ -4008,32 +4038,32 @@ sub print_individual_C_methylation_states_single_end{
 
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {
@@ -4064,37 +4094,37 @@ sub print_individual_C_methylation_states_single_end{
 	
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
 	else{
-	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	}
       }
     }
@@ -4112,32 +4142,32 @@ sub print_individual_C_methylation_states_single_end{
 	
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHH_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{CHH_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
@@ -4166,32 +4196,32 @@ sub print_individual_C_methylation_states_single_end{
 
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
@@ -4214,32 +4244,32 @@ sub print_individual_C_methylation_states_single_end{
 
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CpG}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n";
+	  print {$fhs{$filehandle_index}->{CHH}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
@@ -4385,6 +4415,9 @@ OPTIONS:
 
 -h/--help                Displays this help file and exits.
 
+--mbias_only             The methylation extractor will read the entire file but only output the M-bias table and plots as 
+                         well as a report (optional) and then quit. Default: OFF.
+
 
 
 bedGraph specific options:
@@ -4480,7 +4513,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 16 July 2013.
+This script was last modified on 24 July 2013.
 
 HOW_TO
 }
