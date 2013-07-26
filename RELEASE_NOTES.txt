@@ -1,3 +1,55 @@
+RELEASE NOTES FOR Bismark v0.8.3 (26 Jul 2013)
+-----------------------------------------------
+
+Bismark
+=======
+
+In paired-end SAM mode, Bismark deliberately used to set somewhat unconventional FLAG values
+due to the weird nature of bisulfite reads. In addition, the read IDs for read 1 and read 2 had
+'/1' and '/2' appended, respectively, to make it easier to spot the reads relative to the input file.
+Since both the appended read IDs and custom FLAG values may cause problems with some widely used 
+downstream tools such as Picard, new defaults were implemented as of version 0.8.3. The former
+custom FLAG values and /1 /2 read IDs are still available for via the option '--old_flag' for some
+time (however this option might disappear entirely in future versions.
+
+                           default                          old_flag
+                      ===================              ===================
+                      Read 1       Read 2              Read 1       Read 2
+ 
+             OT:         99          147                  67          131
+
+             OB:         83          163                 115          179
+
+             CTOT:       83          163                 115          179
+
+             CTOB:       99          147                  67          131
+
+Thanks to Peter Hickey, Australia, for bringing this to my attention and for contributing a patch.
+
+
+Changed the additional check for the module GD::Graph::colour to an 'eval {require ...}' statement
+instead of using 'use' (which might still fail at compile time); if it can't be found on the
+system drawing of the M-bias plot will be skipped.
+
+
+
+Methylation Extractor
+=====================
+
+Implemented two quick tests for paired-end SAM/BAM files to see if the file had been sorted by
+chromosomal position prior to using the methylation extractor. This would cause problems with
+the strand identity and overlaps since both reads 1 and read 2 are expected to follow each other
+directly in the Bismark alignment file. The first test attempts to find the @SO (for sorted) tag
+in the SAM header. If this cannot be found, the first 100000 sequences are checked for whether
+or not their ID is the same (/1 and /2 which were appended in previous versions of Bismark will
+be removed prior to testing for equality). If the file appears to have been sorted, the methylation
+extractor will bail and ask for an unsorted file.
+
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.8.2 (24 Jul 2013)
 -----------------------------------------------
 

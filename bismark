@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.8.2';
+my $bismark_version = 'v0.8.3';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -5926,6 +5926,7 @@ sub process_command_line{
   my $gzip;
   my $pbat;
   my $prefix;
+  my $old_flag;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -5968,6 +5969,7 @@ sub process_command_line{
 				 'gzip' => \$gzip,
 				 'pbat' => \$pbat,
 				 'prefix=s' => \$prefix,
+				 'old_flag' => \$old_flag,
 				);
 
 
@@ -6431,6 +6433,11 @@ VERSION
       push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
       push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
     }
+
+    if ($old_flag){
+      warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n" unless($vanilla);
+      sleep(3);
+    }
   }
   elsif ($mates2){
     die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
@@ -6595,7 +6602,7 @@ VERSION
   }
 
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag);
 }
 
 
@@ -6833,8 +6840,17 @@ sub paired_end_SAM_output{
   my $read_conversion_2       = $methylation_call_params->{$id}->{read_conversion_2};
   my $genome_conversion       = $methylation_call_params->{$id}->{genome_conversion};
 
-  my $id_1 = $id.'/1';
-  my $id_2 = $id.'/2';
+  my $id_1;
+  my $id_2;
+
+  if ($old_flag){
+    $id_1 = $id.'/1';
+    $id_2 = $id.'/2';
+  }
+  else{
+    $id_1 = $id; # appending /1 or /2 confuses some downstream programs such as Picard
+    $id_2 = $id;
+  }
 
   # Allows all degenerate nucleotide sequences in reference genome
   die "Reference sequence ($ref_seq_1) contains invalid nucleotides!\n" if $ref_seq_1 =~ /[^ACTGNRYMKSWBDHV]/i;
@@ -6954,24 +6970,50 @@ sub paired_end_SAM_output{
   # strands OT and CTOT will be treated as aligning to the top strand (both sequences are scored as aligning to the top strand)
   # strands OB and CTOB will be treated as aligning to the bottom strand (both sequences are scored as reverse complemented sequences)
 
-  my $flag_1;                                                          # FLAG variable used for SAM format
+  my $flag_1;                                                            # FLAG variable used for SAM format
   my $flag_2;
 
+  ### The new default FLAG values have been suggested by Peter Hickey, Australia (PH)
+
   if ($index == 0){       # OT
-    $flag_1 = 67;                                                      # Read 1 is on the + strand  (1+2+64) (Read 2 is technically reverse-complemented, but we do not score it)
-    $flag_2 = 131;                                                     # Read 2 is on - strand but informative for the OT        (1+2+128)
+    unless ($old_flag){
+      $flag_1 = 99;                                                      # PH: Read 1 is on the + strand and Read 2 is reversed  (1+2+32+64)
+      $flag_2 = 147;                                                     # PH: Read 2 is on - strand but informative for the OT  (1+2+16+128)
+    }
+    else{
+      $flag_1 = 67;                                                      # Read 1 is on the + strand  (1+2+64) (Read 2 is technically reverse-complemented, but we do not score it)
+      $flag_2 = 131;                                                     # Read 2 is on - strand but informative for the OT        (1+2+128)
+    }
   }
   elsif ($index == 1){    # CTOB
-    $flag_1 = 115;                                                     # Read 1 is on the + strand, we score for OB  (1+2+16+32+64)
-    $flag_2 = 179;                                                     # Read 2 is on the - strand  (1+2+16+32+128)
+    unless($old_flag){
+      $flag_1 = 83;                                                      # PH: Read 1 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+16+64)
+      $flag_2 = 163;                                                     # PH: read 2 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+32+128)
+    }
+    else{
+      $flag_1 = 115;                                                     # Read 1 is on the + strand, we score for OB  (1+2+16+32+64)
+      $flag_2 = 179;                                                     # Read 2 is on the - strand  (1+2+16+32+128)
+    }
   }
   elsif ($index == 2){    # CTOT
-    $flag_1 = 67;                                                      # Read 1 is on the - strand (CTOT) strand, but we score it for OT (1+2+64)
-    $flag_2 = 131;                                                     # Read 2 is on the + strand, score it for OT (1+2+128)
+    unless ($old_flag){
+      $flag_1 = 99;                                                      # PH: Read 1 is on the + strand and Read 2 is reversed  (1+2+32+64) 
+      $flag_2 = 147;                                                     # PH: Read 2 is on - strand but informative for the OT  (1+2+16+128) 
+    }
+    else{
+      $flag_1 = 67;                                                      # Read 1 is on the - strand (CTOT) strand, but we score it for OT (1+2+64)
+      $flag_2 = 131;                                                     # Read 2 is on the + strand, score it for OT (1+2+128)
+    }
   }
   elsif ($index == 3){    # OB
-    $flag_1 = 115;                                                     # Read 1 is on the - strand, we score for OB  (1+2+16+32+64)
-    $flag_2 = 179;                                                     # Read 2 is on the + strand  (1+2+16+32+128)
+    unless ($old_flag){
+      $flag_1 = 83;                                                      # PH: Read 1 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+16+64)
+      $flag_2 = 163;                                                     # PH: read 2 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+32+128)
+    }
+    else{
+      $flag_1 = 115;                                                     # Read 1 is on the - strand, we score for OB  (1+2+16+32+64)
+      $flag_2 = 179;                                                     # Read 2 is on the + strand  (1+2+16+32+128)
+    }
   }
 
   #####
@@ -7552,6 +7594,25 @@ Output:
 
 --prefix <prefix>        Prefixes <prefix> to the output filenames. Trailing dots will be replaced by a single one. For
                          example, '--prefix test' with 'file.fq' would result in the output file 'test.file.fq_bismark.sam' etc.
+
+--old_flag               Only in paired-end SAM mode, uses the FLAG values used by Bismark v0.8.2 and before. In addition,
+                         this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since
+                         both the appended read IDs and custom FLAG values may cause problems with some downstream tools 
+                         such as Picard, new defaults were implemented as of version 0.8.3.
+
+
+                                             default                         old_flag
+                                       ===================              ===================
+                                       Read 1       Read 2              Read 1       Read 2
+
+                              OT:         99          147                  67          131
+
+                              OB:         83          163                 115          179
+
+                              CTOT:       83          163                 115          179
+
+                              CTOB:       99          147                  67          131
+
 
 
 Other:

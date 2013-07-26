@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.8.2';
+my $version = 'v0.8.3';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
@@ -206,6 +206,12 @@ foreach my $filename (@filenames){
   %mbias_1 = ();
   %mbias_2 = ();
 
+  ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
+  unless ($vanilla){
+    if ($paired){
+      test_positional_sorting($filename);
+    }
+  }
 
   process_Bismark_results_file($filename);
 
@@ -367,26 +373,26 @@ sub produce_mbias_plots{
 
   unless($@) { # syntax or routine error variable, set if something goes wron in the last eval{ require ...}
     $gd_graph_installed = 1;
+
+    #Check whether the module GD::Graph::colour is installed
+    eval{
+      require GD::Graph::colour;
+      GD::Graph::colour->import(qw(:colours :lists :files :convert));
+    };
+
+    if ($@) {
+      warn "Perl module GD::Graph::colour not found, skipping drawing M-bias plots (only writing out M-bias plot table)\n";
+      sleep(2);
+      $gd_graph_installed = 0;
+    }
+
+
   }
   else{
     warn "Perl module GD::Graph::lines is not installed, skipping drawing M-bias plots (only writing out M-bias plot table)\n";
     sleep(2);
   }
 
-  #Check whether the module GD::Graph::colour is installed
-  eval{
-    require GD::Graph::colour;
-    GD::Graph::colour->import();
-  };
-
-  unless($@) {
-    $gd_graph_installed = 1;
-  }
-  else{
-    warn "Perl module GD::Graph::colour not found, skipping drawing M-bias plots (only writing out M-bias plot table)\n";
-    sleep(2);
-    $gd_graph_installed = 0;
-  }
 
   my $graph_title;
   my $graph1;
@@ -448,7 +454,6 @@ sub produce_mbias_plots{
 
   if ( $gd_graph_installed){
 
-    use GD::Graph::colour qw(:colours :lists :files :convert);
     add_colour(nice_blue => [31,120,180]);
     add_colour(nice_orange => [255,127,0]);
     add_colour(nice_green => [51,160,44]);
@@ -537,7 +542,6 @@ sub produce_mbias_plots{
 
     if ( $gd_graph_installed){
 
-      use GD::Graph::colour qw(:colours :lists :files :convert);
       add_colour(nice_blue => [31,120,180]);
       add_colour(nice_orange => [255,127,0]);
       add_colour(nice_green => [51,160,44]);
@@ -861,6 +865,72 @@ VERSION
   }
 
   return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only);
+}
+
+
+sub test_positional_sorting{
+
+  my $filename = shift;
+
+  print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
+  sleep(1);
+
+  if ($filename =~ /\.gz$/) {
+    open (TEST,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
+  }
+  elsif ($filename =~ /bam$/) {
+    if ($samtools_path){
+      open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
+    }
+    else{
+      die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
+    }
+  }
+  else {
+    open (TEST,$filename) or die "Can't open file $filename: $!\n";
+  }
+
+  my $count = 0;
+
+  while (<TEST>) {
+    if (/^\@/) {	     # testing header lines if they contain the @SO flag (for being sorted)
+      if (/^\@SO/) {
+	die "SAM/BAM header line '$_' indicates that the Bismark aligment file has been sorted by chromosomal positions which is is incompatible with correct methylation extraction. Please use an unsorted file instead\n\n";
+      }
+      next;
+    }
+    $count++;
+
+    last if ($count > 100000); # else we test the first 100000 sequences if they start with the same read ID
+
+    my ($id_1) = (split (/\t/));
+
+    ### reading the next line which should be read 2
+    $_ = <TEST>;
+    my ($id_2) = (split (/\t/));
+    last unless ($id_2);
+    ++$count;
+
+    if ($id_1 eq $id_2){
+      ### ids are the same
+      next;
+    }
+    else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
+      my $id_1_trunc = $id_1;
+      $id_1_trunc =~ s/\/1$//;
+      my $id_2_trunc = $id_2;
+      $id_2_trunc =~ s/\/2$//;
+
+      unless ($id_1_trunc eq $id_2_trunc){
+	die "The IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead\n\n";
+      }
+    }
+  }
+  close TEST or die $!;
+  ### If it hasen't died so far then it seems the file is in the correct Bismark format (read 1 and read 2 of a pair directly following each other)
+  warn "...passed!\n";
+  sleep(1);
+
 }
 
 
@@ -4513,7 +4583,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 24 July 2013.
+This script was last modified on 26 July 2013.
 
 HOW_TO
 }
