@@ -679,10 +679,18 @@ sub print_final_analysis_report_single_end{
   ### create pie-chart with mapping stats
   ###########################################################################################################################################
 
-  my $filename = $C_to_T_infile;
+  my $filename;
+  if ($pbat){
+    $filename = $G_to_A_infile;
+  }
+  else{
+    $filename = $C_to_T_infile;
+  }
+
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;
+  $pie_chart =~ s/_G_to_A.fastq$//;
   if ($prefix){
     $pie_chart = "$prefix.$pie_chart";
   }
@@ -903,10 +911,19 @@ sub print_final_analysis_report_paired_ends{
   ### create pie-chart with mapping stats
   ###########################################################################################################################################
 
-  my $filename = $C_to_T_infile_1;
+  my $filename;
+  if ($pbat){
+    $filename = $G_to_A_infile_1;
+  }
+  else{
+    $filename = $C_to_T_infile_1;
+  }
+
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;
+  $pie_chart =~ s/_G_to_A.fastq$//;
+
   if ($prefix){
     $pie_chart = "$prefix.$pie_chart";
   }
@@ -7609,9 +7626,9 @@ Output:
 
                               OB:         83          163                 115          179
 
-                              CTOT:       83          163                 115          179
+                              CTOT:       99          147                  67          131
 
-                              CTOB:       99          147                  67          131
+                              CTOB:       83          163                 115          179
 
 
 

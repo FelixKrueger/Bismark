@@ -1,3 +1,13 @@
+RELEASE NOTES FOR Bismark v0.8.4 (02 Aug 2013)
+-----------------------------------------------
+
+Bismark
+=======
+
+Fixed a bug when creating the pie chart that occurred for PBAT libraries only.
+
+
+
 RELEASE NOTES FOR Bismark v0.8.3 (26 Jul 2013)
 -----------------------------------------------
 
@@ -20,17 +30,11 @@ time (however this option might disappear entirely in future versions.
 
              OB:         83          163                 115          179
 
-             CTOT:       83          163                 115          179
+             CTOT:       99          147                  67          131
 
-             CTOB:       99          147                  67          131
+             CTOB:       83          163                 115          179
 
 Thanks to Peter Hickey, Australia, for bringing this to my attention and for contributing a patch.
-
-
-Changed the additional check for the module GD::Graph::colour to an 'eval {require ...}' statement
-instead of using 'use' (which might still fail at compile time); if it can't be found on the
-system drawing of the M-bias plot will be skipped.
-
 
 
 Methylation Extractor
@@ -45,7 +49,9 @@ or not their ID is the same (/1 and /2 which were appended in previous versions 
 be removed prior to testing for equality). If the file appears to have been sorted, the methylation
 extractor will bail and ask for an unsorted file.
 
-
+Changed the additional check for the module GD::Graph::colour to an 'eval {require ...}' statement
+instead of using 'use' (which might still fail at compile time); if it can't be found on the
+system drawing of the M-bias plot will be skipped.
 
 
 
