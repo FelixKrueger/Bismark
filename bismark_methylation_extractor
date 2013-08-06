@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.8.3';
+my $version = 'v0.8.3_dev';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
@@ -2386,6 +2386,8 @@ sub print_individual_C_methylation_states_paired_end_files{
   ### h for not methylated C in CHH context (was converted)     ###
   ### Z for methylated C in CpG context (was protected)         ###
   ### z for not methylated C in CpG context (was converted)     ###
+  ### U for methylated C in Unknown context (was protected)     ###
+  ### u for not methylated C in Unknown context (was converted) ###
   #################################################################
 
   my $methyl_CHG_count = 0;
@@ -2520,6 +2522,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.'){}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
@@ -2601,6 +2604,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
@@ -2688,6 +2692,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }	
@@ -2768,6 +2773,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }
@@ -2854,6 +2860,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
@@ -2929,6 +2936,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	    }
@@ -3012,6 +3020,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }
@@ -3087,6 +3096,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	      }
 	    }
 	    elsif ($methylation_calls[$index] eq '.') {}
+	    elsif (lc$methylation_calls[$index] eq 'u'){}
 	    else{
 	      die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	    }
@@ -3181,6 +3191,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3261,6 +3272,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3348,6 +3360,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }	
@@ -3428,6 +3441,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3513,6 +3527,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3588,6 +3603,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3670,6 +3686,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3745,6 +3762,7 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    }
 	  }
 	  elsif ($methylation_calls[$index] eq '.') {}
+	  elsif (lc$methylation_calls[$index] eq 'u'){}
 	  else{
 	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	  }
@@ -3982,8 +4000,8 @@ sub print_individual_C_methylation_states_single_end{
 	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
-	elsif ($methylation_calls[$index] eq '.') {
-	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4032,8 +4050,8 @@ sub print_individual_C_methylation_states_single_end{
 	  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
-	elsif ($methylation_calls[$index] eq '.'){
-	}
+	elsif ($methylation_calls[$index] eq '.'){}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4087,8 +4105,8 @@ sub print_individual_C_methylation_states_single_end{
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
-	elsif ($methylation_calls[$index] eq '.') {
-	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4136,8 +4154,8 @@ sub print_individual_C_methylation_states_single_end{
 	  print {$fhs{$filehandle_index}->{other_c}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index]),"\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
-	elsif ($methylation_calls[$index] eq '.') {
-	}
+	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4193,6 +4211,7 @@ sub print_individual_C_methylation_states_single_end{
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n" unless($mbias_only);
 	}
@@ -4241,6 +4260,7 @@ sub print_individual_C_methylation_states_single_end{
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4295,6 +4315,7 @@ sub print_individual_C_methylation_states_single_end{
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4343,6 +4364,7 @@ sub print_individual_C_methylation_states_single_end{
 	  $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.') {}
+	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
 	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
@@ -4583,7 +4605,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 26 July 2013.
+This script was last modified on 06 August 2013.
 
 HOW_TO
 }

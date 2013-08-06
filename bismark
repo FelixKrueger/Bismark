@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.8.3';
+my $bismark_version = 'v0.8.3_dev';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -611,19 +611,24 @@ sub print_final_analysis_report_single_end{
   warn "Total number of C's analysed:\t$total_number_of_C\n\n";
   warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
-  warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  warn "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  warn "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
+  warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
+  warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+
+  warn "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+  warn "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+  warn "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
+  warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
 
   print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
   print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
   print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
   print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
-  print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  print REPORT "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  print REPORT "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
+  print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
+  print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  print REPORT "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+  print REPORT "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+  print REPORT "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
+  print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
 
   my $percent_meCHG;
   if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
@@ -849,18 +854,23 @@ sub print_final_analysis_report_paired_ends{
   warn "Total number of C's analysed:\t$total_number_of_C\n\n";
   warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
-  warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  warn "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  warn "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
+  warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
+  warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  warn "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+  warn "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+  warn "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
+  warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
+
 
   print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
   print REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
-  print REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  print REPORT "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  print REPORT "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
+  print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
+  print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  print REPORT "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+  print REPORT "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+  print REPORT "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
+  print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
 
   my $percent_meCHG;
   if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
@@ -4008,6 +4018,8 @@ sub methylation_call{
   ### h for not methylated C in CHH context (was converted)     ###
   ### Z for methylated C in CpG context (was protected)         ###
   ### z for not methylated C in CpG context (was converted)     ###
+  ### U for methylated C in unknown context (was protected)     ###
+  ### u for not methylated C in unknwon context (was converted) ###
   #################################################################
 
   my @match =();
@@ -4015,9 +4027,11 @@ sub methylation_call{
   my $methyl_CHH_count = 0;
   my $methyl_CHG_count = 0;
   my $methyl_CpG_count = 0;
+  my $methyl_C_unknown_count = 0;
   my $unmethylated_CHH_count = 0;
   my $unmethylated_CHG_count = 0;
   my $unmethylated_CpG_count = 0;
+  my $unmethylated_C_unknown_count = 0;
 
   if ($read_conversion eq 'CT'){
     for my $index (0..$#seq) {
@@ -4031,7 +4045,10 @@ sub methylation_call{
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C, methylated, in CpG context
 	  }
-	
+	  elsif ($downstream_base eq 'N'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	    ++$methyl_C_unknown_count;
+	    push @match,'U'; # protected C, methylated, in Unknown context
+	  }	
 	  else {
 	    ### C in not in CpG-context, determining the second downstream base context
 	    my $second_downstream_base = $genomic[$index+2];
@@ -4039,6 +4056,10 @@ sub methylation_call{
 	    if ($second_downstream_base eq 'G'){
 	      ++$methyl_CHG_count;
 	      push @match,'X'; # protected C, methylated, in CHG context
+	    }
+	    elsif ($second_downstream_base eq 'N'){
+	      ++$methyl_C_unknown_count; # if the second downstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
+	      push @match,'U'; # protected C, methylated, in Unknown context
 	    }
 	    else{
 	      ++$methyl_CHH_count;
@@ -4061,7 +4082,10 @@ sub methylation_call{
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C, not methylated, in CpG context
 	  }
-
+	  elsif ($downstream_base eq 'N'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	    ++$unmethylated_C_unknown_count;
+	    push @match,'u'; # converted C, not methylated, in Unknown context
+	  }
 	  else{
 	    ### C in not in CpG-context, determining the second downstream base context
 	    my $second_downstream_base = $genomic[$index+2];
@@ -4069,6 +4093,10 @@ sub methylation_call{
 	    if ($second_downstream_base eq 'G'){
 	      ++$unmethylated_CHG_count;
 	      push @match,'x'; # converted C, not methylated, in CHG context
+	    }
+	    elsif ($second_downstream_base eq 'N'){
+	      ++$unmethylated_C_unknown_count; # if the second downstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
+	      push @match,'u'; # converted C, not methylated, in Unknown context
 	    }
 	    else{
 	      ++$unmethylated_CHH_count;
@@ -4102,7 +4130,10 @@ sub methylation_call{
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C on opposing strand, methylated, in CpG context
 	  }
-
+	  elsif ($upstream_base eq 'N'){ # if the upstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	    ++$methyl_C_unknown_count;
+	    push @match,'U'; # protected C on opposing strand, methylated, in Unknown context
+	  }
 	  else{
 	    ### C in not in CpG-context, determining the second upstream base context
 	    my $second_upstream_base = $genomic[$index];
@@ -4110,6 +4141,10 @@ sub methylation_call{
 	    if ($second_upstream_base eq 'C'){
 	      ++$methyl_CHG_count;
 	      push @match,'X'; # protected C on opposing strand, methylated, in CHG context
+	    }
+	    elsif ($second_upstream_base eq 'N'){
+	      ++$methyl_C_unknown_count; # if the second upstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
+	      push @match,'U'; # protected C, methylated, in Unknown context
 	    }
 	    else{
 	      ++$methyl_CHH_count;
@@ -4134,7 +4169,10 @@ sub methylation_call{
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C on opposing strand, not methylated, in CpG context
 	  }
-
+	  elsif ($upstream_base eq 'N'){ # if the upstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	    ++$unmethylated_C_unknown_count;
+	    push @match,'u'; # converted C on opposing strand, not methylated, in Unknown context
+	  }
 	  else{
 	    ### C in not in CpG-context, determining the second upstream base context
 	    my $second_upstream_base = $genomic[$index];
@@ -4142,6 +4180,10 @@ sub methylation_call{
 	    if ($second_upstream_base eq 'C'){
 	      ++$unmethylated_CHG_count;
 	      push @match,'x'; # converted C on opposing strand, not methylated, in CHG context
+	    }
+	    elsif ($second_upstream_base eq 'N'){
+	      ++$unmethylated_C_unknown_count; # if the second upstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
+	      push @match,'u'; # converted C on opposing strand, not methylated, in Unknown context
 	    }
 	    else{
 	      ++$unmethylated_CHH_count;
@@ -4168,9 +4210,11 @@ sub methylation_call{
   $counting{total_meCHH_count} += $methyl_CHH_count;
   $counting{total_meCHG_count} += $methyl_CHG_count;
   $counting{total_meCpG_count} += $methyl_CpG_count;
+  $counting{total_meC_unknown_count} += $methyl_C_unknown_count;
   $counting{total_unmethylated_CHH_count} += $unmethylated_CHH_count;
   $counting{total_unmethylated_CHG_count} += $unmethylated_CHG_count;
   $counting{total_unmethylated_CpG_count} += $unmethylated_CpG_count;
+  $counting{total_unmethylated_C_unknown_count} += $unmethylated_C_unknown_count;
 
   # print "\n$sequence_actually_observed\n$genomic_sequence\n",@match,"\n$read_conversion\n\n";
   return $methylation_call;
@@ -5756,9 +5800,11 @@ sub reset_counters_and_fhs{
 	     total_meCHH_count => 0,
 	     total_meCHG_count => 0,
 	     total_meCpG_count => 0,
+	     total_meC_unknown_count => 0,
 	     total_unmethylated_CHH_count => 0,
 	     total_unmethylated_CHG_count => 0,
 	     total_unmethylated_CpG_count => 0,
+	     total_unmethylated_C_unknown_count => 0,
 	     sequences_count => 0,
 	     no_single_alignment_found => 0,
 	     unsuitable_sequence_count => 0,
@@ -7795,7 +7841,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 12 July 2013.
+Last edited on 06 August 2013.
 
 HOW_TO
 }
