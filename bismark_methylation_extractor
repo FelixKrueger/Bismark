@@ -4391,15 +4391,17 @@ produced by the Bismark bisulfite mapper and extracts the methylation informatio
 for individual cytosines. This information is found in the methylation call field
 which can contain the following characters:
 
-       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-       ~~~   X   for methylated C in CHG context (was protected)     ~~~
-       ~~~   x   for not methylated C CHG (was converted)            ~~~
-       ~~~   H   for methylated C in CHH context (was protected)     ~~~
-       ~~~   h   for not methylated C in CHH context (was converted) ~~~
-       ~~~   Z   for methylated C in CpG context (was protected)     ~~~
-       ~~~   z   for not methylated C in CpG context (was converted) ~~~
-       ~~~   .   for any bases not involving cytosines               ~~~
-       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+       ~~~   X   for methylated C in CHG context                      ~~~
+       ~~~   x   for not methylated C CHG                             ~~~
+       ~~~   H   for methylated C in CHH context                      ~~~
+       ~~~   h   for not methylated C in CHH context                  ~~~
+       ~~~   Z   for methylated C in CpG context                      ~~~
+       ~~~   z   for not methylated C in CpG context                  ~~~
+       ~~~   U   for methylated C in Unknown context (CN or CHN       ~~~
+       ~~~   u   for not methylated C in Unknown context (CN or CHN)  ~~~
+       ~~~   .   for any bases not involving cytosines                ~~~
+       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The methylation extractor outputs result files for cytosines in CpG, CHG and CHH
 context (this distinction is actually already made in Bismark itself). As the methylation
@@ -4605,7 +4607,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 06 August 2013.
+This script was last modified on 08 August 2013.
 
 HOW_TO
 }

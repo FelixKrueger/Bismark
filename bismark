@@ -612,23 +612,37 @@ sub print_final_analysis_report_single_end{
   warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
   warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
-  warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  if ($bowtie2){
+    warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n";
+  }
+  warn "\n";
 
   warn "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
   warn "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
   warn "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
-  warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
+  if ($bowtie2){
+    warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n";
+  }
+  warn "\n";
 
   print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
   print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
-  print REPORT "Total methylated C's in CpG context:\t $counting{total_meCpG_count}\n";
+
+  print REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
   print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
-  print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  if ($bowtie2){
+    print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n";
+  }
+  print REPORT "\n";
+
   print REPORT "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
   print REPORT "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
   print REPORT "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
-  print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
+  if ($bowtie2){
+    print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n";
+  }
+  print REPORT "\n";
 
   my $percent_meCHG;
   if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
@@ -644,6 +658,12 @@ sub print_final_analysis_report_single_end{
   if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
     $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
   }
+
+  my $percent_meC_unknown;
+  if (($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}) > 0){
+    $percent_meC_unknown = sprintf("%.1f",100*$counting{total_meC_unknown_count}/($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}));
+  }
+
 
   ### printing methylated CpG percentage if applicable
   if ($percent_meCpG){
@@ -667,22 +687,38 @@ sub print_final_analysis_report_single_end{
 
   ### printing methylated C percentage (CHH context) if applicable
   if ($percent_meCHH){
-    warn "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
-    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
+    warn "C methylated in CHH context:\t${percent_meCHH}%\n";
+    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n";
   }
   else{
-    warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
-    print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
+    warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
+    print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
   }
+
+  ### printing methylated C percentage (Unknown C context) if applicable
+  if ($bowtie2){
+    if ($percent_meC_unknown){
+      warn "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+      print REPORT "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+    }
+    else{
+      warn "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
+      print REPORT "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
+    }
+  }
+  print REPORT "\n\n";
+  warn "\n\n";
 
   if ($seqID_contains_tabs){
     warn "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
     print REPORT "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
   }
 
-  ############################################################################################################################################
+
+  ###########################################################################################################################################
   ### create pie-chart with mapping stats
   ###########################################################################################################################################
+
 
   my $filename;
   if ($pbat){
@@ -855,22 +891,35 @@ sub print_final_analysis_report_paired_ends{
   warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
   warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
-  warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  if ($bowtie2){
+    warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n";
+  }
+  warn "\n";
+
   warn "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
   warn "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
   warn "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
-  warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
-
+  if ($bowtie2){
+    warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n";
+  }
+  warn "\n";
 
   print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
   print REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
   print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
   print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
-  print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  if ($bowtie2){
+    print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  }
+  print REPORT "\n";
+
   print REPORT "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
   print REPORT "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
   print REPORT "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
-  print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
+  if ($bowtie2){
+    print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
+  }
+  print REPORT "\n";
 
   my $percent_meCHG;
   if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
@@ -886,6 +935,12 @@ sub print_final_analysis_report_paired_ends{
   if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
     $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
   }
+
+  my $percent_meC_unknown;
+  if (($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}) > 0){
+    $percent_meC_unknown = sprintf("%.1f",100*$counting{total_meC_unknown_count}/($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}));
+  }
+
 
   ### printing methylated CpG percentage if applicable
   if ($percent_meCpG){
@@ -909,13 +964,28 @@ sub print_final_analysis_report_paired_ends{
 
   ### printing methylated C percentage in CHH context if applicable
   if ($percent_meCHH){
-    warn "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
-    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
+    warn "C methylated in CHH context:\t${percent_meCHH}%\n";
+    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n";
   }
   else{
-    warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
-    print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
+    warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
+    print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
   }
+
+  ### printing methylated C percentage (Unknown C context) if applicable
+  if ($bowtie2){
+    if ($percent_meC_unknown){
+      warn "C methylated in unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+      print REPORT "C methylated in unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+    }
+    else{
+      warn "Can't determine percentage of methylated Cs in unknown context (CN or CHN) if value was 0\n";
+      print REPORT "Can't determine percentage of methylated Cs in unknown context (CN or CHN) if value was 0\n";
+    }
+  }
+  print REPORT "\n\n";
+  warn "\n\n";
+
 
   ############################################################################################################################################
   ### create pie-chart with mapping stats
@@ -7841,7 +7911,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 06 August 2013.
+Last edited on 08 August 2013.
 
 HOW_TO
 }

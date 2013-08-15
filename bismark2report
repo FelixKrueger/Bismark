@@ -1,0 +1,1019 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Getopt::Long;
+use FindBin qw($Bin);
+use lib "$Bin/../lib";
+
+## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+my $bismark2report_version = 'v0.8.3dev';
+
+my ($alignment_report,$dedup_report,$splitting_report,$mbias_report,$report_output,$verbose) = process_commandline();
+
+my $doc;
+read_report_template();
+# BISMARK ALIGNMENT REPORT (mandatory)
+warn "="x110,"\n";
+warn "Using the following alignment report:\t\t> $alignment_report <\n";
+# DEDUPLICATION REPORT (optional)
+if ($dedup_report){
+  warn "Using the following deduplication report:\t> $dedup_report <\n";
+}
+else{
+  warn "No deduplication report file specified, skipping this step\n";
+}
+
+# SPLITTING REPORT (optional)
+if ($splitting_report){
+  warn "Using the following splitting report:\t\t> $splitting_report <\n";
+}
+else{
+  warn "No splitting report file specified, skipping this step\n";
+}
+
+# M-BIAS REPORT (optional)
+if ($mbias_report){
+  warn "Using the following M-bias report:\t\t> $mbias_report <\n";
+}
+else{
+  warn "No M-bias report file specified, skipping this step\n";
+}
+warn "="x110,"\n\n\n";
+sleep(3);
+
+# creating  timestamp
+getLoggingTime();
+
+read_alignment_report(); # mandatory
+
+if ($dedup_report){ # optional
+  read_deduplication_report();
+
+  # removing the delete tags in the html template
+  $doc =~ s/\{\{start_deletion_duplication\}\}//g;
+  $doc =~ s/\{\{end_deletion_duplication\}\}//g;
+}
+else{
+  # removing the entire graph and table section for the deduplication part
+  warn "Removing the duplication section from the HTML report\n" if ($verbose);
+  $doc =~ s/(\{\{start_deletion_duplication.*?end_deletion_duplication\}\})//gs; # s includes newline chars; non-greedy
+  warn "Deleting the following content:\n$1\n\n" if ($verbose);
+  sleep(3) if ($verbose);
+}
+
+if ($splitting_report){ # optional
+  read_splitting_report();
+
+  # removing the delete tags in the html template
+  $doc =~ s/\{\{start_deletion_splitting\}\}//g;
+  $doc =~ s/\{\{end_deletion_splitting\}\}//g;
+}
+else{
+  # removing the entire graph and table section for the deduplication part
+  warn "Removing the splitting report section from the HTML report\n" if ($verbose);
+  $doc =~ s/(\{\{start_deletion_splitting.*?end_deletion_splitting\}\})//gs; # s includes newline chars; non-greedy
+  warn "Deleting the following content:\n$1\n\n" if ($verbose);
+  sleep(3) if ($verbose);
+}
+
+if ($mbias_report){ # optional
+  my $state = read_mbias_report();
+
+  # removing the delete tags in the html template
+  $doc =~ s/\{\{start_deletion_mbias\}\}//g;
+  $doc =~ s/\{\{end_deletion_mbias\}\}//g;
+
+  warn "Reported read state: $state\n\n" if ($verbose);
+  # if the report was single-end we need to remove the second plot only
+  if ($state eq 'single'){
+    $doc =~ s/(\{\{start_deletion_mbias_2.*?end_deletion_mbias_2\}\})//gs; # s includes newline chars; non-greedy
+    warn "Deleting the following content:\n$1\n\n" if ($verbose);
+  }
+  else{
+    $doc =~ s/\{\{start_deletion_mbias_2\}\}//g;
+    $doc =~ s/\{\{end_deletion_mbias_2\}\}//g;
+  }
+}
+else{
+  # removing the entire graph and table section for the deduplication part
+  $doc =~ s/(\{\{start_deletion_mbias.*?end_deletion_mbias\}\})//gs; # s includes newline chars; non-greedy
+  warn "Deleting the following content:\n$1\n\n" if ($verbose);
+  sleep(3) if ($verbose);
+}
+
+write_out_report();
+
+
+sub write_out_report{
+  open (OUT,'>',$report_output) or die "Failed to write to output file $report_output: $!\n\n";
+  print OUT $doc;
+}
+
+sub getLoggingTime {
+
+  my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+
+  my $time = sprintf ("%02d:%02d", $hour,$min,$sec);
+  my $date = sprintf ("%04d-%02d-%02d", $year+1900,$mon+1,$mday);
+  warn "Using Time: $time, and date: $date\n\n" if ($verbose);
+
+  $doc =~ s/\{\{date\}\}/$date/g;
+  $doc =~ s/\{\{time\}\}/$time/g;
+}
+
+
+sub read_alignment_report{
+
+  warn "Processing alignment report $alignment_report ...\n";
+  open (ALN,$alignment_report) or die "Couldn't read from file $alignment_report: $!\n\n";
+
+  my $unique;
+  my $no_aln;
+  my $multiple;
+  my $no_genomic;
+  my $total_seqs;
+  my $bismark_version;
+  my $input_filename;
+
+  my $unique_text;
+  my $no_aln_text;
+  my $multiple_text;
+  my $total_seq_text;
+
+  my $total_C_count;
+  my ($meth_CpG,$meth_CHG,$meth_CHH,$meth_unknown);
+  my ($unmeth_CpG,$unmeth_CHG,$unmeth_CHH,$unmeth_unknown);
+  my ($perc_CpG,$perc_CHG,$perc_CHH,$perc_unknown);
+
+  my $number_OT;
+  my $number_CTOT;
+  my $number_CTOB;
+  my $number_OB;
+
+  while (<ALN>){
+    chomp;
+
+    ### General Alignment stats
+    if ($_ =~ /^Sequence pairs analysed in total:/ ){ ## Paired-end
+      (undef,$total_seqs) = split /\t/;
+       print "Total paired seqs: >> $total_seqs <<\n" if ($verbose);
+      $total_seq_text = 'Sequence pairs analysed in total';
+    }
+    elsif ($_ =~ /^Sequences analysed in total:/ ){   ## Single-end
+      (undef,$total_seqs) = split /\t/;
+      $total_seq_text = 'Sequences analysed in total';
+      print "total single-end seqs >> $total_seqs <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^Bismark report for: (.*) \(version: (.*)\)/){
+      $input_filename = $1;
+      $bismark_version = $2;
+      print "Input filename(s) >> $input_filename <<\n" if ($verbose);
+      print "Bismark version >> $bismark_version <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^Number of paired-end alignments with a unique best hit:/){ ## Paired-end
+      (undef,$unique) = split /\t/;
+      print "Unique PE>> $unique <<\n" if ($verbose);;
+      $unique_text = 'Paired-end alignments with a unique best hit';
+    }
+    elsif($_ =~ /^Number of alignments with a unique best hit from/){            ## Single-end
+      (undef,$unique) = split /\t/;
+      print "Unique SE>> $unique <<\n" if ($verbose);
+      $unique_text = 'Single-end alignments with a unique best hit';
+    }
+
+    elsif($_ =~ /^Sequence pairs with no alignments under any condition:/){  ## Paired-end
+      (undef,$no_aln) = split /\t/;
+      print "No alignment PE >> $no_aln <<\n" if ($verbose);
+      $no_aln_text = 'Pairs without alignments under any condition';
+    }
+    elsif($_ =~ /^Sequences with no alignments under any condition:/){  ## Single-end
+      (undef,$no_aln) = split /\t/;
+      print "No alignments SE>> $no_aln <<\n" if ($verbose);
+      $no_aln_text = 'Sequences without alignments under any condition';
+    }
+
+    elsif($_ =~ /^Sequence pairs did not map uniquely:/){ ## Paired-end
+      (undef,$multiple) = split /\t/;
+      print "Multiple alignments PE >> $multiple <<\n" if ($verbose);
+      $multiple_text = 'Pairs that did not map uniquely';
+    }
+    elsif($_ =~ /^Sequences did not map uniquely:/){ ## Single-end
+      (undef,$multiple) = split /\t/;
+      print "Multiple alignments SE >> $multiple <<\n" if ($verbose);
+      $multiple_text = 'Sequences that did not map uniquely';
+    }
+
+    elsif($_ =~ /^Sequence pairs which were discarded because genomic sequence could not be extracted:/){ ## Paired-end
+      (undef,$no_genomic) = split /\t/;
+      print "No genomic sequence PE >> $no_genomic <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Sequences which were discarded because genomic sequence could not be extracted:/){ ## Single-end
+      (undef,$no_genomic) = split /\t/;
+      print "No genomic sequence SE>> $no_genomic <<\n" if ($verbose);
+    }
+
+    ### Context Methylation
+    elsif($_ =~ /^Total number of C/ ){
+      (undef,$total_C_count) = split /\t/;
+      print "Total number C >> $total_C_count <<\n" if ($verbose);
+    }
+
+      elsif($_ =~ /^Total methylated C\'s in CpG context:/ ){
+      (undef,$meth_CpG) = split /\t/;
+      print "meth CpG >> $meth_CpG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total methylated C\'s in CHG context:/ ){
+      (undef,$meth_CHG) = split /\t/;
+      print "meth CHG >> $meth_CHG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total methylated C\'s in CHH context:/ ){
+      (undef,$meth_CHH) = split /\t/;
+      print "meth CHH >> $meth_CHH <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total methylated C\'s in Unknown context:/ ){
+      (undef,$meth_unknown) = split /\t/;
+      print "meth Unknown >> $meth_unknown <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^Total unmethylated C\'s in CpG context:/ or $_ =~ /^Total C to T conversions in CpG context:/){
+      (undef,$unmeth_CpG) = split /\t/;
+      print "unmeth CpG >> $unmeth_CpG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total unmethylated C\'s in CHG context:/ or $_ =~ /^Total C to T conversions in CHG context:/){
+      (undef,$unmeth_CHG) = split /\t/;
+      print "unmeth CHG >> $unmeth_CHG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total unmethylated C\'s in CHH context:/ or $_ =~ /^Total C to T conversions in CHH context:/){
+      (undef,$unmeth_CHH) = split /\t/;
+      print "unmeth CHH >> $unmeth_CHH <<\n"if ($verbose);
+    }
+    elsif($_ =~ /^Total unmethylated C\'s in Unknown context:/ or $_ =~ /^Total C to T conversions in Unknown context:/){
+      (undef,$unmeth_unknown) = split /\t/;
+      print "unmeth Unknown >> $unmeth_unknown <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^C methylated in CpG context:/ ){
+      (undef,$perc_CpG) = split /\t/;
+      $perc_CpG =~ s/%//;
+      print "percentage CpG >> $perc_CpG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^C methylated in CHG context:/ ){
+      (undef,$perc_CHG) = split /\t/;
+      $perc_CHG =~ s/%//;
+      print "percentage CHG >> $perc_CHG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^C methylated in CHH context:/ ){
+      (undef,$perc_CHH) = split /\t/;
+      $perc_CHH =~ s/%//;
+      print "percentage CHH >> $perc_CHH <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^C methylated in Unknown context:/ ){
+      (undef,$perc_unknown) = split /\t/;
+      $perc_unknown =~ s/%//;
+      print "percentage Unknown >> $perc_unknown <<\n" if ($verbose);
+    }
+
+
+    ### Strand Origin
+
+    elsif($_ =~ /^CT\/GA\/CT:/ ){             ## Paired-end
+      (undef,$number_OT) = split /\t/;
+      print "Number OT PE>> $number_OT <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^CT\/CT:/ ){                 ## Single-end
+      (undef,$number_OT) = split /\t/;
+      print "Number OT SE>> $number_OT <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^GA\/CT\/CT:/ ){             ## Paired-end
+      (undef,$number_CTOT) = split /\t/;
+      print "Number CTOT PE >> $number_CTOT <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^GA\/CT:/ ){                 ## Single-end
+      (undef,$number_CTOT) = split /\t/;
+      print "Number CTOT SE >> $number_CTOT <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^GA\/CT\/GA:/ ){             ## Paired-end
+      (undef,$number_CTOB) = split /\t/;
+      print "Number CTOB PE >> $number_CTOB <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^GA\/GA:/ ){                 ## Single-end
+      (undef,$number_CTOB) = split /\t/;
+      print "Number CTOB SE >> $number_CTOB <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^CT\/GA\/GA:/ ){             ## Paired-end
+      (undef,$number_OB) = split /\t/;
+      print "Number OB PE >> $number_OB <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^CT\/GA:/ ){                 ## Single-end
+      (undef,$number_OB) = split /\t/;
+      print "Number OB SE >> $number_OB <<\n" if ($verbose);
+    }
+
+
+  }
+
+  if (defined $unique and defined $no_aln and defined $multiple and defined $no_genomic and defined $total_seqs){
+    warn "Got all necessary information, editing HTML report\n"  if ($verbose);
+
+    ### General Alignment Stats
+    $doc =~ s/\{\{unique_seqs\}\}/$unique/g;
+    $doc =~ s/\{\{unique_seqs_text\}\}/$unique_text/g;
+
+    $doc =~ s/\{\{no_alignments\}\}/$no_aln/g;
+    $doc =~ s/\{\{no_alignments_text\}\}/$no_aln_text/g;
+
+    $doc =~ s/\{\{multiple_alignments\}\}/$multiple/g;
+    $doc =~ s/\{\{multiple_alignments_text\}\}/$multiple_text/g;
+
+    $doc =~ s/\{\{no_genomic\}\}/$no_genomic/g;
+
+    $doc =~ s/\{\{total_sequences_alignments\}\}/$total_seqs/g;
+    $doc =~ s/\{\{sequences_analysed_in_total\}\}/$total_seq_text/g;
+
+    $doc =~ s/\{\{filename\}\}/$input_filename/g;
+    $doc =~ s/\{\{bismark_version\}\}/$bismark_version/g;
+
+    ### Strand Origin
+    $doc =~ s/\{\{number_OT\}\}/$number_OT/g;
+    $doc =~ s/\{\{number_CTOT\}\}/$number_CTOT/g;
+    $doc =~ s/\{\{number_CTOB\}\}/$number_CTOB/g;
+    $doc =~ s/\{\{number_OB\}\}/$number_OB/g;
+
+    ### Context Methylation
+    $doc =~ s/\{\{total_C_count\}\}/$total_C_count/g;
+
+    unless (defined $perc_CpG){
+      $perc_CpG = 'N/A';
+    }
+    unless (defined $perc_CHG){
+      $perc_CHG = 'N/A';
+    }
+    unless (defined $perc_CHH){
+      $perc_CHH = 'N/A';
+    }
+    unless (defined $perc_unknown){
+      $perc_unknown = 'N/A';
+    }
+
+    ### Unknown sequence context, just for Bowtie 2 alignments
+    my $meth_unknown_inject;
+    my $unmeth_unknown_inject;
+    my $perc_unknown_inject;
+
+    if (defined $meth_unknown){ # if one Unknown context file is present, so should the others
+      $meth_unknown_inject = "     <tr>
+                                <th>Methylated C's in Unknown context</th>
+    				<td>$meth_unknown</td>
+    			</tr>";
+      $unmeth_unknown_inject = "     <tr>
+                                <th>Unmethylated C's in Unknown context</th>
+    				<td>$unmeth_unknown</td>
+    			</tr>";
+      $perc_unknown_inject = "     <tr>
+                                <th>Methylated C's in Unknown context</th>
+    				<td>$perc_unknown%</td>
+    			</tr>";
+    }
+    else{
+      $meth_unknown_inject = $unmeth_unknown_inject = $perc_unknown_inject = '';
+    }
+
+    ### injecting this into the table
+    $doc =~ s/\{\{meth_unknown\}\}/$meth_unknown_inject/g;
+    $doc =~ s/\{\{unmeth_unknown\}\}/$unmeth_unknown_inject/g;
+    $doc =~ s/\{\{perc_unknown\}\}/$perc_unknown_inject/g;
+
+
+    $doc =~ s/\{\{meth_CpG\}\}/$meth_CpG/g;
+    $doc =~ s/\{\{meth_CHG\}\}/$meth_CHG/g;
+    $doc =~ s/\{\{meth_CHH\}\}/$meth_CHH/g;
+
+    $doc =~ s/\{\{unmeth_CpG\}\}/$unmeth_CpG/g;
+    $doc =~ s/\{\{unmeth_CHG\}\}/$unmeth_CHG/g;
+    $doc =~ s/\{\{unmeth_CHH\}\}/$unmeth_CHH/g;
+
+    $doc =~ s/\{\{perc_CpG\}\}/$perc_CpG/g;
+    $doc =~ s/\{\{perc_CHG\}\}/$perc_CHG/g;
+    $doc =~ s/\{\{perc_CHH\}\}/$perc_CHH/g;
+
+    my ($perc_CpG_graph, $perc_CHG_graph,$perc_CHH_graph,$perc_unknown_graph);
+
+    if ($perc_CpG eq 'N/A'){
+      $perc_CpG_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_CpG_graph =  $perc_CpG;
+    }
+
+    if ($perc_CHG eq 'N/A'){
+      $perc_CHG_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_CHG_graph =  $perc_CHG;
+    }
+
+    if ($perc_CHH eq 'N/A'){
+      $perc_CHH_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_CHH_graph =  $perc_CHH;
+    }
+
+    if ($perc_unknown eq 'N/A'){
+      $perc_unknown_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_unknown_graph =  $perc_unknown;
+    }
+
+    $doc =~ s/\{\{perc_CpG_graph\}\}/$perc_CpG_graph/g;
+    $doc =~ s/\{\{perc_CHG_graph\}\}/$perc_CHG_graph/g;
+    $doc =~ s/\{\{perc_CHH_graph\}\}/$perc_CHH_graph/g;
+
+  }
+  else{
+    warn "Am I missing something?\n\n";
+  }
+
+  warn "Complete\n\n";
+  sleep(1);
+}
+
+
+sub read_deduplication_report{
+
+  warn "Processing deduplication report $dedup_report ...\n";
+  open (DEDUP,$dedup_report) or die "Couldn't read from file $dedup_report: $!\n\n";
+
+  my $total_seqs;
+  my $dups;
+  my $diff_pos;
+  my $leftover;
+
+  while (<DEDUP>){
+    chomp;
+    if ($_ =~ /^Total number of alignments/){
+      (undef,$total_seqs) = split /\t/;
+      warn "Total number of seqs >> $total_seqs <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total number duplicated/){
+      (undef,$dups) = split /\t/;
+      $dups =~ s/\s.*//; # just need the number, not the percentage
+      warn "Duplicated >> $dups <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Duplicated alignments were found at/){
+      (undef,$diff_pos) = split /\t/;
+      $diff_pos =~ s/\s.*//; # just need the number
+      warn "Different positions >> $diff_pos <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total count of deduplicated leftover sequences: (\d+)/){
+      $leftover = $1;
+      warn "Leftover seqs >> $leftover <<\n" if ($verbose);
+    }
+  }
+
+  unless (defined $leftover){
+    if (defined $dups and defined $total_seqs){
+      $leftover = $total_seqs - $dups;
+    }
+  }
+
+  # Checking if we got all we need
+  if (defined $dups and defined $total_seqs and defined $diff_pos and defined $leftover){
+    # warn "Got all I need!\n\n";
+    $doc =~ s/\{\{seqs_total_duplicates\}\}/$total_seqs/g;
+    $doc =~ s/\{\{unique_alignments_duplicates\}\}/$leftover/g;
+    $doc =~ s/\{\{duplicate_alignments_duplicates\}\}/$dups/g;
+    $doc =~ s/\{\{different_positions_duplicates\}\}/$diff_pos/g;
+  }
+  else{
+    warn "what went wrong?\n";
+    # skipping this plot entirely if values could not be extracted
+    sleep(10);
+    return;
+  }
+  warn "Complete\n\n";
+  sleep(1);
+
+}
+
+sub read_splitting_report{
+
+  warn "Processing splitting report $splitting_report ...\n";
+  open (SPLIT,$splitting_report) or die "Couldn't read from file $splitting_report: $!\n\n";
+
+  my $total_seqs;
+
+  my $total_C_count;
+  my ($meth_CpG,$meth_CHG,$meth_CHH,$meth_unknown);
+  my ($unmeth_CpG,$unmeth_CHG,$unmeth_CHH,$unmeth_unknown);
+  my ($perc_CpG,$perc_CHG,$perc_CHH,$perc_unknown);
+
+  while (<SPLIT>){
+    chomp;
+
+    ### Context Methylation
+    if($_ =~ /^Total number of C/ ){
+      (undef,$total_C_count) = split /\t/;
+      print "total calls >> $total_C_count <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^Total methylated C\'s in CpG context:/ ){
+      (undef,$meth_CpG) = split /\t/;
+      print "meth CpG >> $meth_CpG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total methylated C\'s in CHG context:/ ){
+      (undef,$meth_CHG) = split /\t/;
+      print "meth CHG>> $meth_CHG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total methylated C\'s in CHH context:/ ){
+      (undef,$meth_CHH) = split /\t/;
+      print "meth CHH >> $meth_CHH <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total methylated C\'s in Unknown context:/ ){
+      (undef,$meth_unknown) = split /\t/;
+      print "meth Unknown >> $meth_unknown <<\n" if ($verbose);
+    }
+
+    elsif($_ =~ /^Total C to T conversions in CpG context:/ ){
+      (undef,$unmeth_CpG) = split /\t/;
+      print "unmeth CpG >> $unmeth_CpG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total C to T conversions in CHG context:/ ){
+      (undef,$unmeth_CHG) = split /\t/;
+      print "unmeth CHG >> $unmeth_CHG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total C to T conversions in CHH context:/ ){
+      (undef,$unmeth_CHH) = split /\t/;
+      print "unmeth CHH >> $unmeth_CHH <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^Total C to T conversions in Unknown context:/ ){
+      (undef,$unmeth_unknown) = split /\t/;
+      print "unmeth Unknown >> $unmeth_unknown <<\n" if ($verbose);
+    } 
+
+    elsif($_ =~ /^C methylated in CpG context:/ ){
+      (undef,$perc_CpG) = split /\t/;
+      $perc_CpG =~ s/%//;
+      print "percentage CpG >> $perc_CpG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^C methylated in CHG context:/ ){
+      (undef,$perc_CHG) = split /\t/;
+      $perc_CHG =~ s/%//;
+      print "percentage CHG >> $perc_CHG <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^C methylated in CHH context:/ ){
+      (undef,$perc_CHH) = split /\t/;
+      $perc_CHH =~ s/%//;
+      print "percentage CHH >> $perc_CHH <<\n" if ($verbose);
+    }
+    elsif($_ =~ /^C methylated in Unknown context:/ ){
+      (undef,$perc_unknown) = split /\t/;
+      $perc_unknown =~ s/%//;
+      print "percentage unknown >> $perc_unknown <<\n" if ($verbose);
+    }
+  }
+
+
+
+
+  if (defined $meth_CpG and defined $meth_CHG and defined $meth_CHH and defined $unmeth_CpG and defined $unmeth_CHG and defined $unmeth_CHH){
+    warn "Got all necessary information, editing HTML report ...\n" if ($verbose);
+
+    ### Context Methylation
+    $doc =~ s/\{\{total_C_count_splitting\}\}/$total_C_count/g;
+
+    $doc =~ s/\{\{meth_CpG_splitting\}\}/$meth_CpG/g;
+    $doc =~ s/\{\{meth_CHG_splitting\}\}/$meth_CHG/g;
+    $doc =~ s/\{\{meth_CHH_splitting\}\}/$meth_CHH/g;
+
+    $doc =~ s/\{\{unmeth_CpG_splitting\}\}/$unmeth_CpG/g;
+    $doc =~ s/\{\{unmeth_CHG_splitting\}\}/$unmeth_CHG/g;
+    $doc =~ s/\{\{unmeth_CHH_splitting\}\}/$unmeth_CHH/g;
+
+    unless (defined $perc_CpG){
+      $perc_CpG = 'N/A';
+    }
+    unless (defined $perc_CHG){
+      $perc_CHG = 'N/A';
+    }
+    unless (defined $perc_CHH){
+      $perc_CHH = 'N/A';
+    }
+    unless (defined $perc_unknown){
+      $perc_unknown = 'N/A';
+    }
+
+    ### Unknown sequence context, just for Bowtie 2 alignments
+    my $meth_unknown_inject;
+    my $unmeth_unknown_inject;
+    my $perc_unknown_inject;
+
+    if (defined $meth_unknown){ # if one Unknown context file is present, so should the others
+      $meth_unknown_inject = "     <tr>
+                                <th>Methylated C's in Unknown context</th>
+    				<td>$meth_unknown</td>
+    			</tr>";
+      $unmeth_unknown_inject = "     <tr>
+                                <th>Unmethylated C's in Unknown context</th>
+    				<td>$unmeth_unknown</td>
+    			</tr>";
+      $perc_unknown_inject = "     <tr>
+                                <th>Methylated C's in Unknown context</th>
+    				<td>$perc_unknown%</td>
+    			</tr>";
+    }
+    else{
+      $meth_unknown_inject = $unmeth_unknown_inject = $perc_unknown_inject = '';
+    }
+
+    ### injecting this into the table
+    $doc =~ s/\{\{meth_unknown_splitting\}\}/$meth_unknown_inject/g;
+    $doc =~ s/\{\{unmeth_unknown_splitting\}\}/$unmeth_unknown_inject/g;
+    $doc =~ s/\{\{perc_unknown_splitting\}\}/$perc_unknown_inject/g;
+
+    # for the graph we need to take care that there are no N/A values in the percentage fields
+    my ($perc_CpG_graph, $perc_CHG_graph,$perc_CHH_graph,$perc_unknown_graph);
+
+    if ($perc_CpG eq 'N/A'){
+      $perc_CpG_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_CpG_graph =  $perc_CpG;
+    }
+
+    if ($perc_CHG eq 'N/A'){
+      $perc_CHG_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_CHG_graph =  $perc_CHG;
+    }
+
+    if ($perc_CHH eq 'N/A'){
+      $perc_CHH_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_CHH_graph =  $perc_CHH;
+    }
+
+    if ($perc_unknown eq 'N/A'){
+      $perc_unknown_graph = 0; # values of 0 won't show in the graph and won't produce errors
+    }
+    else{
+      $perc_unknown_graph =  $perc_unknown;
+    }
+
+    $doc =~ s/\{\{perc_CpG_graph_splitting\}\}/$perc_CpG_graph/g;
+    $doc =~ s/\{\{perc_CHG_graph_splitting\}\}/$perc_CHG_graph/g;
+    $doc =~ s/\{\{perc_CHH_graph_splitting\}\}/$perc_CHH_graph/g;
+
+    $doc =~ s/\{\{perc_CpG_splitting\}\}/$perc_CpG/g;
+    $doc =~ s/\{\{perc_CHG_splitting\}\}/$perc_CHG/g;
+    $doc =~ s/\{\{perc_CHH_splitting\}\}/$perc_CHH/g;
+  }
+  else{
+    warn "Am I missing something?\n\n";
+  }
+  warn "Complete\n\n";
+  sleep(1);
+
+}
+
+
+sub read_mbias_report{
+
+  warn "Processing M-bias report $mbias_report ...\n";
+  open (MBIAS,$mbias_report) or die "Couldn't read from file $mbias_report: $!\n\n";
+
+  my %mbias_1;
+  my %mbias_2;
+
+  my $context;
+  my $read_identity;
+  my $state = 'single'; # setting this to 'single' if there is no read 2
+
+  while (<MBIAS>){
+    chomp;
+    if ($_ =~ /^(C.{2}) context/){
+      $context = $1;
+
+      if ($_ =~ /R2/){
+	$read_identity = 2;
+	$state = 'paired';
+      }
+      else{
+	$read_identity = 1;
+      }
+
+      # warn "new context is: $context\n";
+      # warn "Read identity is: Read $read_identity\n";
+    }
+    if ($_ =~ /^\d/){
+      my ($pos,$meth,$unmeth,$perc,$coverage) = (split /\t/);
+      if ($read_identity == 1){
+	push @{$mbias_1{$context}->{coverage}}, $coverage;
+	push @{$mbias_1{$context}->{perc}}, $perc;
+      }
+      elsif ($read_identity == 2){
+	push @{$mbias_2{$context}->{coverage}}, $coverage;
+	push @{$mbias_2{$context}->{perc}}, $perc;
+      }
+      else{
+	warn "read identity was unknown : '$read_identity'\n\n";
+      }
+
+      # print join (" ",$pos,$meth,$unmeth,$perc,$coverage)."\n";
+    }
+  }
+
+  # Read 1 M-bias
+  my $r1_CpG_coverage = join (',',@{$mbias_1{'CpG'}->{coverage}});
+  my $r1_CpG_perc     = join (',',@{$mbias_1{'CpG'}->{perc}});
+
+  my $r1_CHG_coverage = join (',',@{$mbias_1{'CHG'}->{coverage}});
+  my $r1_CHG_perc     = join (',',@{$mbias_1{'CHG'}->{perc}});
+
+  my $r1_CHH_coverage = join (',',@{$mbias_1{'CHH'}->{coverage}});
+  my $r1_CHH_perc     = join (',',@{$mbias_1{'CHH'}->{perc}});
+
+  $doc =~ s/\{\{CpG_total_calls_R1\}\}/$r1_CpG_coverage/g;
+  $doc =~ s/\{\{CHG_total_calls_R1\}\}/$r1_CHG_coverage/g;
+  $doc =~ s/\{\{CHH_total_calls_R1\}\}/$r1_CHH_coverage/g;
+
+  $doc =~ s/\{\{CpG_methylation_R1\}\}/$r1_CpG_perc/g;
+  $doc =~ s/\{\{CHG_methylation_R1\}\}/$r1_CHG_perc/g;
+  $doc =~ s/\{\{CHH_methylation_R1\}\}/$r1_CHH_perc/g;
+
+  # Read 2 M-bias
+  if (%mbias_2){
+    my $r2_CpG_coverage = join (',',@{$mbias_2{'CpG'}->{coverage}});
+    my $r2_CpG_perc     = join (',',@{$mbias_2{'CpG'}->{perc}});
+
+    my $r2_CHG_coverage = join (',',@{$mbias_2{'CHG'}->{coverage}});
+    my $r2_CHG_perc     = join (',',@{$mbias_2{'CHG'}->{perc}});
+
+    my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
+    my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
+
+    $doc =~ s/\{\{CpG_total_calls_R2\}\}/$r2_CpG_coverage/g;
+    $doc =~ s/\{\{CHG_total_calls_R2\}\}/$r2_CHG_coverage/g;
+    $doc =~ s/\{\{CHH_total_calls_R2\}\}/$r2_CHH_coverage/g;
+
+    $doc =~ s/\{\{CpG_methylation_R2\}\}/$r2_CpG_perc/g;
+    $doc =~ s/\{\{CHG_methylation_R2\}\}/$r2_CHG_perc/g;
+    $doc =~ s/\{\{CHH_methylation_R2\}\}/$r2_CHH_perc/g;
+  }
+  warn "Complete\n\n";
+  sleep(1);
+
+  return $state;
+
+}
+
+
+sub read_report_template{
+
+  open (DOC,"$Bin/bismark_sitrep.tpl") or die $!;
+  while(<DOC>){
+    chomp;
+    $_ =~ s/\r//g;
+    $doc .= $_."\n";
+  }
+
+  close DOC or die $!;
+}
+
+
+
+sub process_commandline{
+  my $help;
+  my $output_dir;
+  my $report_output;
+  my $alignment_report;
+  my $dedup_report;
+  my $splitting_report;
+  my $mbias_report;
+  my $verbose;
+
+  my $version;
+
+  my $command_line = GetOptions ('help|man' => \$help,
+				 'dir=s' => \$output_dir,
+				 'o|output=s' => \$report_output,
+				 'alignment_report=s' => \$alignment_report,
+				 'dedup_report=s' => \$dedup_report,
+				 'splitting_report=s' => \$splitting_report,
+				 'mbias_report=s' => \$mbias_report,
+				 'version' => \$version,
+				 'verbose' => \$verbose,
+				);
+
+  ### EXIT ON ERROR if there were errors with any of the supplied options
+  unless ($command_line){
+    die "Please respecify command line options\n";
+  }
+
+  ### HELPFILE
+  if ($help){
+    print_helpfile();
+    exit;
+  }
+
+  if ($version){
+    print << "VERSION";
+
+
+                              Bismark HTML Report Module
+
+                         bismark2sitrep version: $bismark2report_version
+               Inspired by \@tallphil, Copyright 2010-13 Felix Krueger
+                               Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+
+
+VERSION
+    exit;
+  }
+
+
+  ### no alignment report specified
+  unless ($alignment_report){
+
+    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+    my @aln_report_files = <*E_report.txt>;
+
+    # warn "Number of alignment reports found in current directory: ",scalar @aln_report_files,"\n";
+    if (scalar @aln_report_files > 1){
+      die "Found ",scalar @aln_report_files," potential Bismark alignment reports in the current directory. Please specify a single report using the option '--alignment_report FILE'\n\n";
+    }
+    elsif (scalar @aln_report_files == 0){
+      die "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
+    }
+    else{
+      # there is only a single Bismark alignment report in the directory, using this one
+      $alignment_report = shift @aln_report_files;
+    }
+  }
+
+
+  ### OUTPUT DIR PATH
+  if (defined $output_dir){
+    unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
+      unless ($output_dir =~ /\/$/){
+	$output_dir =~ s/$/\//;
+      }
+    }
+  }
+  else{
+    $output_dir = '';
+  }
+
+  ### HTML OUTPUT FILE
+  unless (defined $report_output){
+    $report_output = $alignment_report;
+    $report_output =~ s/^.*\///; # deleting path information
+    $report_output =~ s/\.txt$//;
+    $report_output =~ s/$/.html/;
+  }
+  $report_output = $output_dir.$report_output;
+  warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
+
+
+  ### DEDUPLICATION REPORT
+  if ($dedup_report){
+    if (lc$dedup_report eq 'none'){
+      $dedup_report = ''; # user may wish to skip this step by specifying 'none'
+    }
+  }
+  else{
+    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+    my @dedup_report_files = <*deduplication_report.txt>;
+    # warn "Number of deduplication reports found in current directory: ", scalar @dedup_report_files , "\n";
+
+    if (scalar @dedup_report_files > 1){
+      die "Found ", scalar @dedup_report_files ," potential deduplication reports in the current directory. Please specify a single report using the option '--dedup_report FILE'\n\n";
+    }
+    elsif (scalar @dedup_report_files == 0){
+      $dedup_report = '';
+    }
+    else{
+      # there is only a single deduplication report in the current directory, using this one
+      $dedup_report = shift @dedup_report_files;
+    }
+  }
+
+  ### METHYLATION EXTRACTOR SPLITTING REPORT
+  if ($splitting_report){
+    if (lc$splitting_report eq 'none'){
+      $splitting_report = ''; # user may wish to skip this step by specifying 'none'
+    }
+  }
+  else{
+    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+    my @splitting_report_files = <*splitting_report.txt>;
+    # warn "Number of splitting reports found in current directory: ", scalar @splitting_report_files , "\n";
+
+    if (scalar @splitting_report_files > 1){
+      die "Found ", scalar @splitting_report_files ," potential methylation extractor splitting reports in the current directory. Please specify a single report using the option '--splitting_report FILE'\n\n";
+    }
+    elsif (scalar @splitting_report_files == 0){
+      $splitting_report = '';
+    }
+    else{
+      # there is only a single splitting report in the current directory, using this one
+      $splitting_report = shift @splitting_report_files;
+    }
+  }
+
+  ### M-BIAS REPORT
+  if ($mbias_report){
+    if (lc$mbias_report eq 'none'){
+      $mbias_report = ''; # user may wish to skip this step by specifying 'none'
+    }
+  }
+  else{
+    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+    my @mbias_report_files = <*M-bias.txt>;
+    # warn "Number of M-bias reports found in current directory: ", scalar @mbias_report_files , "\n";
+
+    if (scalar @mbias_report_files > 1){
+      die "Found ", scalar @mbias_report_files ," potential M-bias reports in the current directory. Please specify a single report using the option '--mbias_report FILE'\n\n";
+    }
+    elsif (scalar @mbias_report_files == 0){
+      $mbias_report = '';
+    }
+    else{
+      # there is only a single M-bias report in the current directory, using this one
+      $mbias_report = shift @mbias_report_files;
+    }
+  }
+
+  return ($alignment_report,$dedup_report,$splitting_report,$mbias_report,$report_output,$verbose);
+}
+
+sub print_helpfile{
+  print <<EOF
+
+  SYNOPSIS:
+
+  This script uses a Bismark alignment report to generate a graphical HTML report page. Optionally, further reports of
+  the Bismark suite such as deduplication, methylation extractor splitting or M-bias reports can be specified as well.
+
+  USAGE: bismark2sitrep [options]
+
+Methylation extractor input files: These files are required to start with CpG_ in order for the
+script to correctly work out the sequence context when using CpG only (default) context. If all cytosine 
+
+
+-o/--output <filename>     Name of the output file (optional). If not specified, the output file name will be derived
+                           from the Bismark alignment report file.
+
+--dir                      Output directory. Output is written to the current directory if not specified explicitly.
+
+
+--aln_report FILE          If not specified explicitly, bismark2sitrep attempts to find a single Bismarkreport file in the current
+                           directory (and fails if there are either none or too many). A Bismark alignment report file is
+                           mandatory.
+
+--dedup_report FILE        If not specified explicitly, bismark2sitrep attempts to find a single deduplication report file
+                           (generated by deduplicate_bismark_alignment_output.pl) in the current working directory (and fails
+                           if there are too many to choose from). Including a deduplication report is optional, and using the
+                           FILE 'none' will skip this step.
+
+--splitting_report FILE    If not specified explicitly, bismark2sitrep attempts to find a single splitting report file
+                           (generated by the Bismark methylation extractor) in the current working directory (and fails if
+                           there are too many to choose from). Including a splitting report is optional, and using the FILE 'none'
+                           will skip this step.
+
+--mbias_report FILE        If not specified explicitly, bismark2sitrep attempts to find a single M-bias report file
+                           (generated by the Bismark methylation extractor) in the current working directory (and fails if
+                           there are too many to choose from). Including an M-Bias report is optional, and using the FILE 'none'
+                           will skip this step.
+
+
+                          Script last modified: 14 August 2013
+
+EOF
+    ;
+  exit 1;
+}
+

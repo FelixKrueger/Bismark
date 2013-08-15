@@ -1,10 +1,41 @@
-RELEASE NOTES FOR Bismark v0.8.4 (02 Aug 2013)
------------------------------------------------
+RELEASE NOTES FOR Bismark v0.8.4 (06 Aug 2013)
+----------------------------------------------
 
 Bismark
 =======
 
-Fixed a bug when creating the pie chart that occurred for PBAT libraries only.
+Implemented the new methylation call symbols 'U' and 'u' for methylated or unmethylated cytosines
+in unknown sequence context, respectively. If the sequence context bases contain an N, e.g. CN or
+CHN, the context cannot be determined accurately (previously, these cases were assumed to be in CHH
+context).
+These situations may arise whenever the reference sequence contains Ns, or when insertions in the
+read occur close to a cytosine position (bases inserted into the read have no direct equivalent in
+the reference sequence and were assumed to be Ns for the methylation call). In practical terms, the
+'U/u' methylation calls will only occur for Bowtie 2 alignments because Bowtie 1 does not support
+gapped alignments or read alignments if the reference contains any N's. The Bismark report will now
+also include the 'U/u' statistics, such as count and % methylation, however only if run in Bowtie 2
+mode.
+Thanks to Pete Hickey for his contributions towards resolving this issue.
+
+
+Fixed a bug that occurred when generating the alignment overview pie chart that occurred for PBAT
+libraries only.
+
+
+Methylation extractor
+=====================
+
+Added handling of the newly introduced methylation call U/u for cytosines in Unknown sequence
+context. These methylation calls are simply ignored to not cause too much confusion for downstream
+analysis.
+
+
+bismark2bedGraph
+================
+
+Added a check to see whether input files start with CpG_* or not. If they don't, please include the
+option '--CX' to work properly. This is only relevant when bismark2bedGraph is run as a stand-alone
+tool.
 
 
 

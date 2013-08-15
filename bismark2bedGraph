@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.8.3';
+my $bismark2bedGraph_version = 'v0.8.3dev';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -69,9 +69,6 @@ warn  "="x64,"\n\n";
 sleep (2);
 
 ### deciding which files to use for bedGraph conversion
-open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
-warn "Writing bedGraph to file: $bedGraph_output\n";
-
 foreach my $filename (@sorting_files){
 
   if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
@@ -92,9 +89,17 @@ foreach my $filename (@sorting_files){
   }
 }
 
-warn "Using the following files as Input:\n";
-print join ("\t",@bedfiles),"\n\n";
-sleep (2);
+if (@bedfiles){
+  warn "Using the following files as Input:\n";
+  print join ("\t",@bedfiles),"\n\n";
+  sleep (2);
+}
+else{
+  die "It seems that you are trying to generate bedGraph files for files not starting with CpG_.... Please specify the option '--CX' and try again\n\n";
+}
+
+open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
+warn "Writing bedGraph to file: $bedGraph_output\n";
 
 my %temp_fhs;
 my @temp_files; # writing all context files (default CpG only) to these files prior to sorting
