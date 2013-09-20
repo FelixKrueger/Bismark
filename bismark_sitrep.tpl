@@ -439,7 +439,7 @@
 					},
 					tickInterval: 5,
 					minTickInterval: 0,
-					min: 1,
+					min: 0,
 				},
 				yAxis: [{
 					title: {

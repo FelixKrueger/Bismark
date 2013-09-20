@@ -33,7 +33,7 @@ my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
 
-my $bismark_version = 'v0.8.3';
+my $bismark_version = 'v0.9.1';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
@@ -43,10 +43,6 @@ GetOptions ('verbose' => \$verbose,
 	    'single_fasta' => \$single_fasta,
 	    'bowtie2' => \$bowtie2,
 	   );
-
-my $genome_folder = shift @ARGV; # mandatory
-my $CT_dir;
-my $GA_dir;
 
 if ($help or $man){
   print_helpfile();
@@ -65,6 +61,31 @@ if ($version){
 VERSION
     exit;
 }
+
+my $genome_folder = shift @ARGV; # mandatory
+
+# Ensuring a genome folder has been specified
+if ($genome_folder){
+  unless ($genome_folder =~ /\/$/){
+    $genome_folder =~ s/$/\//;
+  }
+  $verbose and print "Path to genome folder specified as: $genome_folder\n";
+  chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
+
+  # making the genome folder path abolsolute so it won't break if the path was specified relative
+  $genome_folder = getcwd;
+  unless ($genome_folder =~ /\/$/){
+    $genome_folder =~ s/$/\//;
+  }
+}
+else{
+  die "Please specify a genome folder to be used for bisulfite conversion\n\n";
+}
+
+
+my $CT_dir;
+my $GA_dir;
+
 
 if ($single_fasta){
   print "Writing individual genomes out into single-entry fasta files (one per chromosome)\n\n";
@@ -309,41 +330,6 @@ sub create_bisulfite_genome_folders{
 
   $verbose and print "Bismark Genome Preparation - Step I: Preparing folders\n\n";
 
-  # Ensuring a genome folder has been specified
-  if ($genome_folder){
-    unless ($genome_folder =~ /\/$/){
-      $genome_folder =~ s/$/\//;
-    }
-    $verbose and print "Path to genome folder specified: $genome_folder\n";
-    chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
-
-    # making the genome folder path abolsolute so it won't break if the path was specified relative
-    $genome_folder = getcwd;
-    unless ($genome_folder =~ /\/$/){
-      $genome_folder =~ s/$/\//;
-    }
-  }
-
-  else{
-    $verbose and print "Genome folder was not provided as argument ";
-    while (1){
-      print "Please specify a genome folder to be bisulfite converted:\n";
-      $genome_folder = <STDIN>;
-      chomp $genome_folder;
-
-      # adding a trailing slash unless already present
-      unless ($genome_folder =~ /\/$/){
-	$genome_folder =~ s/$/\//;
-      }
-      if (chdir $genome_folder){
-	last;
-      }
-      else{
-	warn "Could't move to directory $genome_folder! $!";
-      }
-    }
-  }
-
   if ($path_to_bowtie){
     unless ($path_to_bowtie =~ /\/$/){
       $path_to_bowtie =~ s/$/\//;
@@ -376,7 +362,7 @@ sub create_bisulfite_genome_folders{
     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
   }
 
-  warn "Bisulfite Genome Indexer version $bismark_version (last modified 17 Nov 2011)\n\n";
+  warn "Bisulfite Genome Indexer version $bismark_version (last modified 19 Sept 2013)\n\n";
   sleep (3);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -386,26 +372,9 @@ sub create_bisulfite_genome_folders{
     $verbose and print "Created Bisulfite Genome folder $bisulfite_dir\n";
   }
   else{
-    while (1){
-      print "\nA directory called $bisulfite_dir already exists. Bisulfite converted sequences and/or already existing Bowtie (1 or 2) indexes might be overwritten!\nDo you want to continue anyway?\t";
-      my $proceed = <STDIN>;
-      chomp $proceed;
-      if ($proceed =~ /^y/i ){
-	last;
-      }
-      elsif ($proceed =~ /^n/i){
-	die "Terminated by user\n\n";
-      }
-    }
+    print "\nA directory called $bisulfite_dir already exists. Bisulfite converted sequences and/or already existing Bowtie (1 or 2) indices will be overwritten!\n\n";
+    sleep(5);
   }
-
-  ### as of version 0.6.0 the Bismark indexer will no longer delete the Bisulfite_Genome directory if it was present already, since it could store the Bowtie 1 or 2  indexes already
-  # removing any existing files and subfolders in the bisulfite directory (the specified directory won't be deleted)
-  # rmtree($bisulfite_dir, {verbose => 1,keep_root => 1});
-  #  unless (-d $bisulfite_dir){ #  had to add this after changing remove_tree to rmtree // suggested by Samantha Cooper @ Illumina
-  #    mkdir $bisulfite_dir or die "Unable to create directory $bisulfite_dir $!\n";
-  #  }
-  # }
 
   chdir $bisulfite_dir or die "Unable to move to $bisulfite_dir\n";
   $CT_dir = "${bisulfite_dir}CT_conversion/";
@@ -440,15 +409,14 @@ converted versions and index them for alignments with Bowtie 1 (default), or Bow
 bisulfite genome will have all Cs converted to Ts (C->T), and the other one will have all Gs
 converted to As (G->A). Both bisulfite genomes will be stored in subfolders within the reference
 genome folder. Once the bisulfite conversion has been completed the program will fork and launch
-two simultaneous instances of the bowtie 1 or 2 indexer (bowtie-build or bowtie2-build). Be aware
+two simultaneous instances of the Bowtie 1 or 2 indexer (bowtie-build or bowtie2-build). Be aware
 that the indexing process can take up to several hours; this will mainly depend on genome size
 and system resources.
 
 
 
-
 The following is a brief description of command line options and arguments to control the
-Bismark Genome Preparation script:
+Bismark Genome Preparation:
 
 
 USAGE: bismark_genome_preparation [options] <arguments>
@@ -462,8 +430,9 @@ OPTIONS:
 
 --verbose                Print verbose output for more details or debugging.
 
---path_to_bowtie         The full path to the Bowtie 1 or Bowtie 2 installation on your system.If
-                         the path </../../> is not provided as an option you will be prompted for it.
+--path_to_bowtie </../>  The full path to the Bowtie 1 or Bowtie 2 installation on your system
+                         (depending on which aligner/indexer you intend to use). Unless this path
+                         is specified it is assumed that Bowtie is in the PATH environment.
 
 --bowtie2                This will create bisulfite indexes for Bowtie 2. (Default: Bowtie 1).
 
@@ -481,12 +450,10 @@ OPTIONS:
 ARGUMENTS:
 
 <path_to_genome_folder>  The path to the folder containing the genome to be bisulfite converted.
-                         At the current time Bismark Genome Preparation expects one or more fastA
-                         files in the folder (with the file extension: .fa or .fasta). If the path
-                         is not provided as an argument you will be prompted for it.
+                         The Bismark Genome Preparation expects one or more fastA files in the folder
+                         (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-
-This script was last modified on 18 Nov 2011.
+This script was last modified on 19 Sept 2013.
 HOW_TO
 }

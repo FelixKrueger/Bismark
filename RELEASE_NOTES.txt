@@ -1,11 +1,35 @@
-RELEASE NOTES FOR Bismark v0.8.4 (06 Aug 2013)
+RELEASE NOTES FOR Bismark v0.9.1 (09 Sep 2013)
+----------------------------------------------
+
+Bismark Genome Preparation
+==========================
+
+Made a couple of changes to make the genome preparation fully non-interactive. This means that the 
+path to the genome folder and to Bowtie (1/2) have to be specified up front (for Bowtie (1/2) it 
+is otherwise assumed that it is in the PATH). Furthermore, already existing bisulfite indices in
+the target folder will be overwritten and the user is no longer prompted if he agrees to this. We
+got rid of this creating a second index (Bowtie 1 as well as 2) in the same folder in non-interactive
+mode got stuck in loops asking whether it is alright to proceed or not, generating therabyte sized
+log files without ever starting to do anything useful...).
+
+
+bismark2bedgraph
+================
+
+Dropped the option -k3,3 from the sort command to result in a dramatic speed increase while sorting.
+This option had been used previously to enable sorting by chromosome in addition to position, but 
+should no longer be needed because the files are being read in sorted by chromosome already.
+
+
+
+RELEASE NOTES FOR Bismark v0.9.0 (16 Aug 2013)
 ----------------------------------------------
 
 Bismark
 =======
 
 Implemented the new methylation call symbols 'U' and 'u' for methylated or unmethylated cytosines
-in unknown sequence context, respectively. If the sequence context bases contain an N, e.g. CN or
+in unknown sequence context, respectively. If the sequence context bases contain any N, e.g. CN or
 CHN, the context cannot be determined accurately (previously, these cases were assumed to be in CHH
 context).
 These situations may arise whenever the reference sequence contains Ns, or when insertions in the
@@ -25,9 +49,23 @@ libraries only.
 Methylation extractor
 =====================
 
-Added handling of the newly introduced methylation call U/u for cytosines in Unknown sequence
-context. These methylation calls are simply ignored to not cause too much confusion for downstream
-analysis.
+Added handling of the newly introduced methylation call U/u for cytosines in Unknown sequence context.
+These methylation calls are simply ignored to not cause too much confusion for downstream analysis.
+
+
+bismark2report
+==============
+
+With this version, we are introducing the new module 'bismark2report' which generates a graphical HTML
+report of Bismark alignment, deduplication, splitting and M-bias statistics. The alignment report is
+required for the HTML report, the deduplication, splitting and M-bias reports are optional. For the
+rendering to work as intended your browser needs to support Javascript. The bismark2report module is
+part of the Bismark suite, and it reqires the template file 'bismark_sitrep.tpl' to also reside in the
+same directory (one may still specify a different output directory).
+
+Since several different modules of Bismark may be included into this report that may or may not have
+been run, bismark2report requires the user to specify the relevant reports as input files. Many thanks
+to Phil Ewels (@tallphil) for the conceptual design and his help with this report!
 
 
 bismark2bedGraph
@@ -36,6 +74,7 @@ bismark2bedGraph
 Added a check to see whether input files start with CpG_* or not. If they don't, please include the
 option '--CX' to work properly. This is only relevant when bismark2bedGraph is run as a stand-alone
 tool.
+
 
 
 

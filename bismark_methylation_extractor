@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.8.3_dev';
+my $version = 'v0.9.0';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
@@ -1997,7 +1997,8 @@ sub process_Bismark_results_file{
 	  my @len_1 = split (/\D+/,$cigar_1); # storing the length per operation
 	  my @ops_1 = split (/\d+/,$cigar_1); # storing the operation
 	  shift @ops_1;		# remove the empty first element
-	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len_1 == scalar @ops_1);
+
+	  die "CIGAR string contained a non-matching number of lengths and operations: $cigar_1\n".join(" ",@len_1)."\n".join(" ",@ops_1)."\n" unless (scalar @len_1 == scalar @ops_1);
 	
 	  my @comp_cigar_1; # building an array with all CIGAR operations
 	  foreach my $index (0..$#len_1) {
@@ -2411,6 +2412,7 @@ sub print_individual_C_methylation_states_paired_end_files{
     @len = split (/\D+/,$cigar); # storing the length per operation
     @ops = split (/\d+/,$cigar); # storing the operation
     shift @ops; # remove the empty first element
+
     die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 
     foreach my $index (0..$#len){
@@ -3908,6 +3910,7 @@ sub print_individual_C_methylation_states_single_end{
       @len = split (/\D+/,$cigar); # storing the length per operation
       @ops = split (/\d+/,$cigar); # storing the operation
       shift @ops; # remove the empty first element
+      # die "CIGAR string contained a non-matching number of lengths and operations: id: $id\nmeth call: $meth_call\nCIGAR: $cigar\n".join(" ",@len)."\n".join(" ",@ops)."\n" unless (scalar @len == scalar @ops);
       die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 
       foreach my $index (0..$#len){

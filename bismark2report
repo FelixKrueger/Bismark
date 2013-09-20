@@ -20,7 +20,7 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.8.3dev';
+my $bismark2report_version = 'v0.9.0';
 
 my ($alignment_report,$dedup_report,$splitting_report,$mbias_report,$report_output,$verbose) = process_commandline();
 
@@ -455,7 +455,7 @@ sub read_alignment_report{
   }
 
   warn "Complete\n\n";
-  sleep(1);
+
 }
 
 
@@ -506,13 +506,12 @@ sub read_deduplication_report{
     $doc =~ s/\{\{different_positions_duplicates\}\}/$diff_pos/g;
   }
   else{
-    warn "what went wrong?\n";
+    warn "Something went wrong... Use --verbose to get a clue...\n";
     # skipping this plot entirely if values could not be extracted
-    sleep(10);
+    sleep(5);
     return;
   }
   warn "Complete\n\n";
-  sleep(1);
 
 }
 
@@ -691,10 +690,9 @@ sub read_splitting_report{
     $doc =~ s/\{\{perc_CHH_splitting\}\}/$perc_CHH/g;
   }
   else{
-    warn "Am I missing something?\n\n";
+    warn "Am I missing something? Try using --verbose to get a clue...\n\n";
   }
   warn "Complete\n\n";
-  sleep(1);
 
 }
 
@@ -730,12 +728,12 @@ sub read_mbias_report{
     if ($_ =~ /^\d/){
       my ($pos,$meth,$unmeth,$perc,$coverage) = (split /\t/);
       if ($read_identity == 1){
-	push @{$mbias_1{$context}->{coverage}}, $coverage;
-	push @{$mbias_1{$context}->{perc}}, $perc;
+	push @{$mbias_1{$context}->{coverage}}, "[$pos, $coverage]";
+	push @{$mbias_1{$context}->{perc}}, "[$pos, $perc]";
       }
       elsif ($read_identity == 2){
-	push @{$mbias_2{$context}->{coverage}}, $coverage;
-	push @{$mbias_2{$context}->{perc}}, $perc;
+	push @{$mbias_2{$context}->{coverage}}, "[$pos, $coverage]";
+	push @{$mbias_2{$context}->{perc}}, "[$pos, $perc]";
       }
       else{
 	warn "read identity was unknown : '$read_identity'\n\n";
@@ -783,7 +781,6 @@ sub read_mbias_report{
     $doc =~ s/\{\{CHH_methylation_R2\}\}/$r2_CHH_perc/g;
   }
   warn "Complete\n\n";
-  sleep(1);
 
   return $state;
 
@@ -792,6 +789,7 @@ sub read_mbias_report{
 
 sub read_report_template{
 
+  warn "Attempting to open file from: $Bin/bismark_sitrep.tpl\n\n" if ($verbose);
   open (DOC,"$Bin/bismark_sitrep.tpl") or die $!;
   while(<DOC>){
     chomp;
@@ -863,10 +861,12 @@ VERSION
 
     # warn "Number of alignment reports found in current directory: ",scalar @aln_report_files,"\n";
     if (scalar @aln_report_files > 1){
-      die "Found ",scalar @aln_report_files," potential Bismark alignment reports in the current directory. Please specify a single report using the option '--alignment_report FILE'\n\n";
+      die "Found ",scalar @aln_report_files," potential Bismark alignment reports in the current directory. Please specify a single report using the option '--alignment_report FILE' (or --help for more information)\n\n";
     }
     elsif (scalar @aln_report_files == 0){
-      die "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
+      warn "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
+      print_helpfile();
+      exit;
     }
     else{
       # there is only a single Bismark alignment report in the directory, using this one
@@ -980,9 +980,6 @@ sub print_helpfile{
 
   USAGE: bismark2sitrep [options]
 
-Methylation extractor input files: These files are required to start with CpG_ in order for the
-script to correctly work out the sequence context when using CpG only (default) context. If all cytosine 
-
 
 -o/--output <filename>     Name of the output file (optional). If not specified, the output file name will be derived
                            from the Bismark alignment report file.
@@ -1010,7 +1007,7 @@ script to correctly work out the sequence context when using CpG only (default) 
                            will skip this step.
 
 
-                          Script last modified: 14 August 2013
+                          Script last modified: 16 August 2013
 
 EOF
     ;

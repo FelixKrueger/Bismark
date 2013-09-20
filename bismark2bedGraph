@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.8.3dev';
+my $bismark2bedGraph_version = 'v0.9.0';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -201,7 +201,13 @@ foreach my $in (@temp_files) {
   if ($sort_dir eq ''){
     $sort_dir = './';
   }
-  open my $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+
+  open my $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!";
+
+  ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files should are being sorted according to chromosomes anyway,
+  ### we may lose the -k3,3 option. It has been reported that this will result in a dramatic speed increase
+  # open my $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+
   # warn "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
 
   my $name;
