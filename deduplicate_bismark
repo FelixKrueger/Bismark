@@ -17,6 +17,9 @@ use Getopt::Long;
 ### 16 July 2013
 ### Adding a new deduplication mode for barcoded RRBS-Seq
 
+### 27 Sept 2013
+### Added close statement for all output filehandles (which should probably have been there from the start...)
+
 
 my $help;
 my $representative;
@@ -464,6 +467,10 @@ foreach my $file (@filenames){
     print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
     print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
   }
+
+  close OUT or die "Failed to close output filehandle: $!\n";
+  close REPORT or die "Failed to close report filehandle: $!\n";
+
 }
 
 
@@ -760,11 +767,13 @@ sub deduplicate_barcoded_rrbs{
   warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
   warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 
-
   print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
   print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
   print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
   print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+
+  close OUT or die "Failed to close output filehandle: $!\n";
+  close REPORT or die "Failed to close report filehandle: $!\n";
 
 }
 
@@ -789,7 +798,7 @@ sub print_helpfile{
   print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
   print '='x111,"\n\n";
 
-  print "This script was last modified on July 17, 2013\n\n";
+  print "This script was last modified on Sept 27, 2013\n\n";
 }
 
 
@@ -1002,9 +1011,14 @@ sub deduplicate_representative {
   }
 
   my $percentage = sprintf ("%.2f",$unique_seqs*100/$count);
-  close OUT or die $!;
   print "\nTotal number of alignments analysed in $file:\t$count\n";
   print "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
+  print OUT "\nTotal number of alignments analysed in $file:\t$count\n";
+  print OUT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
+
+  close OUT or die "Failed to close output filehandle: $!\n";
+  close REPORT or die "Failed to close report filehandle: $!\n";
+
 }
 
 

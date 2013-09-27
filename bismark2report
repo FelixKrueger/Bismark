@@ -20,111 +20,135 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.9.0';
+my $bismark2report_version = 'v0.9.1';
+my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports);
 
-my ($alignment_report,$dedup_report,$splitting_report,$mbias_report,$report_output,$verbose) = process_commandline();
+my ($output_dir,$verbose) = process_commandline();
 
-my $doc;
-read_report_template();
-# BISMARK ALIGNMENT REPORT (mandatory)
-warn "="x110,"\n";
-warn "Using the following alignment report:\t\t> $alignment_report <\n";
-# DEDUPLICATION REPORT (optional)
-if ($dedup_report){
-  warn "Using the following deduplication report:\t> $dedup_report <\n";
-}
-else{
-  warn "No deduplication report file specified, skipping this step\n";
-}
+# print join (",",@alignment_reports)."\n";
+# print join (",",@dedup_reports)."\n";
+# print join (",",@splitting_reports)."\n";
+# print join (",",@mbias_reports)."\n";
 
-# SPLITTING REPORT (optional)
-if ($splitting_report){
-  warn "Using the following splitting report:\t\t> $splitting_report <\n";
-}
-else{
-  warn "No splitting report file specified, skipping this step\n";
-}
+while (@alignment_reports){
 
-# M-BIAS REPORT (optional)
-if ($mbias_report){
-  warn "Using the following M-bias report:\t\t> $mbias_report <\n";
-}
-else{
-  warn "No M-bias report file specified, skipping this step\n";
-}
-warn "="x110,"\n\n\n";
-sleep(3);
+  my $alignment_report = shift @alignment_reports;
+  my $dedup_report = shift @dedup_reports;
+  my $splitting_report = shift @splitting_reports;
+  my $mbias_report = shift @mbias_reports;
 
-# creating  timestamp
-getLoggingTime();
+  ### HTML OUTPUT FILE
+  my $report_output = $alignment_report;
+  $report_output =~ s/^.*\///; # deleting optional path information
+  $report_output =~ s/\.txt$//;
+  $report_output =~ s/$/.html/;
 
-read_alignment_report(); # mandatory
+  $report_output = $output_dir.$report_output;
+  warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
 
-if ($dedup_report){ # optional
-  read_deduplication_report();
+  my $doc = read_report_template();
 
-  # removing the delete tags in the html template
-  $doc =~ s/\{\{start_deletion_duplication\}\}//g;
-  $doc =~ s/\{\{end_deletion_duplication\}\}//g;
-}
-else{
-  # removing the entire graph and table section for the deduplication part
-  warn "Removing the duplication section from the HTML report\n" if ($verbose);
-  $doc =~ s/(\{\{start_deletion_duplication.*?end_deletion_duplication\}\})//gs; # s includes newline chars; non-greedy
-  warn "Deleting the following content:\n$1\n\n" if ($verbose);
-  sleep(3) if ($verbose);
-}
-
-if ($splitting_report){ # optional
-  read_splitting_report();
-
-  # removing the delete tags in the html template
-  $doc =~ s/\{\{start_deletion_splitting\}\}//g;
-  $doc =~ s/\{\{end_deletion_splitting\}\}//g;
-}
-else{
-  # removing the entire graph and table section for the deduplication part
-  warn "Removing the splitting report section from the HTML report\n" if ($verbose);
-  $doc =~ s/(\{\{start_deletion_splitting.*?end_deletion_splitting\}\})//gs; # s includes newline chars; non-greedy
-  warn "Deleting the following content:\n$1\n\n" if ($verbose);
-  sleep(3) if ($verbose);
-}
-
-if ($mbias_report){ # optional
-  my $state = read_mbias_report();
-
-  # removing the delete tags in the html template
-  $doc =~ s/\{\{start_deletion_mbias\}\}//g;
-  $doc =~ s/\{\{end_deletion_mbias\}\}//g;
-
-  warn "Reported read state: $state\n\n" if ($verbose);
-  # if the report was single-end we need to remove the second plot only
-  if ($state eq 'single'){
-    $doc =~ s/(\{\{start_deletion_mbias_2.*?end_deletion_mbias_2\}\})//gs; # s includes newline chars; non-greedy
-    warn "Deleting the following content:\n$1\n\n" if ($verbose);
+  # BISMARK ALIGNMENT REPORT (mandatory)
+  warn "="x110,"\n";
+  warn "Using the following alignment report:\t\t> $alignment_report <\n";
+  # DEDUPLICATION REPORT (optional)
+  if ($dedup_report){
+    warn "Using the following deduplication report:\t> $dedup_report <\n";
   }
   else{
-    $doc =~ s/\{\{start_deletion_mbias_2\}\}//g;
-    $doc =~ s/\{\{end_deletion_mbias_2\}\}//g;
+    warn "No deduplication report file specified, skipping this step\n";
   }
-}
-else{
-  # removing the entire graph and table section for the deduplication part
-  $doc =~ s/(\{\{start_deletion_mbias.*?end_deletion_mbias\}\})//gs; # s includes newline chars; non-greedy
-  warn "Deleting the following content:\n$1\n\n" if ($verbose);
-  sleep(3) if ($verbose);
-}
 
-write_out_report();
+  # SPLITTING REPORT (optional)
+  if ($splitting_report){
+    warn "Using the following splitting report:\t\t> $splitting_report <\n";
+  }
+  else{
+    warn "No splitting report file specified, skipping this step\n";
+  }
 
+  # M-BIAS REPORT (optional)
+  if ($mbias_report){
+    warn "Using the following M-bias report:\t\t> $mbias_report <\n";
+  }
+  else{
+    warn "No M-bias report file specified, skipping this step\n";
+  }
+  warn "="x110,"\n\n\n";
+  $verbose and sleep(3);
+
+  # creating  timestamp
+  $doc = getLoggingTime($doc);
+
+  $doc = read_alignment_report($alignment_report,$doc); # mandatory
+
+  if ($dedup_report){ # optional
+    $doc = read_deduplication_report($dedup_report,$doc);
+
+    # removing the delete tags in the html template
+    $doc =~ s/\{\{start_deletion_duplication\}\}//g;
+    $doc =~ s/\{\{end_deletion_duplication\}\}//g;
+  }
+  else{
+    # removing the entire graph and table section for the deduplication part
+    warn "Removing the duplication section from the HTML report\n" if ($verbose);
+    $doc =~ s/(\{\{start_deletion_duplication.*?end_deletion_duplication\}\})//gs; # s includes newline chars; non-greedy
+    warn "Deleting the following content:\n$1\n\n" if ($verbose);
+    sleep(3) if ($verbose);
+  }
+
+  if ($splitting_report){ # optional
+    $doc = read_splitting_report($splitting_report,$doc);
+
+    # removing the delete tags in the html template
+    $doc =~ s/\{\{start_deletion_splitting\}\}//g;
+    $doc =~ s/\{\{end_deletion_splitting\}\}//g;
+  }
+  else{
+    # removing the entire graph and table section for the deduplication part
+    warn "Removing the splitting report section from the HTML report\n" if ($verbose);
+    $doc =~ s/(\{\{start_deletion_splitting.*?end_deletion_splitting\}\})//gs; # s includes newline chars; non-greedy
+    warn "Deleting the following content:\n$1\n\n" if ($verbose);
+    sleep(3) if ($verbose);
+  }
+
+  if ($mbias_report){ # optional
+    (my $state, $doc) = read_mbias_report($mbias_report,$doc);
+
+    # removing the delete tags in the html template
+    $doc =~ s/\{\{start_deletion_mbias\}\}//g;
+    $doc =~ s/\{\{end_deletion_mbias\}\}//g;
+
+    warn "Reported read state: $state\n\n" if ($verbose);
+    # if the report was single-end we need to remove the second plot only
+    if ($state eq 'single'){
+      $doc =~ s/(\{\{start_deletion_mbias_2.*?end_deletion_mbias_2\}\})//gs; # s includes newline chars; non-greedy
+      warn "Deleting the following content:\n$1\n\n" if ($verbose);
+    }
+    else{
+      $doc =~ s/\{\{start_deletion_mbias_2\}\}//g;
+      $doc =~ s/\{\{end_deletion_mbias_2\}\}//g;
+    }
+  }
+  else{
+    # removing the entire graph and table section for the deduplication part
+    $doc =~ s/(\{\{start_deletion_mbias.*?end_deletion_mbias\}\})//gs; # s includes newline chars; non-greedy
+    warn "Deleting the following content:\n$1\n\n" if ($verbose);
+    sleep(3) if ($verbose);
+  }
+
+  write_out_report($report_output,$doc);
+
+}
 
 sub write_out_report{
+  my ($report_output,$doc) = @_;
   open (OUT,'>',$report_output) or die "Failed to write to output file $report_output: $!\n\n";
   print OUT $doc;
 }
 
 sub getLoggingTime {
-
+  my $doc = shift;
   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
 
   my $time = sprintf ("%02d:%02d", $hour,$min,$sec);
@@ -133,10 +157,14 @@ sub getLoggingTime {
 
   $doc =~ s/\{\{date\}\}/$date/g;
   $doc =~ s/\{\{time\}\}/$time/g;
+
+  return $doc;
 }
 
 
 sub read_alignment_report{
+
+  my ($alignment_report,$doc) = @_;
 
   warn "Processing alignment report $alignment_report ...\n";
   open (ALN,$alignment_report) or die "Couldn't read from file $alignment_report: $!\n\n";
@@ -455,11 +483,13 @@ sub read_alignment_report{
   }
 
   warn "Complete\n\n";
-
+  return $doc;
 }
 
 
 sub read_deduplication_report{
+
+  my ($dedup_report,$doc) = @_;
 
   warn "Processing deduplication report $dedup_report ...\n";
   open (DEDUP,$dedup_report) or die "Couldn't read from file $dedup_report: $!\n\n";
@@ -508,14 +538,15 @@ sub read_deduplication_report{
   else{
     warn "Something went wrong... Use --verbose to get a clue...\n";
     # skipping this plot entirely if values could not be extracted
-    sleep(5);
-    return;
+    return $doc;
   }
   warn "Complete\n\n";
-
+  return $doc;
 }
 
 sub read_splitting_report{
+
+  my ($splitting_report,$doc) = @_;
 
   warn "Processing splitting report $splitting_report ...\n";
   open (SPLIT,$splitting_report) or die "Couldn't read from file $splitting_report: $!\n\n";
@@ -591,9 +622,6 @@ sub read_splitting_report{
       print "percentage unknown >> $perc_unknown <<\n" if ($verbose);
     }
   }
-
-
-
 
   if (defined $meth_CpG and defined $meth_CHG and defined $meth_CHH and defined $unmeth_CpG and defined $unmeth_CHG and defined $unmeth_CHH){
     warn "Got all necessary information, editing HTML report ...\n" if ($verbose);
@@ -694,10 +722,14 @@ sub read_splitting_report{
   }
   warn "Complete\n\n";
 
+  return $doc;
+
 }
 
 
 sub read_mbias_report{
+
+  my ($mbias_report,$doc) = @_;
 
   warn "Processing M-bias report $mbias_report ...\n";
   open (MBIAS,$mbias_report) or die "Couldn't read from file $mbias_report: $!\n\n";
@@ -782,13 +814,13 @@ sub read_mbias_report{
   }
   warn "Complete\n\n";
 
-  return $state;
+  return ($state,$doc);
 
 }
 
 
 sub read_report_template{
-
+  my $doc;
   warn "Attempting to open file from: $Bin/bismark_sitrep.tpl\n\n" if ($verbose);
   open (DOC,"$Bin/bismark_sitrep.tpl") or die $!;
   while(<DOC>){
@@ -798,6 +830,7 @@ sub read_report_template{
   }
 
   close DOC or die $!;
+  return $doc;
 }
 
 
@@ -842,7 +875,7 @@ sub process_commandline{
 
                               Bismark HTML Report Module
 
-                         bismark2sitrep version: $bismark2report_version
+                         bismark2report version: $bismark2report_version
                Inspired by \@tallphil, Copyright 2010-13 Felix Krueger
                                Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
@@ -851,29 +884,6 @@ sub process_commandline{
 VERSION
     exit;
   }
-
-
-  ### no alignment report specified
-  unless ($alignment_report){
-
-    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
-    my @aln_report_files = <*E_report.txt>;
-
-    # warn "Number of alignment reports found in current directory: ",scalar @aln_report_files,"\n";
-    if (scalar @aln_report_files > 1){
-      die "Found ",scalar @aln_report_files," potential Bismark alignment reports in the current directory. Please specify a single report using the option '--alignment_report FILE' (or --help for more information)\n\n";
-    }
-    elsif (scalar @aln_report_files == 0){
-      warn "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
-      print_helpfile();
-      exit;
-    }
-    else{
-      # there is only a single Bismark alignment report in the directory, using this one
-      $alignment_report = shift @aln_report_files;
-    }
-  }
-
 
   ### OUTPUT DIR PATH
   if (defined $output_dir){
@@ -887,87 +897,114 @@ VERSION
     $output_dir = '';
   }
 
-  ### HTML OUTPUT FILE
-  unless (defined $report_output){
-    $report_output = $alignment_report;
-    $report_output =~ s/^.*\///; # deleting path information
-    $report_output =~ s/\.txt$//;
-    $report_output =~ s/$/.html/;
-  }
-  $report_output = $output_dir.$report_output;
-  warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
 
+  ## First we are looking for alignment reports, and then look whether there are any optional plots with the same base name
 
-  ### DEDUPLICATION REPORT
-  if ($dedup_report){
-    if (lc$dedup_report eq 'none'){
-      $dedup_report = ''; # user may wish to skip this step by specifying 'none'
-    }
+  if ($alignment_report){
+    ### we only process the one alignment report (and possibly the other ones as well) that was specified
+    push @alignment_reports, $alignment_report;
   }
-  else{
+  else{ ### no alignment report specified, looking in the current directory for files ending in *E_report.txt (SE or PE)
+
     ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
-    my @dedup_report_files = <*deduplication_report.txt>;
-    # warn "Number of deduplication reports found in current directory: ", scalar @dedup_report_files , "\n";
+    @alignment_reports = <*E_report.txt>;
 
-    if (scalar @dedup_report_files > 1){
-      die "Found ", scalar @dedup_report_files ," potential deduplication reports in the current directory. Please specify a single report using the option '--dedup_report FILE'\n\n";
-    }
-    elsif (scalar @dedup_report_files == 0){
-      $dedup_report = '';
+    if (scalar @alignment_reports == 0){
+      warn "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
+      print_helpfile();
+      exit;
     }
     else{
-      # there is only a single deduplication report in the current directory, using this one
-      $dedup_report = shift @dedup_report_files;
+      # there is only a single Bismark alignment report in the directory, using this one
+      warn "Found ",scalar @alignment_reports," alignment reports in current directory. Now trying to figure out whether there are corresponding optional reports\n";
     }
   }
 
-  ### METHYLATION EXTRACTOR SPLITTING REPORT
-  if ($splitting_report){
-    if (lc$splitting_report eq 'none'){
-      $splitting_report = ''; # user may wish to skip this step by specifying 'none'
-    }
-  }
-  else{
-    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
-    my @splitting_report_files = <*splitting_report.txt>;
-    # warn "Number of splitting reports found in current directory: ", scalar @splitting_report_files , "\n";
+  foreach my $aln (@alignment_reports){
 
-    if (scalar @splitting_report_files > 1){
-      die "Found ", scalar @splitting_report_files ," potential methylation extractor splitting reports in the current directory. Please specify a single report using the option '--splitting_report FILE'\n\n";
-    }
-    elsif (scalar @splitting_report_files == 0){
-      $splitting_report = '';
+    # warn "Figuring things out for:\n$aln\n";
+    $aln =~ /^(.+)_(P|S)E_report.txt$/;
+    my $basename = $1;
+    # warn "using this basename:\n$basename\n\n";
+
+    ### DEDUPLICATION REPORT
+    if ($dedup_report){
+      if (lc$dedup_report eq 'none'){
+	push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
+      }
     }
     else{
-      # there is only a single splitting report in the current directory, using this one
-      $splitting_report = shift @splitting_report_files;
-    }
-  }
+      ### looking in the current directory for a report file with the same base name
+      my @dedup_report_files = <$basename*deduplication_report.txt>;
+      #  warn "Number of deduplication reports found in current directory: ", scalar @dedup_report_files , "\n";
 
-  ### M-BIAS REPORT
-  if ($mbias_report){
-    if (lc$mbias_report eq 'none'){
-      $mbias_report = ''; # user may wish to skip this step by specifying 'none'
+      if (scalar @dedup_report_files > 1){
+	die "Found ", scalar @dedup_report_files ," potential deduplication reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--dedup_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+      }
+      elsif (scalar @dedup_report_files == 0){
+	push @dedup_reports, ''; # no corresponding deduplication report found
+      }
+      else{
+	# there is only a single deduplication report in the current directory, using this one
+	$dedup_report = shift @dedup_report_files;
+	push @dedup_reports, $dedup_report;
+	# warn "Going to use this dedup report: $dedup_report\n\n";
+      }
     }
-  }
-  else{
-    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
-    my @mbias_report_files = <*M-bias.txt>;
-    # warn "Number of M-bias reports found in current directory: ", scalar @mbias_report_files , "\n";
 
-    if (scalar @mbias_report_files > 1){
-      die "Found ", scalar @mbias_report_files ," potential M-bias reports in the current directory. Please specify a single report using the option '--mbias_report FILE'\n\n";
-    }
-    elsif (scalar @mbias_report_files == 0){
-      $mbias_report = '';
+    ### METHYLATION EXTRACTOR SPLITTING REPORT
+    if ($splitting_report){
+      if (lc$splitting_report eq 'none'){
+	push @splitting_reports, ''; # user may wish to skip this step by specifying 'none'
+      }
     }
     else{
-      # there is only a single M-bias report in the current directory, using this one
-      $mbias_report = shift @mbias_report_files;
+      ### looking in the current directory for a report file with the same basename
+      my @splitting_report_files = <$basename*splitting_report.txt>;
+      # warn "Number of splitting reports found in current directory: ", scalar @splitting_report_files , "\n";
+
+      if (scalar @splitting_report_files > 1){
+	die "Found ", scalar @splitting_report_files ," potential methylation extractor splitting reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--splitting_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+      }
+      elsif (scalar @splitting_report_files == 0){
+	push @splitting_reports, ''; # no corresponding methylation extractor report found
+      }
+      else{
+	# there is only a single splitting report in the current directory, using this one
+	$splitting_report = shift @splitting_report_files;
+	push  @splitting_reports, $splitting_report;
+      }
     }
+
+    ### M-BIAS REPORT
+    if ($mbias_report){
+      if (lc$mbias_report eq 'none'){
+	$mbias_report = ''; # user may wish to skip this step by specifying 'none'
+      }
+    }
+    else{
+      ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+      my @mbias_report_files = <$basename*M-bias.txt>;
+
+      # warn "Number of M-bias reports found in current directory: ", scalar @mbias_report_files , "\n";
+
+      if (scalar @mbias_report_files > 1){
+	die "Found ", scalar @mbias_report_files ," potential M-bias reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--mbias_report FILE'or otherwise provide filenames that are easier to figure out automatically ...\n\n";
+      }
+      elsif (scalar @mbias_report_files == 0){
+	push @mbias_reports, '';
+      }
+      else{
+	# there is only a single M-bias report in the current directory, using this one
+	$mbias_report = shift @mbias_report_files;
+	push @mbias_reports, $mbias_report;
+      }
+    }
+    $dedup_report = $splitting_report = $mbias_report = undef;
   }
 
-  return ($alignment_report,$dedup_report,$splitting_report,$mbias_report,$report_output,$verbose);
+  return ($output_dir,$verbose);
+
 }
 
 sub print_helpfile{
@@ -987,7 +1024,7 @@ sub print_helpfile{
 --dir                      Output directory. Output is written to the current directory if not specified explicitly.
 
 
---aln_report FILE          If not specified explicitly, bismark2sitrep attempts to find a single Bismarkreport file in the current
+--alignment_report FILE    If not specified explicitly, bismark2sitrep attempts to find a single Bismarkreport file in the current
                            directory (and fails if there are either none or too many). A Bismark alignment report file is
                            mandatory.
 
@@ -1007,7 +1044,7 @@ sub print_helpfile{
                            will skip this step.
 
 
-                          Script last modified: 16 August 2013
+                          Script last modified: 20 September 2013
 
 EOF
     ;
