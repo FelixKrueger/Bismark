@@ -111,7 +111,11 @@ VERSION
 
   ### no files provided
   unless (@ARGV){
-    die "You need to provide a bedGraph --count file to create an individual C methylation output. Please respecify!\n";
+    warn "You need to provide a bedGraph --count file to create an individual C methylation output. Please respecify!\n";
+    sleep(2);
+
+    print_helpfile();
+    exit;
   }
 
   my $bedGraph_infile = shift @ARGV;

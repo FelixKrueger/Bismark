@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.9.0';
+my $version = 'v0.9.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
@@ -201,8 +201,10 @@ foreach my $filename (@filenames){
 	      total_unmethylated_CpG_count => 0,
 	      sequences_count => 0,
 	     );
+
   @sorting_files = ();
   @bedfiles = ();
+
   %mbias_1 = ();
   %mbias_2 = ();
 
@@ -220,9 +222,9 @@ foreach my $filename (@filenames){
     if ($fh =~ /^[1230]$/) {
       foreach my $context (keys %{$fhs{$fh}}) {
 	close $fhs{$fh}->{$context} or die $!;
-
       }
-    } else {
+    }
+    else{
       close $fhs{$fh} or die $!;
     }
   }
@@ -230,6 +232,7 @@ foreach my $filename (@filenames){
   ### printing out all M-Bias data
   produce_mbias_plots ($filename);
 
+  delete_disused_files();
 
   if ($bedGraph){
 
@@ -315,6 +318,40 @@ foreach my $filename (@filenames){
   }
 }
 
+sub delete_disused_files{
+
+  warn "Deleting disused files ...\n\n"; sleep(1);
+
+  foreach my $file (@sorting_files){
+    open (USED,$file) or die "Failed to read from methylation extractor output file $file: $!\n";
+
+    my $used = 0;
+
+    while (<USED>){
+      next if (/^Bismark/);
+      if ($_){
+	$used = 1;
+	last;
+      }
+    }
+    close USED or die $!;
+
+    if ($used){
+      warn "$file contains data ->\tkept\n";
+    }
+    else{
+
+      my $delete = unlink $file;
+
+      if ($delete){
+	warn "$file was empty ->\tdeleted\n";
+      }
+      else{
+	warn "$file was empty, however deletion was unsuccessful: $!\n"
+      }
+    }
+  }
+}
 
 sub produce_mbias_plots{
 
@@ -4610,7 +4647,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 08 August 2013.
+This script was last modified on 07 October 2013.
 
 HOW_TO
 }

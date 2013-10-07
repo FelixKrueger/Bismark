@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.9.1 (09 Sep 2013)
+RELEASE NOTES FOR Bismark v0.9.1 (07 Oct 2013)
 ----------------------------------------------
 
 Bismark Genome Preparation
@@ -8,9 +8,17 @@ Made a couple of changes to make the genome preparation fully non-interactive. T
 path to the genome folder and to Bowtie (1/2) have to be specified up front (for Bowtie (1/2) it 
 is otherwise assumed that it is in the PATH). Furthermore, already existing bisulfite indices in
 the target folder will be overwritten and the user is no longer prompted if he agrees to this. We
-got rid of this creating a second index (Bowtie 1 as well as 2) in the same folder in non-interactive
-mode got stuck in loops asking whether it is alright to proceed or not, generating therabyte sized
-log files without ever starting to do anything useful...).
+got rid of this because creating a second index (Bowtie 1 as well as 2) in the same folder in
+non-interactive mode got stuck in loops asking whether it is alright to proceed or not, generating
+therabyte sized log files without ever starting doing anything useful...).
+
+
+Methylation extractor
+=====================
+
+The methylation extractor will now delete disused methylation context files (e.g. CTOT and CTOB files
+for a directional library). Finally got round to it after deleting thousands of files manually containing
+the header line only...
 
 
 bismark2bedgraph
@@ -19,6 +27,7 @@ bismark2bedgraph
 Dropped the option -k3,3 from the sort command to result in a dramatic speed increase while sorting.
 This option had been used previously to enable sorting by chromosome in addition to position, but 
 should no longer be needed because the files are being read in sorted by chromosome already.
+
 
 
 
