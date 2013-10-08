@@ -1,6 +1,14 @@
 RELEASE NOTES FOR Bismark v0.9.1 (07 Oct 2013)
 ----------------------------------------------
 
+Bismark
+=======
+
+The option --prefix <some.prefix> does now also work for the C->T and G->A transcribed temporary
+files to allow multiple instances of Bismark to be run on the same file in the same folder (e.g.
+using Bowtie and Bowtie 2 or some stricter and laxer parameters concurrently).
+
+
 Bismark Genome Preparation
 ==========================
 

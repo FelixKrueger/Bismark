@@ -283,6 +283,7 @@ foreach my $filename (@filenames){
 
     ### genome-wide cytosine methylation report requires bedGraph processing anyway
     if ($cytosine_report){
+
       @args = (); # resetting @args
       my $cytosine_out = $out;
       $cytosine_out =~ s/bedGraph$//;
@@ -309,9 +310,12 @@ foreach my $filename (@filenames){
 	push @args, '--split_by_chromosome';
       }
 
-      push @args, $output_dir . $bedGraph_output; # this will be the infile
+      my $coverage_output = $bedGraph_output;
+      $coverage_output =~ s/bedGraph$/bismark.cov/;
 
-      system ("$Bin/bedGraph2cytosine @args");
+      push @args, $output_dir . $coverage_output; # this will be the infile
+
+      system ("$Bin/coverage2cytosine @args");
       # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
       warn "\n\nFinished generating genome-wide cytosine report\n\n";
     }
@@ -322,8 +326,11 @@ sub delete_disused_files{
 
   warn "Deleting disused files ...\n\n"; sleep(1);
 
-  foreach my $file (@sorting_files){
-    open (USED,$file) or die "Failed to read from methylation extractor output file $file: $!\n";
+  my $index = 0;
+
+  while ($index <= $#sorting_files){
+
+    open (USED,$sorting_files[$index]) or die "Failed to read from methylation extractor output file $sorting_files[$index]: $!\n";
 
     my $used = 0;
 
@@ -337,20 +344,25 @@ sub delete_disused_files{
     close USED or die $!;
 
     if ($used){
-      warn "$file contains data ->\tkept\n";
+      warn "$sorting_files[$index] contains data ->\tkept\n";
+      ++$index;
     }
     else{
 
-      my $delete = unlink $file;
+      my $delete = unlink $sorting_files[$index];
 
       if ($delete){
-	warn "$file was empty ->\tdeleted\n";
+	warn "$sorting_files[$index] was empty ->\tdeleted\n";
       }
       else{
-	warn "$file was empty, however deletion was unsuccessful: $!\n"
+	warn "$sorting_files[$index] was empty, however deletion was unsuccessful: $!\n"
       }
+
+      ### we also need to remove the element from @sorting_files
+      splice @sorting_files, $index, 1;
     }
   }
+
 }
 
 sub produce_mbias_plots{
@@ -4647,7 +4659,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 07 October 2013.
+This script was last modified on 08 October 2013.
 
 HOW_TO
 }

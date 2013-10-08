@@ -22,17 +22,17 @@ use Carp;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my %chromosomes;
-my $bedGraph2cytosine_version = 'v0.9.0';
+my $coverage2cytosine_version = 'v0.9.1';
 
 
-my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$bedGraph_infile,$cytosine_out) = process_commandline();
+my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out) = process_commandline();
 
 warn "Summary of parameters for genome-wide cytosine report:\n";
 warn '='x78,"\n";
-warn "bedGraph infile:\t\t$bedGraph_infile\n";
-warn "output directory:\t\t>$output_dir<\n";
-warn "parent directory:\t\t>$parent_dir<\n";
-warn "genome directory:\t\t>$genome_folder<\n";
+warn "Coverage infile:\t\t$coverage_infile\n";
+warn "Output directory:\t\t>$output_dir<\n";
+warn "Parent directory:\t\t>$parent_dir<\n";
+warn "Genome directory:\t\t>$genome_folder<\n";
 if ($CX_context){
   warn "CX context:\t\t\tyes\n";
 }
@@ -41,22 +41,22 @@ else{
 }
 
 if ($zero){
-  warn "genome coordinates used:\t0-based\n";
+  warn "Genome coordinates used:\t0-based\n";
 }
 else{
-  warn "genome coordinates used:\t1-based (default)\n";
+  warn "Genome coordinates used:\t1-based (default)\n";
 }
 if ($split_by_chromosome){
-  warn "split by chromosome:\t\tyes\n\n\n";
+  warn "Split by chromosome:\t\tyes\n\n\n";
 }
 else{
-  warn "split by chromosome:\t\tno\n\n\n";
+  warn "Split by chromosome:\t\tno\n\n\n";
 }
 sleep (3);
 
 read_genome_into_memory();
 
-generate_genome_wide_cytosine_report($bedGraph_infile);
+generate_genome_wide_cytosine_report($coverage_infile);
 
 sub process_commandline{
   my $help;
@@ -98,9 +98,9 @@ sub process_commandline{
 
 
                       Bismark Methylation Extractor Module -
-                               bedGraph2cytosine
+                               coverage2cytosine
 
-                      Bismark Extractor Version: $bedGraph2cytosine_version
+                      Bismark Extractor Version: $coverage2cytosine_version
               Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
@@ -111,14 +111,14 @@ VERSION
 
   ### no files provided
   unless (@ARGV){
-    warn "You need to provide a bedGraph --count file to create an individual C methylation output. Please respecify!\n";
+    warn "You need to provide a Bismark coverage file (with counts methylated/unmethylated cytosines) to create an individual C methylation output. Please respecify!\n";
     sleep(2);
 
     print_helpfile();
     exit;
   }
 
-  my $bedGraph_infile = shift @ARGV;
+  my $coverage_infile = shift @ARGV;
 
   unless ($parent_dir){
     $parent_dir = getcwd();
@@ -145,6 +145,7 @@ VERSION
 
   unless ($CX_context){
     $CX_context = 0;
+    $CpG_only = 1;
   }
 
   ### GENOME folder
@@ -157,7 +158,7 @@ VERSION
     die "Please specify a genome folder to proceed (full path only)\n";
   }
 
-  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$bedGraph_infile,$cytosine_out);
+  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out);
 }
 
 
@@ -206,6 +207,7 @@ sub generate_genome_wide_cytosine_report {
       # warn "Storing all covered cytosine positions for chromosome: $chr\n";
     }
 
+    ### As of version 0.9.1 the start positions are 1-based!
     if ($chr eq $last_chr){
       $chr{$chr}->{$start}->{meth} = $meth;
       $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
@@ -217,15 +219,16 @@ sub generate_genome_wide_cytosine_report {
 	my $chromosome_out = $cytosine_out;
 	if ($chromosome_out =~ /txt$/){
 	  $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+	}
+	else{
+	  $chromosome_out =~ s/$/.chr${last_chr}.txt/;
+	}
+	open (CYT,'>',$chromosome_out) or die $!;
+	# warn "Writing output for $last_chr to $chromosome_out\n";
       }
-      else{
-	$chromosome_out =~ s/$/.chr${last_chr}.txt/;
-    }
-    open (CYT,'>',$chromosome_out) or die $!;
-    # warn "Writing output for $last_chr to $chromosome_out\n";
-  }
+
       while ( $chromosomes{$last_chr} =~ /([CG])/g){
-	
+
 	my $tri_nt = '';
 	my $context = '';
 	my $pos = pos$chromosomes{$last_chr};
@@ -233,7 +236,7 @@ sub generate_genome_wide_cytosine_report {
 	my $strand;
 	my $meth = 0;
 	my $nonmeth = 0;
-	
+
 	if ($1 eq 'C'){    # C on forward strand
 	  $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
 	  $strand = '+';
@@ -246,9 +249,9 @@ sub generate_genome_wide_cytosine_report {
 	}
 	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
 
-	if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
-	  $meth =  $chr{$last_chr}->{$pos-1}->{meth};
-	  $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
+	if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! (as of v0.9.1)
+	  $meth =  $chr{$last_chr}->{$pos}->{meth};
+	  $nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
 	}
 
 	### determining cytosine context	
@@ -300,19 +303,19 @@ sub generate_genome_wide_cytosine_report {
   # Last found chromosome
   warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 
-if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-  my $chromosome_out = $cytosine_out;
-  if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
-    $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
-}
-else{ # user specified output file name
-  $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-}
-open (CYT,'>',$chromosome_out) or die $!;
-# warn "Writing output for $last_chr to $chromosome_out\n";
-}
+  if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+    my $chromosome_out = $cytosine_out;
+    if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
+      $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+    }
+    else{ # user specified output file name
+      $chromosome_out =~ s/$/.chr${last_chr}.txt/;
+    }
+    open (CYT,'>',$chromosome_out) or die $!;
+    # warn "Writing output for $last_chr to $chromosome_out\n";
+  }
 
-  while ( $chromosomes{$last_chr} =~ /([CG])/g){
+    while ( $chromosomes{$last_chr} =~ /([CG])/g){
 
     my $tri_nt;
     my $context;
@@ -333,9 +336,9 @@ open (CYT,'>',$chromosome_out) or die $!;
       $strand = '-';
     }
 
-    if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 0-based!
-      $meth =  $chr{$last_chr}->{$pos-1}->{meth};
-      $nonmeth = $chr{$last_chr}->{$pos-1}->{nonmeth};
+    if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! as of v0.9.1
+      $meth =  $chr{$last_chr}->{$pos}->{meth};
+      $nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
     }
 
     next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
@@ -475,16 +478,18 @@ sub print_helpfile{
 
   This script generates a cytosine methylation report for a genome of interest and a sorted methylation input file produced
   by the script "bismark2bedGraph". By default, the output uses 1-based chromosome coordinates and reports CpG positions only
-  (for both strands).
+  (for both strands individually and not merged in any way).
 
-  The input file needs to have been generated with the script bismark2bedGraph while using the '--counts' option,
-  or otherwise be sorted by position and exactly in the following format:
- 
+  The input file needs to have been generated with the script bismark2bedGraph using the '--counts' option (the file is called
+  *bismark.cov) or otherwise be sorted by position and exactly in the following format:
+
   <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count unmethylated>
 
+  The coordinates of the input file are expected to be 1-based (as of version 0.9.1).
 
 
-  USAGE: bedGraph2cytosine [options] -o <output> [input]
+
+  USAGE: coverage2cytosine [options] -o <output> [input]
 
 
 -o/--output <filename>   Name of the output file, mandatory.
@@ -499,7 +504,7 @@ sub print_helpfile{
                          generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse.
                          Default: OFF (i.e. Default = CpG context only).
 
---zero_based             Uses zero-based coordinates like used in e.g. bed files instead of 1-based coordinates. Default: OFF.
+--zero_based             Uses zero-based coordinates instead of 1-based coordinates. Default: OFF.
 
 --genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
                          formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
@@ -517,7 +522,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                          Script last modified: 24 July 2013
+                          Script last modified: 08 October 2013
 
 EOF
     ;

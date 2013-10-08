@@ -98,8 +98,15 @@ else{
   die "It seems that you are trying to generate bedGraph files for files not starting with CpG_.... Please specify the option '--CX' and try again\n\n";
 }
 
-open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
+open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!\n";
 warn "Writing bedGraph to file: $bedGraph_output\n";
+print OUT "track type=bedGraph\n";
+
+my $coverage_output = $bedGraph_output;
+$coverage_output =~ s/bedGraph$/bismark.cov/;
+
+open (COVERAGE,'>',$output_dir.$coverage_output) or die "Problems writing to the coverage output detected. File path: '$output_dir'\tfile name: '$coverage_output' $!\n\n";
+warn "Also writing out a coverage file including counts methylated and unmethylated residues to file: $coverage_output\n\n";
 
 my %temp_fhs;
 my @temp_files; # writing all context files (default CpG only) to these files prior to sorting
@@ -320,12 +327,15 @@ sub generate_output{
   ($totalcount >= $coverage_threshold) ? ($meth_percentage = ($methcount/$totalcount) * 100) : ($meth_percentage = undef);
   # $meth_percentage =~ s/(\.\d\d).+$/$1/ unless $meth_percentage =~ /^Below/;
   if (defined $meth_percentage){
-    if ($counts){
-      print OUT "$last_chr\t$bed_pos\t$bed_pos\t$meth_percentage\t$methcount\t$nonmethcount\n";
-    }
-    else{
-      print OUT "$last_chr\t$bed_pos\t$bed_pos\t$meth_percentage\n";
-    }
+
+    # as of version 0.9.1 we will by default write out both a bedGraph and a more detailed coverage file
+
+    # this is the bedGraph file, the starting position is 0-based, the end position is 1-based! (clever, huh?)
+    my $one_based_pos = $bed_pos + 1;
+    print OUT "$last_chr\t$bed_pos\t$one_based_pos\t$meth_percentage\n";
+
+    # this is the coverage file. Coordinates are 1-based
+    print COVERAGE "$last_chr\t$one_based_pos\t$one_based_pos\t$meth_percentage\t$methcount\t$nonmethcount\n";
   }
   #############################################  }
 }

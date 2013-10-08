@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.9.0';
+my $bismark_version = 'v0.9.1';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -730,11 +730,12 @@ sub print_final_analysis_report_single_end{
 
   my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
   $pie_chart =~ s/gz$//;
-  $pie_chart =~ s/_C_to_T.fastq$//;
-  $pie_chart =~ s/_G_to_A.fastq$//;
-  if ($prefix){
-    $pie_chart = "$prefix.$pie_chart";
-  }
+  $pie_chart =~ s/_C_to_T\.fastq$//;
+  $pie_chart =~ s/_G_to_A\.fastq$//;
+
+  #  if ($prefix){
+  #    $pie_chart = "$prefix.$pie_chart"; # this is now being taken care of in file transformation
+  # }
   $pie_chart = "${output_dir}${pie_chart}_bismark_SE.alignment_overview.png";
 
 
@@ -1003,9 +1004,13 @@ sub print_final_analysis_report_paired_ends{
   $pie_chart =~ s/gz$//;
   $pie_chart =~ s/_C_to_T.fastq$//;
   $pie_chart =~ s/_G_to_A.fastq$//;
+  ### special format for gzipped PE Bowtie1 files
+  $pie_chart =~ s/\.CT_plus_GA\.fastq\.$//;
+  $pie_chart =~ s/\.GA_plus_CT\.fastq\.$//;
 
   if ($prefix){
-    $pie_chart = "$prefix.$pie_chart";
+    # prefix is now being prepended to the temp files already
+    # $pie_chart = "$prefix.$pie_chart";
   }
   $pie_chart = "${output_dir}${pie_chart}_bismark_PE.alignment_overview.png";
 
@@ -4419,6 +4424,13 @@ sub biTransformFastAFiles {
     $G_to_A_infile =~ s/$/_G_to_A.fa/;
   }
 
+  if ($prefix){
+    #  warn "Prefixing $prefix:\nold: $C_to_T_infile\nold: $G_to_A_infile\n\n";
+    $C_to_T_infile = "$prefix.$C_to_T_infile";
+    $G_to_A_infile = "$prefix.$G_to_A_infile";
+    #  warn "Prefixing $prefix:\nnew: $C_to_T_infile\nnew: $G_to_A_infile\n\n";
+  }
+
   warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 
   if ($gzip){
@@ -4522,8 +4534,16 @@ sub biTransformFastAFiles_paired_end {
   }
 
   my $C_to_T_infile = my $G_to_A_infile = $filename;
+
   $C_to_T_infile =~ s/$/_C_to_T.fa/;
   $G_to_A_infile =~ s/$/_G_to_A.fa/;
+
+  if ($prefix){
+    #  warn "Prefixing $prefix:\nold: $C_to_T_infile\nold: $G_to_A_infile\n\n";
+    $C_to_T_infile = "$prefix.$C_to_T_infile";
+    $G_to_A_infile = "$prefix.$G_to_A_infile";
+    #  warn "Prefixing $prefix:\nnew: $C_to_T_infile\nnew: $G_to_A_infile\n\n";
+  }
 
   if ($directional){
     if ($read_number == 1){
@@ -4666,6 +4686,13 @@ sub biTransformFastQFiles {
   }
 
   my $C_to_T_infile = my $G_to_A_infile = $filename;
+
+  if ($prefix){
+    # warn "Prefixing $prefix:\nold: $C_to_T_infile\nold: $G_to_A_infile\n\n";
+    $C_to_T_infile = "$prefix.$C_to_T_infile";
+    $G_to_A_infile = "$prefix.$G_to_A_infile";
+    # warn "Prefixing $prefix:\nnew: $C_to_T_infile\nnew: $G_to_A_infile\n\n";
+  }
 
   if ($pbat){ # PBAT-Seq
     if ($gzip){
@@ -4826,6 +4853,13 @@ sub biTransformFastQFiles_paired_end {
   else{
     $C_to_T_infile =~ s/$/_C_to_T.fastq/;
     $G_to_A_infile =~ s/$/_G_to_A.fastq/;
+  }
+
+  if ($prefix){
+    #  warn "Prefixing $prefix:\nold: $C_to_T_infile\nold: $G_to_A_infile\n\n";
+    $C_to_T_infile = "$prefix.$C_to_T_infile";
+    $G_to_A_infile = "$prefix.$G_to_A_infile";
+    #  warn "Prefixing $prefix:\nnew: $C_to_T_infile\nnew: $G_to_A_infile\n\n";
   }
 
   if ($directional){
@@ -4998,8 +5032,16 @@ sub biTransformFastQFiles_paired_end_bowtie1_gzip {
 
   my $CT_plus_GA_infile = my $GA_plus_CT_infile = $filename;
 
+  if ($prefix){
+    # warn "Prefixing $prefix:\nold: $CT_plus_GA_infile\nold: $GA_plus_CT_infile\n\n";
+    $CT_plus_GA_infile = "$prefix.$CT_plus_GA_infile";
+    $GA_plus_CT_infile = "$prefix.$GA_plus_CT_infile";
+    # warn "Prefixing $prefix:\nnew: $CT_plus_GA_infile\nnew: $GA_plus_CT_infile\n\n";
+  }
+
   $CT_plus_GA_infile =~ s/$/.CT_plus_GA.fastq.gz/;
   $GA_plus_CT_infile =~ s/$/.GA_plus_CT.fastq.gz/;
+  # warn "Prefixing $prefix:\nnew: $CT_plus_GA_infile\nnew: $GA_plus_CT_infile\n\n";
 
   warn "Writing a C -> T converted version of $file_1 and a G -> A converted version of $file_2 to $temp_dir$CT_plus_GA_infile\n";
   open (CTPLUSGA,"| gzip -c - > ${temp_dir}${CT_plus_GA_infile}") or die "Can't write to file: $!\n";
@@ -7911,7 +7953,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 08 August 2013.
+Last edited on 07 October 2013.
 
 HOW_TO
 }
