@@ -22,7 +22,7 @@ use Carp;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my %chromosomes;
-my $coverage2cytosine_version = 'v0.9.1';
+my $coverage2cytosine_version = 'v0.10.0';
 
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out) = process_commandline();
@@ -480,12 +480,12 @@ sub print_helpfile{
   by the script "bismark2bedGraph". By default, the output uses 1-based chromosome coordinates and reports CpG positions only
   (for both strands individually and not merged in any way).
 
-  The input file needs to have been generated with the script bismark2bedGraph using the '--counts' option (the file is called
-  *bismark.cov) or otherwise be sorted by position and exactly in the following format:
+  The input file needs to have been generated with the script bismark2bedGraph (the file is called *.cov) or otherwise be
+  sorted by position and exactly in the following format:
 
   <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count unmethylated>
 
-  The coordinates of the input file are expected to be 1-based (as of version 0.9.1).
+  The coordinates of the input file are expected to be 1-based (as of version 0.10.0).
 
 
 
@@ -515,14 +515,16 @@ sub print_helpfile{
 --help                   Displays this help message and exits
 
 
+
 OUTPUT FORMAT:
 
-The genome-wide cytosine methylation output file is tab-delimited in the following format:
-==========================================================================================
+The genome-wide cytosine methylation output file is tab-delimited in the following format (1-based coords:
+==========================================================================================================
+
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                          Script last modified: 08 October 2013
+                          Script last modified: 11 October 2013
 
 EOF
     ;

@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.9.1';
+my $version = 'v0.10.0';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
@@ -110,7 +110,7 @@ if ($bedGraph){
   warn '='x63,"\n";
 
   if ($counts){
-    warn "Generating additional output in bedGraph format including methylating counts (output format: <Chromosome> <Start Position> <End Position> <Methylation Percentage> <count methylated> <count non-methylated>)\n";
+    warn "Generating additional output in bedGraph and coverage format\nbedGraph format:\t<Chromosome> <Start Position> <End Position> <Methylation Percentage>\ncoverage format:\t<Chromosome> <Start Position> <End Position> <Methylation Percentage> <count methylated> <count non-methylated>\n\n";
   }
   else{
     warn "Generating additional sorted output in bedGraph format (output format: <Chromosome> <Start Position> <End Position> <Methylation Percentage>)\n";
@@ -255,9 +255,9 @@ foreach my $filename (@filenames){
     if ($no_header){
       push @args, '--no_header';
     }
-    if ($counts){
-      push @args, "--counts";
-    }
+    #   if ($counts){
+    #      push @args, "--counts";
+    #   }
 
     push @args, "--buffer_size $sort_size";
     push @args, "--cutoff $coverage_threshold";
@@ -329,8 +329,12 @@ sub delete_disused_files{
   my $index = 0;
 
   while ($index <= $#sorting_files){
-
-    open (USED,$sorting_files[$index]) or die "Failed to read from methylation extractor output file $sorting_files[$index]: $!\n";
+    if ($sorting_files[$index] =~ /gz$/){
+      open (USED,"zcat $sorting_files[$index] |") or die "Failed to read from methylation extractor output file $sorting_files[$index]: $!\n";
+    }
+    else{
+      open (USED,$sorting_files[$index]) or die "Failed to read from methylation extractor output file $sorting_files[$index]: $!\n";
+    }
 
     my $used = 0;
 
@@ -341,7 +345,6 @@ sub delete_disused_files{
 	last;
       }
     }
-    close USED or die $!;
 
     if ($used){
       warn "$sorting_files[$index] contains data ->\tkept\n";
@@ -362,7 +365,7 @@ sub delete_disused_files{
       splice @sorting_files, $index, 1;
     }
   }
-
+  warn "\n\n"; ## can't close the piped filehandles at this point because it will die (unfortunately)
 }
 
 sub produce_mbias_plots{
@@ -851,7 +854,7 @@ VERSION
   }
 
   unless ($counts){
-    $counts = 0;
+    $counts = 1; # counts will always be set
   }
 
   if ($cytosine_report){
@@ -871,7 +874,7 @@ VERSION
       $bedGraph = 1;
     }
     unless ($counts){
-      warn "Setting the option '--counts' since this is required for the genome-wide cytosine report\n";
+      # warn "Setting the option '--counts' since this is required for the genome-wide cytosine report\n";
       $counts = 1;
     }
     warn "\n";
@@ -4587,12 +4590,6 @@ bedGraph specific options:
 --remove_spaces          Replaces whitespaces in the sequence ID field with underscores to allow sorting.
 
 
---counts                 Adds two additional columns to the output file to enable further calculations:
-                             col 5: number of methylated calls
-                             col 6: number of unmethylated calls
-                         This option is required if '--cytosine_report' is specified (and will be set automatically if
-                         necessary).
-
 --CX/--CX_context        The sorted bedGraph output file contains information on every single cytosine that was covered
                          in the experiment irrespective of its sequence context. This applies to both forward and
                          reverse strands. Please be aware that this option may generate large temporary and output files
@@ -4643,11 +4640,17 @@ The bismark_methylation_extractor output is in the form:
 
 
 
-The bedGraph output (optional) looks like this (tab-delimited):
-===============================================================
+The bedGraph output (optional) looks like this (tab-delimited; 0-based start coords, 1-based end coords):
+=========================================================================================================
+
+track type=bedGraph (header line)
+
 <chromosome>  <start position>  <end position>  <methylation percentage>
 
-The bedGraph output with '--counts' specified looks like this (tab-delimited):
+
+
+The coverage output looks like this (tab-delimited, 1-based genomic coords):
+============================================================================
 
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 

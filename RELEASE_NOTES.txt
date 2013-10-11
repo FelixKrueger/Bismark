@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.9.1 (07 Oct 2013)
+RELEASE NOTES FOR Bismark v0.10.0 (11 Oct 2013)
 ----------------------------------------------
 
 Bismark
@@ -25,16 +25,38 @@ Methylation extractor
 =====================
 
 The methylation extractor will now delete disused methylation context files (e.g. CTOT and CTOB files
-for a directional library). Finally got round to it after deleting thousands of files manually containing
-the header line only...
+for a directional library). I finally got round to implementing this after having to delete manually 
+thousands of files containing the header line only...
 
 
-bismark2bedgraph
+bismark2bedGraph
 ================
 
 Dropped the option -k3,3 from the sort command to result in a dramatic speed increase while sorting.
 This option had been used previously to enable sorting by chromosome in addition to position, but 
 should no longer be needed because the files are being read in sorted by chromosome already.
+
+This module does now produce 2 output files: 
+
+     (1) A bedGraph file, which now contains a header line: 'track type=bedGraph'
+         The genomic start coords are 0-based, the end coords are 1-based.
+
+     (2) A coverage file ending in .cov. This file replaces the former 'bedGraph --counts' file and is
+         required to proceed with the subsequent step to generate a genome-wide cytosine report (the
+         module doing this has been renamed to coverage2cytosine to reflect this file name change. 
+
+
+
+coverage2cytosine
+=================
+
+Changed the name of this module from 'bedGraph2cytosine' to 'coverage2cytosine' to reflect that fact
+that this module now requires the methylation coverage file produced by the bismark2bedGraph module
+, ending in .cov (this coverage file replaces the former "bedGraph --counts" output).
+
+Previously, the cytosine report would always report every C position in any context, even though 
+the default should have reported CpG positions only. This has now been fixed.
+
 
 
 
