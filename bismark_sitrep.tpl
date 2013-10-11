@@ -696,6 +696,32 @@
 		{{end_deletion_mbias}}
  
 
+// adds commas to big numbers for better readability
+
+		$(function () {
+			$('table tbody tr td').each(function(){
+				if(isNumber($(this).text())){
+					$(this).text(addCommas($(this).text()));
+				}
+			});
+		});
+
+		function isNumber(n) {
+			return !isNaN(parseFloat(n)) && isFinite(n);
+		}
+		
+		function addCommas(nStr) {
+			nStr += '';
+			x = nStr.split('.');
+			x1 = x[0];
+			x2 = x.length > 1 ? '.' + x[1] : '';
+			var rgx = /(\d+)(\d{3})/;
+			while (rgx.test(x1)) {
+				x1 = x1.replace(rgx, '$1' + ',' + '$2');
+			}
+			return x1 + x2;
+		}
+
 	
 	</script>
 	

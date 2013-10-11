@@ -24,7 +24,7 @@ therabyte sized log files without ever starting doing anything useful...).
 Methylation extractor
 =====================
 
-The methylation extractor will now delete disused methylation context files (e.g. CTOT and CTOB files
+The methylation extractor will now delete unused methylation context files (e.g. CTOT and CTOB files
 for a directional library). I finally got round to implementing this after having to delete manually 
 thousands of files containing the header line only...
 
@@ -36,7 +36,7 @@ Dropped the option -k3,3 from the sort command to result in a dramatic speed inc
 This option had been used previously to enable sorting by chromosome in addition to position, but 
 should no longer be needed because the files are being read in sorted by chromosome already.
 
-This module does now produce 2 output files: 
+This module does now produces these two output files: 
 
      (1) A bedGraph file, which now contains a header line: 'track type=bedGraph'
          The genomic start coords are 0-based, the end coords are 1-based.
@@ -50,13 +50,30 @@ This module does now produce 2 output files:
 coverage2cytosine
 =================
 
-Changed the name of this module from 'bedGraph2cytosine' to 'coverage2cytosine' to reflect that fact
-that this module now requires the methylation coverage file produced by the bismark2bedGraph module
-, ending in .cov (this coverage file replaces the former "bedGraph --counts" output).
+Changed the name of this module from 'bedGraph2cytosine' to 'coverage2cytosine' to reflect the change	
+that this module now requires the methylation coverage file produced by the bismark2bedGraph module	
+, ending in .cov (this coverage file replaces the former "bedGraph --counts" output).	     
 
 Previously, the cytosine report would always report every C position in any context, even though 
 the default should have reported CpG positions only. This has now been fixed.
 
+
+bismark2report
+==============
+
+Changed the behavior of this module to automatically find all Bismark mapping reports in the current 
+working directory, and to try and work out whether the optional reports are present as well (i.e.
+deduplication, splitting and M-bias reports). This uses the file basename and will fail if the files
+have been renamed at any stage. Specifying file names using the individual options takes precedence over
+the automatic detection.
+
+
+
+deduplicate_bismark
+===================
+
+Renamed the rather long deduplication script to this slightly shorter one. Also added some filehandle
+closing statements that might have caused buffering issues under certain circumstances.
 
 
 
