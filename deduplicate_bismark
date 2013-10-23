@@ -25,6 +25,8 @@ my $help;
 my $representative;
 my $single;
 my $paired;
+my $global_single;
+my $global_paired;
 my $vanilla;
 my $samtools_path;
 my $bam;
@@ -32,8 +34,8 @@ my $rrbs;
 
 my $command_line = GetOptions ('help' => \$help,
 			       'representative' => \$representative,
-			       's|single' => \$single,
-			       'p|paired' => \$paired,
+			       's|single' => \$global_single,
+			       'p|paired' => \$global_paired,
 			       'vanilla' => \$vanilla,
 			       'samtools_path=s' => \$samtools_path,
 			       'bam' => \$bam,
@@ -56,14 +58,18 @@ unless (@filenames){
   exit;
 }
 
+
 ### OPTIONS
-unless ($single or $paired){
-  die "\nPlease select either -s to de-duplicate single-end or -p for paired-end Bismark files (--help for more info)\n\n";
+unless ($global_single or $global_paired){
+  if ($vanilla){
+    die "Please specify either -s (single-end) or -p (paired-end) for deduplication. Reading this information from the \@PG header line only works for SAM/BAM files\n\n";
+  }
+  warn "\nNeither -s (single-end) nor -p (paired-end) selected for deduplication. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
 }
 
-if ($paired){
-  if ($single){
-    die "Please select either -s for single end files or -p for paired end files, but not both at the same time!\n\n";
+if ($global_paired){
+  if ($global_single){
+    die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
   }
   if ($vanilla){
 
@@ -150,6 +156,55 @@ else{ # default; random (=first) alignment
 }
 
 foreach my $file (@filenames){
+
+  if ($global_single){
+    $paired = 0;
+    $single = 1;
+  }
+  elsif($global_paired){
+    $paired = 1;
+    $single = 0;
+  }
+
+  unless($global_single or $global_paired){
+
+    warn "Trying to determine the type of mapping from the SAM header line\n"; sleep(1);
+
+    ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
+    if ($file =~ /\.gz$/){
+      open (DETERMINE,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+    }
+    elsif ($file =~ /\.bam$/){
+      open (DETERMINE,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+      open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
+    }
+    while (<DETERMINE>){
+      last unless (/^\@/);
+      if ($_ =~ /^\@PG/){
+	# warn "found the \@PG line:\n";
+	# warn "$_";
+	
+	if ($_ =~ /-1/ and $_ =~ /-2/){
+	  warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
+	  $paired = 1;
+	  $single = 0;
+	}
+	else{
+	  warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
+	  $paired = 0;
+	  $single = 1;
+	}
+      }
+    }
+    close DETERMINE or warn $!;
+  }
+
+  ### OPTIONS
+  unless ($single or $paired){
+    die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
+  }
 
   ### writing to a report file
   my $report = $file;
@@ -798,7 +853,7 @@ sub print_helpfile{
   print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
   print '='x111,"\n\n";
 
-  print "This script was last modified on Sept 27, 2013\n\n";
+  print "This script was last modified on Oct 23, 2013\n\n";
 }
 
 

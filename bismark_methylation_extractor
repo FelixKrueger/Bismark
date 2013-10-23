@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.10.0';
+my $version = 'v0.10.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
 
 
@@ -681,7 +681,7 @@ sub process_commandline{
 				 'report'               => \$report,
 				 'version'              => \$extractor_version,
 				 'no_overlap'           => \$no_overlap,
-				 'merge_non_CpG'        => \$merge_non_CpG, 
+				 'merge_non_CpG'        => \$merge_non_CpG,
 				 'vanilla'              => \$vanilla,
 				 'o|output=s'           => \$output_dir,
 				 'no_header'            => \$no_header,
@@ -796,8 +796,52 @@ VERSION
     $single_end = 0;   ### PAIRED-END ALIGNMENTS
   }
   else{
-    die "Please specify whether the supplied file(s) are in Bismark single-end or paired-end format\n\n";
+
+    ### we will try to determine whether the input file was a single-end or paired-end sequencing run from the SAM header
+
+    if ($vanilla){
+      die "Please specify whether the supplied file(s) are in Bismark single-end or paired-end format with '-s' or '-p'\n\n";
+    }
+    else{ # SAM/BAM format
+
+      my $file = $filenames[0];
+      warn "Trying to determine the type of mapping from the SAM header line of file $file\n"; sleep(1);
+	
+      ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
+      if ($file =~ /\.gz$/){
+	open (DETERMINE,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+      }
+      elsif ($file =~ /\.bam$/){
+	open (DETERMINE,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+      }
+      else{
+	open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
+      }
+
+      while (<DETERMINE>){
+	last unless (/^\@/);
+	if ($_ =~ /^\@PG/){
+	  # warn "found the \@PG line:\n";
+	  # warn "$_";
+	
+	  if ($_ =~ /-1/ and $_ =~ /-2/){
+	    warn "Treating file(s) as paired-end data (as extracted from \@PG line)\n\n"; sleep(1);
+	    $paired_end = 1;
+	    $single_end = 0;
+	  }
+	  else{
+	    warn "Treating file(s) as single-end data (as extracted from \@PG line)\n\n"; sleep(1);
+	    $paired_end = 0;
+	    $single_end = 1;
+	  }
+	}
+      }
+
+      close DETERMINE or warn $!;
+	
+    }
   }
+
 
   ### NO OVERLAP
   if ($no_overlap){
@@ -4662,7 +4706,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 08 October 2013.
+This script was last modified on 23 October 2013.
 
 HOW_TO
 }

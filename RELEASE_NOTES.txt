@@ -1,3 +1,29 @@
+RELEASE NOTES FOR Bismark v0.10.1 (23 Oct 2013)
+-----------------------------------------------
+
+Methylation extractor
+=====================
+
+The methylation extractor does now detect automatically whether Bismark alignment file(s) were run
+in single-end or paired-end mode (this detection only happens once for the first file to be analysed
+and will then be used for all files should there be more than one arguments in the same command). 
+The automatic detection can be overridden by manually specifying -s or -p, and this option is only
+available for SAM/BAM files.
+
+
+deduplicate_bismark
+===================
+
+The deduplication script does now detect automatically whether a Bismark alignment file was run
+in single-end or paired-end mode (this happens separately for every file analysed). The automatic
+detection can be overridden by manually specifying -s or -p, and this option is only available
+for SAM/BAM files.
+
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.10.0 (11 Oct 2013)
 ----------------------------------------------
 

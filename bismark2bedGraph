@@ -55,12 +55,6 @@ else{
 }
 warn "Sort buffer size:\t\t$sort_size\n";
 warn "Coverage threshold:\t\t$coverage_threshold\n";
-if ($counts){
-  warn "Counts requested:\t\tyes\n\n\n";
-}
-else{
-  warn "Counts requested:\t\tno\n\n\n";
-}
 
 
 warn  "="x64,"\n";
@@ -103,7 +97,9 @@ warn "Writing bedGraph to file: $bedGraph_output\n";
 print OUT "track type=bedGraph\n";
 
 my $coverage_output = $bedGraph_output;
-$coverage_output =~ s/bedGraph$/bismark.cov/;
+unless ($coverage_output =~ s/bedGraph$/bismark.cov/){
+  $coverage_output =~ s/$/bismark.cov/;
+}
 
 open (COVERAGE,'>',$output_dir.$coverage_output) or die "Problems writing to the coverage output detected. File path: '$output_dir'\tfile name: '$coverage_output' $!\n\n";
 warn "Also writing out a coverage file including counts methylated and unmethylated residues to file: $coverage_output\n\n";
@@ -189,7 +185,6 @@ foreach my $infile (@bedfiles) {
 }
 warn "\n";
 
-# @temp_files = <*.methXtractor.temp>; # no longer using all temp files in the output folder as there might be old ones as well ...
 
 warn "Collecting temporary chromosome file information...\n";
 sleep (1);
@@ -212,7 +207,7 @@ foreach my $in (@temp_files) {
   open my $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!";
 
   ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files should are being sorted according to chromosomes anyway,
-  ### we may lose the -k3,3 option. It has been reported that this will result in a dramatic speed increase
+  ### we may drop the -k3,3 option. It has been reported that this will result in a dramatic speed increase
   # open my $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
 
   # warn "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
@@ -454,7 +449,7 @@ VERSION
   }
 
   unless ($counts){
-    $counts = 0;
+    $counts = 1;
   }
 
   return ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts);
