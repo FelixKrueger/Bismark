@@ -21,13 +21,13 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.10.0';
+my $bismark2bedGraph_version = 'v0.10.1';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
 my @sorting_files;
 
-my ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts) = process_commandline();
+my ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion) = process_commandline();
 
 # warn "Using these input files: @sorting_files\n";
 
@@ -98,7 +98,7 @@ print OUT "track type=bedGraph\n";
 
 my $coverage_output = $bedGraph_output;
 unless ($coverage_output =~ s/bedGraph$/bismark.cov/){
-  $coverage_output =~ s/$/bismark.cov/;
+  $coverage_output =~ s/$/.bismark.cov/;
 }
 
 open (COVERAGE,'>',$output_dir.$coverage_output) or die "Problems writing to the coverage output detected. File path: '$output_dir'\tfile name: '$coverage_output' $!\n\n";
@@ -111,6 +111,19 @@ my @temp_files; # writing all context files (default CpG only) to these files pr
 unless ($output_dir eq ''){ # default
   chdir $output_dir or die "Failed to change directory to $output_dir\n";
   warn "Changed directory to $output_dir\n";
+}
+
+if ($gazillion){
+  if (scalar @bedfiles == 1){
+    warn "The genome of interest was specified to contain gazillions of chromosomes or scaffolds. Sorting everything in memory instead of writing out individual chromosome files ...\n";
+  }
+  else{
+    warn "The genome of interest was specified to contain gazillions of chromosomes or scaffolds. Merging all input files and sorting everything in memory instead of writing out individual chromosome files...\n";
+    my $merge = "$bedGraph_output.methylation_calls.merged";
+    open (MERGE,'>',$merge) or die "Failed to write to temporary merged file $merge: $!\n";
+    warn "Writing all merged methylation calls to temp file $merge\n\n"; sleep(2);
+    push @temp_files, $merge;
+  }
 }
 
 foreach my $infile (@bedfiles) {
@@ -149,7 +162,7 @@ foreach my $infile (@bedfiles) {
     $infile = $removed_spaces_outfile;
   }
 
-  warn "Now writing methylation information for file $infile to individual files for each chromosome\n";
+  # opening infile
   if ($infile =~ /gz$/){
     open (IN,"zcat $infile |") or die $!;
   }
@@ -157,58 +170,103 @@ foreach my $infile (@bedfiles) {
     open (IN,$infile) or die $!;
   }
 
-  ## always ignoring the version header
-  unless ($no_header){
-    $_ = <IN>;		### Bismark version header
+  ### People these days seem to be aligning their data to newly assembled genomes more and more, which sometimes conist of up to half a million scaffolds instead of ~23 chromosomes. This
+  ### does normally clash with the operating system's limit of files that can be open for writing at the same time, and it is difficult and probably not advisable to increase this
+  ### limit (some even say there is a reason for the OS doing so...).
+  ### To still allow then generation of bedGraph files we will in these cases sort everything using the Linux sort command instead, which will sort by chromosome and position (the
+  ### chromosome sorting is not carried out for chromosome sorted files which makes the sort MUCH faster).
+
+  if ($gazillion){
+    # using all infiles instead of sorting
+    if (scalar @bedfiles == 1){
+      push @temp_files, $infile;
+    }
+    else{
+      ## always ignoring the version header
+      unless ($no_header){
+	$_ = <IN>;		### Bismark version header
+      }
+
+      while (<IN>) {
+	if ($_ =~ /^Bismark /){
+	  warn "Found Bismark version information. Skipping this line (should still work fine) but consider losing '--no_header' next time...\n";
+	  next;
+	}
+	print MERGE;
+      }
+      warn "Finished writing methylation calls from $infile to merged temp file\n";
+    }
   }
+  else{
+    warn "Now writing methylation information for file $infile to individual files for each chromosome\n";
+
+    ## always ignoring the version header
+    unless ($no_header){
+      $_ = <IN>;		### Bismark version header
+    }
 	
-  while (<IN>) {
-    if ($_ =~ /^Bismark /){
-      warn "Found Bismark version information. Skipping this line (should still work fine) but consider losing '--no_header' next time...\n";
-      next;
+    while (<IN>) {
+      if ($_ =~ /^Bismark /){
+	warn "Found Bismark version information. Skipping this line (should still work fine) but consider losing '--no_header' next time...\n";
+	next;
+      }
+
+      chomp;
+
+      my ($chr) = (split (/\t/))[2];
+      # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
+      $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
+      # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
+      unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
+	open ($temp_fhs{$chr},'>',$infile.'.chr'.$chr.'.methXtractor.temp') or die "Failed to open filehandle: $!";
+	push @temp_files, $infile.'.chr'.$chr.'.methXtractor.temp'; # storing temp files as we open them instead
+      }
+      print {$temp_fhs{$chr}} "$_\n";
     }
 
-    chomp;
-
-    my ($chr) = (split (/\t/))[2];
-    # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
-    $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
-    # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
-    unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
-      open ($temp_fhs{$chr},'>',$infile.'.chr'.$chr.'.methXtractor.temp') or die "Failed to open filehandle: $!";
-      push @temp_files, $infile.'.chr'.$chr.'.methXtractor.temp'; # storing temp files as we open them instead
-    }
-    print {$temp_fhs{$chr}} "$_\n";
+    warn "Finished writing out individual chromosome files for $infile\n";
   }
 
-  warn "Finished writing out individual chromosome files for $infile\n";
+  unless ($gazillion){
+    warn "\n";
+    warn "Collecting temporary chromosome file information...\n";
+    sleep (1);
+    warn "processing the following input file(s):\n";
+    warn join ("\n",@temp_files),"\n\n";
+    sleep (1);
+  }
 }
-warn "\n";
 
-
-warn "Collecting temporary chromosome file information...\n";
-sleep (1);
-warn "processing the following input file(s):\n";
-warn join ("\n",@temp_files),"\n\n";
-sleep (1);
+if ($gazillion){
+  if (scalar @bedfiles > 1){
+    close (MERGE) or die "Failed to close filehandle MERGE: $!\n";
+  }
+}
 
 foreach my $in (@temp_files) {
+
   if ($sort_size){
-    warn "Sorting input file $in by positions (using -S of '$sort_size')\n";
+    warn "Sorting input file $in by positions (using -S of $sort_size)\n";
   }
   else{
     warn "Sorting input file $in by positions (using default memory settings)\n";
   }
+
   my $sort_dir = $output_dir;
   if ($sort_dir eq ''){
     $sort_dir = './';
   }
 
-  open my $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!";
+  my $ifh;
 
-  ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files should are being sorted according to chromosomes anyway,
-  ### we may drop the -k3,3 option. It has been reported that this will result in a dramatic speed increase
-  # open my $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+  if ($gazillion){
+    open $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!";
+  }
+  else{
+    ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files should are being sorted according to chromosomes anyway,
+    ### we may drop the -k3,3 option. It has been reported that this will result in a dramatic speed increase
+    open $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!";
+  }
 
   # warn "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n";
 
@@ -259,17 +317,23 @@ foreach my $in (@temp_files) {
 	
   @methylcalls = qw (0 0 0); # resetting @methylcalls
 
-  ### deleting temporary files
-  my $delete = unlink $in;
-  if ($delete) {
-    warn "Successfully deleted the temporary input file $in\n\n";
+  ### deleting temporary files (only needed if --gazillion hasn't been specified
+  if ($gazillion and scalar @bedfiles == 1){
+    # if there was only 1 file to sort this will be the input file, which obviously shouldn't be removed
   }
-  else {
-    warn "The temporary inputfile $in could not be deleted $!\n\n";
+  else{
+    my $delete = unlink $in;
+    if ($delete) {
+      warn "Successfully deleted the temporary input file $in\n\n";
+    }
+    else {
+      warn "The temporary inputfile $in could not be deleted $!\n\n";
+    }
   }
 }
 
 close OUT or die $!;
+close COVERAGE or die $!;
 exit 1;
 
 
@@ -346,6 +410,7 @@ sub process_commandline{
   my $CX_context;
   my $sort_size;
   my $version;
+  my $gazillion;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'dir=s' => \$output_dir,
@@ -357,6 +422,7 @@ sub process_commandline{
 				 "CX|CX_context" => \$CX_context,
 				 "buffer_size=s" => \$sort_size,
 				 'version' => \$version,
+				 'gazillion' => \$gazillion,
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -452,7 +518,7 @@ VERSION
     $counts = 1;
   }
 
-  return ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts);
+  return ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion);
 }
 
 
@@ -514,7 +580,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords):
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 11 October 2013
+                          Script last modified: 24 October 2013
 
 EOF
     ;

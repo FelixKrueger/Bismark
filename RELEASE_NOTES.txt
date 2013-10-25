@@ -20,6 +20,22 @@ detection can be overridden by manually specifying -s or -p, and this option is 
 for SAM/BAM files.
 
 
+bismark2bedGraph
+================
+
+When run in stand-alone mode, the coverage file will replace 'bedGraph' as the file ending with 
+'bismark.cov'. If the output filename is anything other than 'bedGraph', '.bismark.cov' will be
+appended to the bedGraph filename.
+
+When run in stand-alone mode, '--counts' will be enabled by default for the coverage output.
+
+
+bismark2report
+================
+
+Specifying a single file for each of the optional reports does now will now work as intended, instead
+of being skipped.
+
 
 
 

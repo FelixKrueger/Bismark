@@ -506,9 +506,6 @@ sub print_helpfile{
 
 --zero_based             Uses zero-based coordinates instead of 1-based coordinates. Default: OFF.
 
---genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
-                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
-
 --split_by_chromosome    Writes the output into individual files for each chromosome instead of a single output file. Files
                          will be named to include the input filename and the chromosome number.
 

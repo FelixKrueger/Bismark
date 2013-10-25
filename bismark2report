@@ -20,7 +20,7 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.10.0';
+my $bismark2report_version = 'v0.10.1';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports);
 
 my ($output_dir,$verbose) = process_commandline();
@@ -929,8 +929,12 @@ VERSION
 
     ### DEDUPLICATION REPORT
     if ($dedup_report){
+      # warn "User specifified dedup report: $dedup_report\n";sleep(3);
       if (lc$dedup_report eq 'none'){
 	push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
+      }
+      else{
+	push @dedup_reports, $dedup_report;
       }
     }
     else{
@@ -957,6 +961,9 @@ VERSION
       if (lc$splitting_report eq 'none'){
 	push @splitting_reports, ''; # user may wish to skip this step by specifying 'none'
       }
+      else{
+	push @splitting_reports, $splitting_report;
+      }
     }
     else{
       ### looking in the current directory for a report file with the same basename
@@ -980,6 +987,10 @@ VERSION
     if ($mbias_report){
       if (lc$mbias_report eq 'none'){
 	$mbias_report = ''; # user may wish to skip this step by specifying 'none'
+   	push @mbias_reports, $mbias_report;
+      }
+      else{
+	push @mbias_reports, $mbias_report;
       }
     }
     else{
