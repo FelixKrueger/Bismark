@@ -1109,7 +1109,7 @@ sub process_single_end_fastA_file_for_methylation_call{
     }
 
     $counting{sequences_count}++;
-    if ($counting{sequences_count}%100000==0) {
+    if ($counting{sequences_count}%1000000==0) {
       warn "Processed $counting{sequences_count} sequences so far\n";
     }
     chomp $sequence;
@@ -1271,8 +1271,8 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     }
 
     $counting{sequences_count}++;
-    if ($counting{sequences_count}%100000==0) {
-      warn "Processed $counting{sequences_count} sequences so far\n";
+    if ($counting{sequences_count}%1000000==0) {
+      warn "Processed $counting{sequences_count} sequence pairs so far\n";
     }
     my $orig_identifier_1 = $identifier_1;
     my $orig_identifier_2 = $identifier_2;
@@ -1368,8 +1368,8 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     }
 
     $counting{sequences_count}++;
-    if ($counting{sequences_count}%100000==0) {
-      warn "Processed $counting{sequences_count} sequences so far\n";
+    if ($counting{sequences_count}%1000000==0) {
+      warn "Processed $counting{sequences_count} sequence pairs so far\n";
     }
 
     my $orig_identifier_1 = $identifier_1;

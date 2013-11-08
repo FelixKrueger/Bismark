@@ -23,7 +23,7 @@ use lib "$Bin/../lib";
 my $bismark2report_version = 'v0.10.1';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports);
 
-my ($output_dir,$verbose) = process_commandline();
+my ($output_dir,$verbose,$manual_output_file) = process_commandline();
 
 # print join (",",@alignment_reports)."\n";
 # print join (",",@dedup_reports)."\n";
@@ -42,6 +42,12 @@ while (@alignment_reports){
   $report_output =~ s/^.*\///; # deleting optional path information
   $report_output =~ s/\.txt$//;
   $report_output =~ s/$/.html/;
+
+  # if -o output_file was specified we are going to use that name preferentially. This may only happen if there is a single report in the folder, or if a single report has been specified manually
+  if ($manual_output_file){
+    warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
+    $report_output = $manual_output_file;
+  }
 
   $report_output = $output_dir.$report_output;
   warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
@@ -77,7 +83,7 @@ while (@alignment_reports){
   warn "="x110,"\n\n\n";
   $verbose and sleep(3);
 
-  # creating  timestamp
+  # creating timestamp
   $doc = getLoggingTime($doc);
 
   $doc = read_alignment_report($alignment_report,$doc); # mandatory
@@ -838,7 +844,7 @@ sub read_report_template{
 sub process_commandline{
   my $help;
   my $output_dir;
-  my $report_output;
+  my $manual_output_file;
   my $alignment_report;
   my $dedup_report;
   my $splitting_report;
@@ -849,7 +855,7 @@ sub process_commandline{
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 'dir=s' => \$output_dir,
-				 'o|output=s' => \$report_output,
+				 'o|output=s' => \$manual_output_file,
 				 'alignment_report=s' => \$alignment_report,
 				 'dedup_report=s' => \$dedup_report,
 				 'splitting_report=s' => \$splitting_report,
@@ -906,7 +912,7 @@ VERSION
   }
   else{ ### no alignment report specified, looking in the current directory for files ending in *E_report.txt (SE or PE)
 
-    ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+    ### looking in the current directory for report files. Less than 1 report file is not allowed
     @alignment_reports = <*E_report.txt>;
 
     if (scalar @alignment_reports == 0){
@@ -915,8 +921,15 @@ VERSION
       exit;
     }
     else{
-      # there is only a single Bismark alignment report in the directory, using this one
+      # there are Bismark alignment report(s) in the directory
       warn "Found ",scalar @alignment_reports," alignment reports in current directory. Now trying to figure out whether there are corresponding optional reports\n";
+    }
+  }
+
+  ### Ensuring that there isn't more than 1 file in @alignment_reports if someone manually specified an output file.
+  if (scalar @alignment_reports > 1){
+    if (defined $manual_output_file){
+      die "You cannot run bismark2report on more than 1 file while specifying a single output file. Either lose the option -o to derive the output filenames automatically, or specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
     }
   }
 
@@ -1014,7 +1027,7 @@ VERSION
     $dedup_report = $splitting_report = $mbias_report = undef;
   }
 
-  return ($output_dir,$verbose);
+  return ($output_dir,$verbose,$manual_output_file);
 
 }
 
@@ -1024,13 +1037,18 @@ sub print_helpfile{
   SYNOPSIS:
 
   This script uses a Bismark alignment report to generate a graphical HTML report page. Optionally, further reports of
-  the Bismark suite such as deduplication, methylation extractor splitting or M-bias reports can be specified as well.
+  the Bismark suite such as deduplication, methylation extractor splitting or M-bias reports can be specified as well. If several
+  Bismark reports are found in the same folder, a separate report will be generated for each of these, whereby the output filename
+  will be derived from the Bismark alignment report file. Bismark2report attempts to find optional reports automatically based
+  on the file basename.
+
 
   USAGE: bismark2report [options]
 
 
--o/--output <filename>     Name of the output file (optional). If not specified, the output file name will be derived
-                           from the Bismark alignment report file.
+-o/--output <filename>     Name of the output file (optional). If not specified explicitly, the output filename will be derived
+                           from the Bismark alignment report file. Specifying an output filename only works if the HTML report is
+                           to be generated for a single Bismark alignment report (and potentially additional reports).
 
 --dir                      Output directory. Output is written to the current directory if not specified explicitly.
 
@@ -1056,7 +1074,7 @@ sub print_helpfile{
                            entirely.
 
 
-                           Script last modified: 11 October 2013
+                           Script last modified: 08 November 2013
 
 EOF
     ;

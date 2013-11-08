@@ -226,15 +226,15 @@ foreach my $infile (@bedfiles) {
 
     warn "Finished writing out individual chromosome files for $infile\n";
   }
+}
 
-  unless ($gazillion){
-    warn "\n";
-    warn "Collecting temporary chromosome file information...\n";
-    sleep (1);
-    warn "processing the following input file(s):\n";
-    warn join ("\n",@temp_files),"\n\n";
-    sleep (1);
-  }
+unless ($gazillion){
+  warn "\n";
+  warn "Collecting temporary chromosome file information...\n";
+  sleep (1);
+  warn "processing the following input file(s):\n";
+  warn join ("\n",@temp_files),"\n\n";
+  sleep (1);
 }
 
 if ($gazillion){
@@ -422,7 +422,7 @@ sub process_commandline{
 				 "CX|CX_context" => \$CX_context,
 				 "buffer_size=s" => \$sort_size,
 				 'version' => \$version,
-				 'gazillion' => \$gazillion,
+				 'gazillion|scaffolds' => \$gazillion,
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -563,6 +563,19 @@ contexts are selected ('--CX_context'), all input files will be used regardless 
                            (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line.
                            Defaults to 2G.
 
+--scaffolds/--gazillion    Users working with unfinished genomes sporting tens or even hundreds of thousands of
+                           scaffolds/contigs/chromosomes frequently encountered errors with pre-sorting reads to 
+                           individual chromosome files. These errors were caused by the operating system's limit
+                           of the number of filehandle that can be written to at any one time (typically 1024; to
+                           find out this limit on Linux, type: ulimit -a).
+                           To bypass the limitation of open filehandles, the option --scaffolds does not pre-sort
+                           methylation calls into individual chromosome files. Instead, all input files are
+                           temporarily merged into a single file (unless there is only a single file), and this
+                           file will then be sorted by both chromosome AND position using the Unix sort command.
+                           Please be aware that this option might take a looooong time to complete, depending on 
+                           the size of the input files, and the memory you allocate to this process (see --buffer_size).
+                           Nevertheless, it seems to be working.
+
 
 
 The bedGraph output looks like this (tab-delimited; 0-based start coords, 1-based end coords):
@@ -580,7 +593,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords):
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 24 October 2013
+                          Script last modified: 25 October 2013
 
 EOF
     ;

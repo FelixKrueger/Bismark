@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.10.1 (23 Oct 2013)
+RELEASE NOTES FOR Bismark v0.10.1 (09 Nov 2013)
 -----------------------------------------------
 
 Methylation extractor
@@ -29,13 +29,34 @@ appended to the bedGraph filename.
 
 When run in stand-alone mode, '--counts' will be enabled by default for the coverage output.
 
+Added a new option --scaffolds/--gazillion for users working with unfinished genomes sporting tens or
+even hundreds of thousands of scaffolds/contigs/chromosomes. Such a large number of reference sequences
+frequently resulted in errors with pre-sorting reads to individual chromosome files because of the operating
+system's limitation of the number of filehandles that can be written to at any one time (typically this 
+limit is anything between 128 and 1024 filehandles; to find out this limit on Linux, type: ulimit -a).
+      To bypass the limitation of open filehandles, the option --scaffolds does not pre-sort methylation
+calls into individual chromosome files. Instead, all input files are temporarily merged into a single file
+(unless there is only a single file), and this file will then be sorted by both chromosome AND position
+using the Unix sort command.
+       Please be aware that this option might take a looooong time to complete, depending on the size of
+the input files, and the memory you allocate to this process (see --buffer_size). Nevertheless, it seems
+to be working (even with the option --CX specified).
+
+
+
 
 bismark2report
-================
+==============
 
 Specifying a single file for each of the optional reports does now will now work as intended, instead
 of being skipped.
 
+
+coverage2cytosine
+=================
+
+Added some counting and statements to indicate when the run finished successfully (it proved to be
+difficult to follow the report process for a genome with nearly half a million scaffolds...)
 
 
 

@@ -31,7 +31,7 @@ my $parent_dir = getcwd();
 my %fhs;
 
 my $version = 'v0.10.1';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only) = process_commandline();
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -232,7 +232,7 @@ foreach my $filename (@filenames){
   ### printing out all M-Bias data
   produce_mbias_plots ($filename);
 
-  delete_disused_files();
+  delete_unused_files();
 
   if ($bedGraph){
 
@@ -254,6 +254,9 @@ foreach my $filename (@filenames){
     }
     if ($no_header){
       push @args, '--no_header';
+    }
+    if ($gazillion){
+      push @args, '--gazillion';
     }
     #   if ($counts){
     #      push @args, "--counts";
@@ -322,9 +325,9 @@ foreach my $filename (@filenames){
   }
 }
 
-sub delete_disused_files{
+sub delete_unused_files{
 
-  warn "Deleting disused files ...\n\n"; sleep(1);
+  warn "Deleting unused files ...\n\n"; sleep(1);
 
   my $index = 0;
 
@@ -670,6 +673,7 @@ sub process_commandline{
   my $samtools_path;
   my $gzip;
   my $mbias_only;
+  my $gazillion;
 
   my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -698,6 +702,7 @@ sub process_commandline{
 				 'samtools_path=s'      => \$samtools_path,
 				 "gzip"                 => \$gzip,
 				 "mbias_only"           => \$mbias_only,			
+				 "gazillion|scaffolds"  => \$gazillion,
 	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -960,7 +965,7 @@ VERSION
     $samtools_path = '';
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only);
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion);
 }
 
 
@@ -4534,6 +4539,7 @@ USAGE: methylation_extractor [options] <filenames>
 
 
 ARGUMENTS:
+==========
 
 <filenames>              A space-separated list of Bismark result files in SAM format from
                          which methylation information is extracted for every cytosine in
@@ -4614,6 +4620,7 @@ OPTIONS:
 
 
 bedGraph specific options:
+==========================
 
 --bedGraph               After finishing the methylation extraction, the methylation output is written into a
                          sorted bedGraph file that reports the position of a given cytosine and its methylation 
@@ -4646,8 +4653,22 @@ bedGraph specific options:
                          (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line.
                          Defaults to 2G.
 
+--scaffolds/--gazillion  Users working with unfinished genomes sporting tens or even hundreds of thousands of
+                         scaffolds/contigs/chromosomes frequently encountered errors with pre-sorting reads to
+                         individual chromosome files. These errors were caused by the operating system's limit
+                         of the number of filehandle that can be written to at any one time (typically 1024; to
+                         find out this limit on Linux, type: ulimit -a).
+                         To bypass the limitation of open filehandles, the option --scaffolds does not pre-sort
+                         methylation calls into individual chromosome files. Instead, all input files are
+                         temporarily merged into a single file (unless there is only a single file), and this
+                         file will then be sorted by both chromosome AND position using the Unix sort command.
+                         Please be aware that this option might take a looooong time to complete, depending on
+                         the size of the input files, and the memory you allocate to this process (see --buffer_size).
+                         Nevertheless, it seems to be working.
+
 
 Genome-wide cytosine methylation report specific options:
+=========================================================
 
 --cytosine_report        After the conversion to bedGraph has completed, the option '--cytosine_report' produces a
                          genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based
