@@ -740,18 +740,6 @@ VERSION
 
   warn "\n *** Bismark methylation extractor version $version ***\n\n";
 
-  ### IGNORING <INT> bases at the start of the read when processing the methylation call string
-  unless ($ignore){
-    $ignore = 0;
-  }
-
-  if (defined $ignore_r2){
-    die "You can only specify --ignore_r2 for paired-end result files\n" unless ($paired_end);
-  }
-  else{
-    $ignore_r2 = 0;
-  }
-
   ### M-BIAS ONLY
   if ($mbias_only){
     if ($bedGraph){
@@ -845,6 +833,18 @@ VERSION
       close DETERMINE or warn $!;
 	
     }
+  }
+
+  ### IGNORING <INT> bases at the start of the read when processing the methylation call string
+  unless ($ignore){
+    $ignore = 0;
+  }
+
+  if (defined $ignore_r2){
+    die "You can only specify --ignore_r2 for paired-end result files\n" unless ($paired_end);
+  }
+  else{
+    $ignore_r2 = 0;
   }
 
 
