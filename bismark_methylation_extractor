@@ -31,7 +31,7 @@ my $parent_dir = getcwd();
 my %fhs;
 
 my $version = 'v0.10.1';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion) = process_commandline();
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -130,7 +130,10 @@ if ($bedGraph){
     warn "White spaces in read ID names will be removed prior to sorting\n";
   }
 
-  if (defined $sort_size){
+  if ($ample_mem){
+    warn "Sorting chromosomal postions for the bedGraph step using arrays instead of using UNIX sort\n";
+  }
+  elsif (defined $sort_size){
     warn "The bedGraph UNIX sort command will use the following memory setting:\t'$sort_size'. Temporary directory used for sorting is the output directory\n";
   }
   else{
@@ -258,6 +261,11 @@ foreach my $filename (@filenames){
     if ($gazillion){
       push @args, '--gazillion';
     }
+    if ($ample_mem){
+      push @args, '--ample_memory';
+    }
+
+
     #   if ($counts){
     #      push @args, "--counts";
     #   }
@@ -674,6 +682,7 @@ sub process_commandline{
   my $gzip;
   my $mbias_only;
   my $gazillion;
+  my $ample_mem;
 
   my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -703,6 +712,7 @@ sub process_commandline{
 				 "gzip"                 => \$gzip,
 				 "mbias_only"           => \$mbias_only,			
 				 "gazillion|scaffolds"  => \$gazillion,
+				 "ample_memory"         => \$ample_mem,
 	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -965,7 +975,14 @@ VERSION
     $samtools_path = '';
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion);
+
+  if ($gazillion){
+    if ($ample_mem){
+      die "You can't currently select '--ample_mem' together with '--gazillion'. Make your pick!\n\n";
+    }
+  }
+
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem);
 }
 
 
@@ -4666,6 +4683,16 @@ bedGraph specific options:
                          the size of the input files, and the memory you allocate to this process (see --buffer_size).
                          Nevertheless, it seems to be working.
 
+--ample_memory           Using this option will not sort chromosomal positions using the UNIX 'sort' command, but will
+                         instead use two arrays to sort methylated and unmethylated calls. This may result in a faster
+                         sorting process of very large files, but this comes at the cost of a larger memory footprint
+                         (two arrays of the length of the largest human chromosome 1 (~250M bp) consume around 16GB
+                         of RAM). Due to overheads in creating and looping through these arrays it seems that it will
+                         actually be *slower* for small files (few million alignments), and we are currently testing at
+                         which point it is advisable to use this option. Note that --ample_memory is not compatible
+                         with options '--scaffolds/--gazillion' (as it requires pre-sorted files to begin with).
+
+
 
 Genome-wide cytosine methylation report specific options:
 =========================================================
@@ -4727,7 +4754,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 23 October 2013.
+This script was last modified on 25 November 2013.
 
 HOW_TO
 }

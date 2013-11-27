@@ -223,25 +223,50 @@ foreach my $infile (@bedfiles) {
 
       chomp;
 
-      my ($chr) = (split (/\t/))[2];
+      my ($chr,$pos) = (split (/\t/))[2,3];
+
+      ### If --ample_mem was specified we are keeping track of the highest position for each chromosome as this will determine the size of the array we need to create in the next step
+      if ($ample_mem){
+	### setting the first position for this chromosome
+	unless (defined $chr_lengths{$chr} ){
+	  $chr_lengths{$chr} = $pos;
+	}
+	# for all subsequent postions for this chromosome
+	if ($pos > $chr_lengths{$chr} ){
+	  $chr_lengths{$chr} = $pos; # set the current position as the new highest position
+	}
+      }
+
       # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
       $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
       # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
       unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
+
+	my $temp_file_name = $infile.'.chr'.$chr.'.methXtractor.temp';
+	# warn "using temp file name: $temp_file_name\n"; sleep(1);
+	
 	open ($temp_fhs{$chr},'>',$infile.'.chr'.$chr.'.methXtractor.temp') or die "Failed to open filehandle: $!";
-	push @temp_files, $infile.'.chr'.$chr.'.methXtractor.temp'; # storing temp files as we open them instead
+	push @temp_files, $temp_file_name; # storing temp files as we open them instead
       }
+
       print {$temp_fhs{$chr}} "$_\n";
     }
 
     warn "Finished writing out individual chromosome files for $infile\n";
-
-    # closing temporary filehandles to force writing out buffered content
-    foreach my $temp_fh(keys %temp_fhs){
-      close $temp_fhs{$temp_fh} or warn "Failed to close temporary filehandle $temp_fhs{$temp_fh}: $!\n";
-    }
-
   }
+}
+
+# closing temporary filehandles to force writing out buffered content
+foreach my $temp_fh(keys %temp_fhs){
+  close $temp_fhs{$temp_fh} or warn "Failed to close temporary filehandle $temp_fhs{$temp_fh}: $!\n";
+}
+
+### printing out the determined maximum position for each chromosome
+if ($ample_mem){
+  foreach my $chr (sort keys %chr_lengths){
+    warn "Highest determined position for chromosome $chr:\t\t$chr_lengths{$chr} bp\n";
+  }
+  warn "\n";
 }
 
 unless ($gazillion){
@@ -262,11 +287,9 @@ if ($gazillion){
 foreach my $in (@temp_files) {
 
   if ($sort_size){
-    warn "Sorting input file $in by positions (using -S of $sort_size)\n";
+    warn "Sorting input file $in by positions (using -S of $sort_size)\n" unless ($ample_mem);
   }
-  else{
-    warn "Sorting input file $in by positions (using default memory settings)\n";
-  }
+
   my $ifh;
 
   my $name;
@@ -278,20 +301,12 @@ foreach my $in (@temp_files) {
   my $last_pos;
   my $last_chr;
 
-  my $largest_pos_for_this_chrosmome;
-
-  ### If the user specifies to ahve a lot of RAM available (probably in the range of > 40GB for a human genome Chromosome 1) we will sort the methylation calls in two big arrays instead of using the Unix sort command
+  ### If the user specified to have a lot of RAM available (probably in the range of > 16GB for 2 arrays of human genome Chromosome 1) we will sort the methylation calls in two big arrays instead of using the Unix sort command
   if ($ample_mem){
-    warn "Generating enormous array instead of sorting the file. This will temporily use a lot of memory (RAM)!\n\n";
+    # warn "Generating enormous array instead of sorting the file. This may temporily use quite a bit of memory (RAM)!\n\n";
 
-    my @meth_count   = (0) x 10000000;
-    warn "Finished generating array \@meth_count\n";
-    my @unmeth_count = (0) x 10000000;
-    warn "Finished generating array \@unmeth_count\n";
-    sleep(1);
-
-    # my @meth_count   = (0) x $largest_pos_for_this_chromosome;
-    # my @unmeth_count = (0) x $largest_pos_for_this_chromosome;
+    my @meth_count;
+    my @unmeth_count;
 
     open ($ifh,$in) or die "Couldn't read from temporary file '$in': $!\n";
 
@@ -305,66 +320,72 @@ foreach my $in (@temp_files) {
 	$last_chr = $chr;
 	$last_pos = $pos;
       }
-
+      unless (@meth_count and @unmeth_count){
+	warn  "Setting maximum position of arrays \@meth_count and \@unmeth_count for chromosome $chr to $chr_lengths{$chr}\n";
+	@meth_count   = (0) x  $chr_lengths{$chr};
+	@unmeth_count = (0) x  $chr_lengths{$chr};
+	# warn "length of array meth count: ",scalar @meth_count,"\n";
+	warn "Finished generating arrays\n";
+	# sleep(1);	
+      }
       # warn "Chromosome\tStart Position\tEnd Position\tMethylation Percentage\n"; sleep(1);
       # print join ("\t",$name, $meth_state, $chr, $pos, $meth_state2),"\n"; 
       # sleep(1);
 
-      if ($last_chr ne $chr) {
-	warn "reached new chromosome: $chr\n";
-	# TODO: Need to print out array
-	# generate_output_ample_memory ($last_chr,$last_pos) if $methylcalls[2] > 0;
-	@meth_count = ();
-	@unmeth_count = ();
-      }
-      # warn "";
+      # if ($last_chr ne $chr) {
+      #    die "Reached new chromosome '$chr' which mustn't happen from pre-sorted files (previous chromosome was: '$last_chr')\n";
+      # }
 
-      my $validated = validate_methylation_call($meth_state, $meth_state2);
+      my $validated = validate_methylation_call($meth_state, $meth_state2); # as a comment, methylation calls in Unknown context (U, u) would fail this check, but they should be ignored by the methylation extractor anyway
       unless($validated){
 	warn "Methylation state of sequence ($name) in file ($in) on line $. is inconsistent (meth_state is $meth_state, meth_state2 = $meth_state2)\n";
 	next;
       }
 
       if ($meth_state eq '+'){
+	# warn "increasing meth $pos by 1\n"; sleep(1);
 	$meth_count[$pos-1]++;
       }
       else{
 	$unmeth_count[$pos-1]++;
+	# warn "increasing unmeth $pos by 1\n"; sleep(1);
       }
     }
 
     close $ifh or die $!;
 
-    warn "Now printing the chromosome array\n";
+    warn "Now printing methylation information for this chromosome\n";
+    # warn "length of array meth count: ",scalar @meth_count,"\n";
     # warn "chr\tposition\tcount methylated\tcount unmethylated\tcount total\n";
     foreach my $index (0..$#meth_count){
       my $totalcount = $meth_count[$index] + $unmeth_count[$index];
       if ($totalcount > 0){
-	#	warn "$index\t$meth_count[$index]\t$unmeth_count[$index]\t",$meth_count[$index] + $unmeth_count[$index],"\n";
-	#	sleep(1);
-
+	#	warn "$index\t$meth_count[$index]\t$unmeth_count[$index]\t$totalcount\n";
+	# sleep(1);
+	
 	my $bed_pos = $index; ### bedGraph coordinates are 0 based
 	my $one_based_pos = $bed_pos + 1;
 
 	my $meth_percentage;
 	($totalcount >= $coverage_threshold) ? ($meth_percentage = ($meth_count[$index]/$totalcount) * 100) : ($meth_percentage = undef);
 
-	# $meth_percentage =~ s/(\.\d\d).+$/$1/ unless $meth_percentage =~ /^Below/;
 	if (defined $meth_percentage){
 	
 	  # as of version 0.9.1 we will by default write out both a bedGraph and a more detailed coverage file
 	
-	  # this is the bedGraph file, the starting position is 0-based, the end position is 1-based! (clever, huh?)
+	  # this is the bedGraph file, the starting position is 0-based, the end position is 1-based! (half-open. Clever, huh?)
 	  print OUT "$last_chr\t$bed_pos\t$one_based_pos\t$meth_percentage\n";
-
+	
 	  # this is the coverage file. Coordinates are 1-based
 	  print COVERAGE "$last_chr\t$one_based_pos\t$one_based_pos\t$meth_percentage\t$meth_count[$index]\t$unmeth_count[$index]\n";
 	}
-
-     }
+      }
     }
-  }
 
+    @meth_count = ();
+    @unmeth_count = ();
+
+  }
   ### default: we assume that the user wants to use the Linux Sort command. This is quite a bit slower, but features a much smaller memory footprint
   else{
     my $sort_dir = $output_dir;
@@ -688,6 +709,15 @@ contexts are selected ('--CX_context'), all input files will be used regardless 
                            the size of the input files, and the memory you allocate to this process (see --buffer_size).
                            Nevertheless, it seems to be working.
 
+--ample_memory             Using this option will not sort chromosomal positions using the UNIX 'sort' command, but will
+                           instead use two arrays to sort methylated and unmethylated calls, respectively. This may result
+                           in a faster sorting process for very large files, but this comes at the cost of a larger memory
+                           footprint (as an estimate, two arrays of the length of (the largest) human chromosome 1 (nearly
+                           250 million bp) temporarily consume around 16GB of RAM). Note however that due to the overheads
+                           of creating and looping through arrays this option might in fact be *slower* for small-ish
+                           files (up to a few million alignments). Note also that this option is not currently compatible
+                           with options '--scaffolds/--gazillion'.
+
 
 
 The bedGraph output looks like this (tab-delimited; 0-based start coords, 1-based end coords):
@@ -705,7 +735,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords):
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 25 October 2013
+                          Script last modified: 25 November 2013
 
 EOF
     ;
