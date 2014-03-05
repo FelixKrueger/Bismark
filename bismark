@@ -7,7 +7,7 @@ $|++;
 use Getopt::Long;
 
 
-## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-14, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.10.0';
+my $bismark_version = 'v0.10.2';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -39,6 +39,7 @@ my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequen
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
+my %SQ_order;    # stores the order of sequences in the reference. This is to produce SAM/BAM files with a known order of chromosomes
 my %counting;    # counting various events
 
 my $seqID_contains_tabs;
@@ -58,7 +59,6 @@ foreach my $filename (@filenames){
     $fhs[1]->{name} = 'GAread1CTread2GAgenome';
     $fhs[2]->{name} = 'GAread1CTread2CTgenome';
     $fhs[3]->{name} = 'CTread1GAread2GAgenome';
-
     warn "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
 
     my ($filename_1,$filename_2) = (split (/,/,$filename));
@@ -4292,6 +4292,7 @@ sub methylation_call{
   $counting{total_unmethylated_C_unknown_count} += $unmethylated_C_unknown_count;
 
   # print "\n$sequence_actually_observed\n$genomic_sequence\n",@match,"\n$read_conversion\n\n";
+
   return $methylation_call;
 }
 
@@ -4300,7 +4301,7 @@ sub read_genome_into_memory{
     my $cwd = shift;
     ## reading in and storing the specified genome in the %chromosomes hash
     chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
-    print "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
+    warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
 
     my @chromosome_filenames =  <*.fa>;
 
@@ -4313,6 +4314,8 @@ sub read_genome_into_memory{
       die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
     }
 
+    my $SQ_count = 0;
+
     foreach my $chromosome_filename (@chromosome_filenames){
 
 	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
@@ -4323,32 +4326,36 @@ sub read_genome_into_memory{
 	
 	### Extracting chromosome name from the FastA header
 	my $chromosome_name = extract_chromosome_name($first_line);
-	
+	++$SQ_count;
 	my $sequence;
+
+
 	while (<CHR_IN>){
-	    chomp;
-	    $_ =~ s/\r//;
-	    if ($_ =~ /^>/){
-		### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
-		if (exists $chromosomes{$chromosome_name}){
-		    print "chr $chromosome_name (",length $sequence ," bp)\n";
-		    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
-		}
-		else {
-		    if (length($sequence) == 0){
-			warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
-		    }
-		    print "chr $chromosome_name (",length $sequence ," bp)\n";
-		    $chromosomes{$chromosome_name} = $sequence;
-		}
-		### resetting the sequence variable
-		$sequence = '';
-		### setting new chromosome name
-		$chromosome_name = extract_chromosome_name($_);
+	  chomp;
+	  $_ =~ s/\r//; # removing carriage returns if present
+	  if ($_ =~ /^>/){
+	    ++$SQ_count;
+	    ### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
+	    if (exists $chromosomes{$chromosome_name}){
+	      print "chr $chromosome_name (",length $sequence ," bp)\n";
+	      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
 	    }
-	    else{
-		$sequence .= uc$_;
+	    else {
+	      if (length($sequence) == 0){
+		warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+	      }
+	      print "chr $chromosome_name (",length $sequence ," bp)\n";
+	      $chromosomes{$chromosome_name} = $sequence;
+	      $SQ_order{$SQ_count} = $chromosome_name;
 	    }
+	    ### resetting the sequence variable
+	    $sequence = '';
+	    ### setting new chromosome name
+	    $chromosome_name = extract_chromosome_name($_);
+	  }
+	  else{
+	    $sequence .= uc$_;
+	  }
 	}
 	
 	if (exists $chromosomes{$chromosome_name}){
@@ -4361,6 +4368,7 @@ sub read_genome_into_memory{
 	    }
 	    print "chr $chromosome_name (",length $sequence ," bp)\n";
 	    $chromosomes{$chromosome_name} = $sequence;
+	    $SQ_order{$SQ_count} = $chromosome_name;
 	}
     }
     print "\n";
@@ -6783,12 +6791,24 @@ VERSION
 
 
 sub generate_SAM_header{
+
   print OUT "\@HD\tVN:1.0\tSO:unsorted\n";          # @HD = header, VN = version, SO = sort order
-  foreach my $chr (keys %chromosomes){
-    my $length = length ($chromosomes{$chr});
-    print OUT "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
+
+  #  Unordered printing of @SQ headers
+  #  foreach my $chr (keys %chromosomes){
+  #    my $length = length ($chromosomes{$chr});
+  #    print "\@SQ\tSN:$chr\tLN:$length\n";
+  #    print OUT "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
+  #  }
+
+  foreach my $chr (sort {$a<=>$b} keys %SQ_order){
+    #  print "$chr\t$SQ_order{$chr}\n";
+    my $length = length ($chromosomes{$SQ_order{$chr}});
+    print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length
   }
+
   print OUT "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";        # @PG = program, ID = unique identifier, PN = program name name, VN = program version
+
 }
 
 ### I would like to thank the following individuals for their valuable contributions to the Bismark SAM output format:
@@ -7953,7 +7973,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 07 October 2013.
+Last edited on 05 March 2014.
 
 HOW_TO
 }

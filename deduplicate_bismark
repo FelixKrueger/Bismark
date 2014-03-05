@@ -198,7 +198,7 @@ foreach my $file (@filenames){
 	}
       }
     }
-    close DETERMINE or warn $!;
+    close DETERMINE or warn "$!\n";
   }
 
   ### OPTIONS
@@ -215,7 +215,7 @@ foreach my $file (@filenames){
   $report =~ s/\.txt$//;
   $report =~ s/$/.deduplication_report.txt/;
 
-  open (REPORT,'>',$report) or die "Failed to write to report file to $report: S!\n\n";
+  open (REPORT,'>',$report) or die "Failed to write to report file to $report: $!\n\n";
 
 
   ### for representative methylation calls we need to discriminate between single-end and paired-end files as the latter have 2 methylation call strings
@@ -1068,8 +1068,8 @@ sub deduplicate_representative {
   my $percentage = sprintf ("%.2f",$unique_seqs*100/$count);
   print "\nTotal number of alignments analysed in $file:\t$count\n";
   print "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
-  print OUT "\nTotal number of alignments analysed in $file:\t$count\n";
-  print OUT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
+  print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
+  print REPORT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
 
   close OUT or die "Failed to close output filehandle: $!\n";
   close REPORT or die "Failed to close report filehandle: $!\n";
