@@ -1,3 +1,18 @@
+RELEASE NOTES FOR Bismark v0.10.2 (06 Mar 201)
+-----------------------------------------------
+
+Changed the order the @SQ lines are written out to the SAM/BAM header from random to the same order 
+they are being read in from the genomes folder (or the order of the files in which they occur within
+a multi-FastA file).
+
+
+Methylation extractor
+=====================
+
+The methylation extractor willl no longer attempt to delete unused files if --mbias_only was speficied.
+
+
+
 RELEASE NOTES FOR Bismark v0.10.1 (26 Nov 2013)
 -----------------------------------------------
 

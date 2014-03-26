@@ -235,7 +235,9 @@ foreach my $filename (@filenames){
   ### printing out all M-Bias data
   produce_mbias_plots ($filename);
 
-  delete_unused_files();
+  unless ($mbias_only){
+    delete_unused_files();
+  }
 
   if ($bedGraph){
 
