@@ -5,12 +5,20 @@ Changed the order the @SQ lines are written out to the SAM/BAM header from rando
 they are being read in from the genomes folder (or the order of the files in which they occur within
 a multi-FastA file).
 
+Included a new option -B/--basename <basename> for output files instead of deriving these names from
+the input file. --basename take precedence over the option --prefix.
+ 
+Unmapped or ambiguous files now end in .fq or.fa for FastA or FastQ files, respectively (instead
+of .txt files).
+
 
 Methylation extractor
 =====================
 
 The methylation extractor willl no longer attempt to delete unused files if --mbias_only was speficied.
 
+Added a test to see if a file that does not end in .bam is in fact a BAM file, and if this succeeds open
+the using Samtools vieew.
 
 
 RELEASE NOTES FOR Bismark v0.10.1 (26 Nov 2013)

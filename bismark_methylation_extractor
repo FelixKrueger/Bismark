@@ -9,7 +9,7 @@ use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
 
-## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-14, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.10.1';
+my $version = 'v0.10.2';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem) = process_commandline();
 
 
@@ -44,6 +44,7 @@ my %chromosomes;
 
 my %mbias_1;
 my %mbias_2;
+
 
 ##############################################################################################
 ### Summarising Run Parameters
@@ -186,7 +187,7 @@ if ($bedGraph){
 }
 
 warn "\n";
-sleep (5);
+sleep (1);
 
 ######################################################
 ### PROCESSING FILES
@@ -210,6 +211,7 @@ foreach my $filename (@filenames){
 
   %mbias_1 = ();
   %mbias_2 = ();
+
 
   ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
   unless ($vanilla){
@@ -287,7 +289,7 @@ foreach my $filename (@filenames){
     system ("$Bin/bismark2bedGraph @args");
 
     warn "Finished BedGraph conversion ...\n\n";
-    sleep(3);
+    sleep(1);
 
     # open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!";
     # warn "Writing bedGraph to file: $bedGraph_output\n";
@@ -816,7 +818,7 @@ VERSION
       if ($file =~ /\.gz$/){
 	open (DETERMINE,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
       }
-      elsif ($file =~ /\.bam$/){
+      elsif ($file =~ /\.bam$/ || isBam($file) ){ ### this would allow to read BAM files that do not end in *.bam
 	open (DETERMINE,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
       }
       else{
@@ -842,7 +844,7 @@ VERSION
 	}
       }
 
-      close DETERMINE or warn $!;
+      # close DETERMINE or warn $!; # this always throws an error anyway...
 	
     }
   }
@@ -998,7 +1000,7 @@ sub test_positional_sorting{
   if ($filename =~ /\.gz$/) {
     open (TEST,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
   }
-  elsif ($filename =~ /bam$/) {
+  elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
     if ($samtools_path){
       open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
     }
@@ -1062,7 +1064,7 @@ sub process_Bismark_results_file{
   if ($filename =~ /\.gz$/) {
     open (IN,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
   }
-  elsif ($filename =~ /bam$/) {
+  elsif ($filename =~ /bam$/ || isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
     if ($samtools_path){
       open (IN,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
     }
@@ -1082,7 +1084,7 @@ sub process_Bismark_results_file{
     $bismark_version =~  s/Bismark version: //;
     if ($bismark_version =~ /^\@/) {
       warn "Detected \@ as the first character of the version information. Is it possible that the file is in SAM format?\n\n";
-      sleep (2);
+      sleep (1);
     }
 
     unless ($version eq $bismark_version){
@@ -4499,6 +4501,25 @@ sub print_individual_C_methylation_states_single_end{
   }
 }
 
+sub isBam{
+
+  my $filename = shift;
+
+  # reading the first line of the input file to see if it is a BAM file in disguise (i.e. a BAM file that does not end in *.bam which may be produced by Galaxy)
+  open (DISGUISE,"zcat $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
+
+  ### when BAM files read through a zcat stream they start with BAM...
+  my $bam_in_disguise = <DISGUISE>;
+  # warn "BAM in disguise: $bam_in_disguise\n\n";
+
+  if ($bam_in_disguise =~ /^BAM/){
+    return 1;
+  }
+  else{
+    return 0;
+  }
+
+}
 
 
 sub print_helpfile{
@@ -4756,7 +4777,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 25 November 2013.
+This script was last modified on 27 March 2014.
 
 HOW_TO
 }

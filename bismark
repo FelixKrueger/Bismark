@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -296,8 +296,6 @@ sub start_methylation_call_procedure_single_ends {
   if ($prefix){
     $outfile = "$prefix.$outfile";
   }
-
-
   if ($bowtie2){ # SAM format is the default for Bowtie 2
     $outfile =~ s/$/_bismark_bt2.sam/;
   }
@@ -306,6 +304,10 @@ sub start_methylation_call_procedure_single_ends {
   }
   else{ # SAM is the default output
     $outfile =~ s/$/_bismark.sam/;
+  }
+
+  if ($basename){ # Output file basename is set using the -B argument
+    $outfile = "${basename}.sam";
   }
 
   $bam = 0 unless (defined $bam);
@@ -334,12 +336,15 @@ sub start_methylation_call_procedure_single_ends {
   if ($prefix){
     $reportfile = "$prefix.$reportfile";
   }
-
   if ($bowtie2){
     $reportfile =~ s/$/_bismark_bt2_SE_report.txt/;
   }
   else{
     $reportfile =~ s/$/_bismark_SE_report.txt/;
+  }
+
+  if ($basename){ # Output file basename is set using the -B argument
+    $reportfile = "${basename}_SE_report.txt";
   }
 
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
@@ -351,16 +356,50 @@ sub start_methylation_call_procedure_single_ends {
       $unmapped_file = "$prefix.$unmapped_file";
     }
 
-    $unmapped_file =~ s/$/_unmapped_reads.txt/;
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file = "${basename}_unmapped_reads.fq";
+      }
+      else{
+	$unmapped_file = "${basename}_unmapped_reads.fa";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file =~ s/$/_unmapped_reads.fq/;
+      }
+      else{
+	$unmapped_file =~ s/$/_unmapped_reads.fa/;
+      }
+    }
+
     open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
     print "Unmapped sequences will be written to $output_dir$unmapped_file\n";
   }
+
   if ($ambiguous){
     my $ambiguous_file = $filename;
+
     if ($prefix){
       $ambiguous_file = "$prefix.$ambiguous_file";
     }
-    $ambiguous_file =~ s/$/_ambiguous_reads.txt/;
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =  "${basename}ambiguous_reads.fq";
+      }
+      else{
+	$ambiguous_file =  "${basename}ambiguous_reads.fa";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads.fq/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads.fa/;
+      }
+    }
     open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
     print "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
   }
@@ -414,12 +453,11 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
   ### printing all alignments to a results file
-  my $outfile = $filename_1; 
+  my $outfile = $filename_1;
 
   if ($prefix){
     $outfile = "$prefix.$outfile";
   }
-
   if ($bowtie2){ # SAM format is the default Bowtie 2 output
     $outfile =~ s/$/_bismark_bt2_pe.sam/;
   }
@@ -429,6 +467,11 @@ sub start_methylation_call_procedure_paired_ends {
   else{ # SAM format is the default Bowtie 1 output
     $outfile =~ s/$/_bismark_pe.sam/;
   }
+
+  if ($basename){ # Output file basename is set using the -B argument
+    $outfile = "${basename}_pe.sam";
+  }
+
 
   $bam = 0 unless (defined $bam);
 
@@ -464,6 +507,10 @@ sub start_methylation_call_procedure_paired_ends {
     $reportfile =~ s/$/_bismark_PE_report.txt/;
   }
 
+  if ($basename){ # Output file basename is set using the -B argument
+    $reportfile = "${basename}_PE_report.txt";
+  }
+
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2 (version: $bismark_version)\n";
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
@@ -473,12 +520,33 @@ sub start_methylation_call_procedure_paired_ends {
   if ($unmapped){
     my $unmapped_1 = $filename_1;
     my $unmapped_2 = $filename_2;
+
     if ($prefix){
       $unmapped_1 = "$prefix.$unmapped_1";
       $unmapped_2 = "$prefix.$unmapped_2";
     }
-    $unmapped_1 =~ s/$/_unmapped_reads_1.txt/;
-    $unmapped_2 =~ s/$/_unmapped_reads_2.txt/;
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_1 = "${basename}_unmapped_reads_1.fq";
+	$unmapped_2 = "${basename}_unmapped_reads_2.fq";
+      }
+      else{
+	$unmapped_1 = "${basename}_unmapped_reads_1.fa";
+	$unmapped_2 = "${basename}_unmapped_reads_2.fa";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_1 =~ s/$/_unmapped_reads_1.fq/;
+	$unmapped_2 =~ s/$/_unmapped_reads_2.fq/;
+      }
+      else{
+	$unmapped_1 =~ s/$/_unmapped_reads_1.fa/;
+	$unmapped_2 =~ s/$/_unmapped_reads_2.fa/;
+      }
+    }
+
     open (UNMAPPED_1,'>',"$output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
     open (UNMAPPED_2,'>',"$output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
     print "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
@@ -487,13 +555,33 @@ sub start_methylation_call_procedure_paired_ends {
   if ($ambiguous){
     my $amb_1 = $filename_1;
     my $amb_2 = $filename_2;
+
     if ($prefix){
       $amb_1 = "$prefix.$amb_1";
       $amb_2 = "$prefix.$amb_2";
     }
 
-    $amb_1 =~ s/$/_ambiguous_reads_1.txt/;
-    $amb_2 =~ s/$/_ambiguous_reads_2.txt/;
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$amb_1 = "${basename}_ambiguous_reads_1.fq";
+	$amb_2 = "${basename}_ambiguous_reads_2.fq";
+      }
+      else{
+	$amb_1 = "${basename}_ambiguous_reads_1.fa";
+	$amb_2 = "${basename}_ambiguous_reads_2.fa";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$amb_1 =~ s/$/_ambiguous_reads_1.fq/;
+	$amb_2 =~ s/$/_ambiguous_reads_2.fq/;
+      }
+      else{
+	$amb_1 =~ s/$/_ambiguous_reads_1.fa/;
+	$amb_2 =~ s/$/_ambiguous_reads_2.fa/;
+      }
+    }
+ 
     open (AMBIG_1,'>',"$output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
     open (AMBIG_2,'>',"$output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
     print "Ambiguously mapping sequences will be written to $amb_1 and $amb_2\n";
@@ -6110,6 +6198,7 @@ sub process_command_line{
   my $pbat;
   my $prefix;
   my $old_flag;
+  my $basename;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -6153,6 +6242,7 @@ sub process_command_line{
 				 'pbat' => \$pbat,
 				 'prefix=s' => \$prefix,
 				 'old_flag' => \$old_flag,
+				 'B|basename=s' => \$basename,
 				);
 
 
@@ -6172,7 +6262,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version 
-        Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-14 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
 
 
@@ -6785,7 +6875,7 @@ VERSION
   }
 
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename);
 }
 
 
@@ -7790,6 +7880,10 @@ Output:
 --prefix <prefix>        Prefixes <prefix> to the output filenames. Trailing dots will be replaced by a single one. For
                          example, '--prefix test' with 'file.fq' would result in the output file 'test.file.fq_bismark.sam' etc.
 
+-B/--basename <basename> Write all output to files starting with this base file name. For example, '--basename foo'
+                         would result in the files 'foo.sam' and 'foo_SE_report.txt' (or its paired-end equivalent). Takes
+                         precedence over --prefix.
+
 --old_flag               Only in paired-end SAM mode, uses the FLAG values used by Bismark v0.8.2 and before. In addition,
                          this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since
                          both the appended read IDs and custom FLAG values may cause problems with some downstream tools 
@@ -7807,7 +7901,6 @@ Output:
                               CTOT:       99          147                  67          131
 
                               CTOB:       83          163                 115          179
-
 
 
 Other:
@@ -7973,7 +8066,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 05 March 2014.
+Last edited on 28 March 2014.
 
 HOW_TO
 }
