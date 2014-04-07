@@ -223,7 +223,6 @@ foreach my $filename (@filenames){
     ### Initialising bisulfite conversion filenames
     my ($C_to_T_infile,$G_to_A_infile);
 
-
     ### FastA format
     if ($sequence_file_format eq 'FASTA'){
       warn "Inut file is in FastA format\n";
@@ -264,11 +263,16 @@ foreach my $filename (@filenames){
       }
 
       ### Creating up to 4 different bowtie filehandles and storing the first entry
-      if ($bowtie2){
-	single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
+      if ($pbat){
+	if ($bowtie2){ # as of version 0.10.2 we also support PBAT alignments for Bowtie 2
+	  single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 (undef,$G_to_A_infile);
+	}
+	else{
+	  single_end_align_fragments_to_bisulfite_genome_fastQ (undef,$G_to_A_infile);
+	}
       }
-      elsif ($pbat){
-	single_end_align_fragments_to_bisulfite_genome_fastQ (undef,$G_to_A_infile);
+      elsif ($bowtie2){
+	single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
       }
       else{
 	single_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile,$G_to_A_infile);
@@ -405,10 +409,12 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   if ($directional){
-    print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored (i.e. not performed!)\n";
+    print REPORT "Option '--directional' specified: alignments to complementary strands are ignored (i.e. not performed!)\n";
+  }
+  elsif ($pbat){
+    print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands are ignored (i.e. not performed!)\n";
   }
   print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
-
 
   ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -1236,7 +1242,9 @@ sub process_single_end_fastA_file_for_methylation_call{
 }
 
 sub process_single_end_fastQ_file_for_methylation_call{
+
   my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+
   ### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
   ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
   ### the C->T or G->A version
@@ -1806,12 +1814,7 @@ sub check_bowtie_results_single_end{
 
   ### If the sequence has not been rejected so far it will have a unique best alignment
   $counting{unique_best_alignment_count}++;
-  if ($pbat){
-    extract_corresponding_genomic_sequence_single_end_pbat($identifier,$methylation_call_params);
-  }
-  else{
-    extract_corresponding_genomic_sequence_single_end($identifier,$methylation_call_params);
-  }
+  extract_corresponding_genomic_sequence_single_end($identifier,$methylation_call_params);
 
   ### check test to see if the genomic sequence we extracted has the same length as the observed sequence+2, and only then we perform the methylation call
   if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence}) != length($sequence)+2){
@@ -3833,8 +3836,14 @@ sub extract_corresponding_genomic_sequence_single_end {
   my $non_bisulfite_sequence;
   ### depending on the conversion we want to make need to capture 1 extra base at the 3' end
 
+  my $pbat_index_modifier = 0;
+
+  if ($pbat){
+    $pbat_index_modifier += 2; # (we are simply not running indexes 0 or 1!
+  }
+
   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
-  if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 0){
     ### [Index 0, sequence originated from (converted) forward strand]
     $counting{CT_CT_count}++;
     $alignment_strand = '+';
@@ -3852,7 +3861,7 @@ sub extract_corresponding_genomic_sequence_single_end {
   }
 
   ### results from CT converted reads vs. GA converted genome (- orientation alignments are reported only)
-  elsif ($methylation_call_params->{$sequence_identifier}->{index} == 1){
+  elsif ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 1){
     ### [Index 1, sequence originated from (converted) reverse strand]
     $counting{CT_GA_count}++;
     $alignment_strand = '-';
@@ -3872,7 +3881,7 @@ sub extract_corresponding_genomic_sequence_single_end {
   }
 
   ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
-  elsif ($methylation_call_params->{$sequence_identifier}->{index} == 2){
+  elsif ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 2){
     ### [Index 2, sequence originated from complementary to (converted) forward strand]
     $counting{GA_CT_count}++;
     $alignment_strand = '-';
@@ -3892,113 +3901,7 @@ sub extract_corresponding_genomic_sequence_single_end {
   }
 
   ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
-  elsif ($methylation_call_params->{$sequence_identifier}->{index} == 3){
-    ### [Index 3, sequence originated from complementary to (converted) reverse strand]
-    $counting{GA_GA_count}++;
-    $alignment_strand = '+';
-    $read_conversion_info = 'GA';
-    $genome_conversion = 'GA';
-
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if ($methylation_call_params->{$sequence_identifier}->{position}-2 >= 0){ ## CHH changed to +2 # 02 02 2012 Changed this to >= from >
-      ### +2 extra base at the 5' end as we are nominally checking the converted reverse strand
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
-  }
-  else{
-    die "Too many bowtie result filehandles\n";
-  }
-
-  $methylation_call_params->{$sequence_identifier}->{alignment_strand} = $alignment_strand;
-  $methylation_call_params->{$sequence_identifier}->{read_conversion} = $read_conversion_info;
-  $methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
-  $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
-
-  ### at this point we can also determine the end position of a read
-  $methylation_call_params->{$sequence_identifier}->{end_position} = $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence});
-}
-
-sub extract_corresponding_genomic_sequence_single_end_pbat {
-  my ($sequence_identifier,$methylation_call_params) = @_;
-  ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
-  ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
-
-  ### the alignment_strand information is needed to determine which strand of the genomic sequence we are comparing the read against,
-  ### the read_conversion information is needed to know whether we are looking for C->T or G->A substitutions
-  my $alignment_strand;
-  my $read_conversion_info;
-  my $genome_conversion;
-  ### Also extracting the corresponding genomic sequence, +2 extra bases at the end so that we can also make a CpG methylation call and
-  ### in addition make differential calls for Cs non-CpG context, which will now be divided into CHG and CHH methylation,
-  ### if the C happens to be at the last position of the actually observed sequence
-  my $non_bisulfite_sequence;
-  ### depending on the conversion we want to make need to capture 1 extra base at the 3' end
-
-  my $pbat_index = $methylation_call_params->{$sequence_identifier}->{index} + 2; # (we are simply not running indexes 0 or 1!
-
-  ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
-  if ($pbat_index == 0){
-    ### [Index 0, sequence originated from (converted) forward strand]
-    $counting{CT_CT_count}++;
-    $alignment_strand = '+';
-    $read_conversion_info = 'CT';
-    $genome_conversion = 'CT';
-
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## CHH changed to +1
-      ### + 2 extra base at the 3' end
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
-  }
-
-  ### results from CT converted reads vs. GA converted genome (- orientation alignments are reported only)
-  elsif ($pbat_index == 1){
-    ### [Index 1, sequence originated from (converted) reverse strand]
-    $counting{CT_GA_count}++;
-    $alignment_strand = '-';
-    $read_conversion_info = 'CT';
-    $genome_conversion = 'GA';
-
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if ($methylation_call_params->{$sequence_identifier}->{position}-2 >= 0){ ## CHH changed to -2 # 02 02 2012 Changed this to >= from >
-      ### Extracting 2 extra 5' bases on forward strand which will become 2 extra 3' bases after reverse complementation
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position}-2,length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to -2/+2
-      ## reverse complement!
-      $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
-  }
-
-  ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
-  elsif ($pbat_index == 2){
-    ### [Index 2, sequence originated from complementary to (converted) forward strand]
-    $counting{GA_CT_count}++;
-    $alignment_strand = '-';
-    $read_conversion_info = 'GA';
-    $genome_conversion = 'CT';
-
-    ### +2 extra bases on the forward strand 3', which will become 2 extra 5' bases after reverse complementation
-    ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
-    if (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) > $methylation_call_params->{$sequence_identifier}->{position}+length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+1){ ## changed to +1 on 02 02 2012
-      $non_bisulfite_sequence = substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$methylation_call_params->{$sequence_identifier}->{position},length($methylation_call_params->{$sequence_identifier}->{bowtie_sequence})+2); ## CHH changed to +2
-      ## reverse complement!
-      $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
-    }
-    else{
-      $non_bisulfite_sequence = '';
-    }
-  }
-
-  ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
-  elsif ($pbat_index == 3){
+  elsif ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 3){
     ### [Index 3, sequence originated from complementary to (converted) reverse strand]
     $counting{GA_GA_count}++;
     $alignment_strand = '+';
@@ -4042,6 +3945,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   my $alignment_strand;
   my $read_conversion_info;
   my $genome_conversion;
+
   ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end (or start) so that we can also make a CpG methylation call and
   ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last (or first)  position of the actually observed sequence
   my $non_bisulfite_sequence = '';
@@ -4055,8 +3959,14 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   shift @ops; # remove the empty first element
   die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 
+  my $pbat_index_modifier = 0;
+
+  if ($pbat){
+    $pbat_index_modifier += 2; # (we are simply not running indexes 0 or 1!
+  }
+
   ### If the sequence aligns best as CT converted reads vs. GA converted genome (OB, index 1) or GA converted reads vs. GA converted genome (CTOB, index 3)
-  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
+  if ( (($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 1) or (($methylation_call_params->{$sequence_identifier}->{index}  + $pbat_index_modifier) == 3) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless ( ($pos-2) >= 0){ # exiting with en empty genomic sequence otherwise
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
@@ -4094,7 +4004,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   }
 
   ### If the sequence aligns best as CT converted reads vs. CT converted genome (OT, index 0) or GA converted reads vs. CT converted genome (CTOT, index 2)
-  if ( ($methylation_call_params->{$sequence_identifier}->{index} == 0) or ($methylation_call_params->{$sequence_identifier}->{index} == 2) ){
+  if ( ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 0) or ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 2) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos+2){ # exiting with en empty genomic sequence otherwise
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
@@ -4107,7 +4017,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
 
 
   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
-  if ($methylation_call_params->{$sequence_identifier}->{index} == 0){
+  if ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 0){
     ### [Index 0, sequence originated from (converted) forward strand]
     $counting{CT_CT_count}++;
     $alignment_strand = '+';
@@ -4116,7 +4026,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   }
 
   ### results from CT converted reads vs. GA converted genome (- orientation alignments are reported only)
-  elsif ($methylation_call_params->{$sequence_identifier}->{index} == 1){
+  elsif ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 1){
     ### [Index 1, sequence originated from (converted) reverse strand]
     $counting{CT_GA_count}++;
     $alignment_strand = '-';
@@ -4128,7 +4038,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   }
 
   ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
-  elsif ($methylation_call_params->{$sequence_identifier}->{index} == 2){
+  elsif ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 2){
     ### [Index 2, sequence originated from complementary to (converted) forward strand]
     $counting{GA_CT_count}++;
     $alignment_strand = '-';
@@ -4140,7 +4050,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   }
 
   ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
-  elsif ($methylation_call_params->{$sequence_identifier}->{index} == 3){
+  elsif ( ($methylation_call_params->{$sequence_identifier}->{index} + $pbat_index_modifier) == 3){
     ### [Index 3, sequence originated from complementary to (converted) reverse strand]
     $counting{GA_GA_count}++;
     $alignment_strand = '+';
@@ -5945,19 +5855,23 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   if ($directional){
     warn "Input file is $C_to_T_infile (FastQ)\n\n";
   }
+  elsif ($pbat){
+    warn "Input file is $G_to_A_infile (FastQ)\n\n";
+  }
   else{
     warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
   }
 
   ## Now starting up to 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
   ## the data structure above
-  if ($directional){
+  if ($directional or $pbat){
     warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
   else{
     warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
-   foreach my $fh (@fhs) {
+
+  foreach my $fh (@fhs) {
     my $bt2_options = $bowtie_options;
     if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
       $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
@@ -6773,21 +6687,20 @@ VERSION
   if ($non_directional){
     die "A library can only be specified to be either non-directional or a PBAT-Seq library. Please respecify!\n\n" if ($pbat);
     warn "Library was specified to be not strand-specific (non-directional), therefore alignments to all four possible bisulfite strands (OT, CTOT, OB and CTOB) will be reported\n";
-    sleep (3);
+    sleep (1);
     $directional = 0;
   }
   elsif($pbat){
     die "The option --pbat is currently not compatible with --gzip. Please run alignments with uncompressed temporary files, i.e. lose the option --gzip\n" if ($gzip);
-    die "The option --pbat is currently not working for Bowtie 2. Please run alignments in default (i.e. Bowtie 1) mode!\n" if ($bowtie2);
     die "The option --pbat is currently only working with FastQ files. Please respecify (i.e. lose the option -f)!\n" if ($fasta);
 
     warn "Library was specified as PBAT-Seq (Post-Bisulfite Adapter Tagging), only performing alignments to the complementary strands (CTOT and CTOB)\n";
-    sleep (3);
+    sleep (1);
     $directional = 0;
   }
   else{
     warn "Library is assumed to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored (i.e. not performed!)\n";
-    sleep (3);
+    sleep (1);
     $directional = 1; # default behaviour
   }
 
