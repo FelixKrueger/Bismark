@@ -151,8 +151,8 @@ foreach my $filename (@filenames){
 	  }
 	}
       }
-      elsif($pbat){ # PBAT-Seq
-	### At the moment we are only performing uncompressed FastQ alignments with Bowtie1
+      elsif($pbat){ # PBAT-Seq. This works for both Bowtie and Bowtie 2
+	### At the moment we are only performing alignments only with uncompressed FastQ files
 	($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
 	
@@ -192,7 +192,7 @@ foreach my $filename (@filenames){
 	    $fhs[3]->{inputfile_1} = $C_to_T_infile_1;
 	    $fhs[3]->{inputfile_2} = undef; # not needed for compressed temp files
 	  }
-	  else{ #uncompressed temp files
+	  else{ # uncompressed temp files
 	    ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	    ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
 	
@@ -409,12 +409,21 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   if ($directional){
-    print REPORT "Option '--directional' specified: alignments to complementary strands are ignored (i.e. not performed!)\n";
+    print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n";
   }
   elsif ($pbat){
-    print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands are ignored (i.e. not performed!)\n";
+    print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)\n";
   }
-  print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  else{
+    print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n";
+  }
+
+  if ($bowtie2){
+    print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  }
+  else{
+    print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+  }
 
   ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -519,7 +528,13 @@ sub start_methylation_call_procedure_paired_ends {
 
   open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2 (version: $bismark_version)\n";
-  print REPORT "Bowtie was run against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+
+  if ($bowtie2){
+    print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n";
+  }
+  else{
+    print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n";
+  }
 
 
   ### Unmapped read output
@@ -594,8 +609,17 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
   if ($directional){
-    print REPORT "Option '--directional' specified: alignments to complementary strands will be ignored (i.e. not performed)\n";
+    print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n";
   }
+  elsif ($pbat){
+    print REPORT "Option '--pbat' specified: alignments to original strands (OT, OB) were ignored (i.e. not performed)\n\n";
+  }
+  else{
+    print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n\n";
+  }
+
+
+
 
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
@@ -5494,17 +5518,16 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
 
   if ($directional){
-    warn "Input file is $C_to_T_infile_1 (FastQ)\n";
+    warn "Input file is $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
   }
   elsif($pbat){
-    warn "Input file is $G_to_A_infile_1 (FastQ; PBAT-Seq)\n";
+    warn "Input file is $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ; PBAT-Seq)\n";
   }
   else{
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 (FastQ)\n";
+    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 and $G_to_A_infile_1 and $C_to_T_infile_2 (non-directional; FastQ)\n";
   }
 
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
-  ## data structure above
+  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the data structure above
   if ($directional or $pbat){
     warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
@@ -5586,13 +5609,16 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   if ($directional){
     warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
   }
+  elsif ($pbat){
+    warn "Input files are $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ)\n";
+  }
   else{
     warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
   }
 
   ## Now starting up 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
   ## data structure above
-  if ($directional){
+  if ($directional or $pbat){
     warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
   else{
@@ -5601,7 +5627,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
   foreach my $fh (@fhs) {
 
-    if ($directional){
+    if ($directional or $pbat){ # skipping unwanted filehandles
       unless ($fh->{inputfile_1}){
 	$fh->{last_seq_id} = undef;
 	$fh->{last_line_1} = undef;
@@ -7738,7 +7764,7 @@ Output:
                          as it will only launch two alignment threads to the CTOT and CTOB strands instead of the normal OT
                          and OB ones. Use this option only if you are certain that your libraries were constructed following
                          a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option). The option
-                         --pbat works only for single-end and paired-end FastQ files for use with Bowtie1 (uncompressed
+                         --pbat works only for FastQ files (in both Bowtie and Bowtie 2 mode) and using uncompressed
                          temporary files only).
 
 --sam-no-hd              Suppress SAM header lines (starting with @). This might be useful when very large input files are
@@ -7979,7 +8005,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 28 March 2014.
+Last edited on 08 April 2014.
 
 HOW_TO
 }

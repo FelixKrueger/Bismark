@@ -1,15 +1,20 @@
-RELEASE NOTES FOR Bismark v0.10.2 (06 Mar 201)
+RELEASE NOTES FOR Bismark v0.11.1 (07 Apr 2014)
 -----------------------------------------------
+
+The option --pbat now also works for use with Bowtie 2, in both single-end and paired-end mode. The
+only limitation to that is that it only works with FastQ files and uncompressed temporary files.
 
 Changed the order the @SQ lines are written out to the SAM/BAM header from random to the same order 
 they are being read in from the genomes folder (or the order of the files in which they occur within
 a multi-FastA file).
 
 Included a new option -B/--basename <basename> for output files instead of deriving these names from
-the input file. --basename take precedence over the option --prefix.
+the input file. --basename takes precedence over the option --prefix.
  
 Unmapped or ambiguous files now end in .fq or.fa for FastA or FastQ files, respectively (instead
 of .txt files).
+
+
 
 
 Methylation extractor
