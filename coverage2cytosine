@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-13, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-14, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -21,9 +21,9 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my %chromosomes;
-my $coverage2cytosine_version = 'v0.10.1';
-
+my %chromosomes; # storing sequence information of all chromosomes/scaffolds
+my $coverage2cytosine_version = 'v0.11.2';
+my %processed;   # keeping a record of which chromosomes have been processed
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out) = process_commandline();
 
@@ -102,7 +102,7 @@ sub process_commandline{
                                coverage2cytosine
 
                       Bismark Extractor Version: $coverage2cytosine_version
-              Copyright 2010-13 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-14 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
 
@@ -232,7 +232,8 @@ sub generate_genome_wide_cytosine_report {
 	# warn "Writing output for $last_chr to $chromosome_out\n";
       }
 
-      while ( $chromosomes{$last_chr} =~ /([CG])/g){
+  $processed{$last_chr} = 1;
+  while ( $chromosomes{$last_chr} =~ /([CG])/g){
 
 	my $tri_nt = '';
 	my $context = '';
@@ -306,7 +307,8 @@ sub generate_genome_wide_cytosine_report {
   }
 
   # Last found chromosome
-  warn "Writing cytosine reports for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+  warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+  $processed{$last_chr} = 1;
 
   if ($split_by_chromosome){ ## writing output to 1 file per chromosome
     my $chromosome_out = $cytosine_out;
@@ -385,8 +387,112 @@ sub generate_genome_wide_cytosine_report {
     }
   }
 
-warn "Finished writing out cytosine report (processed $number_processed chromosomes/scaffolds in total\n\n";
-close CYT or warn $!;
+  warn "Finished writing out cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
+
+  ### Now processing chromosomes that were not covered in the coverage file
+  warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
+  my $unprocessed = 0;
+
+  foreach my $chr (keys %processed) {
+    unless ( $processed{$chr} ) {
+      ++$unprocessed;
+      ++$number_processed;
+      process_unprocessed_chromosomes($chr);
+    }
+  }
+
+  if ($unprocessed == 0) {
+    warn "All chromosomes in the genome were covered by at least some reads. coverage2cytosine processing complete.\n\n";
+  }
+  else{
+    warn "Finished writing out cytosine report (processed $number_processed chromosomes/scaffolds in total). coverage2cytosine processing complete.\n\n";
+  }
+
+  close CYT or warn $!;
+
+}
+
+sub process_unprocessed_chromosomes{
+
+  my $chr = shift;
+
+  warn "Writing cytosine report for not covered chromosome $chr\n";
+  $processed{$chr} = 1;
+
+  if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+    my $chromosome_out = $cytosine_out;
+    if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
+      $chromosome_out =~ s/txt$/chr${chr}.txt/;
+    }
+    else{ # user specified output file name
+      $chromosome_out =~ s/$/.chr${chr}.txt/;
+    }
+
+    open (CYT,'>',$chromosome_out) or die $!;
+    # warn "Writing output for $last_chr to $chromosome_out\n";
+  }
+
+  while ( $chromosomes{$chr} =~ /([CG])/g){
+
+    my $tri_nt;
+    my $context;
+    my $pos = pos$chromosomes{$chr};
+
+    my $strand;
+    my $meth = 0;
+    my $nonmeth = 0;
+
+    if ($1 eq 'C'){    # C on forward strand
+      $tri_nt = substr ($chromosomes{$chr},($pos-1),3);   # positions are 0-based!
+      $strand = '+';
+    }
+    elsif ($1 eq 'G'){ # C on reverse strand
+      $tri_nt = substr ($chromosomes{$chr},($pos-3),3);   # positions are 0-based!
+      $tri_nt = reverse $tri_nt;
+      $tri_nt =~ tr/ACTG/TGAC/;
+      $strand = '-';
+    }
+
+    next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+
+    ### determining cytosine context	
+    if ($tri_nt =~ /^CG/){
+      $context = 'CG';
+    }
+    elsif ($tri_nt =~ /^C.{1}G$/){
+      $context = 'CHG';
+    }
+    elsif ($tri_nt =~ /^C.{2}$/){
+      $context = 'CHH';
+    }
+    else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+      warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
+      next;
+    }
+	
+    if ($CpG_only){
+      if ($tri_nt =~ /^CG/){ # CpG context is the default
+	if ($zero){ # zero-based coordinates
+	  $pos -= 1;
+	  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	}
+	else{ # default
+	  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	}
+      }
+    }
+    else{ ## all cytosines, specified with --CX
+      if ($zero){ # zero based coordinates
+	$pos -= 1;
+	print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+      }
+      else{ # default
+	print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+      }
+    }
+  }
+
+  #  close CYT or warn $!;
 
 }
 
@@ -438,6 +544,7 @@ sub read_genome_into_memory{
 	  }
 	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
 	  $chromosomes{$chromosome_name} = $sequence;
+	  $processed{$chromosome_name} = 0; # processed chromosomes will be set to 1 later to allow a record of which chromosome has been processed
 	}
 	### resetting the sequence variable
 	$sequence = '';
@@ -459,6 +566,7 @@ sub read_genome_into_memory{
       }
       warn "chr $chromosome_name (",length $sequence ," bp)\n";
       $chromosomes{$chromosome_name} = $sequence;
+      $processed{$chromosome_name} = 0; # processed chromosomes will be set to 1 later to allow a record of which chromosome has been processed
     }
   }
   warn "\n";
@@ -529,7 +637,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                          Script last modified: 08 November 2013
+                          Script last modified: 28 April 2014
 
 EOF
     ;

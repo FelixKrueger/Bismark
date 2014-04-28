@@ -15,15 +15,15 @@ Unmapped or ambiguous files now end in .fq or.fa for FastA or FastQ files, respe
 of .txt files).
 
 
-
-
 Methylation extractor
 =====================
 
 The methylation extractor willl no longer attempt to delete unused files if --mbias_only was speficied.
 
 Added a test to see if a file that does not end in .bam is in fact a BAM file, and if this succeeds open
-the using Samtools vieew.
+the file using Samtools view.
+
+
 
 
 RELEASE NOTES FOR Bismark v0.10.1 (26 Nov 2013)
