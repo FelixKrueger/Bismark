@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.11.1';
+my $bismark_version = 'v0.12.1';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -2005,6 +2005,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	  unless (exists $alignments{$alignment_location}){
 	    $alignments{$alignment_location}->{seq_id} = $id; 
 	    $alignments{$alignment_location}->{alignment_score} = $alignment_score;
+	    $alignments{$alignment_location}->{alignment_score_second_best} = $second_best;
 	    $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
 	    $alignments{$alignment_location}->{index} = $index;
 	    $alignments{$alignment_location}->{chromosome} = $chromosome;
@@ -2044,6 +2045,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	unless (exists $alignments{$alignment_location}){
 	  $alignments{$alignment_location}->{seq_id} = $id; 
 	  $alignments{$alignment_location}->{alignment_score} = $alignment_score;
+	  $alignments{$alignment_location}->{alignment_score_second_best} = undef;
 	  $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
 	  $alignments{$alignment_location}->{index} = $index;
 	  $alignments{$alignment_location}->{chromosome} = $chromosome;
@@ -2139,6 +2141,7 @@ sub check_bowtie_results_single_end_bowtie2{
       $methylation_call_params->{$identifier}->{position}        = $alignments{$unique_best_alignment}->{position};
       $methylation_call_params->{$identifier}->{index}           = $alignments{$unique_best_alignment}->{index};
       $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$unique_best_alignment}->{alignment_score};
+      $methylation_call_params->{$identifier}->{alignment_score_second_best} = $alignments{$unique_best_alignment}->{alignment_score_second_best};
       $methylation_call_params->{$identifier}->{MD_tag}          = $alignments{$unique_best_alignment}->{MD_tag};
       $methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$unique_best_alignment}->{CIGAR};
     }
@@ -2172,6 +2175,12 @@ sub check_bowtie_results_single_end_bowtie2{
 	  $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$best_alignment_location}->{alignment_score};
 	  $methylation_call_params->{$identifier}->{MD_tag}          = $alignments{$best_alignment_location}->{MD_tag};
 	  $methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$best_alignment_location}->{CIGAR};
+	  if (defined $alignments{$best_alignment_location}->{alignment_score_second_best} and $alignments{$best_alignment_location}-> {alignment_score_second_best} > $alignments{$alignment_location}->{alignment_score}) {
+	    $methylation_call_params->{$identifier}->{alignment_score_second_best} = $alignments{$best_alignment_location}->{alignment_score_second_best};
+	  }
+	  else {
+	    $methylation_call_params->{$identifier}->{alignment_score_second_best} = $alignments{$alignment_location}->{alignment_score};
+	  }
 	  last; # exiting after processing the second alignment since the sequence produced a unique best alignment
 	}
       }
@@ -2223,6 +2232,12 @@ sub check_bowtie_results_single_end_bowtie2{
     $counting{genomic_sequence_could_not_be_extracted_count}++;
     return 0;
   }
+
+  # Compute MAPQ value
+  $methylation_call_params->{$identifier}->{mapq} = calc_mapq (length($sequence), undef,
+							       $methylation_call_params->{$identifier}->{alignment_score},
+							       $methylation_call_params->{$identifier}->{alignment_score_second_best});
+
 
 
   ### otherwise we are set to perform the actual methylation call
@@ -2824,7 +2839,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
       ### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
       my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
-      # print "sum of alignment scores: $sum_of_alignment_scores_1\n\n";
+      # warn "sum of alignment scores: $sum_of_alignment_scores_1\n\n";
 
       if (defined $second_best_1 and defined $second_best_2){
 	my $sum_of_alignment_scores_second_best = $second_best_1 + $second_best_2;
@@ -2886,6 +2901,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
  	    $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
 	    $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
 	    $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
+	    $alignments{$alignment_location}->{sum_of_alignment_scores_second_best} = $sum_of_alignment_scores_second_best;
 	    $alignments{$alignment_location}->{bowtie_sequence_1} = $bowtie_sequence_1;
 	    $alignments{$alignment_location}->{bowtie_sequence_2} = $bowtie_sequence_2;
 	    $alignments{$alignment_location}->{index} = $index;
@@ -2945,6 +2961,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
 	  $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
 	  $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
+	  $alignments{$alignment_location}->{sum_of_alignment_scores_second_best} = undef;
 	  $alignments{$alignment_location}->{bowtie_sequence_1} = $bowtie_sequence_1;
 	  $alignments{$alignment_location}->{bowtie_sequence_2} = $bowtie_sequence_2;
 	  $alignments{$alignment_location}->{index} = $index;
@@ -3079,6 +3096,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
       $methylation_call_params->{$identifier}->{alignment_score_1} = $alignments{$unique_best_alignment}->{alignment_score_1};
       $methylation_call_params->{$identifier}->{alignment_score_2} = $alignments{$unique_best_alignment}->{alignment_score_2};
       $methylation_call_params->{$identifier}->{sum_of_alignment_scores} = $alignments{$unique_best_alignment}->{sum_of_alignment_scores};
+      $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$unique_best_alignment}->{sum_of_alignment_scores_second_best};
       $methylation_call_params->{$identifier}->{mismatch_info_1}   = $alignments{$unique_best_alignment}->{mismatch_info_1};
       $methylation_call_params->{$identifier}->{mismatch_info_2}   = $alignments{$unique_best_alignment}->{mismatch_info_2};
       $methylation_call_params->{$identifier}->{CIGAR_1}           = $alignments{$unique_best_alignment}->{CIGAR_1};
@@ -3094,7 +3112,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
     my $best_sum_of_alignment_scores;
     my $best_alignment_location;
     foreach my $alignment_location (sort {$alignments{$b}->{sum_of_alignment_scores} <=> $alignments{$a}->{sum_of_alignment_scores}} keys %alignments){
-      # print "$alignments{$alignment_location}->{sum_of_alignment_scores}\n";
+
+      # warn "$alignments{$alignment_location}->{sum_of_alignment_scores}\n"; sleep(1);
+
       unless (defined $best_sum_of_alignment_scores){
 	$best_sum_of_alignment_scores = $alignments{$alignment_location}->{sum_of_alignment_scores};
 	$best_alignment_location = $alignment_location;
@@ -3124,6 +3144,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	  $methylation_call_params->{$identifier}->{CIGAR_2}           = $alignments{$best_alignment_location}->{CIGAR_2};
 	  $methylation_call_params->{$identifier}->{flag_1}            = $alignments{$best_alignment_location}->{flag_1};
 	  $methylation_call_params->{$identifier}->{flag_2}            = $alignments{$best_alignment_location}->{flag_2};
+
+	  if (defined $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best} and ( $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best} > $alignments{$alignment_location}->{sum_of_alignment_scores} )) {
+	    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best};
+	  }
+	  else {
+	    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$alignment_location}->{sum_of_alignment_scores};
+	  }
+
 	  last; # exiting since the sequence produced a unique best alignment
 	}
       }
@@ -3181,6 +3209,12 @@ sub check_bowtie_results_paired_ends_bowtie2{
     return 0;
   }
 
+  ### Compute MAPQ value
+  $methylation_call_params->{$identifier}->{mapq} = calc_mapq (length($sequence_1), length($sequence_2),
+                                                                           $methylation_call_params->{$identifier}->{sum_of_alignment_scores},
+                                                                           $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best});
+
+
   ### now we are set to perform the actual methylation call
   $methylation_call_params->{$identifier}->{methylation_call_1} = methylation_call($identifier,$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{read_conversion_1});
   $methylation_call_params->{$identifier}->{methylation_call_2} = methylation_call($identifier,$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{read_conversion_2});
@@ -3192,6 +3226,124 @@ sub check_bowtie_results_paired_ends_bowtie2{
   print_bisulfite_mapping_results_paired_ends_bowtie2($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2);
   return 0; ## otherwise 1 will be returned by default, which would print the sequence pair to unmapped_1 and _2
 }
+
+###
+
+# Compute MAPQ value for a read or read pair as in Bowtie2-2.2.2 (specifically, V2 of the MAPQ calculator: "class BowtieMapq2")
+# assuming end-to-end alignment with the default calculation of the minimum alignment score
+
+sub calc_mapq {
+  my ($read1Len, $read2Len, $AS_best, $AS_secBest) = @_;
+
+  my $scMin = $score_min_intercept + $score_min_slope * $read1Len;
+  ### read2Len is only defined for paired-end reads, so for single-end mode we can just a score min value for read 1
+  if (defined $read2Len){
+    $scMin   += $score_min_intercept + $score_min_slope * $read2Len;
+  }
+
+  my $diff = abs$scMin; # scores can vary by up to this much (since max AS is 0 for end-to-end alignment)
+  my $bestOver = $AS_best - $scMin;
+
+  if (!defined $AS_secBest) {
+    if    ($bestOver >= $diff * 0.8) { return 42; }
+    elsif ($bestOver >= $diff * 0.7) { return 40; }
+    elsif ($bestOver >= $diff * 0.6) { return 24; }
+    elsif ($bestOver >= $diff * 0.5) { return 23; }
+    elsif ($bestOver >= $diff * 0.4) { return  8; }
+    elsif ($bestOver >= $diff * 0.3) { return  3; }
+    else                             { return  0; }
+  } else {
+    my $bestDiff = abs(abs($AS_best) - abs($AS_secBest));
+    if ($bestDiff >= $diff * 0.9) {
+      if ($bestOver == $diff) {
+	return 39;
+      } else {
+	return 33;
+      }
+    } elsif ($bestDiff >= $diff * 0.8) {
+      if ($bestOver == $diff) {
+	return 38;
+      } else {
+	return 27;
+      }
+    } elsif ($bestDiff >= $diff * 0.7) {
+      if ($bestOver == $diff) {
+	return 37;
+      } else {
+	return 26;
+      }
+    } elsif ($bestDiff >= $diff * 0.6) {
+      if ($bestOver == $diff) {
+	return 36;
+      } else {
+	return 22;
+      }
+    } elsif ($bestDiff >= $diff * 0.5) {
+      if ($bestOver == $diff) {
+	return 35;
+      } elsif ($bestOver >= $diff * 0.84) {
+	return 25;
+      } elsif ($bestOver >= $diff * 0.68) {
+	return 16;
+      } else {
+	return 5;
+      }
+    } elsif ($bestDiff >= $diff * 0.4) {
+      if ($bestOver == $diff) {
+	return 34;
+      } elsif ($bestOver >= $diff * 0.84) {
+	return 21;
+      } elsif ($bestOver >= $diff * 0.68) {
+	return 14;
+      } else {
+	return 4;
+      }
+    } elsif ($bestDiff >= $diff * 0.3) {
+      if ($bestOver == $diff) {
+	return 32;
+      } elsif ($bestOver >= $diff * 0.88) {
+	return 18;
+      } elsif ($bestOver >= $diff * 0.67) {
+	return 15;
+      } else {
+	return 3;
+      }
+    } elsif ($bestDiff >= $diff * 0.2) {
+      if ($bestOver == $diff) {
+	return 31;
+      } elsif ($bestOver >= $diff * 0.88) {
+	return 17;
+      } elsif ($bestOver >= $diff * 0.67) {
+	return 11;
+      } else {
+	return 0;
+      }
+    } elsif ($bestDiff >= $diff * 0.1) {
+      if ($bestOver == $diff) {
+	return 30;
+      } elsif ($bestOver >= $diff * 0.88) {
+	return 12;
+      } elsif ($bestOver >= $diff * 0.67) {
+	return 7;
+      } else {
+	return 0;
+      }
+    } elsif ($bestDiff > 0) {
+      if ($bestOver >= $diff * 0.67) {
+	return 6;
+      } else {
+	return 2;
+      }
+    } else {
+      if ($bestOver >= $diff * 0.67) {
+	return 1;
+      } else {
+	return 0;
+      }
+    }
+  }
+}
+
 
 ###
 
@@ -6522,16 +6674,22 @@ VERSION
 
 
   ### BOWTIE 2 SCORING OPTIONS
+
+  my ($score_min_intercept, $score_min_slope);
+
   if ($score_min){
     die "The option '--score_min <func>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    unless ($score_min =~ /^L,.+,.+$/){
+
+    unless ($score_min =~ /^L,(.+),(.+)$/){
       die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
-    push @bowtie_options,"--score-min $score_min";
+    ($score_min_intercept, $score_min_slope) = ($1, $2);
+    push @bowtie_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
   }
   else{
     if ($bowtie2){
-      push @bowtie_options,"--score-min L,0,-0.2"; # default setting, more stringent than normal Bowtie2
+      ($score_min_intercept, $score_min_slope) = (0, -0.2);
+      push @bowtie_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
     }
   }
 
@@ -6814,7 +6972,7 @@ VERSION
   }
 
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope);
 }
 
 
@@ -6907,7 +7065,14 @@ sub single_end_SAM_output{
 
   #####
 
-  my $mapq = 255;                                                     # Assume mapping quality is unavailable
+  my $mapq;
+
+  if ($bowtie2){
+    $mapq = $methylation_call_params->{$id}->{mapq};
+  }
+  else{
+    $mapq = 255;                                                      # Mapping quality is unavailable for use with Bowtie
+  }
 
   #####
 
@@ -7052,6 +7217,7 @@ sub single_end_SAM_output{
 }
 
 sub paired_end_SAM_output{
+
   my ($id,$actual_seq_1,$actual_seq_2,$methylation_call_params,$qual_1,$qual_2) = @_;
   my $strand_1                = $methylation_call_params->{$id}->{alignment_read_1}; # Bowtie 1 only reports the read 1 alignment strand
   my $strand_2                = $methylation_call_params->{$id}->{alignment_read_2};
@@ -7242,7 +7408,14 @@ sub paired_end_SAM_output{
 
   #####
 
-  my $mapq = 255;                                                      # Mapping quality is unavailable
+  my $mapq;
+
+  if ($bowtie2){
+    $mapq = $methylation_call_params->{$id}->{mapq};
+  }
+  else{
+    $mapq = 255;                                                       # Mapping quality is unavailable for use with Bowtie
+  }
 
   #####
 
@@ -7988,7 +8161,7 @@ Bismark SAM OUTPUT (default):
  (2) FLAG   (this flag tries to take the strand a bisulfite read originated from into account (this is different from ordinary DNA alignment flags!))
  (3) RNAME  (chromosome)
  (4) POS    (start position)
- (5) MAPQ   (always 255)
+ (5) MAPQ   (always 255 for use with Bowtie)
  (6) CIGAR
  (7) RNEXT
  (8) PNEXT
@@ -8005,7 +8178,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 08 April 2014.
+Last edited on 28 April 2014.
 
 HOW_TO
 }
