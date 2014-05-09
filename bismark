@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.12.1';
+my $bismark_version = 'v0.12.2';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -3717,6 +3717,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   if ( ($methylation_call_params->{$sequence_identifier}->{index} == 1) or ($methylation_call_params->{$sequence_identifier}->{index} == 3) ){
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless ( ($pos_2-2) >= 0){# exiting with en empty genomic sequence otherwise
+      $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
       return;
     }
@@ -4497,18 +4498,15 @@ sub read_genome_into_memory{
 	my $first_line = <CHR_IN>;
 	chomp $first_line;
 	$first_line =~ s/\r//;
-	
 	### Extracting chromosome name from the FastA header
 	my $chromosome_name = extract_chromosome_name($first_line);
-	++$SQ_count;
 	my $sequence;
-
 
 	while (<CHR_IN>){
 	  chomp;
 	  $_ =~ s/\r//; # removing carriage returns if present
 	  if ($_ =~ /^>/){
-	    ++$SQ_count;
+	
 	    ### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
 	    if (exists $chromosomes{$chromosome_name}){
 	      print "chr $chromosome_name (",length $sequence ," bp)\n";
@@ -4521,6 +4519,9 @@ sub read_genome_into_memory{
 	      print "chr $chromosome_name (",length $sequence ," bp)\n";
 	      $chromosomes{$chromosome_name} = $sequence;
 	      $SQ_order{$SQ_count} = $chromosome_name;
+
+	      ++$SQ_count;
+
 	    }
 	    ### resetting the sequence variable
 	    $sequence = '';
@@ -4532,6 +4533,8 @@ sub read_genome_into_memory{
 	  }
 	}
 	
+ 	### Processing last chromosome of a multi Fasta File or the only entry in case of single entry FastA files
+
 	if (exists $chromosomes{$chromosome_name}){
 	    print "chr $chromosome_name (",length $sequence ," bp)\t";
 	    die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
@@ -4540,6 +4543,9 @@ sub read_genome_into_memory{
 	    if (length($sequence) == 0){
 		warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
 	    }
+
+	    ++$SQ_count;
+
 	    print "chr $chromosome_name (",length $sequence ," bp)\n";
 	    $chromosomes{$chromosome_name} = $sequence;
 	    $SQ_order{$SQ_count} = $chromosome_name;
@@ -6989,7 +6995,7 @@ sub generate_SAM_header{
   #  }
 
   foreach my $chr (sort {$a<=>$b} keys %SQ_order){
-    #  print "$chr\t$SQ_order{$chr}\n";
+    # warn "$chr\t$SQ_order{$chr}\n";
     my $length = length ($chromosomes{$SQ_order{$chr}});
     print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length
   }
@@ -6999,7 +7005,7 @@ sub generate_SAM_header{
 }
 
 ### I would like to thank the following individuals for their valuable contributions to the Bismark SAM output format:
-### O. Tam (2010), C. Whelan (2011), E. Vidal (2011), T. McBryan (2011), P. Hickey (2011)
+### O. Tam (2010), C. Whelan (2011), E. Vidal (2011), T. McBryan (2011), P. Hickey (2011), A. Dei Rossi (2014)
 
 sub single_end_SAM_output{
   my ($id,$actual_seq,$methylation_call_params,$qual) = @_;
@@ -7155,7 +7161,7 @@ sub single_end_SAM_output{
 	### if Bowtie 2 was used we need to analyse the CIGAR string whether the read contained any indels to determine the number of mismatches
 	if ($cigar =~ /(D|I)/) {
 	  # warn "$cigar\n";
-	  
+	
 	  # parsing CIGAR string
 	  my @len = split (/\D+/,$cigar); # storing the length per operation
 	  my @ops = split (/\d+/,$cigar); # storing the operation
@@ -8178,7 +8184,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 28 April 2014.
+Last edited on 09 May 2014.
 
 HOW_TO
 }

@@ -1,3 +1,30 @@
+RELEASE NOTES FOR Bismark v0.12.1 (29 Apr 2014)
+-----------------------------------------------
+
+Added calculation of MAPQ values for SAM/BAM output generated with Bowtie 2 for both single-end and
+paired-end mode. The calculation is implemented like in Bowtie 2 itself, so please don't ask me why
+the values are what they are. Thanks to Andrew Dei Rossi (Stanford) for taking the initiative to adapt
+the Bowtie 2 code to Perl after a discussion that was sparked on SeqAnswers). Mapping quality values
+are still unavailable for alignments performed with Bowtie and retain a value of 255 throughout.
+
+Fixed an uninitialised value warning for PE alignments with Bowtie 2 that occurred whenever Read 2
+aligned to the very start of a chromosome (this only affected the warning itself and has no impact on
+any results).
+
+
+coverage2cytosine
+=================
+
+Changed this module so that all chromosomes or scaffolds are processed irrespective of whether they
+were covered in the sequencing experiment. For organisms with few chromosomes and lots of reads the
+outcome would most probably be the same, but it might have affected the CpG/Cytosine reports for genomes
+with lots of very small scaffolds that were not covered by any reads. Thanks to S. Jhanwar for bringing
+this to my attention.
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.11.1 (07 Apr 2014)
 -----------------------------------------------
 
