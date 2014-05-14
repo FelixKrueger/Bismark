@@ -9,9 +9,15 @@ Fixed a bug that caused a the second last chromosome of a multi-FastA reference 
 from the SAM header (really only the header line, the genome as well as the alignments were not 
 affected by this).
 
-
 When the option --basename is specified, SE amibiguous file names now feature an underscore. Also, the 
 pie chart file names are derived from the the basename.
+
+
+Methylation Extractor
+=====================
+
+Introduced a length check when the options --ignore or --ignore_r2 were set to ensure that only reads
+that are long enough are being processed.
 
 
 

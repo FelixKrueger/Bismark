@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.12.1';
+my $version = 'v0.12.2';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem) = process_commandline();
 
 
@@ -2152,14 +2152,20 @@ sub process_Bismark_results_file{
 	  if ($ignore) {
 	    ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>' for read 1	
 	    ### the methylation calls have already been reversed where necessary
-	    $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
+
+	    if ( (length($meth_call_1)-$ignore) <= 0){
+	      next; # skipping this read entirely if the read is shorter than the portion to be ignored
+	    }
+	    else {
+	      $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
+	    }
 
 	    if ($strand eq '+') {
 		
 	      ### if the (read 1) strand information is '+', read 1 needs to be trimmed from the start
 	      my $D_count_1 = 0; # counting all deletions that affect the ignored genomic position for read 1, i.e. Deletions and insertions
 	      my $I_count_1 = 0;
-	      
+	
 	      for (1..$ignore) {
 		my $op = shift @comp_cigar_1; # adjusting composite CIGAR string of read 1 by removing $ignore operations from the start
 		# print "$_ deleted $op\n";
@@ -2196,7 +2202,13 @@ sub process_Bismark_results_file{
 	  if ($ignore_r2) {
 	    ### Clipping off the first <int> number of bases from the methylation call string as specified with '--ignore_r2 <int>' for read 2	
 	    ### the methylation calls have already been reversed where necessary
-	    $meth_call_2 = substr($meth_call_2,$ignore_r2,length($meth_call_2)-$ignore_r2);
+
+	    if ( (length($meth_call_2)-$ignore_r2) <= 0){
+	      next; # skipping this read entirely if the read is shorter than the portion to be ignored
+	    }
+	    else {
+	      $meth_call_2 = substr($meth_call_2,$ignore_r2,length($meth_call_2)-$ignore_r2);
+	    }
 	
 	    ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
 	
@@ -4781,7 +4793,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 27 March 2014.
+This script was last modified on 14 May 2014.
 
 HOW_TO
 }
