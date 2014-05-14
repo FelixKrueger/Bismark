@@ -35,7 +35,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -390,10 +390,10 @@ sub start_methylation_call_procedure_single_ends {
 
     if ($basename){ # Output file basename is set using the -B argument
       if ($sequence_file_format eq 'FASTQ'){
-	$ambiguous_file =  "${basename}ambiguous_reads.fq";
+	$ambiguous_file =  "${basename}_ambiguous_reads.fq";
       }
       else{
-	$ambiguous_file =  "${basename}ambiguous_reads.fa";
+	$ambiguous_file =  "${basename}_ambiguous_reads.fa";
       }
     }
     else{
@@ -854,8 +854,12 @@ sub print_final_analysis_report_single_end{
   #  if ($prefix){
   #    $pie_chart = "$prefix.$pie_chart"; # this is now being taken care of in file transformation
   # }
-  $pie_chart = "${output_dir}${pie_chart}_bismark_SE.alignment_overview.png";
-
+  if ($basename){
+    $pie_chart = "${output_dir}${basename}_bismark_SE.alignment_overview.png";
+  }
+  else{
+    $pie_chart = "${output_dir}${pie_chart}_bismark_SE.alignment_overview.png";
+  }
 
   #Check whether the module GD::Graph is installed
   my $gd_graph_installed = 0;
@@ -1130,7 +1134,12 @@ sub print_final_analysis_report_paired_ends{
     # prefix is now being prepended to the temp files already
     # $pie_chart = "$prefix.$pie_chart";
   }
-  $pie_chart = "${output_dir}${pie_chart}_bismark_PE.alignment_overview.png";
+  if ($basename){
+    $pie_chart = "${output_dir}${basename}_bismark_PE.alignment_overview.png";
+  }
+  else{
+    $pie_chart = "${output_dir}${pie_chart}_bismark_PE.alignment_overview.png";
+  }
 
   #Check whether the module GD::Graph is installed
   my $gd_graph_installed = 0;
@@ -5763,6 +5772,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 ### Bowtie 2 | PAIRED-END | FASTQ
 
 sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
+
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
   if ($directional){
     warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
@@ -5803,7 +5813,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     }
 
     warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -6066,7 +6076,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $bt2_options)\n";
     warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
 
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
       $_ = $fh->{fh}->getline();
@@ -6490,23 +6500,72 @@ VERSION
   my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
   my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
 
-  if ($bowtie2){ ### Bowtie 2 (new)
-    ### checking the integrity of $CT_dir
+  my $bt2_small_index_present = 1;
+  my $bt2_large_index_present = 1;
+
+  if ($bowtie2){ ### Bowtie 2
+
+    ### Checking for small indixes first (ending in .bt2)
+
+    # checking the integrity of $CT_dir
     chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+
     my @CT_bowtie_index = ('BS_CT.1.bt2','BS_CT.2.bt2','BS_CT.3.bt2','BS_CT.4.bt2','BS_CT.rev.1.bt2','BS_CT.rev.2.bt2');
     foreach my $file(@CT_bowtie_index){
       unless (-f $file){
-	die "The Bowtie 2 index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run the bismark_genome_preparation before running Bismark\n";
+	warn "The Bowtie 2 index of the C->T converted genome seems to be faulty or non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
+	$bt2_small_index_present = 0;
       }
     }
-    ### checking the integrity of $GA_dir
+    # checking the integrity of $GA_dir
     chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
     my @GA_bowtie_index = ('BS_GA.1.bt2','BS_GA.2.bt2','BS_GA.3.bt2','BS_GA.4.bt2','BS_GA.rev.1.bt2','BS_GA.rev.2.bt2');
+
     foreach my $file(@GA_bowtie_index){
       unless (-f $file){
-	die "The Bowtie 2 index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation before running Bismark\n";
+	warn "The Bowtie 2 index of the G->A converted genome seems to be faulty or non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
+	$bt2_small_index_present = 0;
       }
     }
+
+    ### Using the small index preferentially
+    if ($bt2_small_index_present){
+      $bt2_large_index_present = 0;
+    }
+    else{  # only checking for large indexes if the 'normal' one can't be found
+      warn "\nCouldn't find a traditional small Bowtie 2 index for the genome specified (ending in .bt2). Now searching for a large index instead (64-bit index ending in .bt2l)...\n";
+
+      ### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .bt2l)
+
+      # checking the integrity of $CT_dir
+      chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+
+      @CT_bowtie_index = ('BS_CT.1.bt2l','BS_CT.2.bt2l','BS_CT.3.bt2l','BS_CT.4.bt2l','BS_CT.rev.1.bt2l','BS_CT.rev.2.bt2l');
+      foreach my $file(@CT_bowtie_index){
+	unless (-f $file){
+	  die "The Bowtie 2 index of the C->T converted genome seems to be faulty or non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
+	  $bt2_large_index_present = 0;  }
+      }
+
+      ### checking the integrity of $GA_dir
+      chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+      @GA_bowtie_index = ('BS_GA.1.bt2l','BS_GA.2.bt2l','BS_GA.3.bt2l','BS_GA.4.bt2l','BS_GA.rev.1.bt2l','BS_GA.rev.2.bt2l');
+
+      foreach my $file(@GA_bowtie_index){
+	unless (-f $file){
+	  die "The Bowtie 2 index of the G->A converted genome seems to be faulty or non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
+	  $bt2_large_index_present = 0;
+	}
+      }
+
+      if ($bt2_large_index_present){
+	warn "64-bit large genome Bowtie 2 index found...\n";
+      }
+      else{
+	die "Failed to detect either a standard (.bt2) or 64-bit (.bt2l) Bowtie 2 index for the genome specified. Please run the bismark_genome_preparation before launching Bismark\n\n";
+      }
+    }
+
   }
 
   else{ ### Bowtie 1 (default)
@@ -6977,8 +7036,7 @@ VERSION
     sleep(1);
   }
 
-
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present);
 }
 
 
@@ -8033,7 +8091,8 @@ BOWTIE 2 SPECIFIC OPTIONS
 --bowtie2                Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
                          alignments, i.e. searches for alignments involving all read characters (also called 
                          untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
-                         and/or quality trimmed where appropriate. Default: off.
+                         and/or quality trimmed where appropriate. Both small (.bt2) and large (.bt2l) Bowtie 2
+                         indexes are supported. Default: off.
 
 Bowtie 2 alignment options:
 
@@ -8184,7 +8243,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 09 May 2014.
+Last edited on 14 May 2014.
 
 HOW_TO
 }

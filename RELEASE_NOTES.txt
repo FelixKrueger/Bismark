@@ -1,3 +1,21 @@
+RELEASE NOTES FOR Bismark v0.12.2 (14 May 2014)
+-----------------------------------------------
+
+Added support for the new 64-bit large index file for very large genomes in Bowtie 2 mode. The
+indexes end in .bt2l (instead of .bt2 for small genomes). If both small (.bt2) and large index
+files are in the same folder the small ones are used.
+
+Fixed a bug that caused a the second last chromosome of a multi-FastA reference file to be absent
+from the SAM header (really only the header line, the genome as well as the alignments were not 
+affected by this).
+
+
+When the option --basename is specified, SE amibiguous file names now feature an underscore. Also, the 
+pie chart file names are derived from the the basename.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.12.1 (29 Apr 2014)
 -----------------------------------------------
 
