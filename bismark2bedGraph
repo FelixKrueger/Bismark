@@ -21,13 +21,13 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.12.1';
+my $bismark2bedGraph_version = 'v0.12.3';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
 my @sorting_files;
 
-my ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem) = process_commandline();
+my ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero) = process_commandline();
 
 # warn "Using these input files: @sorting_files\n";
 
@@ -83,7 +83,7 @@ foreach my $filename (@sorting_files){
     push @bedfiles,$filename;
   }
   else{ ## CpG context only (default)
-    if ($filename =~ /^CpG_/){
+    if ($filename =~ /^CpG/){
       push @bedfiles,$filename;
     }
     else{
@@ -98,7 +98,7 @@ if (@bedfiles){
   sleep (2);
 }
 else{
-  die "It seems that you are trying to generate bedGraph files for files not starting with CpG_.... Please specify the option '--CX' and try again\n\n";
+  die "It seems that you are trying to generate bedGraph files for files not starting with CpG.... Please specify the option '--CX' and try again\n\n";
 }
 
 open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!\n";
@@ -111,7 +111,18 @@ unless ($coverage_output =~ s/bedGraph$/bismark.cov/){
 }
 
 open (COVERAGE,'>',$output_dir.$coverage_output) or die "Problems writing to the coverage output detected. File path: '$output_dir'\tfile name: '$coverage_output' $!\n\n";
-warn "Also writing out a coverage file including counts methylated and unmethylated residues to file: $coverage_output\n\n";
+warn "Also writing out a coverage file including counts methylated and unmethylated residues to file: $coverage_output\n";
+
+if ($zero){
+  my $zero_coverage_output = $bedGraph_output;
+  unless ($zero_coverage_output =~ s/bedGraph$/bismark.zero.cov/){
+    $zero_coverage_output =~ s/$/.bismark.zero.cov/;
+  }
+
+  open (ZEROCOVERAGE,'>',$output_dir.$zero_coverage_output) or die "Problems writing to the zero-based coverage output detected. File path: '$output_dir'\tfile name: '$\zero_coverage_output' $!\n\n";
+  warn "Also writing out a 0-based, half-open coverage file including counts methylated and unmethylated residues to file: $zero_coverage_output\n";
+}
+warn "\n";
 
 my %temp_fhs;
 my @temp_files; # writing all context files (default CpG only) to these files prior to sorting
@@ -378,6 +389,12 @@ foreach my $in (@temp_files) {
 	
 	  # this is the coverage file. Coordinates are 1-based
 	  print COVERAGE "$last_chr\t$one_based_pos\t$one_based_pos\t$meth_percentage\t$meth_count[$index]\t$unmeth_count[$index]\n";
+
+	  # this is an optional 0-based, half-open coverage file. Coordinates are 0-based start and 1-based end
+	  if ($zero){
+	    print ZEROCOVERAGE "$last_chr\t$bed_pos\t$one_based_pos\t$meth_percentage\t$meth_count[$index]\t$unmeth_count[$index]\n";
+	  }
+
 	}
       }
     }
@@ -459,7 +476,8 @@ foreach my $in (@temp_files) {
 
 close OUT or die $!;
 close COVERAGE or die $!;
-exit 1;
+close ZEROCOVERAGE or die $!;
+exit 0;
 
 
 
@@ -504,15 +522,11 @@ sub generate_output{
   croak "Should not be generating output if there's no reads to this region" unless ($totalcount > 0);
   croak "Total counts ($totalcount) is not the sum of the methylated ($methcount) and unmethylated ($nonmethcount) counts" if ($totalcount != ($methcount + $nonmethcount) );
 
-  ############################################# m.a.bentley - declare a new variable 'bed_pos' to distinguish from bismark positions (-1) - previous scripts modified the last_pos variable earlier in the script leading to problems in meth % calculation {
-
   my $bed_pos = $last_pos - 1; ### Bismark coordinates are 1 based whereas bedGraph coordinates are 0 based.
   my $meth_percentage;
   ($totalcount >= $coverage_threshold) ? ($meth_percentage = ($methcount/$totalcount) * 100) : ($meth_percentage = undef);
   # $meth_percentage =~ s/(\.\d\d).+$/$1/ unless $meth_percentage =~ /^Below/;
   if (defined $meth_percentage){
-
-    # as of version 0.9.1 we will by default write out both a bedGraph and a more detailed coverage file
 
     # this is the bedGraph file, the starting position is 0-based, the end position is 1-based! (clever, huh?)
     my $one_based_pos = $bed_pos + 1;
@@ -520,8 +534,13 @@ sub generate_output{
 
     # this is the coverage file. Coordinates are 1-based
     print COVERAGE "$last_chr\t$one_based_pos\t$one_based_pos\t$meth_percentage\t$methcount\t$nonmethcount\n";
+
+    # this is an optional 0-based, half-open coverage file. Coordinates are 0-based start and 1-based end
+    if ($zero){
+      print ZEROCOVERAGE "$last_chr\t$bed_pos\t$one_based_pos\t$meth_percentage\t$methcount\t$nonmethcount\n";
+    }
   }
-  #############################################  }
+
 }
 
 sub process_commandline{
@@ -537,20 +556,22 @@ sub process_commandline{
   my $version;
   my $gazillion;
   my $ample_mem;
+  my $zero;
 
-  my $command_line = GetOptions ('help|man' => \$help,
-				 'dir=s' => \$output_dir,
-				 'o|output=s' => \$bedGraph_output,
-				 'no_header' => \$no_header,
-				 "cutoff=i" => \$coverage_threshold,
-				 "remove_spaces" => \$remove,
-				 "counts" => \$counts,
-				 "CX|CX_context" => \$CX_context,
-				 "buffer_size=s" => \$sort_size,
-				 'version' => \$version,
+  my $command_line = GetOptions ('help|man'            => \$help,
+				 'dir=s'               => \$output_dir,
+				 'o|output=s'          => \$bedGraph_output,
+				 'no_header'           => \$no_header,
+				 "cutoff=i"            => \$coverage_threshold,
+				 "remove_spaces"       => \$remove,
+				 "counts"              => \$counts,
+				 "CX|CX_context"       => \$CX_context,
+				 "buffer_size=s"       => \$sort_size,
+				 'version'             => \$version,
 				 'gazillion|scaffolds' => \$gazillion,
-				 'ample_memory' => \$ample_mem,
-				);
+				 'ample_memory'        => \$ample_mem,
+				 "zero_based"          => \$zero,
+			);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
   unless ($command_line){
@@ -651,7 +672,7 @@ VERSION
     }
   }
 
-  return ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem);
+  return ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero);
 }
 
 
@@ -670,7 +691,7 @@ sub print_helpfile{
 
   USAGE: bismark2bedGraph [options] -o <output> [methylation extractor input files]
 
-Methylation extractor input files: These files are required to start with CpG_ in order for the
+Methylation extractor input files: These files are required to start with CpG... in order for the
 script to correctly work out the sequence context when using CpG context only (default). If all cytosine
 contexts are selected ('--CX_context'), all input files will be used regardless of their file file name(s).
 
@@ -718,6 +739,10 @@ contexts are selected ('--CX_context'), all input files will be used regardless 
                            files (up to a few million alignments). Note also that this option is not currently compatible
                            with options '--scaffolds/--gazillion'.
 
+--zero_based               Write out an additional coverage file (ending in .zero.cov) that uses 0-based genomic start
+                           and 1-based genomic end coordinates (zero-based, half-open), like used in the bedGraph file,
+                           instead of using 1-based coordinates throughout. Default: OFF.
+
 
 
 The bedGraph output looks like this (tab-delimited; 0-based start coords, 1-based end coords):
@@ -729,13 +754,13 @@ track type=bedGraph (header line)
 
 
 
-The coverage output looks like this (tab-delimited, 1-based genomic coords):
-============================================================================
+The coverage output looks like this (tab-delimited, 1-based genomic coords; optional zero-based, half-open coords with '--zero_based'):
+=======================================================================================================================================
 
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 25 November 2013
+                          Script last modified: 02 June 2014
 
 EOF
     ;

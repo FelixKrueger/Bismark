@@ -1,3 +1,13 @@
+RELEASE NOTES FOR Bismark v0.12.3 (03 June 2014)
+-----------------------------------------------
+
+bismark2bedGraph
+================
+
+Changed the requirement of CpG context files to start with CpG... (from CpG_...). 
+
+
+
 RELEASE NOTES FOR Bismark v0.12.2 (14 May 2014)
 -----------------------------------------------
 

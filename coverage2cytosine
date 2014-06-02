@@ -22,7 +22,7 @@ use Carp;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
-my $coverage2cytosine_version = 'v0.12.1';
+my $coverage2cytosine_version = 'v0.12.3';
 my %processed;   # keeping a record of which chromosomes have been processed
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out) = process_commandline();
@@ -41,11 +41,12 @@ else{
 }
 
 if ($zero){
-  warn "Genome coordinates used:\t0-based\n";
+  warn "Genome coordinates used:\t0-based (user specified)\n";
 }
 else{
   warn "Genome coordinates used:\t1-based (default)\n";
 }
+
 if ($split_by_chromosome){
   warn "Split by chromosome:\t\tyes\n\n\n";
 }
@@ -594,15 +595,14 @@ sub print_helpfile{
 
   This script generates a cytosine methylation report for a genome of interest and a sorted methylation input file produced
   by the script "bismark2bedGraph". By default, the output uses 1-based chromosome coordinates and reports CpG positions only
-  (for both strands individually and not merged in any way).
+  (for both strands individually and not merged in any way). Coordinates may be changed to 0-based using the option '--zero_based'.
 
   The input file needs to have been generated with the script bismark2bedGraph (the file is called *.cov) or otherwise be
   sorted by position and exactly in the following format:
 
   <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count unmethylated>
 
-  The coordinates of the input file are expected to be 1-based (as of version 0.10.0).
-
+  The coordinates of the input file are expected to be 1-based throughout (do not use files ending in .zero.cov!).
 
 
   USAGE: coverage2cytosine [options] -o <output> [input]
@@ -620,7 +620,7 @@ sub print_helpfile{
                          generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse.
                          Default: OFF (i.e. Default = CpG context only).
 
---zero_based             Uses zero-based coordinates instead of 1-based coordinates. Default: OFF.
+--zero_based             Uses 0-based coordinates instead of 1-based coordinates throughout. Default: OFF.
 
 --split_by_chromosome    Writes the output into individual files for each chromosome instead of a single output file. Files
                          will be named to include the input filename and the chromosome number.
@@ -631,13 +631,13 @@ sub print_helpfile{
 
 OUTPUT FORMAT:
 
-The genome-wide cytosine methylation output file is tab-delimited in the following format (1-based coords:
-==========================================================================================================
+The genome-wide cytosine methylation output file is tab-delimited in the following format (1-based coords):
+===========================================================================================================
 
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                          Script last modified: 28 April 2014
+                              Script last modified: 02 June 2014
 
 EOF
     ;

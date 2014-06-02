@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.12.2';
+my $version = 'v0.12.3';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem) = process_commandline();
 
 
@@ -117,6 +117,11 @@ if ($bedGraph){
     warn "Generating additional sorted output in bedGraph format (output format: <Chromosome> <Start Position> <End Position> <Methylation Percentage>)\n";
   }
 
+  ### Zero-based coordinates
+  if ($zero){
+    warn "Writing out an additional coverage file (ending in zero.cov) with 0-based start and 1-based end genomic coordinates (zero-based, half-open; user-defined)\n";
+  }
+
   warn "Using a cutoff of $coverage_threshold read(s) to report cytosine positions\n";
 
   if ($CX_context){
@@ -165,7 +170,7 @@ if ($bedGraph){
 
     ### Zero-based coordinates
     if ($zero){
-      warn "Using zero-based genomic coordinates (user-defined)\n";
+      warn "Using zero-based start and 1-based end genomic coordinates (zero-based, half-open; user-defined)\n";
     }
     else{ # default, 1-based coords
       warn "Using 1-based genomic coordinates (default)\n";
@@ -268,7 +273,9 @@ foreach my $filename (@filenames){
     if ($ample_mem){
       push @args, '--ample_memory';
     }
-
+    if ($zero){
+      push @args, "--zero";
+    }
 
     #   if ($counts){
     #      push @args, "--counts";
@@ -906,11 +913,11 @@ VERSION
   }
 
   if ($zero){
-    die "Option '--zero' is only available if  '--cytosine_report' is specified as well. Please respecify\n" unless ($cytosine_report);
+    die "Option '--zero' is only available if  '--bedGraph' or '--cytosine_report' are specified as well. Please respecify\n" unless ($cytosine_report or $bedGraph);
   }
 
   if ($CX_context){
-    die "Option '--CX_context' is only available if  '--cytosine_report' or '--bedGraph' is specified as well. Please respecify\n" unless ($cytosine_report or $bedGraph);
+    die "Option '--CX_context' is only available if  '--bedGraph' or '--cytosine_report' are specified as well. Please respecify\n" unless ($cytosine_report or $bedGraph);
   }
   else{
     $CX_context = 0;
@@ -4690,6 +4697,10 @@ bedGraph specific options:
                          module 'bismark2bedGraph'; this script needs to reside in the same folder as the 
                          bismark_methylation_extractor itself.
 
+--zero_based             Write out an additional coverage file (ending in .zero.cov) that uses 0-based genomic start
+                         and 1-based genomic end coordinates (zero-based, half-open), like used in the bedGraph file,
+                         instead of using 1-based coordinates throughout. Default: OFF.
+
 
 --cutoff [threshold]     The minimum number of times a methylation state has to be seen for that nucleotide
                          before its methylation percentage is reported. Default: 1.
@@ -4738,11 +4749,11 @@ Genome-wide cytosine methylation report specific options:
 
 --cytosine_report        After the conversion to bedGraph has completed, the option '--cytosine_report' produces a
                          genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based
-                         chromosome coordinates (zero-based cords are optional) and reports CpG context only (all
+                         chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all
                          cytosine context is optional). The output considers all Cs on both forward and reverse strands and
                          reports their position, strand, trinucleotide content and methylation state (counts are 0 if not
-                         covered). The cytsoine report conversion step is performed by the external module 
-                         'bedGraph2cytosine'; this script needs to reside in the same folder as the bismark_methylation_extractor
+                         covered). The cytsoine report conversion step is performed by the external module
+                         'coverage2cytosine'; this script needs to reside in the same folder as the bismark_methylation_extractor
                          itself.
 
 --CX/--CX_context        The output file contains information on every single cytosine in the genome irrespective of
@@ -4750,7 +4761,7 @@ Genome-wide cytosine methylation report specific options:
                          generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse.
                          Default: OFF (i.e. Default = CpG context only).
 
---zero_based             Uses zero-based coordinates like used in e.g. bed files instead of 1-based coordinates. Default: OFF.
+--zero_based             Uses 0-based genomic coordinates instead of 1-based coordinates. Default: OFF.
 
 --genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
                          formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
@@ -4780,8 +4791,8 @@ track type=bedGraph (header line)
 
 
 
-The coverage output looks like this (tab-delimited, 1-based genomic coords):
-============================================================================
+The coverage output looks like this (tab-delimited, 1-based genomic coords; zero-based half-open coordinates available with '--zero_based'):
+============================================================================================================================================
 
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
@@ -4793,7 +4804,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 14 May 2014.
+This script was last modified on 02 June 2014.
 
 HOW_TO
 }
