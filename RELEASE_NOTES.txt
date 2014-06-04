@@ -1,10 +1,18 @@
-RELEASE NOTES FOR Bismark v0.12.3 (03 June 2014)
+RELEASE NOTES FOR Bismark v0.12.3 (04 June 2014)
 -----------------------------------------------
+
+Bismark
+=======
+
+Fixed the hemming distance value (NM:i: field) for reads containing insertions (Bowtie 2 mode only),
+which was previously offset by the number of insertions in the read.
+
 
 bismark2bedGraph
 ================
 
 Changed the requirement of CpG context files to start with CpG... (from CpG_...). 
+
 
 
 
