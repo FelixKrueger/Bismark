@@ -3688,12 +3688,12 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
       $pos_1 += $len_1[$_];
     }
     elsif ($ops_1[$_] eq 'I'){ # insertion in the read sequence
-      # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
-      $non_bisulfite_sequence_1 .= 'N' x $len_1[$_];
+      # we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls, and we can later ignore it for the generation of the MD;Z: tag
+      $non_bisulfite_sequence_1 .= 'X' x $len_1[$_];
       #    warn "$non_bisulfite_sequence_1\n";
       # position doesn't need adjusting
 
-      ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Ns which will fail a base by base comparison in hemming_dist()
+      ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
       # indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
     }
     elsif ($ops_1[$_] eq 'D'){ # deletion in the read sequence
@@ -3744,12 +3744,12 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
       $pos_2 += $len_2[$_];
     }
     elsif ($ops_2[$_] eq 'I'){ # insertion in the read sequence
-      # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
-      $non_bisulfite_sequence_2 .= 'N' x $len_2[$_];
+      # we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls and we can ignore this later during the generation of the MD:Z: tag
+      $non_bisulfite_sequence_2 .= 'X' x $len_2[$_];
       # warn "$non_bisulfite_sequence_2\n";
       # position doesn't need adjusting
 
-      ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Ns which will fail a base by base comparison in hemming_dist()
+      ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
       # $indels_2 += $len_2[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
     }
     elsif ($ops_2[$_] eq 'D'){ # deletion in the read sequence
@@ -4174,12 +4174,12 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
       $pos += $len[$_];
     }
     elsif ($ops[$_] eq 'I'){ # insertion in the read sequence
-      # we simply add padding Ns instead of finding genomic sequence. This will not be used to infer methylation calls
-      $non_bisulfite_sequence .= 'N' x $len[$_];
+      # we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls and we can later ignore it better during the generation of the MD:Z-tag
+      $non_bisulfite_sequence .= 'X' x $len[$_];
       # warn "$non_bisulfite_sequence\n";
       # position doesn't need to be adjusting
 
-      ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Ns which will fail the base by base comparison in hemming_dist()
+      ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail the base by base comparison in hemming_dist()
       # $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
     }
     elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
@@ -7194,7 +7194,8 @@ sub single_end_SAM_output{
 
   #####
 
-  my $XX_tag = make_mismatch_string($actual_seq, $ref_seq);           # Optional tag XX: string providing mismatched reference bases in the alignment (NO indel information!)
+  my $MD_tag = make_mismatch_string($actual_seq, $ref_seq);           # Optional tag MD: string providing mismatched reference bases in the alignment (this does include indel information!)
+  #  my $XX_tag = make_mismatch_string($actual_seq, $ref_seq);           # Optional tag XX: string providing mismatched reference bases in the alignment (NO indel information!)
 
   #####
 
@@ -7279,11 +7280,11 @@ sub single_end_SAM_output{
   # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
   ### optionally print number of non-bisulfite mismatches
   if ($non_bs_mm){
-    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$XX_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
+    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
   }
   else{ # default
     # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
-    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$XX_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
   }
 }
 
@@ -7650,8 +7651,11 @@ sub paired_end_SAM_output{
 
   #####
 
-  my $XX_tag_1 = make_mismatch_string($actual_seq_1,$ref_seq_1);       # Optional tag XX: String providing mismatched reference bases in the alignment (NO indel information!)
-  my $XX_tag_2 = make_mismatch_string($actual_seq_2,$ref_seq_2);
+  my $MD_tag_1 = make_mismatch_string($actual_seq_1,$ref_seq_1);       # Optional tag MD: String providing mismatched reference bases in the alignment (including indel information)
+  my $MD_tag_2 = make_mismatch_string($actual_seq_2,$ref_seq_2);
+  
+  #  my $XX_tag_1 = make_mismatch_string($actual_seq_1,$ref_seq_1);       # Optional tag XX: String providing mismatched reference bases in the alignment (NO indel information!)
+  #  my $XX_tag_2 = make_mismatch_string($actual_seq_2,$ref_seq_2);
 
   #####
 
@@ -7791,12 +7795,12 @@ sub paired_end_SAM_output{
   # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
   ### optionally print number of non-bisulfite mismatches
   if ($non_bs_mm){
-    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $XX_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$XA_tag)), "\n";
-    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $XX_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$XB_tag)), "\n";
+    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$XA_tag)), "\n";
+    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$XB_tag)), "\n";
   }
   else{ # default
-    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $XX_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
-    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $XX_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
+    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
   }
 }
 
@@ -7818,23 +7822,110 @@ sub hemming_dist{
   return my $hd = scalar @actual_seq - $matches;
 }
 
+
+### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
+### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
+### 05 June 2014
+
 sub make_mismatch_string{
-  my $actual_seq = shift or die "Missing actual sequence";
-  my $ref_seq = shift or die "Missing reference sequence";
-  my $XX_tag = "XX:Z:";
-  my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
-  my $prev_mm_pos = 0;
-  while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
-    my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-    my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
-    $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
-    $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
-    $prev_mm_pos = pos($tmp);                            # Position of last mismatch
+  my $actual_seq = shift or die "Missing actual sequence\n";
+  my $ref_seq = shift or die "Missing reference sequence\n";
+  my $MD_tag = "MD:Z:";
+  my $prev_matching = 0;
+  my $last_char;
+
+  my $ref_base;
+  my $actual_base;
+
+  foreach my $pos ( 0..(length$actual_seq) - 1 ){
+
+    $actual_base = substr($actual_seq,$pos,1);
+    $ref_base    = substr($ref_seq,$pos,1);
+    # warn "reference: $ref_base\tseen base: $actual_base\n";
+
+    if ( $actual_base eq $ref_base ){
+      ++$prev_matching;
+    }
+    else{
+      # If the mismatch is due to an insertion we simply move on, else we print the previously matching bases as well as the mismatching genomic base
+      if ($ref_base eq 'X'){
+	# warn "The genome base was an artificually padded '$ref_base' due to an insertion in the read at this position. Just ignoring it for the MD tag\n"; sleep(1);
+      }
+      else{
+	# warn "previous matching bases: $prev_matching\n";
+
+	### There is a mismatch between the sequence and the genome. First we need to write out how may bases matched until now
+	if ($prev_matching == 0){
+	  # warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";
+	  # warn "${prev_matching}$ref_base\n";
+	  $MD_tag .= $prev_matching;
+	  $MD_tag .= $ref_base;
+	}
+	else{
+	  # warn "${prev_matching}$ref_base\n";
+	  $MD_tag .= $prev_matching;
+	  $MD_tag .= $ref_base;
+	}
+	
+	$prev_matching = 0; # resetting $prev_matching
+      }
+
+    }
+
+    #    my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
+    #    my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
+    #    $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
+    #    $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
+    #    $prev_mm_pos = pos($tmp);                            # Position of last mismatch
   }
-  my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
-  $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
-  return $XX_tag;
+  ### appending the number of matches one last time]
+  $MD_tag .= $prev_matching;
+
+  #  my $XX_tag = "XX:Z:";
+  #   my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
+  #   my $prev_mm_pos = 0;
+  #   while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
+  #      my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
+  #      my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
+  #      $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
+  #      $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
+  #      $prev_mm_pos = pos($tmp);                            # Position of last mismatch
+  #    }
+  #    my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
+  #   $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
+  #   if ($ref_seq =~ /X/){
+  #     warn "seen: $actual_seq\nref: $ref_seq\n";
+  #     warn "MD-tag: $MD_tag\n";
+  #     warn "XX-tag: $XX_tag\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";
+  #   }
+
+  return $MD_tag;
+
 }
+
+### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
+### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
+# sub make_mismatch_string{
+#   my $actual_seq = shift or die "Missing actual sequence\n";
+#   my $ref_seq = shift or die "Missing reference sequence\n";
+#   my $XX_tag = "XX:Z:";
+
+#   my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
+
+#   warn "'$tmp'\n"; sleep(1);
+#   my $prev_mm_pos = 0;
+
+#   while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
+#     my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
+#     my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
+#     $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
+#     $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
+#     $prev_mm_pos = pos($tmp);                            # Position of last mismatch
+#   }
+#   my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
+#   $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
+#   return $XX_tag;
+# }
 
 
 
@@ -8242,7 +8333,7 @@ Bismark SAM OUTPUT (default):
 (10) SEQ
 (11) QUAL   (Phred33 scale)
 (12) NM-tag (edit distance to the reference)
-(13) XX-tag (base-by-base mismatches to the reference. This does not include indels)
+(13) MD-tag (base-by-base mismatches to the reference (handles indels)
 (14) XM-tag (methylation call string)
 (15) XR-tag (read conversion state for the alignment)
 (16) XG-tag (genome conversion state for the alignment)
@@ -8251,7 +8342,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 14 May 2014.
+Last edited on 05 June 2014.
 
 HOW_TO
 }

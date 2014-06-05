@@ -565,11 +565,20 @@ sub produce_mbias_plots{
 
     $graph1->set_legend('CpG methylation','CHG methylation','CHH methylation','CpG total calls','CHG total calls','CHH total calls');
 
-    my $gd1 = $graph1->plot(\@mbias_read1) or die $graph1->error;
+    ### Failure to plot the MBIAS graph will now generate a warning instead of dieing (previous version below. Suggested by Andrew DeiRossi, 05 June 2014)
+    if (my $gd1 = $graph1->plot(\@mbias_read1)) {
+      open (MBIAS_G1,'>',$mbias_graph_1) or die "Failed to write to file for M-bias plot 1: $!\n\n";
+      binmode MBIAS_G1;
+      print MBIAS_G1 $gd1->png;
+    }
+    else {
+      warn "WARNING: Cannot generate read 1 M-bias plot: " , $graph1->error  , "\n\n";
+    }
 
-    open (MBIAS_G1,'>',$mbias_graph_1) or die "Failed to write to file for M-bias plot 1: $!\n\n";
-    binmode MBIAS_G1;
-    print MBIAS_G1 $gd1->png;
+    #     my $gd1 = $graph1->plot(\@mbias_read1) or die $graph1->error;
+    #     open (MBIAS_G1,'>',$mbias_graph_1) or die "Failed to write to file for M-bias plot 1: $!\n\n";
+    #     binmode MBIAS_G1;
+    #     print MBIAS_G1 $gd1->png;
   }
 
   if ($paired){
@@ -653,11 +662,21 @@ sub produce_mbias_plots{
 		  ) or die $graph2->error;
 
       $graph2->set_legend('CpG methylation','CHG methylation','CHH methylation','CpG total calls','CHG total calls','CHH total calls');
-      my $gd2 = $graph2->plot(\@mbias_read2) or die $graph2->error;
 
-      open (MBIAS_G2,'>',$mbias_graph_2) or die "Failed to write to file for M-bias plot 2: $!\n\n";
-      binmode MBIAS_G2;
-      print MBIAS_G2 $gd2->png;
+      ### Failure to plot the MBIAS graph will now generate a warning instead of dieing (previous version below. Suggested by Andrew DeiRossi, 05 June 2014)
+      if (my $gd2 = $graph2->plot(\@mbias_read2)) {
+        open (MBIAS_G2,'>',$mbias_graph_2) or die "Failed to write to file for M-bias plot 2: $!\n\n";
+        binmode MBIAS_G2;
+        print MBIAS_G2 $gd2->png;
+      }
+      else {
+        warn "WARNING: Cannot generate Read 2 M-bias plot: " , $graph2->error , "\n\n";
+      }
+
+      # my $gd2 = $graph2->plot(\@mbias_read2) or die $graph2->error;
+      # open (MBIAS_G2,'>',$mbias_graph_2) or die "Failed to write to file for M-bias plot 2: $!\n\n";
+      # binmode MBIAS_G2;
+      # print MBIAS_G2 $gd2->png;
 
     }
   }
@@ -4804,7 +4823,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 02 June 2014.
+This script was last modified on 05 June 2014.
 
 HOW_TO
 }

@@ -11,8 +11,10 @@ which was previously offset by the number of insertions in the read.
 bismark2bedGraph
 ================
 
-Changed the requirement of CpG context files to start with CpG... (from CpG_...). 
+Changed the '--zero_based' option of the methylation extractor and bismark2bedGraph to write out an
+additional coverage file (ending in .zero.cov) which uses the UCSC zero-based, half-open standard.
 
+Changed the requirement of CpG context files to start with CpG... (from CpG_...). 
 
 
 
