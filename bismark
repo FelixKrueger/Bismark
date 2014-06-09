@@ -3631,8 +3631,19 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   my $cigar_2 = $methylation_call_params->{$sequence_identifier}->{CIGAR_2};
   my $flag_1 =  $methylation_call_params->{$sequence_identifier}->{flag_1};
   my $flag_2 =  $methylation_call_params->{$sequence_identifier}->{flag_2};
-  # print "$cigar_1\t$cigar_2\t$flag_1\t$flag_2\n";
-  # sleep(10);
+
+  my $contains_deletion_1 = 0;
+  my $contains_deletion_2 = 0;
+  if ($cigar_1 =~ /D/){
+    $contains_deletion_1 = 1;
+    warn "$cigar_1\n$methylation_call_params->{$sequence_identifier}->{mismatch_info_1}\n";
+  }
+  if ($cigar_2 =~ /D/){
+    $contains_deletion_2 = 1;
+    warn "$cigar_2\n$methylation_call_params->{$sequence_identifier}->{mismatch_info_2}\n";
+  }
+
+  # warn "$cigar_1\t$cigar_2\t$flag_1\t$flag_2\n";
   ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end (or start) so that we can also make a CpG methylation call and
   ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last (or first)  position of the actually observed sequence
 
@@ -3648,6 +3659,8 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   ### if the C happens to be at the last position of the actually observed sequence
   my $non_bisulfite_sequence_1 = '';
   my $non_bisulfite_sequence_2 = '';
+  my $genomic_seq_for_MD_tag_1 = ''; # this sequence contains potential deletions in the genome as well so that we can generate a proper MD tag for the SAM output
+  my $genomic_seq_for_MD_tag_2 = '';
 
   ### Positions in SAM format are 1 based, so we need to subract 1 when getting substrings
   my $pos_1 = $methylation_call_params->{$sequence_identifier}->{position_1}-1;
@@ -3664,7 +3677,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   shift @ops_2; # remove the empty first element
   die "CIGAR 2 string contained a non-matching number of lengths and operations\n" unless (scalar @len_2 == scalar @ops_2);
 
-  my $indels_1 = 0; # addiong these to the hemming distance value (needed for the NM field in the final SAM output
+  my $indels_1 = 0; # adding these to the hemming distance value (needed for the NM field in the final SAM output
   my $indels_2 = 0;
 
   ### Extracting read 1 genomic sequence ###
@@ -3674,6 +3687,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     # checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless ( ($pos_1-2) > 0){# exiting with en empty genomic sequence otherwise
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
+      $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag_1} = $genomic_seq_for_MD_tag_1;
       return;
     }
     $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1-2,2);
@@ -3683,6 +3697,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     if ($ops_1[$_] eq 'M'){
       # extracting genomic sequence
       $non_bisulfite_sequence_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,$len_1[$_]);
+      if ($contains_deletion_1){
+	$genomic_seq_for_MD_tag_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,$len_1[$_]);
+      }
       #   warn "$non_bisulfite_sequence_1\n";
       # adjusting position
       $pos_1 += $len_1[$_];
@@ -3690,7 +3707,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     elsif ($ops_1[$_] eq 'I'){ # insertion in the read sequence
       # we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls, and we can later ignore it for the generation of the MD;Z: tag
       $non_bisulfite_sequence_1 .= 'X' x $len_1[$_];
-      #    warn "$non_bisulfite_sequence_1\n";
+      if ($contains_deletion_1){
+	$genomic_seq_for_MD_tag_1 .= 'X' x $len_1[$_];
+      }
+      # warn "$non_bisulfite_sequence_1\n";
       # position doesn't need adjusting
 
       ### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
@@ -3698,6 +3718,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     }
     elsif ($ops_1[$_] eq 'D'){ # deletion in the read sequence
       # we do not add any genomic sequence but only adjust the position
+      # we do however need to add the genomic sequence to $genomic_seq_for_MD-tag so we can create a proper MD tag later
+      if ($contains_deletion_1){
+	$genomic_seq_for_MD_tag_1 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_1,$len_1[$_]);
+      }
       #     warn "Just adjusting the position by: ",$len_1[$_],"bp\n";
       $pos_1 += $len_1[$_];
       $indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
@@ -3730,6 +3754,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     unless ( ($pos_2-2) >= 0){# exiting with en empty genomic sequence otherwise
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
+      $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag_2} = $genomic_seq_for_MD_tag_2;
       return;
     }
     $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2-2,2);
@@ -3739,6 +3764,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     if ($ops_2[$_] eq 'M'){
       # extracting genomic sequence
       $non_bisulfite_sequence_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2,$len_2[$_]);
+      if ($contains_deletion_2){
+	$genomic_seq_for_MD_tag_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2,$len_2[$_]);
+      }
       # warn "$non_bisulfite_sequence_2\n";
       # adjusting position
       $pos_2 += $len_2[$_];
@@ -3746,6 +3774,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     elsif ($ops_2[$_] eq 'I'){ # insertion in the read sequence
       # we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls and we can ignore this later during the generation of the MD:Z: tag
       $non_bisulfite_sequence_2 .= 'X' x $len_2[$_];
+      if ($contains_deletion_2){
+	$genomic_seq_for_MD_tag_2 .= 'X' x $len_2[$_];
+      }
       # warn "$non_bisulfite_sequence_2\n";
       # position doesn't need adjusting
 
@@ -3754,6 +3785,10 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     }
     elsif ($ops_2[$_] eq 'D'){ # deletion in the read sequence
       # we do not add any genomic sequence but only adjust the position
+      # we do however need to add the genomic sequence to $genomic_seq_for_MD-tag so we can create a proper MD tag later
+      if ($contains_deletion_2){
+	$genomic_seq_for_MD_tag_2 .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos_2,$len_2[$_]);
+      }
       # warn "Just adjusting the position by: ",$len_2[$_],"bp\n";
       $pos_2 += $len_2[$_];
       $indels_2 += $len_2[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
@@ -3795,6 +3830,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     ### Read 1 is always the forward hit
     ### Read 2 is will always on the reverse strand, so it needs to be reverse complemented
     $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
+    if ($contains_deletion_2){
+      $genomic_seq_for_MD_tag_2 = reverse_complement($genomic_seq_for_MD_tag_2);
+    }
   }
 
   ### results from GA converted read 1 plus CT converted read 2 vs. GA converted genome (+/- orientation alignments are reported only)
@@ -3809,6 +3847,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     ### Read 1 is always the forward hit
     ### Read 2 is will always on the reverse strand, so it needs to be reverse complemented
     $non_bisulfite_sequence_2 = reverse_complement($non_bisulfite_sequence_2);
+    if ($contains_deletion_2){
+      $genomic_seq_for_MD_tag_2 = reverse_complement($genomic_seq_for_MD_tag_2);
+    }
   }
 
   ### results from GA converted read 1 plus CT converted read 2 vs. CT converted genome (-/+ orientation alignments are reported only)
@@ -3823,6 +3864,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
 
     ### Read 1 (the reverse strand) genomic sequence needs to be reverse complemented
     $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
+    if ($contains_deletion_1){
+      $genomic_seq_for_MD_tag_1 = reverse_complement($genomic_seq_for_MD_tag_1);
+    }
   }
 
   ### results from CT converted read 1 plus GA converted read 2 vs. GA converted genome (-/+ orientation alignments are reported only)
@@ -3836,6 +3880,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
     $genome_conversion = 'GA';
     ### Read 1 (the reverse strand) genomic sequence needs to be reverse complemented
     $non_bisulfite_sequence_1 = reverse_complement($non_bisulfite_sequence_1);
+    if ($contains_deletion_1){
+      $genomic_seq_for_MD_tag_1 = reverse_complement($genomic_seq_for_MD_tag_1);
+    }
   }
   else{
     die "Too many bowtie result filehandles\n";
@@ -3850,6 +3897,9 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   $methylation_call_params->{$sequence_identifier}->{read_conversion_2} = $read_conversion_info_2;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_1} = $non_bisulfite_sequence_1;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
+  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag_1} = $genomic_seq_for_MD_tag_1;
+  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag_2} = $genomic_seq_for_MD_tag_2;
+  
   ## the end position of a read is stored in $pos
   $methylation_call_params->{$sequence_identifier}->{end_position_1} = $pos_1;
   $methylation_call_params->{$sequence_identifier}->{end_position_2} = $pos_2;
@@ -4124,9 +4174,14 @@ sub extract_corresponding_genomic_sequence_single_end {
 sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   my ($sequence_identifier,$methylation_call_params) = @_;
 
-  my $MD_tag = $methylation_call_params->{$sequence_identifier}->{mismatch_info};
-  my $cigar = $methylation_call_params->{$sequence_identifier}->{CIGAR};
+  my $MD_tag = $methylation_call_params->{$sequence_identifier}->{MD_tag};
+  my $cigar  = $methylation_call_params->{$sequence_identifier}->{CIGAR};
 
+  my $contains_deletion = 0;
+  if ($cigar =~ /D/){
+    $contains_deletion = 1;
+    warn "$cigar\n$MD_tag\n";
+  }
   ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
   ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
 
@@ -4139,6 +4194,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   ### We are now extracting the corresponding genomic sequence, +2 extra bases at the end (or start) so that we can also make a CpG methylation call and
   ### in addition make differential calls for Cs in CHG or CHH context if the C happens to be at the last (or first)  position of the actually observed sequence
   my $non_bisulfite_sequence = '';
+  my $genomic_seq_for_MD_tag = ''; # this sequence contains potential deletions in the genome as well so that we can generate a proper MD tag for the SAM output
 
   ### Positions in SAM format are 1 based, so we need to subract 1 when getting substrings
   my $pos = $methylation_call_params->{$sequence_identifier}->{position}-1;
@@ -4160,22 +4216,30 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless ( ($pos-2) >= 0){ # exiting with en empty genomic sequence otherwise
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+      $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag} = $genomic_seq_for_MD_tag;
       return;
     }
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos-2,2);
   }
+
   my $indels = 0;	
 
   foreach (0..$#len){
     if ($ops[$_] eq 'M'){
       #extracting genomic sequence
       $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,$len[$_]);
+      if ($contains_deletion){
+	$genomic_seq_for_MD_tag .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,$len[$_]);
+      }
       # adjusting position
       $pos += $len[$_];
     }
     elsif ($ops[$_] eq 'I'){ # insertion in the read sequence
       # we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls and we can later ignore it better during the generation of the MD:Z-tag
       $non_bisulfite_sequence .= 'X' x $len[$_];
+      if ($contains_deletion){
+	$genomic_seq_for_MD_tag .= 'X' x $len[$_];
+      }
       # warn "$non_bisulfite_sequence\n";
       # position doesn't need to be adjusting
 
@@ -4184,6 +4248,11 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
     }
     elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
       # we do not add any genomic sequence but only adjust the position
+
+      # we do however add the genomic sequence to the $genomic_sequence for MD-tag determination if the CIGAR string contained a deletion
+      if ($contains_deletion){
+	$genomic_seq_for_MD_tag .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,$len[$_]);
+      }
       $pos += $len[$_];
       $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
     }
@@ -4200,12 +4269,12 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
     ## checking if the substring will be valid or if we can't extract the sequence because we are right at the edge of a chromosome
     unless (length($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}}) >= $pos+2){ # exiting with en empty genomic sequence otherwise
       $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+      $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag} = $genomic_seq_for_MD_tag;
       return;
     }
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos,2);
     # print "$methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n$non_bisulfite_sequence\n";
   }
-
 
 
   ### results from CT converted read vs. CT converted genome (+ orientation alignments are reported only)
@@ -4227,6 +4296,9 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
 
     ### reverse complement!
     $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
+    if ($contains_deletion){
+      $genomic_seq_for_MD_tag = reverse_complement($genomic_seq_for_MD_tag);
+    }
   }
 
   ### results from GA converted reads vs. CT converted genome (- orientation alignments are reported only)
@@ -4239,6 +4311,9 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
 
     ### reverse complement!
     $non_bisulfite_sequence = reverse_complement($non_bisulfite_sequence);
+    if ($contains_deletion){
+      $genomic_seq_for_MD_tag = reverse_complement($genomic_seq_for_MD_tag);
+    }
   }
 
   ### results from GA converted reads vs. GA converted genome (+ orientation alignments are reported only)
@@ -4258,6 +4333,12 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   $methylation_call_params->{$sequence_identifier}->{read_conversion} = $read_conversion_info;
   $methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
+  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag} = $genomic_seq_for_MD_tag;
+
+  if ($contains_deletion){
+    warn "non-bis: $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence}\n";
+    warn "MD-seq:  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag}\n";
+  }
 
   ### the end position of a read is stored in $pos
   $methylation_call_params->{$sequence_identifier}->{end_position} = $pos;
@@ -7083,6 +7164,7 @@ sub single_end_SAM_output{
   my $read_conversion   = $methylation_call_params->{$id}->{read_conversion};
   my $genome_conversion = $methylation_call_params->{$id}->{genome_conversion};
   my $number_of_mismatches;
+
   if ($bowtie2){
     $number_of_mismatches= $methylation_call_params->{$id}->{alignment_score};	
   }
@@ -7179,6 +7261,9 @@ sub single_end_SAM_output{
   if ($strand eq '-'){
     $actual_seq = revcomp($actual_seq);                               # Sequence represented on the forward genomic strand
     $ref_seq = revcomp($ref_seq);                                     # Required for comparison with actual sequence
+    if ($cigar =~ /D/){
+      $methylation_call_params->{$id}->{genomic_seq_for_MD_tag} = revcomp( $methylation_call_params->{$id}->{genomic_seq_for_MD_tag} );
+    }
     $qual = reverse $qual;                                            # if the sequence was reverse-complemented the quality string needs to be reversed as well
   }
 
@@ -7194,8 +7279,8 @@ sub single_end_SAM_output{
 
   #####
 
-  my $MD_tag = make_mismatch_string($actual_seq, $ref_seq);           # Optional tag MD: string providing mismatched reference bases in the alignment (this does include indel information!)
-  #  my $XX_tag = make_mismatch_string($actual_seq, $ref_seq);           # Optional tag XX: string providing mismatched reference bases in the alignment (NO indel information!)
+  my $MD_tag = make_mismatch_string($actual_seq, $ref_seq,$cigar,$methylation_call_params->{$id}->{genomic_seq_for_MD_tag});    # Optional tag MD: string providing mismatched reference bases in the alignment (this does include indel information)
+  #  my $XX_tag = make_mismatch_string($actual_seq, $ref_seq);        # Optional tag XX: string providing mismatched reference bases in the alignment (NO indel information!)
 
   #####
 
@@ -7315,8 +7400,8 @@ sub paired_end_SAM_output{
   }
 
   # Allows all degenerate nucleotide sequences in reference genome
-  die "Reference sequence ($ref_seq_1) contains invalid nucleotides!\n" if $ref_seq_1 =~ /[^ACTGNRYMKSWBDHV]/i;
-  die "Reference sequence ($ref_seq_2) contains invalid nucleotides!\n" if $ref_seq_2 =~ /[^ACTGNRYMKSWBDHV]/i;
+  # die "Reference sequence ($ref_seq_1) contains invalid nucleotides!\n" if $ref_seq_1 =~ /[^ACTGNRYMKSWBDHVX]/i; # X are padded nucleotides in case of insertions in the read
+  # die "Reference sequence ($ref_seq_2) contains invalid nucleotides!\n" if $ref_seq_2 =~ /[^ACTGNRYMKSWBDHVX]/i;
 
   my $index; # used to store the srand origin of the alignment in a less convoluted way
 
@@ -7435,7 +7520,7 @@ sub paired_end_SAM_output{
   my $flag_1;                                                            # FLAG variable used for SAM format
   my $flag_2;
 
-  ### The new default FLAG values have been suggested by Peter Hickey, Australia (PH)
+  ### The new default FLAG values have been suggested by Peter Hickey, Australia
 
   if ($index == 0){       # OT
     unless ($old_flag){
@@ -7627,11 +7712,17 @@ sub paired_end_SAM_output{
   if ($strand_1 eq '-'){
     $actual_seq_1 = revcomp($actual_seq_1);                            # Sequence represented on the forward genomic strand
     $ref_seq_1 = revcomp($ref_seq_1);                                  # Required for comparison with actual sequence
+    if ($cigar_1 =~ /D/){
+      $methylation_call_params->{$id}->{genomic_seq_for_MD_tag_1} = revcomp( $methylation_call_params->{$id}->{genomic_seq_for_MD_tag_1} );
+    }
     $qual_1 = reverse $qual_1;                                         # we need to reverse the quality string as well
   }
   if ($strand_2 eq '-'){
     $actual_seq_2 = revcomp($actual_seq_2);                            # Mate sequence represented on the forward genomic strand
     $ref_seq_2 = revcomp($ref_seq_2);                                  # Required for comparison with actual sequence
+    if ($cigar_2 =~ /D/){
+      $methylation_call_params->{$id}->{genomic_seq_for_MD_tag_2} = revcomp( $methylation_call_params->{$id}->{genomic_seq_for_MD_tag_2} );
+    }
     $qual_2 = reverse $qual_2;                                         # If the sequence gets reverse complemented we reverse the quality string as well
   }
 
@@ -7651,9 +7742,9 @@ sub paired_end_SAM_output{
 
   #####
 
-  my $MD_tag_1 = make_mismatch_string($actual_seq_1,$ref_seq_1);       # Optional tag MD: String providing mismatched reference bases in the alignment (including indel information)
-  my $MD_tag_2 = make_mismatch_string($actual_seq_2,$ref_seq_2);
-  
+  my $MD_tag_1 = make_mismatch_string($actual_seq_1,$ref_seq_1,$cigar_1,$methylation_call_params->{$id}->{genomic_seq_for_MD_tag_1}); # Optional tag MD: String providing mismatched reference bases in the alignment (including indel information)
+  my $MD_tag_2 = make_mismatch_string($actual_seq_2,$ref_seq_2,$cigar_2,$methylation_call_params->{$id}->{genomic_seq_for_MD_tag_2});
+
   #  my $XX_tag_1 = make_mismatch_string($actual_seq_1,$ref_seq_1);       # Optional tag XX: String providing mismatched reference bases in the alignment (NO indel information!)
   #  my $XX_tag_2 = make_mismatch_string($actual_seq_2,$ref_seq_2);
 
@@ -7828,8 +7919,8 @@ sub hemming_dist{
 ### 05 June 2014
 
 sub make_mismatch_string{
-  my $actual_seq = shift or die "Missing actual sequence\n";
-  my $ref_seq = shift or die "Missing reference sequence\n";
+  my ($actual_seq,$ref_seq,$cigar,$md_sequence) = @_;
+
   my $MD_tag = "MD:Z:";
   my $prev_matching = 0;
   my $last_char;
@@ -7872,33 +7963,207 @@ sub make_mismatch_string{
 
     }
 
-    #    my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-    #    my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
-    #    $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
-    #    $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
-    #    $prev_mm_pos = pos($tmp);                            # Position of last mismatch
   }
-  ### appending the number of matches one last time]
+  ### appending the number of matches one last time
   $MD_tag .= $prev_matching;
 
-  #  my $XX_tag = "XX:Z:";
-  #   my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
-  #   my $prev_mm_pos = 0;
-  #   while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
-  #      my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-  #      my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
-  #      $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
-  #      $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
-  #      $prev_mm_pos = pos($tmp);                            # Position of last mismatch
-  #    }
-  #    my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
-  #   $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
-  #   if ($ref_seq =~ /X/){
-  #     warn "seen: $actual_seq\nref: $ref_seq\n";
-  #     warn "MD-tag: $MD_tag\n";
-  #     warn "XX-tag: $XX_tag\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";
-  #   }
 
+  ### If the read contains deletion(s) we need to take care of these in the MD-tag as well
+  if ($cigar =~ /D/){
+    warn "There was a deletion in the read!\n"; sleep(1);
+    warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";
+    # parsing CIGAR string
+    my @len = split (/\D+/,$cigar); # storing the length per operation
+    my @ops = split (/\d+/,$cigar); # storing the operation
+    shift @ops; # remove the empty first element
+    die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+
+    my $MD_pos_so_far = 0;
+    my $del_pos = 0;
+    my $deleted_bases = '';
+    my $new_MD = $1 if ($MD_tag =~ /MD:Z:(.*)/);
+    my $md_index_already_processed;
+    my @md = split //,$new_MD;
+
+    warn "New MD-tag: $new_MD\n\n";
+    $MD_tag = "MD:Z:"; ### reconstituting a new MD-tag
+
+
+    warn "CIGAR string; $cigar\n";
+    ### determining end position of a read
+    foreach my $index(0..$#len){
+
+      if ($ops[$index] eq 'M'){  # matching bases
+	$del_pos += $len[$index];
+	warn "Operation is 'M', adding $len[$index] bp\n";
+      }
+      elsif($ops[$index] eq 'I'){ # insertion
+	$del_pos += $len[$index];
+	warn "Operation is 'I',  adding $len[$index] bp\n";
+      }
+      elsif($ops[$index] eq 'D'){ # deletion
+	warn "Operation is 'D', extracting $len[$index] bp\n";
+	$deleted_bases = substr($md_sequence,$del_pos,$len[$index]);
+	warn "Deleted bases: $deleted_bases\n\n";
+
+	my $deletion_already_processed; # setting to true once we have processed it
+
+	### Now we need to process the MD-tag so far and write out everything up until this point, inlcuding the deletion
+	warn "Now processing the MD-tag\n";
+	my $op;
+	my $md_processed_so_far;
+	my $current_md_index;
+
+	$MD_tag = "MD:Z:"; ### reconstituting a new MD-tag. This will overwrite the new MD-tag until we have reached the final D in the read
+	
+  	foreach my $el (@md){
+
+	  unless (defined $current_md_index){
+	    $current_md_index  = 0; # first element = index 0
+	  }
+	  else{
+	    ++$current_md_index;
+	  }
+	  #  warn "$md_processed_so_far\n";
+	  # if ($md_processed_so_far){
+	  #    if ( substr($md_processed_so_far,$index,1) ){
+	  #      warn "We have already processed the MD-tag this far: ",substr($md_processed_so_far,$index,1),". Skipping\n";
+	  #      next; # we have processed the MD-tag this far already
+	  #    }
+	  #  }
+	  #  $md_processed_so_far .= $el;
+
+	  #	  warn "$md_processed_so_far\n";
+	  warn "Current element: $el\n";
+	  unless (defined $op){ # initialize
+	    $op = $el;
+	    warn "Initializing \$op as $op\n";
+	    next;
+	  }
+
+	  if ($deletion_already_processed){
+	    $MD_tag .= $el;
+	    next;
+	  }
+	
+	  if ($md_index_already_processed and ($current_md_index <= $md_index_already_processed)){
+	    warn "This has to be another deletion within the same read. Currently processing index $current_md_index, but have already processed $md_index_already_processed indexes previously\n";
+	    next;
+	  }
+
+	  if ($op =~ /^\d+$/){
+	    warn "Operation so far was a digit: $op\n";
+	    warn "current operation is: $el\n";
+	    if ($el =~ /\d/){
+	      $op .= $el;
+	      warn "Appending current operation $el. New operation is: $op\n";
+	      next;
+	    }
+	    else{
+	      warn "current element is a word character: $el\n";
+	      ### Need to determine if the matching operation length includes the deletion position
+	      warn "Processing position $op; deletion pos is $del_pos\n";
+	      $MD_pos_so_far += $op;
+	      warn "MD pos so far: $MD_pos_so_far\n";
+	      if ($MD_pos_so_far < $del_pos){
+		warn "Doesn't cover the deletion yet. Writing back out.\n";
+		$MD_tag .= $op;
+	      }
+	      else{
+		warn "Here we go, this operation covers the deletion position!!\n";
+		### splitting up the number of matching bases in number before and after the deletion
+
+		my $pos_after_deletion = $MD_pos_so_far - $del_pos;
+		my $pos_before_deletion = $op - $pos_after_deletion;
+		warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";		
+		
+		$MD_tag .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
+
+		### also appending the current element because we are writing out the rest of the MD-string unchanged
+		$deletion_already_processed = 1;
+		warn "also appending the current element $el\n";
+		$MD_tag .= $el;
+		warn "Setting \$md_index_already_processed to $current_md_index\n";
+		$md_index_already_processed = $current_md_index;
+
+		### Finally also adding the length of the deletion to $del_pos
+		$del_pos += $len[$index];
+
+		# last; # exiting the loop after having processed the deletion
+
+	      }
+	      warn "Setting new operation to: $el\n";
+	      $op = $el; # setting new $op
+	    }
+	    warn "MD-tag so far: $MD_tag ~~\n";
+	  }
+	  else{
+	    warn "Operation so far was a word character: $op\n";
+	    warn "current operation is: $el\n";
+	    if ($el =~ /\d+/){
+	      # processing the previous mismatch position
+	      $MD_tag .= $op;
+	      $MD_pos_so_far += length($op);
+	      warn "Writing out mismatching base $op and adding length ",length($op),"\n";
+	    }
+	    else{
+	      # this should never occur since mismatches are followed by a 0 or another digit
+	      die "current element is a another word character: $el. This should never happen!\n";
+	    }
+	    warn "Setting new operation to: $el\n";
+	    $op = $el; # setting new $op
+	    warn "MD-tag so far: $MD_tag ~~\n";
+	    #  warn "MD proc so far:     $md_processed_so_far ~~\n";
+	  }
+	}
+
+	### need to consider last element if it was a digit or number
+	if ($op =~ /\d+/){
+	  warn "last operation was $op\n";
+	  warn "Processing position $op; deletion pos is $del_pos\n";
+	
+	  $MD_pos_so_far += $op;
+	  warn "MD pos so far: $MD_pos_so_far\n";
+	  if ($deletion_already_processed){
+	    $MD_tag .= $op; # done
+	  }
+	  else{
+	    warn "Here we go, this operation covers the deletion position!!\n";
+	    ### splitting up the number of matching bases in number before and after the deletion
+
+	    my $pos_after_deletion = $MD_pos_so_far - $del_pos;
+	    my $pos_before_deletion = $op - $pos_after_deletion;
+	    warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";		
+	
+	    $MD_tag .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
+	    if ($pos_after_deletion == 0){
+	      # need to add a padding 0
+	      $MD_tag .= 0;
+	    }
+	
+	    ### also appending the current element because we are writing out the rest of the MD-string unchanged
+	    warn "Setting \$md_index_already_processed to $current_md_index\n";
+	    $md_index_already_processed = $current_md_index;
+
+	    ### Finally also adding the length of the deletion to $del_pos
+	    $del_pos += $len[$index];
+	  }
+	}
+
+	warn "MD-tag so far: $MD_tag ~~\n";
+
+
+	### appending the number of matches one last time
+	#	$MD_tag .= $prev_matching;
+
+      }
+      else{
+	die "Found CIGAR operations other than M, I, D or N: '$ops[$index]'. Not allowed at the moment\n";
+      }
+    }
+
+  }
+  warn "Returning MD-tag: $MD_tag\n";
   return $MD_tag;
 
 }
