@@ -43,6 +43,7 @@ my %SQ_order;    # stores the order of sequences in the reference. This is to pr
 my %counting;    # counting various events
 
 my $seqID_contains_tabs;
+my $verbose = 0;
 
 foreach my $filename (@filenames){
 
@@ -3636,11 +3637,11 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   my $contains_deletion_2 = 0;
   if ($cigar_1 =~ /D/){
     $contains_deletion_1 = 1;
-    warn "$cigar_1\n$methylation_call_params->{$sequence_identifier}->{mismatch_info_1}\n";
+    if ($verbose){ warn "$cigar_1\n$methylation_call_params->{$sequence_identifier}->{mismatch_info_1}\n";}
   }
   if ($cigar_2 =~ /D/){
     $contains_deletion_2 = 1;
-    warn "$cigar_2\n$methylation_call_params->{$sequence_identifier}->{mismatch_info_2}\n";
+    if ($verbose){ warn "$cigar_2\n$methylation_call_params->{$sequence_identifier}->{mismatch_info_2}\n";}
   }
 
   # warn "$cigar_1\t$cigar_2\t$flag_1\t$flag_2\n";
@@ -4180,7 +4181,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   my $contains_deletion = 0;
   if ($cigar =~ /D/){
     $contains_deletion = 1;
-    warn "$cigar\n$MD_tag\n";
+    # warn "$cigar\n$MD_tag\n";
   }
   ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
   ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
@@ -7918,6 +7919,7 @@ sub hemming_dist{
 ### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
 ### 05 June 2014
 
+
 sub make_mismatch_string{
   my ($actual_seq,$ref_seq,$cigar,$md_sequence) = @_;
 
@@ -7932,7 +7934,7 @@ sub make_mismatch_string{
 
     $actual_base = substr($actual_seq,$pos,1);
     $ref_base    = substr($ref_seq,$pos,1);
-    # warn "reference: $ref_base\tseen base: $actual_base\n";
+    # if ($verbose){ warn "reference: $ref_base\tseen base: $actual_base\n";}
 
     if ( $actual_base eq $ref_base ){
       ++$prev_matching;
@@ -7940,20 +7942,20 @@ sub make_mismatch_string{
     else{
       # If the mismatch is due to an insertion we simply move on, else we print the previously matching bases as well as the mismatching genomic base
       if ($ref_base eq 'X'){
-	# warn "The genome base was an artificually padded '$ref_base' due to an insertion in the read at this position. Just ignoring it for the MD tag\n"; sleep(1);
+	# if ($verbose){ warn "The genome base was an artificually padded '$ref_base' due to an insertion in the read at this position. Just ignoring it for the MD tag\n"; sleep(1);}
       }
       else{
-	# warn "previous matching bases: $prev_matching\n";
+	# if ($verbose){ warn "previous matching bases: $prev_matching\n";}
 
 	### There is a mismatch between the sequence and the genome. First we need to write out how may bases matched until now
 	if ($prev_matching == 0){
-	  # warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";
-	  # warn "${prev_matching}$ref_base\n";
+	  # if ($verbose){ warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";}
+	  # if ($verbose){ warn "${prev_matching}$ref_base\n";}
 	  $MD_tag .= $prev_matching;
 	  $MD_tag .= $ref_base;
 	}
 	else{
-	  # warn "${prev_matching}$ref_base\n";
+	  # if ($verbose){ warn "${prev_matching}$ref_base\n";}
 	  $MD_tag .= $prev_matching;
 	  $MD_tag .= $ref_base;
 	}
@@ -7970,15 +7972,14 @@ sub make_mismatch_string{
 
   ### If the read contains deletion(s) we need to take care of these in the MD-tag as well
   if ($cigar =~ /D/){
-
     my $deletions_total = 0;
     while ($cigar =~ /D/g){
       ++$deletions_total;
     }
-    warn "Read contains $deletions_total deletions in total\n\n";
+    if ($verbose){ warn "Read contains $deletions_total deletions in total\n\n";}
 
-    warn "There was a deletion in the read!\n"; sleep(1);
-    warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";
+    if ($verbose){ warn "There was a deletion in the read!\n";}
+    if ($verbose){ warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";}
 
     # parsing CIGAR string
     my @len = split (/\D+/,$cigar); # storing the length per operation
@@ -7995,216 +7996,197 @@ sub make_mismatch_string{
 
     my @md = split //,$new_MD;
 
-    warn "New MD-tag:  $new_MD\n\n";
+    if ($verbose){ warn "New MD-tag:  $new_MD\n\n";}
     $MD_tag = "MD:Z:"; ### reconstituting a new MD-tag
+    $new_MD = ''; # using this to build up a new string that will replace the old \@md
 
-
-    warn "CIGAR string; $cigar\n";
+    if ($verbose){ warn "CIGAR string; $cigar\n";}
     ### determining end position of a read
     foreach my $index(0..$#len){
 
       if ($ops[$index] eq 'M'){  # matching bases
 	$del_pos += $len[$index];
-	warn "Operation is 'M', adding $len[$index] bp\n";
+	if ($verbose){ warn "Operation is 'M', adding $len[$index] bp\n";}
       }
       elsif($ops[$index] eq 'I'){ # insertion
 	$del_pos += $len[$index];
-	warn "Operation is 'I',  adding $len[$index] bp\n";
-      }
+	### need to add insertions in the read to MD pos so far!
+	$MD_pos_so_far += $len[$index];
+	if ($verbose){ warn "Operation is 'I',  adding $len[$index] bp\n";}
+	}
       elsif($ops[$index] eq 'D'){ # deletion
-	warn "Operation is 'D', extracting $len[$index] bp\n";
+	if ($verbose){ warn "Operation is 'D', extracting $len[$index] bp\n";}
 	$deleted_bases = substr($md_sequence,$del_pos,$len[$index]);
-	warn "Deleted bases: $deleted_bases\n\n";
-
-	my $deletion_already_processed; # setting to true once we have processed it
+	if ($verbose){ warn "Deleted bases: $deleted_bases\n\n";}
 
 	### Now we need to process the MD-tag so far and write out everything up until this point, inlcuding the deletion
-	warn "Now processing the MD-tag\n";
+	if ($verbose){ warn "Now processing the MD-tag\n";}
 	my $op;
+
+	my $this_deletion_processed;
 	my $md_processed_so_far;
 	my $current_md_index;
 
   	foreach my $el (@md){
 	
 	  unless (defined $current_md_index){
-	    $current_md_index  = 0; # first element = index 0
+	    $current_md_index = 0; # first element = index 0
 	  }
 	  else{
 	    ++$current_md_index;
 	  }
 
 	  if ($md_index_already_processed and ($current_md_index <= $md_index_already_processed)){
-	    warn "This has to be another deletion within the same read. Currently processing index $current_md_index, but have already processed $md_index_already_processed indexes previously\n";
+	    if ($verbose){ warn "This has to be another deletion within the same read. Currently processing index $current_md_index, but have already processed $md_index_already_processed indexes previously\n";}
 	    next;
 	  }
 	
-	  #	  warn "$md_processed_so_far\n";
-	  warn "Current element: $el\n";
+	  if ($verbose){ warn "Current element: $el\n";}
 	  unless (defined $op){ # initialize
 	    $op = $el;
-	    warn "Initializing \$op as $op\n";
+	    if ($verbose){ warn "Initializing \$op as $op\n";}
 	    next;
 	  }
 
 	  if ($deletions_processed == $deletions_total){
-	    warn "Processed $deletions_processed in the read so far, out of $deletions_total total. Just appending elements until the end of the string: here $el\n";
+	    if ($verbose){ warn "Processed $deletions_processed in the read so far, out of $deletions_total total. Just appending elements until the end of the string: here $el\n";}
 	    $MD_tag .= $el;
+	    $new_MD .= $el;
 	    next;
 	  }
-	
+	  # this only occurs when there are more deletions in the read but we want to regenerate a new MD tag
+	  if ($this_deletion_processed){
+	    $new_MD .= $el;
+	    next;
+	  }
 
 	  if ($op =~ /^\d+$/){
-	    warn "Operation so far was a digit: $op\n";
-	    warn "current operation is: $el\n";
+	    if ($verbose){ warn "Operation so far was a digit: $op\n";}
 	    if ($el =~ /\d/){
 	      $op .= $el;
-	      warn "Appending current operation $el. New operation is: $op\n";
+	      if ($verbose){ warn "Appending current operation $el. New operation is: $op\n";}
 	      next;
 	    }
 	    else{
-	      warn "current element is a word character: $el\n";
+	      if ($verbose){ warn "current element is a word character: $el\n";}
+
 	      ### Need to determine if the matching operation length includes the deletion position
-	      warn "Processing operation $op and adding it to MD pos which is so far: $MD_pos_so_far; deletion pos is $del_pos.\n";
+	      if ($verbose){ warn "Processing operation $op and adding it to MD pos which is so far: $MD_pos_so_far; deletion pos is $del_pos.\n";}
 	      $MD_pos_so_far += $op;
-	      warn "MD pos so far: $MD_pos_so_far\n";
+	      if ($verbose){ warn "MD pos so far: $MD_pos_so_far\n";}
 	      if ($MD_pos_so_far < $del_pos){
-		warn "Doesn't cover the deletion yet. Writing back out.\n";
+		if ($verbose){ warn "Doesn't cover the deletion yet. Writing back out.\n";}
 		$MD_tag .= $op;
-		warn "Setting new operation to: $el\n";
+		$new_MD .= $op;
+		if ($verbose){ warn "Setting new operation to: $el\n";}
 		$op = $el; # setting new $op
 	      }
 	      else{
-		warn "Here we go, this operation covers the deletion position!!\n";
+		if ($verbose){ warn "Here we go, this operation covers the deletion position!!\n";}
 		### splitting up the number of matching bases in number before and after the deletion
-
-
 
 		my $pos_after_deletion = $MD_pos_so_far - $del_pos;
 		my $pos_before_deletion = $op - $pos_after_deletion;
-		warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";		
+		if ($verbose){ warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}	
 		$MD_tag .= "${pos_before_deletion}^${deleted_bases}";
-
+		$new_MD .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
+		
 		#adjusting the MD_position by the number of bases after the deletion
 		$MD_pos_so_far -= $pos_after_deletion;
-		warn "MD after adjusting for deletion: $MD_pos_so_far\n";	
+		if ($verbose){ warn "MD after adjusting for deletion: $MD_pos_so_far\n";	}
+		### also appending the current element because we are writing out the rest of the MD-string unchanged to $new_MD
+		$new_MD .= $el;
 	
-		warn "Current index = $current_md_index\n";
-		print "Replacing the current operation $op with ${pos_before_deletion}^${deleted_bases}${pos_after_deletion}\n";
-		print "\@md before replacing:\n";
-		print join  (" ",@md),"\n"; sleep(1);
-		
-		### Need to replace the last $op, which is the current index - 1
-		$md[$current_md_index - 1] = "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
-		warn "\@md after replacing:\n";
-		print join  (" ",@md),"\n"; sleep(1);
-
 		$deletions_processed += 1;
-		if ($deletions_processed == $deletions_total){ # this was the last deletion of the read
-		  warn "This was the last deletion in the read ($deletions_processed out of $deletions_total total). Continuing to append \$pos_after_deletion (${pos_after_deletion})..\n";
-		  $MD_tag .= "${pos_after_deletion}";
+		$this_deletion_processed = 1;
 
+		if ($deletions_processed == $deletions_total){ # this was the last deletion of the read
+		  if ($verbose){ warn "This was the last deletion in the read ($deletions_processed out of $deletions_total total). Continuing to append \$pos_after_deletion (${pos_after_deletion})..\n";}
+		  $MD_tag .= "${pos_after_deletion}";
+		
 		  ### also appending the current element because we are writing out the rest of the MD-string unchanged
-		  warn "also appending the current element $el\n";
+		  if ($verbose){ warn "also appending the current element $el\n";}
 		  $MD_tag .= $el;
 		  ### Finally also adding the length of the deletion to $del_pos
 		  $del_pos += $len[$index];
-		  warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";	
+		  if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}	
 		}	
 		else{
-		  warn "This wasn't the last deletion in the read. Substituting the last operation with the current deletion and reconstituting \@md\n";
-		  warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";
-		  $current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
-		  warn "Current index = $current_md_index\n";
-	
-		  $new_MD = join ("",@md);
-		  @md = split //,$new_MD;
-		  warn "new \@md\n";
-		  print join  ("",@md),"\n"; sleep(3);
+		  if ($verbose){ warn "This wasn't the last deletion in the read. Substituting the last operation with the current deletion and reconstituting \@md\n";}
+		  if ($verbose){ warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";}
 
-		  warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";
+		
+		  ### This migh need looking at!!
+		
+		  $current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
+		  if ($verbose){  warn "Current index = $current_md_index\n";}
+		
+		  if ($verbose){ warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";}
 		  $md_index_already_processed = $current_md_index - 1;
-	
-		  warn "Exiting now and waiting for the next deletion\n";	
+		
+		  if ($verbose){ warn "Exiting now and waiting for the next deletion\n";}
 
 		  ### Finally also adding the length of the deletion to $del_pos
 		  $del_pos += $len[$index];
 		  $MD_pos_so_far += $len[$index];	
-		  warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";	
-		  warn "MD-tag so far: $MD_tag ~~\n";
-
-		  last; # exiting the loop and processing the CIGAR string further until we hit the next deletion	
+		  if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
+		  if ($verbose){ warn "MD-tag so far: $MD_tag ~~\n";}
+		  #setting $op to en empty string so it is not being processed as the last element
+		  $op = '';
+		  # last; # exiting the loop and processing the CIGAR string further until we hit the next deletion	
 		}
 	      }
 	    }
-	    warn "MD-tag so far: $MD_tag ~~\n";
+	    if ($verbose){  warn "MD-tag so far: $MD_tag ~~\n";}
 	  }
 	  else{
-	    warn "Operation so far was a word character: $op\n";
-	    warn "current operation is: $el\n";
+	    if ($verbose){  warn "Operation so far was a word character: $op\n";}
 	    if ($el =~ /\d+/){
 	      # processing the previous mismatch position
 	      $MD_tag .= $op;
+	      $new_MD .= $op;
 	      $MD_pos_so_far += length($op);
-	      warn "Writing out mismatching base $op and adding length ",length($op),"\n";
+	      if ($verbose){  warn "Writing out mismatching base $op and adding length ",length($op),"\n";}
 	    }
 	    else{
 	      # this should never occur since mismatches are followed by a 0 or another digit
 	      die "current element is a another word character: $el. This should never happen!\n";
 	    }
-	    warn "Setting new operation to: $el\n";
+	    if ($verbose){ warn "Setting new operation to: $el\n";}
 	    $op = $el; # setting new $op
-	    warn "MD-tag so far: $MD_tag ~~\n";
-	    # warn "MD proc so far:     $md_processed_so_far ~~\n";
+	    if ($verbose){  warn "MD-tag so far: $MD_tag ~~\n";}
 	  }
 	}
 
-	### If this was not the last deletion in the read we skip to processing the next CIGAR string
-	#	if ($deletions_processed == $deletions_total){ # all deletions in the read have been processed already, we can skip looking at the last element
-	#	  next;
-	#}
-
-	#	if ($deletions_processed >= 0 and $deletions_processed < $deletions_total){
+	### need to consider last element if it was a digit or number and we are expecting the deletion in the last element of the MD-tag
+ 	if ($op =~ /\d+/ and $deletions_processed < $deletions_total){
+	  if ($verbose){ warn "\n\nlast operation was $op\n";}
+ 	  if ($verbose){ warn "Processing operation $op; deletion pos is $del_pos. MD so far was: $MD_pos_so_far\n";}
 	
-	#}
-
-# 	### need to consider last element if it was a digit or number
-# 	if ($op =~ /\d+/){
-# 	  warn "last operation was $op\n";
-# 	  warn "Processing position $op; deletion pos is $del_pos\n";
+ 	  $MD_pos_so_far += $op;
+	  if ($verbose){ warn "Adding $op to MD pos so far: $MD_pos_so_far\n";}
+	  if ($verbose){ warn "Deletions already processed: $deletions_processed, del total: $deletions_total\n\n";}
+ 	  if ($MD_pos_so_far >= $del_pos){
+	    if ($verbose){ warn "Here we go, this operation covers the deletion position!!\n";}
+ 	    ### splitting up the number of matching bases in number before and after the deletion
 	
-# 	  $MD_pos_so_far += $op;
-# 	  warn "MD pos so far: $MD_pos_so_far\n";
-# 	  if ($deletion_already_processed){
-# 	    $MD_tag .= $op; # done
-# 	  }
-# 	  else{
-# 	    warn "Here we go, this operation covers the deletion position!!\n";
-# 	    ### splitting up the number of matching bases in number before and after the deletion
-
-# 	    my $pos_after_deletion = $MD_pos_so_far - $del_pos;
-# 	    my $pos_before_deletion = $op - $pos_after_deletion;
-# 	    warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";		
+ 	    my $pos_after_deletion = $MD_pos_so_far - $del_pos;
+ 	    my $pos_before_deletion = $op - $pos_after_deletion;
+	    if ($verbose){  warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}
 	
-# 	    $MD_tag .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
-# 	    if ($pos_after_deletion == 0){
-# 	      # need to add a padding 0
-# 	      $MD_tag .= 0;
-# 	    }
-	
-# 	    ### also appending the current element because we are writing out the rest of the MD-string unchanged
-# 	    warn "Setting \$md_index_already_processed to $current_md_index\n";
-# 	    $md_index_already_processed = $current_md_index;
+ 	    $MD_tag .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
+	    $new_MD .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
+	  }
+	  else{
+	    die "Something went wrong, we haven't seen a deletion so far even though we should have...\n\n";
+	  }
+ 	}
 
-# 	    ### Finally also adding the length of the deletion to $del_pos
-# 	    $del_pos += $len[$index];
-# 	  }
-# 	}
+	# forming a new @md
+	@md = split //,$new_MD;
 
-	warn "MD-tag so far: $MD_tag ~~\n";
-
-
-	### appending the number of matches one last time
-	#	$MD_tag .= $prev_matching;
+	if ($verbose){ warn "New \@md array: @md\n\n";}
+	if ($verbose){ warn "MD-tag so far: $MD_tag ~~\nnew_MD so far: $new_MD\n\n";}
 
       }
       else{
@@ -8213,7 +8195,7 @@ sub make_mismatch_string{
     }
 
   }
-  warn "Returning MD-tag: $MD_tag\n";
+  if ($verbose){  warn "Returning MD-tag: $MD_tag\n";}
   return $MD_tag;
 
 }
