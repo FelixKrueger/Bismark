@@ -210,7 +210,7 @@ foreach my $infile (@bedfiles) {
 
       while (<IN>) {
 	if ($_ =~ /^Bismark /){
-	  warn "Found Bismark version information. Skipping this line (should still work fine) but consider losing '--no_header' next time...\n";
+	  warn "Found Bismark version information. Skipping this line (should still work fine) but consider using '--no_header' next time...\n";
 	  next;
 	}
 	print MERGE;
