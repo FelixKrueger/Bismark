@@ -1,8 +1,11 @@
-RELEASE NOTES FOR Bismark v0.12.3 (04 June 2014)
+RELEASE NOTES FOR Bismark v0.12.3 (17 June 2014)
 -----------------------------------------------
 
 Bismark
 =======
+
+Replaced the XX-tag field (base-by-base mismatches to the reference, excluding indels) by an MD:Z:
+field that now properly reflects mismatches as well as indels.
 
 Fixed the hemming distance value (NM:i: field) for reads containing insertions (Bowtie 2 mode only),
 which was previously offset by the number of insertions in the read.
@@ -15,6 +18,7 @@ Changed the '--zero_based' option of the methylation extractor and bismark2bedGr
 additional coverage file (ending in .zero.cov) which uses the UCSC zero-based, half-open standard.
 
 Changed the requirement of CpG context files to start with CpG... (from CpG_...). 
+
 
 
 
