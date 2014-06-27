@@ -605,7 +605,7 @@ sub print_helpfile{
   The coordinates of the input file are expected to be 1-based throughout (do not use files ending in .zero.cov!).
 
 
-  USAGE: coverage2cytosine [options] -o <output> [input]
+  USAGE: coverage2cytosine [options] --genome_folder <path> -o <output> [input]
 
 
 -o/--output <filename>   Name of the output file, mandatory.

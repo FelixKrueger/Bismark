@@ -1805,6 +1805,7 @@ sub process_Bismark_results_file{
       }
     } else {		  # processing single-end SAM format (default)
       while (<IN>) {
+	chomp;
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
 	if (/^\@/) {	     # skipping header lines (starting with @)
 	  warn "skipping SAM header line:\t$_";
@@ -1847,7 +1848,7 @@ sub process_Bismark_results_file{
 	}
 
 	my $strand;
-	chomp $genome_conversion;
+	# chomp $genome_conversion; # line had been chomped already
 	# print "$meth_call\n$read_conversion\n$genome_conversion\n";
 	
 	my $index;
@@ -2044,6 +2045,7 @@ sub process_Bismark_results_file{
     }
     else {	      # Bismark paired-end SAM output format (default)
       while (<IN>) {
+	chomp;
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
 	if (/^\@/) {	     # skipping header lines (starting with @)
 	  warn "skipping SAM header line:\t$_";
@@ -2081,7 +2083,7 @@ sub process_Bismark_results_file{
 	}
 
 	$_ = <IN>;		# reading in the paired read
-
+	chomp;
 	# < version 0.7.6 my ($id_2,$start_read_2,$meth_call_2,$second_read_conversion) = (split("\t"))[0,3,13,14];
 	# < version 0.7.6 $meth_call_1 =~ s/^XM:Z://;
 	# < version 0.7.6 $meth_call_2 =~ s/^XM:Z://;
@@ -2107,7 +2109,7 @@ sub process_Bismark_results_file{
 	}
 	
 	# < version 0.7.6 $genome_conversion =~ s/^XG:Z://;	
-	chomp $genome_conversion; # in case it captured a new line character	
+	# chomp $genome_conversion; # in case it captured a new line character	# already removed
 
 	# print join ("\t",$meth_call_1,$meth_call_2,$first_read_conversion,$second_read_conversion,$genome_conversion),"\n";
 
