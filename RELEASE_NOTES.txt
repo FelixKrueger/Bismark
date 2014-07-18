@@ -1,3 +1,26 @@
+RELEASE NOTES FOR Bismark v0.12.4 (08 July 2014)
+-----------------------------------------------
+
+Bismark
+=======
+
+Got rid of 2 warning messages of MD-tag information for reads containing deletions (Bowtie 2 mode only)
+which accidentally made it through to the release.
+
+Added '-x' to the Bowtie 2 invocation for FastA sequences so that it works again. (It used to work
+previously only because Bowtie 2 did not check it properly and automatically used bowtie2-align-s, but
+now it does check...).
+
+
+Methylation Extractor
+=====================
+
+Line endings are now chomped at an earlier stage so that interfering with the optional files in the
+Bismark BAM file doesn't break the methylation extractor (e.g. Picard reordering of optional tags by
+Picard).
+
+
+
 RELEASE NOTES FOR Bismark v0.12.3 (17 June 2014)
 -----------------------------------------------
 

@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.12.3';
+my $bismark_version = 'v0.12.4';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -625,7 +625,7 @@ sub start_methylation_call_procedure_paired_ends {
   ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
     my $cwd = getcwd; # storing the path of the current working directory
-    print "Current working directory is: $cwd\n\n";
+    warn "Current working directory is: $cwd\n\n";
     read_genome_into_memory($cwd);
   }
 
@@ -1730,7 +1730,7 @@ sub check_bowtie_results_single_end{
   ### meth_call variables, if there are multiple hits with the same amount of (lowest) mismatches we are discarding the sequence altogether           ###
   #######################################################################################################################################################
   #######################################################################################################################################################
-  ### Going to use the variable $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
+  ### Going to use the variable $sequence_fails as a memory if a sequence could not be aligned uniquely (set to 1 then)
   my $sequence_fails = 0;
   ### Declaring an empty hash reference which will store all information we need for the methylation call
   my $methylation_call_params; # hash reference!
@@ -1877,6 +1877,8 @@ sub check_bowtie_results_single_end_bowtie2{
   # print "sequence $sequence\nid $identifier\nquality: '$quality_value'\n";
 
   my $alignment_ambiguous = 0;
+  my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
+  my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
 
   my %alignments = ();
 
@@ -1975,16 +1977,38 @@ sub check_bowtie_results_single_end_bowtie2{
 	}
       }
 
-      #      warn "First  best alignment_score is: '$alignment_score'\n";
-      #     warn "MD tag is: '$MD_tag'\n";
+      if (!defined $best_AS_so_far){
+	$best_AS_so_far = $alignment_score;
+	# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+      }
+      else{
+	if ($alignment_score > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+	  $best_AS_so_far = $alignment_score;
+	  # warn "Found better alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
+	  # resetting the ambiguous within thread memory (if applicable at all)
+	  # warn "Resetting amb within thread value to 0\n";
+	  $amb_same_thread = 0;
+	}
+	else{
+	  # warn "current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	}
+      }
+
+      # warn "First  best alignment_score is: '$alignment_score'\n";
+      # warn "MD tag is: '$MD_tag'\n";
       die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag)!\n" unless (defined $alignment_score and defined $MD_tag);
 
       if (defined $second_best){
 	#	warn "second best alignment_score is: '$second_best'\n\n";
 
-	# If the first alignment score is the same as the alignment score of the second best hit we are going to boot this sequence altogether
+	# If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
 	if ($alignment_score == $second_best){
-	  $alignment_ambiguous = 1;
+
+	  $amb_same_thread = 1;
+	  # warn "Read is ambiguous within the same thread! setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+
+	  ### if there is a better alignment later on -> fine. If not, the read will get booted altogether
+
 	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
 	  until ($fhs[$index]->{last_seq_id} ne $identifier){
 	    my $newline = $fhs[$index]->{fh}-> getline();
@@ -2081,6 +2105,16 @@ sub check_bowtie_results_single_end_bowtie2{
 	}
       }
     }
+  }
+
+  ### If there were several equally good alignments for the best alignment score we will boot the read
+  if ($amb_same_thread){
+    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+    $alignment_ambiguous = 1;
+    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+  }
+  else{
+    # warn "alignment won't be considered ambiguous. This time....\n";
   }
 
   ### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous or --unmapped was specified the read sequence will be printed out.
@@ -2701,6 +2735,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
   my %alignments;
   my $alignment_ambiguous = 0;
+  my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
+  my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
 
   ### reading from the Bowtie 2 output filehandles
 
@@ -2851,16 +2887,36 @@ sub check_bowtie_results_paired_ends_bowtie2{
       my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
       # warn "sum of alignment scores: $sum_of_alignment_scores_1\n\n";
 
+      if (!defined $best_AS_so_far){
+	$best_AS_so_far = $sum_of_alignment_scores_1;
+	# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+      }
+      else{
+	if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+	  $best_AS_so_far = $sum_of_alignment_scores_1;
+	  # warn "Found better sum of alignment scores ($sum_of_alignment_scores), setting \$best_AS_so_far to $best_AS_so_far\n";
+	  # resetting the ambiguous within thread memory (if applicable at all)
+	  # warn "Resetting amb within thread value to 0\n";
+	  $amb_same_thread = 0;
+	}
+	else{
+	  # warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	}
+      }
+
       if (defined $second_best_1 and defined $second_best_2){
 	my $sum_of_alignment_scores_second_best = $second_best_1 + $second_best_2;
 	# warn "Second best alignment_score_1 is: '$second_best_1'\n";
 	# warn "Second best alignment_score_2 is: '$second_best_2'\n";
 	# warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
-
-	# If the first alignment score for the first read pair is the same as the alignment score of the second best hit we are going to boot this sequence pair altogether
+	
+	# If the first alignment score for the first read pair is the same as the alignment score of the second best hit we we keep a memory of this
 	if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
-	  $alignment_ambiguous = 1;
-	  # print "This read will be chucked (AS==XS detected)!\n";
+
+	  $amb_same_thread = 1;
+	  # warn "Read pair is ambiguous within the same thread! setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+
+	  ### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
 
  	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
  	  until ($fhs[$index]->{last_seq_id} ne $identifier){
@@ -3019,6 +3075,17 @@ sub check_bowtie_results_paired_ends_bowtie2{
       }
     }
   }
+
+  ### If there were several equally good alignments for the best alignment score we will boot the read
+  if ($amb_same_thread){
+    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+    $alignment_ambiguous = 1;
+    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+  }
+  else{
+    # warn "alignment won't be considered ambiguous. This time....\n";
+  }
+
 
   ### if the read produced several ambiguous alignments for a single instance of Bowtie 2 we can return already now. If --ambiguous was specified the read sequence will be printed out in FastQ format
   if ($alignment_ambiguous == 1){
@@ -4336,10 +4403,10 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
   $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag} = $genomic_seq_for_MD_tag;
 
-  if ($contains_deletion){
-    warn "non-bis: $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence}\n";
-    warn "MD-seq:  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag}\n";
-  }
+  # if ($contains_deletion){
+  #   warn "non-bis: $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence}\n";
+  #   warn "MD-seq:  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag}\n";
+  # }
 
   ### the end position of a read is stored in $pos
   $methylation_call_params->{$sequence_identifier}->{end_position} = $pos;
@@ -5717,7 +5784,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
     }
 
     warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -6039,7 +6106,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
     }
 
     warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt2_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie 2: $!";
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
@@ -8672,7 +8739,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 05 June 2014.
+Last edited on 18 July 2014.
 
 HOW_TO
 }
