@@ -1,8 +1,15 @@
-RELEASE NOTES FOR Bismark v0.12.4 (08 July 2014)
+RELEASE NOTES FOR Bismark v0.12.4 (21 July 2014)
 -----------------------------------------------
 
 Bismark
 =======
+
+Improved the way ambiguous alignments are handled in Bowtie 2 mode. Previously, sequences were
+classified as ambiguously aligning as soon as a sequence produced several equally good alignments
+within the same alignment thread. Under certain circumstances however there may exist equally good
+alignments within the same alignment thread, but the sequence might have a better (unique) alignment
+in another thread. Such a unique alignment will now trump the ambiguous alignment flag.
+
 
 Got rid of 2 warning messages of MD-tag information for reads containing deletions (Bowtie 2 mode only)
 which accidentally made it through to the release.
