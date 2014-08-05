@@ -1,3 +1,15 @@
+RELEASE NOTES FOR Bismark v0.12.5 (21 July 2014)
+-----------------------------------------------
+
+Bismark
+=======
+
+Added one more check to improve the ambiguous alignment detection. In more detail this adds a check
+whether the current ambiguous alignment is worse than the best alignment so far, in which case the
+sequence does not get flagged as ambiguous. Thanks to Ashwath Kumar for spotting these issues). 
+
+
+
 RELEASE NOTES FOR Bismark v0.12.4 (21 July 2014)
 -----------------------------------------------
 
@@ -22,9 +34,10 @@ now it does check...).
 Methylation Extractor
 =====================
 
-Line endings are now chomped at an earlier stage so that interfering with the optional files in the
-Bismark BAM file doesn't break the methylation extractor (e.g. Picard reordering of optional tags by
+Line endings are now chomped at an earlier stage so that interfering with the optional fields in the
+Bismark BAM file doesn't break the methylation extractor (e.g. reordering of optional tags by
 Picard).
+
 
 
 

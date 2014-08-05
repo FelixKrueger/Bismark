@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.12.4';
+my $bismark_version = 'v0.12.5';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -1999,14 +1999,19 @@ sub check_bowtie_results_single_end_bowtie2{
       die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag)!\n" unless (defined $alignment_score and defined $MD_tag);
 
       if (defined $second_best){
-	#	warn "second best alignment_score is: '$second_best'\n\n";
+	# warn "second best alignment_score is: '$second_best'\n\n";
 
 	# If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
 	if ($alignment_score == $second_best){
 
-	  $amb_same_thread = 1;
-	  # warn "Read is ambiguous within the same thread! setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
-
+	  # checking to see if this read produced the best alignment
+	  if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
+	    # warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+	    $amb_same_thread = 1;
+	  }
+	  else{
+	    # warn "This read has a worse alignments score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+	  }
 	  ### if there is a better alignment later on -> fine. If not, the read will get booted altogether
 
 	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
@@ -2913,8 +2918,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	# If the first alignment score for the first read pair is the same as the alignment score of the second best hit we we keep a memory of this
 	if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
 
-	  $amb_same_thread = 1;
-	  # warn "Read pair is ambiguous within the same thread! setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+	  # checking to see if this read pair produced the best alignment
+	  if ($sum_of_alignment_scores_1 == $best_AS_so_far){  # yes this is the best read pair so far, either within the thread or between threads, however it is ambiguous
+	    # warn "Read pair is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+	    $amb_same_thread = 1;
+	  }
+	  else{
+	    # warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+	  }
 
 	  ### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
 
@@ -8739,7 +8750,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 18 July 2014.
+Last edited on 21 July 2014.
 
 HOW_TO
 }
