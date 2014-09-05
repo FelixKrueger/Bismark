@@ -1946,7 +1946,7 @@ sub process_Bismark_results_file{
 	  if ($strand eq '-') {
 	    $meth_call = reverse $meth_call;
 	  }
-	  warn "\n$meth_call\n";
+	  # warn "\n$meth_call\n";
 	
 	  ### IGNORE 5 PRIME: Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
 	  if ($ignore) {
@@ -2037,9 +2037,9 @@ sub process_Bismark_results_file{
 
 	  ### INGORE 3 PRIME Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
 	  if ($ignore_3prime) {
-	    warn "\n\n$meth_call\n";
+	    # warn "$meth_call\n";
 	    $meth_call = substr($meth_call,0, (length($meth_call)) - $ignore_3prime);	
-	    warn "$meth_call\n";sleep(1);
+	    # warn "$meth_call\n";sleep(1);
 	
 	    ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
 
@@ -2056,8 +2056,8 @@ sub process_Bismark_results_file{
 	      }
 	    }
 
-	    print "original CIGAR: $cigar\n";
-	    print join ("",@comp_cigar),"\n";
+	    # print "original CIGAR: $cigar\n";
+	    # print join ("",@comp_cigar),"\n";
 
 	    ### If we are clipping off some bases at the end we might have to adjust the start position of the alignments accordingly
 	    if ($strand eq '+') {
@@ -2082,10 +2082,10 @@ sub process_Bismark_results_file{
 		#  $I_count++;
 		#}
 	      }
-	      #print "Final truncated CIGAR string:\n";
-	      #print join ("",@comp_cigar),"\n";
+	      # print "Final truncated CIGAR string:\n";
+	      # print join ("",@comp_cigar),"\n";
 	      # $start += $ignore + $D_count - $I_count;
-	      #print "start $start\t ignore_3prime: $ignore_3prime\t D count: $D_count I_count: $I_count\n";
+	      # print "start $start\t ignore_3prime: $ignore_3prime\t D count: $D_count I_count: $I_count\n";
 	    }
 	    elsif ($strand eq '-') {
 
@@ -2111,7 +2111,7 @@ sub process_Bismark_results_file{
 	    my $new_cigar;
 	    my $count = 0;
 	    my $last_op;
-	    print "ignore_3prime adjusted:\n"; print join ("",@comp_cigar),"\n";
+	    # print "ignore_3prime adjusted:\n"; print join ("",@comp_cigar),"\n";
 	    foreach my $op (@comp_cigar) {
 	      unless (defined $last_op){
 		$last_op = $op;
@@ -2128,7 +2128,7 @@ sub process_Bismark_results_file{
 	    }
 	    $new_cigar .= "$count$last_op"; # appending the last operation and count
 	    $cigar = $new_cigar;
-	    print "ignore_3prime adjusted scalar: $cigar\n";
+	    # print "ignore_3prime adjusted scalar: $cigar\n";
 	  }
 	}
 	### printing out the methylation state of every C in the read
@@ -2169,6 +2169,7 @@ sub process_Bismark_results_file{
 	if ($meth_call_1 and $meth_call_2) {
 	  ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>'
 
+	  ### IGNORE FROM 5' END
 	  if ($ignore) {
 	    $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
 	
@@ -2182,13 +2183,26 @@ sub process_Bismark_results_file{
 	    $end_read_2   -= $ignore_r2;
 	  }
 
+	  ### IGNORE 3' END
+
+	  ### Clipping off the last <int> number of bases from the methylation call string of Read 1 as specified with --ignore_3prime <int>
+	  if ($ignore_3prime) {
+	    $meth_call_1 = substr($meth_call_1,0, length($meth_call_1) - $ignore_3prime);
+	    # we don't have to adjust the position now since the shortened methylation call will be fine, see below
+	  }
+	  ### Clipping off the last <int> number of bases from the methylation call string of Read 2 as specified with --ignore_3prime_r2 <int>
+	  if ($ignore_3prime_r2) {
+	    $meth_call_2 = substr($meth_call_2,0, length($meth_call_2) - $ignore_3prime_r2);
+	    # we don't have to adjust the position now since the shortened methylation call will be fine, see below
+	  }
+
 	  my $end_read_1;
 	  my $start_read_2;
 
 	  if ($strand eq '+') {
 
-	    $end_read_1 = $start_read_1+length($meth_call_1)-1;
-	    $start_read_2 = $end_read_2-length($meth_call_2)+1;
+	    $end_read_1 = $start_read_1 + length($meth_call_1) - 1;
+	    $start_read_2 = $end_read_2 - length($meth_call_2) + 1;
 	
 	    ## we first pass the first read which is in + orientation on the forward strand
 	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id,'+',$index,0,0,undef,1); # the last two values are CIGAR string and read identity
@@ -2214,7 +2228,7 @@ sub process_Bismark_results_file{
 	}	
       }
     }
-    else {	      # Bismark paired-end SAM output format (default)
+    else {	      # Bismark paired-end BAM/SAM output format (default)
       while (<IN>) {
 	chomp;
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
@@ -2309,6 +2323,7 @@ sub process_Bismark_results_file{
 	} else {
 	  $meth_call_1 = reverse $meth_call_1;
 	}
+	warn "\n$meth_call_1\n$meth_call_2\n";
 
 	if ($meth_call_1 and $meth_call_2) {
 
@@ -2346,7 +2361,9 @@ sub process_Bismark_results_file{
 	  # print "original CIGAR read 2: $cigar_2\n";
 	  # print "original CIGAR read 2: @comp_cigar_2\n";
 	
-
+	  ############################	
+	  ### IGNORE BASES FROM 5' END
+	  ############################
 
 	  if ($ignore) {
 	    ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>' for read 1	
@@ -2500,7 +2517,16 @@ sub process_Bismark_results_file{
 	    $cigar_2 = $new_cigar_2;
 	    # print "ignore_r2 adjusted CIGAR 2 scalar: $cigar_2\n";
 	  }
-	
+
+	  ############################	
+	  ### IGNORE BASES FROM 3' END
+	  ############################
+
+
+	  ############################
+	  ### END IGNORE 3' END
+	  ############################
+
 	  ### Adjusting CIGAR string and starting position of reads in reverse orientation which we will pass to the extraction subroutine later on
 	
 	  if ($strand eq '+') {
