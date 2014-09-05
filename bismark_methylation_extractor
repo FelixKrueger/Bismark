@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.12.3';
+my $version = 'v0.12.6';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem) = process_commandline();
 
 
@@ -713,6 +713,7 @@ sub process_commandline{
   my $mbias_only;
   my $gazillion;
   my $ample_mem;
+  my $include_overlap;
 
   my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -739,11 +740,12 @@ sub process_commandline{
 				 "split_by_chromosome"  => \$split_by_chromosome,
 				 "buffer_size=s"        => \$sort_size,
 				 'samtools_path=s'      => \$samtools_path,
-				 "gzip"                 => \$gzip,
-				 "mbias_only"           => \$mbias_only,			
-				 "gazillion|scaffolds"  => \$gazillion,
-				 "ample_memory"         => \$ample_mem,
-	);
+				 'gzip'                 => \$gzip,
+				 'mbias_only'           => \$mbias_only,			
+				 'gazillion|scaffolds'  => \$gazillion,
+				 'ample_memory'         => \$ample_mem,
+				 'include_overlap'      => \$include_overlap,
+				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
   unless ($command_line){
@@ -799,7 +801,7 @@ VERSION
 
   ### PRINT A REPORT
   unless ($report){
-    $report = 0;
+    $report = 1; # making this the default
   }
 
   ### OUTPUT DIR PATH
@@ -889,11 +891,17 @@ VERSION
 
 
   ### NO OVERLAP
-  if ($no_overlap){
-    die "The option '--no_overlap' can only be specified for paired-end input!\n" unless ($paired_end);
-  }
-  else{
+  ### --no_overlap is the default (as of version 0.12.6), unless someone explicitly asks to include overlaps
+  if ($include_overlap){
+    die "The option '--include_overlap' can only be specified for paired-end input!\n" unless ($paired_end);
+    warn "Setting option '--inlcude_overlap' for paired-end data (user-defined)\n\n";
     $no_overlap = 0;
+  }
+  else{ # default
+    if ($paired_end){
+      warn "Setting option '--no_overlap' since this is (normally) the right thing to do for paired-end data\n\n";
+      $no_overlap = 1;
+    }
   }
 
   ### COMPREHENSIVE OUTPUT
@@ -2048,7 +2056,7 @@ sub process_Bismark_results_file{
 	chomp;
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
 	if (/^\@/) {	     # skipping header lines (starting with @)
-	  warn "skipping SAM header line:\t$_";
+	  warn "skipping SAM header line:\t$_\n";
 	  next;
 	}
 	
@@ -2183,6 +2191,7 @@ sub process_Bismark_results_file{
 
 	    if ( (length($meth_call_1)-$ignore) <= 0){
 	      next; # skipping this read entirely if the read is shorter than the portion to be ignored
+	      # $meth_call_1 = undef; # will skip this read entirely since the read is shorter than the portion to be ignored
 	    }
 	    else {
 	      $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
@@ -4650,8 +4659,11 @@ OPTIONS:
                          since read 1 has historically higher quality basecalls than read 2).
                          Whilst this option removes a bias towards more methylation calls
                          in the center of sequenced fragments it may de facto remove a sizable
-                         proportion of the data. This option is highly recommended for paired-end
-                         data.
+                         proportion of the data. This option is on by default for paired-end data
+                         but can be disabled using --include_overlap. Default: ON.
+
+--include_overlap        For paired-end data all methylation calls will be extracted irrespective of
+                         of whether they overlap or not. Default: OFF.
 
 --ignore <int>           Ignore the first <int> bp from the 5' end of Read 1 when processing the
                          methylation call string. This can remove e.g. a restriction enzyme site
@@ -4679,7 +4691,7 @@ OPTIONS:
                           - non-CpG context
 
 --report                 Prints out a short methylation summary as well as the paramaters used to run
-                         this script.
+                         this script. Default: ON.
 
 --no_header              Suppresses the Bismark version header line in all output files for more convenient
                          batch processing.

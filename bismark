@@ -318,7 +318,7 @@ sub start_methylation_call_procedure_single_ends {
   $bam = 0 unless (defined $bam);
 
   if ($bam == 1){ ### Samtools is installed, writing out BAM directly
-    $outfile =~ s/sam/bam/;
+    $outfile =~ s/sam$/bam/;
     open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead

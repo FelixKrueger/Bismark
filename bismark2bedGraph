@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.12.3';
+my $bismark2bedGraph_version = 'v0.12.4';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -405,10 +405,11 @@ foreach my $in (@temp_files) {
   }
   ### default: we assume that the user wants to use the Linux Sort command. This is quite a bit slower, but features a much smaller memory footprint
   else{
-    my $sort_dir = $output_dir;
-    if ($sort_dir eq ''){
-      $sort_dir = './';
-    }
+    my $sort_dir = './'; # there has been a cd into the output_directory already
+    # my $sort_dir = $output_dir;
+    # if ($sort_dir eq ''){
+    #   $sort_dir = './';
+    # }
 
     if ($gazillion){
       open $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!\n";
@@ -476,7 +477,10 @@ foreach my $in (@temp_files) {
 
 close OUT or die $!;
 close COVERAGE or die $!;
-close ZEROCOVERAGE or die $!;
+if ($zero){
+  close ZEROCOVERAGE or die $!;
+}
+
 exit 0;
 
 
@@ -760,7 +764,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 02 June 2014
+                          Script last modified: 01 Sept 2014
 
 EOF
     ;

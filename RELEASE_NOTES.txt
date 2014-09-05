@@ -1,3 +1,32 @@
+RELEASE NOTES FOR Bismark v0.12.6 (01 Sep 2014)
+-----------------------------------------------
+
+Bismark
+=======
+
+Fixed renaming issue for SAM to BAM files (which would have replaced any occurrence of sam in the
+file name, e.g. sample1_... instead of the file extesion .sam).
+
+
+Methylation Extractor
+=====================
+
+The option --no_overlap is now the default for paired-end data. One may explicitely choose to include
+overlapping data with the option '--include_overlap'.
+
+The splitting report will now be written out by default (option --report).
+
+
+bismark2bedGraph
+================
+
+Fixed the location of the sorting directory which could have failed if an output directory had been
+specified.
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.12.5 (21 July 2014)
 -----------------------------------------------
 
