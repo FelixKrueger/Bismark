@@ -76,6 +76,10 @@ if ($single){
   if ($ignore){
     warn "First $ignore bp will be disregarded when processing the methylation call string\n";
   }
+  if ($ignore_3prime){
+    warn "Last $ignore_3prime bp will be disregarded when processing the methylation call string\n";
+  }
+
 }
 else{ ## paired-end
   if ($ignore){
@@ -1193,6 +1197,9 @@ sub process_Bismark_results_file{
       if ($ignore) {
 	print REPORT "Ignoring first $ignore bp\n";
       }
+      if ($ignore_3prime) {
+	print REPORT "Ignoring last $ignore_3prime bp\n";
+      }
     }
     else{ # paired-end
       if ($ignore) {
@@ -2035,7 +2042,11 @@ sub process_Bismark_results_file{
 	    # print "ignore adjusted scalar: $cigar\n";
 	  }
 
-	  ### INGORE 3 PRIME Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
+	  #######################
+	  ###  INGORE 3' END  ###
+	  #######################
+	
+	  # Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
 	  if ($ignore_3prime) {
 	    # warn "$meth_call\n";
 	    $meth_call = substr($meth_call,0, (length($meth_call)) - $ignore_3prime);	
@@ -2065,22 +2076,15 @@ sub process_Bismark_results_file{
 	      ### clipping the 3' end does not affect the starting position of forward strand alignments
 	      # ignore 5' has already been taken care of at this stage, if relevant at all
 	
-	      my $D_count = 0; # counting all deletions that affect the ignored genomic position, i.e. Deletions and insertions
-	      my $I_count = 0;
-	
 	      for (1..$ignore_3prime) {
 		my $op = pop @comp_cigar; # adjusting composite CIGAR string by removing $ignore_3prime operations from the end
-		#print join ("",@comp_cigar),"\n";
+		# print join ("",@comp_cigar),"\n";
 		# print "$_ deleted $op from 3' end\n";
 		while ($op eq 'D') { # repeating this for deletions (D)
-		  $D_count++;
 		  $op = pop @comp_cigar;
-		  #print join ("",@comp_cigar),"\n";
+		  # print join ("",@comp_cigar),"\n";
 		  # print "$_ deleted $op from 3' end\n";
 		}
-		#if ($op eq 'I') { # adjusting the genomic position for insertions (I)
-		#  $I_count++;
-		#}
 	      }
 	      # print "Final truncated CIGAR string:\n";
 	      # print join ("",@comp_cigar),"\n";
@@ -2089,11 +2093,19 @@ sub process_Bismark_results_file{
 	    }
 	    elsif ($strand eq '-') {
 
+	      my $D_count = 0; # counting all deletions that affect the ignored genomic position, i.e. Deletions and insertions
+	      my $I_count = 0;
+	
 	      for (1..$ignore_3prime) {
 		my $op = shift @comp_cigar; # adjusting composite CIGAR string by removing $ignore_3prime operations, here the first value of the array
 		while ($op eq 'D') { # repeating this for deletions (D)
+		  $D_count++;
 		  $op = shift @comp_cigar;
 		}
+		if ($op eq 'I') { # adjusting the genomic position for insertions (I)
+		  $I_count++;
+		}
+	
 	      }
 
 	      # here we need to discriminate if the start has been adjusted because of --ignore or not
@@ -2101,8 +2113,9 @@ sub process_Bismark_results_file{
 		# the start position has already been modified for --ignore already, so we don't have to adjust the position again now
 	      }
 	      else{
-		# Here we need to add the length ignore_3prime to the read starting position, adjustment of the start position will take place later in the methylation extraction step
-		$start += $ignore_3prime;
+		# Here we need to add the length ignore_3prime to the read starting position
+		#  adjustment of the true starting position of this reverse read will take place later in the methylation extraction step
+		$start += $ignore_3prime + $D_count - $I_count;
 	      }
 
 	    }
@@ -2323,7 +2336,7 @@ sub process_Bismark_results_file{
 	} else {
 	  $meth_call_1 = reverse $meth_call_1;
 	}
-	warn "\n$meth_call_1\n$meth_call_2\n";
+	# warn "\n$meth_call_1\n$meth_call_2\n";
 
 	if ($meth_call_1 and $meth_call_2) {
 
@@ -2361,112 +2374,114 @@ sub process_Bismark_results_file{
 	  # print "original CIGAR read 2: $cigar_2\n";
 	  # print "original CIGAR read 2: @comp_cigar_2\n";
 	
-	  ############################	
-	  ### IGNORE BASES FROM 5' END
-	  ############################
+	  ##################################	
+	  ###  IGNORE BASES FROM 5' END  ###
+	  ##################################
 
 	  if ($ignore) {
-	    ### Clipping off the first <int> number of bases from the methylation call strings as specified with '--ignore <int>' for read 1	
+	    ### Clipping off the first <int> number of bases from the methylation call string as specified with '--ignore <int>' for read 1	
 	    ### the methylation calls have already been reversed where necessary
 
-	    if ( (length($meth_call_1)-$ignore) <= 0){
-	      next; # skipping this read entirely if the read is shorter than the portion to be ignored
-	      # $meth_call_1 = undef; # will skip this read entirely since the read is shorter than the portion to be ignored
+	    if ( (length($meth_call_1) - $ignore) <= 0){
+	      # next; # skipping this read entirely if the read is shorter than the portion to be ignored
+	      $meth_call_1 = undef; # will skip this read entirely since the read is shorter than the portion to be ignored
 	    }
 	    else {
 	      $meth_call_1 = substr($meth_call_1,$ignore,length($meth_call_1)-$ignore);
-	    }
-
-	    if ($strand eq '+') {
-		
-	      ### if the (read 1) strand information is '+', read 1 needs to be trimmed from the start
-	      my $D_count_1 = 0; # counting all deletions that affect the ignored genomic position for read 1, i.e. Deletions and insertions
-	      my $I_count_1 = 0;
 	
-	      for (1..$ignore) {
-		my $op = shift @comp_cigar_1; # adjusting composite CIGAR string of read 1 by removing $ignore operations from the start
-		# print "$_ deleted $op\n";
+	      if ($strand eq '+') {
 		
-		while ($op eq 'D') { # repeating this for deletions (D)
-		  $D_count_1++;
-		  $op = shift @comp_cigar_1;
+		### if the (read 1) strand information is '+', read 1 needs to be trimmed from the start
+		my $D_count_1 = 0; # counting all deletions that affect the ignored genomic position for read 1, i.e. Deletions and insertions
+		my $I_count_1 = 0;
+		
+		for (1..$ignore) {
+		  my $op = shift @comp_cigar_1; # adjusting composite CIGAR string of read 1 by removing $ignore operations from the start
 		  # print "$_ deleted $op\n";
-		}
-		if ($op eq 'I') { # adjusting the genomic position for insertions (I)
-		  $I_count_1++;
-		}
-	      }
 		
-	      $start_read_1 += $ignore + $D_count_1 - $I_count_1;
-	      # print "start read 1 $start_read_1\t ignore: $ignore\t D count 1: $D_count_1\tI_count 1: $I_count_1\n";
-
-	      # the start position of reads mapping to the reverse strand is being adjusted further below
-	    }
-	    elsif ($strand eq '-') {
-	
-	      ### if the (read 1) strand information is '-', read 1 needs to be trimmed from the back
-	      for (1..$ignore) {
-		my $op = pop @comp_cigar_1; # adjusting composite CIGAR string by removing $ignore operations, here the last value of the array
-		while ($op eq 'D') { # repeating this for deletions (D)
-		  $op = pop @comp_cigar_1;
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $D_count_1++;
+		    $op = shift @comp_cigar_1;
+		    # print "$_ deleted $op\n";
+		  }
+		  if ($op eq 'I') { # adjusting the genomic position for insertions (I)
+		    $I_count_1++;
+		  }
 		}
-	      }
-	      # the start position of reads mapping to the reverse strand is being adjusted further below
+		
+		$start_read_1 += $ignore + $D_count_1 - $I_count_1;
+		# print "start read 1 $start_read_1\t ignore: $ignore\t D count 1: $D_count_1\tI_count 1: $I_count_1\n";
 
+		# the start position of reads mapping to the reverse strand is being adjusted further below
+	      }
+	      elsif ($strand eq '-') {
+		
+		### if the (read 1) strand information is '-', read 1 needs to be trimmed from the back
+		for (1..$ignore) {
+		  my $op = pop @comp_cigar_1; # adjusting composite CIGAR string by removing $ignore operations, here the last value of the array
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $op = pop @comp_cigar_1;
+		  }
+		}
+		# the start position of reads mapping to the reverse strand is being adjusted further below
+		
+	      }
 	    }
 	  }
-
+	
 	  if ($ignore_r2) {
 	    ### Clipping off the first <int> number of bases from the methylation call string as specified with '--ignore_r2 <int>' for read 2	
 	    ### the methylation calls have already been reversed where necessary
 
-	    if ( (length($meth_call_2)-$ignore_r2) <= 0){
-	      next; # skipping this read entirely if the read is shorter than the portion to be ignored
+	    if ( (length($meth_call_2) - $ignore_r2) <= 0){
+	      # next; # skipping this read entirely if the read is shorter than the portion to be ignored # this would skip the entire read pair!
+	      $meth_call_2 = undef; # will skip this read entirely since the read is shorter than the portion to be ignored
 	    }
 	    else {
 	      $meth_call_2 = substr($meth_call_2,$ignore_r2,length($meth_call_2)-$ignore_r2);
-	    }
 	
-	    ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
+	      ### If we are ignoring a part of the sequence we also need to adjust the cigar string accordingly
 	
-	    if ($strand eq '+') {
+	      if ($strand eq '+') {
 		
-	      ### if the (read 1) strand information is '+', read 2 needs to be trimmed from the back
+		### if the (read 1) strand information is '+', read 2 needs to be trimmed from the back
 
-	      for (1..$ignore_r2) {
-		my $op = pop @comp_cigar_2; # adjusting composite CIGAR string by removing $ignore operations, here the last value of the array
-		while ($op eq 'D') { # repeating this for deletions (D)
-		  $op = pop @comp_cigar_2;
+		for (1..$ignore_r2) {
+		  my $op = pop @comp_cigar_2; # adjusting composite CIGAR string by removing $ignore operations, here the last value of the array
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $op = pop @comp_cigar_2;
+		  }
 		}
+		# the start position of reads mapping to the reverse strand is being adjusted further below
 	      }
-	      # the start position of reads mapping to the reverse strand is being adjusted further below
-	    }
-	    elsif ($strand eq '-') {
+	      elsif ($strand eq '-') {
 	
-	      ### if the (read 1) strand information is '-', read 2 needs to be trimmed from the start
-	      my $D_count_2 = 0; # counting all deletions that affect the ignored genomic position for read 2, i.e. Deletions and insertions
-		      my $I_count_2 = 0;
+		### if the (read 1) strand information is '-', read 2 needs to be trimmed from the start
+		my $D_count_2 = 0; # counting all deletions that affect the ignored genomic position for read 2, i.e. Deletions and insertions
+		my $I_count_2 = 0;
 
-	      for (1..$ignore_r2) {
-		my $op = shift @comp_cigar_2; # adjusting composite CIGAR string of read 2 by removing $ignore operations from the start
-		# print "$_ deleted $op\n";
-		
-		while ($op eq 'D') { # repeating this for deletions (D)
-		  $D_count_2++;
-		  $op = shift @comp_cigar_2;
+		for (1..$ignore_r2) {
+		  my $op = shift @comp_cigar_2; # adjusting composite CIGAR string of read 2 by removing $ignore operations from the start
 		  # print "$_ deleted $op\n";
-		}
-		if ($op eq 'I') { # adjusting the genomic position for insertions (I)
-		  $I_count_2++;
-		}
-	      }
 		
-	      $start_read_2 += $ignore_r2 + $D_count_2 - $I_count_2;
-	      # print "start read 2 $start_read_2\t ignore R2: $ignore_r2\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $D_count_2++;
+		    $op = shift @comp_cigar_2;
+		    # print "$_ deleted $op\n";
+		  }
+		  if ($op eq 'I') { # adjusting the genomic position for insertions (I)
+		    $I_count_2++;
+		  }
+		}
+		
+		$start_read_2 += $ignore_r2 + $D_count_2 - $I_count_2;
+		# print "start read 2 $start_read_2\t ignore R2: $ignore_r2\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
+	      }
 	    }
 	  }
 	
-	  if ($ignore){
+	  if ($ignore and $meth_call_1){ # if the methylation call string is undefined at this position we don't need any new CIGAR string
+	
 	    ### reconstituting shortened CIGAR string 1
 	    my $new_cigar_1;
 	    my $count_1 = 0;
@@ -2491,7 +2506,7 @@ sub process_Bismark_results_file{
 	    # print "ignore adjusted CIGAR 1 scalar: $cigar_1\n";
 	  }
 
-	  if ($ignore_r2){
+	  if ($ignore_r2 and $meth_call_2){ # if the methylation call string is undefined at this point we don't need any new CIGAR string
 
 	    ### reconstituting shortened CIGAR string 2
 	    my $new_cigar_2;
@@ -2518,14 +2533,226 @@ sub process_Bismark_results_file{
 	    # print "ignore_r2 adjusted CIGAR 2 scalar: $cigar_2\n";
 	  }
 
-	  ############################	
-	  ### IGNORE BASES FROM 3' END
-	  ############################
+	  ###########################
+	  ###  END IGNORE 5' END  ###
+	  ###########################
 
+	  ##################################
+	  ###  IGNORE BASES FROM 3' END  ###
+	  ##################################
 
-	  ############################
-	  ### END IGNORE 3' END
-	  ############################
+	  # print "CIGAR string before truncating 3' end (Read 1)\n";
+	  # print join ("",@comp_cigar_1),"\n";
+		
+	  if ($ignore_3prime and $meth_call_1) { # if the methylation call string is undefined at this point we don't need to process the read any further
+
+	    ### Clipping off the last <int> number of bases from the methylation call string as specified with '--ignore_3prime <int>' for read 1	
+	    ### the methylation calls have already been reversed where necessary
+
+	    if ( (length($meth_call_1) - $ignore_3prime) <= 0){
+	      $meth_call_1 = undef; # will skip this read entirely since the read is shorter than the portion to be ignored
+	    }
+	    else {
+	      $meth_call_1 = substr($meth_call_1,0,length($meth_call_1) - $ignore_3prime);
+	      # warn "truncated meth_call 1:\n$meth_call_1\n";
+	
+	      if ($strand eq '+') {
+
+		### if the (read 1) strand information is '+', clipping the 3' end does not affect the starting position of forward strand alignments
+		# ignore 5' has already been taken care of at this stage, if relevant at all
+		
+		for (1..$ignore_3prime) {
+		  my $op = pop @comp_cigar_1; # adjusting composite CIGAR string of read 1 by removing $ignore_3prime operations from the end
+		  # print "$_ deleted $op from 3' end\n";
+		  # print join ("",@comp_cigar_1),"\n";
+		
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $op = pop @comp_cigar_1;
+		    # print join ("",@comp_cigar_1),"\n";
+		    # print "$_ deleted $op from 3' end\n";
+		  }
+		}
+		
+		# print "Final truncated CIGAR string (Read 1):\n";
+		# print join ("",@comp_cigar_1),"\n";
+		
+	      }
+	      elsif ($strand eq '-') {
+
+		my $D_count_1 = 0; # counting all deletions that affect the ignored genomic position for read 1, i.e. Deletions and insertions
+		my $I_count_1 = 0;
+	
+		### if the (read 1) strand information is '-', the read 1 CIGAR string needs to be trimmed from the start
+		for (1..$ignore_3prime) {
+		  my $op = shift @comp_cigar_1; # adjusting composite CIGAR string by removing $ignore_3prime operations, here the first value of the array
+		  # print join ("",@comp_cigar_1),"\n";
+		
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $D_count_1++;
+		    $op = shift @comp_cigar_1;
+		    # print join ("",@comp_cigar_1),"\n";
+		  }
+
+		  if ($op eq 'I') { # adjusting the genomic position for insertions (I)
+		    $I_count_1++;
+		  }
+		}
+
+		# print "Final truncated CIGAR string reverse_read:\n";
+		# print join ("",@comp_cigar_1),"\n";
+		
+		# here we need to discriminate if the start has been adjusted because of --ignore or not
+		if ($ignore){
+		  # the start position of read 1 has already been modified for --ignore already, so we don't have to adjust the position again now
+		}
+		else{
+		  # Here we need to add the length ignore_3prime to the read starting position
+		  # adjustment of the true start position of this reverse read will take place later in the methylation extraction step
+		  $start_read_1 += $ignore_3prime + $D_count_1 - $I_count_1;
+		}
+		
+	      }
+	    }
+	  }
+	
+	  if ($ignore_3prime_r2 and $meth_call_2) { # if the methylation call string is undefined at this point we don't need to process the read any further
+	
+	    ### Clipping off the last <int> number of bases from the methylation call string as specified with '--ignore_3prime_r2 <int>' for read 2	
+	    ### the methylation calls have already been reversed where necessary
+
+	    if ( (length($meth_call_2) - $ignore_3prime_r2) <= 0){
+	      $meth_call_2 = undef; # will skip this read entirely since the read is shorter than the portion to be ignored
+	    }
+	    else {
+	      $meth_call_2 = substr($meth_call_2,0,length($meth_call_2) - $ignore_3prime_r2);
+	      # warn "truncated meth_call 2:\n$meth_call_2\n";
+	
+	      ### If we are ignoring a part of the sequence we also need to adjust the cigar string and the positions accordingly
+	
+	      if ($strand eq '+') {
+		
+		### if the (read 1) strand information is '+', clipping the 3' end of read 2 does potentially affect the starting position of read 2 (reverse strand alignment)
+		### if the (read 1) strand information is '+', read 2 needs to be trimmed from the start
+		
+		my $D_count_2 = 0; # counting all deletions that affect the ignored genomic position for read 2, i.e. Deletions and insertions
+		my $I_count_2 = 0;
+		
+		for (1..$ignore_3prime_r2) {
+		  my $op = shift @comp_cigar_2; # adjusting composite CIGAR string by removing $ignore operations, here the first value of the array
+		  # print "$_ deleted $op from 3' end\n";
+		  # print join ("",@comp_cigar_2),"\n";
+		
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $D_count_2++;
+		    $op = shift @comp_cigar_2;
+		    # print "$_ deleted $op from 3' end\n";
+		    # print join ("",@comp_cigar_2),"\n";
+		  }
+
+		  if ($op eq 'I') { # adjusting the genomic position for insertions (I)
+		    $I_count_2++;
+		  }
+		}
+		
+		# print "Final truncated CIGAR string 2 (+ alignment):\n";
+		# print join ("",@comp_cigar_2),"\n";
+
+		# here we need to discriminate if the start has been adjusted because of --ignore_r2 or not
+		if ($ignore_r2){
+		  # the start position of read 2 has already been modified for --ignore_r2 already, so we don't have to adjust the position again now
+		}
+		else{
+		  # Here we need to add the length ignore_3prime_r2 to the read starting position
+		  # adjustment of the true start position of this reverse read will take place later in the methylation extraction step
+		  $start_read_2 += $ignore_3prime_r2 + $D_count_2 - $I_count_2;
+		}
+
+		# print "start read 2 $start_read_2\t ignore R2: $ignore_r2\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
+		
+	      }
+	      elsif ($strand eq '-') {
+		### if the (read 1) strand information is '-', clipping the 3' end of read 2 does not affect its starting position (forward strand alignment)
+		### ignore_r2 5' has already been taken care of at this stage, if relevant at all
+		
+		### if the (read 1) strand information is '-', read 2 needs to be trimmed from the end
+		
+		for (1..$ignore_3prime_r2) {
+		  my $op = pop @comp_cigar_2; # adjusting composite CIGAR string of read 2 by removing $ignore operations from the start
+		  # print "$_ deleted $op\n";
+		  # print join ("",@comp_cigar_2),"\n";
+		
+		  while ($op eq 'D') { # repeating this for deletions (D)
+		    $op = pop @comp_cigar_2;
+		    # print "$_ deleted $op\n";
+		    # print join ("",@comp_cigar_2),"\n";
+		  }
+		}
+		
+		# print "Final truncated CIGAR string 2 (- alignment):\n";
+		# print join ("",@comp_cigar_2),"\n";
+		
+	      }
+	    }
+	  }
+	
+	  if ($ignore_3prime and $meth_call_1){ # if the methylation call string is undefined at this point we don't need any new CIGAR string
+	
+	    ### reconstituting shortened CIGAR string 1
+	    my $new_cigar_1;
+	    my $count_1 = 0;
+	    my $last_op_1;
+	    # print "ignore_3prime adjusted CIGAR 1: @comp_cigar_1\n";
+	    foreach my $op (@comp_cigar_1) {
+	      unless (defined $last_op_1){
+		$last_op_1 = $op;
+		++$count_1;
+		next;
+	      }
+	      if ($last_op_1 eq $op) {
+		++$count_1;
+	      }
+	      else {
+		$new_cigar_1 .= "$count_1$last_op_1";
+		$last_op_1 = $op;
+		$count_1 = 1;
+	      }
+	    }
+	    $new_cigar_1 .= "$count_1$last_op_1"; # appending the last operation and count
+	    $cigar_1 = $new_cigar_1;
+	    # warn "ignore_3prime adjusted CIGAR 1 scalar: $cigar_1\n";
+	  }
+
+	  if ($ignore_3prime_r2 and $meth_call_2){ # if the methylation call string is undefined at this point we don't need any new CIGAR string
+
+	    ### reconstituting shortened CIGAR string 2
+	    my $new_cigar_2;
+	    my $count_2 = 0;
+	    my $last_op_2;
+	    # print "ignore_3prime_r2 adjusted CIGAR 2: @comp_cigar_2\n";
+	    foreach my $op (@comp_cigar_2) {
+	      unless (defined $last_op_2){
+		$last_op_2 = $op;
+		++$count_2;
+		next;
+	      }
+	      if ($last_op_2 eq $op) {
+		++$count_2;
+	      }
+	      else {
+		$new_cigar_2 .= "$count_2$last_op_2";
+		$last_op_2 = $op;
+		$count_2 = 1;
+	      }
+	    }
+	    $new_cigar_2 .= "$count_2$last_op_2"; # appending the last operation and count
+	    $cigar_2 = $new_cigar_2;
+	    # warn "ignore_3prime_r2 adjusted CIGAR 2 scalar: $cigar_2\n";
+	  }
+
+	  ###########################
+	  ###  END IGNORE 3' END  ###
+	  ###########################
+
 
 	  ### Adjusting CIGAR string and starting position of reads in reverse orientation which we will pass to the extraction subroutine later on
 	
@@ -2569,7 +2796,8 @@ sub process_Bismark_results_file{
 	    # we next pass the second read which is in - orientation on the reverse strand
 	    ### if --no_overlap was specified we also pass the end of read 1. If read 2 starts to overlap with read 1 we can stop extracting methylation calls from read 2
 	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_2,$id_2,'-',$index,$no_overlap,$end_read_1,$cigar_2,2);
-	  } else {
+	  }
+	  else {
 	    ## we first pass the first read which is in - orientation on the reverse strand
 	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id_1,'-',$index,0,0,$cigar_1,1);
 	
@@ -2578,7 +2806,7 @@ sub process_Bismark_results_file{
 	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_2,$id_2,'+',$index,$no_overlap,$end_read_1,$cigar_2,2);
 	  }
 	
-	  $methylation_call_strings_processed += 2; # paired-end = 2 methylation calls
+	  $methylation_call_strings_processed += 2; # paired-end = 2 methylation call strings
 	}	
       }
     }
@@ -2733,6 +2961,10 @@ sub print_splitting_report{
 sub print_individual_C_methylation_states_paired_end_files{
 
   my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index,$no_overlap,$end_read_1,$cigar,$read_identity) = @_;
+
+  unless (defined $meth_call) {
+    return; # skip this read
+  }
 
   ### we will use the read identity for the M-bias plot to discriminate read 1 and read 2
   die "Read identity was neither 1 nor 2: $read_identity\n\n" unless ($read_identity == 1 or $read_identity == 2);
@@ -3814,7 +4046,7 @@ sub print_individual_C_methylation_states_paired_end_files{
     }
   }
 
-  ### this is the default paired-end procedure allowing overlaps and using every single C position
+  ### this is the paired-end procedure allowing overlaps and using every single C position
   else {
     ### single-file CpG, CHG and CHH context output
     if ($full) {

@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.12.6 (01 Sep 2014)
+RELEASE NOTES FOR Bismark v0.12.6 (08 Sep 2014)
 -----------------------------------------------
 
 Bismark
@@ -15,6 +15,12 @@ The option --no_overlap is now the default for paired-end data. One may explicit
 overlapping data with the option '--include_overlap'.
 
 The splitting report will now be written out by default (option --report).
+
+In paired-end mode, read-pairs which had been skipped because either read was shorter than a specified
+(very high) value of '--ignore' or '--ignore_r2' will now have the information of the other read
+extracted if it meets the length criteria (if applicable). Thanks to Andrew Dei Rossi for contributing
+a patch.
+
 
 
 bismark2bedGraph
