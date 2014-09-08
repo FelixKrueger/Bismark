@@ -11,7 +11,11 @@ file name, e.g. sample1_... instead of the file extesion .sam).
 Methylation Extractor
 =====================
 
-The option --no_overlap is now the default for paired-end data. One may explicitely choose to include
+Added two new options '--ignore_3prime <INT>' (for single-end alignments and Read 1 of paired-end
+alignments) and '--ignore_3prime_r2 <INT>' (for Read 2 of paired-end alignments) to remove positions
+that display a methylation call bias from the 3' end of reads.	     
+
+The option --no_overlap is now the default for paired-end data. One may explicitly choose to include
 overlapping data with the option '--include_overlap'.
 
 The splitting report will now be written out by default (option --report).
