@@ -30,8 +30,8 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.12.6';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2) = process_commandline();
+my $version = 'v0.13.0';
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -71,6 +71,8 @@ elsif ($paired){
     warn "Bismark paired-end SAM format specified (default)\n"; # default
   }
 }
+
+warn "Number of cores to be used: $multicore\n";
 
 if ($single){
   if ($ignore){
@@ -238,7 +240,34 @@ foreach my $filename (@filenames){
     }
   }
 
-  process_Bismark_results_file($filename);
+  my ($pid,$pids) = process_Bismark_results_file($filename);
+
+  if ($pid == 0){
+    warn "Finished processing. Exiting child process\n";
+    exit 0;
+  }
+
+  ###
+  if ($pid){
+    print "Now waiting for all child processes to complete\n";
+    sleep(3);
+  }
+
+  ### we need to ensure that we wait for all child processes to be finished before continuing
+  if ($multicore > 1){
+    print "here are the child IDs: @$pids\n";
+
+    print "Looping through the child process IDs:\n";
+    foreach my $id (@$pids){
+      print "$id\t";
+      my $kid = waitpid ($id,0);
+      print "Returned: $kid\n";
+      print "Exit status: $?\n";
+      unless ($? == 0){
+	warn "\nChild process terminated with exit signal: '$?'\n\n";
+      }
+    }
+  }
 
   ### Closing all filehandles so that the Bismark methylation extractor output doesn't get truncated due to buffering issues
   foreach my $fh (keys %fhs) {
@@ -729,6 +758,7 @@ sub process_commandline{
   my $include_overlap;
   my $ignore_3prime;
   my $ignore_3prime_r2;
+  my $multicore;
 
   my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -762,6 +792,7 @@ sub process_commandline{
 				 'include_overlap'      => \$include_overlap,
 				 'ignore_3prime=i'      => \$ignore_3prime,
 				 'ignore_3prime_r2=i'   => \$ignore_3prime_r2,
+				 'multicore=i'          => \$multicore,
 	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -1051,7 +1082,20 @@ VERSION
     }
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2);
+  if (defined $multicore){
+    unless ($multicore > 0){
+      die "Core usage needs to be set to 1 or more (currently selected $multicore). Please respecify!\n";
+    }
+    if ($multicore > 20){
+      warn "Core usage currently set to more than 20 threads. Let's see how this goes... (set value: $multicore)\n\n";
+    }
+  }
+  else{
+    $multicore = 1; # default. Single-thread mode
+    warn "Setting core usage to single-threaded (default). Consider using --multicore <int> to speed up the extraction process.\n\n";
+  }
+
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore);
 }
 
 
@@ -1120,12 +1164,71 @@ sub test_positional_sorting{
 
 }
 
-
 sub process_Bismark_results_file{
+
   my $filename = shift;
+  my $report_filename = open_output_filehandles($filename);
+
+  ################################################
+  ################################################
+  ### multi-process handling
+  ###
+
+  my $offset = 1;
+  my $process_id;
+  my @pids;
+  if ($multicore > 1){
+
+    until ($offset == $multicore){
+      # warn "multicore: $multicore\noffset: $offset\n";
+      my $fork = fork;
+
+      if (defined $fork){
+	if ($fork != 0){
+	  $process_id = $fork;
+	  push @pids, $process_id;
+	  if ($offset < $multicore){
+	    ++$offset;
+	    warn "I am the parent process, child pid: $fork\nIncrementing offset counter to: $offset\n\n";
+	  }
+	  else{
+	    warn "Reached the number of maximum multicores. Proceeeding to processing...\n";
+	  }
+	}
+	elsif ($fork == 0){
+	  warn "I am a child process, pid: $fork\nOffset counter is: $offset\nProceeding to processing...\n";
+	  $process_id = $fork;
+	  last;
+	}
+      }
+      else{
+	die "Forking unsuccessful. Proceeding using a single thread only\n";
+      }
+    }
+
+    # warn "\nThe thread identity\n===================\n";
+    if ($process_id){
+      # print "I am the parent process. My children are called:\n";
+      # print join ("\t",@pids),"\n";
+      # print "I am going to process the following line count: $offset\n\n";
+    }
+    elsif($process_id == 0){
+      # warn "I am a child process: Process ID: $process_id\n";
+      # warn "I am going to process the following line count: $offset\n\n";
+    }
+    else{
+      die "Process ID was: $process_id\n";
+    }
+  }
+  else{
+    # warn "Single-core mode: setting pid to 1\n";
+    $process_id = 1;
+  }
+
+  ################################################
+  ################################################
 
   warn "\nNow reading in Bismark result file $filename\n\n";
-
   if ($filename =~ /\.gz$/) {
     open (IN,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
   }
@@ -1160,647 +1263,6 @@ sub process_Bismark_results_file{
     # We are reading from it further down
   }
 
-  my $output_filename = (split (/\//,$filename))[-1];
-
-  ### OPENING OUTPUT-FILEHANDLES
-  if ($report) {
-    my $report_filename = $output_filename;
-    $report_filename =~ s/\.sam$//;
-    $report_filename =~ s/\.txt$//;
-    $report_filename =~ s/$/_splitting_report.txt/;
-    $report_filename = $output_dir . $report_filename;
-    open (REPORT,'>',$report_filename) or die "Failed to write to file $report_filename $!\n";
-  }
-
-  if ($report) {
-
-    print REPORT "$output_filename\n\n";
-    print REPORT "Parameters used to extract methylation information:\n";
-    print REPORT "Bismark Extractor Version: $version\n";
-
-    if ($paired) {
-      if ($vanilla) {
-	print REPORT "Bismark result file: paired-end (vanilla Bismark format)\n";
-      } else {
-	print REPORT "Bismark result file: paired-end (SAM format)\n"; # default
-      }
-    }
-
-    if ($single) {
-      if ($vanilla) {
-	print REPORT "Bismark result file: single-end (vanilla Bismark format)\n";
-      } else {
-	print REPORT "Bismark result file: single-end (SAM format)\n"; # default
-      }
-    }
-    if ($single){
-      if ($ignore) {
-	print REPORT "Ignoring first $ignore bp\n";
-      }
-      if ($ignore_3prime) {
-	print REPORT "Ignoring last $ignore_3prime bp\n";
-      }
-    }
-    else{ # paired-end
-      if ($ignore) {
-	print REPORT "Ignoring first $ignore bp of Read 1\n";
-      }
-      if ($ignore_r2){
-	print REPORT "Ignoring first $ignore_r2 bp of Read 2\n";
-      }
-
-      if ($ignore_3prime) {
-	print REPORT "Ignoring last $ignore_3prime bp of Read 1\n";
-      }
-      if ($ignore_3prime_r2){
-	print REPORT "Ignoring last $ignore_3prime_r2 bp of Read 2\n";
-      }
-
-    }
-
-    if ($full) {
-      print REPORT "Output specified: comprehensive\n";
-    } else {
-      print REPORT "Output specified: strand-specific (default)\n";
-    }
-
-    if ($no_overlap) {
-      print REPORT "No overlapping methylation calls specified\n";
-    }
-    if ($genomic_fasta) {
-      print REPORT "Genomic equivalent sequences will be printed out in FastA format\n";
-    }
-    if ($merge_non_CpG) {
-      print REPORT "Methylation in CHG and CHH context will be merged into \"non-CpG context\" output\n";
-    }
-
-    print REPORT "\n";
-  }
-
-#####   open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-
-  ### CpG-context and non-CpG context. THIS SECTION IS OPTIONAL
-  ### if --comprehensive AND --merge_non_CpG was specified we are only writing out one CpG-context and one Any-Other-context result file
-  if ($full and $merge_non_CpG) {
-    my $cpg_output = my $other_c_output = $output_filename;
-    ### C in CpG context
-    $cpg_output =~ s/^/CpG_context_/;
-    $cpg_output =~ s/sam$/txt/;
-    $cpg_output =~ s/bam$/txt/;
-    $cpg_output =~ s/$/.txt/ unless ($cpg_output =~ /\.txt$/);
-    $cpg_output = $output_dir . $cpg_output;
-
-    if ($gzip){
-      $cpg_output .= '.gz';
-      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n" unless($mbias_only);
-    push @sorting_files,$cpg_output;
-
-    unless ($no_header) {
-      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    ### C in any other context than CpG
-    $other_c_output =~ s/^/Non_CpG_context_/;
-    $other_c_output =~ s/sam$/txt/;
-    $other_c_output =~ s/bam$/txt/;
-    $other_c_output =~ s/$/.txt/ unless ($other_c_output =~ /\.txt$/);
-    $other_c_output = $output_dir . $other_c_output;
-
-    if ($gzip){
-      $other_c_output .= '.gz';
-      open ($fhs{other_context},"| gzip -c - > $other_c_output") or die "Failed to write to $other_c_output $! \n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{other_context},'>',$other_c_output) or die "Failed to write to $other_c_output $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in any other context to $other_c_output\n" unless($mbias_only);
-    push @sorting_files,$other_c_output;
-
-
-    unless ($no_header) {
-      print {$fhs{other_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-  }
-
-  ### if only --merge_non_CpG was specified we will write out 8 different output files, depending on where the (first) unique best alignment has been found
-  elsif ($merge_non_CpG) {
-
-    my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $output_filename;
-
-    ### For cytosines in CpG context
-    $cpg_ot =~ s/^/CpG_OT_/;
-    $cpg_ot =~ s/sam$/txt/;
-    $cpg_ot =~ s/bam$/txt/;
-    $cpg_ot =~ s/$/.txt/ unless ($cpg_ot =~ /\.txt$/);
-    $cpg_ot = $output_dir . $cpg_ot;
-
-    if ($gzip){
-      $cpg_ot .= '.gz';
-      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n" unless($mbias_only);
-    push @sorting_files,$cpg_ot;
-
-    unless($no_header){
-      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $cpg_ctot =~ s/^/CpG_CTOT_/;
-    $cpg_ctot =~ s/sam$/txt/;
-    $cpg_ctot =~ s/bam$/txt/;
-    $cpg_ctot =~ s/$/.txt/ unless ($cpg_ctot =~ /\.txt$/);
-    $cpg_ctot = $output_dir . $cpg_ctot;
-
-    if ($gzip){
-      $cpg_ctot .= '.gz';
-      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n" unless($mbias_only);
-    push @sorting_files,$cpg_ctot;
-
-    unless($no_header){
-      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $cpg_ctob =~ s/^/CpG_CTOB_/;
-    $cpg_ctob =~ s/sam$/txt/;
-    $cpg_ctob =~ s/bam$/txt/;
-    $cpg_ctob =~ s/$/.txt/ unless ($cpg_ctob =~ /\.txt$/);
-    $cpg_ctob = $output_dir . $cpg_ctob;
-
-    if ($gzip){
-      $cpg_ctob .= '.gz';
-      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n" unless($mbias_only);
-    push @sorting_files,$cpg_ctob;
-
-    unless($no_header){
-      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $cpg_ob =~ s/^/CpG_OB_/;
-    $cpg_ob =~ s/sam$/txt/;
-    $cpg_ob =~ s/bam$/txt/;
-    $cpg_ob =~ s/$/.txt/ unless ($cpg_ob =~ /\.txt$/);
-    $cpg_ob = $output_dir . $cpg_ob;
-
-    if ($gzip){
-      $cpg_ob .= '.gz';
-      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n" unless($mbias_only);
-    push @sorting_files,$cpg_ob;
-
-    unless($no_header){
-      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    ### For cytosines in Non-CpG (CC, CT or CA) context
-    my $other_c_ot = my $other_c_ctot = my $other_c_ctob = my $other_c_ob = $output_filename;
-
-    $other_c_ot =~ s/^/Non_CpG_OT_/;
-    $other_c_ot =~ s/sam$/txt/;
-    $other_c_ot =~ s/bam$/txt/;
-    $other_c_ot =~ s/$/.txt/ unless ($other_c_ot =~ /\.txt$/);
-    $other_c_ot = $output_dir . $other_c_ot;
-
-    if ($gzip){
-      $other_c_ot .= '.gz';
-      open ($fhs{0}->{other_c},"| gzip -c - > $other_c_ot") or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in any other context from the original top strand to $other_c_ot\n" unless($mbias_only);
-    push @sorting_files,$other_c_ot;
-
-    unless($no_header){
-      print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $other_c_ctot =~ s/^/Non_CpG_CTOT_/;
-    $other_c_ctot =~ s/sam$/txt/;
-    $other_c_ctot =~ s/bam$/txt/;
-    $other_c_ctot =~ s/$/.txt/ unless ($other_c_ctot =~ /\.txt$/);
-    $other_c_ctot = $output_dir . $other_c_ctot;
-
-    if ($gzip){
-      $other_c_ctot .= '.gz';
-      open ($fhs{1}->{other_c},"| gzip -c - > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in any other context from the complementary to original top strand to $other_c_ctot\n" unless($mbias_only);
-    push @sorting_files,$other_c_ctot;
-
-    unless($no_header){
-      print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $other_c_ctob =~ s/^/Non_CpG_CTOB_/;
-    $other_c_ctob =~ s/sam$/txt/;
-    $other_c_ctob =~ s/bam$/txt/;
-    $other_c_ctob =~ s/$/.txt/ unless ($other_c_ctob =~ /\.txt$/);
-    $other_c_ctob = $output_dir . $other_c_ctob;
-
-    if ($gzip){
-      $other_c_ctob .= '.gz';
-      open ($fhs{2}->{other_c},"| gzip -c - > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in any other context from the complementary to original bottom strand to $other_c_ctob\n" unless($mbias_only);
-    push @sorting_files,$other_c_ctob;
-
-    unless($no_header){
-      print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $other_c_ob =~ s/^/Non_CpG_OB_/;
-    $other_c_ob =~ s/sam$/txt/;
-    $other_c_ob =~ s/sam$/txt/;
-    $other_c_ob =~ s/$/.txt/ unless ($other_c_ob =~ /\.txt$/);
-    $other_c_ob = $output_dir . $other_c_ob;
-
-    if ($gzip){
-      $other_c_ob .= '.gz';
-      open ($fhs{3}->{other_c},"| gzip -c - > $other_c_ob") or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in any other context from the original bottom strand to $other_c_ob\n\n" unless($mbias_only);
-    push @sorting_files,$other_c_ob;
-
-    unless($no_header){
-      print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-  }
-  ### THIS SECTION IS THE DEFAULT (CpG, CHG and CHH context)
-
-  ### if --comprehensive was specified we are only writing one file per context
-  elsif ($full) {
-    my $cpg_output = my $chg_output =  my $chh_output = $output_filename;
-    ### C in CpG context
-    $cpg_output =~ s/^/CpG_context_/;
-    $cpg_output =~ s/sam$/txt/;
-    $cpg_output =~ s/bam$/txt/;
-    $cpg_output =~ s/$/.txt/ unless ($cpg_output =~ /\.txt$/);
-    $cpg_output = $output_dir . $cpg_output;
-
-    if ($gzip){
-      $cpg_output .= '.gz';
-      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n" unless($mbias_only);
-    push @sorting_files,$cpg_output;
-
-    unless($no_header){
-      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    ### C in CHG context
-    $chg_output =~ s/^/CHG_context_/;
-    $chg_output =~ s/sam$/txt/;
-    $chg_output =~ s/bam$/txt/;
-    $chg_output =~ s/$/.txt/ unless ($chg_output =~ /\.txt$/);
-    $chg_output = $output_dir . $chg_output;
-
-    if ($gzip){
-      $chg_output .= '.gz';
-      open ($fhs{CHG_context},"| gzip -c - > $chg_output") or die "Failed to write to $chg_output $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{CHG_context},'>',$chg_output) or die "Failed to write to $chg_output $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHG context to $chg_output\n" unless($mbias_only);
-    push @sorting_files,$chg_output;
-
-    unless($no_header){
-      print {$fhs{CHG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    ### C in CHH context
-    $chh_output =~ s/^/CHH_context_/;
-    $chh_output =~ s/sam$/txt/;
-    $chh_output =~ s/bam$/txt/;
-    $chh_output =~ s/$/.txt/ unless ($chh_output =~ /\.txt$/);
-    $chh_output = $output_dir . $chh_output;
-
-    if ($gzip){
-      $chh_output .= '.gz';
-      open ($fhs{CHH_context},"| gzip -c - > $chh_output") or die "Failed to write to $chh_output $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{CHH_context},'>',$chh_output) or die "Failed to write to $chh_output $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHH context to $chh_output\n" unless($mbias_only);
-    push @sorting_files, $chh_output;
-
-    unless($no_header){
-      print {$fhs{CHH_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-  }
-  ### else we will write out 12 different output files, depending on where the (first) unique best alignment was found
-  else {
-    my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $output_filename;
-
-    ### For cytosines in CpG context
-    $cpg_ot =~ s/^/CpG_OT_/;
-    $cpg_ot =~ s/sam$/txt/;
-    $cpg_ot =~ s/bam$/txt/;
-    $cpg_ot =~ s/$/.txt/ unless ($cpg_ot =~ /\.txt$/);
-    $cpg_ot = $output_dir . $cpg_ot;
-
-    if ($gzip){
-      $cpg_ot .= '.gz';
-      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n" unless($mbias_only);
-    push @sorting_files,$cpg_ot;
-
-    unless($no_header){
-      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $cpg_ctot =~ s/^/CpG_CTOT_/;
-    $cpg_ctot =~ s/sam$/txt/;
-    $cpg_ctot =~ s/bam$/txt/;
-    $cpg_ctot =~ s/$/.txt/ unless ($cpg_ctot =~ /\.txt$/);
-    $cpg_ctot = $output_dir . $cpg_ctot;
-
-    if ($gzip){
-      $cpg_ctot .= '.gz';
-      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n" unless($mbias_only);
-    push @sorting_files,$cpg_ctot;
-
-    unless($no_header){
-      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $cpg_ctob =~ s/^/CpG_CTOB_/;
-    $cpg_ctob =~ s/sam$/txt/;
-    $cpg_ctob =~ s/bam$/txt/;
-    $cpg_ctob =~ s/$/.txt/ unless ($cpg_ctob =~ /\.txt$/);
-    $cpg_ctob = $output_dir . $cpg_ctob;
-
-    if ($gzip){
-      $cpg_ctob .= '.gz';
-      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n" unless($mbias_only);
-    push @sorting_files,$cpg_ctob;
-
-    unless($no_header){
-      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $cpg_ob =~ s/^/CpG_OB_/;
-    $cpg_ob =~ s/sam$/txt/;
-    $cpg_ob =~ s/bam$/txt/;
-    $cpg_ob =~ s/$/.txt/ unless ($cpg_ob =~ /\.txt$/);
-    $cpg_ob = $output_dir . $cpg_ob;
-
-    if ($gzip){
-      $cpg_ob .= '.gz';
-      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n" unless($mbias_only);
-    push @sorting_files,$cpg_ob;
-
-    unless($no_header){
-      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    ### For cytosines in CHG context
-    my $chg_ot = my $chg_ctot = my $chg_ctob = my $chg_ob = $output_filename;
-
-    $chg_ot =~ s/^/CHG_OT_/;
-    $chg_ot =~ s/sam$/txt/;
-    $chg_ot =~ s/bam$/txt/;
-    $chg_ot =~ s/$/.txt/ unless ($chg_ot =~ /\.txt$/);
-    $chg_ot = $output_dir . $chg_ot;
-
-    if ($gzip){
-      $chg_ot .= '.gz';
-      open ($fhs{0}->{CHG},"| gzip -c - > $chg_ot") or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{0}->{CHG},'>',$chg_ot) or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHG context from the original top strand to $chg_ot\n" unless($mbias_only);
-    push @sorting_files,$chg_ot;
-
-    unless($no_header){
-      print {$fhs{0}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $chg_ctot =~ s/^/CHG_CTOT_/;
-    $chg_ctot =~ s/sam$/txt/;
-    $chg_ctot =~ s/bam$/txt/;
-    $chg_ctot =~ s/$/.txt/ unless ($chg_ctot =~ /\.txt$/);
-    $chg_ctot = $output_dir . $chg_ctot;
-
-    if ($gzip){
-      $chg_ctot .= '.gz';
-      open ($fhs{1}->{CHG},"| gzip -c - > $chg_ctot") or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{1}->{CHG},'>',$chg_ctot) or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHG context from the complementary to original top strand to $chg_ctot\n" unless($mbias_only);
-    push @sorting_files,$chg_ctot;
-
-    unless($no_header){
-      print {$fhs{1}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $chg_ctob =~ s/^/CHG_CTOB_/;
-    $chg_ctob =~ s/sam$/txt/;
-    $chg_ctob =~ s/bam$/txt/;
-    $chg_ctob =~ s/$/.txt/ unless ($chg_ctob =~ /\.txt$/);
-    $chg_ctob = $output_dir . $chg_ctob;
-
-    if ($gzip){
-      $chg_ctob .= '.gz';
-      open ($fhs{2}->{CHG},"| gzip -c - > $chg_ctob") or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{2}->{CHG},'>',$chg_ctob) or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHG context from the complementary to original bottom strand to $chg_ctob\n" unless($mbias_only);
-    push @sorting_files,$chg_ctob;
-
-    unless($no_header){
-      print {$fhs{2}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $chg_ob =~ s/^/CHG_OB_/;
-    $chg_ob =~ s/sam$/txt/;
-    $chg_ob =~ s/bam$/txt/;
-    $chg_ob =~ s/$/.txt/ unless ($chg_ob =~ /\.txt$/);
-    $chg_ob = $output_dir . $chg_ob;
-
-    if ($gzip){
-      $chg_ob .= '.gz';
-      open ($fhs{3}->{CHG},"| gzip -c - > $chg_ob") or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{3}->{CHG},'>',$chg_ob) or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHG context from the original bottom strand to $chg_ob\n\n" unless($mbias_only);
-    push @sorting_files,$chg_ob;
-
-    unless($no_header){
-      print {$fhs{3}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    ### For cytosines in CHH context
-    my $chh_ot = my $chh_ctot = my $chh_ctob = my $chh_ob = $output_filename;
-
-    $chh_ot =~ s/^/CHH_OT_/;
-    $chh_ot =~ s/sam$/txt/;
-    $chh_ot =~ s/bam$/txt/;
-    $chh_ot =~ s/$/.txt/ unless ($chh_ot =~ /\.txt$/);
-    $chh_ot = $output_dir . $chh_ot;
-
-    if ($gzip){
-      $chh_ot .= '.gz';
-      open ($fhs{0}->{CHH},"| gzip -c - > $chh_ot") or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{0}->{CHH},'>',$chh_ot) or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHH context from the original top strand to $chh_ot\n" unless($mbias_only);
-    push @sorting_files,$chh_ot;
-
-    unless($no_header){
-      print {$fhs{0}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $chh_ctot =~ s/^/CHH_CTOT_/;
-    $chh_ctot =~ s/sam$/txt/;
-    $chh_ctot =~ s/bam$/txt/;
-    $chh_ctot =~ s/$/.txt/ unless ($chh_ctot =~ /\.txt$/);
-    $chh_ctot = $output_dir . $chh_ctot;
-
-    if ($gzip){
-      $chh_ctot .= '.gz';
-      open ($fhs{1}->{CHH},"| gzip -c - > $chh_ctot") or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{1}->{CHH},'>',$chh_ctot) or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHH context from the complementary to original top strand to $chh_ctot\n" unless($mbias_only);
-    push @sorting_files,$chh_ctot;
-
-    unless($no_header){
-      print {$fhs{1}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $chh_ctob =~ s/^/CHH_CTOB_/;
-    $chh_ctob =~ s/sam$/txt/;
-    $chh_ctob =~ s/bam$/txt/;
-    $chh_ctob =~ s/$/.txt/ unless ($chh_ctob =~ /\.txt$/);
-    $chh_ctob = $output_dir . $chh_ctob;
-
-    if ($gzip){
-      $chh_ctob .= '.gz';
-      open ($fhs{2}->{CHH},"| gzip -c - > $chh_ctob") or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{2}->{CHH},'>',$chh_ctob) or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHH context from the complementary to original bottom strand to $chh_ctob\n" unless($mbias_only);
-    push @sorting_files,$chh_ctob;
-
-    unless($no_header){
-      print {$fhs{2}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-
-    $chh_ob =~ s/^/CHH_OB_/;
-    $chh_ob =~ s/sam$/txt/;
-    $chh_ob =~ s/bam$/txt/;
-    $chh_ob =~ s/$/.txt/ unless ($chh_ob =~ /\.txt$/);
-    $chh_ob = $output_dir . $chh_ob;
-
-    if ($gzip){
-      $chh_ob .= '.gz';
-      open ($fhs{3}->{CHH},"| gzip -c - > $chh_ob") or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
-    }
-    else{
-      open ($fhs{3}->{CHH},'>',$chh_ob) or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
-    }
-
-    warn "Writing result file containing methylation information for C in CHH context from the original bottom strand to $chh_ob\n\n" unless($mbias_only);
-    push @sorting_files,$chh_ob;
-
-    unless($no_header){
-      print {$fhs{3}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
-    }
-  }
-
   my $methylation_call_strings_processed = 0;
   my $line_count = 0;
 
@@ -1814,6 +1276,16 @@ sub process_Bismark_results_file{
       while (<IN>) {
 	++$line_count;
 	warn "Processed lines: $line_count\n" if ($line_count%500000==0);
+
+	if ( ($line_count - $offset)%$multicore == 0){
+	  # warn "line count: $line_count\noffset: $offset\n";
+	  # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+	  # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+	}
+	else{
+	  # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+	  next;
+	}
 	
 	### $seq here is the chromosomal sequence (to use for the repeat analysis for example)
 	my ($id,$strand,$chrom,$start,$seq,$meth_call,$read_conversion,$genome_conversion) = (split("\t"))[0,1,2,3,6,7,8,9];
@@ -1894,7 +1366,18 @@ sub process_Bismark_results_file{
 	}
 
 	++$line_count;
-	warn "Processed lines: $line_count\n" if ($line_count%500000==0);
+	#	warn "$line_count\n";
+	warn "Processed lines: $line_count\n" if ($line_count%500000 == 0);
+
+	if ( ($line_count - $offset)%$multicore == 0){
+	  # warn "line count: $line_count\noffset: $offset\n";
+	  # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+	  # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+	}
+	else{
+	  # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+	  next;
+	}
 	
 	# example read in SAM format
 	# 1_R1/1	67	5	103172224	255	40M	=	103172417	233	AATATTTTTTTTATTTTAAAATGTGTATTGATTTAAATTT	IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII	NM:i:4	XX:Z:4T1T24TT7	XM:Z:....h.h........................hh.......	XR:Z:CT	XG:Z:CT
@@ -2159,7 +1642,17 @@ sub process_Bismark_results_file{
     if ($vanilla) {	# old vanilla Bismark paired-end output format
       while (<IN>) {
 	++$line_count;
-	warn "processed line: $line_count\n" if ($line_count%500000==0);
+	warn "processed line: $line_count\n" if ($line_count%500000 == 0);
+
+	if ( ($line_count - $offset)%$multicore == 0){
+	  # warn "line count: $line_count\noffset: $offset\n";
+	  # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+	  # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+	}
+	else{
+	  # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+	  next;
+	}
 
 	### $seq here is the chromosomal sequence (to use for the repeat analysis for example)
 	my ($id,$strand,$chrom,$start_read_1,$end_read_2,$seq_1,$meth_call_1,$seq_2,$meth_call_2,$first_read_conversion,$genome_conversion) = (split("\t"))[0,1,2,3,4,6,7,9,10,11,12,13];
@@ -2253,12 +1746,21 @@ sub process_Bismark_results_file{
 	++$line_count;
 	warn "Processed lines: $line_count\n" if ($line_count%500000==0);
 	
+	if ( ($line_count - $offset)%$multicore == 0){
+	  # warn "line count: $line_count\noffset: $offset\n";
+	  # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+	  # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+	}
+	else{
+	  # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+	  $_ = <IN>; # reading and skipping another line since this is the paired-end read
+	  next;
+	}
+
 	# example paired-end reads in SAM format (2 consecutive lines)
 	# 1_R1/1	67	5	103172224	255	40M	=	103172417	233	AATATTTTTTTTATTTTAAAATGTGTATTGATTTAAATTT	IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII	NM:i:4	XX:Z:4T1T24TT7	XM:Z:....h.h........................hh.......	XR:Z:CT	XG:Z:CT
 	# 1_R1/2	131	5	103172417	255	40M	=	103172224	-233	TATTTTTTTTTAGAGTATTTTTTAATGGTTATTAGATTTT	IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII	NM:i:6	XX:Z:T5T1T9T9T7T3	XM:Z:h.....h.h.........h.........h.......h...	XR:Z:GA	XG:Z:CT
 	
-	#  < version 0.7.6 my ($id_1,$chrom,$start_read_1,$meth_call_1,$first_read_conversion,$genome_conversion) = (split("\t"))[0,2,3,13,14,15];
-
 	my ($id_1,$chrom,$start_read_1,$cigar_1) = (split("\t"))[0,2,3,5]; ### detecting the following SAM flags in case the SAM entry was shuffled by CRAM or Goby compression/decompression
 	my $meth_call_1;
 	my $first_read_conversion;
@@ -2282,12 +1784,7 @@ sub process_Bismark_results_file{
 
 	$_ = <IN>;		# reading in the paired read
 	chomp;
-	# < version 0.7.6 my ($id_2,$start_read_2,$meth_call_2,$second_read_conversion) = (split("\t"))[0,3,13,14];
-	# < version 0.7.6 $meth_call_1 =~ s/^XM:Z://;
-	# < version 0.7.6 $meth_call_2 =~ s/^XM:Z://;
-	# < version 0.7.6 $first_read_conversion =~ s/^XR:Z://;
-	# < version 0.7.6 $second_read_conversion =~ s/^XR:Z://;
-
+	
 	my ($id_2,$start_read_2,$cigar_2) = (split("\t"))[0,3,5]; ### detecting the following SAM flags in case the SAM entry was shuffled by CRAM or Goby compression/decompression
 
 	my $meth_call_2;
@@ -2820,7 +2317,15 @@ sub process_Bismark_results_file{
     print REPORT "\n\nProcessed $line_count lines from $filename in total\n";
     print REPORT "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
   }
-  print_splitting_report ();
+  if ($multicore == 1){
+    print_splitting_report ();
+  }
+  elsif ($multicore > 1){
+    print_splitting_report_multicore($report_filename,$offset);
+  }
+
+  return ($process_id,\@pids);
+
 }
 
 
@@ -2956,7 +2461,100 @@ sub print_splitting_report{
   }
 }
 
+###
 
+sub print_splitting_report_multicore{
+
+  my $report_filename = shift;
+  my $offset = shift;
+  warn "\$report_filename is $report_filename\n";
+  my $special_report = $report_filename.".$offset";
+  warn "\$special_report is $special_report\n";
+
+  open (SPECIAL_REPORT,'>',$special_report) or die $!;
+  my $report_fh = "REPORT";
+  warn "$report_fh\n";
+  ### Calculating methylation percentages if applicable
+
+  my $percent_meCpG;
+  if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
+    $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
+  }
+
+  my $percent_meCHG;
+  if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
+    $percent_meCHG = sprintf("%.1f",100*$counting{total_meCHG_count}/($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}));
+  }
+
+  my $percent_meCHH;
+  if (($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}) > 0){
+    $percent_meCHH = sprintf("%.1f",100*$counting{total_meCHH_count}/($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}));
+  }
+
+  my $percent_non_CpG_methylation;
+  if ($merge_non_CpG){
+    if ( ($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}+$counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
+      $percent_non_CpG_methylation = sprintf("%.1f",100* ( $counting{total_meCHH_count}+$counting{total_meCHG_count} ) / ( $counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}+$counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count} ) );
+    }
+  }
+
+  if ($report){
+
+    ### detailed information about Cs analysed
+    print SPECIAL_REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
+
+    my $total_number_of_C = $counting{total_meCHG_count}+$counting{total_meCHH_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CpG_count};
+    print SPECIAL_REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
+
+    print SPECIAL_REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
+    print SPECIAL_REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
+    print SPECIAL_REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
+
+    print SPECIAL_REPORT "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+    print SPECIAL_REPORT "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+    print SPECIAL_REPORT "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
+
+    ### calculating methylated CpG percentage if applicable
+    if ($percent_meCpG){
+      print SPECIAL_REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
+    }
+    else{
+      print SPECIAL_REPORT "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
+    }
+
+    ### 2-Context Output
+    if ($merge_non_CpG){
+      if ($percent_non_CpG_methylation){
+	print SPECIAL_REPORT "C methylated in non-CpG context:\t${percent_non_CpG_methylation}%\n\n\n";
+      }
+      else{
+	print SPECIAL_REPORT "Can't determine percentage of methylated Cs in non-CpG context if value was 0\n\n\n";
+      }
+    }
+
+    ### 3 Context Output
+    else{
+      ### calculating methylated CHG percentage if applicable
+      if ($percent_meCHG){
+	print SPECIAL_REPORT "C methylated in CHG context:\t${percent_meCHG}%\n";
+      }
+      else{
+	print SPECIAL_REPORT "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
+      }
+
+      ### calculating methylated CHH percentage if applicable
+      if ($percent_meCHH){
+	print SPECIAL_REPORT "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
+      }
+      else{
+	print SPECIAL_REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
+      }
+    }
+  }
+}
+
+
+###
 
 sub print_individual_C_methylation_states_paired_end_files{
 
@@ -4971,6 +4569,653 @@ sub print_individual_C_methylation_states_single_end{
   }
 }
 
+sub open_output_filehandles{
+
+  my $filename = shift;
+
+  my $output_filename = (split (/\//,$filename))[-1];
+  my $report_filename = $output_filename;
+
+  ### OPENING OUTPUT-FILEHANDLES
+  if ($report) {
+    $report_filename =~ s/\.sam$//;
+    $report_filename =~ s/\.txt$//;
+    $report_filename =~ s/$/_splitting_report.txt/;
+    $report_filename = $output_dir . $report_filename;
+    open (REPORT,'>',$report_filename) or die "Failed to write to file $report_filename $!\n";
+  }
+
+  if ($report) {
+
+    print REPORT "$output_filename\n\n";
+    print REPORT "Parameters used to extract methylation information:\n";
+    print REPORT "Bismark Extractor Version: $version\n";
+
+    if ($paired) {
+      if ($vanilla) {
+	print REPORT "Bismark result file: paired-end (vanilla Bismark format)\n";
+      } else {
+	print REPORT "Bismark result file: paired-end (SAM format)\n"; # default
+      }
+    }
+
+    if ($single) {
+      if ($vanilla) {
+	print REPORT "Bismark result file: single-end (vanilla Bismark format)\n";
+      } else {
+	print REPORT "Bismark result file: single-end (SAM format)\n"; # default
+      }
+    }
+    if ($single){
+      if ($ignore) {
+	print REPORT "Ignoring first $ignore bp\n";
+      }
+      if ($ignore_3prime) {
+	print REPORT "Ignoring last $ignore_3prime bp\n";
+      }
+    }
+    else{ # paired-end
+      if ($ignore) {
+	print REPORT "Ignoring first $ignore bp of Read 1\n";
+      }
+      if ($ignore_r2){
+	print REPORT "Ignoring first $ignore_r2 bp of Read 2\n";
+      }
+
+      if ($ignore_3prime) {
+	print REPORT "Ignoring last $ignore_3prime bp of Read 1\n";
+      }
+      if ($ignore_3prime_r2){
+	print REPORT "Ignoring last $ignore_3prime_r2 bp of Read 2\n";
+      }
+
+    }
+
+    if ($full) {
+      print REPORT "Output specified: comprehensive\n";
+    } else {
+      print REPORT "Output specified: strand-specific (default)\n";
+    }
+
+    if ($no_overlap) {
+      print REPORT "No overlapping methylation calls specified\n";
+    }
+    if ($genomic_fasta) {
+      print REPORT "Genomic equivalent sequences will be printed out in FastA format\n";
+    }
+    if ($merge_non_CpG) {
+      print REPORT "Methylation in CHG and CHH context will be merged into \"non-CpG context\" output\n";
+    }
+
+    print REPORT "\n";
+  }
+
+  #####   open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+
+  ### CpG-context and non-CpG context. THIS SECTION IS OPTIONAL
+  ### if --comprehensive AND --merge_non_CpG was specified we are only writing out one CpG-context and one Any-Other-context result file
+  if ($full and $merge_non_CpG) {
+    my $cpg_output = my $other_c_output = $output_filename;
+    ### C in CpG context
+    $cpg_output =~ s/^/CpG_context_/;
+    $cpg_output =~ s/sam$/txt/;
+    $cpg_output =~ s/bam$/txt/;
+    $cpg_output =~ s/$/.txt/ unless ($cpg_output =~ /\.txt$/);
+    $cpg_output = $output_dir . $cpg_output;
+
+    if ($gzip){
+      $cpg_output .= '.gz';
+      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n" unless($mbias_only);
+    push @sorting_files,$cpg_output;
+
+    unless ($no_header) {
+      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    ### C in any other context than CpG
+    $other_c_output =~ s/^/Non_CpG_context_/;
+    $other_c_output =~ s/sam$/txt/;
+    $other_c_output =~ s/bam$/txt/;
+    $other_c_output =~ s/$/.txt/ unless ($other_c_output =~ /\.txt$/);
+    $other_c_output = $output_dir . $other_c_output;
+
+    if ($gzip){
+      $other_c_output .= '.gz';
+      open ($fhs{other_context},"| gzip -c - > $other_c_output") or die "Failed to write to $other_c_output $! \n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{other_context},'>',$other_c_output) or die "Failed to write to $other_c_output $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in any other context to $other_c_output\n" unless($mbias_only);
+    push @sorting_files,$other_c_output;
+
+
+    unless ($no_header) {
+      print {$fhs{other_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+  }
+
+  ### if only --merge_non_CpG was specified we will write out 8 different output files, depending on where the (first) unique best alignment has been found
+  elsif ($merge_non_CpG) {
+
+    my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $output_filename;
+
+    ### For cytosines in CpG context
+    $cpg_ot =~ s/^/CpG_OT_/;
+    $cpg_ot =~ s/sam$/txt/;
+    $cpg_ot =~ s/bam$/txt/;
+    $cpg_ot =~ s/$/.txt/ unless ($cpg_ot =~ /\.txt$/);
+    $cpg_ot = $output_dir . $cpg_ot;
+
+    if ($gzip){
+      $cpg_ot .= '.gz';
+      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n" unless($mbias_only);
+    push @sorting_files,$cpg_ot;
+
+    unless($no_header){
+      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $cpg_ctot =~ s/^/CpG_CTOT_/;
+    $cpg_ctot =~ s/sam$/txt/;
+    $cpg_ctot =~ s/bam$/txt/;
+    $cpg_ctot =~ s/$/.txt/ unless ($cpg_ctot =~ /\.txt$/);
+    $cpg_ctot = $output_dir . $cpg_ctot;
+
+    if ($gzip){
+      $cpg_ctot .= '.gz';
+      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n" unless($mbias_only);
+    push @sorting_files,$cpg_ctot;
+
+    unless($no_header){
+      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $cpg_ctob =~ s/^/CpG_CTOB_/;
+    $cpg_ctob =~ s/sam$/txt/;
+    $cpg_ctob =~ s/bam$/txt/;
+    $cpg_ctob =~ s/$/.txt/ unless ($cpg_ctob =~ /\.txt$/);
+    $cpg_ctob = $output_dir . $cpg_ctob;
+
+    if ($gzip){
+      $cpg_ctob .= '.gz';
+      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n" unless($mbias_only);
+    push @sorting_files,$cpg_ctob;
+
+    unless($no_header){
+      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $cpg_ob =~ s/^/CpG_OB_/;
+    $cpg_ob =~ s/sam$/txt/;
+    $cpg_ob =~ s/bam$/txt/;
+    $cpg_ob =~ s/$/.txt/ unless ($cpg_ob =~ /\.txt$/);
+    $cpg_ob = $output_dir . $cpg_ob;
+
+    if ($gzip){
+      $cpg_ob .= '.gz';
+      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n" unless($mbias_only);
+    push @sorting_files,$cpg_ob;
+
+    unless($no_header){
+      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    ### For cytosines in Non-CpG (CC, CT or CA) context
+    my $other_c_ot = my $other_c_ctot = my $other_c_ctob = my $other_c_ob = $output_filename;
+
+    $other_c_ot =~ s/^/Non_CpG_OT_/;
+    $other_c_ot =~ s/sam$/txt/;
+    $other_c_ot =~ s/bam$/txt/;
+    $other_c_ot =~ s/$/.txt/ unless ($other_c_ot =~ /\.txt$/);
+    $other_c_ot = $output_dir . $other_c_ot;
+
+    if ($gzip){
+      $other_c_ot .= '.gz';
+      open ($fhs{0}->{other_c},"| gzip -c - > $other_c_ot") or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{0}->{other_c},'>',$other_c_ot) or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in any other context from the original top strand to $other_c_ot\n" unless($mbias_only);
+    push @sorting_files,$other_c_ot;
+
+    unless($no_header){
+      print {$fhs{0}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $other_c_ctot =~ s/^/Non_CpG_CTOT_/;
+    $other_c_ctot =~ s/sam$/txt/;
+    $other_c_ctot =~ s/bam$/txt/;
+    $other_c_ctot =~ s/$/.txt/ unless ($other_c_ctot =~ /\.txt$/);
+    $other_c_ctot = $output_dir . $other_c_ctot;
+
+    if ($gzip){
+      $other_c_ctot .= '.gz';
+      open ($fhs{1}->{other_c},"| gzip -c - > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{1}->{other_c},'>',$other_c_ctot) or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in any other context from the complementary to original top strand to $other_c_ctot\n" unless($mbias_only);
+    push @sorting_files,$other_c_ctot;
+
+    unless($no_header){
+      print {$fhs{1}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $other_c_ctob =~ s/^/Non_CpG_CTOB_/;
+    $other_c_ctob =~ s/sam$/txt/;
+    $other_c_ctob =~ s/bam$/txt/;
+    $other_c_ctob =~ s/$/.txt/ unless ($other_c_ctob =~ /\.txt$/);
+    $other_c_ctob = $output_dir . $other_c_ctob;
+
+    if ($gzip){
+      $other_c_ctob .= '.gz';
+      open ($fhs{2}->{other_c},"| gzip -c - > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{2}->{other_c},'>',$other_c_ctob) or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in any other context from the complementary to original bottom strand to $other_c_ctob\n" unless($mbias_only);
+    push @sorting_files,$other_c_ctob;
+
+    unless($no_header){
+      print {$fhs{2}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $other_c_ob =~ s/^/Non_CpG_OB_/;
+    $other_c_ob =~ s/sam$/txt/;
+    $other_c_ob =~ s/sam$/txt/;
+    $other_c_ob =~ s/$/.txt/ unless ($other_c_ob =~ /\.txt$/);
+    $other_c_ob = $output_dir . $other_c_ob;
+
+    if ($gzip){
+      $other_c_ob .= '.gz';
+      open ($fhs{3}->{other_c},"| gzip -c - > $other_c_ob") or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{3}->{other_c},'>',$other_c_ob) or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in any other context from the original bottom strand to $other_c_ob\n\n" unless($mbias_only);
+    push @sorting_files,$other_c_ob;
+
+    unless($no_header){
+      print {$fhs{3}->{other_c}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+  }
+  ### THIS SECTION IS THE DEFAULT (CpG, CHG and CHH context)
+
+  ### if --comprehensive was specified we are only writing one file per context
+  elsif ($full) {
+    my $cpg_output = my $chg_output =  my $chh_output = $output_filename;
+    ### C in CpG context
+    $cpg_output =~ s/^/CpG_context_/;
+    $cpg_output =~ s/sam$/txt/;
+    $cpg_output =~ s/bam$/txt/;
+    $cpg_output =~ s/$/.txt/ unless ($cpg_output =~ /\.txt$/);
+    $cpg_output = $output_dir . $cpg_output;
+
+    if ($gzip){
+      $cpg_output .= '.gz';
+      open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{CpG_context},'>',$cpg_output) or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context to $cpg_output\n" unless($mbias_only);
+    push @sorting_files,$cpg_output;
+
+    unless($no_header){
+      print {$fhs{CpG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    ### C in CHG context
+    $chg_output =~ s/^/CHG_context_/;
+    $chg_output =~ s/sam$/txt/;
+    $chg_output =~ s/bam$/txt/;
+    $chg_output =~ s/$/.txt/ unless ($chg_output =~ /\.txt$/);
+    $chg_output = $output_dir . $chg_output;
+
+    if ($gzip){
+      $chg_output .= '.gz';
+      open ($fhs{CHG_context},"| gzip -c - > $chg_output") or die "Failed to write to $chg_output $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{CHG_context},'>',$chg_output) or die "Failed to write to $chg_output $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHG context to $chg_output\n" unless($mbias_only);
+    push @sorting_files,$chg_output;
+
+    unless($no_header){
+      print {$fhs{CHG_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    ### C in CHH context
+    $chh_output =~ s/^/CHH_context_/;
+    $chh_output =~ s/sam$/txt/;
+    $chh_output =~ s/bam$/txt/;
+    $chh_output =~ s/$/.txt/ unless ($chh_output =~ /\.txt$/);
+    $chh_output = $output_dir . $chh_output;
+
+    if ($gzip){
+      $chh_output .= '.gz';
+      open ($fhs{CHH_context},"| gzip -c - > $chh_output") or die "Failed to write to $chh_output $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{CHH_context},'>',$chh_output) or die "Failed to write to $chh_output $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHH context to $chh_output\n" unless($mbias_only);
+    push @sorting_files, $chh_output;
+
+    unless($no_header){
+      print {$fhs{CHH_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+  }
+  ### else we will write out 12 different output files, depending on where the (first) unique best alignment was found
+  else {
+    my $cpg_ot = my $cpg_ctot = my $cpg_ctob = my $cpg_ob = $output_filename;
+
+    ### For cytosines in CpG context
+    $cpg_ot =~ s/^/CpG_OT_/;
+    $cpg_ot =~ s/sam$/txt/;
+    $cpg_ot =~ s/bam$/txt/;
+    $cpg_ot =~ s/$/.txt/ unless ($cpg_ot =~ /\.txt$/);
+    $cpg_ot = $output_dir . $cpg_ot;
+
+    if ($gzip){
+      $cpg_ot .= '.gz';
+      open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{0}->{CpG},'>',$cpg_ot) or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the original top strand to $cpg_ot\n" unless($mbias_only);
+    push @sorting_files,$cpg_ot;
+
+    unless($no_header){
+      print {$fhs{0}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $cpg_ctot =~ s/^/CpG_CTOT_/;
+    $cpg_ctot =~ s/sam$/txt/;
+    $cpg_ctot =~ s/bam$/txt/;
+    $cpg_ctot =~ s/$/.txt/ unless ($cpg_ctot =~ /\.txt$/);
+    $cpg_ctot = $output_dir . $cpg_ctot;
+
+    if ($gzip){
+      $cpg_ctot .= '.gz';
+      open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{1}->{CpG},'>',$cpg_ctot) or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original top strand to $cpg_ctot\n" unless($mbias_only);
+    push @sorting_files,$cpg_ctot;
+
+    unless($no_header){
+      print {$fhs{1}->{CpG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $cpg_ctob =~ s/^/CpG_CTOB_/;
+    $cpg_ctob =~ s/sam$/txt/;
+    $cpg_ctob =~ s/bam$/txt/;
+    $cpg_ctob =~ s/$/.txt/ unless ($cpg_ctob =~ /\.txt$/);
+    $cpg_ctob = $output_dir . $cpg_ctob;
+
+    if ($gzip){
+      $cpg_ctob .= '.gz';
+      open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{2}->{CpG},'>',$cpg_ctob) or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the complementary to original bottom strand to $cpg_ctob\n" unless($mbias_only);
+    push @sorting_files,$cpg_ctob;
+
+    unless($no_header){
+      print {$fhs{2}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $cpg_ob =~ s/^/CpG_OB_/;
+    $cpg_ob =~ s/sam$/txt/;
+    $cpg_ob =~ s/bam$/txt/;
+    $cpg_ob =~ s/$/.txt/ unless ($cpg_ob =~ /\.txt$/);
+    $cpg_ob = $output_dir . $cpg_ob;
+
+    if ($gzip){
+      $cpg_ob .= '.gz';
+      open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{3}->{CpG},'>',$cpg_ob) or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CpG context from the original bottom strand to $cpg_ob\n\n" unless($mbias_only);
+    push @sorting_files,$cpg_ob;
+
+    unless($no_header){
+      print {$fhs{3}->{CpG}}  "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    ### For cytosines in CHG context
+    my $chg_ot = my $chg_ctot = my $chg_ctob = my $chg_ob = $output_filename;
+
+    $chg_ot =~ s/^/CHG_OT_/;
+    $chg_ot =~ s/sam$/txt/;
+    $chg_ot =~ s/bam$/txt/;
+    $chg_ot =~ s/$/.txt/ unless ($chg_ot =~ /\.txt$/);
+    $chg_ot = $output_dir . $chg_ot;
+
+    if ($gzip){
+      $chg_ot .= '.gz';
+      open ($fhs{0}->{CHG},"| gzip -c - > $chg_ot") or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{0}->{CHG},'>',$chg_ot) or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHG context from the original top strand to $chg_ot\n" unless($mbias_only);
+    push @sorting_files,$chg_ot;
+
+    unless($no_header){
+      print {$fhs{0}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $chg_ctot =~ s/^/CHG_CTOT_/;
+    $chg_ctot =~ s/sam$/txt/;
+    $chg_ctot =~ s/bam$/txt/;
+    $chg_ctot =~ s/$/.txt/ unless ($chg_ctot =~ /\.txt$/);
+    $chg_ctot = $output_dir . $chg_ctot;
+
+    if ($gzip){
+      $chg_ctot .= '.gz';
+      open ($fhs{1}->{CHG},"| gzip -c - > $chg_ctot") or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{1}->{CHG},'>',$chg_ctot) or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHG context from the complementary to original top strand to $chg_ctot\n" unless($mbias_only);
+    push @sorting_files,$chg_ctot;
+
+    unless($no_header){
+      print {$fhs{1}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $chg_ctob =~ s/^/CHG_CTOB_/;
+    $chg_ctob =~ s/sam$/txt/;
+    $chg_ctob =~ s/bam$/txt/;
+    $chg_ctob =~ s/$/.txt/ unless ($chg_ctob =~ /\.txt$/);
+    $chg_ctob = $output_dir . $chg_ctob;
+
+    if ($gzip){
+      $chg_ctob .= '.gz';
+      open ($fhs{2}->{CHG},"| gzip -c - > $chg_ctob") or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{2}->{CHG},'>',$chg_ctob) or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHG context from the complementary to original bottom strand to $chg_ctob\n" unless($mbias_only);
+    push @sorting_files,$chg_ctob;
+
+    unless($no_header){
+      print {$fhs{2}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $chg_ob =~ s/^/CHG_OB_/;
+    $chg_ob =~ s/sam$/txt/;
+    $chg_ob =~ s/bam$/txt/;
+    $chg_ob =~ s/$/.txt/ unless ($chg_ob =~ /\.txt$/);
+    $chg_ob = $output_dir . $chg_ob;
+
+    if ($gzip){
+      $chg_ob .= '.gz';
+      open ($fhs{3}->{CHG},"| gzip -c - > $chg_ob") or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{3}->{CHG},'>',$chg_ob) or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHG context from the original bottom strand to $chg_ob\n\n" unless($mbias_only);
+    push @sorting_files,$chg_ob;
+
+    unless($no_header){
+      print {$fhs{3}->{CHG}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    ### For cytosines in CHH context
+    my $chh_ot = my $chh_ctot = my $chh_ctob = my $chh_ob = $output_filename;
+
+    $chh_ot =~ s/^/CHH_OT_/;
+    $chh_ot =~ s/sam$/txt/;
+    $chh_ot =~ s/bam$/txt/;
+    $chh_ot =~ s/$/.txt/ unless ($chh_ot =~ /\.txt$/);
+    $chh_ot = $output_dir . $chh_ot;
+
+    if ($gzip){
+      $chh_ot .= '.gz';
+      open ($fhs{0}->{CHH},"| gzip -c - > $chh_ot") or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{0}->{CHH},'>',$chh_ot) or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHH context from the original top strand to $chh_ot\n" unless($mbias_only);
+    push @sorting_files,$chh_ot;
+
+    unless($no_header){
+      print {$fhs{0}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $chh_ctot =~ s/^/CHH_CTOT_/;
+    $chh_ctot =~ s/sam$/txt/;
+    $chh_ctot =~ s/bam$/txt/;
+    $chh_ctot =~ s/$/.txt/ unless ($chh_ctot =~ /\.txt$/);
+    $chh_ctot = $output_dir . $chh_ctot;
+
+    if ($gzip){
+      $chh_ctot .= '.gz';
+      open ($fhs{1}->{CHH},"| gzip -c - > $chh_ctot") or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{1}->{CHH},'>',$chh_ctot) or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHH context from the complementary to original top strand to $chh_ctot\n" unless($mbias_only);
+    push @sorting_files,$chh_ctot;
+
+    unless($no_header){
+      print {$fhs{1}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $chh_ctob =~ s/^/CHH_CTOB_/;
+    $chh_ctob =~ s/sam$/txt/;
+    $chh_ctob =~ s/bam$/txt/;
+    $chh_ctob =~ s/$/.txt/ unless ($chh_ctob =~ /\.txt$/);
+    $chh_ctob = $output_dir . $chh_ctob;
+
+    if ($gzip){
+      $chh_ctob .= '.gz';
+      open ($fhs{2}->{CHH},"| gzip -c - > $chh_ctob") or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{2}->{CHH},'>',$chh_ctob) or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHH context from the complementary to original bottom strand to $chh_ctob\n" unless($mbias_only);
+    push @sorting_files,$chh_ctob;
+
+    unless($no_header){
+      print {$fhs{2}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+
+    $chh_ob =~ s/^/CHH_OB_/;
+    $chh_ob =~ s/sam$/txt/;
+    $chh_ob =~ s/bam$/txt/;
+    $chh_ob =~ s/$/.txt/ unless ($chh_ob =~ /\.txt$/);
+    $chh_ob = $output_dir . $chh_ob;
+
+    if ($gzip){
+      $chh_ob .= '.gz';
+      open ($fhs{3}->{CHH},"| gzip -c - > $chh_ob") or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
+    }
+    else{
+      open ($fhs{3}->{CHH},'>',$chh_ob) or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
+    }
+
+    warn "Writing result file containing methylation information for C in CHH context from the original bottom strand to $chh_ob\n\n" unless($mbias_only);
+    push @sorting_files,$chh_ob;
+
+    unless($no_header){
+      print {$fhs{3}->{CHH}} "Bismark methylation extractor version $version\n" unless($mbias_only);
+    }
+  }
+  return $report_filename;
+}
+
 sub isBam{
 
   my $filename = shift;
@@ -5141,6 +5386,9 @@ OPTIONS:
 
 --mbias_only             The methylation extractor will read the entire file but only output the M-bias table and plots as 
                          well as a report (optional) and then quit. Default: OFF.
+
+--multicore <int>        Setting the number of cores to be used for the methylation extraction process 
+
 
 
 
