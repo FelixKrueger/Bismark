@@ -7,7 +7,7 @@ use Cwd;
 use Carp;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
-
+use IO::Handle;
 
 ## This program is Copyright (C) 2010-14, Felix Krueger (felix.krueger@babraham.ac.uk)
 
@@ -217,13 +217,14 @@ foreach my $filename (@filenames){
   # resetting counters and filehandles
   %fhs = ();
   %counting =(
-	      total_meCHG_count => 0,
-	      total_meCHH_count => 0,
-	      total_meCpG_count => 0,
+	      total_meCHG_count            => 0,
+	      total_meCHH_count            => 0,
+	      total_meCpG_count            => 0,
 	      total_unmethylated_CHG_count => 0,
 	      total_unmethylated_CHH_count => 0,
 	      total_unmethylated_CpG_count => 0,
-	      sequences_count => 0,
+	      sequences_count              => 0,
+	      methylation_call_strings     => 0,
 	     );
 
   @sorting_files = ();
@@ -240,29 +241,38 @@ foreach my $filename (@filenames){
     }
   }
 
-  my ($pid,$pids) = process_Bismark_results_file($filename);
+  my ($pid,$pids,$report_basename) = process_Bismark_results_file($filename);
 
   if ($pid == 0){
-    warn "Finished processing. Exiting child process\n";
+    warn "Finished processing child process. Exiting..\n";
+
+    #  ### Closing all filehandles of the child process so that the Bismark methylation extractor output doesn't get truncated due to buffering issues
+    #     foreach my $fh (keys %fhs) {
+    #       if ($fh =~ /^[1230]$/) {
+    # 	foreach my $context (keys %{$fhs{$fh}}) {
+    # 	  $fhs{$fh}->{$context}->flush;
+    # 	}
+    #       }
+    #       else{
+    # 	$fhs{$fh}->flush;
+    #       }
+    # }
     exit 0;
   }
 
   ###
-  if ($pid){
-    print "Now waiting for all child processes to complete\n";
-    sleep(3);
-  }
+  if ($pid and $multicore > 1){
+    warn "Now waiting for all child processes to complete\n";
+    sleep(1);
 
-  ### we need to ensure that we wait for all child processes to be finished before continuing
-  if ($multicore > 1){
-    print "here are the child IDs: @$pids\n";
+    ### we need to ensure that we wait for all child processes to be finished before continuing
+    # warn "here are the child IDs: @$pids\n";
+    # warn "Looping through the child process IDs:\n";
 
-    print "Looping through the child process IDs:\n";
     foreach my $id (@$pids){
-      print "$id\t";
+      # print "$id\t";
       my $kid = waitpid ($id,0);
-      print "Returned: $kid\n";
-      print "Exit status: $?\n";
+      # print "Returned: $kid\nExit status: $?\n";
       unless ($? == 0){
 	warn "\nChild process terminated with exit signal: '$?'\n\n";
       }
@@ -279,6 +289,12 @@ foreach my $filename (@filenames){
     else{
       close $fhs{$fh} or die $!;
     }
+  }
+
+  ### We need to stitch together a main splitting report from all individual parent/child processes
+  if ($multicore > 1){
+    merge_individual_splitting_reports($report_basename);
+    print_splitting_report();
   }
 
   ### printing out all M-Bias data
@@ -383,6 +399,81 @@ foreach my $filename (@filenames){
       # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
       warn "\n\nFinished generating genome-wide cytosine report\n\n";
     }
+  }
+}
+
+sub merge_individual_splitting_reports{
+
+  my $report_basename = shift;
+
+  my @splitting_reports; # only needed in multi-core mode to generate an overall report
+  foreach my $ext (1..$multicore){
+    push @splitting_reports, "$report_basename.$ext";
+  }
+  warn "\nMerging individual splitting reports into overall report: '$report_basename'\n";
+  warn "Merging from these individual files:\n";
+  print join ("\n",@splitting_reports),"\n\n";
+  sleep(1);
+
+  ##########
+  # resetting the counter first
+  %counting =(
+	      total_meCHG_count            => 0,
+	      total_meCHH_count            => 0,
+	      total_meCpG_count            => 0,
+	      total_unmethylated_CHG_count => 0,
+	      total_unmethylated_CHH_count => 0,
+	      total_unmethylated_CpG_count => 0,
+	      sequences_count              => 0,
+	      methylation_call_strings     => 0,
+	     );
+
+  # repopulating the merged counter
+  foreach my $file (@splitting_reports){
+    open (IR,$file) or die $!;
+    while (<IR>){
+      chomp;
+      my ($context,$count) = (split /\t/);
+      if ($context){
+	if ($context =~ /^Total C to T conversions in CpG context/){
+	  # warn "context: $context\ncount: $count\n";
+	  $counting{total_unmethylated_CpG_count} += $count;
+	}
+	elsif ($context =~ /^Total C to T conversions in CHG context/){
+	  # warn "context: $context\ncount: $count\n";
+	  $counting{total_unmethylated_CHG_count} += $count;
+	}
+	elsif ($context =~ /^Total C to T conversions in CHH context/){
+	  # warn "context: $context\ncount: $count\n";
+	  $counting{total_unmethylated_CHH_count} += $count;
+	}
+	elsif ($context =~ /^Total methylated C\'s in CpG context/){
+	  # warn "context: $context\ncount: $count\n";
+	  $counting{total_meCpG_count} += $count;
+	}
+	elsif ($context =~ /^Total methylated C\'s in CHG context/){
+	  # warn "context: $context\ncount: $count\n";
+	  $counting{total_meCHG_count} += $count;
+	}
+	elsif ($context =~ /^Total methylated C\'s in CHH context/){
+	  # warn "context: $context\ncount: $count\n";
+	  $counting{total_meCHH_count} += $count;
+	}
+	elsif ($context =~ /^line count/){
+	  # warn "Line count\ncount: $count\n";
+	  $counting{sequences_count} = $count; # always the same
+	}
+	elsif ($context =~ /^meth call strings/){
+	  # warn "Meth call strings\ncount: $count\n";
+	  $counting{methylation_call_strings} += $count;
+	}
+      }
+    }
+  }
+
+  # deleting the individual reports afterwards
+  foreach my $file (@splitting_reports){
+    unlink $file;
   }
 }
 
@@ -1169,6 +1260,21 @@ sub process_Bismark_results_file{
   my $filename = shift;
   my $report_filename = open_output_filehandles($filename);
 
+  ### disabling buffering so we don't run into problems with half written out lines...
+  foreach my $fh (keys %fhs){
+    if ($fh =~ /^[1230]$/) {
+      foreach my $context (keys %{$fhs{$fh}}) {
+	select($fhs{$fh}->{$context});
+	$|++;
+      }
+    }
+    else{
+      select($fhs{$fh});
+      $|++;
+    }
+  }
+
+  select(STDOUT);
   ################################################
   ################################################
   ### multi-process handling
@@ -1189,14 +1295,14 @@ sub process_Bismark_results_file{
 	  push @pids, $process_id;
 	  if ($offset < $multicore){
 	    ++$offset;
-	    warn "I am the parent process, child pid: $fork\nIncrementing offset counter to: $offset\n\n";
+	    # warn "I am the parent process, child pid: $fork\nIncrementing offset counter to: $offset\n\n";
 	  }
 	  else{
-	    warn "Reached the number of maximum multicores. Proceeeding to processing...\n";
+	    # warn "Reached the number of maximum multicores. Proceeeding to processing...\n";
 	  }
 	}
 	elsif ($fork == 0){
-	  warn "I am a child process, pid: $fork\nOffset counter is: $offset\nProceeding to processing...\n";
+	  # warn "I am a child process, pid: $fork\nOffset counter is: $offset\nProceeding to processing...\n";
 	  $process_id = $fork;
 	  last;
 	}
@@ -1227,8 +1333,13 @@ sub process_Bismark_results_file{
 
   ################################################
   ################################################
+  if ($process_id){
+    warn "Now reading in Bismark result file $filename\n";
+  }
+  else{
+    warn "\nNow reading in Bismark result file $filename\n\n";
+  }
 
-  warn "\nNow reading in Bismark result file $filename\n\n";
   if ($filename =~ /\.gz$/) {
     open (IN,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
   }
@@ -1361,7 +1472,7 @@ sub process_Bismark_results_file{
 	chomp;
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
 	if (/^\@/) {	     # skipping header lines (starting with @)
-	  warn "skipping SAM header line:\t$_\n";
+	  warn "skipping SAM header line:\t$_\n" unless ($process_id == 0);
 	  next;
 	}
 
@@ -1739,7 +1850,7 @@ sub process_Bismark_results_file{
 	chomp;
 	### SAM format can either start with header lines (starting with @) or start with alignments directly
 	if (/^\@/) {	     # skipping header lines (starting with @)
-	  warn "skipping SAM header line:\t$_\n";
+	  warn "skipping SAM header line:\t$_\n" unless ($process_id == 0); # no additional warnings for child procesess
 	  next;
 	}
 	
@@ -2311,20 +2422,17 @@ sub process_Bismark_results_file{
     die "Single-end or paired-end reads not specified properly\n";
   }
 
-  warn "\n\nProcessed $line_count lines from $filename in total\n";
-  warn "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
-  if ($report) {
-    print REPORT "\n\nProcessed $line_count lines from $filename in total\n";
-    print REPORT "Total number of methylation call strings processed: $methylation_call_strings_processed\n\n";
-  }
+  $counting{sequences_count}          = $line_count;
+  $counting{methylation_call_strings} = $methylation_call_strings_processed;
+
   if ($multicore == 1){
     print_splitting_report ();
   }
   elsif ($multicore > 1){
-    print_splitting_report_multicore($report_filename,$offset);
+    print_splitting_report_multicore($report_filename,$offset,$line_count,$methylation_call_strings_processed);
   }
 
-  return ($process_id,\@pids);
+  return ($process_id,\@pids,$report_filename);
 
 }
 
@@ -2333,6 +2441,12 @@ sub process_Bismark_results_file{
 sub print_splitting_report{
 
   ### Calculating methylation percentages if applicable
+  warn "\nProcessed $counting{sequences_count} lines in total\n";
+  warn "Total number of methylation call strings processed: $counting{methylation_call_strings}\n\n";
+  if ($report) {
+    print REPORT "\nProcessed $counting{sequences_count} lines in total\n";
+    print REPORT "Total number of methylation call strings processed: $counting{methylation_call_strings}\n\n";
+  }
 
   my $percent_meCpG;
   if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
@@ -2410,34 +2524,34 @@ sub print_splitting_report{
   }
 
   ### detailed information about Cs analysed for on-screen report
-  print "Final Cytosine Methylation Report\n",'='x33,"\n";
+  warn "Final Cytosine Methylation Report\n",'='x33,"\n";
 
   my $total_number_of_C = $counting{total_meCHG_count}+$counting{total_meCHH_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CpG_count};
-  print "Total number of C's analysed:\t$total_number_of_C\n\n";
+  warn "Total number of C's analysed:\t$total_number_of_C\n\n";
 
-  print "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
-  print "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  print "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
+  warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
+  warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
+  warn"Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n\n";
 
-  print "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  print "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  print "Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
+  warn "Total C to T conversions in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+  warn "Total C to T conversions in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+  warn"Total C to T conversions in CHH context:\t$counting{total_unmethylated_CHH_count}\n\n";
 
   ### printing methylated CpG percentage if applicable
   if ($percent_meCpG){
-    print "C methylated in CpG context:\t${percent_meCpG}%\n";
+    warn "C methylated in CpG context:\t${percent_meCpG}%\n";
   }
   else{
-    print "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
+    warn "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
   }
 
   ### 2-Context Output
   if ($merge_non_CpG){
     if ($percent_non_CpG_methylation){
-      print "C methylated in non-CpG context:\t${percent_non_CpG_methylation}%\n\n\n";
+      warn "C methylated in non-CpG context:\t${percent_non_CpG_methylation}%\n\n\n";
     }
     else{
-      print "Can't determine percentage of methylated Cs in non-CpG context if value was 0\n\n\n";
+      warn "Can't determine percentage of methylated Cs in non-CpG context if value was 0\n\n\n";
     }
   }
 
@@ -2445,18 +2559,18 @@ sub print_splitting_report{
   else{
     ### printing methylated CHG percentage if applicable
     if ($percent_meCHG){
-      print "C methylated in CHG context:\t${percent_meCHG}%\n";
+      warn "C methylated in CHG context:\t${percent_meCHG}%\n";
     }
     else{
-      print "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
+      warn "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
     }
 
     ### printing methylated CHH percentage if applicable
     if ($percent_meCHH){
-      print "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
+      warn "C methylated in CHH context:\t${percent_meCHH}%\n\n\n";
     }
     else{
-      print "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
+      warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n";
     }
   }
 }
@@ -2465,17 +2579,19 @@ sub print_splitting_report{
 
 sub print_splitting_report_multicore{
 
-  my $report_filename = shift;
-  my $offset = shift;
-  warn "\$report_filename is $report_filename\n";
+  my ($report_filename,$offset,$line_count,$meth_call_strings) = @_;
+
+  # warn "\$report_filename is $report_filename\n";
   my $special_report = $report_filename.".$offset";
-  warn "\$special_report is $special_report\n";
 
   open (SPECIAL_REPORT,'>',$special_report) or die $!;
-  my $report_fh = "REPORT";
-  warn "$report_fh\n";
-  ### Calculating methylation percentages if applicable
+  # warn "line count\t$line_count\n";
+  # warn "meth call strings\t$meth_call_strings\n";
 
+  print SPECIAL_REPORT "line count\t$line_count\n";
+  print SPECIAL_REPORT "meth call strings\t$meth_call_strings\n";
+
+  ### Calculating methylation percentages if applicable
   my $percent_meCpG;
   if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
     $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
@@ -2551,6 +2667,7 @@ sub print_splitting_report_multicore{
       }
     }
   }
+  close SPECIAL_REPORT or warn "Failed to close filehandle for individual report $special_report\n";
 }
 
 
