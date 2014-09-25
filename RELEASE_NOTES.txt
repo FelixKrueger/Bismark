@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.12.6 (08 Sep 2014)
+RELEASE NOTES FOR Bismark v0.13.0 (26 Sep 2014)
 -----------------------------------------------
 
 Bismark
@@ -10,6 +10,9 @@ file name, e.g. sample1_... instead of the file extesion .sam).
 
 Methylation Extractor
 =====================
+
+
+
 
 Added two new options '--ignore_3prime <INT>' (for single-end alignments and Read 1 of paired-end
 alignments) and '--ignore_3prime_r2 <INT>' (for Read 2 of paired-end alignments) to remove positions
