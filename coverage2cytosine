@@ -22,7 +22,7 @@ use Carp;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
-my $coverage2cytosine_version = 'v0.12.3';
+my $coverage2cytosine_version = 'v0.13.0';
 my %processed;   # keeping a record of which chromosomes have been processed
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out) = process_commandline();
