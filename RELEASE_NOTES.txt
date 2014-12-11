@@ -1,3 +1,22 @@
+RELEASE NOTES FOR Bismark v0.13.1 (16 Oct 2014)
+-----------------------------------------------
+
+Bismark Genome Preparation
+==========================
+
+Added a check for unique chromosome names to the Bismark indexer to avoid disappointments later.
+
+bismark2bedGraph
+================
+
+Deferred removal of the input file path information a little so that specifying specifying file
+don't prevent bismark2bedGraph from finding the input files anymore.
+
+If the specified output directory doesn't exist it will be created for you.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.13.0 (01 Oct 2014)
 -----------------------------------------------
 

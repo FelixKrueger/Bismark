@@ -63,6 +63,7 @@ VERSION
 }
 
 my $genome_folder = shift @ARGV; # mandatory
+my %chromosomes; # checking if chromosome names are unique (required)
 
 # Ensuring a genome folder has been specified
 if ($genome_folder){
@@ -227,6 +228,14 @@ sub process_sequence_files {
 
     ### Extracting chromosome name from the FastA header
     my $chromosome_name = extract_chromosome_name($first_line);
+
+    ### Exiting if a chromosome with the same name was present already
+    if (exists $chromosomes{$chromosome_name}){
+      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+    }
+    else{
+      $chromosomes{$chromosome_name}++;
+    }
 
     ### alternatively, chromosomes can be written out into single-entry FastA files. This will only work for genomes with up to a few hundred chromosomes.
     unless ($multi_fasta){
@@ -454,6 +463,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-This script was last modified on 19 Sept 2013.
+This script was last modified on 16 Oct 2014.
 HOW_TO
 }

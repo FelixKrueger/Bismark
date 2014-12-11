@@ -1996,7 +1996,7 @@ sub check_bowtie_results_single_end_bowtie2{
 
       # warn "First  best alignment_score is: '$alignment_score'\n";
       # warn "MD tag is: '$MD_tag'\n";
-      die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag)!\n" unless (defined $alignment_score and defined $MD_tag);
+      die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag) from line $fhs[$index]->{last_line}!\n" unless (defined $alignment_score and defined $MD_tag);
 
       if (defined $second_best){
 	# warn "second best alignment_score is: '$second_best'\n\n";

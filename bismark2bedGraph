@@ -73,11 +73,12 @@ sleep (2);
 
 ### deciding which files to use for bedGraph conversion
 foreach my $filename (@sorting_files){
+  warn "Infile name before replacement: $filename\n";
 
-  if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
-    $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
-    warn "$filename\n";
-  }
+  #  if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
+  #    $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
+  #    warn "$filename\n";
+  #  }
 
   if ($CX_context){
     push @bedfiles,$filename;
@@ -189,6 +190,12 @@ foreach my $infile (@bedfiles) {
   }
   else{
     open (IN,$infile) or die $!;
+  }
+
+  # warn "reading from Infile: $infile\n";
+  if ($infile =~ /\//){ # if files are in a different output folder we extract the filename again
+    $infile =~ s/.*\///;# replacing everything up to the last slash in the filename
+    # warn "Renamed Infile: $infile\n";
   }
 
   ### People these days seem to be aligning their data to newly assembled genomes more and more, which sometimes conist of up to half a million scaffolds instead of ~23 chromosomes. This
@@ -622,7 +629,12 @@ VERSION
       unless ($output_dir =~ /\/$/){
 	$output_dir =~ s/$/\//;
       }
+      unless (-d $output_dir){
+	mkdir $output_dir or die "Failed to create output directory $output_dir: $!\n\n";
+	warn "Created output directory $output_dir\n";
+      }
     }
+
   }
   else{
     $output_dir = '';
