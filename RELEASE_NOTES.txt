@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.13.1 (16 Oct 2014)
+RELEASE NOTES FOR Bismark v0.13.1 (11 Dec 2014)
 -----------------------------------------------
 
 Bismark Genome Preparation
@@ -13,6 +13,35 @@ Deferred removal of the input file path information a little so that specifying 
 don't prevent bismark2bedGraph from finding the input files anymore.
 
 If the specified output directory doesn't exist it will be created for you.
+
+Changed the way scaffolds are sorted (with --gazillion specified) to -k3,3V (this was done following
+a suggestion by Volker Brendel, Indiana University: "The -k3,3V sort option is critical when the
+sequence names are numbered scaffolds (without left-buffering of zeros). Omit the V, and things go
+very wrong in the tallying of reads.")
+
+
+coverage2cytosine
+=================
+
+Added a new option --merge_CpG that will post-process the genome-wide report to write out an
+additional coverage file which has the top and bottom strand methylation evidence pooled into a 
+single CpG dinucleotide entity. This may be the desirable input format for some downstream processing
+tools such as the R-package bsseq (by K.D. Hansen). An example would be:
+
+  genome-wide CpG report (old)
+         gi|9626372|ref|NC_001422.1|     157     +       313     156     CG
+         gi|9626372|ref|NC_001422.1|     158     -       335     156     CG
+
+  merged CpG evidence coverage file (new)
+         gi|9626372|ref|NC_001422.1|     157     158     67.500000       648     312
+
+This option is currently experimental, and only works if CpG context only and a single genome-wide report
+were specified (i.e. it doesn't work with the options --CX or --split_by_chromosome).
+
+
+Changed the processing of not-covered chromosomes so that they are sorted and not processed randomly.
+This should make runs more reproducible.
+
 
 
 

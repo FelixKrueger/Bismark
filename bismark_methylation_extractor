@@ -5632,7 +5632,7 @@ Genome-wide cytosine methylation report specific options:
                          chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all
                          cytosine context is optional). The output considers all Cs on both forward and reverse strands and
                          reports their position, strand, trinucleotide content and methylation state (counts are 0 if not
-                         covered). The cytsoine report conversion step is performed by the external module
+                         covered). The cytosine report conversion step is performed by the external module
                          'coverage2cytosine'; this script needs to reside in the same folder as the bismark_methylation_extractor
                          itself.
 

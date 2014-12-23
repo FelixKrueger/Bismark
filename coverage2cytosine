@@ -479,7 +479,7 @@ sub generate_genome_wide_cytosine_report {
   warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
   my $unprocessed = 0;
 
-  foreach my $chr (keys %processed) {
+  foreach my $chr (sort keys %processed) {
     unless ( $processed{$chr} ) {
       ++$unprocessed;
       ++$number_processed;

@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.13.0';
+my $bismark2bedGraph_version = 'v0.13.1';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -419,11 +419,13 @@ foreach my $in (@temp_files) {
     # }
 
     if ($gazillion){
-      open $ifh, "sort -S $sort_size -T $sort_dir -k3,3 -k4,4n $in |" or die "Input file could not be sorted. $!\n";
+      open $ifh, "sort -S $sort_size -T $sort_dir -k3,3V -k4,4n $in |" or die "Input file could not be sorted. $!\n";
+      ### Comment by Volker Brendel, Indiana University
+      ### "The -k3,3V sort option is critical when the sequence names are numbered scaffolds (without left-buffering of zeros).  Omit the V, and things go very wrong in the tallying of reads."
     }
     else{
-      ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files should are being sorted according to chromosomes anyway,
-      ### we may drop the -k3,3 option. It has been reported that this will result in a dramatic speed increase
+      ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files are being sorted according to chromosomes anyway,
+      ### we may drop the -k3,3V option. It has been reported that this will result in a dramatic speed increase
       open $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!\n";
     }
 
@@ -776,7 +778,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 01 Sept 2014
+                          Script last modified: 11 December 2014
 
 EOF
     ;
