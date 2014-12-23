@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 my %fhs;
 
 my $version = 'v0.13.0';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -296,8 +296,11 @@ foreach my $filename (@filenames){
     print_splitting_report();
   }
 
-  ### printing out all M-Bias data
-  produce_mbias_plots ($filename);
+  unless ($mbias_off){
+    ### printing out all M-Bias data
+    produce_mbias_plots ($filename);    produce_mbias_plots ($filename);
+
+  }
 
   unless ($mbias_only){
     delete_unused_files();
@@ -843,6 +846,7 @@ sub process_commandline{
   my $samtools_path;
   my $gzip;
   my $mbias_only;
+  my $mbias_off;
   my $gazillion;
   my $ample_mem;
   my $include_overlap;
@@ -877,6 +881,7 @@ sub process_commandline{
 				 'samtools_path=s'      => \$samtools_path,
 				 'gzip'                 => \$gzip,
 				 'mbias_only'           => \$mbias_only,			
+				 'mbias_off'            => \$mbias_off,			
 				 'gazillion|scaffolds'  => \$gazillion,
 				 'ample_memory'         => \$ample_mem,
 				 'include_overlap'      => \$include_overlap,
@@ -1185,7 +1190,7 @@ VERSION
     warn "Setting core usage to single-threaded (default). Consider using --multicore <int> to speed up the extraction process.\n\n";
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore);
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore);
 }
 
 
@@ -5551,6 +5556,10 @@ OPTIONS:
 
 --mbias_only             The methylation extractor will read the entire file but only output the M-bias table and plots as 
                          well as a report (optional) and then quit. Default: OFF.
+
+--mbias_off              The methylation extractor will process the entire file as usual but not write out any M-bias report.
+                         Only recommended for users who deliberately want to keep an earlier version of the M-bias report. 
+                         Default: OFF.
 
 --multicore <int>        Sets the number of cores to be used for the methylation extraction process. If system resources
                          are plentiful this is a viable option to speed up the extraction process (we observed a near linear
