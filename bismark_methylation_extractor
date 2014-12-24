@@ -8,7 +8,7 @@ use Carp;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
-## This program is Copyright (C) 2010-14, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-15, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.13.0';
+my $version = 'v0.13.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -294,6 +294,9 @@ foreach my $filename (@filenames){
   if ($multicore > 1){
     merge_individual_splitting_reports($report_basename);
     print_splitting_report();
+
+    merge_individual_mbias_reports($report_basename); # this updates the main %mbias_1 and  %mbias_2 data structures so we can proceed normally
+
   }
 
   unless ($mbias_off){
@@ -479,6 +482,82 @@ sub merge_individual_splitting_reports{
   }
 }
 
+
+sub merge_individual_mbias_reports{
+
+  my $report_basename = shift;
+
+  my @mbias_reports; # only needed in multi-core mode to generate an overall report
+  foreach my $ext (1..$multicore){
+    push @mbias_reports, "$report_basename.${ext}.mbias";
+  }
+  warn "\nMerging individual M-bias reports into overall M-bias statistics from these $multicore individual files:\n";
+  print join ("\n",@mbias_reports),"\n\n";
+
+
+  ##########
+  # resetting the counters first, then repopulating them
+  %mbias_1 = ();
+  %mbias_2 = ();
+
+  # repopulating the merged counter
+  foreach my $file (@mbias_reports){
+    open (IR,$file) or die $!;
+
+    my $context;
+    my $read;
+
+    while (<IR>){
+      chomp;
+      # warn "$_\n"; sleep(1);
+      if ($_ =~ /context/){
+	$context = $1 if ($_ =~ /(\D{3}) context/);
+	# warn "Context set as $context\n";
+	
+	if ($_ =~ /R2/){
+	  $read = 'R2';
+	}
+	else{
+	  $read = 'R1';
+	}
+	# warn "Setting read identity to '$read'\n";
+	
+	# reading in 2 additional lines (===========, and header line)
+	$_ = <IR>;
+	#warn "discarding line $_\n";
+	$_ = <IR>;
+	#warn "discarding line $_\n";
+	next;
+      }
+      else{
+
+	if ($_ eq ''){
+	  # empty line, only occurs after a context has finished and before a new context starts
+	  next;
+	}
+
+	my ($pos,$meth,$unmeth) = (split /\t/);
+	# warn "$pos\t$meth\t$unmeth\n"; sleep(1);
+	if ($read eq 'R1'){
+	  $mbias_1{$context}->{$pos}->{meth} += $meth;
+	  $mbias_1{$context}->{$pos}->{un} += $unmeth;
+	}
+	elsif ($read eq 'R2'){
+	  $mbias_2{$context}->{$pos}->{meth} += $meth;
+	  $mbias_2{$context}->{$pos}->{un} += $unmeth;
+	}
+      }
+    }
+    close IR or warn "Had trouble closing filehandle for $file: $!\n";
+  }
+
+  # deleting the individual reports afterwards
+  foreach my $file (@mbias_reports){
+    unlink $file;
+  }
+}
+
+
 sub delete_unused_files{
 
   warn "Deleting unused files ...\n\n"; sleep(1);
@@ -580,7 +659,7 @@ sub produce_mbias_plots{
     GD::Graph::lines->import();
   };
 
-  unless($@) { # syntax or routine error variable, set if something goes wron in the last eval{ require ...}
+  unless($@) { # syntax or routine error variable, set if something goes wrong in the last eval{ require ...}
     $gd_graph_installed = 1;
 
     #Check whether the module GD::Graph::colour is installed
@@ -908,7 +987,7 @@ sub process_commandline{
                            Bismark Methylation Extractor
 
                          Bismark Extractor Version: $version
-              Copyright 2010-14 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
 
@@ -927,6 +1006,10 @@ VERSION
 
   ### M-BIAS ONLY
   if ($mbias_only){
+
+    if ($mbias_off){
+      die "Options '--mbias_only' and '--mbias_off' are not compatible. Just pick one, mkay?\n";
+    }
     if ($bedGraph){
       die "Option '--mbias_only' skips all sorts of methylation extraction, including the bedGraph generation. Please respecify!\n";
     }
@@ -2434,6 +2517,7 @@ sub process_Bismark_results_file{
   }
   elsif ($multicore > 1){
     print_splitting_report_multicore($report_filename,$offset,$line_count,$methylation_call_strings_processed);
+    print_mbias_report_multicore($report_filename,$offset,$line_count,$methylation_call_strings_processed);
   }
 
   return ($process_id,\@pids,$report_filename);
@@ -2676,6 +2760,108 @@ sub print_splitting_report_multicore{
 
 
 ###
+
+### INDIVIDUAL M-BIAS REPORTS
+
+sub print_mbias_report_multicore{
+
+  my ($report_filename,$offset,$line_count,$meth_call_strings) = @_;
+
+  # warn "\$report_filename is $report_filename\n";
+  my $special_mbias_report = $report_filename.".${offset}.mbias";
+
+  open (SPECIAL_MBIAS,'>',$special_mbias_report) or die $!;
+
+  # determining maximum read length
+  my $max_length_1 = 0;
+  my $max_length_2 = 0;
+
+  foreach my $context (keys %mbias_1){
+    foreach my $pos (sort {$a<=>$b} keys %{$mbias_1{$context}}){
+      $max_length_1 = $pos unless ($max_length_1 >= $pos);
+    }
+  }
+  if ($paired){
+    foreach my $context (keys %mbias_2){
+      foreach my $pos (sort {$a<=>$b} keys %{$mbias_2{$context}}){
+	$max_length_2 = $pos unless ($max_length_2 >= $pos);
+      }
+    }
+  }
+
+  if ($single){
+    # warn "Determining maximum read length for M-Bias plot\n";
+    # warn "Maximum read length of Read 1: $max_length_1\n\n";
+  }
+  else{
+    # warn "Determining maximum read lengths for M-Bias plots\n";
+    # warn "Maximum read length of Read 1: $max_length_1\n";
+    # warn "Maximum read length of Read 2: $max_length_2\n\n";
+  }
+
+  foreach my $context (qw(CpG CHG CHH)){
+
+    if ($paired){
+      print SPECIAL_MBIAS "$context context (R1)\n================\n";
+    }
+    else{
+      print SPECIAL_MBIAS "$context context\n===========\n";
+    }
+    print SPECIAL_MBIAS "position\tcount methylated\tcount unmethylated\t% methylation\tcoverage\n";
+
+    foreach my $pos (1..$max_length_1){
+
+      unless (defined $mbias_1{$context}->{$pos}->{meth}){
+	$mbias_1{$context}->{$pos}->{meth} = 0;
+      }
+      unless (defined $mbias_1{$context}->{$pos}->{un}){
+	$mbias_1{$context}->{$pos}->{un} = 0;
+      }
+
+      my $percent = '';
+      if (($mbias_1{$context}->{$pos}->{meth} + $mbias_1{$context}->{$pos}->{un}) > 0){
+	$percent = sprintf("%.2f",$mbias_1{$context}->{$pos}->{meth} * 100/ ( $mbias_1{$context}->{$pos}->{meth} + $mbias_1{$context}->{$pos}->{un}) );
+      }
+      my $coverage = $mbias_1{$context}->{$pos}->{un} + $mbias_1{$context}->{$pos}->{meth};
+
+      print SPECIAL_MBIAS "$pos\t$mbias_1{$context}->{$pos}->{meth}\t$mbias_1{$context}->{$pos}->{un}\t$percent\t$coverage\n";
+    }
+    print SPECIAL_MBIAS "\n";
+  }
+
+  if ($paired){
+
+    foreach my $context (qw(CpG CHG CHH)){
+
+      print SPECIAL_MBIAS "$context context (R2)\n================\n";
+      print SPECIAL_MBIAS "position\tcount methylated\tcount unmethylated\t% methylation\tcoverage\n";
+
+      foreach my $pos (1..$max_length_2){
+	
+	unless (defined $mbias_2{$context}->{$pos}->{meth}){
+	  $mbias_2{$context}->{$pos}->{meth} = 0;
+	}
+	unless (defined $mbias_2{$context}->{$pos}->{un}){
+	  $mbias_2{$context}->{$pos}->{un} = 0;
+	}
+
+	my $percent = '';
+	if (($mbias_2{$context}->{$pos}->{meth} + $mbias_2{$context}->{$pos}->{un}) > 0){
+	  $percent = sprintf("%.2f",$mbias_2{$context}->{$pos}->{meth} * 100/ ($mbias_2{$context}->{$pos}->{meth} + $mbias_2{$context}->{$pos}->{un}) );
+	}
+	my $coverage = $mbias_2{$context}->{$pos}->{un} + $mbias_2{$context}->{$pos}->{meth};
+
+	print SPECIAL_MBIAS "$pos\t$mbias_2{$context}->{$pos}->{meth}\t$mbias_2{$context}->{$pos}->{un}\t$percent\t$coverage\n";
+      }	
+    }
+  }
+
+  close SPECIAL_MBIAS or warn "Failed to close filehandle for individual M-bias report $special_mbias_report\n";
+}
+
+
+###
+
 
 sub print_individual_C_methylation_states_paired_end_files{
 
@@ -5557,7 +5743,7 @@ OPTIONS:
 --mbias_only             The methylation extractor will read the entire file but only output the M-bias table and plots as 
                          well as a report (optional) and then quit. Default: OFF.
 
---mbias_off              The methylation extractor will process the entire file as usual but not write out any M-bias report.
+--mbias_off              The methylation extractor will process the entire file as usual but doesn't write out any M-bias report.
                          Only recommended for users who deliberately want to keep an earlier version of the M-bias report. 
                          Default: OFF.
 
@@ -5693,7 +5879,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 25 Sept 2014.
+This script was last modified on 24 Dec 2014.
 
 HOW_TO
 }
