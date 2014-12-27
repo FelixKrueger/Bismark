@@ -1,10 +1,28 @@
-RELEASE NOTES FOR Bismark v0.13.1 (11 Dec 2014)
+RELEASE NOTES FOR Bismark v0.13.1 (26 Dec 2014)
 -----------------------------------------------
 
 Bismark Genome Preparation
 ==========================
 
 Added a check for unique chromosome names to the Bismark indexer to avoid disappointments later.
+
+
+Bismark Methylation Extractor
+=============================
+
+Added a new option --mbias_off, which processes the files as normal but does not write out any M-bias
+files. This option is meant for users who run the two times, the first time to figure out whether there
+is a bias that needs to be removed, and the second time using the --ignore options, but without overwriting
+the already existent M-bias reports.
+
+Fixed a bug for the M-bias reports when the option --multicore was used, in which case only the numbers
+of one core were used to constuct the report. Now every different thread writes out an individual M-bias
+table, and once the methylation extraction has completed all these individual files are merged into a single,
+cumulative table as it should be.
+
+Added closing statements for the BAM in disguise filehandle.
+
+
 
 bismark2bedGraph
 ================

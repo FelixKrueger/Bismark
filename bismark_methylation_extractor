@@ -5585,13 +5585,16 @@ sub isBam{
 
   if ($bam_in_disguise){
     if ($bam_in_disguise =~ /^BAM/){
+      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
       return 1;
     }
     else{
-      return 0;
+      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+     return 0;
     }
   }
   else{
+    close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
     return 0;
   }
 }

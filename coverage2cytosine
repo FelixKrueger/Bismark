@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+2#!/usr/bin/perl
 use warnings;
 use strict;
 $|++;
@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-14, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-15, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -179,7 +179,7 @@ sub process_commandline{
                                coverage2cytosine
 
                       Bismark Extractor Version: $coverage2cytosine_version
-              Copyright 2010-14 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
 
