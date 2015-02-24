@@ -1,4 +1,4 @@
-&#!/usr/bin/perl --
+#!/usr/bin/perl --
 use strict;
 use warnings;
 use IO::Handle;
@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.13.1';
+my $bismark_version = 'v0.13.2';
 my $command_line = join (" ",@ARGV);
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
@@ -6473,6 +6473,7 @@ sub process_command_line{
   my $prefix;
   my $old_flag;
   my $basename;
+  my $sam;
 
   my $command_line = GetOptions ('help|man' => \$help,
 				 '1=s' => \$mates1,
@@ -6517,6 +6518,7 @@ sub process_command_line{
 				 'prefix=s' => \$prefix,
 				 'old_flag' => \$old_flag,
 				 'B|basename=s' => \$basename,
+				 'sam' => \$sam,
 				);
 
 
@@ -6584,7 +6586,16 @@ VERSION
     }
   }
 
-  ### OUTPUT REQUESTED AS BAM FILE
+
+  if ($sam){
+    warn "Output format manually set as SAM\n";
+  }
+  else{
+    $bam = 1;
+    warn "Output format is BAM (default)\n";
+  }
+
+  ### OUTPUT REQUESTED AS BAM FILE (default)
   if ($bam){
     if ($vanilla){
       die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
@@ -8552,7 +8563,7 @@ Output:
                          files. This option might be somewhat slower than writing out uncompressed files, but this awaits
                          further testing.
 
---bam                    The output will be written out in BAM format instead of the default SAM format. Bismark will
+--sam                    The output will be written out in SAM format instead of the default SAM format. Bismark will
                          attempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't
                          been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,
                          the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
@@ -8750,7 +8761,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 21 July 2014.
+Last edited on 04 February 2014.
 
 HOW_TO
 }

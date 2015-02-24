@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.13.1';
+my $version = 'v0.13.2';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -1085,7 +1085,7 @@ VERSION
 	  # warn "found the \@PG line:\n";
 	  # warn "$_";
 	
-	  if ($_ =~ /-1/ and $_ =~ /-2/){
+	  if ($_ =~ /\s+-1\s+/ and $_ =~ /\s+-2\s+/){
 	    warn "Treating file(s) as paired-end data (as extracted from \@PG line)\n\n"; sleep(1);
 	    $paired_end = 1;
 	    $single_end = 0;
@@ -5882,7 +5882,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 24 Dec 2014.
+This script was last modified on 08 Jan 2015.
 
 HOW_TO
 }

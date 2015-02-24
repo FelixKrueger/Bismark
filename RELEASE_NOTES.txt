@@ -1,3 +1,29 @@
+RELEASE NOTES FOR Bismark v0.13.2 (04 Wed 2015)
+-----------------------------------------------
+
+Bismark
+=======
+
+Changed the default output to BAM. SAM output may be requested using the option --sam.
+
+
+Bismark Methylation Extractor
+=============================
+
+To detect paired-end alignment mode from the @PG header line, white spaces before and after -1 and
+-2 are now required.
+
+
+deduplicate_bismark 
+===================
+
+To detect paired-end alignment mode from the @PG header line, white spaces before and after -1 and
+-2 are now required.
+
+Added option --version so that Clusterflow can report a version number.
+
+
+
 RELEASE NOTES FOR Bismark v0.13.1 (26 Dec 2014)
 -----------------------------------------------
 
@@ -11,9 +37,9 @@ Bismark Methylation Extractor
 =============================
 
 Added a new option --mbias_off, which processes the files as normal but does not write out any M-bias
-files. This option is meant for users who run the two times, the first time to figure out whether there
-is a bias that needs to be removed, and the second time using the --ignore options, but without overwriting
-the already existent M-bias reports.
+files. This option is meant for users who run the methylation extractor two times, the first time to
+figure out whether there is a bias that needs to be removed, and the second time using the --ignore options,
+but without overwriting the already existent M-bias reports.
 
 Fixed a bug for the M-bias reports when the option --multicore was used, in which case only the numbers
 of one core were used to constuct the report. Now every different thread writes out an individual M-bias
@@ -27,8 +53,8 @@ Added closing statements for the BAM in disguise filehandle.
 bismark2bedGraph
 ================
 
-Deferred removal of the input file path information a little so that specifying specifying file
-don't prevent bismark2bedGraph from finding the input files anymore.
+Deferred removal of the input file path information a little so that specifying file paths doesn't prevent
+bismark2bedGraph from finding the input files anymore.
 
 If the specified output directory doesn't exist it will be created for you.
 
