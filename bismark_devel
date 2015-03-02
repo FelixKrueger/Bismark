@@ -173,6 +173,8 @@ sub subset_input_file{
 foreach my $filename (@filenames){
 
   my $original_filename = $filename;
+  my $original_filename_1;
+  my $original_filename_2;
 
   chdir $parent_dir or die "Unable to move to initial working directory'$parent_dir' $!\n";
   ### resetting the counting hash and fhs
@@ -203,7 +205,23 @@ foreach my $filename (@filenames){
     warn "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
 
     my ($filename_1,$filename_2) = (split (/,/,$filename));
+    $original_filename_1 = $filename_1;
+    $original_filename_2 = $filename_2;
+
     warn "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
+
+   ### subsetting the input file(s)
+    unless ($multicore == 1){ # not needed in single-core mode
+      # warn "My PID: $pid\nMy offset: $offset\n";
+
+      my $temp_filename_1 = subset_input_file($filename_1,$pid,$offset);
+      warn "Using the subset file >$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
+      $filename_1 = $temp_filename_1;
+
+      my $temp_filename_2 = subset_input_file($filename_2,$pid,$offset);
+      warn "Using the subset file >$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
+      $filename_2 = $temp_filename_2;
+    }
 
     ### additional variables only for paired-end alignments
     my ($C_to_T_infile_2,$G_to_A_infile_2); # to be made from mate2 file
@@ -437,6 +455,8 @@ foreach my $filename (@filenames){
 
   }
 
+  ### MERGING AND DELETING TEMP FILES // TIDYING UP AFTER A MULTICORE PROCESS
+
   if ($pid){ # only performing this for the parent process
 
     if ($multicore > 1){
@@ -459,59 +479,90 @@ foreach my $filename (@filenames){
       # regenerating names for temporary files
       my @temp_input;
       my @temp_output;
+      my @temp_reports;
 
       for (1..$offset){
-	if ($gzip){
-	  push @temp_input, "${original_filename}.temp.${_}.gz";
+
+	# Temp Input Files
+	if ($single_end){
+	  if ($gzip){
+	    push @temp_input, "${original_filename}.temp.${_}.gz";
+	  }
+	  else{
+	    push @temp_input, "${original_filename}.temp.${_}";
+	  }
 	}
-	else{
-	  push @temp_input, "${original_filename}.temp.${_}";
+	elsif($paired_end){
+	  if ($gzip){
+	    push @temp_input, "${original_filename_1}.temp.${_}.gz";
+	    push @temp_input, "${original_filename_2}.temp.${_}.gz";
+	  }
+	  else{
+	    push @temp_input, "${original_filename_1}.temp.${_}";
+	    push @temp_input, "${original_filename_2}.temp.${_}";
+	  }
 	}
 
+	# Temp Output Files
 	if ($single_end){
 	  if ($bowtie2){
 	    push @temp_output, "${original_filename}.temp.${_}_bismark_bt2.bam";
+	    push @temp_reports, "${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
 	  }
 	  else{
-	    push @temp_output, "${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_output,  "${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_reports, "${original_filename}.temp.${_}_bismark_SE_report.txt";
 	  }
 	}
 	elsif($paired_end){
 	  if ($bowtie2){
-	    #  push @temp_output, "${original_filename}.temp.${_}_bismark_bt2.bam";
+	    push @temp_output, "${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+	    push @temp_reports, "${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
 	  }
 	  else{
-	    #  push @temp_output, "${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_output, "${original_filename_1}.temp.${_}_bismark_pe.bam";
+	    push @temp_reports, "${original_filename_1}.temp.${_}_bismark_PE_report.txt";
 	  }
 	}
 	
       }
 
+      warn "\n\nRight, cleaning up now...\n\n";
+
       # deleting temp files;
+      warn "Deleting temporary sequence files...\n";
       foreach my $temp (@temp_input){
-	warn "deleting $temp\n";
-	unlink "${temp_dir}${temp}" or warn "failed to delete temporary FastQ file ${temp_dir}$temp\n";
+	print "$temp\t";
+	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp\n";
+      }
+      print "\n\n";
+
+      # merging temp BAM files
+      if ($single_end){
+	merge_individual_BAM_files(\@temp_output,$original_filename,$single_end);
+      }
+      else{
+	merge_individual_BAM_files(\@temp_output,$original_filename_1,$single_end);
       }
 
-      foreach my $file (@temp_output){
-	warn "$file\n";
+      # deleting temp BAM files
+      warn "Deleting temporary BAM files...\n";
+      foreach my $temp (@temp_output){
+	print "$temp\t";
+	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp\n";
       }
+      print "\n\n";
 
-      merge_individual_BAM_files(\@temp_output,$original_filename,$single_end);
+      # merge_individual_splitting_reports(\@temp_reports,$original_filename,$single_end);
+      # print_splitting_report();
 
     }
-    
-    
-    warn "\n====================\nBismark run complete\n====================\n\n";
+
   }
 
-  #     merge_individual_splitting_reports($report_basename);
-  #     print_splitting_report();
-  
-  #     merge_individual_mbias_reports($report_basename); # this updates the main %mbias_1 and  %mbias_2 data structures so we can proceed normally
-
-
-
+  if ($pid){
+    warn "\n====================\nBismark run complete\n====================\n\n";
+  }
 }
 
 sub merge_individual_BAM_files{
@@ -534,24 +585,40 @@ sub merge_individual_BAM_files{
     if ($basename){ # Output file basename is set using the -B argument
       $merged_name = "${basename}.bam";
     }
-    
   }
   else{
+    if ($bowtie2){ # BAM format is the default for Bowtie 2
+      $merged_name .= '_bismark_bt2_pe.bam';
+    }
+    else{          # BAM is the default output
+      $merged_name .= '_bismark_pe.bam';
+    }
 
+    if ($basename){ # Output file basename is set using the -B argument
+      $merged_name = "${basename}_pe.bam";
+    }
   }
+
   warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
   open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
+  my $first = 0;
 
   foreach my $temp_bam(@$tempbam){
     warn "Merging from file >> $temp_bam <<\n";
-    open (IN,"$samtools_path view -h $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+    if ($first > 0){
+      open (IN,"$samtools_path view $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+    }
+    else{ # only for the first file we print the header as well
+      open (IN,"$samtools_path view -h $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+    }
 
     while (<IN>){
-      # header only once
       print OUT;
     }
     close IN or warn "Failed to close filehandle\n";
+    ++$first;
   }
+  warn "\n";
 
   close OUT or warn "Failed to close output filehandle\n\n";
 }
