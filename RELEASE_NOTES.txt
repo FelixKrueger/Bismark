@@ -6,6 +6,9 @@ Bismark
 
 Changed the default output to BAM. SAM output may be requested using the option --sam.
 
+No longer generates a piechart (.png) with the alignment stats. bismark2report generates
+a much nicer report anyway.
+
 
 Bismark Methylation Extractor
 =============================
