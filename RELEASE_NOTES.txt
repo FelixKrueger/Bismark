@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.13.2 (04 Wed 2015)
+RELEASE NOTES FOR Bismark v0.13.2 (27 Feb 2015)
 -----------------------------------------------
 
 Bismark
@@ -21,6 +21,19 @@ To detect paired-end alignment mode from the @PG header line, white spaces befor
 -2 are now required.
 
 Added option --version so that Clusterflow can report a version number.
+
+bismark2bedGraph
+================
+
+Fixed path handling for cases where the input files were given with path information and an output
+directory had been specified as well.
+
+
+coverage2bismark
+================
+
+Fixed a typo in the shebang which prevented coverage2bismark from running.
+
 
 
 

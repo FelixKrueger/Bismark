@@ -21,13 +21,13 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.13.1';
+my $bismark2bedGraph_version = 'v0.13.2';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
 my @sorting_files;
 
-my ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero) = process_commandline();
+my ($bedGraph_output,$parent_dir,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero) = process_commandline();
 
 # warn "Using these input files: @sorting_files\n";
 
@@ -73,19 +73,19 @@ sleep (2);
 
 ### deciding which files to use for bedGraph conversion
 foreach my $filename (@sorting_files){
-  warn "Infile name before replacement: $filename\n";
+  # warn "Infile name before replacement: $filename\n";
 
-  #  if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
-  #    $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
-  #    warn "$filename\n";
-  #  }
+  if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
+    $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
+    # warn "After replacement: $filename\n";
+  }
 
   if ($CX_context){
-    push @bedfiles,$filename;
+    push @bedfiles,$output_dir.$filename;
   }
   else{ ## CpG context only (default)
-    if ($filename =~ /^CpG/){
-      push @bedfiles,$filename;
+    if ($filename =~ /^CpG/){ # only testing the actual filename without the path information
+      push @bedfiles,$output_dir.$filename; # we are adding the full path to the filename
     }
     else{
       # skipping CHH or CHG files
@@ -186,10 +186,10 @@ foreach my $infile (@bedfiles) {
 
   # opening infile
   if ($infile =~ /gz$/){
-    open (IN,"zcat $infile |") or die $!;
+    open (IN,"zcat $infile |") or die "Couldn't find file '$infile': $!\n";
   }
   else{
-    open (IN,$infile) or die $!;
+    open (IN,$infile) or die "Couldn't find file '$infile': $!\n";
   }
 
   # warn "reading from Infile: $infile\n";
@@ -624,9 +624,11 @@ VERSION
     exit;
   }
 
-
   ### OUTPUT DIR PATH
   if (defined $output_dir){
+    my $parent_dir = getcwd();
+    # warn "parent directory is: $parent_dir\n";
+
     unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
       unless ($output_dir =~ /\/$/){
 	$output_dir =~ s/$/\//;
@@ -635,6 +637,18 @@ VERSION
 	mkdir $output_dir or die "Failed to create output directory $output_dir: $!\n\n";
 	warn "Created output directory $output_dir\n";
       }
+
+      ### want to get an absolute path for the output directory instead of a relative one
+      chdir $output_dir or die "Failed to move into output directory '$output_dir': $!\n\n";
+      $output_dir = getcwd();
+      unless ($output_dir =~ /\/$/){
+	$output_dir =~ s/$/\//;
+      }
+      # warn "output directory is: $output_dir\n";
+
+      # changing back to the parent directory
+      chdir $parent_dir or die "Failed to move back into parent directory '$parent_dir': $!\n\n";
+
     }
 
   }
@@ -690,7 +704,7 @@ VERSION
     }
   }
 
-  return ($bedGraph_output,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero);
+  return ($bedGraph_output,$parent_dir,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero);
 }
 
 
@@ -778,7 +792,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 11 December 2014
+                          Script last modified: 27 Februray 2015
 
 EOF
     ;
