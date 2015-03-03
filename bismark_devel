@@ -480,6 +480,10 @@ foreach my $filename (@filenames){
       my @temp_input;
       my @temp_output;
       my @temp_reports;
+      my @temp_unmapped_1;  # will store single end reads or R1 of paired-end
+      my @temp_unmapped_2;
+      my @temp_ambiguous_1; # will store single end reads or R1 of paired-end
+      my @temp_ambiguous_2;
 
       for (1..$offset){
 
@@ -491,6 +495,7 @@ foreach my $filename (@filenames){
 	  else{
 	    push @temp_input, "${original_filename}.temp.${_}";
 	  }
+
 	}
 	elsif($paired_end){
 	  if ($gzip){
@@ -505,24 +510,45 @@ foreach my $filename (@filenames){
 
 	# Temp Output Files
 	if ($single_end){
+
 	  if ($bowtie2){
-	    push @temp_output, "${original_filename}.temp.${_}_bismark_bt2.bam";
-	    push @temp_reports, "${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+	    push @temp_output,     "${original_filename}.temp.${_}_bismark_bt2.bam";
+	    push @temp_reports,    "${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
 	  }
 	  else{
-	    push @temp_output,  "${original_filename}.temp.${_}_bismark.bam";
-	    push @temp_reports, "${original_filename}.temp.${_}_bismark_SE_report.txt";
+	    push @temp_output,     "${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_reports,    "${original_filename}.temp.${_}_bismark_SE_report.txt";
 	  }
+
+	  if ($unmapped){	 
+	    push @temp_unmapped_1,   "${original_filename}.temp.${_}_unmapped_reads.fq";
+	  }
+
+	  if ($ambiguous){
+	    push @temp_ambiguous_1,  "${original_filename}.temp.${_}_ambiguous_reads.fq";
+	  }
+	
 	}
 	elsif($paired_end){
 	  if ($bowtie2){
-	    push @temp_output, "${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
-	    push @temp_reports, "${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+	    push @temp_output,     "${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+	    push @temp_reports,    "${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
 	  }
 	  else{
-	    push @temp_output, "${original_filename_1}.temp.${_}_bismark_pe.bam";
-	    push @temp_reports, "${original_filename_1}.temp.${_}_bismark_PE_report.txt";
+	    push @temp_output,     "${original_filename_1}.temp.${_}_bismark_pe.bam";
+	    push @temp_reports,    "${original_filename_1}.temp.${_}_bismark_PE_report.txt";
 	  }
+
+	  if ($unmapped){
+	    push @temp_unmapped_1,   "${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
+	    push @temp_unmapped_2,   "${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
+	  }
+
+	  if ($ambiguous){
+	    push @temp_ambiguous_1,   "${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+	    push @temp_ambiguous_2,   "${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+	  }
+
 	}
 	
       }
@@ -553,17 +579,294 @@ foreach my $filename (@filenames){
       }
       print "\n\n";
 
-      # merge_individual_splitting_reports(\@temp_reports,$original_filename,$single_end);
+      if ($unmapped){
+	if ($single_end){
+	  merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename,$single_end);
+	}
+	else{
+	  merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename_1,$single_end,'_1');
+	  merge_individual_unmapped_files(\@temp_unmapped_2,$original_filename_2,$single_end,'_2');
+	}
+
+	# deleting temp unmapped files
+	warn "Deleting temporary unmapped files...\n";
+	foreach my $temp (@temp_unmapped_1){
+	  print "$temp\t";
+	  unlink "${temp_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${temp_dir}$temp\n";
+	}
+	if ($paired_end){
+	  foreach my $temp (@temp_unmapped_2){
+	    print "$temp\t";
+	    unlink "${temp_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${temp_dir}$temp\n";
+	  }
+	}
+	print "\n\n";
+
+      }
+
+      if ($ambiguous){
+	if ($single_end){
+	  merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename,$single_end);
+	}
+	else{
+	  merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename_1,$single_end,'_1');
+	  merge_individual_ambiguous_files(\@temp_ambiguous_2,$original_filename_2,$single_end,'_2');
+	}
+
+	# deleting temp ambiguous files
+	warn "Deleting temporary ambiguous files...\n";
+	foreach my $temp (@temp_ambiguous_1){
+	  print "$temp\t";
+	  unlink "${temp_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${temp_dir}$temp\n";
+	}
+
+	if ($paired_end){
+	  foreach my $temp (@temp_ambiguous_2){
+	    print "$temp\t";
+	    unlink "${temp_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${temp_dir}$temp\n";
+	  }
+	}
+	print "\n\n";
+      }
+
+      ### Merging the Bismark mapping report files
+      if ($single_end){
+	merge_individual_splitting_reports(\@temp_reports,$original_filename,$single_end);
+      }
+      else{
+	# merge_individual_splitting_reports(\@temp_reports,$original_filename_1,$single_end);
+      }
+
       # print_splitting_report();
+
 
     }
 
   }
 
-  if ($pid){
+  if ($pid){ # only for the Parent
     warn "\n====================\nBismark run complete\n====================\n\n";
   }
+
 }
+
+sub merge_individual_splitting_reports{
+
+  my ($temp_reports,$original_filename,$single_end,$paired_information) = @_;
+  my $report_file = $original_filename;
+  my $ambiguous_file;
+  my $temp_ambiguous;
+  if ($prefix){
+    $ambiguous_file = "${prefix}.${ambiguous_file}";
+  }
+
+  if ($single_end){
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file = "${basename}_ambiguous_reads.fq.gz";
+      }
+      else{
+	$ambiguous_file = "${basename}_ambiguous_reads.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads.fq.gz/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads.fa.gz/;
+      }
+    }
+  }
+  else{ # paired-end
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file = "${basename}_ambiguous_reads${paired_information}.fq.gz";
+      }
+      else{
+	$ambiguous_file = "${basename}_ambiguous_reads${paired_information}.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads${paired_information}.fq.gz/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads${paired_information}.fa.gz/;
+      }
+    }
+  }
+
+
+  # open (AMBIGUOUS,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+  warn "Now merging temporary reports @$temp_ambiguous into >>> $output_dir$ambiguous_file <<<\n";
+
+  foreach my $temp(@$temp_ambiguous){
+    warn "Merging from file >> $temp <<\n";
+    if ($temp =~ /gz$/){
+      open (IN,"zcat $temp |") or die "Failed to read from ambiguous temp file '$temp'\n";
+    }
+    else{
+      open (IN,$temp) or die "Failed to read from ambiguous temp file '$temp'\n";
+    }
+
+    while (<IN>){
+      print AMBIGUOUS;
+    }
+    close IN or warn "Failed to close filehandle\n";
+  }
+  warn "\n";
+
+  close AMBIGUOUS or warn "Failed to close output filehandle AMBIGUOUS\n\n";
+}
+
+
+
+sub merge_individual_ambiguous_files{
+
+  my ($temp_ambiguous,$original_filename,$single_end,$paired_information) = @_;
+  my $ambiguous_file = $original_filename;
+
+  if ($prefix){
+    $ambiguous_file = "${prefix}.${ambiguous_file}";
+  }
+
+  if ($single_end){
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file = "${basename}_ambiguous_reads.fq.gz";
+      }
+      else{
+	$ambiguous_file = "${basename}_ambiguous_reads.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads.fq.gz/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads.fa.gz/;
+      }
+    }
+  }
+  else{ # paired-end
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file = "${basename}_ambiguous_reads${paired_information}.fq.gz";
+      }
+      else{
+	$ambiguous_file = "${basename}_ambiguous_reads${paired_information}.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads${paired_information}.fq.gz/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads${paired_information}.fa.gz/;
+      }
+    }
+  }
+
+
+  open (AMBIGUOUS,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+  warn "Now merging ambiguous sequences @$temp_ambiguous into >>> $output_dir$ambiguous_file <<<\n";
+
+  foreach my $temp(@$temp_ambiguous){
+    warn "Merging from file >> $temp <<\n";
+    if ($temp =~ /gz$/){
+      open (IN,"zcat $temp |") or die "Failed to read from ambiguous temp file '$temp'\n";
+    }
+    else{
+      open (IN,$temp) or die "Failed to read from ambiguous temp file '$temp'\n";
+    }
+
+    while (<IN>){
+      print AMBIGUOUS;
+    }
+    close IN or warn "Failed to close filehandle\n";
+  }
+  warn "\n";
+
+  close AMBIGUOUS or warn "Failed to close output filehandle AMBIGUOUS\n\n";
+}
+
+
+sub merge_individual_unmapped_files{
+
+  my ($temp_unmapped,$original_filename,$single_end,$paired_information) = @_;
+  my $unmapped_file = $original_filename;
+
+  if ($prefix){
+    $unmapped_file = "${prefix}.${unmapped_file}";
+  }
+
+  if ($single_end){
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file = "${basename}_unmapped_reads.fq.gz";
+      }
+      else{
+	$unmapped_file = "${basename}_unmapped_reads.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file =~ s/$/_unmapped_reads.fq.gz/;
+      }
+      else{
+	$unmapped_file =~ s/$/_unmapped_reads.fa.gz/;
+      }
+    }
+  }
+  else{ # paired-end
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file = "${basename}_unmapped_reads${paired_information}.fq.gz";
+      }
+      else{
+	$unmapped_file = "${basename}_unmapped_reads${paired_information}.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file =~ s/$/_unmapped_reads${paired_information}.fq.gz/;
+      }
+      else{
+	$unmapped_file =~ s/$/_unmapped_reads${paired_information}.fa.gz/;
+      }
+    }
+  }
+
+
+  open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+  warn "Now merging unmapped sequences @$temp_unmapped into >>> $output_dir$unmapped_file <<<\n";
+
+  foreach my $temp(@$temp_unmapped){
+    warn "Merging from file >> $temp <<\n";
+    if ($temp =~ /gz$/){
+      open (IN,"zcat $temp |") or die "Failed to read from unmapped temp file '$temp'\n";
+    }
+    else{
+      open (IN,$temp) or die "Failed to read from unmapped temp file '$temp'\n";
+    }
+
+    while (<IN>){
+      print UNMAPPED;
+    }
+    close IN or warn "Failed to close filehandle\n";
+  }
+  warn "\n";
+
+  close UNMAPPED or warn "Failed to close output filehandle UNMAPPED\n\n";
+}
+
 
 sub merge_individual_BAM_files{
 
@@ -622,7 +925,6 @@ sub merge_individual_BAM_files{
 
   close OUT or warn "Failed to close output filehandle\n\n";
 }
-
 
 sub start_methylation_call_procedure_single_ends {
   my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
@@ -718,7 +1020,7 @@ sub start_methylation_call_procedure_single_ends {
     }
 
     open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
-    print "Unmapped sequences will be written to $output_dir$unmapped_file\n";
+    warn "Unmapped sequences will be written to $output_dir$unmapped_file\n";
   }
 
   if ($ambiguous){
@@ -745,7 +1047,7 @@ sub start_methylation_call_procedure_single_ends {
       }
     }
     open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
-    print "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
+    warn "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
   }
 
   if ($directional){
