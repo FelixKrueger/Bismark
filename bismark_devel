@@ -508,45 +508,55 @@ foreach my $filename (@filenames){
 	  }
 	}
 
+	# if files had a prefix we need to specify it
+	my $add_prefix;
+	if (defined $prefix){
+	  $add_prefix = "${prefix}.";
+	}
+	else{
+	  $add_prefix = '';
+	}
+
 	# Temp Output Files
 	if ($single_end){
+	  
 
 	  if ($bowtie2){
-	    push @temp_output,     "${original_filename}.temp.${_}_bismark_bt2.bam";
-	    push @temp_reports,    "${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+	    push @temp_output,     "${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
+	    push @temp_reports,    "${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
 	  }
 	  else{
-	    push @temp_output,     "${original_filename}.temp.${_}_bismark.bam";
-	    push @temp_reports,    "${original_filename}.temp.${_}_bismark_SE_report.txt";
+	    push @temp_output,     "${add_prefix}${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_reports,    "${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
 	  }
 
 	  if ($unmapped){	 
-	    push @temp_unmapped_1,   "${original_filename}.temp.${_}_unmapped_reads.fq";
+	    push @temp_unmapped_1,   "${add_prefix}${original_filename}.temp.${_}_unmapped_reads.fq";
 	  }
 
 	  if ($ambiguous){
-	    push @temp_ambiguous_1,  "${original_filename}.temp.${_}_ambiguous_reads.fq";
+	    push @temp_ambiguous_1,  "${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
 	  }
 	
 	}
 	elsif($paired_end){
 	  if ($bowtie2){
-	    push @temp_output,     "${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
-	    push @temp_reports,    "${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+	    push @temp_output,     "${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+	    push @temp_reports,    "${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
 	  }
 	  else{
-	    push @temp_output,     "${original_filename_1}.temp.${_}_bismark_pe.bam";
-	    push @temp_reports,    "${original_filename_1}.temp.${_}_bismark_PE_report.txt";
+	    push @temp_output,     "${add_prefix}${original_filename_1}.temp.${_}_bismark_pe.bam";
+	    push @temp_reports,    "${add_prefix}${original_filename_1}.temp.${_}_bismark_PE_report.txt";
 	  }
 
 	  if ($unmapped){
-	    push @temp_unmapped_1,   "${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
-	    push @temp_unmapped_2,   "${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
+	    push @temp_unmapped_1,   "${add_prefix}${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
+	    push @temp_unmapped_2,   "${add_prefix}${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
 	  }
 
 	  if ($ambiguous){
-	    push @temp_ambiguous_1,   "${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
-	    push @temp_ambiguous_2,   "${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+	    push @temp_ambiguous_1,   "${add_prefix}${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+	    push @temp_ambiguous_2,   "${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
 	  }
 
 	}
