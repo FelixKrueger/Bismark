@@ -215,12 +215,12 @@ foreach my $filename (@filenames){
       # warn "My PID: $pid\nMy offset: $offset\n";
 
       my $temp_filename_1 = subset_input_file($filename_1,$pid,$offset);
-      warn "Using the subset file >$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
-      $filename_1 = $temp_filename_1;
+      warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
+      $filename_1 = "${temp_dir}$temp_filename_1";
 
       my $temp_filename_2 = subset_input_file($filename_2,$pid,$offset);
-      warn "Using the subset file >$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
-      $filename_2 = $temp_filename_2;
+      warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
+      $filename_2 = "${temp_dir}$temp_filename_2";
     }
 
     ### additional variables only for paired-end alignments
@@ -387,8 +387,8 @@ foreach my $filename (@filenames){
     unless ($multicore == 1){ # not needed in single-core mode
       # warn "My PID: $pid\nMy offset: $offset\n";
       my $temp_filename = subset_input_file($filename,$pid,$offset);
-      warn "Using the subset file >$temp_filename< as new in-file (instead of >$filename<)\n";
-      $filename = $temp_filename;
+      warn "Using the subset file >${temp_dir}$temp_filename< as new in-file (instead of >$filename<)\n";
+      $filename = "${temp_dir}$temp_filename";
     }
 
 
@@ -519,44 +519,43 @@ foreach my $filename (@filenames){
 
 	# Temp Output Files
 	if ($single_end){
-	  
-
+	
 	  if ($bowtie2){
-	    push @temp_output,     "${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
-	    push @temp_reports,    "${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
 	  }
 	  else{
-	    push @temp_output,     "${add_prefix}${original_filename}.temp.${_}_bismark.bam";
-	    push @temp_reports,    "${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
 	  }
 
 	  if ($unmapped){	 
-	    push @temp_unmapped_1,   "${add_prefix}${original_filename}.temp.${_}_unmapped_reads.fq";
+	    push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename}.temp.${_}_unmapped_reads.fq";
 	  }
 
 	  if ($ambiguous){
-	    push @temp_ambiguous_1,  "${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
+	    push @temp_ambiguous_1,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
 	  }
 	
 	}
 	elsif($paired_end){
 	  if ($bowtie2){
-	    push @temp_output,     "${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
-	    push @temp_reports,    "${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
 	  }
 	  else{
-	    push @temp_output,     "${add_prefix}${original_filename_1}.temp.${_}_bismark_pe.bam";
-	    push @temp_reports,    "${add_prefix}${original_filename_1}.temp.${_}_bismark_PE_report.txt";
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_pe.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_PE_report.txt";
 	  }
 
 	  if ($unmapped){
-	    push @temp_unmapped_1,   "${add_prefix}${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
-	    push @temp_unmapped_2,   "${add_prefix}${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
+	    push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
+	    push @temp_unmapped_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
 	  }
 
 	  if ($ambiguous){
-	    push @temp_ambiguous_1,   "${add_prefix}${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
-	    push @temp_ambiguous_2,   "${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+	    push @temp_ambiguous_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+	    push @temp_ambiguous_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
 	  }
 
 	}
@@ -585,7 +584,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary BAM files...\n";
       foreach my $temp (@temp_output){
 	print "$temp\t";
-	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp\n";
+	unlink "${output_dir}${temp}" or warn "Failed to delete temporary FastQ file ${output_dir}$temp\n";
       }
       print "\n\n";
 
@@ -602,12 +601,12 @@ foreach my $filename (@filenames){
 	warn "Deleting temporary unmapped files...\n";
 	foreach my $temp (@temp_unmapped_1){
 	  print "$temp\t";
-	  unlink "${temp_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${temp_dir}$temp\n";
+	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp\n";
 	}
 	if ($paired_end){
 	  foreach my $temp (@temp_unmapped_2){
 	    print "$temp\t";
-	    unlink "${temp_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${temp_dir}$temp\n";
+	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp\n";
 	  }
 	}
 	print "\n\n";
@@ -627,13 +626,13 @@ foreach my $filename (@filenames){
 	warn "Deleting temporary ambiguous files...\n";
 	foreach my $temp (@temp_ambiguous_1){
 	  print "$temp\t";
-	  unlink "${temp_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${temp_dir}$temp\n";
+	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp\n";
 	}
 
 	if ($paired_end){
 	  foreach my $temp (@temp_ambiguous_2){
 	    print "$temp\t";
-	    unlink "${temp_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${temp_dir}$temp\n";
+	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp\n";
 	  }
 	}
 	print "\n\n";
@@ -656,7 +655,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary report files...\n";
       foreach my $temp (@temp_reports){
 	print "$temp\t";
-	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary report file ${temp_dir}$temp\n";
+	unlink "${output_dir}${temp}" or warn "Failed to delete temporary report file ${output_dir}$temp\n";
       }
       print "\n\n";
     }
