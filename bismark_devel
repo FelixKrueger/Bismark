@@ -109,7 +109,7 @@ sub multi_process_handling{
 
 
 ### TODO: discriminate between FastQ and FastA file
-sub subset_input_file{
+sub subset_input_file_FastQ{
 
   my ($filename,$process_id,$offset) = @_;
 
@@ -150,6 +150,61 @@ sub subset_input_file{
       # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
       # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
       print TEMPFQ "$l1$l2$l3$l4";
+    }
+    else{
+      # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+      next;
+    }
+  }
+
+  close OFFSET or warn $!;
+  close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
+
+  warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
+
+  return ($temp); # returning the subset filename
+
+}
+
+sub subset_input_file_FastA{
+
+  my ($filename,$process_id,$offset) = @_;
+
+  if ($filename =~ /gz$/){
+    open (OFFSET,"zcat $filename |") or die "Couldn't read from file '$filename': $!\n";
+  }
+  else{
+    open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
+  }
+
+  # warn "offset is $offset\n";
+  my $temp = $filename;
+  $temp .= ".temp.$offset";
+
+  if ($gzip){
+    $temp .= '.gz';
+    open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+  }
+  else{
+    open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+  }
+
+  warn "Writing temporary infile to $temp\n";
+
+  my $line_count = 0;
+
+  while (1){
+    my $l1 = <OFFSET>;
+    my $l2 = <OFFSET>;
+
+    last unless ($l2);
+    ++$line_count;
+
+    if ( ($line_count - $offset)%$multicore == 0){
+      # warn "line count: $line_count\noffset: $offset\n";
+      # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+      # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+      print TEMPFQ "$l1$l2";
     }
     else{
       # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
@@ -210,17 +265,27 @@ foreach my $filename (@filenames){
 
     warn "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
 
-   ### subsetting the input file(s)
+    ### subsetting the input file(s)
     unless ($multicore == 1){ # not needed in single-core mode
       # warn "My PID: $pid\nMy offset: $offset\n";
+      if ($sequence_file_format eq 'FASTA'){
+	my $temp_filename_1 = subset_input_file_FastA($filename_1,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
+	$filename_1 = "${temp_dir}$temp_filename_1";
+	
+	my $temp_filename_2 = subset_input_file_FastA($filename_2,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
+	$filename_2 = "${temp_dir}$temp_filename_2";
+      }
+      else{ # FastQ format, default
+	my $temp_filename_1 = subset_input_file_FastQ($filename_1,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
+	$filename_1 = "${temp_dir}$temp_filename_1";
 
-      my $temp_filename_1 = subset_input_file($filename_1,$pid,$offset);
-      warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
-      $filename_1 = "${temp_dir}$temp_filename_1";
-
-      my $temp_filename_2 = subset_input_file($filename_2,$pid,$offset);
-      warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
-      $filename_2 = "${temp_dir}$temp_filename_2";
+	my $temp_filename_2 = subset_input_file_FastQ($filename_2,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
+	$filename_2 = "${temp_dir}$temp_filename_2";
+      }
     }
 
     ### additional variables only for paired-end alignments
@@ -386,11 +451,17 @@ foreach my $filename (@filenames){
     ### subsetting the input file(s)
     unless ($multicore == 1){ # not needed in single-core mode
       # warn "My PID: $pid\nMy offset: $offset\n";
-      my $temp_filename = subset_input_file($filename,$pid,$offset);
-      warn "Using the subset file >${temp_dir}$temp_filename< as new in-file (instead of >$filename<)\n";
-      $filename = "${temp_dir}$temp_filename";
+      if ($sequence_file_format eq 'FASTA'){
+	my $temp_filename = subset_input_file_FastA($filename,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename< as new in-file (instead of >$filename<)\n";
+	$filename = "${temp_dir}$temp_filename";
+      }
+      else{ # FastQ format, default
+	my $temp_filename = subset_input_file_FastQ($filename,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename< as new in-file (instead of >$filename<)\n";
+	$filename = "${temp_dir}$temp_filename";
+      }
     }
-
 
     ### Initialising bisulfite conversion filenames
     my ($C_to_T_infile,$G_to_A_infile);
@@ -568,7 +639,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary sequence files...\n";
       foreach my $temp (@temp_input){
 	print "$temp\t";
-	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp\n";
+	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp: $!\n";
       }
       print "\n\n";
 
@@ -584,7 +655,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary BAM files...\n";
       foreach my $temp (@temp_output){
 	print "$temp\t";
-	unlink "${output_dir}${temp}" or warn "Failed to delete temporary FastQ file ${output_dir}$temp\n";
+	unlink "$temp" or warn "Failed to delete temporary FastQ file $temp: $!\n";
       }
       print "\n\n";
 
@@ -601,12 +672,12 @@ foreach my $filename (@filenames){
 	warn "Deleting temporary unmapped files...\n";
 	foreach my $temp (@temp_unmapped_1){
 	  print "$temp\t";
-	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp\n";
+	  unlink "${temp}" or warn "Failed to delete temporary unmapped FastQ file $temp: $!\n";
 	}
 	if ($paired_end){
 	  foreach my $temp (@temp_unmapped_2){
 	    print "$temp\t";
-	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp\n";
+	    unlink "${temp}" or warn "Failed to delete temporary unmapped FastQ file $temp: $!\n";
 	  }
 	}
 	print "\n\n";
@@ -626,13 +697,13 @@ foreach my $filename (@filenames){
 	warn "Deleting temporary ambiguous files...\n";
 	foreach my $temp (@temp_ambiguous_1){
 	  print "$temp\t";
-	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp\n";
+	  unlink "${temp}" or warn "Failed to delete temporary ambiguous FastQ file $temp: $!\n";
 	}
 
 	if ($paired_end){
 	  foreach my $temp (@temp_ambiguous_2){
 	    print "$temp\t";
-	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp\n";
+	    unlink "${temp}" or warn "Failed to delete temporary ambiguous FastQ file $temp: $!\n";
 	  }
 	}
 	print "\n\n";
@@ -655,7 +726,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary report files...\n";
       foreach my $temp (@temp_reports){
 	print "$temp\t";
-	unlink "${output_dir}${temp}" or warn "Failed to delete temporary report file ${output_dir}$temp\n";
+	unlink "${temp}" or warn "Failed to delete temporary report file $temp: $!\n";
       }
       print "\n\n";
     }
