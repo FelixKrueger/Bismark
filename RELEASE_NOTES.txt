@@ -1,8 +1,25 @@
-RELEASE NOTES FOR Bismark v0.13.2 (27 Feb 2015)
+RELEASE NOTES FOR Bismark v0.14.0 (06 Mar 2015)
 -----------------------------------------------
 
 Bismark
 =======
+
+Finally added parallelization to the Bismark alignment step using the option '--muticore <int>' 
+which sets the number of parallel instances of Bismark to be run concurrently. At least in this
+first distribution this is achieved by forking the Bismark alignment step very early on so that
+each individual Spawn of Bismark (SoB?) processes only every n-th sequence (n being set by --multicore).
+Once all processes have completed, the individual BAM files, mapping reports, unmapped or ambiguous
+FastQ files are merged into single files in very much the same way as they would have been generated
+running Bismark conventionally with only a single instance.
+
+If system resources are plentiful this is a viable option to speed up the alignment process
+(we observed a near linear speed increase for up to --multicore 8 tested so far). However, please note
+that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads of
+Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory depending on the choice of aligner and
+genome. WARNING: Bismark Parallel (BP?) is resource hungry! Each value of --multicore specified
+will effectively lead to a linear increase in compute and memory requirements, so --multicore 4 for
+e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~40GB or RAM, but at the same time
+reduce the alignment time to ~25-30%. You have been warned.
 
 Changed the default output to BAM. SAM output may be requested using the option --sam.
 
@@ -14,14 +31,17 @@ Bismark Methylation Extractor
 =============================
 
 To detect paired-end alignment mode from the @PG header line, white spaces before and after -1 and
--2 are now required.
+-2 are now required. Previously files containing e.g. -1-2 in the filenames could have been identified
+incorrectly as paired-end files.
 
 
 deduplicate_bismark 
 ===================
 
 To detect paired-end alignment mode from the @PG header line, white spaces before and after -1 and
--2 are now required.
+-2 are now required. Previously files containing e.g. -1-2 in the filenames could have been identified
+incorrectly as paired-end files.
+
 
 Added option --version so that Clusterflow can report a version number.
 
@@ -35,7 +55,7 @@ directory had been specified as well.
 coverage2bismark
 ================
 
-Fixed a typo in the shebang which prevented coverage2bismark from running.
+Fixed a typo in the shebang which prevented coverage2cytosine from running.
 
 
 

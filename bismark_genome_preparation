@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Cwd;
-use File::Path qw(rmtree);
+# use File::Path qw(rmtree);
 $|++;
 
 
@@ -33,7 +33,7 @@ my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
 
-my $bismark_version = 'v0.13.1';
+my $bismark_version = 'v0.14.0';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,

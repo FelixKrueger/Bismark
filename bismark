@@ -24,8 +24,9 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.13.2';
+my $bismark_version = 'v0.14.0';
 my $command_line = join (" ",@ARGV);
+
 
 ### before processing the command line we will replace --solexa1.3-quals with --phred64-quals as the '.' in the option name will cause Getopt::Long to fail
 foreach my $arg (@ARGV){
@@ -35,25 +36,220 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
 my %SQ_order;    # stores the order of sequences in the reference. This is to produce SAM/BAM files with a known order of chromosomes
 my %counting;    # counting various events
+my @pids; # storing the process IDs of child processes in parallel mode
+
 
 my $seqID_contains_tabs;
 my $verbose = 0;
 
+if ($multicore > 1){
+  warn "Running Bismark Parallel version. Number of cores to parallel instances to be spawned: $multicore\n\n";
+}
+
+
+sub multi_process_handling{
+
+  my $offset = 1;
+  my $process_id;
+  if ($multicore > 1){
+
+    until ($offset == $multicore){
+      # warn "multicore: $multicore\noffset: $offset\n";
+      my $fork = fork;
+
+      if (defined $fork){
+	if ($fork != 0){
+	  $process_id = $fork;
+	  push @pids, $process_id;
+	  if ($offset < $multicore){
+	    ++$offset;
+	    # warn "I am the parent process, child pid: $fork\nIncrementing offset counter to: $offset\n\n";
+	  }
+	  else{
+	    # warn "Reached the number of maximum multicores. Proceeeding to processing...\n";
+	  }
+	}
+	elsif ($fork == 0){
+	  # warn "I am a child process, pid: $fork\nOffset counter is: $offset\nProceeding to processing...\n";
+	  $process_id = $fork;
+	  last;
+	}
+      }
+      else{
+	die "Forking unsuccessful. Proceeding using a single thread only\n";
+      }
+    }
+
+    # warn "\nThe Thread Identity\n===================\n";
+    if ($process_id){
+      # print "I am the parent process. My children are called:\n";
+      # print join ("\t",@pids),"\n";
+      # print "I am going to process the following line count: $offset\n\n";
+    }
+    elsif($process_id == 0){
+      # warn "I am a child process: Process ID: $process_id\n";
+      # warn "I am going to process the following line count: $offset\n\n";
+    }
+    else{
+      die "Process ID was: '$process_id'\n";
+    }
+  }
+  else{
+    warn "Single-core mode: setting pid to 1\n";
+    $process_id = 1;
+  }
+
+  return ($process_id,$offset);
+}
+
+
+sub subset_input_file_FastQ{
+
+  my ($filename,$process_id,$offset) = @_;
+
+  if ($filename =~ /gz$/){
+    open (OFFSET,"zcat $filename |") or die "Couldn't read from file '$filename': $!\n";
+  }
+  else{
+    open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
+  }
+
+  # warn "offset is $offset\n";
+  my $temp = $filename;
+  $temp .= ".temp.$offset";
+
+  if ($gzip){
+    $temp .= '.gz';
+    open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+  }
+  else{
+    open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+  }
+
+  warn "Writing temporary infile to $temp\n";
+
+  my $line_count = 0;
+
+  while (1){
+    my $l1 = <OFFSET>;
+    my $l2 = <OFFSET>;
+    my $l3 = <OFFSET>;
+    my $l4 = <OFFSET>;
+
+    last unless ($l4);
+    ++$line_count;
+
+    if ( ($line_count - $offset)%$multicore == 0){
+      # warn "line count: $line_count\noffset: $offset\n";
+      # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+      # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+      print TEMPFQ "$l1$l2$l3$l4";
+    }
+    else{
+      # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+      next;
+    }
+  }
+
+  close OFFSET or warn $!;
+  close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
+
+  warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
+
+  return ($temp); # returning the subset filename
+
+}
+
+sub subset_input_file_FastA{
+
+  my ($filename,$process_id,$offset) = @_;
+
+  if ($filename =~ /gz$/){
+    open (OFFSET,"zcat $filename |") or die "Couldn't read from file '$filename': $!\n";
+  }
+  else{
+    open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
+  }
+
+  # warn "offset is $offset\n";
+  my $temp = $filename;
+  $temp .= ".temp.$offset";
+
+  if ($gzip){
+    $temp .= '.gz';
+    open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+  }
+  else{
+    open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+  }
+
+  warn "Writing temporary infile to $temp\n";
+
+  my $line_count = 0;
+
+  while (1){
+    my $l1 = <OFFSET>;
+    my $l2 = <OFFSET>;
+
+    last unless ($l2);
+    ++$line_count;
+
+    if ( ($line_count - $offset)%$multicore == 0){
+      # warn "line count: $line_count\noffset: $offset\n";
+      # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+      # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+      print TEMPFQ "$l1$l2";
+    }
+    else{
+      # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+      next;
+    }
+  }
+
+  close OFFSET or warn $!;
+  close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
+
+  warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
+
+  return ($temp); # returning the subset filename
+
+}
+
+#####
+#####
+
 foreach my $filename (@filenames){
 
-  chdir $parent_dir or die "Unable to move to initial working directory $!\n";
+  my $original_filename = $filename;
+  my $original_filename_1;
+  my $original_filename_2;
+
+  chdir $parent_dir or die "Unable to move to initial working directory'$parent_dir' $!\n";
   ### resetting the counting hash and fhs
   reset_counters_and_fhs($filename);
+  @pids = ();
   $seqID_contains_tabs = 0;
 
+  ### As of version 0.14.0 we support multi-threading. In a first instance we accomplish this by
+  ### splitting the input file(s) into several smaller subfiles and merging the results back at
+  ### the end.
+
+  # get general settings (also for single-threaded use)
+  my ($pid,$offset) = multi_process_handling ();
+
+  my ($single_end,$paired_end);
   ### PAIRED-END ALIGNMENTS
   if ($filename =~ ','){
+
+    $single_end = 0;
+    $paired_end = 1;
+
     my ($C_to_T_infile_1,$G_to_A_infile_1); # to be made from mate1 file
 
     $fhs[0]->{name} = 'CTread1GAread2CTgenome';
@@ -63,7 +259,33 @@ foreach my $filename (@filenames){
     warn "\nPaired-end alignments will be performed\n",'='x39,"\n\n";
 
     my ($filename_1,$filename_2) = (split (/,/,$filename));
+    $original_filename_1 = $filename_1;
+    $original_filename_2 = $filename_2;
+
     warn "The provided filenames for paired-end alignments are $filename_1 and $filename_2\n";
+
+    ### subsetting the input file(s)
+    unless ($multicore == 1){ # not needed in single-core mode
+      # warn "My PID: $pid\nMy offset: $offset\n";
+      if ($sequence_file_format eq 'FASTA'){
+	my $temp_filename_1 = subset_input_file_FastA($filename_1,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
+	$filename_1 = "${temp_dir}$temp_filename_1";
+	
+	my $temp_filename_2 = subset_input_file_FastA($filename_2,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
+	$filename_2 = "${temp_dir}$temp_filename_2";
+      }
+      else{ # FastQ format, default
+	my $temp_filename_1 = subset_input_file_FastQ($filename_1,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
+	$filename_1 = "${temp_dir}$temp_filename_1";
+
+	my $temp_filename_2 = subset_input_file_FastQ($filename_2,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
+	$filename_2 = "${temp_dir}$temp_filename_2";
+      }
+    }
 
     ### additional variables only for paired-end alignments
     my ($C_to_T_infile_2,$G_to_A_infile_2); # to be made from mate2 file
@@ -215,12 +437,31 @@ foreach my $filename (@filenames){
        	paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);	
       }
     }
-    start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+    start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
   }
 
   ### Else we are performing SINGLE-END ALIGNMENTS
   else{
     warn "\nSingle-end alignments will be performed\n",'='x39,"\n\n";
+
+    $single_end = 1;
+    $paired_end = 0;
+
+    ### subsetting the input file(s)
+    unless ($multicore == 1){ # not needed in single-core mode
+      # warn "My PID: $pid\nMy offset: $offset\n";
+      if ($sequence_file_format eq 'FASTA'){
+	my $temp_filename = subset_input_file_FastA($filename,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename< as new in-file (instead of >$filename<)\n";
+	$filename = "${temp_dir}$temp_filename";
+      }
+      else{ # FastQ format, default
+	my $temp_filename = subset_input_file_FastQ($filename,$pid,$offset);
+	warn "Using the subset file >${temp_dir}$temp_filename< as new in-file (instead of >$filename<)\n";
+	$filename = "${temp_dir}$temp_filename";
+      }
+    }
+
     ### Initialising bisulfite conversion filenames
     my ($C_to_T_infile,$G_to_A_infile);
 
@@ -280,13 +521,692 @@ foreach my $filename (@filenames){
       }
     }
 
-    start_methylation_call_procedure_single_ends($filename,$C_to_T_infile,$G_to_A_infile);
+    start_methylation_call_procedure_single_ends($filename,$C_to_T_infile,$G_to_A_infile,$pid);
 
+  }
+
+  ### MERGING AND DELETING TEMP FILES // TIDYING UP AFTER A MULTICORE PROCESS
+
+  if ($pid){ # only performing this for the parent process
+
+    if ($multicore > 1){
+
+      warn "Now waiting for all child processes to complete\n";
+
+      ### we need to ensure that we wait for all child processes to be finished before continuing
+      # warn "here are the child IDs: @pids\n";
+      # warn "Looping through the child process IDs:\n";
+
+      foreach my $id (@pids){
+	# print "$id\t";
+	my $kid = waitpid ($id,0);
+	# print "Returned: $kid\nExit status: $?\n";
+	unless ($? == 0){
+	  warn "\nChild process terminated with exit signal: '$?'\n\n";
+	}
+      }
+
+      # regenerating names for temporary files
+      my @temp_input;
+      my @temp_output;
+      my @temp_reports;
+      my @temp_unmapped_1;  # will store single end reads or R1 of paired-end
+      my @temp_unmapped_2;
+      my @temp_ambiguous_1; # will store single end reads or R1 of paired-end
+      my @temp_ambiguous_2;
+
+      for (1..$offset){
+
+	# Temp Input Files
+	if ($single_end){
+	  if ($gzip){
+	    push @temp_input, "${original_filename}.temp.${_}.gz";
+	  }
+	  else{
+	    push @temp_input, "${original_filename}.temp.${_}";
+	  }
+
+	}
+	elsif($paired_end){
+	  if ($gzip){
+	    push @temp_input, "${original_filename_1}.temp.${_}.gz";
+	    push @temp_input, "${original_filename_2}.temp.${_}.gz";
+	  }
+	  else{
+	    push @temp_input, "${original_filename_1}.temp.${_}";
+	    push @temp_input, "${original_filename_2}.temp.${_}";
+	  }
+	}
+
+	# if files had a prefix we need to specify it
+	my $add_prefix;
+	if (defined $prefix){
+	  $add_prefix = "${prefix}.";
+	}
+	else{
+	  $add_prefix = '';
+	}
+
+	# Temp Output Files
+	if ($single_end){
+	
+	  if ($bowtie2){
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+	  }
+	  else{
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
+	  }
+
+	  if ($unmapped){	 
+	    push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename}.temp.${_}_unmapped_reads.fq";
+	  }
+
+	  if ($ambiguous){
+	    push @temp_ambiguous_1,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
+	  }
+	
+	}
+	elsif($paired_end){
+	  if ($bowtie2){
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+	  }
+	  else{
+	    push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_pe.bam";
+	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_PE_report.txt";
+	  }
+
+	  if ($unmapped){
+	    push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
+	    push @temp_unmapped_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
+	  }
+
+	  if ($ambiguous){
+	    push @temp_ambiguous_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+	    push @temp_ambiguous_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+	  }
+
+	}
+	
+      }
+
+      warn "\n\nRight, cleaning up now...\n\n";
+
+      # deleting temp files;
+      warn "Deleting temporary sequence files...\n";
+      foreach my $temp (@temp_input){
+	print "$temp\t";
+	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp: $!\n";
+      }
+      print "\n\n";
+
+      # merging temp BAM files
+      if ($single_end){
+	merge_individual_BAM_files(\@temp_output,$original_filename,$single_end);
+      }
+      else{
+	merge_individual_BAM_files(\@temp_output,$original_filename_1,$single_end);
+      }
+
+      # deleting temp BAM files
+      warn "Deleting temporary BAM files...\n";
+      foreach my $temp (@temp_output){
+	print "$temp\t";
+	unlink "$temp" or warn "Failed to delete temporary FastQ file $temp: $!\n";
+      }
+      print "\n\n";
+
+      if ($unmapped){
+	if ($single_end){
+	  merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename,$single_end);
+	}
+	else{
+	  merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename_1,$single_end,'_1');
+	  merge_individual_unmapped_files(\@temp_unmapped_2,$original_filename_2,$single_end,'_2');
+	}
+
+	# deleting temp unmapped files
+	warn "Deleting temporary unmapped files...\n";
+	foreach my $temp (@temp_unmapped_1){
+	  print "$temp\t";
+	  unlink "${temp}" or warn "Failed to delete temporary unmapped FastQ file $temp: $!\n";
+	}
+	if ($paired_end){
+	  foreach my $temp (@temp_unmapped_2){
+	    print "$temp\t";
+	    unlink "${temp}" or warn "Failed to delete temporary unmapped FastQ file $temp: $!\n";
+	  }
+	}
+	print "\n\n";
+
+      }
+
+      if ($ambiguous){
+	if ($single_end){
+	  merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename,$single_end);
+	}
+	else{
+	  merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename_1,$single_end,'_1');
+	  merge_individual_ambiguous_files(\@temp_ambiguous_2,$original_filename_2,$single_end,'_2');
+	}
+
+	# deleting temp ambiguous files
+	warn "Deleting temporary ambiguous files...\n";
+	foreach my $temp (@temp_ambiguous_1){
+	  print "$temp\t";
+	  unlink "${temp}" or warn "Failed to delete temporary ambiguous FastQ file $temp: $!\n";
+	}
+
+	if ($paired_end){
+	  foreach my $temp (@temp_ambiguous_2){
+	    print "$temp\t";
+	    unlink "${temp}" or warn "Failed to delete temporary ambiguous FastQ file $temp: $!\n";
+	  }
+	}
+	print "\n\n";
+      }
+
+      # resetting the counters once more so we can add all data from all temporary reports
+      reset_counters_and_fhs($original_filename);
+
+      ### Merging the Bismark mapping report files
+      if ($single_end){
+	merge_individual_splitting_reports(\@temp_reports,$original_filename,$single_end);
+	print_final_analysis_report_single_end('mock_file1','mock_file_2','mock_pid','mergeThis');
+      }
+      else{
+	merge_individual_splitting_reports(\@temp_reports,$original_filename_1,$single_end,$original_filename_2);
+	print_final_analysis_report_paired_ends('mock_file1','mock_file_2','mock_file3','mock_file_4','mock_pid','mergeThis');
+      }
+
+      # deleting temp report files
+      warn "Deleting temporary report files...\n";
+      foreach my $temp (@temp_reports){
+	print "$temp\t";
+	unlink "${temp}" or warn "Failed to delete temporary report file $temp: $!\n";
+      }
+      print "\n\n";
+    }
+
+  }
+
+  if ($pid){ # only for the Parent
+    warn "\n====================\nBismark run complete\n====================\n\n";
+  }
+
+}
+
+sub merge_individual_splitting_reports{
+
+  my ($temp_reports,$original_filename_1,$single_end,$original_filename_2) = @_;
+  my $report_file = $original_filename_1;
+
+  if ($prefix){
+    $report_file = "${prefix}.${report_file}";
+  }
+
+  if ($basename){ # Output file basename is set using the -B argument
+    $report_file = ${basename};
+  }
+
+  if ($single_end){
+    if ($bowtie2){
+      $report_file .= '_bismark_bt2_SE_report.txt';
+    }
+    else{
+      $report_file .= '_bismark_SE_report.txt';
+    }
+  }
+  else{
+    if ($bowtie2){
+      $report_file .= '_bismark_bt2_PE_report.txt';
+    }
+    else{
+      $report_file .= '_bismark_PE_report.txt';
+    }
+  }
+
+  open (REPORT,'>',"$output_dir$report_file") or die "Failed to write to $report_file: $!\n";
+  warn "Now merging temporary reports @$temp_reports into >>> ${output_dir}$report_file <<<\n";
+
+  if ($single_end){
+    print REPORT "Bismark report for: $original_filename_1 (version: $bismark_version)\n";
+  }
+  else{ # paired-end
+    print REPORT "Bismark report for: $original_filename_1 and $original_filename_2 (version: $bismark_version)\n";
+  }
+
+
+  my $first = 0;
+
+  foreach my $temp(@$temp_reports){
+
+    warn "Merging from file >> $temp <<\n";
+    open (IN,$temp) or die "Failed to read from temporary mapping report '$temp'\n";
+
+    ### this is printing the first couple of lines
+    while (<IN>){
+      chomp;
+      if ($_ =~ /^Bismark report/){
+	next;
+      }
+
+      unless ($first){ # only happens for the first run we are processing
+	if ($_ =~ /^Final Alignment/){
+	  ++$first;
+	  last;
+	}
+	else{
+	  print REPORT "$_\n";
+	}
+      }
+    }
+    close IN or warn "Failed to close filehandle\n";
+
+    ### Simon says: You are going to regret this in the future. Just for the record. He might be right...
+    read_alignment_report($temp,$single_end);
+
+  }
+  warn "\n";
+
+}
+
+sub read_alignment_report{
+  my ($report,$single_end) = @_;
+
+  my $unique;
+  my $no_aln;
+  my $multiple;
+  my $no_genomic;
+  my $total_seqs;
+  my $bismark_version;
+  my $input_filename;
+
+  my $unique_text;
+  my $no_aln_text;
+  my $multiple_text;
+  my $total_seq_text;
+
+  my $total_C_count;
+  my ($meth_CpG,$meth_CHG,$meth_CHH,$meth_unknown);
+  my ($unmeth_CpG,$unmeth_CHG,$unmeth_CHH,$unmeth_unknown);
+
+  my $number_OT;
+  my $number_CTOT;
+  my $number_CTOB;
+  my $number_OB;
+
+  open (ALN,$report) or die "Failed to read from temporary mapping report '$report'\n";
+
+  while (<ALN>){
+    chomp;
+
+    ### General Alignment stats
+    if ($_ =~ /^Sequence pairs analysed in total:/ ){ ## Paired-end
+      (undef,$total_seqs) = split /\t/;
+      # warn "Total paired seqs: >> $total_seqs <<\n";
+    }
+    elsif ($_ =~ /^Sequences analysed in total:/ ){   ## Single-end
+      (undef,$total_seqs) = split /\t/;
+      # warn "total single-end seqs >> $total_seqs <<\n";
+    }
+
+    elsif($_ =~ /^Number of paired-end alignments with a unique best hit:/){ ## Paired-end
+      (undef,$unique) = split /\t/;
+      # warn "Unique PE>> $unique <<\n";
+    }
+    elsif($_ =~ /^Number of alignments with a unique best hit from/){        ## Single-end
+      (undef,$unique) = split /\t/;
+      # warn "Unique SE>> $unique <<\n";
+    }
+
+    elsif($_ =~ /^Sequence pairs with no alignments under any condition:/){  ## Paired-end
+      (undef,$no_aln) = split /\t/;
+      # warn "No alignment PE >> $no_aln <<\n";
+    }
+    elsif($_ =~ /^Sequences with no alignments under any condition:/){  ## Single-end
+      (undef,$no_aln) = split /\t/;
+      # warn "No alignments SE>> $no_aln <<\n";
+    }
+
+    elsif($_ =~ /^Sequence pairs did not map uniquely:/){ ## Paired-end
+      (undef,$multiple) = split /\t/;
+      # warn "Multiple alignments PE >> $multiple <<\n";
+    }
+    elsif($_ =~ /^Sequences did not map uniquely:/){ ## Single-end
+      (undef,$multiple) = split /\t/;
+      # warn "Multiple alignments SE >> $multiple <<\n";
+    }
+
+    elsif($_ =~ /^Sequence pairs which were discarded because genomic sequence could not be extracted:/){ ## Paired-end
+      (undef,$no_genomic) = split /\t/;
+      # warn "No genomic sequence PE >> $no_genomic <<\n";
+    }
+    elsif($_ =~ /^Sequences which were discarded because genomic sequence could not be extracted:/){ ## Single-end
+      (undef,$no_genomic) = split /\t/;
+      # warn "No genomic sequence SE>> $no_genomic <<\n";
+    }
+
+    ### Context Methylation
+    elsif($_ =~ /^Total number of C/ ){
+      (undef,$total_C_count) = split /\t/;
+      # warn "Total number C >> $total_C_count <<\n";
+    }
+
+    elsif($_ =~ /^Total methylated C\'s in CpG context:/ ){
+      (undef,$meth_CpG) = split /\t/;
+      # warn "meth CpG >> $meth_CpG <<\n" ;
+    }
+    elsif($_ =~ /^Total methylated C\'s in CHG context:/ ){
+      (undef,$meth_CHG) = split /\t/;
+      # warn "meth CHG >> $meth_CHG <<\n" ;
+    }
+    elsif($_ =~ /^Total methylated C\'s in CHH context:/ ){
+      (undef,$meth_CHH) = split /\t/;
+      # warn "meth CHH >> $meth_CHH <<\n" ;
+    }
+    elsif($_ =~ /^Total methylated C\'s in Unknown context:/ ){
+      (undef,$meth_unknown) = split /\t/;
+      # warn "meth Unknown >> $meth_unknown <<\n" ;
+    }
+
+    elsif($_ =~ /^Total unmethylated C\'s in CpG context:/ or $_ =~ /^Total C to T conversions in CpG context:/){
+      (undef,$unmeth_CpG) = split /\t/;
+      # warn "unmeth CpG >> $unmeth_CpG <<\n" ;
+    }
+    elsif($_ =~ /^Total unmethylated C\'s in CHG context:/ or $_ =~ /^Total C to T conversions in CHG context:/){
+      (undef,$unmeth_CHG) = split /\t/;
+      # warn "unmeth CHG >> $unmeth_CHG <<\n" ;
+    }
+    elsif($_ =~ /^Total unmethylated C\'s in CHH context:/ or $_ =~ /^Total C to T conversions in CHH context:/){
+      (undef,$unmeth_CHH) = split /\t/;
+      # warn "unmeth CHH >> $unmeth_CHH <<\n";
+    }
+    elsif($_ =~ /^Total unmethylated C\'s in Unknown context:/ or $_ =~ /^Total C to T conversions in Unknown context:/){
+      (undef,$unmeth_unknown) = split /\t/;
+      # warn "unmeth Unknown >> $unmeth_unknown <<\n" ;
+    }
+
+    ### Strand Origin
+
+    elsif($_ =~ /^CT\/GA\/CT:/ ){             ## Paired-end
+      (undef,$number_OT) = split /\t/;
+      # warn "Number OT PE>> $number_OT <<\n" ;
+    }
+    elsif($_ =~ /^CT\/CT:/ ){                 ## Single-end
+      (undef,$number_OT) = split /\t/;
+      # warn "Number OT SE>> $number_OT <<\n" ;
+    }
+
+    elsif($_ =~ /^GA\/CT\/CT:/ ){             ## Paired-end
+      (undef,$number_CTOT) = split /\t/;
+      # warn "Number CTOT PE >> $number_CTOT <<\n" ;
+    }
+    elsif($_ =~ /^GA\/CT:/ ){                 ## Single-end
+      (undef,$number_CTOT) = split /\t/;
+      # warn "Number CTOT SE >> $number_CTOT <<\n" ;
+    }
+
+    elsif($_ =~ /^GA\/CT\/GA:/ ){             ## Paired-end
+      (undef,$number_CTOB) = split /\t/;
+      # warn "Number CTOB PE >> $number_CTOB <<\n" ;
+    }
+    elsif($_ =~ /^GA\/GA:/ ){                 ## Single-end
+      (undef,$number_CTOB) = split /\t/;
+      # warn "Number CTOB SE >> $number_CTOB <<\n";
+    }
+
+    elsif($_ =~ /^CT\/GA\/GA:/ ){             ## Paired-end
+      (undef,$number_OB) = split /\t/;
+      # warn "Number OB PE >> $number_OB <<\n";
+    }
+    elsif($_ =~ /^CT\/GA:/ ){                 ## Single-end
+      (undef,$number_OB) = split /\t/;
+      # warn "Number OB SE >> $number_OB <<\n";
+    }
+  }
+
+  $counting{sequences_count}                               += $total_seqs;
+  $counting{unique_best_alignment_count}                   += $unique;
+  $counting{no_single_alignment_found}                     += $no_aln;
+  $counting{unsuitable_sequence_count}                     += $multiple;
+  $counting{genomic_sequence_could_not_be_extracted_count} += $no_genomic;
+
+  $counting{total_meCHH_count}                             += $meth_CHH;
+  $counting{total_meCHG_count}                             += $meth_CHG;
+  $counting{total_meCpG_count}                             += $meth_CpG;
+  if ($bowtie2){
+    $counting{total_meC_unknown_count}                     += $meth_unknown;
+  }
+
+  $counting{total_unmethylated_CHH_count}                  += $unmeth_CHH;
+  $counting{total_unmethylated_CHG_count}                  += $unmeth_CHG;
+  $counting{total_unmethylated_CpG_count}                  += $unmeth_CpG;
+  if ($bowtie2){
+    $counting{total_unmethylated_C_unknown_count}          += $unmeth_unknown;
+  }
+
+  if ($single_end){
+    $counting{CT_CT_count}    += $number_OT;
+    $counting{CT_GA_count}    += $number_OB;
+    $counting{GA_CT_count}    += $number_CTOT;
+    $counting{GA_GA_count}    += $number_CTOB;
+  }
+  else{
+    # paired-end
+    $counting{GA_CT_CT_count} += $number_CTOT;
+    $counting{CT_GA_CT_count} += $number_OT;
+    $counting{GA_CT_GA_count} += $number_CTOB;
+    $counting{CT_GA_GA_count} += $number_OB;
   }
 }
 
+sub merge_individual_ambiguous_files{
+
+  my ($temp_ambiguous,$original_filename,$single_end,$paired_information) = @_;
+  my $ambiguous_file = $original_filename;
+
+  if ($prefix){
+    $ambiguous_file = "${prefix}.${ambiguous_file}";
+  }
+
+  if ($single_end){
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file = "${basename}_ambiguous_reads.fq.gz";
+      }
+      else{
+	$ambiguous_file = "${basename}_ambiguous_reads.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads.fq.gz/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads.fa.gz/;
+      }
+    }
+  }
+  else{ # paired-end
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file = "${basename}_ambiguous_reads${paired_information}.fq.gz";
+      }
+      else{
+	$ambiguous_file = "${basename}_ambiguous_reads${paired_information}.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$ambiguous_file =~ s/$/_ambiguous_reads${paired_information}.fq.gz/;
+      }
+      else{
+	$ambiguous_file =~ s/$/_ambiguous_reads${paired_information}.fa.gz/;
+      }
+    }
+  }
+
+
+  open (AMBIGUOUS,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+  warn "Now merging ambiguous sequences @$temp_ambiguous into >>> $output_dir$ambiguous_file <<<\n";
+
+  foreach my $temp(@$temp_ambiguous){
+    warn "Merging from file >> $temp <<\n";
+    if ($temp =~ /gz$/){
+      open (IN,"zcat $temp |") or die "Failed to read from ambiguous temp file '$temp'\n";
+    }
+    else{
+      open (IN,$temp) or die "Failed to read from ambiguous temp file '$temp'\n";
+    }
+
+    while (<IN>){
+      print AMBIGUOUS;
+    }
+    close IN or warn "Failed to close filehandle\n";
+  }
+  warn "\n";
+
+  close AMBIGUOUS or warn "Failed to close output filehandle AMBIGUOUS\n\n";
+}
+
+
+sub merge_individual_unmapped_files{
+
+  my ($temp_unmapped,$original_filename,$single_end,$paired_information) = @_;
+  my $unmapped_file = $original_filename;
+
+  if ($prefix){
+    $unmapped_file = "${prefix}.${unmapped_file}";
+  }
+
+  if ($single_end){
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file = "${basename}_unmapped_reads.fq.gz";
+      }
+      else{
+	$unmapped_file = "${basename}_unmapped_reads.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file =~ s/$/_unmapped_reads.fq.gz/;
+      }
+      else{
+	$unmapped_file =~ s/$/_unmapped_reads.fa.gz/;
+      }
+    }
+  }
+  else{ # paired-end
+
+    if ($basename){ # Output file basename is set using the -B argument
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file = "${basename}_unmapped_reads${paired_information}.fq.gz";
+      }
+      else{
+	$unmapped_file = "${basename}_unmapped_reads${paired_information}.fa.gz";
+      }
+    }
+    else{
+      if ($sequence_file_format eq 'FASTQ'){
+	$unmapped_file =~ s/$/_unmapped_reads${paired_information}.fq.gz/;
+      }
+      else{
+	$unmapped_file =~ s/$/_unmapped_reads${paired_information}.fa.gz/;
+      }
+    }
+  }
+
+
+  open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+  warn "Now merging unmapped sequences @$temp_unmapped into >>> $output_dir$unmapped_file <<<\n";
+
+  foreach my $temp(@$temp_unmapped){
+    warn "Merging from file >> $temp <<\n";
+    if ($temp =~ /gz$/){
+      open (IN,"zcat $temp |") or die "Failed to read from unmapped temp file '$temp'\n";
+    }
+    else{
+      open (IN,$temp) or die "Failed to read from unmapped temp file '$temp'\n";
+    }
+
+    while (<IN>){
+      print UNMAPPED;
+    }
+    close IN or warn "Failed to close filehandle\n";
+  }
+  warn "\n";
+
+  close UNMAPPED or warn "Failed to close output filehandle UNMAPPED\n\n";
+}
+
+
+sub merge_individual_BAM_files{
+
+  my ($tempbam,$original_filename,$single_end) = @_;
+  my $merged_name = $original_filename;
+
+  if ($prefix){
+    $merged_name = "$prefix.$merged_name";
+  }
+
+  if ($single_end){
+    if ($bowtie2){ # BAM format is the default for Bowtie 2
+      $merged_name .= '_bismark_bt2.bam';
+    }
+    else{          # BAM is the default output
+      $merged_name .= '_bismark.bam';
+    }
+
+    if ($basename){ # Output file basename is set using the -B argument
+      $merged_name = "${basename}.bam";
+    }
+  }
+  else{
+    if ($bowtie2){ # BAM format is the default for Bowtie 2
+      $merged_name .= '_bismark_bt2_pe.bam';
+    }
+    else{          # BAM is the default output
+      $merged_name .= '_bismark_pe.bam';
+    }
+
+    if ($basename){ # Output file basename is set using the -B argument
+      $merged_name = "${basename}_pe.bam";
+    }
+  }
+
+  warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
+  open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
+  my $first = 0;
+
+  foreach my $temp_bam(@$tempbam){
+    warn "Merging from file >> $temp_bam <<\n";
+    if ($first > 0){
+      open (IN,"$samtools_path view $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+    }
+    else{ # only for the first file we print the header as well
+      open (IN,"$samtools_path view -h $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+    }
+
+    while (<IN>){
+      print OUT;
+    }
+    close IN or warn "Failed to close filehandle\n";
+    ++$first;
+  }
+  warn "\n";
+
+  close OUT or warn "Failed to close output filehandle\n\n";
+}
+
 sub start_methylation_call_procedure_single_ends {
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+  my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
   my ($dir,$filename);
 
   if ($sequence_file =~ /\//){
@@ -379,7 +1299,7 @@ sub start_methylation_call_procedure_single_ends {
     }
 
     open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
-    print "Unmapped sequences will be written to $output_dir$unmapped_file\n";
+    warn "Unmapped sequences will be written to $output_dir$unmapped_file\n";
   }
 
   if ($ambiguous){
@@ -406,7 +1326,7 @@ sub start_methylation_call_procedure_single_ends {
       }
     }
     open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
-    print "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
+    warn "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
   }
 
   if ($directional){
@@ -439,16 +1359,16 @@ sub start_methylation_call_procedure_single_ends {
 
   ### Input file is in FastA format
   if ($sequence_file_format eq 'FASTA'){
-    process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile);
+    process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
   }
   ### Input file is in FastQ format
   else{
-    process_single_end_fastQ_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile);
+    process_single_end_fastQ_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
   }
 }
 
 sub start_methylation_call_procedure_paired_ends {
-  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
 
   my ($dir_1,$filename_1);
 
@@ -635,44 +1555,50 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### Input files are in FastA format
   if ($sequence_file_format eq 'FASTA'){
-    process_fastA_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+    process_fastA_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
   }
   ### Input files are in FastQ format
   else{
-    process_fastQ_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+    process_fastQ_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
   }
 }
 
 sub print_final_analysis_report_single_end{
-  my ($C_to_T_infile,$G_to_A_infile) = @_;
-  ### All sequences from the original sequence file have been analysed now
-  ### deleting temporary C->T or G->A infiles
+  my ($C_to_T_infile,$G_to_A_infile,$pid,$merge_multi) = @_;
 
-  if ($directional){
-    my $deletion_successful =  unlink "$temp_dir$C_to_T_infile";
-    if ($deletion_successful == 1){
-      warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile\n\n";
-    }
-    else{
-      warn "Could not delete temporary file $C_to_T_infile properly $!\n";
-    }
-  }
-  elsif ($pbat){
-    my $deletion_successful =  unlink "$temp_dir$G_to_A_infile";
-    if ($deletion_successful == 1){
-      warn "\nSuccessfully deleted the temporary file $temp_dir$G_to_A_infile\n\n";
-    }
-    else{
-      warn "Could not delete temporary file $G_to_A_infile properly $!\n";
-    }
+  if ($merge_multi){
+    warn "Printing a final merged alignment report for all individual sub-reports\n\n";
   }
   else{
-    my $deletion_successful =  unlink "$temp_dir$C_to_T_infile","$temp_dir$G_to_A_infile";
-    if ($deletion_successful == 2){
-      warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile and $temp_dir$G_to_A_infile\n\n";
+    ### All sequences from the original sequence file have been analysed now
+    ### deleting temporary C->T or G->A infiles
+
+    if ($directional){
+      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile";
+      if ($deletion_successful == 1){
+	warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile\n\n";
+      }
+      else{
+	warn "Could not delete temporary file $C_to_T_infile properly $!\n";
+      }
+    }
+    elsif ($pbat){
+      my $deletion_successful =  unlink "$temp_dir$G_to_A_infile";
+      if ($deletion_successful == 1){
+	warn "\nSuccessfully deleted the temporary file $temp_dir$G_to_A_infile\n\n";
+      }
+      else{
+	warn "Could not delete temporary file $G_to_A_infile properly $!\n";
+      }
     }
     else{
-      warn "Could not delete temporary files properly $!\n";
+      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile","$temp_dir$G_to_A_infile";
+      if ($deletion_successful == 2){
+	warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile and $temp_dir$G_to_A_infile\n\n";
+      }
+      else{
+	warn "Could not delete temporary files properly $!\n";
+      }
     }
   }
 
@@ -832,135 +1758,55 @@ sub print_final_analysis_report_single_end{
     warn "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
     print REPORT "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
   }
-
-
-  ###########################################################################################################################################
-  ### create pie-chart with mapping stats
-  ###########################################################################################################################################
-
-
-  my $filename;
-  if ($pbat){
-    $filename = $G_to_A_infile;
-  }
-  else{
-    $filename = $C_to_T_infile;
-  }
-
-  my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
-  $pie_chart =~ s/gz$//;
-  $pie_chart =~ s/_C_to_T\.fastq$//;
-  $pie_chart =~ s/_G_to_A\.fastq$//;
-
-  #  if ($prefix){
-  #    $pie_chart = "$prefix.$pie_chart"; # this is now being taken care of in file transformation
-  # }
-  if ($basename){
-    $pie_chart = "${output_dir}${basename}_bismark_SE.alignment_overview.png";
-  }
-  else{
-    $pie_chart = "${output_dir}${pie_chart}_bismark_SE.alignment_overview.png";
-  }
-
-  #Check whether the module GD::Graph is installed
-  my $gd_graph_installed = 0;
-  eval{
-    require GD::Graph::pie;
-    GD::Graph::pie->import();
-  };
-
-  unless($@) {
-    $gd_graph_installed = 1;
-  }
-  else{
-    warn "Perl module GD::Graph::pie is not installed, skipping graphical alignment summary\n";
-    sleep(2);
-  }
-
-  if ($gd_graph_installed){
-    warn "Generating pie chart\n\n";
-    sleep(1);
-    my $graph = GD::Graph::pie->new(600,600);
-
-    my $percent_unaligned;
-    my $percent_multiple;
-    my $percent_unextractable;
-
-    if ($counting{sequences_count}){
-      $percent_unaligned = sprintf ("%.1f",$counting{no_single_alignment_found}*100/$counting{sequences_count});
-      $percent_multiple = sprintf ("%.1f",$counting{unsuitable_sequence_count}*100/$counting{sequences_count});
-      $percent_unextractable = sprintf ("%.1f",$counting{genomic_sequence_could_not_be_extracted_count}*100/$counting{sequences_count});
-    }
-    else{
-      $percent_unaligned = $percent_multiple = $percent_unextractable = 'N/A';
-    }
-
-    my @aln_stats = (
-		     ["Uniquely aligned $percent_alignable_sequences%","Unaligned $percent_unaligned%","Multiple alignments $percent_multiple%","sequence unextractable $percent_unextractable%"],
-		     [$counting{unique_best_alignment_count},$counting{no_single_alignment_found},$counting{unsuitable_sequence_count},$counting{genomic_sequence_could_not_be_extracted_count}],
-		    );
-
-    $graph->set( 
-		start_angle => 180,
-		'3d' => 0,
-		label => 'Alignment stats (single-end)',
-		suppress_angle => 2,    # Only label slices of sufficient size
-		transparent => 0,
-		dclrs => [ qw(red lorange dgreen cyan) ],
-	       ) or die $graph->error;
-
-    my $gd = $graph->plot(\@aln_stats) or die $graph->error;
-
-    open (PIE,'>',$pie_chart) or die "Failed to write to file for alignments pie chart: $!\n\n";
-    binmode PIE;
-    print PIE $gd->png;
-  }
-
-  warn "====================\nBismark run complete\n====================\n\n";
-
 }
 
 
 sub print_final_analysis_report_paired_ends{
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-  ### All sequences from the original sequence file have been analysed now, therefore deleting temporary C->T or G->A infiles
-  if ($directional){
-    if ($G_to_A_infile_2){
-      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_2";
-      if ($deletion_successful == 2){
-	warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_2\n\n";
-      }
-      else{
-	warn "Could not delete temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_2 properly: $!\n";
-      }
-    }
-    else{ # for paired-end FastQ infiles with Bowtie1 there is only one file to delete
-      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1";
-      if ($deletion_successful == 1){
-	warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile_1\n\n";
-      }
-      else{
-	warn "Could not delete temporary file $temp_dir$C_to_T_infile_1 properly: $!\n";
-      }
-    }
+  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid,$merge_multi) = @_;
+
+  if ($merge_multi){
+    warn "Printing a final merged alignment report for all individual sub-reports\n\n";
   }
   else{
-    if ($G_to_A_infile_2 and $C_to_T_infile_2){
-      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_1","$temp_dir$C_to_T_infile_2","$temp_dir$G_to_A_infile_2";
-      if ($deletion_successful == 4){
-	warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1, $temp_dir$G_to_A_infile_1, $temp_dir$C_to_T_infile_2 and $temp_dir$G_to_A_infile_2\n\n";
+    ### All sequences from the original sequence file have been analysed now, therefore deleting temporary C->T or G->A infiles
+    if ($directional){
+      if ($G_to_A_infile_2){
+	my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_2";
+	if ($deletion_successful == 2){
+	  warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_2\n\n";
+	}
+	else{
+	  warn "Could not delete temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_2 properly: $!\n";
+	}
       }
-      else{
-	warn "Could not delete temporary files properly: $!\n";
+      else{ # for paired-end FastQ infiles with Bowtie1 there is only one file to delete
+	my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1";
+	if ($deletion_successful == 1){
+	  warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile_1\n\n";
+	}
+	else{
+	  warn "Could not delete temporary file $temp_dir$C_to_T_infile_1 properly: $!\n";
+	}
       }
     }
-    else{ # for paired-end FastQ infiles with Bowtie1 there are only two files to delete
-      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_1";
-      if ($deletion_successful == 2){
-	warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_1\n\n";
+    else{
+      if ($G_to_A_infile_2 and $C_to_T_infile_2){
+	my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_1","$temp_dir$C_to_T_infile_2","$temp_dir$G_to_A_infile_2";
+	if ($deletion_successful == 4){
+	  warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1, $temp_dir$G_to_A_infile_1, $temp_dir$C_to_T_infile_2 and $temp_dir$G_to_A_infile_2\n\n";
+	}
+	else{
+	  warn "Could not delete temporary files properly: $!\n";
+	}
       }
-      else{
-	warn "Could not delete temporary files properly: $!\n";
+      else{ # for paired-end FastQ infiles with Bowtie1 there are only two files to delete
+	my $deletion_successful =  unlink "$temp_dir$C_to_T_infile_1","$temp_dir$G_to_A_infile_1";
+	if ($deletion_successful == 2){
+	  warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile_1 and $temp_dir$G_to_A_infile_1\n\n";
+	}
+	else{
+	  warn "Could not delete temporary files properly: $!\n";
+	}
       }
     }
   }
@@ -1110,100 +1956,10 @@ sub print_final_analysis_report_paired_ends{
   print REPORT "\n\n";
   warn "\n\n";
 
-
-  ############################################################################################################################################
-  ### create pie-chart with mapping stats
-  ###########################################################################################################################################
-
-  my $filename;
-  if ($pbat){
-    $filename = $G_to_A_infile_1;
-  }
-  else{
-    $filename = $C_to_T_infile_1;
-  }
-
-  my $pie_chart = (split (/\//,$filename))[-1]; # extracting the filename if a full path was specified
-  $pie_chart =~ s/gz$//;
-  $pie_chart =~ s/_C_to_T.fastq$//;
-  $pie_chart =~ s/_G_to_A.fastq$//;
-  ### special format for gzipped PE Bowtie1 files
-  $pie_chart =~ s/\.CT_plus_GA\.fastq\.$//;
-  $pie_chart =~ s/\.GA_plus_CT\.fastq\.$//;
-
-  if ($prefix){
-    # prefix is now being prepended to the temp files already
-    # $pie_chart = "$prefix.$pie_chart";
-  }
-  if ($basename){
-    $pie_chart = "${output_dir}${basename}_bismark_PE.alignment_overview.png";
-  }
-  else{
-    $pie_chart = "${output_dir}${pie_chart}_bismark_PE.alignment_overview.png";
-  }
-
-  #Check whether the module GD::Graph is installed
-  my $gd_graph_installed = 0;
-  eval{
-    require GD::Graph::pie;
-    GD::Graph::pie->import();
-  };
-
-  unless($@) {
-    $gd_graph_installed = 1;
-  }
-  else{
-    warn "Perl module GD::Graph::pie is not installed, skipping graphical alignment summary\n";
-    sleep(2);
-  }
-
-  if ($gd_graph_installed){
-    warn "Generating pie chart\n\n";
-    sleep(1);
-    my $graph = GD::Graph::pie->new(600,600);
-
-    my $percent_unaligned;
-    my $percent_multiple;
-    my $percent_unextractable;
-
-    if ($counting{sequences_count}){
-      $percent_unaligned = sprintf ("%.1f",$counting{no_single_alignment_found}*100/$counting{sequences_count});
-      $percent_multiple = sprintf ("%.1f",$counting{unsuitable_sequence_count}*100/$counting{sequences_count});
-      $percent_unextractable = sprintf ("%.1f",$counting{genomic_sequence_could_not_be_extracted_count}*100/$counting{sequences_count});
-    }
-    else{
-      $percent_unaligned = $percent_multiple = $percent_unextractable = 'N/A';
-    }
-
-    my @aln_stats = (
-		     ["Uniquely aligned pairs $percent_alignable_sequence_pairs%","Unaligned $percent_unaligned%","Multiple alignments $percent_multiple%","sequence unextractable $percent_unextractable%"],
-		     [$counting{unique_best_alignment_count},$counting{no_single_alignment_found},$counting{unsuitable_sequence_count},$counting{genomic_sequence_could_not_be_extracted_count}],
-		    );
-
-    # push @{$mbias_read1[0]},$pos;
-
-    $graph->set( 
-		start_angle => 180,
-		'3d' => 0,
-		label => 'Alignment stats (paired-end)',
-		suppress_angle => 2,    # Only label slices of sufficient size
-		transparent => 0,
-		dclrs => [ qw(red lorange dgreen cyan) ],
-	       ) or die $graph->error;
-
-    my $gd = $graph->plot(\@aln_stats) or die $graph->error;
-
-    open (PIE,'>',$pie_chart) or die "Failed to write to file for alignments pie chart: $!\n\n";
-    binmode PIE;
-    print PIE $gd->png;
-  }
-
-  warn "====================\nBismark run complete\n====================\n\n";
-
 }
 
 sub process_single_end_fastA_file_for_methylation_call{
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+  my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
   ### this is a FastA sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
   ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
   ### the C->T or G->A version
@@ -1271,13 +2027,13 @@ sub process_single_end_fastA_file_for_methylation_call{
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
 
-  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile);
+  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 
 }
 
 sub process_single_end_fastQ_file_for_methylation_call{
 
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile) = @_;
+  my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
 
   ### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
   ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
@@ -1353,12 +2109,12 @@ sub process_single_end_fastQ_file_for_methylation_call{
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
 
-  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile);
+  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 
 }
 
 sub process_fastA_files_for_paired_end_methylation_calls{
-  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
   ### Processing the two FastA sequence files; we need the actual sequences of both reads to compare them against the genomic sequence in order to
   ### make a methylation call. The sequence idetifier per definition needs to be the same for a sequence pair used for paired-end mapping.
   ### Now reading in the sequence files sequence by sequence and see if the current sequences produced an alignment to one (or both) of the
@@ -1447,12 +2203,12 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
   close OUT or die $!;
 
-  print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+  print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
 
 }
 
 sub process_fastQ_files_for_paired_end_methylation_calls{
-  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
   ### Processing the two Illumina sequence files; we need the actual sequence of both reads to compare them against the genomic sequence in order to
   ### make a methylation call. The sequence identifier per definition needs to be same for a sequence pair used for paired-end alignments.
   ### Now reading in the sequence files sequence by sequence and see if the current sequences produced a paired-end alignment to one (or both)
@@ -1559,7 +2315,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
   close OUT or die $!;
 
-  print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+  print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
 
 }
 
@@ -6474,51 +7230,53 @@ sub process_command_line{
   my $old_flag;
   my $basename;
   my $sam;
+  my $multicore;
 
-  my $command_line = GetOptions ('help|man' => \$help,
-				 '1=s' => \$mates1,
-				 '2=s' => \$mates2,
-				 'path_to_bowtie=s' => \$path_to_bowtie,
-				 'f|fasta' => \$fasta,
-				 'q|fastq' => \$fastq,
-				 's|skip=i' => \$skip,
-				 'u|upto=i' => \$qupto,
-				 'phred33-quals' => \$phred33,
-				 'phred64-quals|solexa1' => \$phred64,
-				 'solexa-quals' => \$solexa,
-				 'n|seedmms=i' => \$mismatches,
-				 'l|seedlen=i' => \$seed_length,
-				 'no_best' => \$best,
-				 'version' => \$version,
-				 'quiet' => \$quiet,
-				 'chunkmbs=i' => \$chunk,
-				 'non_directional' => \$non_directional,
-				 'I|minins=i' => \$minins,
-				 'X|maxins=i' => \$maxins,
-				 'e|maqerr=i' => \$ceiling,
-				 'un|unmapped' => \$unmapped,
-				 'ambiguous' => \$multi_map,
-				 'o|output_dir=s' => \$output_dir,
-				 'bowtie2' => \$bowtie2,
-				 'vanilla' => \$vanilla,
-				 'sam-no-hd' => \$sam_no_hd,
-				 'D=i' => \$seed_extension_fails,
-				 'R=i' => \$reseed_repetitive_seeds,
-				 'score_min=s' => \$score_min,
+  my $command_line = GetOptions ('help|man'                => \$help,
+				 '1=s'                     => \$mates1,
+				 '2=s'                     => \$mates2,
+				 'path_to_bowtie=s'        => \$path_to_bowtie,
+				 'f|fasta'                 => \$fasta,
+				 'q|fastq'                 => \$fastq,
+				 's|skip=i'                => \$skip,
+				 'u|upto=i'                => \$qupto,
+				 'phred33-quals'           => \$phred33,
+				 'phred64-quals|solexa1'   => \$phred64,
+				 'solexa-quals'            => \$solexa,
+				 'n|seedmms=i'             => \$mismatches,
+				 'l|seedlen=i'             => \$seed_length,
+				 'no_best'                 => \$best,
+				 'version'                 => \$version,
+				 'quiet'                   => \$quiet,
+				 'chunkmbs=i'              => \$chunk,
+				 'non_directional'         => \$non_directional,
+				 'I|minins=i'              => \$minins,
+				 'X|maxins=i'              => \$maxins,
+				 'e|maqerr=i'              => \$ceiling,
+				 'un|unmapped'             => \$unmapped,
+				 'ambiguous'               => \$multi_map,
+				 'o|output_dir=s'          => \$output_dir,
+				 'bowtie2'                 => \$bowtie2,
+				 'vanilla'                 => \$vanilla,
+				 'sam-no-hd'               => \$sam_no_hd,
+				 'D=i'                     => \$seed_extension_fails,
+				 'R=i'                     => \$reseed_repetitive_seeds,
+				 'score_min=s'             => \$score_min,
 				 'most_valid_alignments=i' => \$most_valid_alignments,
-				 'p=i' => \$parallel,
-				 'temp_dir=s' => \$temp_dir,
-				 'rdg=s' => \$rdg,
-				 'rfg=s' => \$rfg,
-				 'non_bs_mm' => \$non_bs_mm,
-				 'samtools_path=s' => \$samtools_path,
-				 'bam' => \$bam,
-				 'gzip' => \$gzip,
-				 'pbat' => \$pbat,
-				 'prefix=s' => \$prefix,
-				 'old_flag' => \$old_flag,
-				 'B|basename=s' => \$basename,
-				 'sam' => \$sam,
+				 'p=i'                     => \$parallel,
+				 'temp_dir=s'              => \$temp_dir,
+				 'rdg=s'                   => \$rdg,
+				 'rfg=s'                   => \$rfg,
+				 'non_bs_mm'               => \$non_bs_mm,
+				 'samtools_path=s'         => \$samtools_path,
+				 'bam'                     => \$bam,
+				 'gzip'                    => \$gzip,
+				 'pbat'                    => \$pbat,
+				 'prefix=s'                => \$prefix,
+				 'old_flag'                => \$old_flag,
+				 'B|basename=s'            => \$basename,
+				 'sam'                     => \$sam,
+				 'multicore=i'             => \$multicore,
 				);
 
 
@@ -7212,7 +7970,21 @@ VERSION
     sleep(1);
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present);
+  if (defined $multicore){
+    unless ($multicore > 0){
+      die "Core usage needs to be set to 1 or more (currently selected $multicore). Please respecify!\n";
+    }
+    if ($multicore > 20){
+      warn "Core usage currently set to more than 20 threads. This might fail horribly but let's see how it goes... (set value: $multicore)\n\n";
+    }
+  }
+  else{
+    $multicore = 1; # default. Single-thread mode
+    warn "Setting parallelization to single-threaded (default)\n\n";
+  }
+
+
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore);
 }
 
 
@@ -8482,6 +9254,23 @@ Alignment:
                          60-bp gap between them, that alignment is considered valid (as long as -I is also satisfied).
                          A 61-bp gap would not be valid in that case. Default: 500.
 
+--multicore <int>        Sets the number of parallel instances of Bismark to be run concurrently. This forks the
+                         Bismark alignment step very early on so that each individual Spawn of Bismark processes
+                         only every n-th sequence (n being set by --multicore). Once all processes have completed,
+                         the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged
+                         into single files in very much the same way as they would have been generated running Bismark
+                         conventionally with only a single instance.
+
+                         If system resources are plentiful this is a viable option to speed up the alignment process
+                         (we observed a near linear speed increase for up to --multicore 8 tested). However, please note
+                         that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads of
+                         Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory depending on the choice of aligner
+                         and genome. WARNING: Bismark Parallel (BP?) is resource hungry! Each value of --multicore specified
+                         will effectively lead to a linear increase in compute and memory requirements, so --multicore 4 for
+                         e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~40GB or RAM, but at the same time
+                         reduce the alignment time to ~25-30%. You have been warned.
+
+
 
 Bowtie 1 Reporting:
 
@@ -8761,7 +9550,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 04 February 2014.
+Last edited on 05 March 2014.
 
 HOW_TO
 }

@@ -20,7 +20,7 @@ use Getopt::Long;
 ### 8 Jan 2015
 ### to detect paired-end command from the @PG line we are no requiring spaces before and after the -1 or -2
 
-my $dedup_version = 'v0.13.2';
+my $dedup_version = 'v0.14.0';
 
 
 my $help;
