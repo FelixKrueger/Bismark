@@ -1,3 +1,16 @@
+RELEASE NOTES FOR Bismark v0.14.1 (06 Mar 2015)
+-----------------------------------------------
+
+
+deduplicate_bismark 
+===================
+
+Now also removing newline characters from the read conversion tag in case other programs interfered
+with the line ordering and put this tag into the very last column.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.14.0 (06 Mar 2015)
 -----------------------------------------------
 

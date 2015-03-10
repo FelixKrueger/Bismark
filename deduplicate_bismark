@@ -20,7 +20,10 @@ use Getopt::Long;
 ### 8 Jan 2015
 ### to detect paired-end command from the @PG line we are no requiring spaces before and after the -1 or -2
 
-my $dedup_version = 'v0.14.0';
+### 09 Mar 2015
+### Removin newline characters also from the read conversion flag in case the tags had been reordered and are now present in the very last column
+
+my $dedup_version = 'v0.14.1';
 
 
 my $help;
@@ -317,8 +320,8 @@ foreach my $file (@filenames){
       ### if this was a SAM file we ignore header lines
       unless ($vanilla){
 	if (/^\@\w{2}\t/){
-	  warn "skipping SAM header line:\t$_";
-	  print OUT; # Printing the header lines again into the de-duplicated file
+	  print "skipping header line:\t$_";
+	  print OUT "$_"; # Printing the header lines again into the de-duplicated file
 	  next;
 	}
       }
@@ -395,6 +398,7 @@ foreach my $file (@filenames){
 	    if ($tag eq "XR") {
 	      $read_conversion = $value;
 	      $read_conversion =~ s/\r//;
+	      chomp $read_conversion;
 	    } elsif ($tag eq "XG") {
 	      $genome_conversion = $value;
 	      $genome_conversion =~ s/\r//;
@@ -520,10 +524,10 @@ foreach my $file (@filenames){
       else{
 	if ($paired){
 	  unless ($vanilla){
-	    print OUT $line1; # printing first paired-end line for SAM output
+	    print OUT "$line1"; # printing first paired-end line for SAM output
 	  }
 	}
-	print OUT; # printing single-end SAM alignment or second paired-end line
+	print OUT "$_"; # printing single-end SAM alignment or second paired-end line
 	$unique_seqs{$composite}++;
       }
     }
@@ -701,6 +705,7 @@ sub deduplicate_barcoded_rrbs{
 	if ($tag eq "XR") {
 	  $read_conversion = $value;
 	  $read_conversion =~ s/\r//;
+	  chomp $read_conversion;
 	}
 	elsif ($tag eq "XG") {
 	  $genome_conversion = $value;
@@ -875,7 +880,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on Jan 16, 2015\n\n";
+  print "This script was last modified on Marcg 10, 2015\n\n";
 }
 
 
