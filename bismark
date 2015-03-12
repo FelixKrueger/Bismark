@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.0';
+my $bismark_version = 'v0.14.1';
 my $command_line = join (" ",@ARGV);
 
 
@@ -591,45 +591,90 @@ foreach my $filename (@filenames){
 	if ($single_end){
 	
 	  if ($bowtie2){
-	    push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
-	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+	    if ($gzip){
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_bt2.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_bt2_SE_report.txt";
+	    }
+	    else{
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+	    }
 	  }
 	  else{
-	    push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark.bam";
-	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
+	    if ($gzip){
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_SE_report.txt";
+	    }
+	    else{
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
+	    }
 	  }
-
-	  if ($unmapped){	 
-	    push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename}.temp.${_}_unmapped_reads.fq";
+	
+	  if ($unmapped){
+	    if ($gzip){
+	      push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_unmapped_reads.fq";
+	    }
+	    else{
+	      push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename}.temp.${_}_unmapped_reads.fq";
+  	    }
 	  }
 
 	  if ($ambiguous){
-	    push @temp_ambiguous_1,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
+	    if ($gzip){
+	      push @temp_ambiguous_1,  "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_ambiguous_reads.fq";
+	    }
+	    else{
+	      push @temp_ambiguous_1,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
+	    }
 	  }
 	
 	}
 	elsif($paired_end){
 	  if ($bowtie2){
-	    push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
-	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+	    if ($gzip){
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_bt2_pe.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_bt2_PE_report.txt";
+	    }
+	    else{
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+	    }
 	  }
 	  else{
-	    push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_pe.bam";
-	    push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_PE_report.txt";
+	    if ($gzip){
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_pe.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_PE_report.txt";
+	    }
+	    else{
+	      push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_pe.bam";
+	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_PE_report.txt";
+	    }
 	  }
 
 	  if ($unmapped){
-	    push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
-	    push @temp_unmapped_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
+	    if ($gzip){
+	      push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_unmapped_reads_1.fq";
+	      push @temp_unmapped_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}.gz_unmapped_reads_2.fq";
+	    }
+	    else{
+	      push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_unmapped_reads_1.fq";
+	      push @temp_unmapped_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_unmapped_reads_2.fq";
+	    }
 	  }
 
 	  if ($ambiguous){
-	    push @temp_ambiguous_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
-	    push @temp_ambiguous_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+	    if ($gzip){
+	      push @temp_ambiguous_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_ambiguous_reads_1.fq";
+	      push @temp_ambiguous_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}.gz_ambiguous_reads_2.fq";
+	    }
+	    else{
+	      push @temp_ambiguous_1,   "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+	      push @temp_ambiguous_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+	    }
 	  }
-
-	}
 	
+	}
       }
 
       warn "\n\nRight, cleaning up now...\n\n";
@@ -654,7 +699,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary BAM files...\n";
       foreach my $temp (@temp_output){
 	print "$temp\t";
-	unlink "$temp" or warn "Failed to delete temporary FastQ file $temp: $!\n";
+	unlink "$temp" or warn "Failed to delete temporary BAM file $temp: $!\n";
       }
       print "\n\n";
 
@@ -728,6 +773,7 @@ foreach my $filename (@filenames){
 	unlink "${temp}" or warn "Failed to delete temporary report file $temp: $!\n";
       }
       print "\n\n";
+
     }
 
   }
@@ -9550,7 +9596,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 05 March 2014.
+Last edited on 12 March 2014.
 
 HOW_TO
 }
