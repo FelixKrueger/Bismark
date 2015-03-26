@@ -1,5 +1,10 @@
-RELEASE NOTES FOR Bismark v0.14.1 (06 Mar 2015)
+RELEASE NOTES FOR Bismark v0.14.1 (13 Mar 2015)
 -----------------------------------------------
+
+Bismark
+=======
+
+Fixed the cleaning up stage ina --multicore run when --gzip had been specified as well.
 
 
 deduplicate_bismark 

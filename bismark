@@ -9398,7 +9398,7 @@ Output:
                          files. This option might be somewhat slower than writing out uncompressed files, but this awaits
                          further testing.
 
---sam                    The output will be written out in SAM format instead of the default SAM format. Bismark will
+--sam                    The output will be written out in SAM format instead of the default BAM format. Bismark will
                          attempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't
                          been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,
                          the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
