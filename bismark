@@ -8029,6 +8029,9 @@ VERSION
     warn "Setting parallelization to single-threaded (default)\n\n";
   }
 
+  if ($basename and $multicore > 1){
+    die "Specifying --basename in conjuction with --multicore is currently not supported (but we are aiming to fix this soon). Please lose either --basename or --multicore to proceed\n\n";
+  }
 
   return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore);
 }
@@ -9596,7 +9599,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 12 March 2014.
+Last edited on 26 March 2015.
 
 HOW_TO
 }

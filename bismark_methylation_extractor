@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.14.0';
+my $version = 'v0.14.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -1727,7 +1727,7 @@ sub process_Bismark_results_file{
 	  ###  INGORE 3' END  ###
 	  #######################
 	
-	  # Clipping off the first <int> number of bases from the methylation call string as specified with --ignore <int>
+	  # Clipping off the last <int> number of bases from the methylation call string as specified with --ignore_3prime <int>
 	  if ($ignore_3prime) {
 	    # warn "$meth_call\n";
 	    $meth_call = substr($meth_call,0, (length($meth_call)) - $ignore_3prime);	
@@ -1789,16 +1789,10 @@ sub process_Bismark_results_file{
 	
 	      }
 
-	      # here we need to discriminate if the start has been adjusted because of --ignore or not
-	      if ($ignore){
-		# the start position has already been modified for --ignore already, so we don't have to adjust the position again now
-	      }
-	      else{
-		# Here we need to add the length ignore_3prime to the read starting position
-		#  adjustment of the true starting position of this reverse read will take place later in the methylation extraction step
-		$start += $ignore_3prime + $D_count - $I_count;
-	      }
-
+	      # Here we need to add the length ignore_3prime to the read starting position
+	      # adjustment of the true starting position of this reverse read will take place later in the methylation extraction step
+	      $start += $ignore_3prime + $D_count - $I_count;
+	
 	    }
 	
 	    ### reconstituting shortened CIGAR string
@@ -2296,15 +2290,9 @@ sub process_Bismark_results_file{
 		# print "Final truncated CIGAR string reverse_read:\n";
 		# print join ("",@comp_cigar_1),"\n";
 		
-		# here we need to discriminate if the start has been adjusted because of --ignore or not
-		if ($ignore){
-		  # the start position of read 1 has already been modified for --ignore already, so we don't have to adjust the position again now
-		}
-		else{
-		  # Here we need to add the length ignore_3prime to the read starting position
-		  # adjustment of the true start position of this reverse read will take place later in the methylation extraction step
-		  $start_read_1 += $ignore_3prime + $D_count_1 - $I_count_1;
-		}
+		# Here we need to add the length ignore_3prime to the read starting position
+		# adjustment of the true start position of this reverse read will take place later in the methylation extraction step
+		$start_read_1 += $ignore_3prime + $D_count_1 - $I_count_1;
 		
 	      }
 	    }

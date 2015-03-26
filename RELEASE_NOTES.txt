@@ -14,6 +14,12 @@ Now also removing newline characters from the read conversion tag in case other 
 with the line ordering and put this tag into the very last column.
 
 
+Methylation_extractor
+=====================
+
+Fixed a bug with paired-end reads when the reads should have been trimmed from their 3' ends (option
+--ignore_3prime). Thanks to V. Brendel for spotting this!
+
 
 
 RELEASE NOTES FOR Bismark v0.14.0 (06 Mar 2015)
