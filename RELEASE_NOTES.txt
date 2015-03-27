@@ -1,24 +1,30 @@
-RELEASE NOTES FOR Bismark v0.14.1 (13 Mar 2015)
+RELEASE NOTES FOR Bismark v0.14.1 (27 Mar 2015)
 -----------------------------------------------
 
 Bismark
 =======
 
-Fixed the cleaning up stage ina --multicore run when --gzip had been specified as well.
+Fixed the cleaning up stage in a --multicore run when --gzip had been specified as well.
+
+Fixed the handling of files in a --multicore run when the input files had been specified including 
+file path information.
 
 
 deduplicate_bismark 
 ===================
 
 Now also removing newline characters from the read conversion tag in case other programs interfered
-with the line ordering and put this tag into the very last column.
+with the tag ordering and put this tag into the very last column.
 
 
 Methylation_extractor
 =====================
 
 Fixed a bug with paired-end reads when the reads should have been trimmed from their 3' ends (option
---ignore_3prime). Thanks to V. Brendel for spotting this!
+--ignore_3prime). More specifically the position of reads on the - strand wasn't adjusted appropriately 
+when the read had been trimmed from its 3' end, which would result in offset methylation call positions.
+Thanks to V. Brendel for spotting this!
+
 
 
 

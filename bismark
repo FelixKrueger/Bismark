@@ -49,7 +49,7 @@ my $seqID_contains_tabs;
 my $verbose = 0;
 
 if ($multicore > 1){
-  warn "Running Bismark Parallel version. Number of cores to parallel instances to be spawned: $multicore\n\n";
+  warn "Running Bismark Parallel version. Number of parallel instances to be spawned: $multicore\n\n";
 }
 
 
@@ -123,6 +123,7 @@ sub subset_input_file_FastQ{
   # warn "offset is $offset\n";
   my $temp = $filename;
   $temp .= ".temp.$offset";
+  $temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
 
   if ($gzip){
     $temp .= '.gz';
@@ -131,8 +132,6 @@ sub subset_input_file_FastQ{
   else{
     open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
   }
-
-  warn "Writing temporary infile to $temp\n";
 
   my $line_count = 0;
 
