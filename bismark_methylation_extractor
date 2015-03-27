@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.14.1';
+my $version = 'v0.14.2';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -2339,19 +2339,12 @@ sub process_Bismark_results_file{
 		
 		# print "Final truncated CIGAR string 2 (+ alignment):\n";
 		# print join ("",@comp_cigar_2),"\n";
-
-		# here we need to discriminate if the start has been adjusted because of --ignore_r2 or not
-		if ($ignore_r2){
-		  # the start position of read 2 has already been modified for --ignore_r2 already, so we don't have to adjust the position again now
-		}
-		else{
-		  # Here we need to add the length ignore_3prime_r2 to the read starting position
-		  # adjustment of the true start position of this reverse read will take place later in the methylation extraction step
-		  $start_read_2 += $ignore_3prime_r2 + $D_count_2 - $I_count_2;
-		}
-
-		# print "start read 2 $start_read_2\t ignore R2: $ignore_r2\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
 		
+		# Here we need to add the length ignore_3prime_r2 to the read starting position
+		# adjustment of the true start position of this reverse read will take place later in the methylation extraction step
+		$start_read_2 += $ignore_3prime_r2 + $D_count_2 - $I_count_2;
+		
+		# print "start read 2 $start_read_2\t ignore R2: $ignore_r2\t D count 2: $D_count_2\tI_count 2: $I_count_2\n";
 	      }
 	      elsif ($strand eq '-') {
 		### if the (read 1) strand information is '-', clipping the 3' end of read 2 does not affect its starting position (forward strand alignment)
