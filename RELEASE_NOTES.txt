@@ -1,3 +1,25 @@
+RELEASE NOTES FOR Bismark v0.14.3 (21 Apr 2015)
+-----------------------------------------------
+
+Bismark
+=======
+
+Changed the renaming settings for paired-end files so that 'sam' within the filename no longer gets
+renamed to 'bam' (e.g. smallsample -> smallbample).
+
+
+
+RELEASE NOTES FOR Bismark v0.14.2 (27 Mar 2015)
+-----------------------------------------------
+
+Methylation Extractor
+=====================
+
+Added a bug fix for the same issue as in 0.14.1 that was overlooked in the earlier release. Apologies
+
+
+
+
 RELEASE NOTES FOR Bismark v0.14.1 (27 Mar 2015)
 -----------------------------------------------
 

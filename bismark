@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.1';
+my $bismark_version = 'v0.14.3';
 my $command_line = join (" ",@ARGV);
 
 
@@ -681,7 +681,9 @@ foreach my $filename (@filenames){
       # deleting temp files;
       warn "Deleting temporary sequence files...\n";
       foreach my $temp (@temp_input){
-	print "$temp\t";
+	#print "$temp\t";
+	$temp =~ s/.*\///; # deleting path information
+	print "${temp_dir}${temp}\t";
 	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp: $!\n";
       }
       print "\n\n";
@@ -697,8 +699,10 @@ foreach my $filename (@filenames){
       # deleting temp BAM files
       warn "Deleting temporary BAM files...\n";
       foreach my $temp (@temp_output){
-	print "$temp\t";
-	unlink "$temp" or warn "Failed to delete temporary BAM file $temp: $!\n";
+	# print "$temp\t";
+	$temp =~ s/.*\///; # deleting path information
+	print "${output_dir}${temp}\t";
+	unlink "${output_dir}${temp}" or warn "Failed to delete temporary BAM file ${output_dir}${temp}: $!\n";
       }
       print "\n\n";
 
@@ -715,12 +719,12 @@ foreach my $filename (@filenames){
 	warn "Deleting temporary unmapped files...\n";
 	foreach my $temp (@temp_unmapped_1){
 	  print "$temp\t";
-	  unlink "${temp}" or warn "Failed to delete temporary unmapped FastQ file $temp: $!\n";
+	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp: $!\n";
 	}
 	if ($paired_end){
 	  foreach my $temp (@temp_unmapped_2){
 	    print "$temp\t";
-	    unlink "${temp}" or warn "Failed to delete temporary unmapped FastQ file $temp: $!\n";
+	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp: $!\n";
 	  }
 	}
 	print "\n\n";
@@ -740,13 +744,13 @@ foreach my $filename (@filenames){
 	warn "Deleting temporary ambiguous files...\n";
 	foreach my $temp (@temp_ambiguous_1){
 	  print "$temp\t";
-	  unlink "${temp}" or warn "Failed to delete temporary ambiguous FastQ file $temp: $!\n";
+	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp: $!\n";
 	}
 
 	if ($paired_end){
 	  foreach my $temp (@temp_ambiguous_2){
 	    print "$temp\t";
-	    unlink "${temp}" or warn "Failed to delete temporary ambiguous FastQ file $temp: $!\n";
+	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp: $!\n";
 	  }
 	}
 	print "\n\n";
@@ -769,7 +773,7 @@ foreach my $filename (@filenames){
       warn "Deleting temporary report files...\n";
       foreach my $temp (@temp_reports){
 	print "$temp\t";
-	unlink "${temp}" or warn "Failed to delete temporary report file $temp: $!\n";
+	unlink "${output_dir}${temp}" or warn "Failed to delete temporary report file $output_dir$temp: $!\n";
       }
       print "\n\n";
 
@@ -787,7 +791,7 @@ sub merge_individual_splitting_reports{
 
   my ($temp_reports,$original_filename_1,$single_end,$original_filename_2) = @_;
   my $report_file = $original_filename_1;
-
+  $report_file =~ s/.*\///; # removing path information
   if ($prefix){
     $report_file = "${prefix}.${report_file}";
   }
@@ -812,9 +816,14 @@ sub merge_individual_splitting_reports{
       $report_file .= '_bismark_PE_report.txt';
     }
   }
+  warn "Writing report to ${output_dir}${report_file}\n";
+  open (REPORT,'>',"$output_dir$report_file") or die "Failed to write to ${output_dir}${report_file}: $!\n";
 
-  open (REPORT,'>',"$output_dir$report_file") or die "Failed to write to $report_file: $!\n";
-  warn "Now merging temporary reports @$temp_reports into >>> ${output_dir}$report_file <<<\n";
+  foreach my $temp(@$temp_reports){
+    $temp =~ s/.*\///; # removing path information
+  }
+
+  warn "Now merging temporary reports @$temp_reports into >>> ${output_dir}${report_file} <<<\n";
 
   if ($single_end){
     print REPORT "Bismark report for: $original_filename_1 (version: $bismark_version)\n";
@@ -827,9 +836,10 @@ sub merge_individual_splitting_reports{
   my $first = 0;
 
   foreach my $temp(@$temp_reports){
+    # $temp =~ s/.*\///; # removing path information
 
     warn "Merging from file >> $temp <<\n";
-    open (IN,$temp) or die "Failed to read from temporary mapping report '$temp'\n";
+    open (IN,"${output_dir}${temp}") or die "Failed to read from temporary mapping report '${output_dir}${temp}'\n";
 
     ### this is printing the first couple of lines
     while (<IN>){
@@ -883,7 +893,7 @@ sub read_alignment_report{
   my $number_CTOB;
   my $number_OB;
 
-  open (ALN,$report) or die "Failed to read from temporary mapping report '$report'\n";
+  open (ALN,"${output_dir}${report}") or die "Failed to read from temporary mapping report '$output_dir$report'\n";
 
   while (<ALN>){
     chomp;
@@ -1052,6 +1062,7 @@ sub merge_individual_ambiguous_files{
 
   my ($temp_ambiguous,$original_filename,$single_end,$paired_information) = @_;
   my $ambiguous_file = $original_filename;
+  $ambiguous_file =~ s/.*\///; # removing path information
 
   if ($prefix){
     $ambiguous_file = "${prefix}.${ambiguous_file}";
@@ -1096,6 +1107,9 @@ sub merge_individual_ambiguous_files{
     }
   }
 
+  foreach my $temp(@$temp_ambiguous){
+    $temp =~ s/.*\///; # removing path information
+  }
 
   open (AMBIGUOUS,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
   warn "Now merging ambiguous sequences @$temp_ambiguous into >>> $output_dir$ambiguous_file <<<\n";
@@ -1103,10 +1117,10 @@ sub merge_individual_ambiguous_files{
   foreach my $temp(@$temp_ambiguous){
     warn "Merging from file >> $temp <<\n";
     if ($temp =~ /gz$/){
-      open (IN,"zcat $temp |") or die "Failed to read from ambiguous temp file '$temp'\n";
+      open (IN,"zcat ${output_dir}$temp |") or die "Failed to read from ambiguous temp file '${output_dir}$temp'\n";
     }
     else{
-      open (IN,$temp) or die "Failed to read from ambiguous temp file '$temp'\n";
+      open (IN,"${output_dir}$temp") or die "Failed to read from ambiguous temp file '${output_dir}$temp'\n";
     }
 
     while (<IN>){
@@ -1124,6 +1138,7 @@ sub merge_individual_unmapped_files{
 
   my ($temp_unmapped,$original_filename,$single_end,$paired_information) = @_;
   my $unmapped_file = $original_filename;
+  $unmapped_file =~ s/.*\///; # removing path information
 
   if ($prefix){
     $unmapped_file = "${prefix}.${unmapped_file}";
@@ -1168,17 +1183,20 @@ sub merge_individual_unmapped_files{
     }
   }
 
+  foreach my $temp(@$temp_unmapped){
+    $temp =~ s/.*\///; # removing path information
+  }
 
-  open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
-  warn "Now merging unmapped sequences @$temp_unmapped into >>> $output_dir$unmapped_file <<<\n";
+  open (UNMAPPED,"| gzip -c - > ${output_dir}${unmapped_file}") or die "Failed to write to ${output_dir}${unmapped_file}: $!\n";
+  warn "Now merging unmapped sequences @$temp_unmapped into >>> ${output_dir}${unmapped_file} <<<\n";
 
   foreach my $temp(@$temp_unmapped){
     warn "Merging from file >> $temp <<\n";
     if ($temp =~ /gz$/){
-      open (IN,"zcat $temp |") or die "Failed to read from unmapped temp file '$temp'\n";
+      open (IN,"zcat ${output_dir}${temp} |") or die "Failed to read from unmapped temp file '${output_dir}$temp'\n";
     }
     else{
-      open (IN,$temp) or die "Failed to read from unmapped temp file '$temp'\n";
+      open (IN,"${output_dir}${temp}") or die "Failed to read from unmapped temp file '${output_dir}${temp}'\n";
     }
 
     while (<IN>){
@@ -1196,6 +1214,14 @@ sub merge_individual_BAM_files{
 
   my ($tempbam,$original_filename,$single_end) = @_;
   my $merged_name = $original_filename;
+
+  # warn "merged name is: $merged_name\n";
+  $merged_name =~ s/.*\///; # deleting path information
+  # warn "merged name is: $merged_name\n"; sleep(1);
+
+  foreach my $temp_bam(@$tempbam){
+    $temp_bam =~ s/.*\///; # deleting path information
+  }
 
   if ($prefix){
     $merged_name = "$prefix.$merged_name";
@@ -1231,12 +1257,15 @@ sub merge_individual_BAM_files{
   my $first = 0;
 
   foreach my $temp_bam(@$tempbam){
+    # $temp_bam =~ s/.*\///; # deleting path information
+
     warn "Merging from file >> $temp_bam <<\n";
+
     if ($first > 0){
-      open (IN,"$samtools_path view $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+      open (IN,"$samtools_path view ${output_dir}${temp_bam} |") or die "Failed to read from BAM file ${output_dir}${temp_bam}\n";
     }
     else{ # only for the first file we print the header as well
-      open (IN,"$samtools_path view -h $temp_bam |") or die "Failed to read from BAM file $temp_bam\n";
+      open (IN,"$samtools_path view -h ${output_dir}${temp_bam} |") or die "Failed to read from BAM file ${output_dir}${temp_bam}\n";
     }
 
     while (<IN>){
@@ -1457,7 +1486,7 @@ sub start_methylation_call_procedure_paired_ends {
   $bam = 0 unless (defined $bam);
 
   if ($bam == 1){ ### Samtools is installed, writing out BAM directly
-    $outfile =~ s/sam/bam/;
+    $outfile =~ s/sam$/bam/;
     open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
