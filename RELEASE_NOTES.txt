@@ -1,11 +1,30 @@
-RELEASE NOTES FOR Bismark v0.14.3 (21 Apr 2015)
+RELEASE NOTES FOR Bismark v0.14.3 (06 May 2015)
 -----------------------------------------------
 
 Bismark
 =======
 
 Changed the renaming settings for paired-end files so that 'sam' within the filename no longer gets
-renamed to 'bam' (e.g. smallsample -> smallbample).
+renamed to 'bam' (e.g. smallsample.sam -> smallbample.sam).
+
+Input files specified with filepath information are now handled properly in --multicore runs. 
+
+The --multicore option currently requires the files to be in BAM format, so specifying --sam at the 
+same time is disallowed.
+
+
+Methylation Extractor
+=====================
+
+Another bug fix for the same issue as in 0.14.1 that had crept in the 0.14.2 release.
+
+
+coverage2cytosine
+=================
+
+Changed the option --merge_CpG so that CGs starting at position 1 are not considered (since the 3-base
+sequence context of the bottom strand C at position 2 can not be determined)
+
 
 
 

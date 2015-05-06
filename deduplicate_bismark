@@ -23,7 +23,7 @@ use Getopt::Long;
 ### 09 Mar 2015
 ### Removin newline characters also from the read conversion flag in case the tags had been reordered and are now present in the very last column
 
-my $dedup_version = 'v0.14.1';
+my $dedup_version = 'v0.14.3';
 
 
 my $help;

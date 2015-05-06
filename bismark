@@ -8051,6 +8051,9 @@ VERSION
     if ($multicore > 20){
       warn "Core usage currently set to more than 20 threads. This might fail horribly but let's see how it goes... (set value: $multicore)\n\n";
     }
+    if ($sam){
+      die "The multicore function currently requires the output to be in BAM format, so please lose either option --sam or --multi\n";
+    }
   }
   else{
     $multicore = 1; # default. Single-thread mode
@@ -9627,7 +9630,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 26 March 2015.
+Last edited on 06 May 2015.
 
 HOW_TO
 }
