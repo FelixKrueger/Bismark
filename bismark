@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.3';
+my $bismark_version = 'v0.14.4_devel';
 my $command_line = join (" ",@ARGV);
 
 
@@ -179,13 +179,14 @@ sub subset_input_file_FastA{
   # warn "offset is $offset\n";
   my $temp = $filename;
   $temp .= ".temp.$offset";
+  $temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
 
   if ($gzip){
     $temp .= '.gz';
-    open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+    open (TEMPFA,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
   }
   else{
-    open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+    open (TEMPFA,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
   }
 
   warn "Writing temporary infile to $temp\n";
@@ -203,7 +204,7 @@ sub subset_input_file_FastA{
       # warn "line count: $line_count\noffset: $offset\n";
       # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
       # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
-      print TEMPFQ "$l1$l2";
+      print TEMPFA "$l1$l2";
     }
     else{
       # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
@@ -212,7 +213,7 @@ sub subset_input_file_FastA{
   }
 
   close OFFSET or warn $!;
-  close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
+  close TEMPFA or warn "Failed to close file handle TEMPFQ: $!\n";
 
   warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
 

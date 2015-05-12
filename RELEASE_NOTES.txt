@@ -1,3 +1,16 @@
+RELEASE NOTES FOR Bismark v0.14.4 (12 May 2015)
+-----------------------------------------------
+
+Bismark
+=======
+
+Input files specified with filepath information for FastA files are now handled properly in 
+--multicore runs (this was fixed only for FastQ files in the previous patch).
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.14.3 (06 May 2015)
 -----------------------------------------------
 
