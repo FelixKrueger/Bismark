@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.4 (12 May 2015)
+RELEASE NOTES FOR Bismark v0.14.4 (21 07 2015)
 -----------------------------------------------
 
 Bismark
@@ -6,6 +6,32 @@ Bismark
 
 Input files specified with filepath information for FastA files are now handled properly in 
 --multicore runs (this was fixed only for FastQ files in the previous patch).
+
+Changed the FLAG values of paired-end alignments to the CTOT or CTOB strands so that reads can
+be properly displayed in SeqMonk when imported as BAM files. This change affects only paired-end
+alignments in --pbat or --non_directional mode. In detail we simply swapped the Read 1 and Read 2
+FLAG values round so reads now resemble exactly concordant read pairs to the OT and OB strands. 
+Note that results produced by the methylation extractor or further downstream of that are not
+affected by this change. FLAG values now look like this:
+
+                                      Read 1       Read 2
+
+                              OT:         99          147
+
+                              OB:         83          163
+
+                              CTOT:      147           99
+
+                              CTOB:      163           83
+
+
+
+Bismark Genome Preparation
+==========================
+
+Changed the execution of the genome indexing of the parent process to system() rather
+than an exec() call since this seemed to lead to interesting faults when run in
+a pipeline setting.
 
 
 

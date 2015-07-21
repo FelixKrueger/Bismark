@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.4_devel';
+my $bismark_version = 'v0.14.4';
 my $command_line = join (" ",@ARGV);
 
 
@@ -7370,7 +7370,7 @@ sub process_command_line{
 
           Bismark - Bisulfite Mapper and Methylation Caller.
 
-                       Bismark Version: $bismark_version 
+                       Bismark Version: $bismark_version
         Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
 
@@ -8462,12 +8462,14 @@ sub paired_end_SAM_output{
   my $flag_1;                                                            # FLAG variable used for SAM format
   my $flag_2;
 
-  ### The new default FLAG values have been suggested by Peter Hickey, Australia
+  ### The new default FLAG values were changed on 21 07 2015, so that reads do not ignored as discordant reads by the new SeqMonk BAM import
+  ### In essence we are going to flip the R1 R2 flags around for CTOT and CTOB reads. We still report the first and second read in the same
+  ### order and only change the actual FLAG value. This should not affect the methylation extraction in any way
 
   if ($index == 0){       # OT
     unless ($old_flag){
-      $flag_1 = 99;                                                      # PH: Read 1 is on the + strand and Read 2 is reversed  (1+2+32+64)
-      $flag_2 = 147;                                                     # PH: Read 2 is on - strand but informative for the OT  (1+2+16+128)
+      $flag_1 = 99;                                                      # Read 1 is on the + strand and Read 2 is reversed  (1+2+32+64)
+      $flag_2 = 147;                                                     # Read 2 is reverse complemented but informative for the OT  (1+2+16+128)
     }
     else{
       $flag_1 = 67;                                                      # Read 1 is on the + strand  (1+2+64) (Read 2 is technically reverse-complemented, but we do not score it)
@@ -8476,8 +8478,10 @@ sub paired_end_SAM_output{
   }
   elsif ($index == 1){    # CTOB
     unless($old_flag){
-      $flag_1 = 83;                                                      # PH: Read 1 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+16+64)
-      $flag_2 = 163;                                                     # PH: read 2 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+32+128)
+      $flag_1 = 163;                                                     # Read 1 is on the forward strand (CTOB) and Read 2 is reverse complemented but we swap round the FLAG
+                                                                         # for R1 and R2 so that we don't end up with discordant pairs
+                                                                         # So Read 1 gets Paired read, mapped in proper pair, mate is reversed and second in pair  (1+2+32+128)
+      $flag_2 = 83;                                                      # Read 2 gets Read paired, mapped in proper pair, first in pair and Read 2 is reversed  (1+2+16+64)
     }
     else{
       $flag_1 = 115;                                                     # Read 1 is on the + strand, we score for OB  (1+2+16+32+64)
@@ -8486,8 +8490,10 @@ sub paired_end_SAM_output{
   }
   elsif ($index == 2){    # CTOT
     unless ($old_flag){
-      $flag_1 = 99;                                                      # PH: Read 1 is on the + strand and Read 2 is reversed  (1+2+32+64)
-      $flag_2 = 147;                                                     # PH: Read 2 is on - strand but informative for the OT  (1+2+16+128)
+      $flag_1 = 147;                                                     # Read 1 is reverse complemented (CTOT) and Read 2 is the forward read
+                                                                         # but we swap round the FLAG for R1 and R2 so that we do not end up with discordant pairs
+                                                                         # So Read 1 gets Read paired, read mapped in proper pair, read reverse complemented and second in pair (1+2+32+128)
+      $flag_2 = 99;                                                      # Read 2 gets Read paired, read mapped in proper pair, mate reverse strand and First in Pair (1+2+32+64)
     }
     else{
       $flag_1 = 67;                                                      # Read 1 is on the - strand (CTOT) strand, but we score it for OT (1+2+64)
@@ -8496,8 +8502,8 @@ sub paired_end_SAM_output{
   }
   elsif ($index == 3){    # OB
     unless ($old_flag){
-      $flag_1 = 83;                                                      # PH: Read 1 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+16+64)
-      $flag_2 = 163;                                                     # PH: read 2 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+32+128)
+      $flag_1 = 83;                                                      # Read 1 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+16+64)
+      $flag_2 = 163;                                                     # Read 2 is on the - strand, mapped in proper pair and Read 1 is reversed  (1+2+32+128)
     }
     else{
       $flag_1 = 115;                                                     # Read 1 is on the - strand, we score for OB  (1+2+16+32+64)
@@ -9462,9 +9468,9 @@ Output:
 
                               OB:         83          163                 115          179
 
-                              CTOT:       99          147                  67          131
+                              CTOT:      147           99                  67          131
 
-                              CTOB:       83          163                 115          179
+                              CTOB:      163           83                 115          179
 
 
 Other:
@@ -9631,7 +9637,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 06 May 2015.
+Last edited on 21 July 2015.
 
 HOW_TO
 }

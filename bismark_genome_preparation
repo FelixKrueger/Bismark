@@ -148,8 +148,9 @@ sub launch_bowtie_indexer{
     $verbose and print "Parent process: Starting to index C->T converted genome with the following command:\n\n";
     $verbose and print "$path_to_bowtie -f $file_list BS_CT\n\n";
 
-    sleep (11);
-    exec ("$path_to_bowtie","-f","$file_list","BS_CT");
+    # sleep (11);
+    system ("$path_to_bowtie","-f","$file_list","BS_CT");
+    waitpid( $pid, 0 )
   }
 
   # child process
@@ -162,14 +163,14 @@ sub launch_bowtie_indexer{
     $verbose and print "Child process: Starting to index G->A converted genome with the following command:\n\n";
     $verbose and print "$path_to_bowtie -f $file_list BS_GA\n\n";
     $verbose and print "(starting in 10 seconds)\n";
-    sleep(10);
+    # sleep(10);
     exec ("$path_to_bowtie","-f","$file_list","BS_GA");
   }
 
   # if the platform doesn't support the fork command we will run the indexing processes one after the other
   else{
     print "Forking process was not successful, therefore performing the indexing sequentially instead\n";
-    sleep(10);
+    # sleep(10);
 
     ### moving to CT genome folder
     $verbose and warn "Preparing to index CT converted genome in $CT_dir\n";
@@ -177,7 +178,7 @@ sub launch_bowtie_indexer{
     my @fasta_files = <*.fa>;
     my $file_list = join (',',@fasta_files);
     $verbose and print "$file_list\n\n";
-    sleep(2);
+    # sleep(2);
     system ("$path_to_bowtie","-f","$file_list","BS_CT");
     @fasta_files=();
     $file_list= '';
@@ -188,7 +189,7 @@ sub launch_bowtie_indexer{
     @fasta_files = <*.fa>;
     $file_list = join (',',@fasta_files);
     $verbose and print "$file_list\n\n";
-    sleep(2);
+    # sleep(2);
     exec ("$path_to_bowtie","-f","$file_list","BS_GA");
   }
 }
@@ -463,6 +464,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-This script was last modified on 16 Oct 2014.
+This script was last modified on 02 July 2015.
 HOW_TO
 }
