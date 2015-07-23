@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.14.3';
+my $bismark2bedGraph_version = 'v0.14.4';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -102,16 +102,16 @@ else{
   die "It seems that you are trying to generate bedGraph files for files not starting with CpG.... Please specify the option '--CX' and try again\n\n";
 }
 
-open (OUT,'>',$output_dir.$bedGraph_output) or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!\n";
+open (OUT,"| gzip -c - > ${output_dir}${bedGraph_output}") or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!\n";
 warn "Writing bedGraph to file: $bedGraph_output\n";
 print OUT "track type=bedGraph\n";
 
 my $coverage_output = $bedGraph_output;
-unless ($coverage_output =~ s/bedGraph$/bismark.cov/){
-  $coverage_output =~ s/$/.bismark.cov/;
+unless ($coverage_output =~ s/bedGraph\.gz$/bismark.cov.gz/){
+  $coverage_output =~ s/$/.bismark.cov.gz/;
 }
 
-open (COVERAGE,'>',$output_dir.$coverage_output) or die "Problems writing to the coverage output detected. File path: '$output_dir'\tfile name: '$coverage_output' $!\n\n";
+open (COVERAGE,"| gzip -c - > ${output_dir}${coverage_output}") or die "Problems writing to the coverage output detected. File path: '$output_dir'\tfile name: '$coverage_output' $!\n\n";
 warn "Also writing out a coverage file including counts methylated and unmethylated residues to file: $coverage_output\n";
 
 if ($zero){
@@ -659,6 +659,10 @@ VERSION
   unless (defined $bedGraph_output){
     die "Please provide the name of the output file using the option -o/--output filename\n";
   }
+  ### 22 07 2015: Output will be gzip compressed
+  unless ($bedGraph_output =~ /\.gz$/){
+    $bedGraph_output = "${bedGraph_output}.gz";
+  }
 
   ### NO HEADER
   unless ($no_header){
@@ -792,7 +796,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 27 Februray 2015
+                          Script last modified: 23 July 2015
 
 EOF
     ;

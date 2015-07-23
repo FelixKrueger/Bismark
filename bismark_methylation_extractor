@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.14.3';
+my $version = 'v0.14.4';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -396,7 +396,7 @@ foreach my $filename (@filenames){
       }
 
       my $coverage_output = $bedGraph_output;
-      $coverage_output =~ s/bedGraph$/bismark.cov/;
+      $coverage_output =~ s/bedGraph$/bismark.cov.gz/;
 
       push @args, $output_dir . $coverage_output; # this will be the infile
 
@@ -5869,7 +5869,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 22 April 2015.
+This script was last modified on 22 July 2015.
 
 HOW_TO
 }

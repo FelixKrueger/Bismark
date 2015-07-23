@@ -34,6 +34,13 @@ than an exec() call since this seemed to lead to interesting faults when run in
 a pipeline setting.
 
 
+bismark2bedGraph
+================
+
+The coverage (.cov) and bedGraph (.bedGraph) files are now written out as gzip compressed files so
+you don't have to gzip them manually every single time.
+
+
 
 
 
