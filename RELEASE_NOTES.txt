@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.4 (21 07 2015)
+RELEASE NOTES FOR Bismark v0.14.4 (27 07 2015)
 -----------------------------------------------
 
 Bismark
@@ -24,6 +24,9 @@ affected by this change. FLAG values now look like this:
 
                               CTOB:      163           83
 
+Changed the default mode of operation to --bowtie2. Bowtie (1) alignments may still be chosen using
+the option --bowtie1.
+
 
 
 Bismark Genome Preparation
@@ -32,6 +35,9 @@ Bismark Genome Preparation
 Changed the execution of the genome indexing of the parent process to system() rather
 than an exec() call since this seemed to lead to interesting faults when run in
 a pipeline setting.
+
+Changed the default indexing mode to --bowtie2. Bowtie (1) indexing is still available via the
+option --bowtie1.
 
 
 bismark2bedGraph

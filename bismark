@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.4';
+my $bismark_version = 'v0.14.5';
 my $command_line = join (" ",@ARGV);
 
 
@@ -1373,7 +1373,13 @@ sub start_methylation_call_procedure_single_ends {
       }
     }
 
-    open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+    if ($multicore > 1){ # multicore runs already output gzipped unmapped files
+      open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+    }
+    else{
+      $unmapped_file .= '.gz';
+      open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+    }
     warn "Unmapped sequences will be written to $output_dir$unmapped_file\n";
   }
 
@@ -1400,7 +1406,14 @@ sub start_methylation_call_procedure_single_ends {
 	$ambiguous_file =~ s/$/_ambiguous_reads.fa/;
       }
     }
-    open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+
+    if ($multicore > 1){ # multicore runs already output gzipped amobiguous files
+      open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+    }
+    else{
+      $ambiguous_file .= '.gz';
+      open (AMBIG,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+    }
     warn "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
   }
 
@@ -7306,6 +7319,7 @@ sub process_command_line{
   my $basename;
   my $sam;
   my $multicore;
+  my $bowtie1;
 
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7332,6 +7346,7 @@ sub process_command_line{
 				 'ambiguous'               => \$multi_map,
 				 'o|output_dir=s'          => \$output_dir,
 				 'bowtie2'                 => \$bowtie2,
+				 'bowtie1'                 => \$bowtie1,
 				 'vanilla'                 => \$vanilla,
 				 'sam-no-hd'               => \$sam_no_hd,
 				 'D=i'                     => \$seed_extension_fails,
@@ -7384,9 +7399,13 @@ VERSION
   ### PROCESSING OPTIONS ###
   ##########################
 
-  unless ($bowtie2){
+  if ($bowtie1){
     $bowtie2 = 0;
   }
+  else{ # Bowtie 2 is now the default mode (as of 27 July 2015)
+    $bowtie2 = 1;
+  }
+
   unless ($sam_no_hd){
     $sam_no_hd =0;
   }
@@ -9482,11 +9501,15 @@ Other:
 
 BOWTIE 2 SPECIFIC OPTIONS
 
---bowtie2                Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
+--bowtie1                Uses Bowtie 1 instead of Bowtie 2, which might be a good choice for faster and very short
+                         alignments. Bismark assumes that raw sequence data is adapter and/or quality trimmed where
+                         appropriate. Default: off.
+
+--bowtie2                Default: ON. Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
                          alignments, i.e. searches for alignments involving all read characters (also called 
                          untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
                          and/or quality trimmed where appropriate. Both small (.bt2) and large (.bt2l) Bowtie 2
-                         indexes are supported. Default: off.
+                         indexes are supported.
 
 Bowtie 2 alignment options:
 
@@ -9637,7 +9660,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 21 July 2015.
+Last edited on 27 July 2015.
 
 HOW_TO
 }
