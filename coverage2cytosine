@@ -544,12 +544,15 @@ sub generate_GC_context_report {
   else{
     open (IN,"$in") or die "Failed to read from file $in: $!\n";
   }
-  
+
   my $gc_out = $cytosine_out.'.GpC_report.txt';
+  my $gc_cov = $cytosine_out.'.GpC.cov';
 
   ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
   open (GC,'>',$gc_out) or die "Failed to write to GpC file $gc_out: !\n\n";
-  warn ">>> Writing genome-wide GpC cytosine report to: $gc_out <<<\n\n";
+  warn ">>> Writing genome-wide GpC cytosine report to: $gc_out <<<\n";
+  open (GCCOV,'>',$gc_cov) or die "Failed to write to GpC coverage file $gc_cov: !\n\n";
+  warn ">>> Writing genome-wide GpC coverage file to: $gc_cov <<<\n\n";
 
   my $last_chr;
   my %chr; # storing reads for one chromosome at a time
@@ -645,9 +648,13 @@ sub generate_GC_context_report {
 
 	# if Cs were not covered at all they are not written out
 	unless ($meth_bottom + $nonmeth_bottom == 0){
+	  my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
+	  print GCCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
 	  print GC join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
 	}
 	unless ($meth_top + $nonmeth_top == 0){
+	  my $percentage = sprintf ("%.6f",$meth_top/ ($meth_top + $nonmeth_top) *100);
+	  print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
 	  print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 	}	
 	
@@ -733,9 +740,13 @@ sub generate_GC_context_report {
 
     # if Cs were not covered at all they are not written out
     unless ($meth_bottom + $nonmeth_bottom == 0){
+      my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
+      print GCCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
       print GC join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
     }
     unless ($meth_top + $nonmeth_top == 0){
+      my $percentage = sprintf ("%.6f",$meth_top/ ($meth_top + $nonmeth_top) *100);
+      print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
       print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
     }
   }
@@ -974,8 +985,8 @@ sub print_helpfile{
 --gc/--gc_context        In addition to normal processing this option will reprocess the genome to find methylation in 
                          GpC context. This might be useful for specialist applications where GpC methylases had been
                          deployed. The output format is exactly the same as for the normal cytosine report, and only
-                         positions covered by at least one read are reported. The output file ends in .GpC_report.txt.
-
+                         positions covered by at least one read are reported (output file ends in .GpC_report.txt). In addition
+                         this will write out a Bismark coverage file (ending in GpC.cov).
 
 
 --zero_based             Uses 0-based coordinates instead of 1-based coordinates throughout. Default: OFF.
