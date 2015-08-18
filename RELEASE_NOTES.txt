@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.4 (27 07 2015)
+RELEASE NOTES FOR Bismark v0.14.4 (17 08 2015)
 -----------------------------------------------
 
 Bismark
@@ -27,6 +27,9 @@ affected by this change. FLAG values now look like this:
 Changed the default mode of operation to --bowtie2. Bowtie (1) alignments may still be chosen using
 the option --bowtie1.
 
+Unmapped (option --unmapped) and ambiguous (option --ambiguous) files are now written out as gzip 
+compressed files so they don't have to be gzipped manually every single time.
+
 
 
 Bismark Genome Preparation
@@ -47,6 +50,12 @@ The coverage (.cov) and bedGraph (.bedGraph) files are now written out as gzip c
 you don't have to gzip them manually every single time.
 
 
+coverage2cytosine
+=================
+
+Added a new option --gc_context to reprocess the genome and find methylation in GpC context. This might
+be useful for certain applications where GpC methylases had been deployed. The output format is exactly
+the same as for the normal CpG report, and only positions covered by at least one read are reported.
 
 
 

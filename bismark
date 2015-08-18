@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.5';
+my $bismark_version = 'v0.14.4';
 my $command_line = join (" ",@ARGV);
 
 
@@ -762,11 +762,11 @@ foreach my $filename (@filenames){
 
       ### Merging the Bismark mapping report files
       if ($single_end){
-	merge_individual_splitting_reports(\@temp_reports,$original_filename,$single_end);
+	merge_individual_mapping_reports(\@temp_reports,$original_filename,$single_end);
 	print_final_analysis_report_single_end('mock_file1','mock_file_2','mock_pid','mergeThis');
       }
       else{
-	merge_individual_splitting_reports(\@temp_reports,$original_filename_1,$single_end,$original_filename_2);
+	merge_individual_mapping_reports(\@temp_reports,$original_filename_1,$single_end,$original_filename_2);
 	print_final_analysis_report_paired_ends('mock_file1','mock_file_2','mock_file3','mock_file_4','mock_pid','mergeThis');
       }
 
@@ -788,7 +788,7 @@ foreach my $filename (@filenames){
 
 }
 
-sub merge_individual_splitting_reports{
+sub merge_individual_mapping_reports{
 
   my ($temp_reports,$original_filename_1,$single_end,$original_filename_2) = @_;
   my $report_file = $original_filename_1;
