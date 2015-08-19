@@ -55,7 +55,17 @@ coverage2cytosine
 
 Added a new option --gc_context to reprocess the genome and find methylation in GpC context. This might
 be useful for certain applications where GpC methylases had been deployed. The output format is exactly
-the same as for the normal CpG report, and only positions covered by at least one read are reported.
+the same as for the normal CpG report, and only positions covered by at least one read are reported. A
+coverage file will also be written out.
+
+
+deduplicate_bismark
+===================
+
+Removed redundant close() statements so there shouldn't be any warning messages popping up again.
+
+
+
 
 
 

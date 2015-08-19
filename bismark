@@ -9486,7 +9486,7 @@ Output:
                          example, '--prefix test' with 'file.fq' would result in the output file 'test.file.fq_bismark.sam' etc.
 
 -B/--basename <basename> Write all output to files starting with this base file name. For example, '--basename foo'
-                         would result in the files 'foo.sam' and 'foo_SE_report.txt' (or its paired-end equivalent). Takes
+                         would result in the files 'foo.bam' and 'foo_SE_report.txt' (or its paired-end equivalent). Takes
                          precedence over --prefix.
 
 --old_flag               Only in paired-end SAM mode, uses the FLAG values used by Bismark v0.8.2 and before. In addition,

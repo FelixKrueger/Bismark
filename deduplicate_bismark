@@ -21,9 +21,15 @@ use Getopt::Long;
 ### to detect paired-end command from the @PG line we are no requiring spaces before and after the -1 or -2
 
 ### 09 Mar 2015
-### Removin newline characters also from the read conversion flag in case the tags had been reordered and are now present in the very last column
+### Removing newline characters also from the read conversion flag in case the tags had been reordered and are now present in the very last column
 
-my $dedup_version = 'v0.14.3';
+### 19 08 2015
+### Hiding the option --representative from view to discourage people from using it (it was nearly always not what they wanted to do anyway). It should still work though.
+### Just for reference, here is the the text:
+### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
+
+
+my $dedup_version = 'v0.14.4';
 
 
 my $help;
@@ -852,9 +858,6 @@ sub deduplicate_barcoded_rrbs{
   print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
   print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 
-  close OUT or warn "Failed to close output filehandle: $!\n";
-  close REPORT or warn "Failed to close report filehandle: $!\n";
-
 }
 
 
@@ -872,7 +875,6 @@ sub print_helpfile{
   print "-s/--single\t\tdeduplicate single-end Bismark files (default format: SAM)\n";
   print "-p/--paired\t\tdeduplicate paired-end Bismark files (default format: SAM)\n\n";
   print "--vanilla\t\tThe input file is in the old custom Bismark format and not in SAM format\n\n";
-  print "--representative\twill browse through all sequences and print out the sequence with the most representative\n                        (as in most frequent) methylation call for any given position. Note that this is very likely\n                        the most highly amplified PCR product for a given sequence\n\n";
   print "--barcode\t\tIn addition to chromosome, start position and orientation this will also take a potential barcode into\n                        consideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
   print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
   print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
@@ -880,7 +882,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on Marcg 10, 2015\n\n";
+  print "This script was last modified on August 19, 2015\n\n";
 }
 
 
@@ -1097,9 +1099,6 @@ sub deduplicate_representative {
   print "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
   print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
   print REPORT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
-
-  close OUT or warn "Failed to close output filehandle: $!\n";
-  close REPORT or warn "Failed to close report filehandle: $!\n";
 
 }
 
