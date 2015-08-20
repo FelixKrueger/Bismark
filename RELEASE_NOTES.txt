@@ -1,5 +1,15 @@
+RELEASE NOTES FOR Bismark v0.14.5 (20 08 2015)
+----------------------------------------------
+
+deduplicate_bismark
+===================
+
+Changed all instances of literal calls of 'samtools' calls to '$samtools_path'.
+
+
+
 RELEASE NOTES FOR Bismark v0.14.4 (17 08 2015)
------------------------------------------------
+----------------------------------------------
 
 Bismark
 =======

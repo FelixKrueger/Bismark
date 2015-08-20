@@ -29,7 +29,7 @@ use Getopt::Long;
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
 
-my $dedup_version = 'v0.14.4';
+my $dedup_version = 'v0.14.5';
 
 
 my $help;
@@ -204,7 +204,7 @@ foreach my $file (@filenames){
       open (DETERMINE,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
-      open (DETERMINE,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+      open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
       open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
@@ -266,7 +266,7 @@ foreach my $file (@filenames){
       open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
-      open (IN,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+      open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
       open (IN,$file) or die "Unable to read from $file: $!\n";
@@ -570,7 +570,7 @@ sub deduplicate_barcoded_rrbs{
     open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
   }
   elsif ($file =~ /\.bam$/){
-    open (IN,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+    open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
   }
   else{
     open (IN,$file) or die "Unable to read from $file: $!\n";
@@ -903,7 +903,7 @@ sub deduplicate_representative {
     open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
   }
   elsif ($file =~ /\.bam$/){
-    open (IN,"samtools view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+    open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
   }
   else{
     open (IN,$file) or die "Unable to read from $file: $!\n";
