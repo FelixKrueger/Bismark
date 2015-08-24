@@ -29,7 +29,7 @@ use Getopt::Long;
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
 
-my $dedup_version = 'v0.14.5';
+my $dedup_version = 'v0.14.6';
 
 
 my $help;
@@ -538,9 +538,18 @@ foreach my $file (@filenames){
       }
     }
 
-    my $percentage = sprintf("%.2f",$removed/$count*100);
+    my $percentage;
+    my $percentage_leftover;
     my $leftover = $count - $removed;
-    my $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+
+    unless ($count == 0){
+      $percentage = sprintf("%.2f",$removed/$count*100);
+      $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+    }
+    else{
+      $percentage = 'N/A';
+      $percentage_leftover = 'N/A';
+    }
 
     warn "\nTotal number of alignments analysed in $file:\t$count\n";
     warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
@@ -844,9 +853,19 @@ sub deduplicate_barcoded_rrbs{
     }
   }
 
-  my $percentage = sprintf("%.2f",$removed/$count*100);
+  my $percentage;
+  my $percentage_leftover;
   my $leftover = $count - $removed;
-  my $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+
+  unless ($count == 0){
+    $percentage = sprintf("%.2f",$removed/$count*100);
+    $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
+  }
+  else{
+    $percentage = 'N/A';
+    $percentage_leftover = 'N/A';
+  }
+
 
   warn "\nTotal number of alignments analysed in $file:\t$count\n";
   warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
@@ -1094,9 +1113,16 @@ sub deduplicate_representative {
     }
   }
 
-  my $percentage = sprintf ("%.2f",$unique_seqs*100/$count);
-  print "\nTotal number of alignments analysed in $file:\t$count\n";
-  print "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
+  my $percentage;
+  unless ($count == 0){
+    $percentage = sprintf ("%.2f",$unique_seqs*100/$count);
+  }
+  else{
+    $percentage = 'N/A';
+  }
+
+  warn "\nTotal number of alignments analysed in $file:\t$count\n";
+  warn "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
   print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
   print REPORT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
 
