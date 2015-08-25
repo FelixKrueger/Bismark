@@ -34,7 +34,7 @@ my $single_fasta;
 my $bowtie2;
 my $bowtie1;
 
-my $bismark_version = 'v0.14.4';
+my $bismark_version = 'v0.14.6';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
@@ -94,8 +94,15 @@ if ($bowtie1){
     die "You may not select both --bowtie1 and --bowtie2. Make your pick! (default is Bowtie2)\n";
   }
   $bowtie2 = 0;
+  $verbose and print "Aligner to be used: Bowtie (1)\n";
 }
 else{ # Bowtie 2 is now the default mode (as of 27 July 2015)
+  if ($bowtie2){
+    $verbose and print "Aligner to be used: Bowtie 2 (user-defined)\n";
+  }
+  else{
+    $verbose and print "Aligner to be used: Bowtie 2 (default)\n";
+  }
   $bowtie2 = 1;
 }
 
@@ -159,9 +166,9 @@ sub launch_bowtie_indexer{
     $verbose and print "Parent process: Starting to index C->T converted genome with the following command:\n\n";
     $verbose and print "$path_to_bowtie -f $file_list BS_CT\n\n";
 
-    # sleep (11);
-    system ("$path_to_bowtie","-f","$file_list","BS_CT");
-    waitpid( $pid, 0 )
+    system ("$path_to_bowtie","-f","$file_list","BS_CT")== 0 or die "Parent process: Failed to build index\n";
+    waitpid( $pid, 0 );
+    $? == 0 or die "Parent process: Child process failed\n";
   }
 
   # child process
@@ -173,8 +180,7 @@ sub launch_bowtie_indexer{
     my $file_list = join (',',@fasta_files);
     $verbose and print "Child process: Starting to index G->A converted genome with the following command:\n\n";
     $verbose and print "$path_to_bowtie -f $file_list BS_GA\n\n";
-    $verbose and print "(starting in 10 seconds)\n";
-    # sleep(10);
+
     exec ("$path_to_bowtie","-f","$file_list","BS_GA");
   }
 
@@ -457,7 +463,7 @@ OPTIONS:
 
 --bowtie2                This will create bisulfite indexes for Bowtie 2. (Default: ON).
 
---bowtie1                This will create bisulfite indexes for Bowtie 1. (Default: Bowtie 2).
+--bowtie1                This will create bisulfite indexes for Bowtie 1. (Default: OFF).
 
 --single_fasta           Instruct the Bismark Indexer to write the converted genomes into
                          single-entry FastA files instead of making one multi-FastA file (MFA)
@@ -466,7 +472,7 @@ OPTIONS:
                          problem with indexing if the number of chromosomes is vast (this is likely
                          to be in the range of several thousand files; the operating system can
                          only handle lists up to a certain length, and some newly assembled
-                         genomes may contain 20000-50000 contigs of scaffold files which do exceed
+                         genomes may contain 20000-500000 contigs of scaffold files which do exceed
                          this list length limit).
 
 
@@ -477,6 +483,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-This script was last modified on 27 July 2015.
+This script was last modified on 25 August 2015.
 HOW_TO
 }
