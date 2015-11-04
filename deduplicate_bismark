@@ -24,7 +24,8 @@ use Getopt::Long;
 ### Removing newline characters also from the read conversion flag in case the tags had been reordered and are now present in the very last column
 
 ### 19 08 2015
-### Hiding the option --representative from view to discourage people from using it (it was nearly always not what they wanted to do anyway). It should still work though.
+### Hiding the option --representative from view to discourage people from using it (it was nearly always not what they wanted to do anyway). It should still work 
+### for alignments that do not contain any indels
 ### Just for reference, here is the the text:
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
@@ -233,6 +234,13 @@ foreach my $file (@filenames){
   ### OPTIONS
   unless ($single or $paired){
     die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
+  }
+
+  ### 
+  unless ($vanilla){
+    if ($paired){
+      test_positional_sorting($file);
+    }
   }
 
   ### writing to a report file
@@ -885,9 +893,11 @@ sub deduplicate_barcoded_rrbs{
 sub print_helpfile{
   print "\n",'='x111,"\n";
   print "\nThis script is supposed to remove alignments to the same position in the genome from the Bismark mapping output\n(both single and paired-end SAM files), which can arise by e.g. excessive PCR amplification. If sequences align\nto the same genomic position but on different strands they will be scored individually.\n\nNote that deduplication is not recommended for RRBS-type experiments!\n\nIn the default mode, the first alignment to a given position will be used irrespective of its methylation call\n(this is the fastest option, and as the alignments are not ordered in any way this is also near enough random).\n\n";
-  print "For single-end alignments only use the start-coordinate of a read will be used for deduplication.\n";
+  print "For single-end alignments only use the start coordinate of a read will be used for deduplication.\n\n";
   print "For paired-end alignments the start-coordinate of the first read and the end coordinate of the second\nread will be used for deduplication. ";
-  print "This script expects the Bismark output to be in SAM format\n(Bismark v0.6.x or higher). To deduplicate the oldcustom Bismark output please specify '--vanilla'.\n\n";
+  print "This script expects the Bismark output to be in SAM format\n(Bismark v0.6.x or higher). To deduplicate the old custom Bismark output please specify '--vanilla'.\n\n";
+  print "*** Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to\nfollow each other in consecutive lines! If the file has been sorted by position make sure that you resort it\nby read name first (e.g. using samtools sort -n)  ***\n\n";
+
   print '='x111,"\n\n";
   print ">>> USAGE: ./deduplicate_bismark_alignment_output.pl [options] filename(s) <<<\n\n";
 
@@ -901,11 +911,114 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on August 19, 2015\n\n";
+  print "This script was last modified on November 04, 2015\n\n";
 }
 
 
 
+
+sub test_positional_sorting{
+
+  my $filename = shift;
+
+  print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
+  sleep(1);
+
+  if ($filename =~ /\.gz$/) {
+    open (TEST,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
+  }
+  elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
+    if ($samtools_path){
+      open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
+    }
+    else{
+      die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
+    }
+  }
+  else {
+    open (TEST,$filename) or die "Can't open file $filename: $!\n";
+  }
+
+  my $count = 0;
+
+  while (<TEST>) {
+    if (/^\@/) {	     # testing header lines if they contain the @SO flag (for being sorted)
+      if (/^\@SO/) {
+	die "SAM/BAM header line '$_' indicates that the Bismark aligment file has been sorted by chromosomal positions which is is incompatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+      }
+      next;
+    }
+    $count++;
+
+    last if ($count > 100000); # else we test the first 100000 sequences if they start with the same read ID
+
+    my ($id_1) = (split (/\t/));
+
+    ### reading the next line which should be read 2
+    $_ = <TEST>;
+    my ($id_2) = (split (/\t/));
+    last unless ($id_2);
+    ++$count;
+
+    if ($id_1 eq $id_2){
+      ### ids are the same
+      next;
+    }
+    else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
+      my $id_1_trunc = $id_1;
+      $id_1_trunc =~ s/\/1$//;
+      my $id_2_trunc = $id_2;
+      $id_2_trunc =~ s/\/2$//;
+
+      unless ($id_1_trunc eq $id_2_trunc){
+	die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+      }
+    }
+  }
+  #  close TEST or die $!; somehow fails on our cluster...
+  ### If it hasen't died so far then it seems the file is in the correct Bismark format (read 1 and read 2 of a pair directly following each other)
+  warn "...passed!\n";
+  sleep(1);
+
+}
+
+sub isBam{
+
+  my $filename = shift;
+
+  # reading the first line of the input file to see if it is a BAM file in disguise (i.e. a BAM file that does not end in *.bam which may be produced by Galaxy)
+  open (DISGUISE,"zcat $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
+
+  ### when BAM files read through a zcat stream they start with BAM...
+  my $bam_in_disguise = <DISGUISE>;
+  # warn "BAM in disguise: $bam_in_disguise\n\n";
+
+  if ($bam_in_disguise){
+    if ($bam_in_disguise =~ /^BAM/){
+      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+      return 1;
+    }
+    else{
+      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+     return 0;
+    }
+  }
+  else{
+    close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+    return 0;
+  }
+}
+
+
+
+
+
+#####################################
+
+### The following subroutine "deduplicate_representative" only works correctly for reads that do not contain any indels (as in only Bowtie1-based alignments). 
+### Please refrain from using it unless you want to test something out.
+
+#####################################
 
 sub deduplicate_representative {
   my $file = shift;
@@ -1127,5 +1240,6 @@ sub deduplicate_representative {
   print REPORT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
 
 }
+
 
 

@@ -5640,7 +5640,7 @@ The output files are in the following format (tab delimited):
 <sequence_id>     <strand>      <chromosome>     <position>     <methylation call>
 
 
-USAGE: methylation_extractor [options] <filenames>
+USAGE: bismark_methylation_extractor [options] <filenames>
 
 
 ARGUMENTS:

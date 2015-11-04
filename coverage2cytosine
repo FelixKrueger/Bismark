@@ -328,20 +328,20 @@ sub generate_genome_wide_cytosine_report {
 
       if ($split_by_chromosome){ ## writing output to 1 file per chromosome
 	my $chromosome_out = $cytosine_out;
-	if ($chromosome_out =~ /txt$/){
-	  $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
-	}
-	else{
-	  $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-	}
-	open (CYT,'>',$chromosome_out) or die $!;
-	# warn "Writing output for $last_chr to $chromosome_out\n";
+	if ($chromosome_out =~ /\.txt$/){
+	  $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
       }
+      else{
+	$chromosome_out =~ s/$/.chr${last_chr}.txt/;
+    }
+    open (CYT,'>',$chromosome_out) or die $!;
+    # warn "Writing output for $last_chr to $chromosome_out\n";
+  }
 
   $processed{$last_chr} = 1;
   while ( $chromosomes{$last_chr} =~ /([CG])/g){
 
-	my $tri_nt = '';
+    my $tri_nt = '';
 	my $context = '';
 	my $pos = pos$chromosomes{$last_chr};
 	
@@ -416,10 +416,10 @@ sub generate_genome_wide_cytosine_report {
   warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
   $processed{$last_chr} = 1;
 
-  if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-    my $chromosome_out = $cytosine_out;
-    if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
-      $chromosome_out =~ s/txt$/chr${last_chr}.txt/;
+if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+  my $chromosome_out = $cytosine_out;
+  if ($chromosome_out =~ /\.txt$/){ # files passed on by the methylation extractor end in _report.txt
+    $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
     }
     else{ # user specified output file name
       $chromosome_out =~ s/$/.chr${last_chr}.txt/;

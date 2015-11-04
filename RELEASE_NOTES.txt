@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.6 (24 08 2015)
+RELEASE NOTES FOR Bismark v0.14.6 (04 11 2015)
 ----------------------------------------------
 
 deduplicate_bismark
@@ -6,6 +6,21 @@ deduplicate_bismark
 
 Added better handling of cases when the input file was empty (died for percentage calculation
 instead of calling it N/A)
+
+Added a note mentioning that Read1 and Read2 of paired-end files are expected to follow each
+other in two consecutive lines and possibly require name-sorting prior to deduplciation. I also
+added a check that reads the first 100000 lines to see if the file appears to have been sorted
+and bail out if this is true.
+
+
+
+
+bismark_genome_preparation
+==========================
+
+Added process handling to the child processes.
+
+
 
 
 
