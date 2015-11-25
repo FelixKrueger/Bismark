@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.4';
+my $bismark_version = 'v0.14.6';
 my $command_line = join (" ",@ARGV);
 
 
@@ -36,7 +36,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -7336,6 +7336,9 @@ sub process_command_line{
   my $sam;
   my $multicore;
   my $bowtie1;
+  my $rg_tag;
+  my $rg_id;
+  my $rg_sample;
 
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7383,6 +7386,9 @@ sub process_command_line{
 				 'B|basename=s'            => \$basename,
 				 'sam'                     => \$sam,
 				 'multicore=i'             => \$multicore,
+				 'rg_tag'                 => \$rg_tag,
+				 'rg_id=s'                 => \$rg_id,
+				 'rg_sample=s'             => \$rg_sample,
 				);
 
 
@@ -8100,7 +8106,27 @@ VERSION
     die "Specifying --basename in conjuction with --multicore is currently not supported (but we are aiming to fix this soon). Please lose either --basename or --multicore to proceed\n\n";
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore);
+  # Read Group Tags for the @RG header
+  if (defined $rg_sample){
+    if (defined $rg_id){
+      warn "--rg_id set to '$rg_id', setting --rg_tag to TRUE\n";
+      $rg_tag++; # implicitely setting $rg_tag as well
+    }
+    else{
+      die "--rg_sample cannot be specified without without setting --rg_id. Please set both or none (which would result in the default name 'SAMPLE' for both)\n";
+    }
+  }
+
+  if ($rg_tag){ # either true because of --rg_tag, or because --rg_id/--rg_sample were defined as well
+    unless (defined $rg_id){
+      $rg_id = 'SAMPLE';
+    }
+    unless (defined $rg_sample){
+      $rg_sample = 'SAMPLE';
+    }
+  }
+
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample);
 }
 
 
@@ -8122,6 +8148,11 @@ sub generate_SAM_header{
     print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length
   }
 
+  # 18 11 2015: Added @RG as a header line if --rg_tag or --rg_id/--rg_sample were set as well
+  if ($rg_tag){
+    print OUT "\@RG\tPL:ILLUMINA\tID:$rg_id\tSM:$rg_sample\n";  # @RG = Read Group, PL = Platform, ID: required, SM: sample, can be a description
+  }
+  
   print OUT "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";        # @PG = program, ID = unique identifier, PN = program name name, VN = program version
 
 }
@@ -8337,16 +8368,33 @@ sub single_end_SAM_output{
 
   my $XA_tag = "XA:Z:$number_of_mismatches";
 
-  #####
+  ####
+
+  my $read_group; # optional
+  if ($rg_tag){
+    $read_group = "RG:Z:$rg_id";
+  }
+
+  ####
 
   # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
   ### optionally print number of non-bisulfite mismatches
   if ($non_bs_mm){
-    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
+    if ($rg_tag){
+      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag,$read_group)),"\n";
+    }
+    else{
+      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
+    }
   }
   else{ # default
     # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
-    print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+    if ($rg_tag){
+      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$read_group)),"\n";
+    }
+    else{
+      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+    }
   }
 }
 
@@ -8865,18 +8913,39 @@ sub paired_end_SAM_output{
   my $XA_tag = "XA:Z:$number_of_mismatches_1";
   my $XB_tag = "XB:Z:$number_of_mismatches_2";
 
+  ####
+
+  my $read_group; # optional
+  if ($rg_tag){
+    $read_group = "RG:Z:$rg_id";
+  }
+
+  ####
 
   # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
   ### optionally print number of non-bisulfite mismatches
   if ($non_bs_mm){
-    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$XA_tag)), "\n";
-    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$XB_tag)), "\n";
+    if ($rg_tag){
+      print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$XA_tag,$read_group)), "\n";
+      print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$XB_tag,$read_group)), "\n";
+    }
+    else{
+      print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$XA_tag)), "\n";
+      print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$XB_tag)), "\n";
+    }
   }
   else{ # default
-    print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
-    print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+    if ($rg_tag){
+      print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group)), "\n";
+      print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group)), "\n";
+    }
+    else{
+      print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
+      print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+    }
   }
 }
+
 
 sub revcomp{
   my $seq = shift or die "Missing seq to reverse complement\n";
@@ -9436,6 +9505,15 @@ Output:
 --sam-no-hd              Suppress SAM header lines (starting with @). This might be useful when very large input files are
                          split up into several smaller files to run concurrently and the output files are to be merged.
 
+--rg_tag                 Write out a Read Group tag to the resulting SAM/BAM file. This will write the following line to the
+                         SAM header: \@RG PL: ILLUMINA ID:SAMPLE SM:SAMPLE ; to set ID and SM see --rg_id and --rg_sample.
+                         In addition each read recieves a RG:Z:RG-ID tag. Default: OFF.
+
+--rg_id <string>         Sets the ID field in the \@RG header line. The default is 'SAMPLE'.
+
+--rg_sample <string>     Sets the SM field in the \@RG header line; can't be set without setting --rg_id as well. The default is
+                         'SAMPLE'.
+
 --quiet                  Print nothing besides alignments.
 
 --vanilla                Performs bisulfite mapping with Bowtie 1 and prints the 'old' output (as in Bismark 0.5.X) instead
@@ -9450,7 +9528,7 @@ Output:
 
 --ambiguous              Write all reads which produce more than one valid alignment with the same number of lowest
                          mismatches or other reads that fail to align uniquely to a file in the output directory.
-                         Written reads will appear as they did in the input, without any of the translation of quality
+                         Written reads will appear as. they did in the input, without any of the translation of quality
                          values that may have taken place within Bowtie or Bismark. Paired-end reads will be written to two
                          parallel files with _1 and _2 inserted in theit filenames, i.e. _ambiguous_reads_1.txt and
                          _ambiguous_reads_2.txt. These reads are not written to the file specified with --un.
@@ -9676,7 +9754,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 27 July 2015.
+Last edited on 18 Nov 2015.
 
 HOW_TO
 }
