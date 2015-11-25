@@ -7339,11 +7339,13 @@ sub process_command_line{
   my $rg_tag;
   my $rg_id;
   my $rg_sample;
+  my $genome_folder;
 
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
 				 '2=s'                     => \$mates2,
 				 'path_to_bowtie=s'        => \$path_to_bowtie,
+				 'genome_folder=s'         => \$genome_folder,
 				 'f|fasta'                 => \$fasta,
 				 'q|fastq'                 => \$fastq,
 				 's|skip=i'                => \$skip,
@@ -7524,7 +7526,13 @@ VERSION
   ### PROCESSING ARGUMENTS
 
   ### GENOME FOLDER
-  my $genome_folder = shift @ARGV; # mandatory
+  if (defined $genome_folder){ # 25 11 2015 The genome folder may now also be defined with the option --genome_folder
+    # warn "Genome folder specified with --genome_folder $genome_folder\n";
+  }
+  else{
+    $genome_folder = shift @ARGV; # mandatory
+  }
+
   unless ($genome_folder){
     warn "Genome folder was not specified!\n";
     print_helpfile();
@@ -9754,7 +9762,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 18 Nov 2015.
+Last edited on 25 Nov 2015.
 
 HOW_TO
 }
