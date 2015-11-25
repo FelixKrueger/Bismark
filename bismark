@@ -7340,6 +7340,7 @@ sub process_command_line{
   my $rg_id;
   my $rg_sample;
   my $genome_folder;
+  my $singles;
 
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7388,9 +7389,10 @@ sub process_command_line{
 				 'B|basename=s'            => \$basename,
 				 'sam'                     => \$sam,
 				 'multicore=i'             => \$multicore,
-				 'rg_tag'                 => \$rg_tag,
+				 'rg_tag'                  => \$rg_tag,
 				 'rg_id=s'                 => \$rg_id,
 				 'rg_sample=s'             => \$rg_sample,
+				 'se|single_end=s'         => \$singles,
 				);
 
 
@@ -7627,7 +7629,7 @@ VERSION
 
   }
 
-  else{ ### Bowtie 1 (default)
+  else{ ### Bowtie 1
     ### checking the integrity of $CT_dir
     chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
     my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
@@ -7911,45 +7913,57 @@ VERSION
 
   ### PAIRED-END MAPPING
   if ($mates1){
-    my @mates1 = (split (/,/,$mates1));
-    die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
-    my @mates2 = (split(/,/,$mates2));
-    unless (scalar @mates1 == scalar @mates2){
-      die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
-    }
-    while (1){
-      my $mate1 = shift @mates1;
-      my $mate2 = shift @mates2;
-      last unless ($mate1 and $mate2);
-      push @filenames,"$mate1,$mate2";
-    }
-    if ($bowtie2){
-      push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
-      push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
-    }
-
-    if ($old_flag){
-      warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n" unless($vanilla);
-      sleep(3);
-    }
+      
+      if (defined $singles){ # if --single_end has been set explicitely
+	  die "You cannot set --single_end and supply files in paired-end format (-1 <mates1> -2 <mates2>). Please respecify!\n";
+      }
+      
+      my @mates1 = (split (/,/,$mates1));
+      die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
+      my @mates2 = (split(/,/,$mates2));
+      unless (scalar @mates1 == scalar @mates2){
+	  die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
+      }
+      while (1){
+	  my $mate1 = shift @mates1;
+	  my $mate2 = shift @mates2;
+	  last unless ($mate1 and $mate2);
+	  push @filenames,"$mate1,$mate2";
+      }
+      if ($bowtie2){
+	  push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
+	  push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
+      }
+      
+      if ($old_flag){
+	  warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n" unless($vanilla);
+	  sleep(3);
+      }
   }
   elsif ($mates2){
-    die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
+      die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
   }
-
+  
   ### SINGLE-END MAPPING
   # Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
-  my $singles;
+  
   unless ($mates1 and $mates2){
-    $singles = join (',',@ARGV);
-    unless ($singles){
-      die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
-    }
-    $singles =~ s/\s/,/g;
-    @filenames = (split(/,/,$singles));
-    warn "\nFiles to be analysed:\n";
-    warn "@filenames\n\n";
-    sleep (3);
+      if (defined $singles){ # if --single_end has been set explicitely
+	  warn "Mapping set to single-end mode (user defined). File names need to be separated by commas [,] or colons [:]! Supplied file names are: $singles\n";
+	  $singles =~ s/:/,/g; # replacing colons (:) with commas
+      }
+      else{
+	  $singles = join (',',@ARGV);
+	  unless ($singles){
+	      die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
+	  }
+	  $singles =~ s/\s/,/g; # replacing spaces with commas
+      }
+      
+      @filenames = (split(/,/,$singles));
+      warn "\nFiles to be analysed:\n";
+      warn "@filenames\n\n";
+      sleep (3);
   }
 
   ### MININUM INSERT SIZE (PAIRED-END ONLY)
@@ -9389,6 +9403,9 @@ OPTIONS:
 
 
 Input:
+
+--se/--single_end <list> Sets single-end mapping mode explicitly giving a list of file names as <list>.
+                         The filenames may be provided as a comma [,] or colon [:] separated list.       
 
 -q/--fastq               The query input files (specified as <mate1>,<mate2> or <singles> are FASTQ
                          files (usually having extension .fg or .fastq). This is the default. See also
