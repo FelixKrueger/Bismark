@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.6 (04 11 2015)
+RELEASE NOTES FOR Bismark v0.14.6 (01 12 2015)
 ----------------------------------------------
 
 deduplicate_bismark
@@ -20,7 +20,12 @@ bismark_genome_preparation
 
 Added process handling to the child processes.
 
+coverage2cytosine
+=================
 
+Added option --gzip to compress output files. This currently only works for the default CpG_report
+and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip 
+is now also passed on from the bismark_methylation_extractor.
 
 
 

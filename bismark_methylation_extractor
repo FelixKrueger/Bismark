@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.14.4';
+my $version = 'v0.14.6';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -394,10 +394,13 @@ foreach my $filename (@filenames){
       if ($split_by_chromosome){
 	push @args, '--split_by_chromosome';
       }
+      if ($gzip){
+	  push @args, '--gzip';
+      }
 
       my $coverage_output = $bedGraph_output;
       $coverage_output =~ s/bedGraph$/bismark.cov.gz/;
-
+      
       push @args, $output_dir . $coverage_output; # this will be the infile
 
       system ("$Bin/coverage2cytosine @args");
@@ -5723,8 +5726,8 @@ OPTIONS:
                          explicitly if Samtools is in the PATH already.
 
 --gzip                   The methylation extractor files (CpG_OT_..., CpG_OB_... etc) will be written out in
-                         a GZIP compressed form to save disk space. This option does not work on bedGraph and
-                         genome-wide cytosine reports as they are 'tiny' anyway.
+                         a GZIP compressed form to save disk space. This option is also passed on to the genome-wide
+                         cytosine report. BedGraph and coverage files will be written out as .gz by default.
 
 --version                Displays version information.
 
@@ -5869,7 +5872,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 22 July 2015.
+This script was last modified on 01 December 2015.
 
 HOW_TO
 }
