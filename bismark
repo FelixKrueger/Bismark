@@ -1311,22 +1311,30 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   $bam = 0 unless (defined $bam);
-
+  
+  if ($ambig_bam){
+      my $ambig_bam_out = $outfile;
+      $ambig_bam_out =~ s/sam$/ambig.bam/;
+      warn "Ambiguous BAM output: $ambig_bam_out\n";
+      open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
+  }
+   
   if ($bam == 1){ ### Samtools is installed, writing out BAM directly
-    $outfile =~ s/sam$/bam/;
-    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      $outfile =~ s/sam$/bam/;
+      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-    $outfile .= '.gz';
-    open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      $outfile .= '.gz';
+      open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   else{ # uncompressed ouput, default
-    open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
-
   warn "\n>>> Writing bisulfite mapping results to $output_dir$outfile <<<\n\n";
-  sleep(1);
 
+ 
+  sleep(1);
+  
   if ($vanilla){
     print OUT "Bismark version: $bismark_version\n";
   }
@@ -1418,20 +1426,20 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   if ($directional){
-    print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n";
+      print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n";
   }
   elsif ($pbat){
-    print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)\n";
+      print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)\n";
   }
   else{
-    print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n";
+      print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n";
   }
-
+  
   if ($bowtie2){
-    print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+      print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
   else{
-    print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+      print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
 
   ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
@@ -1440,11 +1448,11 @@ sub start_methylation_call_procedure_single_ends {
     print "Current working directory is: $cwd\n\n";
     read_genome_into_memory($cwd);
   }
-
+  
   unless ($vanilla or $sam_no_hd){
-    generate_SAM_header();
+      generate_SAM_header();
   }
-
+  
   ### Input file is in FastA format
   if ($sequence_file_format eq 'FASTA'){
     process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
@@ -1495,8 +1503,17 @@ sub start_methylation_call_procedure_paired_ends {
   if ($basename){ # Output file basename is set using the -B argument
     $outfile = "${basename}_pe.sam";
   }
-
-
+  
+  if ($ambig_bam){
+      my $ambig_bam_out = $outfile;
+      $ambig_bam_out =~ s/sam$/ambig.bam/;
+      warn "Ambiguous BAM output: $ambig_bam_out\n";
+      open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
+  }
+  else{
+      warn "AMBIG BAM NOT defined!!!!!!!!!!!!!!!\n"; sleep(3);
+  }
+  
   $bam = 0 unless (defined $bam);
 
   if ($bam == 1){ ### Samtools is installed, writing out BAM directly
@@ -2214,7 +2231,9 @@ sub process_single_end_fastQ_file_for_methylation_call{
   print "Processed $counting{sequences_count} sequences in total\n\n";
 
   print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
-
+  if ($ambig_bam){
+      close AMBIBAM or warn "Had trouble closing filehandle AMBIBAM: $!\n";
+  }
 }
 
 sub process_fastA_files_for_paired_end_methylation_calls{
@@ -2418,6 +2437,9 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
   warn "Processed $counting{sequences_count} sequences in total\n\n";
 
   close OUT or warn "Failed to close filehandle OUT: $!\n\n";
+  if ($ambig_bam){
+      close AMBIBAM or warn "Had trouble closing filehandle AMBIBAM: $!\n\n";
+  }
 
   print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
 
@@ -2734,8 +2756,9 @@ sub check_bowtie_results_single_end_bowtie2{
   # as of version Bowtie 2 2.0.0 beta7, when input reads are unpaired, Bowtie 2 no longer removes the trailing /1 or /2 from the read name.
   # $identifier =~ s/\/[1234567890]+$//; # some sequencers don't just have /1 or /2 at the end of read IDs
   # print "sequence $sequence\nid $identifier\nquality: '$quality_value'\n";
-
+  
   my $alignment_ambiguous = 0;
+  my $first_ambig_alignment; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified
   my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
   my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
 
@@ -2836,32 +2859,32 @@ sub check_bowtie_results_single_end_bowtie2{
 	}
       }
 
-
-      if ($ambig_bam){ 
-	  warn "Sequence:\n";
-	  my $first_ambig_alignment = $fhs[$index]->{last_line};
-	  $first_ambig_alignment =~ s/(_CT_converted|_GA_converted)//;
-	  warn "$first_ambig_alignment\n"; sleep(1);
-      }
-      else{
-	  warn "\$ambig_bam is not defined!!!!\n";
-      }
-      
       if (!defined $best_AS_so_far){
-	$best_AS_so_far = $alignment_score;
-	# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+	  $best_AS_so_far = $alignment_score;
+	  # warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+	  if ($ambig_bam){ # also setting the first_ambig_alignment
+	      $first_ambig_alignment = $fhs[$index]->{last_line};
+	      $first_ambig_alignment =~ s/_(CT|GA)_converted//;
+	      # warn "$first_ambig_alignment\n"; sleep(1);
+	  }	
       }
       else{
-	if ($alignment_score > $best_AS_so_far){ # AS are generally negative with a maximum of 0
-	  $best_AS_so_far = $alignment_score;
-	  # warn "Found better alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
-	  # resetting the ambiguous within thread memory (if applicable at all)
-	  # warn "Resetting amb within thread value to 0\n";
-	  $amb_same_thread = 0;
-	}
-	else{
-	  # warn "current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
-	}
+	  if ($alignment_score > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+	      $best_AS_so_far = $alignment_score;
+	      # warn "Found better alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
+	      # resetting the ambiguous within thread memory (if applicable at all)
+	      # warn "Resetting amb within thread value to 0\n";
+	      $amb_same_thread = 0;
+
+	      if ($ambig_bam){ # also setting a new first_ambig_alignment
+		  $first_ambig_alignment = $fhs[$index]->{last_line};
+		  $first_ambig_alignment =~ s/_(CT|GA)_converted//;
+		  # warn "$first_ambig_alignment\n"; sleep(1);
+	      }
+	  }
+	  else{
+	      # warn "current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	  }
       }
 
       # warn "First  best alignment_score is: '$alignment_score'\n";
@@ -2974,9 +2997,9 @@ sub check_bowtie_results_single_end_bowtie2{
 	  }
 	}
 	else{
-	  # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-	  $fhs[$index]->{last_seq_id} = undef;
-	  $fhs[$index]->{last_line} = undef;
+	    # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+	    $fhs[$index]->{last_seq_id} = undef;
+	    $fhs[$index]->{last_line} = undef;
 	}
       }
     }
@@ -2984,30 +3007,34 @@ sub check_bowtie_results_single_end_bowtie2{
 
   ### If there were several equally good alignments for the best alignment score we will boot the read
   if ($amb_same_thread){
-    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
-    $alignment_ambiguous = 1;
-    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+      $alignment_ambiguous = 1;
+      # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
   }
   else{
-    # warn "alignment won't be considered ambiguous. This time....\n";
+      # warn "alignment won't be considered ambiguous. This time....\n";
   }
 
   ### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous or --unmapped was specified the read sequence will be printed out.
   if ($alignment_ambiguous == 1){
-    $counting{unsuitable_sequence_count}++;
-    ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    # my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
-    # print "$ambiguous_read_output\n";
+      $counting{unsuitable_sequence_count}++;
+      ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
+      # my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
+      # print "$ambiguous_read_output\n";
 
-    if ($ambiguous){
-      return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.txt if '--ambiguous' was specified
-    }
-    elsif ($unmapped){
-      return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' but not '--ambiguous' was specified
-    }
-    else{
-      return 0;
-    }
+      if ($ambig_bam){ 
+	  # warn "Sequence is ambiguous, printing out BAM file:\n";
+	  print AMBIBAM "$first_ambig_alignment\n";
+      }  
+
+      if ($ambiguous){
+	  return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.txt if '--ambiguous' was specified
+      }
+      elsif ($unmapped){
+	  return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' but not '--ambiguous' was specified
+      }
+      else{
+	  return 0;
+      }
   }
 
   ### if there was no alignment found for a certain sequence at all we continue with the next sequence in the sequence file
@@ -3610,6 +3637,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
   my %alignments;
   my $alignment_ambiguous = 0;
+
+  my $first_ambig_alignment_line1; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified R1
+  my $first_ambig_alignment_line2; # R2
+
   my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
   my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
 
@@ -3765,18 +3796,37 @@ sub check_bowtie_results_paired_ends_bowtie2{
       if (!defined $best_AS_so_far){
 	$best_AS_so_far = $sum_of_alignment_scores_1;
 	# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+	if ($ambig_bam){ # also setting the first_ambig_alignment
+	    # Read 1
+	    $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
+	    $first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
+	    # Read 2
+	    $first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
+	    $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
+	    # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
+	}
       }
       else{
-	if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
-	  $best_AS_so_far = $sum_of_alignment_scores_1;
-	  # warn "Found better sum of alignment scores ($sum_of_alignment_scores), setting \$best_AS_so_far to $best_AS_so_far\n";
-	  # resetting the ambiguous within thread memory (if applicable at all)
-	  # warn "Resetting amb within thread value to 0\n";
-	  $amb_same_thread = 0;
-	}
-	else{
-	  # warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
-	}
+	  if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+	      $best_AS_so_far = $sum_of_alignment_scores_1;
+	      # warn "Found better sum of alignment scores ($sum_of_alignment_scores), setting \$best_AS_so_far to $best_AS_so_far\n";
+	      # resetting the ambiguous within thread memory (if applicable at all)
+	      # warn "Resetting amb within thread value to 0\n";
+	      $amb_same_thread = 0;
+
+	      if ($ambig_bam){ # also setting a new first_ambig_alignment
+		  # Read 1
+		  $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
+		  $first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
+		  # Read 2
+		  $first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
+		  $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
+		  # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
+	      }
+	  }
+	  else{
+	      # warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	  }
       }
 
       if (defined $second_best_1 and defined $second_best_2){
@@ -3959,33 +4009,38 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
   ### If there were several equally good alignments for the best alignment score we will boot the read
   if ($amb_same_thread){
-    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
-    $alignment_ambiguous = 1;
-    # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+      # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+      $alignment_ambiguous = 1;
+      # warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
   }
   else{
-    # warn "alignment won't be considered ambiguous. This time....\n";
+      # warn "alignment won't be considered ambiguous. This time....\n";
   }
-
+  
 
   ### if the read produced several ambiguous alignments for a single instance of Bowtie 2 we can return already now. If --ambiguous was specified the read sequence will be printed out in FastQ format
   if ($alignment_ambiguous == 1){
-    $counting{unsuitable_sequence_count}++;
-    ### report that the sequence pair has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
-    #  my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
-    #  my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
-    #  print "$ambiguous_read_1\n";
-    #  print "$ambiguous_read_2\n";
-
-    if ($ambiguous){
-      return 2; # => exits to next sequence pair, and prints it out to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
-    }
-    elsif ($unmapped){
-      return 1; # => exits to next sequence pair, and prints it out to _unmapped_reads_1.txt and _unmapped_reads_2.txt if '--unmapped' but not '--ambiguous' was specified
-    }
-    else{
-      return 0;
-    }
+      $counting{unsuitable_sequence_count}++;
+      ### report that the sequence pair has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
+      #  my $ambiguous_read_1 = join("\t",$identifier.'/1','256','*','0','0','*','*','0','0',$sequence_1,$quality_value_1);
+      #  my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
+      #  print "$ambiguous_read_1\n";
+      #  print "$ambiguous_read_2\n";
+      
+      if ($ambig_bam){ 
+	  # warn "Sequence is ambiguous, printing out to ambiguous BAM file:\n";
+	  print AMBIBAM "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
+      }  
+      
+      if ($ambiguous){
+	  return 2; # => exits to next sequence pair, and prints it out to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
+      }
+      elsif ($unmapped){
+	  return 1; # => exits to next sequence pair, and prints it out to _unmapped_reads_1.txt and _unmapped_reads_2.txt if '--unmapped' but not '--ambiguous' was specified
+      }
+      else{
+	  return 0;
+      }
   }
 
   ### if no alignment was found for a certain sequence at all we continue with the next sequence in the sequence file
@@ -8173,29 +8228,37 @@ VERSION
 
 
 sub generate_SAM_header{
+    
+    print OUT "\@HD\tVN:1.0\tSO:unsorted\n";          # @HD = header, VN = version, SO = sort order
+    if ($ambig_bam){
+	print AMBIBAM "\@HD\tVN:1.0\tSO:unsorted\n";    
+    }
+    
+    #  Unordered printing of @SQ headers
+    #  foreach my $chr (keys %chromosomes){
+    #    my $length = length ($chromosomes{$chr});
+    #    print "\@SQ\tSN:$chr\tLN:$length\n";
+    #    print OUT "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
+    #  }
+    
+    foreach my $chr (sort {$a<=>$b} keys %SQ_order){
+	# warn "$chr\t$SQ_order{$chr}\n";
+	my $length = length ($chromosomes{$SQ_order{$chr}});
+	print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length   
+	if ($ambig_bam){
+	    print AMBIBAM "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n";
+	}
+    }
 
-  print OUT "\@HD\tVN:1.0\tSO:unsorted\n";          # @HD = header, VN = version, SO = sort order
-
-  #  Unordered printing of @SQ headers
-  #  foreach my $chr (keys %chromosomes){
-  #    my $length = length ($chromosomes{$chr});
-  #    print "\@SQ\tSN:$chr\tLN:$length\n";
-  #    print OUT "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
-  #  }
-
-  foreach my $chr (sort {$a<=>$b} keys %SQ_order){
-    # warn "$chr\t$SQ_order{$chr}\n";
-    my $length = length ($chromosomes{$SQ_order{$chr}});
-    print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length
-  }
-
-  # 18 11 2015: Added @RG as a header line if --rg_tag or --rg_id/--rg_sample were set as well
-  if ($rg_tag){
-    print OUT "\@RG\tPL:ILLUMINA\tID:$rg_id\tSM:$rg_sample\n";  # @RG = Read Group, PL = Platform, ID: required, SM: sample, can be a description
-  }
-  
-  print OUT "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";        # @PG = program, ID = unique identifier, PN = program name name, VN = program version
-
+    # 18 11 2015: Added @RG as a header line if --rg_tag or --rg_id/--rg_sample were set as well
+    if ($rg_tag){
+	print OUT "\@RG\tPL:ILLUMINA\tID:$rg_id\tSM:$rg_sample\n";  # @RG = Read Group, PL = Platform, ID: required, SM: sample, can be a description
+    }
+    
+    print OUT "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";        # @PG = program, ID = unique identifier, PN = program name name, VN = program version
+    if ($ambig_bam){
+	print AMBIBAM "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";
+    }
 }
 
 ### I would like to thank the following individuals for their valuable contributions to the Bismark SAM output format:
