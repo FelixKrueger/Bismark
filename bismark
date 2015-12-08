@@ -36,7 +36,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -2727,7 +2727,6 @@ sub check_bowtie_results_single_end{
 sub check_bowtie_results_single_end_bowtie2{
   my ($sequence,$identifier,$quality_value) = @_;
 
-
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
     $quality_value = 'I'x(length$sequence);
   }
@@ -2837,6 +2836,17 @@ sub check_bowtie_results_single_end_bowtie2{
 	}
       }
 
+
+      if ($ambig_bam){ 
+	  warn "Sequence:\n";
+	  my $first_ambig_alignment = $fhs[$index]->{last_line};
+	  $first_ambig_alignment =~ s/(_CT_converted|_GA_converted)//;
+	  warn "$first_ambig_alignment\n"; sleep(1);
+      }
+      else{
+	  warn "\$ambig_bam is not defined!!!!\n";
+      }
+      
       if (!defined $best_AS_so_far){
 	$best_AS_so_far = $alignment_score;
 	# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
@@ -7341,7 +7351,8 @@ sub process_command_line{
   my $rg_sample;
   my $genome_folder;
   my $singles;
-
+  my $ambig_bam;
+  
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
 				 '2=s'                     => \$mates2,
@@ -7393,6 +7404,7 @@ sub process_command_line{
 				 'rg_id=s'                 => \$rg_id,
 				 'rg_sample=s'             => \$rg_sample,
 				 'se|single_end=s'         => \$singles,
+				 'ambig_bam'               => \$ambig_bam,
 				);
 
 
@@ -7521,6 +7533,13 @@ VERSION
       warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
     }
     sleep (1);
+  }
+
+  ### OPTION AMBIGUOUS BAM
+  if ($ambig_bam){
+      unless ($bowtie2){
+	  die "The option --ambig_bam is only available for Bowtie2 alignments\n";
+      }
   }
 
 
@@ -8148,7 +8167,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam);
 }
 
 
@@ -9381,7 +9400,8 @@ ARGUMENTS:
                          as well as the subfolders created by the Bismark_Genome_Preparation
                          script (/Bisulfite_Genome/CT_conversion/ and /Bisulfite_Genome/GA_conversion/).
                          Bismark expects one or more fastA files in this folder (file extension: .fa
-                         or .fasta). The path can be relative or absolute.
+                         or .fasta). The path can be relative or absolute. The path may also be set as
+                         '--genome_folder /path/to/genome/folder/'.
 
 -1 <mates1>              Comma-separated list of files containing the #1 mates (filename usually includes
                          "_1"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
@@ -9412,7 +9432,7 @@ Input:
                          --solexa-quals.
 
 -f/--fasta               The query input files (specified as <mate1>,<mate2> or <singles> are FASTA
-                         files (usually havin extension .fa, .mfa, .fna or similar). All quality values
+                         files (usually having extensions .fa, .mfa, .fna or similar). All quality values
                          are assumed to be 40 on the Phred scale. FASTA files are expected to contain both
                          the read name and the sequence on a single line (and not spread over several lines).
 
@@ -9532,7 +9552,7 @@ Output:
 
 --rg_tag                 Write out a Read Group tag to the resulting SAM/BAM file. This will write the following line to the
                          SAM header: \@RG PL: ILLUMINA ID:SAMPLE SM:SAMPLE ; to set ID and SM see --rg_id and --rg_sample.
-                         In addition each read recieves a RG:Z:RG-ID tag. Default: OFF.
+                         In addition each read receives an RG:Z:RG-ID tag. Default: OFF.
 
 --rg_id <string>         Sets the ID field in the \@RG header line. The default is 'SAMPLE'.
 
@@ -9610,6 +9630,10 @@ Output:
 
                               CTOB:      163           83                 115          179
 
+--ambig_bam              For reads that have multiple alignments a random alignment is written out to a special file ending in
+                         '.ambiguous.bam'. The alignments are in Bowtie2 format and do not any contain Bismark specific
+                         entries such as the methylation call etc. These ambiguous BAM files are intended to be used as 
+                         coverage estimators for variant callers. 
 
 Other:
 
@@ -9779,7 +9803,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 25 Nov 2015.
+Last edited on 07 Dec 2015.
 
 HOW_TO
 }
