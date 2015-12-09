@@ -2363,7 +2363,6 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     my $ident_2 = <IN2>;         # not needed
     my $quality_value_2 = <IN2>; # not needed
     last unless ($identifier_1 and $sequence_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $quality_value_2);
-
     $identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
     $identifier_2 = fix_IDs($identifier_2);
 
@@ -3630,10 +3629,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
   unless ($quality_value_2){
     $quality_value_2 = 'I'x(length$sequence_2);
   }
-
-
   # print "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
-
 
   my %alignments;
   my $alignment_ambiguous = 0;
@@ -3658,9 +3654,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
     ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
-
-      my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
-      my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
+	
+	my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
+	my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
       #  print "Index: $index\t$fhs[$index]->{last_line_1}\n";
       #  print "Index: $index\t$fhs[$index]->{last_line_2}\n";	
       #  print join ("\t",$id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1),"\n";
@@ -4029,7 +4025,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
       
       if ($ambig_bam){ 
 	  # warn "Sequence is ambiguous, printing out to ambiguous BAM file:\n";
+	  # replacing the first /1\t in the ID of R1 
+	  # warn "Was\n$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
+	  $first_ambig_alignment_line1 =~ s/\/1\t/\t/;
+ 	  $first_ambig_alignment_line2 =~ s/\/2\t/\t/;
+	  # warn "Is:\n$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n";
+	  
 	  print AMBIBAM "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
+   	  # print "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
       }  
       
       if ($ambiguous){
@@ -9866,7 +9869,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 07 Dec 2015.
+Last edited on 09 Dec 2015.
 
 HOW_TO
 }

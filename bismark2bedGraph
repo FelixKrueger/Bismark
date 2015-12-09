@@ -440,17 +440,17 @@ foreach my $in (@temp_files) {
     }
 
     while (my $line = <$ifh>) {
-      next if ($line =~ /^Bismark/);
-      chomp $line;
-      #warn "full line:\n$line\n";
-      $last_chr = $chr;
-      $last_pos = $pos;
-      ($name, $meth_state, $chr, $pos, $meth_state2) = split "\t", $line;
-      #warn "$name, $meth_state, $chr, $pos, $meth_state2\n"; sleep(1);
-      if (($last_pos ne $pos) || ($last_chr ne $chr)) {
-	generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
-	@methylcalls = qw (0 0 0);
-      }
+	next if ($line =~ /^Bismark/);
+	chomp $line;
+	#warn "full line:\n$line\n";
+	$last_chr = $chr;
+	$last_pos = $pos;
+	($name, $meth_state, $chr, $pos, $meth_state2) = split "\t", $line;
+	#warn "$name, $meth_state, $chr, $pos, $meth_state2\n"; sleep(1);
+	if (($last_pos ne $pos) || ($last_chr ne $chr)) {
+	    generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
+	    @methylcalls = qw (0 0 0);
+	}
 
       my $validated = validate_methylation_call($meth_state, $meth_state2);
       unless($validated){
