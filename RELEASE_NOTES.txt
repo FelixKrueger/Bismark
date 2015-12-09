@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.6 (08 12 2015)
+RELEASE NOTES FOR Bismark v0.14.6 (09 12 2015)
 ----------------------------------------------
 
 Bismark
@@ -28,12 +28,11 @@ added a check that reads the first 100000 lines to see if the file appears to ha
 and bail out if this is true.
 
 
-
-
 bismark_genome_preparation
 ==========================
 
 Added process handling to the child processes.
+
 
 coverage2cytosine
 =================
@@ -42,6 +41,12 @@ Added option --gzip to compress output files. This currently only works for the 
 and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip 
 is now also passed on from the bismark_methylation_extractor.
 
+
+bismark2bedGraph
+================
+
+Changed the way gzip compressed input files are handled when using the unix sort command (i.e. with
+--scaffolds/--gazillion or without --ample_memory. 
 
 
 

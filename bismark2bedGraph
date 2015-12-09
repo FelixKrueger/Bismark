@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.14.4';
+my $bismark2bedGraph_version = 'v0.14.6';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -417,26 +417,36 @@ foreach my $in (@temp_files) {
     # if ($sort_dir eq ''){
     #   $sort_dir = './';
     # }
-
+    
     if ($gazillion){
-      open $ifh, "sort -S $sort_size -T $sort_dir -k3,3V -k4,4n $in |" or die "Input file could not be sorted. $!\n";
-      ### Comment by Volker Brendel, Indiana University
-      ### "The -k3,3V sort option is critical when the sequence names are numbered scaffolds (without left-buffering of zeros).  Omit the V, and things go very wrong in the tallying of reads."
+	if ($in =~ /gz$/){
+	    open $ifh, "zcat $in | sort -S $sort_size -T $sort_dir -k3,3V -k4,4n |" or die "Input file could not be sorted. $!\n";
+	}
+	else{ 
+	    open $ifh, "sort -S $sort_size -T $sort_dir -k3,3V -k4,4n $in |" or die "Input file could not be sorted. $!\n";
+	}
+	### Comment by Volker Brendel, Indiana University
+	### "The -k3,3V sort option is critical when the sequence names are numbered scaffolds (without left-buffering of zeros).  Omit the V, and things go very wrong in the tallying of reads."
     }
     else{
-      ### this sort command was used previously and sorts according to chromosome in addition to position. Since the files are being sorted according to chromosomes anyway,
-      ### we may drop the -k3,3V option. It has been reported that this will result in a dramatic speed increase
-      open $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!\n";
+	### this sort command was used previously and sorts according to chromosome in addition to position. Since the files are being sorted according to chromosomes anyway,
+	### we may drop the -k3,3V option. It has been reported that this will result in a dramatic speed increase
+	if ($in =~ /gz$/){
+	    open $ifh, "zcat $in | sort -S $sort_size -T $sort_dir -k4,4n |" or die "Input file could not be sorted. $!\n";
+	}
+	else{
+	    open $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!\n";
+	}
     }
 
     while (my $line = <$ifh>) {
       next if ($line =~ /^Bismark/);
       chomp $line;
-
+      #warn "full line:\n$line\n";
       $last_chr = $chr;
       $last_pos = $pos;
       ($name, $meth_state, $chr, $pos, $meth_state2) = split "\t", $line;
-
+      #warn "$name, $meth_state, $chr, $pos, $meth_state2\n"; sleep(1);
       if (($last_pos ne $pos) || ($last_chr ne $chr)) {
 	generate_output($last_chr,$last_pos) if $methylcalls[2] > 0;
 	@methylcalls = qw (0 0 0);
@@ -451,7 +461,7 @@ foreach my $in (@temp_files) {
 	$methylcalls[0]++;
 	$methylcalls[2]++;
       } else {
-	$methylcalls[1]++;
+	  $methylcalls[1]++;
 	$methylcalls[2]++;
       }
     }
@@ -796,7 +806,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 23 July 2015
+                          Script last modified: 09 December 2015
 
 EOF
     ;
