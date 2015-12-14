@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.6';
+my $bismark_version = 'v0.14.6_dev';
 my $command_line = join (" ",@ARGV);
 
 
@@ -36,7 +36,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -1409,8 +1409,12 @@ sub start_methylation_call_procedure_single_ends {
       warn "Ambiguous BAM output: $ambig_bam_out\n";
       open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
   }
-   
-  if ($bam == 1){ ### Samtools is installed, writing out BAM directly
+
+  if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
+      $outfile =~ s/sam$/cram/;
+      open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+  }
+  elsif($bam == 1){ ### Samtools is installed, writing out BAM directly
       $outfile =~ s/sam$/bam/;
       open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
@@ -1601,22 +1605,23 @@ sub start_methylation_call_procedure_paired_ends {
       warn "Ambiguous BAM output: $ambig_bam_out\n";
       open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
   }
-  else{
-      warn "AMBIG BAM NOT defined!!!!!!!!!!!!!!!\n"; sleep(3);
-  }
   
   $bam = 0 unless (defined $bam);
-
-  if ($bam == 1){ ### Samtools is installed, writing out BAM directly
-    $outfile =~ s/sam$/bam/;
-    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  
+  if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
+      $outfile =~ s/sam$/cram/;
+      open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+  }
+  elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
+      $outfile =~ s/sam$/bam/;
+      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-    $outfile .= '.gz';
-    open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      $outfile .= '.gz';
+      open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   else{ # uncompressed ouput, default
-    open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
 
   warn "\n>>> Writing bisulfite mapping results to $outfile <<<\n\n";
@@ -7501,6 +7506,8 @@ sub process_command_line{
   my $genome_folder;
   my $singles;
   my $ambig_bam;
+  my $cram;
+  my $cram_ref;
   
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7554,6 +7561,8 @@ sub process_command_line{
 				 'rg_sample=s'             => \$rg_sample,
 				 'se|single_end=s'         => \$singles,
 				 'ambig_bam'               => \$ambig_bam,
+				 'cram'                    => \$cram,
+				 'cram_ref=s'              => \$cram_ref,
 				);
 
 
@@ -7627,61 +7636,83 @@ VERSION
 
 
   if ($sam){
-    warn "Output format manually set as SAM\n";
+      warn "Output format manually set as SAM\n";
+  }
+  elsif($cram){
+      warn "Output format set to CRAM\n";
+      if (defined $cram_ref){
+	  warn "CRAM reference given as: '$cram_ref'\n\n";
+	  unless (-e $cram_ref){
+	      die "There is a problem with the CRAM reference '$cram_ref': $!\n\n";
+	  }
+	  
+	  # determining full path information for the cram reference
+	  if ($cram_ref =~/\//){
+	      if (chdir $cram_ref){
+		  my $absolute_cram_ref_folder = getcwd; ## making the genome folder path absolute
+		  unless ($absolute_cram_ref_folder =~/\/$/){
+		      $absolute_cram_ref_folder =~ s/$/\//;
+		  }
+	      }
+	  }
+      }
+      else{
+	  die "CRAM output requires you to supply a single-file reference using '--cram_ref <reference>'. Please respecify!\n\n";
+      }
   }
   else{
-    $bam = 1;
-    warn "Output format is BAM (default)\n";
+      $bam = 1;
+      warn "Output format is BAM (default)\n";
   }
 
   ### OUTPUT REQUESTED AS BAM FILE (default)
-  if ($bam){
-    if ($vanilla){
-      die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
-    }
-
-    ### PATH TO SAMTOOLS
-    if (defined $samtools_path){
-      # if Samtools was specified as full command
-      if ($samtools_path =~ /samtools$/){
-	if (-e $samtools_path){
-	  # Samtools executable found
-	}
-	else{
-	  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-	}
+  if ($bam or $cram){
+      if ($vanilla){
+	  die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
       }
+
+      ### PATH TO SAMTOOLS
+      if (defined $samtools_path){
+	  # if Samtools was specified as full command
+	  if ($samtools_path =~ /samtools$/){
+	      if (-e $samtools_path){
+		  # Samtools executable found
+	      }
+	      else{
+		  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	      }
+	  }
+	  else{
+	      unless ($samtools_path =~ /\/$/){
+		  $samtools_path =~ s/$/\//;
+	      }
+	      $samtools_path .= 'samtools';
+	      if (-e $samtools_path){
+		  # Samtools executable found
+	      }
+	      else{
+		  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	      }
+	  }
+	  
+	  warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
+	  $bam = 1;
+      }
+      # Check whether Samtools is in the PATH if no path was supplied by the user
       else{
-	unless ($samtools_path =~ /\/$/){
-	  $samtools_path =~ s/$/\//;
-	}
-	$samtools_path .= 'samtools';
-   	if (-e $samtools_path){
-	  # Samtools executable found
-	}
-	else{
-	  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-	}
+	  if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
+	      $samtools_path = `which samtools`;
+	      chomp $samtools_path;
+	      warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n"; sleep(1);
+	      $bam = 1;
+	  }
       }
-
-      warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
-      $bam = 1;
-    }
-    # Check whether Samtools is in the PATH if no path was supplied by the user
-    else{
-      if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
-	$samtools_path = `which samtools`;
-	chomp $samtools_path;
-	warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n";
-	$bam = 1;
+      
+      unless (defined $samtools_path){
+	  $bam = 2;
+	  warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
       }
-    }
-
-    unless (defined $samtools_path){
-      $bam = 2;
-      warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
-    }
-    sleep (1);
+      sleep (1);
   }
 
   ### OPTION AMBIGUOUS BAM
@@ -8316,7 +8347,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref);
 }
 
 
@@ -9759,6 +9790,13 @@ Output:
                          been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,
                          the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
 
+--cram                   Writes the output to a CRAM file instead of BAM. This requires the use of Samtools 1.2 or higher.
+                         This mode is currently developmental and does not work in --multicore mode.
+
+--cram_ref <ref_file>    CRAM output requires you to specify a reference genome as a single FastA file. Currently you need
+                         to provide this file yourself. Future versions will construct this file for you from the reference
+                         genome .fa sequences in case there were more than one.                 
+
 --samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                          explicitly if Samtools is in the PATH already.
 
@@ -9960,7 +9998,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 09 Dec 2015.
+Last edited on 14 Dec 2015.
 
 HOW_TO
 }
