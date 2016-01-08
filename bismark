@@ -236,6 +236,13 @@ foreach my $filename (@filenames){
   @pids = ();
   $seqID_contains_tabs = 0;
 
+  ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
+  unless (%chromosomes){
+      my $cwd = getcwd; # storing the path of the current working directory
+      warn "Current working directory is: $cwd\n\n";
+      read_genome_into_memory($cwd);
+  }
+
   ### As of version 0.14.0 we support multi-threading. In a first instance we accomplish this by
   ### splitting the input file(s) into several smaller subfiles and merging the results back at
   ### the end.
@@ -1279,11 +1286,20 @@ sub merge_individual_BAM_files{
       $merged_name = "${basename}_pe.bam";
     }
   }
+  if ($cram){
+      $merged_name =~ s/bam$/cram/;
+      warn "At this stage we write out a single CRAM file and delete all temporary BAM files\n";
+      warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
+      
+      open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+  }
+  else{
+      warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
+      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
+  }  
 
-  warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
-  open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
   my $first = 0;
-
+  
   foreach my $temp_bam(@$tempbam){
     # $temp_bam =~ s/.*\///; # deleting path information
 
@@ -1411,8 +1427,16 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
-      $outfile =~ s/sam$/cram/;
-      open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+      ### for multicore processing we write out BAM files by default and merge them together as a single CRAM file in the merging step later on.
+      ### This avoids having to change all the the file endings on the way
+      if($multicore > 1){
+	  $outfile =~ s/sam$/bam/;
+	  open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      }
+      else{ # single-core mode
+	  $outfile =~ s/sam$/cram/;
+	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+      }
   }
   elsif($bam == 1){ ### Samtools is installed, writing out BAM directly
       $outfile =~ s/sam$/bam/;
@@ -1537,12 +1561,6 @@ sub start_methylation_call_procedure_single_ends {
       print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
 
-  ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
-  unless (%chromosomes){
-    my $cwd = getcwd; # storing the path of the current working directory
-    print "Current working directory is: $cwd\n\n";
-    read_genome_into_memory($cwd);
-  }
   
   unless ($vanilla or $sam_no_hd){
       generate_SAM_header();
@@ -1560,16 +1578,15 @@ sub start_methylation_call_procedure_single_ends {
 
 sub start_methylation_call_procedure_paired_ends {
   my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
-
   my ($dir_1,$filename_1);
-
+    
   if ($sequence_file_1 =~ /\//){
-    ($dir_1,$filename_1) = $sequence_file_1 =~ m/(.*\/)(.*)$/;
+      ($dir_1,$filename_1) = $sequence_file_1 =~ m/(.*\/)(.*)$/;
   }
   else{
-    $filename_1 = $sequence_file_1;
+      $filename_1 = $sequence_file_1;
   }
-
+  
   my ($dir_2,$filename_2);
 
   if  ($sequence_file_2 =~ /\//){
@@ -1595,6 +1612,7 @@ sub start_methylation_call_procedure_paired_ends {
     $outfile =~ s/$/_bismark_pe.sam/;
   }
 
+
   if ($basename){ # Output file basename is set using the -B argument
     $outfile = "${basename}_pe.sam";
   }
@@ -1609,8 +1627,14 @@ sub start_methylation_call_procedure_paired_ends {
   $bam = 0 unless (defined $bam);
   
   if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
-      $outfile =~ s/sam$/cram/;
-      open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+      if ($multicore > 1){
+	  $outfile =~ s/sam$/bam/;
+	  open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+      }
+      else{ # single-core mode
+	  $outfile =~ s/sam$/cram/;
+	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+      }
   }
   elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
       $outfile =~ s/sam$/bam/;
@@ -1757,14 +1781,6 @@ sub start_methylation_call_procedure_paired_ends {
   }
 
 
-
-
-  ### if 2 or more files are provided we might still hold the genome in memory and don't need to read it in a second time
-  unless (%chromosomes){
-    my $cwd = getcwd; # storing the path of the current working directory
-    warn "Current working directory is: $cwd\n\n";
-    read_genome_into_memory($cwd);
-  }
 
   unless ($vanilla or $sam_no_hd){
     generate_SAM_header();
@@ -5671,8 +5687,10 @@ sub methylation_call{
 }
 
 sub read_genome_into_memory{
+
     ## working directoy
     my $cwd = shift;
+    
     ## reading in and storing the specified genome in the %chromosomes hash
     chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
     warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
@@ -5752,6 +5770,26 @@ sub read_genome_into_memory{
     }
     print "\n";
     chdir $cwd or die "Failed to move to directory $cwd\n";
+
+    ### If no single multi-FastA genome file was specified explicitely we will generate one here and write it to the output directory
+    if ($cram){
+	unless (defined $cram_ref){
+	    warn "Reconstituting a single multi-FastA genome file as CRAM reference (you may specify such a file using --cram_ref <file> explicitely to prevent this behaviour)\n";	
+
+	    $cram_ref = "${output_dir}Bismark_genome_CRAM_reference.mfa";
+	    warn "Writing multi-FastA file to $cram_ref\n";
+	    open (REF,'>',"$cram_ref") or die "Failed to write to file $cram_ref\n";
+	    foreach my $chr(keys %chromosomes){
+		print REF ">$chr\n$chromosomes{$chr}\n";
+	    }
+	    warn "Complete\n";
+	    close REF or warn "Failed to close filehandle REF: $!\n";
+	}
+	
+    }
+    
+
+
 }
 
 sub extract_chromosome_name {
@@ -7657,7 +7695,7 @@ VERSION
 	  }
       }
       else{
-	  die "CRAM output requires you to supply a single-file reference using '--cram_ref <reference>'. Please respecify!\n\n";
+	  warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
       }
   }
   else{

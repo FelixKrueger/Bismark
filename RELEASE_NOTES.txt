@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.14.6 (09 12 2015)
+RELEASE NOTES FOR Bismark v0.14.6 (08 01 2016)
 ----------------------------------------------
 
 Bismark
@@ -14,6 +14,11 @@ first argument.
 Added an option '--rg_tag' to print an @RG header line as well as and RG:Z: tag to each read. 
 The ID and SAMPLE fields default to 'SAMPLE', but can be specified manually with '--rg_id' or
 '--rg_sample'.
+
+Added the new options '--cram' and '--cram_ref' to Bismark for both paired-end and single-end mode.
+This option requires Samtools version 1.2 or higher, and you need to supply the genome FastA
+sequences as a single file with the option '--cram_ref'. In the future I am considering to derive
+the reference file from multiple .fa files that were specified for the Bismark run anyway.
 
 
 deduplicate_bismark
