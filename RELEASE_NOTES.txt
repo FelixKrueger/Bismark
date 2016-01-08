@@ -15,10 +15,17 @@ Added an option '--rg_tag' to print an @RG header line as well as and RG:Z: tag 
 The ID and SAMPLE fields default to 'SAMPLE', but can be specified manually with '--rg_id' or
 '--rg_sample'.
 
-Added the new options '--cram' and '--cram_ref' to Bismark for both paired-end and single-end mode.
-This option requires Samtools version 1.2 or higher, and you need to supply the genome FastA
-sequences as a single file with the option '--cram_ref'. In the future I am considering to derive
-the reference file from multiple .fa files that were specified for the Bismark run anyway.
+Added new option '--ambig_bam' for Bowtie2-mode only, which writes out a single alignment for
+sequences with multiple alignments to a special file ending in '.ambiguous.bam'. The alignments
+are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation
+call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant
+callers. Works for single-end and paired-end alignments in single or multi-core mode.
+
+Added the new options '--cram' and '--cram_ref' to Bismark for both paired- and single-end alignments
+in single or multi-core mode. This option requires Samtools version 1.2 or higher. A genome
+FastA reference may be supplied as a single file with the option '--cram_ref'; if this is not
+specified the file is derived from the reference FastA files used for the Bismark run, and written
+to the file 'Bismark_genome_CRAM_reference.mfa' into the output directory.
 
 
 deduplicate_bismark
