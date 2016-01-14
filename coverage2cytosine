@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-15, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@ warn "Coverage infile:\t\t\t$coverage_infile\n";
 warn "Output directory:\t\t\t>$output_dir<\n";
 warn "Parent directory:\t\t\t>$parent_dir<\n";
 warn "Genome directory:\t\t\t>$genome_folder<\n";
+
 if ($CX_context){
   warn "CX context:\t\t\t\tyes\n";
 }
@@ -113,8 +114,8 @@ sub combine_CpGs_to_single_CG_entity{
 
     my ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
     my ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
-    #  print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
-    #  print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n";
+    # print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
+    # print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n"; sleep(1);
 
     if ($pos1 < 2){
       $line1 = $line2;
@@ -430,19 +431,24 @@ sub generate_genome_wide_cytosine_report {
   }
 
   # Last found chromosome
+  # If there never was a last chromosome then something must have gone wrong with reading the data in
+  unless (defined $last_chr){
+      die "No last chromosome was defined, something must have gone wrong while reading the data in (e.g. specified wrong file path for a gzipped coverage file?). Please check your command!\n\n";
+  }
+
   warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
   $processed{$last_chr} = 1;
-
-if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-  my $chromosome_out = $cytosine_out;
-  if ($chromosome_out =~ /\.txt$/){ # files passed on by the methylation extractor end in _report.txt
-    $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
-    }
-    else{ # user specified output file name
-      $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-    }
-    open (CYT,'>',$chromosome_out) or die $!;
-    # warn "Writing output for $last_chr to $chromosome_out\n";
+  
+  if ($split_by_chromosome){ ## writing output to 1 file per chromosome
+      my $chromosome_out = $cytosine_out;
+      if ($chromosome_out =~ /\.txt$/){ # files passed on by the methylation extractor end in _report.txt
+	  $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
+      }
+      else{ # user specified output file name
+	  $chromosome_out =~ s/$/.chr${last_chr}.txt/;
+      }
+      open (CYT,'>',$chromosome_out) or die $!;
+      # warn "Writing output for $last_chr to $chromosome_out\n";
   }
 
     while ( $chromosomes{$last_chr} =~ /([CG])/g){
@@ -1025,7 +1031,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 01 December 2015
+                              Script last modified: 14 January 2016
 
 EOF
     ;
