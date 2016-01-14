@@ -40,6 +40,12 @@ added a check that reads the first 100000 lines to see if the file appears to ha
 and bail out if this is true.
 
 
+Methylation extractor
+=====================
+
+Added support for CRAM files (this option requires Samtools version 1.2 or higher).
+
+
 bismark_genome_preparation
 ==========================
 
@@ -53,6 +59,8 @@ Added option --gzip to compress output files. This currently only works for the 
 and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip 
 is now also passed on from the bismark_methylation_extractor.
 
+Added a check to coverage2cytosine to bail if no information was found in the coverage file, e.g. if
+a wroong file path for a cov.gz file had been specified.
 
 bismark2bedGraph
 ================
