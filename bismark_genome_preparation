@@ -6,7 +6,7 @@ use Cwd;
 $|++;
 
 
-## This program is Copyright (C) 2010-15, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@ my $single_fasta;
 my $bowtie2;
 my $bowtie1;
 
-my $bismark_version = 'v0.14.6';
+my $bismark_version = 'v0.15.0';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,

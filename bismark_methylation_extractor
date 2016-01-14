@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.14.6';
+my $version = 'v0.15.0';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -5628,9 +5628,9 @@ DESCRIPTION
 
 The following is a brief description of all options to control the Bismark
 methylation extractor. The script reads in a bisulfite read alignment results file 
-produced by the Bismark bisulfite mapper and extracts the methylation information
-for individual cytosines. This information is found in the methylation call field
-which can contain the following characters:
+produced by the Bismark bisulfite mapper (in BAM/CRAM/SAM format) and extracts the
+methylation information for individual cytosines. This information is found in the
+methylation call field which can contain the following characters:
 
        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
        ~~~   X   for methylated C in CHG context                      ~~~
@@ -5901,7 +5901,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 01 December 2015.
+This script was last modified on 14 January 2016.
 
 HOW_TO
 }

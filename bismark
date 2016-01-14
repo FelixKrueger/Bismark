@@ -24,7 +24,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.14.6_dev';
+my $bismark_version = 'v0.15.0';
 my $command_line = join (" ",@ARGV);
 
 
@@ -9829,11 +9829,11 @@ Output:
                          the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
 
 --cram                   Writes the output to a CRAM file instead of BAM. This requires the use of Samtools 1.2 or higher.
-                         This mode is currently developmental and does not work in --multicore mode.
-
---cram_ref <ref_file>    CRAM output requires you to specify a reference genome as a single FastA file. Currently you need
-                         to provide this file yourself. Future versions will construct this file for you from the reference
-                         genome .fa sequences in case there were more than one.                 
+                         
+--cram_ref <ref_file>    CRAM output requires you to specify a reference genome as a single FastA file. If this single-FastA
+                         reference file is not supplied explicitly it will be regenerated from the genome .fa sequence(s)
+                         used for the Bismark run and written to a file called 'Bismark_genome_CRAM_reference.mfa' into the
+                         oputput directory.
 
 --samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                          explicitly if Samtools is in the PATH already.
@@ -10036,7 +10036,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 08 Jan 2016.
+Last edited on 14 Jan 2016.
 
 HOW_TO
 }

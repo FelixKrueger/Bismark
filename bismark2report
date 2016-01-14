@@ -5,7 +5,7 @@ use Getopt::Long;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
-## This program is Copyright (C) 2010-15, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.14.3';
+my $bismark2report_version = 'v0.15.0';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
