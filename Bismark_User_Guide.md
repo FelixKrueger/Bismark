@@ -547,143 +547,79 @@ bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 ##### Output:
 
---non_directional
-
-Thesequencinglibrarywasconstructedinanonstrand-specificmanner,alignments to all four bisulfite strands will be reported. Default: OFF.
-
-(The current Illumina protocol for BS-Seq is directional, in which case the strands complementary to the original strands are merely theoretical and should not exist in reality. Specifying directional alignments (which is the default) will only run 2 alignment threads to the original top (OT) or bottom (OB) strands in parallel and report these alignments. This is the recommended option for sprand-specific libraries).
-
-This option may be used for PBAT-Seq libraries (Post-Bisulfite Adapter Tagging; Kobayashi et al., PLoS Genetics, 2012). This is essentially the exact opposite of alignments in 'directional' mode, as it will only launch two alignment threads to the CTOT and CTOB strands instead of the normal OT and OB ones. Use this option only if you are certain that your libraries were constructed following a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option). The option ‘- -bat’ works only for FastQ files and uncompressed temporary files.
-
-Suppress SAM header lines (starting with @). This might be useful when very large input files are split up into several smaller files to run concurrently and the output files are to be merged afterwards.
-
-Write out a Read Group tag to the resulting SAM/BAM file. This will write the following line to the SAM header:
-
-@RG PL: ILLUMINA ID:SAMPLE SM:SAMPLE
-
-to set ID and SM see --rg_id and --rg_sample. In addition each read receives an RG:Z:RG-ID tag. Default: OFF.
-
---pbat
-
---sam-no-hd
-
---rg_tag
-
---rg_id <string>
-
---rg_sample <string> Sets the SM field in the @RG header line; can't be set without setting --rg_id
-
-as well. The default is 'SAMPLE'. --quiet Print nothing besides alignments.
-
---vanilla Performs bisulfite mapping with Bowtie 1 and prints the 'old' custom Bismark output (up to versions 0.5.X) instead of SAM format output.
-
---un Write all reads that could not be aligned to the file _unmapped_reads.txt in the output directory. Written reads will appear as they did in the input, without any
-
-translation of quality values that may have taken place within Bowtie or Bismark. Paired-end reads will be written to two parallel files with _1 and _2 inserted in their filenames, i.e. unmapped_reads_1.txt and unmapped_reads_2.txt. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to unmapped_reads.txt unless --ambiguous is also specified.
-
-Sets the ID field in the @RG header line. The default is 'SAMPLE'.
-
---ambiguous
-
-Write all reads which produce more than one valid alignment with the same number of lowest mismatches or other reads that fail to align uniquely to _ambiguous_reads.txt. Written reads will appear as they did in the input, without any of the translation of quality values that may have taken place within Bowtie orBismark.Paired-endreadswillbewrittentotwoparallelfiles
-
-with _1 and _2 inserted in their filenames, i.e. _ambiguous_reads_1.txt and _ambiguous_reads_2.txt.fq. These reads are not written to the file specified with --un.
-
--o/--output_dir <dir> Write all output files into this directory. By default the output files will be written into the same folder as the input file. If the specified folder does not exist,
-
---temp_dir <dir>
-
---non_bs_mm
-
---gzip
-
---sam
-
---cram
-
-Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
-
-Write temporary files to this directory instead of into the same directory as the input files. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
-
-Optionally outputs an extra column specifying the number of non-bisulfite mismatches a read during the alignment step. This option is only available for SAM format. In Bowtie 2 context, this value is just the number of actual non-bisulfite mismatches and ignores potential insertions or deletions. The format for single-end reads and read 1 of paired-end reads is 'XA:Z:number of mismatches' and 'XB:Z:number of mismatches' for read 2 of paired-end reads.
-
-Temporary bisulfite conversion files will be written out in a GZIP compressed form to save disk space. This option is available for most alignment modes but is not availableforpaired-endFastA files.Thisoptionmightbesomewhatslowerthan writing out uncompressed files, but this awaits further testing.
-
-The output will be written out in SAM format instead of the default BAM format. Bismark will attempt to use the path to Samtools that was specified with '-- samtools_path', or, if it hasn't been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found, the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
-
-Writes the output to a CRAM file instead of BAM. This requires the use of Samtools 1.2 or higher.
-
---cram_ref <ref_file> CRAM output requires you to specify a reference genome as a single FastA file. If this single-FastA reference file is not supplied explicitly it will be regenerated
-
-from the genome .fa sequence(s) used for the Bismark run and written to a file called Bismark_genome_CRAM_reference.mfa into the oputput directory.
-
---samtools_path The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.
-
---prefix <prefix> Prefixes <prefix> to the output filenames. Trailing dots will be replaced by a singleone.Forexample,'--prefix test'with'file.fq'wouldresultin
-
-the output file 'test.file.fq_bismark.sam' etc.
-
--B/--basename <basename> Write all output to files starting with this base file name. For example, '- -basename foo'wouldresultinthefiles'foo.bam'and
-
---old_flag
-
-'foo_SE_report.txt' (or its paired-end equivalent). Takes precedence over - -prefix.
-
-Only in paired-end SAM mode, uses the FLAG values used by Bismark 0.8.2 and before. In addition, this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since both the appended read IDs and custom FLAG values may cause problems with some downstream tools such as Picard, new defaults were implemented as of version 0.8.3.
-
---ambig_bam
-
-Other:
-
---bowtie1
-
--h/--help
-
--v/--version
-
-For reads that have multiple alignments a random alignment is written out to a special file ending in '.ambiguous.bam'. The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
-
-Uses Bowtie 1 instead of Bowtie 2, which might be a good choice for faster and very short alignments. Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Default: off.
-
-Displays this help file. Displays version information.
-
-Read
-
-OT:     99
-
-OB:     83
-
-CTOT:   99
-
-CTOB:   83
-
-1
-
-Read 2
-
- 147
-
- 163
-
- 147
-
- 163
-
-Read 2
-
- 131
-
- 179
-
- 131
-
- 179
-
-default
-
-=================== ===================
-
-BOWTIE 2 SPECIFIC OPTIONS
+- `--non_directional`
+  - The sequencing library was constructed in a non strand-specific manner, alignments to all four bisulfite strands will be reported.
+    (The current Illumina protocol for BS-Seq is directional, in which case the strands complementary to the original strands are merely theoretical and should not exist in reality. Specifying directional alignments (which is the default) will only run 2 alignment threads to the original top (OT) or bottom (OB) strands in parallel and report these alignments. This is the recommended option for sprand-specific libraries).
+  - Default: OFF
+- `--pbat`
+  - This option may be used for PBAT-Seq libraries (Post-Bisulfite Adapter Tagging; Kobayashi et al., PLoS Genetics, 2012). This is essentially the exact opposite of alignments in 'directional' mode, as it will only launch two alignment threads to the CTOT and CTOB strands instead of the normal OT and OB ones. Use this option only if you are certain that your libraries were constructed following a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option). The option `--pbat` works only for FastQ files and uncompressed temporary files.
+- `--sam-no-hd`
+  - Suppress SAM header lines (starting with @). This might be useful when very large input files are split up into several smaller files to run concurrently and the output files are to be merged afterwards.
+- `--rg_tag`
+  - Write out a Read Group tag to the resulting SAM/BAM file. This will write the following line to the SAM header:
+    ```
+    @RG PL: ILLUMINA ID:SAMPLE SM:SAMPLE
+    ```
+    to set ID and SM see `--rg_id` and `--rg_sample`. In addition each read receives an `RG:Z:RG-ID` tag.
+  - Default: OFF
+- `--rg_id <string>`
+  - Sets the ID field in the `@RG` header line.
+  - Default: SAMPLE
+- `--rg_sample <string>`
+ - Sets the SM field in the `@RG` header line; can't be set without setting `--rg_id` as well.
+ - Default: SAMPLE
+- `--quiet`
+  - Print nothing besides alignments.
+- `--vanilla`
+  - Performs bisulfite mapping with Bowtie 1 and prints the 'old' custom Bismark output (up to versions 0.5.X) instead of SAM format output.
+- `--un`
+  - Write all reads that could not be aligned to the file `_unmapped_reads.txt` in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `unmapped_reads_1.txt` and `unmapped_reads_2.txt`. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to `unmapped_reads.txt` unless `--ambiguous` is also specified.
+- `--ambiguous`
+  - Write all reads which produce more than one valid alignment with the same number of lowest mismatches or other reads that fail to align uniquely to `_ambiguous_reads.txt`. Written reads will appear as they did in the input, without any of the translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `_ambiguous_reads_1.txt` and `_ambiguous_reads_2.txt.fq`. These reads are not written to the file specified with `--un`.
+- `-o/--output_dir <dir>`
+  - Write all output files into this directory. By default the output files will be written into the same folder as the input file. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
+- `--temp_dir <dir>`
+  - Write temporary files to this directory instead of into the same directory as the input files. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
+- `--non_bs_mm`
+  - Optionally outputs an extra column specifying the number of non-bisulfite mismatches a read during the alignment step. This option is only available for SAM format. In Bowtie 2 context, this value is just the number of actual non-bisulfite mismatches and ignores potential insertions or deletions. The format for single-end reads and read 1 of paired-end reads is `XA:Z:number of mismatches` and `XB:Z:number of mismatches` for read 2 of paired-end reads.
+- `--gzip`
+  - Temporary bisulfite conversion files will be written out in a `GZIP` compressed form to save disk space. This option is available for most alignment modes but is not available for paired-end `FastA` files.Thisoptionmightbesomewhatslowerthan writing out uncompressed files, but this awaits further testing.
+- `--sam`
+  - The output will be written out in `SAM` format instead of the default `BAM` format. `Bismark` will attempt to use the path to Samtools that was specified with `--samtools_path`, or, if it hasn't been specified, attempt to find `Samtools` in the `PATH`. If no installation of `Samtools` can be found, the `SAM` output will be compressed with `GZIP` instead (yielding a `.sam.gz` output file).
+- `--cram`
+  - Writes the output to a `CRAM` file instead of BAM. This requires the use of Samtools 1.2 or higher.
+- `--cram_ref <ref_file>`
+  - `CRAM` output requires you to specify a reference genome as a single FastA file. If this single-FastA reference file is not supplied explicitly it will be regenerated from the genome `.fa` sequence(s) used for the Bismark run and written to a file called `Bismark_genome_CRAM_reference.mfa` into the oputput directory.
+- `--samtools_path`
+  - The path to your `Samtools` installation, e.g. `/home/user/samtools/`. Does not need to be specified explicitly if `Samtools` is in the `PATH` already.
+- `--prefix <prefix>`
+  - Prefixes `<prefix>` to the output filenames. Trailing dots will be replaced by a singleone. For example, `--prefix test` with `file.fq` would result in the output file `test.file.fq_bismark.sam` etc.
+- `-B/--basename <basename>`
+  - Write all output to files starting with this base file name. For example, `--basename foo` would result in the files `foo.bam` and `foo_SE_report.txt` (or its paired-end equivalent). Takes precedence over `--prefix`.
+- `--old_flag`
+  - Only in paired-end SAM mode, uses the FLAG values used by Bismark 0.8.2 and before. In addition, this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since both the appended read IDs and custom FLAG values may cause problems with some downstream tools such as Picard, new defaults were implemented as of version 0.8.3.
+    ```
+            default                  old_flag
+      ===================     ===================
+      Read 1       Read 2     Read 1       Read 2
+OT:    99           147        67           131
+OB:    83           163       115           179
+CTOT:  99           147        67           131
+CTOB:  83           163       115           179
+    ```
+- `--ambig_bam`
+  - For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambiguous.bam`. The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
+
+##### Other:
+
+- `--bowtie1`
+  - Uses Bowtie 1 instead of Bowtie 2, which might be a good choice for faster and very short alignments. Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Default: off.
+- `-h/--help`
+  - Displays this help file. Displays version information.
+- `-v/--version`
+  - Displays version information
+
+##### BOWTIE 2 SPECIFIC OPTIONS
 
 --bowtie2 Default: ON. Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read
 
