@@ -458,8 +458,14 @@
 				title: {
 					text: ''
 				},
+				plotOptions: {
+					series: {
+						groupPadding: 0.1
+					}
+				},
 				xAxis: {
 					categories: obkeys,
+					alternateGridColor: '#EDEDED',
 				},
 				yAxis: {
 					title: {
@@ -1044,7 +1050,8 @@
 		<tbody>
 		</tbody>
 	</table>
-	<div id="dinucleotide_coverage" class="plot"></div>
+	<div id="dinucleotide_coverage" class="plot" style="height: 600px;"></div>
+	<hr>
 
 	{{start_deletion_mbias}}
 
