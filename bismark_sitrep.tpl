@@ -401,6 +401,94 @@
 		});
 
 		{{end_deletion_splitting}}	
+		
+		// Dinucleotide coverage
+		$(function(){
+			var data = {
+			  A: [57436383, 42891990],
+			  C: [38992719, 46555223],
+			  T: [42322930, 54531812],
+			  G: [49574375, 63180021],
+			  AA: [57436383, 42891990],
+			  AC: [38992719, 46555223],
+			  AG: [42322930, 54531812],
+			  AT: [49574375, 39567060],
+			  CA: [35970055, 35969862],
+			  CC: [32699875, 73421540],
+			  CG: [66746855, 41446122],
+			  CT: [37678293, 62077968],
+			  GA: [56434517, 56116465],
+			  GC: [51014969, 40097090],
+			  GG: [36451900, 45079721],
+			  GT: [40981565, 41045967],
+			  TA: [37314516, 56017035],
+			  TC: [50924578, 42990081],
+			  TG: [39081892, 61253601],
+			  TT: [55685092, 50924578],
+			};
+			var obkeys = [];
+			var obsexp = [];
+			for (var dn in data){
+				obkeys.push(dn);
+				// Trick HighCharts into having the y axis intercept at 1:
+				// Subtract 1 from all values, then add 1 back again for
+				// axis labels and tooltips
+				obsexp.push((data[dn][0] / data[dn][1]) - 1);
+				// Add to table
+				$('#dinucleotide_coverage_table tbody').append(
+					'<tr><th>'+dn+'</th><td>'+data[dn][0]+'</td><td>'+data[dn][1]+'</td><td>'+(data[dn][0] / data[dn][1]).toFixed(2)+'</td></tr>'
+				);
+			}
+			$('#dinucleotide_coverage').highcharts({
+				colors: [
+				   '#0d233a', 
+				   '#2f7ed8', 
+				   '#8bbc21', 
+				   '#910000', 
+				   '#1aadce', 
+				   '#492970',
+				   '#f28f43', 
+				   '#77a1e5', 
+				   '#c42525', 
+				   '#a6c96a'
+				],
+				chart: {
+					type: 'bar'
+				},
+				title: {
+					text: ''
+				},
+				xAxis: {
+					categories: obkeys,
+				},
+				yAxis: {
+					title: {
+						text: 'Observed / Expected'
+					},
+					max: 1,
+					min: -1,
+					labels: { formatter: function(){
+							return this.value + 1;
+					} }
+				},
+				credits: {
+					enabled: false
+				},
+				legend: {
+					enabled: false
+				},
+				tooltip: {
+					headerFormat: '',
+					formatter: function () {
+						return '<span style="font-weight:bold;"><span style="text-decoration:underline;">'+this.x+'</span> Observed / Expected</span>: '+(this.y + 1).toFixed(2)
+					}
+				},
+				series: [{
+					name: 'Methylation Context',
+					data: obsexp
+				}]
+			});
+		});
 
 		{{start_deletion_mbias}}	
 
@@ -944,6 +1032,19 @@
 	<hr>
 
 	{{end_deletion_splitting}}
+	
+	<h2>Dinucleotide Coverage</h2>
+	<table class="data" id="dinucleotide_coverage_table">
+		<thead>
+			<th>Dinucleotide Class</th>
+			<th>Observed</th>
+			<th>Expected</th>
+			<th>Obs / Exp</th>
+		</thead>
+		<tbody>
+		</tbody>
+	</table>
+	<div id="dinucleotide_coverage" class="plot"></div>
 
 	{{start_deletion_mbias}}
 
