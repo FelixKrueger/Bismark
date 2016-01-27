@@ -401,7 +401,9 @@
 		});
 
 		{{end_deletion_splitting}}	
+
 		
+		{{start_deletion_nucleotide_coverage}}	
 		// Dinucleotide coverage
 		$(function(){
 			var data = {
@@ -495,6 +497,8 @@
 				}]
 			});
 		});
+
+		{{end_deletion_nucleotide_coverage}}	
 
 		{{start_deletion_mbias}}	
 
