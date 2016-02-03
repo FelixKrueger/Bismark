@@ -401,30 +401,32 @@
 		});
 
 		{{end_deletion_splitting}}	
+
 		
-		// Dinucleotide coverage
+		{{start_deletion_nucleotide_coverage}}	
+		// Nucleotide coverage
 		$(function(){
 			var data = {
-			  A: [57436383, 42891990],
-			  C: [38992719, 46555223],
-			  T: [42322930, 54531812],
-			  G: [49574375, 63180021],
-			  AA: [57436383, 42891990],
-			  AC: [38992719, 46555223],
-			  AG: [42322930, 54531812],
-			  AT: [49574375, 39567060],
-			  CA: [35970055, 35969862],
-			  CC: [32699875, 73421540],
-			  CG: [66746855, 41446122],
-			  CT: [37678293, 62077968],
-			  GA: [56434517, 56116465],
-			  GC: [51014969, 40097090],
-			  GG: [36451900, 45079721],
-			  GT: [40981565, 41045967],
-			  TA: [37314516, 56017035],
-			  TC: [50924578, 42990081],
-			  TG: [39081892, 61253601],
-			  TT: [55685092, 50924578],
+			  A:  [{{nuc_A_obs}} , {{nuc_A_exp}} , {{nuc_log_A}}],
+			  C:  [{{nuc_C_obs}} , {{nuc_C_exp}} , {{nuc_log_C}}],
+			  T:  [{{nuc_T_obs}} , {{nuc_T_exp}} , {{nuc_log_T}}],
+			  G:  [{{nuc_G_obs}} , {{nuc_G_exp}} , {{nuc_log_G}}],
+			  AA: [{{nuc_AA_obs}}, {{nuc_AA_exp}}, {{nuc_log_AA}}],
+			  AC: [{{nuc_AC_obs}}, {{nuc_AC_exp}}, {{nuc_log_AC}}],
+			  AG: [{{nuc_AG_obs}}, {{nuc_AG_exp}}, {{nuc_log_AG}}],
+			  AT: [{{nuc_AT_obs}}, {{nuc_AT_exp}}, {{nuc_log_AT}}],
+			  CA: [{{nuc_CA_obs}}, {{nuc_CA_exp}}, {{nuc_log_CA}}],
+			  CC: [{{nuc_CC_obs}}, {{nuc_CC_exp}}, {{nuc_log_CC}}],
+			  CG: [{{nuc_CG_obs}}, {{nuc_CG_exp}}, {{nuc_log_CG}}],
+			  CT: [{{nuc_CT_obs}}, {{nuc_CT_exp}}, {{nuc_log_CT}}],
+			  GA: [{{nuc_GA_obs}}, {{nuc_GA_exp}}, {{nuc_log_GA}}],
+			  GC: [{{nuc_GC_obs}}, {{nuc_GC_exp}}, {{nuc_log_GC}}],
+			  GG: [{{nuc_GG_obs}}, {{nuc_GG_exp}}, {{nuc_log_GG}}],
+			  GT: [{{nuc_GT_obs}}, {{nuc_GT_exp}}, {{nuc_log_GT}}],
+			  TA: [{{nuc_TA_obs}}, {{nuc_TA_exp}}, {{nuc_log_TA}}],
+			  TC: [{{nuc_TC_obs}}, {{nuc_TC_exp}}, {{nuc_log_TC}}],
+			  TG: [{{nuc_TG_obs}}, {{nuc_TG_exp}}, {{nuc_log_TG}}],
+			  TT: [{{nuc_TT_obs}}, {{nuc_TT_exp}}, {{nuc_log_TT}}],
 			};
 			var obkeys = [];
 			var obsexp = [];
@@ -433,13 +435,15 @@
 				// Trick HighCharts into having the y axis intercept at 1:
 				// Subtract 1 from all values, then add 1 back again for
 				// axis labels and tooltips
-				obsexp.push((data[dn][0] / data[dn][1]) - 1);
+		//obsexp.push((data[dn][0] / data[dn][1]) - 1);
+		                obsexp.push(data[dn][2]);
 				// Add to table
-				$('#dinucleotide_coverage_table tbody').append(
-					'<tr><th>'+dn+'</th><td>'+data[dn][0]+'</td><td>'+data[dn][1]+'</td><td>'+(data[dn][0] / data[dn][1]).toFixed(2)+'</td></tr>'
+				$('#nucleotide_coverage_table tbody').append(
+				//	'<tr><th>'+dn+'</th><td>'+data[dn][0]+'</td><td>'+data[dn][1]+'</td><td>'+(data[dn][0] / data[dn][1]).toFixed(2)+'</td></tr>'
+                          		'<tr><th>'+dn+'</th><td>'+data[dn][0]+'</td><td>'+data[dn][1]+'</td><td>'+data[dn][2]+'</td></tr>'
 				);
 			}
-			$('#dinucleotide_coverage').highcharts({
+			$('#nucleotide_coverage').highcharts({
 				colors: [
 				   '#0d233a', 
 				   '#2f7ed8', 
@@ -469,12 +473,13 @@
 				},
 				yAxis: {
 					title: {
-						text: 'Observed / Expected'
+						text: 'log2(Observed/Expected)'
 					},
-					max: 1,
-					min: -1,
+		                        max:  {{nuc_minmax}},
+                                        min: -{{nuc_minmax}},
+
 					labels: { formatter: function(){
-							return this.value + 1;
+							return this.value;
 					} }
 				},
 				credits: {
@@ -486,15 +491,18 @@
 				tooltip: {
 					headerFormat: '',
 					formatter: function () {
-						return '<span style="font-weight:bold;"><span style="text-decoration:underline;">'+this.x+'</span> Observed / Expected</span>: '+(this.y + 1).toFixed(2)
+		return '<span style="font-weight:bold;"><span style="text-decoration:underline;">'+this.x+'</span> Observed / Expected</span>: '+(this.y).toFixed(2)
+
 					}
 				},
 				series: [{
-					name: 'Methylation Context',
+					name: 'Coverage context',
 					data: obsexp
 				}]
 			});
 		});
+
+		{{end_deletion_nucleotide_coverage}}	
 
 		{{start_deletion_mbias}}	
 
@@ -1039,18 +1047,18 @@
 
 	{{end_deletion_splitting}}
 	
-	<h2>Dinucleotide Coverage</h2>
-	<table class="data" id="dinucleotide_coverage_table">
+	<h2>Nucleotide Coverage</h2>
+	<table class="data" id="nucleotide_coverage_table">
 		<thead>
-			<th>Dinucleotide Class</th>
+			<th>Nucleotide Class</th>
 			<th>Observed</th>
 			<th>Expected</th>
-			<th>Obs / Exp</th>
+			<th>log2(Obs/Exp)</th>
 		</thead>
 		<tbody>
 		</tbody>
 	</table>
-	<div id="dinucleotide_coverage" class="plot" style="height: 600px;"></div>
+	<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
 	<hr>
 
 	{{start_deletion_mbias}}

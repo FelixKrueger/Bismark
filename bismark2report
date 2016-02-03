@@ -20,8 +20,8 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.15.0';
-my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports);
+my $bismark2report_version = 'v0.15.1';
+my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
 
@@ -29,13 +29,15 @@ my ($output_dir,$verbose,$manual_output_file) = process_commandline();
 # print join (",",@dedup_reports)."\n";
 # print join (",",@splitting_reports)."\n";
 # print join (",",@mbias_reports)."\n";
+# print join (",",@nuc_reports)."\n";
 
 while (@alignment_reports){
 
   my $alignment_report = shift @alignment_reports;
-  my $dedup_report = shift @dedup_reports;
+  my $dedup_report     = shift @dedup_reports;
   my $splitting_report = shift @splitting_reports;
-  my $mbias_report = shift @mbias_reports;
+  my $mbias_report     = shift @mbias_reports;
+  my $nuc_report       = shift @nuc_reports;
 
   ### HTML OUTPUT FILE
   my $report_output = $alignment_report;
@@ -45,24 +47,24 @@ while (@alignment_reports){
 
   # if -o output_file was specified we are going to use that name preferentially. This may only happen if there is a single report in the folder, or if a single report has been specified manually
   if ($manual_output_file){
-    warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
-    $report_output = $manual_output_file;
+      warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
+      $report_output = $manual_output_file;
   }
 
   $report_output = $output_dir.$report_output;
   warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
 
-  my $doc = read_report_template();
+  my $doc = read_report_template(); #reading and storing the entire report template
 
   # BISMARK ALIGNMENT REPORT (mandatory)
   warn "="x110,"\n";
   warn "Using the following alignment report:\t\t> $alignment_report <\n";
   # DEDUPLICATION REPORT (optional)
   if ($dedup_report){
-    warn "Using the following deduplication report:\t> $dedup_report <\n";
+      warn "Using the following deduplication report:\t> $dedup_report <\n";
   }
   else{
-    warn "No deduplication report file specified, skipping this step\n";
+      warn "No deduplication report file specified, skipping this step\n";
   }
 
   # SPLITTING REPORT (optional)
@@ -75,11 +77,19 @@ while (@alignment_reports){
 
   # M-BIAS REPORT (optional)
   if ($mbias_report){
-    warn "Using the following M-bias report:\t\t> $mbias_report <\n";
+      warn "Using the following M-bias report:\t\t> $mbias_report <\n";
   }
   else{
-    warn "No M-bias report file specified, skipping this step\n";
+      warn "No M-bias report file specified, skipping this step\n";
   }
+  
+  # NUCLEOTIDE COVERAGE REPORT (optional)
+  if ($nuc_report){
+      warn "Using the following nucleotide coverage report:\t> $nuc_report <\n";
+  }
+  else{
+      warn "No nucleotide coverage report file specified, skipping this step\n";
+  } 
   warn "="x110,"\n\n\n";
   $verbose and sleep(3);
 
@@ -101,6 +111,21 @@ while (@alignment_reports){
     $doc =~ s/(\{\{start_deletion_duplication.*?end_deletion_duplication\}\})//gs; # s includes newline chars; non-greedy
     warn "Deleting the following content:\n$1\n\n" if ($verbose);
     sleep(3) if ($verbose);
+  }
+
+  if ($nuc_report){ # optional
+      $doc = read_nucleotide_coverage_report($nuc_report,$doc);
+      
+      # removing the delete tags in the html template
+      $doc =~ s/\{\{start_deletion_nucleotide_coverage\}\}//g;
+      $doc =~ s/\{\{end_deletion_nucleotide_coverage\}\}//g;
+  }
+  else{
+      # removing the entire graph and table section for the nucleotide coverage part
+      warn "Removing the nucleotide coverage section from the HTML report\n" if ($verbose);
+      $doc =~ s/(\{\{start_deletion_nucleotide_coverage.*?end_deletion_nucleotide_coverage\}\})//gs; # s includes newline chars; non-greedy
+      warn "Deleting the following content:\n$1\n\n" if ($verbose);
+      sleep(3) if ($verbose);
   }
 
   if ($splitting_report){ # optional
@@ -550,6 +575,89 @@ sub read_deduplication_report{
   return $doc;
 }
 
+
+sub read_nucleotide_coverage_report{
+    
+    my ($nuc_report,$doc) = @_;
+    
+    warn "Processing nucleotide coverage report '$nuc_report' ...\n";
+    open (NUC,$nuc_report) or die "Couldn't read from file $nuc_report: $!\n\n";
+    
+    my %nucs; # storing nucleotides and frequencies
+    my $linecount = 0;    
+    
+    while (<NUC>){
+	chomp;
+	$_ =~ s/\r//; # removing carriage returns
+	# warn "$_\n"; sleep(1);
+	my ($element,$observed,$expected) = (split /\t/);
+	# warn "$element , $observed , $expected\n"; sleep(1);
+	if ($linecount == 0){ # verifying that the data appears to be a Bismark nucleotide coverage report
+	    if ($observed eq 'observed'){
+		# warn "Fine, found '$observed'\n";
+	    }
+	    else{
+		die "Expected to find 'observed' as entry in line 1, column 2 but found '$observed'. This doesn't look like a Bismark nucleotide coverage report. Please respecify!\n";
+	    }
+	    
+	    if ($expected eq 'expected'){
+		# warn "Fine, found '$expected'\n";
+	    }
+	    else{
+		die "Expected to find 'expected' as entry in line 1, column 3 but found '$expected'. This doesn't look like a Bismark nucleotide coverage report. Please respecify!\n";
+	    }
+	}
+	else{
+	    $nucs{$element}->{obs} = $observed;
+	    $nucs{$element}->{exp} = $expected;
+	    warn "Element '$element' observed: $observed\n" if $verbose;
+	    warn "Element '$element' expected: $expected\n" if $verbose;
+	}
+
+	++$linecount;
+
+    }
+
+    # Checking if we got all we need
+    my $looksOK = 1;
+    foreach my $key (keys %nucs){ 
+	unless ( (defined $nucs{$key}->{obs}) and (defined $nucs{$key}->{exp})){
+	    $looksOK = 0;
+	}
+    }
+    
+    if ($looksOK){ 
+	warn "Got all necessary information, editing HTML report ...\n" if $verbose;
+	my $minmax = 0;
+	foreach my $key (sort {$a cmp $b} keys %nucs){
+	    my $nuc_obs = $nucs{$key}->{obs};
+	    my $nuc_exp = $nucs{$key}->{exp};
+
+	    # calculating log2 observed/expected
+	    my $ratio = $nuc_obs/$nuc_exp;
+	    my $logratio = sprintf ("%.2f",log($ratio)/log(2));
+	    if (abs($logratio) > $minmax){
+		$minmax = abs($logratio);
+	    } 
+	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\tlog2 ratio: $logratio\n" if $verbose;
+	    $doc =~ s/\{\{nuc_${key}_obs\}\}/$nuc_obs/g;
+	    $doc =~ s/\{\{nuc_${key}_exp\}\}/$nuc_exp/g;
+	    $doc =~ s/\{\{nuc_log_${key}\}\}/$logratio/g;
+	}
+	warn "Minimum/maxium ratio was: $minmax\n" if $verbose;
+	$doc =~ s/\{\{nuc_minmax\}\}/$minmax/g;
+    }
+    else{
+	warn "Something went wrong, skipping this plot entirely... Use --verbose to get a clue...\n";
+	# skipping this plot entirely if values could not be extracted
+	return $doc;
+    }
+
+    warn "Complete\n\n";
+    return $doc;
+}
+
+
 sub read_splitting_report{
 
   my ($splitting_report,$doc) = @_;
@@ -849,19 +957,21 @@ sub process_commandline{
   my $dedup_report;
   my $splitting_report;
   my $mbias_report;
+  my $nuc_report;  # stores nucleotide coverage statistics
   my $verbose;
 
   my $version;
 
-  my $command_line = GetOptions ('help|man' => \$help,
-				 'dir=s' => \$output_dir,
-				 'o|output=s' => \$manual_output_file,
-				 'alignment_report=s' => \$alignment_report,
-				 'dedup_report=s' => \$dedup_report,
-				 'splitting_report=s' => \$splitting_report,
-				 'mbias_report=s' => \$mbias_report,
-				 'version' => \$version,
-				 'verbose' => \$verbose,
+  my $command_line = GetOptions ('help|man'              => \$help,
+				 'dir=s'                 => \$output_dir,
+				 'o|output=s'            => \$manual_output_file,
+				 'alignment_report=s'    => \$alignment_report,
+				 'dedup_report=s'        => \$dedup_report,
+				 'splitting_report=s'    => \$splitting_report,
+				 'mbias_report=s'        => \$mbias_report,
+				 'nucleotide_report=s'   => \$nuc_report, 
+				 'version'               => \$version,
+				 'verbose'               => \$verbose,
 				);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -882,7 +992,7 @@ sub process_commandline{
                               Bismark HTML Report Module
 
                          bismark2report version: $bismark2report_version
-                            Copyright 2010-15 Felix Krueger
+                            Copyright 2010-16 Felix Krueger
                                Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
@@ -940,7 +1050,7 @@ VERSION
     my $basename = $1;
     # warn "using this basename:\n$basename\n\n";
 
-    ### DEDUPLICATION REPORT
+    ### DEDUPLICATION REPORT (optional)
     if ($dedup_report){
       # warn "User specifified dedup report: $dedup_report\n";sleep(3);
       if (lc$dedup_report eq 'none'){
@@ -969,6 +1079,36 @@ VERSION
       }
     }
 
+    ### NUCLEOTIDE COVERAGE REPORT (optional)
+    if ($nuc_report){
+	warn "User specifified nucleotide coverage report: $nuc_report\n";sleep(3);
+	if (lc$nuc_report eq 'none'){
+	    push @nuc_reports, ''; # user may wish to skip this step by specifying 'none'
+	}
+	else{
+	    push @nuc_reports, $nuc_report;
+	}
+    }
+    else{
+	### looking in the current directory for a report file with the same base name
+	my @nucleotide_coverage_report_files = <$basename*nucleotide_stats.txt>;
+	warn "Number of nucleotide coverage statistic reports found in current directory: ", scalar @nucleotide_coverage_report_files , "\n";
+	
+	if (scalar @nucleotide_coverage_report_files > 1){
+	    die "Found ", scalar @nucleotide_coverage_report_files ," potential nucleotide coverage reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--nucleotide_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+	}
+	elsif (scalar @nucleotide_coverage_report_files == 0){
+	    push @nuc_reports, ''; # no corresponding nucleotide coverge file report found
+	}
+	else{
+	    # there is only a single nucleotide coverage report in the current directory, using this one
+	    $nuc_report = shift @nucleotide_coverage_report_files;
+	    push @nuc_reports, $nuc_report;
+	    warn "Going to use this nucleotide coverage report: $nuc_report\n\n";
+	}
+    }
+
+    
     ### METHYLATION EXTRACTOR SPLITTING REPORT
     if ($splitting_report){
       if (lc$splitting_report eq 'none'){
@@ -1073,8 +1213,12 @@ sub print_helpfile{
                            working directory. Including an M-Bias report is optional, and using the FILE 'none' will skip this step
                            entirely.
 
+--nucleotide_report FILE   If not specified explicitly, bismark2report attempts to find a single nucleotide coverage report file
+                           with the same basename as the Bismark mapping report (generated by Bismark with the option --nucleocov)
+                           in the current working directory. Including a nucleotide coverage statistics report is optional, and
+                           using the FILE 'none' will skip this report entirely.
 
-                           Script last modified: 08 November 2013
+                           Script last modified: 29 January 2016
 
 EOF
     ;
