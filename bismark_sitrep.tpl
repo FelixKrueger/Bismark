@@ -74,8 +74,8 @@
 		.data tr:first-child td {
 			border-top:0;
 		}
-		.data tbody tr:last-child th,
-		.data tbody tr:last-child td {
+		.data tr:last-child th,
+		.data tr:last-child td {
 			border-bottom: 2px solid #666;
 		}
 		.plot {
@@ -299,10 +299,17 @@
 		            title: { text: null }
 		        },
 		        tooltip: {
+					valueDecimals: 1,
 		            valueSuffix: '%',
 		            shared: true,
-		            valueDecimals: 1
+		            headerFormat: '<span style="text-decoration:underline; font-weight:bold; font-size: 1.1em;">{point.key}</span><br/>'
 		        },
+				plotOptions: {
+					series: {
+						borderWidth: 0,
+						groupPadding: 0.1
+					}
+				},
 		        series: [{
 		            name: 'Percent Genomic',
 		            data: [
@@ -323,6 +330,7 @@
 					]
 		        }]
 		    });
+		});
 		{{end_deletion_nucleotide_coverage}}	
 
 		{{start_deletion_mbias}}	
@@ -741,111 +749,28 @@
 	<h2>Nucleotide Coverage</h2>
 	<table class="data" id="nucleotide_coverage_table">
 		<thead>
-			<th>Nucleotide Class</th>
-			<th>Total</th>
-			<th>Genome</th>
-		</thead>
+			<tr><th>Nucleotide Class</th> <th>Total</th> <th>Genome</th> </thead>
 		<tbody>
-			<tr>
-			    <th>A</th>
-			    <td>{{nuc_A_p_obs}}</td>
-			    <td>{{nuc_A_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>C</th>
-			    <td>{{nuc_C_p_obs}}</td>
-			    <td>{{nuc_C_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>G</th>
-			    <td>{{nuc_G_p_obs}}</td>
-			    <td>{{nuc_G_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>T</th>
-			    <td>{{nuc_T_p_obs}}</td>
-			    <td>{{nuc_T_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>AA</th>
-			    <td>{{nuc_AA_p_obs}}</td>
-			    <td>{{nuc_AA_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>AC</th>
-			    <td>{{nuc_AC_p_obs}}</td>
-			    <td>{{nuc_AC_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>AG</th>
-			    <td>{{nuc_AG_p_obs}}</td>
-			    <td>{{nuc_AG_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>AT</th>
-			    <td>{{nuc_AT_p_obs}}</td>
-			    <td>{{nuc_AT_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>CA</th>
-			    <td>{{nuc_CA_p_obs}}</td>
-			    <td>{{nuc_CA_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>CC</th>
-			    <td>{{nuc_CC_p_obs}}</td>
-			    <td>{{nuc_CC_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>CG</th>
-			    <td>{{nuc_CG_p_obs}}</td>
-			    <td>{{nuc_CG_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>CT</th>
-			    <td>{{nuc_CT_p_obs}}</td>
-			    <td>{{nuc_CT_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>GA</th>
-			    <td>{{nuc_GA_p_obs}}</td>
-			    <td>{{nuc_GA_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>GC</th>
-			    <td>{{nuc_GC_p_obs}}</td>
-			    <td>{{nuc_GC_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>GG</th>
-			    <td>{{nuc_GG_p_obs}}</td>
-			    <td>{{nuc_GG_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>GT</th>
-			    <td>{{nuc_GT_p_obs}}</td>
-			    <td>{{nuc_GT_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>TA</th>
-			    <td>{{nuc_TA_p_obs}}</td>
-			    <td>{{nuc_TA_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>TC</th>
-			    <td>{{nuc_TC_p_obs}}</td>
-			    <td>{{nuc_TC_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>TG</th>
-			    <td>{{nuc_TG_p_obs}}</td>
-			    <td>{{nuc_TG_p_exp}}</td>
-			</tr>
-			<tr>
-			    <th>TT</th>
-			    <td>{{nuc_TT_p_obs}}</td>
-			    <td>{{nuc_TT_p_exp}}</td>
-			</tr>
+			<tr><th>A</th>	<td>{{nuc_A_p_obs}} %</td>	<td>{{nuc_A_p_exp}} %</td>	</tr>
+			<tr><th>C</th>	<td>{{nuc_C_p_obs}} %</td>	<td>{{nuc_C_p_exp}} %</td>	</tr>
+			<tr><th>G</th>	<td>{{nuc_G_p_obs}} %</td>	<td>{{nuc_G_p_exp}} %</td>	</tr>
+			<tr><th>T</th>	<td>{{nuc_T_p_obs}} %</td>	<td>{{nuc_T_p_exp}} %</td>	</tr>
+			<tr><th>AA</th>	<td>{{nuc_AA_p_obs}} %</td>	<td>{{nuc_AA_p_exp}} %</td>	</tr>
+			<tr><th>AC</th>	<td>{{nuc_AC_p_obs}} %</td>	<td>{{nuc_AC_p_exp}} %</td>	</tr>
+			<tr><th>AG</th>	<td>{{nuc_AG_p_obs}} %</td>	<td>{{nuc_AG_p_exp}} %</td>	</tr>
+			<tr><th>AT</th>	<td>{{nuc_AT_p_obs}} %</td>	<td>{{nuc_AT_p_exp}} %</td>	</tr>
+			<tr><th>CA</th>	<td>{{nuc_CA_p_obs}} %</td>	<td>{{nuc_CA_p_exp}} %</td>	</tr>
+			<tr><th>CC</th>	<td>{{nuc_CC_p_obs}} %</td>	<td>{{nuc_CC_p_exp}} %</td>	</tr>
+			<tr><th>CG</th>	<td>{{nuc_CG_p_obs}} %</td>	<td>{{nuc_CG_p_exp}} %</td>	</tr>
+			<tr><th>CT</th>	<td>{{nuc_CT_p_obs}} %</td>	<td>{{nuc_CT_p_exp}} %</td>	</tr>
+			<tr><th>GA</th>	<td>{{nuc_GA_p_obs}} %</td>	<td>{{nuc_GA_p_exp}} %</td>	</tr>
+			<tr><th>GC</th>	<td>{{nuc_GC_p_obs}} %</td>	<td>{{nuc_GC_p_exp}} %</td>	</tr>
+			<tr><th>GG</th>	<td>{{nuc_GG_p_obs}} %</td>	<td>{{nuc_GG_p_exp}} %</td>	</tr>
+			<tr><th>GT</th>	<td>{{nuc_GT_p_obs}} %</td>	<td>{{nuc_GT_p_exp}} %</td>	</tr>
+			<tr><th>TA</th>	<td>{{nuc_TA_p_obs}} %</td>	<td>{{nuc_TA_p_exp}} %</td>	</tr>
+			<tr><th>TC</th>	<td>{{nuc_TC_p_obs}} %</td>	<td>{{nuc_TC_p_exp}} %</td>	</tr>
+			<tr><th>TG</th>	<td>{{nuc_TG_p_obs}} %</td>	<td>{{nuc_TG_p_exp}} %</td>	</tr>
+			<tr><th>TT</th>	<td>{{nuc_TT_p_obs}} %</td>	<td>{{nuc_TT_p_exp}} %</td>	</tr>
 		</tbody>
 	</table>
 	<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
