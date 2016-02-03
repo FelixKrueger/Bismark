@@ -59,57 +59,53 @@ sub generate_nucleotide_report {
     warn  "="x66,"\n";
     warn "Mono- and di-nucleotide coverage will now be written into a report\n";
     warn  "="x66,"\n\n";
-    sleep (2);
 
     my $number_processed = 0;
 
-    ### changing to the output directory again
-    #    unless ($output_dir eq ''){ # default
-    # chdir $output_dir or die "Failed to change directory to $output_dir\n";
-	# warn "Changed directory to $output_dir\n";
-    #   }
-    
-    #  my $in = shift;
-    #  if ($in =~ /gz$/){# 
-    #	open (IN,"zcat $in |") or die "Failed to read from gzippd file $in: $!\n";
-    #  }
-    # else{
-    #	open (IN,"$in") or die "Failed to read from file $in: $!\n";
-    #  }
-    
     ### GENOMIC NUCLEOTIDE FREQUENCIES
     if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
-	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein\n";
+	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
+	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
+	warn "="x146,"\n";
+	
+	while (<GF>){
+	    chomp;
+	    my ($element,$freq) = (split /\t/);
+	    $genomic_freqs{$element} = $freq;
+	    # warn "$element\t$freq\n";
+	}
+	close GF;
     }
     else{
-	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies...\n";
-	warn "="x121,"\n";
+	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
+	warn "="x164,"\n";
 	foreach my $chr (keys %chromosomes){
 	    warn "Processing chromosome >> $chr <<\n";
 	    process_sequence($chromosomes{$chr});
 	}
 
 	%genomic_freqs = %freqs;
+	%freqs = (); # resetting to store the read composition now
 	
 	### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
+	### if this fails
 	if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
 	    warn "Writing genomic nucleotide frequencies to the >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
 	    foreach my $f(sort keys %genomic_freqs){
-		warn "$f\t$genomic_freqs{$f}\n";
+		warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
 		print FREQS "$f\t$genomic_freqs{$f}\n";
 	    }
 	    close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
 	}
 	else{
-	    warn "Failed to open filehandle for ${genome_folder}genomic_nucleotide_frequencies.txt, skipping writing out genomic frequency table";
+	    warn "Failed to open filehandle for ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!, skipping writing out genomic frequency table\n";
 	}
-	%freqs = (); # resetting to store the read composition now
-
+	
     }
     warn "\n\n";
     
     warn "Calculating read frequencies from file '$infile'\n";
-    warn "="x71,"\n";
+    warn "="x90,"\n";
 
     if ($infile =~ /\.bam$/){
 	open (IN,"$samtools_path view -h $infile |") or die "Unable to read from BAM file $infile: $!\n";
@@ -122,10 +118,10 @@ sub generate_nucleotide_report {
     # warn "returned $single and $paired\n";
     
     if ($single){
-	warn "Determined the file to be single-end!\n";
+	warn "Determined the file to be single-end\n";
     }
     elsif ($paired){
-	warn "Determined the file to be paired-end!\n";
+	warn "Determined the file to be paired-end\n";
     }
     else{
 	die "Failed to figure out SE or PE...\n";
@@ -167,25 +163,30 @@ sub generate_nucleotide_report {
     }
     warn "\n\n";
 
+    ### Time to calculate averages and print to a file
+
+    my $outfile = $infile;
+    die "file needs to be in BAM or CRAM format (ending in .bam or .cram). Terminating process...\n" unless ($outfile =~s /(bam|cram)$/nucleotide_stats.txt/);
+    warn "Printing nucleotide stats to >> $outfile <<\n";
+    open (OUT,'>',$outfile) or die "Failed to write to file $outfile: $!\n\n";
+
     calculate_averages();
-    
+
+    close OUT or  warn "Failed to close filehandle CLOSE: $!\n\n";    
+
 }
 
 sub calc_paired_end{
     my ($sequence,$flag) = @_;
     # warn "FLAG: $flag\n$sequence\n"; sleep(1);    
     
-    if ($flag == 99){ # OT or CTOT
-	# warn "flag 99. Don't need to do anything\n"; # fine, don't need to do anything
+    if ($flag == 99 or $flag == 147){ # OT or CTOT
+	# warn "flag 99 or 147. Don't need to do anything\n"; # fine, don't need to do anything
     }
-    elsif ($flag == 83){ # OB or CTOB
+    elsif ($flag == 83 or 163){ # OB or CTOB
 	# reverse complementing
 	$sequence = reverse $sequence;
 	$sequence =~ tr/GATC/CTAG/;
-    }
-    elsif ($flag == 147 or $flag == 163){
-	# warn "Read 2, skipping\n";
-	# is currently not skipped
     }
     else{
 	die "failed to detect valid Bismark FLAG tag: $flag\n";
@@ -218,7 +219,7 @@ sub test_file{
     while (<TEST>){
 	chomp;
 	if (/^\@PG/) {
-	    if (/ -1 / and / -2 /){ # paired-end
+	    if (/\s-1\s+/ and /\s+-2\s/){ # paired-end
 		close TEST or warn $!;
 		return (0,1);
 	    }
@@ -239,7 +240,8 @@ sub calculate_averages {
     my $total_number_of_words_counted;
     my $total_number_of_words_counted_genomic;
     
-    print "(di-)nucleotide\tcount\tpercent total\tcount genomic\tpercent genomic\n";
+    warn "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
+    print OUT "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
     
     foreach my $word ('A','C','G','T') {
 	$total_number_of_words_counted += $freqs{$word}; 
@@ -249,7 +251,8 @@ sub calculate_averages {
     foreach my $word ('A','C','G','T') {
 	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
 	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
-	print "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
     }
     
     $total_number_of_words_counted = 0;
@@ -263,7 +266,8 @@ sub calculate_averages {
     foreach my $word ('AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT') {
       	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
 	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
-	print "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
     }
     
 }
@@ -272,25 +276,26 @@ sub calculate_averages {
 sub process_sequence{
     
     my $seq = shift;
-  
-    foreach my $word_size (1,2){
-	my $index = 0;
+    my $mono;
+    my $di;
+
+    foreach my $index (0..(length$seq)-1){
 	my $counted = 0;
-	my $stop = (length($seq)) - $word_size;
-	# warn "word size: $word_size\tlength sequence: ",length($seq),"\tstop: $stop\n";
-	while ($index < $stop) {
-	    if ($index%10000000==0){
-		# warn "Current index number is $index\n";
-	    }
-	    my $word = substr($seq,$index,$word_size);
-	    if (index($word,'N') < 0) {
-		$freqs{$word}++;
-		++$counted;
-	    }
-	    ++$index;
+	if ($index%10000000==0){
+	    # warn "Current index number is $index\n";
 	}
-	# warn "Finished counting different words (checked $index different possibilities)\n";
-	# warn "Number of sequences counted and entered into the hash: $counted\n";
+
+	$mono = substr($seq,$index,1);
+	unless ( $mono eq 'N'){
+	    $freqs{$mono}++;
+	}
+
+	unless ( ($index + 2) > length$seq ){
+	    $di = substr($seq,$index,2);
+	    if (index($di,'N') < 0) {
+		$freqs{$di}++;
+	    }
+	}
     }
     
 }
@@ -359,7 +364,7 @@ VERSION
     
     ### OUTPUT DIR PATH
     if (defined $output_dir){
-	unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
+	unless ($output_dir eq ''){ # if the output dir has been passed on by Bismark and is an empty string we don't want to change it
 	    unless ($output_dir =~ /\/$/){
 		$output_dir =~ s/$/\//;
 	    }

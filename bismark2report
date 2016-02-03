@@ -590,26 +590,28 @@ sub read_nucleotide_coverage_report{
 	chomp;
 	$_ =~ s/\r//; # removing carriage returns
 	# warn "$_\n"; sleep(1);
-	my ($element,$observed,$expected) = (split /\t/);
-	# warn "$element , $observed , $expected\n"; sleep(1);
+	my ($element,$count_obs,$observed,$count_exp,$expected) = (split /\t/);
+	# warn "$element , $count_obs , $observed , $count_exp , $expected\n"; sleep(1);
 	if ($linecount == 0){ # verifying that the data appears to be a Bismark nucleotide coverage report
-	    if ($observed eq 'observed'){
+	    if ($observed eq 'percent sample'){
 		# warn "Fine, found '$observed'\n";
 	    }
 	    else{
-		die "Expected to find 'observed' as entry in line 1, column 2 but found '$observed'. This doesn't look like a Bismark nucleotide coverage report. Please respecify!\n";
+		die "Expected to find 'percent sample' as entry in line 1, column 3 but found '$observed'. This doesn't look like a Bismark nucleotide coverage report. Please respecify!\n";
 	    }
 	    
-	    if ($expected eq 'expected'){
+	    if ($expected eq 'percent genomic'){
 		# warn "Fine, found '$expected'\n";
 	    }
 	    else{
-		die "Expected to find 'expected' as entry in line 1, column 3 but found '$expected'. This doesn't look like a Bismark nucleotide coverage report. Please respecify!\n";
+		die "Expected to find 'percent genomic' as entry in line 1, column 5 but found '$expected'. This doesn't look like a Bismark nucleotide coverage report. Please respecify!\n";
 	    }
 	}
 	else{
-	    $nucs{$element}->{obs} = $observed;
-	    $nucs{$element}->{exp} = $expected;
+	    $nucs{$element}->{obs}->{percent} = $observed;
+	    $nucs{$element}->{exp}->{percent} = $expected;
+	    $nucs{$element}->{obs}->{counts} = $count_obs;
+	    $nucs{$element}->{exp}->{counts} = $count_exp;
 	    warn "Element '$element' observed: $observed\n" if $verbose;
 	    warn "Element '$element' expected: $expected\n" if $verbose;
 	}
@@ -630,8 +632,10 @@ sub read_nucleotide_coverage_report{
 	warn "Got all necessary information, editing HTML report ...\n" if $verbose;
 	my $minmax = 0;
 	foreach my $key (sort {$a cmp $b} keys %nucs){
-	    my $nuc_obs = $nucs{$key}->{obs};
-	    my $nuc_exp = $nucs{$key}->{exp};
+	    my $nuc_obs = $nucs{$key}->{obs}->{percent};
+	    my $nuc_exp = $nucs{$key}->{exp}->{percent};
+	    my $counts_obs = $nucs{$key}->{obs}->{counts};
+	    my $counts_exp = $nucs{$key}->{exp}->{counts};
 
 	    # calculating log2 observed/expected
 	    my $ratio = $nuc_obs/$nuc_exp;
@@ -640,12 +644,13 @@ sub read_nucleotide_coverage_report{
 		$minmax = abs($logratio);
 	    } 
 	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\tlog2 ratio: $logratio\n" if $verbose;
-	    $doc =~ s/\{\{nuc_${key}_obs\}\}/$nuc_obs/g;
-	    $doc =~ s/\{\{nuc_${key}_exp\}\}/$nuc_exp/g;
-	    $doc =~ s/\{\{nuc_log_${key}\}\}/$logratio/g;
+	    $doc =~ s/\{\{nuc_${key}_p_obs\}\}/$nuc_obs/g;
+	    $doc =~ s/\{\{nuc_${key}_p_exp\}\}/$nuc_exp/g;
+	    $doc =~ s/\{\{nuc_${key}_counts_obs\}\}/$counts_obs/g;
+	    $doc =~ s/\{\{nuc_${key}_counts_exp\}\}/$counts_exp/g;
 	}
-	warn "Minimum/maxium ratio was: $minmax\n" if $verbose;
-	$doc =~ s/\{\{nuc_minmax\}\}/$minmax/g;
+	# warn "Minimum/maxium ratio was: $minmax\n" if $verbose;
+	# $doc =~ s/\{\{nuc_minmax\}\}/$minmax/g;
     }
     else{
 	warn "Something went wrong, skipping this plot entirely... Use --verbose to get a clue...\n";
@@ -957,7 +962,7 @@ sub process_commandline{
   my $dedup_report;
   my $splitting_report;
   my $mbias_report;
-  my $nuc_report;  # stores nucleotide coverage statistics
+  my $nucleotide_coverage_report;  # stores nucleotide coverage statistics
   my $verbose;
 
   my $version;
@@ -969,7 +974,7 @@ sub process_commandline{
 				 'dedup_report=s'        => \$dedup_report,
 				 'splitting_report=s'    => \$splitting_report,
 				 'mbias_report=s'        => \$mbias_report,
-				 'nucleotide_report=s'   => \$nuc_report, 
+				 'nucleotide_report=s'   => \$nucleotide_coverage_report, 
 				 'version'               => \$version,
 				 'verbose'               => \$verbose,
 				);
@@ -1052,7 +1057,7 @@ VERSION
 
     ### DEDUPLICATION REPORT (optional)
     if ($dedup_report){
-      # warn "User specifified dedup report: $dedup_report\n";sleep(3);
+	warn "User specifified dedup report: $dedup_report\n";sleep(3);
       if (lc$dedup_report eq 'none'){
 	push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
       }
@@ -1063,7 +1068,7 @@ VERSION
     else{
       ### looking in the current directory for a report file with the same base name
       my @dedup_report_files = <$basename*deduplication_report.txt>;
-      #  warn "Number of deduplication reports found in current directory: ", scalar @dedup_report_files , "\n";
+      # warn "Number of deduplication reports found in current directory for basename $1: ", scalar @dedup_report_files , "\n";
 
       if (scalar @dedup_report_files > 1){
 	die "Found ", scalar @dedup_report_files ," potential deduplication reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--dedup_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
@@ -1080,31 +1085,32 @@ VERSION
     }
 
     ### NUCLEOTIDE COVERAGE REPORT (optional)
-    if ($nuc_report){
-	warn "User specifified nucleotide coverage report: $nuc_report\n";sleep(3);
-	if (lc$nuc_report eq 'none'){
+    if (defined $nucleotide_coverage_report){
+	# warn "User specified nucleotide coverage report: $nucleotide_coverage_report\n";sleep(1);
+	if (lc$nucleotide_coverage_report eq 'none'){
 	    push @nuc_reports, ''; # user may wish to skip this step by specifying 'none'
 	}
 	else{
-	    push @nuc_reports, $nuc_report;
+	    push @nuc_reports, $nucleotide_coverage_report;
 	}
     }
     else{
 	### looking in the current directory for a report file with the same base name
 	my @nucleotide_coverage_report_files = <$basename*nucleotide_stats.txt>;
-	warn "Number of nucleotide coverage statistic reports found in current directory: ", scalar @nucleotide_coverage_report_files , "\n";
+	# warn "Number of nucleotide coverage statistic reports found in current directory for basename $1: ", scalar @nucleotide_coverage_report_files , "\n";
 	
 	if (scalar @nucleotide_coverage_report_files > 1){
 	    die "Found ", scalar @nucleotide_coverage_report_files ," potential nucleotide coverage reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--nucleotide_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
 	}
 	elsif (scalar @nucleotide_coverage_report_files == 0){
+	    # warn "Found no corresponding nucleotide coverage file\n";
 	    push @nuc_reports, ''; # no corresponding nucleotide coverge file report found
 	}
 	else{
 	    # there is only a single nucleotide coverage report in the current directory, using this one
-	    $nuc_report = shift @nucleotide_coverage_report_files;
-	    push @nuc_reports, $nuc_report;
-	    warn "Going to use this nucleotide coverage report: $nuc_report\n\n";
+	    $nucleotide_coverage_report = shift @nucleotide_coverage_report_files;
+	    push @nuc_reports, $nucleotide_coverage_report;
+	    # warn "Going to use this nucleotide coverage report: $nucleotide_coverage_report\n\n"; sleep(3);
 	}
     }
 
@@ -1164,7 +1170,7 @@ VERSION
 	push @mbias_reports, $mbias_report;
       }
     }
-    $dedup_report = $splitting_report = $mbias_report = undef;
+    $dedup_report = $splitting_report = $mbias_report = $nucleotide_coverage_report = undef;
   }
 
   return ($output_dir,$verbose,$manual_output_file);
@@ -1218,7 +1224,7 @@ sub print_helpfile{
                            in the current working directory. Including a nucleotide coverage statistics report is optional, and
                            using the FILE 'none' will skip this report entirely.
 
-                           Script last modified: 29 January 2016
+                           Script last modified: 03 February 2016
 
 EOF
     ;
