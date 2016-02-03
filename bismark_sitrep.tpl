@@ -406,102 +406,81 @@
 		{{start_deletion_nucleotide_coverage}}	
 		// Nucleotide coverage
 		$(function(){
-			var data = {
-			  A:  [{{nuc_A_obs}} , {{nuc_A_exp}} , {{nuc_log_A}}],
-			  C:  [{{nuc_C_obs}} , {{nuc_C_exp}} , {{nuc_log_C}}],
-			  T:  [{{nuc_T_obs}} , {{nuc_T_exp}} , {{nuc_log_T}}],
-			  G:  [{{nuc_G_obs}} , {{nuc_G_exp}} , {{nuc_log_G}}],
-			  AA: [{{nuc_AA_obs}}, {{nuc_AA_exp}}, {{nuc_log_AA}}],
-			  AC: [{{nuc_AC_obs}}, {{nuc_AC_exp}}, {{nuc_log_AC}}],
-			  AG: [{{nuc_AG_obs}}, {{nuc_AG_exp}}, {{nuc_log_AG}}],
-			  AT: [{{nuc_AT_obs}}, {{nuc_AT_exp}}, {{nuc_log_AT}}],
-			  CA: [{{nuc_CA_obs}}, {{nuc_CA_exp}}, {{nuc_log_CA}}],
-			  CC: [{{nuc_CC_obs}}, {{nuc_CC_exp}}, {{nuc_log_CC}}],
-			  CG: [{{nuc_CG_obs}}, {{nuc_CG_exp}}, {{nuc_log_CG}}],
-			  CT: [{{nuc_CT_obs}}, {{nuc_CT_exp}}, {{nuc_log_CT}}],
-			  GA: [{{nuc_GA_obs}}, {{nuc_GA_exp}}, {{nuc_log_GA}}],
-			  GC: [{{nuc_GC_obs}}, {{nuc_GC_exp}}, {{nuc_log_GC}}],
-			  GG: [{{nuc_GG_obs}}, {{nuc_GG_exp}}, {{nuc_log_GG}}],
-			  GT: [{{nuc_GT_obs}}, {{nuc_GT_exp}}, {{nuc_log_GT}}],
-			  TA: [{{nuc_TA_obs}}, {{nuc_TA_exp}}, {{nuc_log_TA}}],
-			  TC: [{{nuc_TC_obs}}, {{nuc_TC_exp}}, {{nuc_log_TC}}],
-			  TG: [{{nuc_TG_obs}}, {{nuc_TG_exp}}, {{nuc_log_TG}}],
-			  TT: [{{nuc_TT_obs}}, {{nuc_TT_exp}}, {{nuc_log_TT}}],
-			};
-			var obkeys = [];
-			var obsexp = [];
-			for (var dn in data){
-				obkeys.push(dn);
-				// Trick HighCharts into having the y axis intercept at 1:
-				// Subtract 1 from all values, then add 1 back again for
-				// axis labels and tooltips
-		//obsexp.push((data[dn][0] / data[dn][1]) - 1);
-		                obsexp.push(data[dn][2]);
-				// Add to table
-				$('#nucleotide_coverage_table tbody').append(
-				//	'<tr><th>'+dn+'</th><td>'+data[dn][0]+'</td><td>'+data[dn][1]+'</td><td>'+(data[dn][0] / data[dn][1]).toFixed(2)+'</td></tr>'
-                          		'<tr><th>'+dn+'</th><td>'+data[dn][0]+'</td><td>'+data[dn][1]+'</td><td>'+data[dn][2]+'</td></tr>'
-				);
-			}
-			$('#nucleotide_coverage').highcharts({
-				colors: [
-				   '#0d233a', 
-				   '#2f7ed8', 
-				   '#8bbc21', 
-				   '#910000', 
-				   '#1aadce', 
-				   '#492970',
-				   '#f28f43', 
-				   '#77a1e5', 
-				   '#c42525', 
-				   '#a6c96a'
-				],
-				chart: {
-					type: 'bar'
-				},
-				title: {
-					text: ''
-				},
-				plotOptions: {
-					series: {
-						groupPadding: 0.1
-					}
-				},
-				xAxis: {
-					categories: obkeys,
-					alternateGridColor: '#EDEDED',
-				},
-				yAxis: {
-					title: {
-						text: 'log2(Observed/Expected)'
-					},
-		                        max:  {{nuc_minmax}},
-                                        min: -{{nuc_minmax}},
-
-					labels: { formatter: function(){
-							return this.value;
-					} }
-				},
-				credits: {
-					enabled: false
-				},
-				legend: {
-					enabled: false
-				},
-				tooltip: {
-					headerFormat: '',
-					formatter: function () {
-		return '<span style="font-weight:bold;"><span style="text-decoration:underline;">'+this.x+'</span> Observed / Expected</span>: '+(this.y).toFixed(2)
-
-					}
-				},
-				series: [{
-					name: 'Coverage context',
-					data: obsexp
-				}]
-			});
-		});
-
+		    $('#nucleotide_coverage').highcharts({
+		        chart: {
+		            type: 'bar'
+		        },
+		        title: {
+		            text: 'Chart Title'
+		        },
+		        xAxis: {
+		            categories: ['A','C','G','T','AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT'],
+		            title: {
+		                text: null
+		            }
+		        },
+		        yAxis: {
+		            min: 0,
+		            title: { text: null }
+		        },
+		        tooltip: {
+		            valueSuffix: '%',
+		            shared: true,
+		            valueDecimals: 1
+		        },
+		        credits: {
+		            enabled: false
+		        },
+		        series: [{
+		            name: 'Percent Genomic',
+		            data: [
+						{{nuc_A_percent_exp}},
+						{{nuc_C_percent_exp}},
+						{{nuc_G_percent_exp}},
+						{{nuc_T_percent_exp}},
+						{{nuc_AA_percent_exp}},
+						{{nuc_AC_percent_exp}},
+						{{nuc_AG_percent_exp}},
+						{{nuc_AT_percent_exp}},
+						{{nuc_CA_percent_exp}},
+						{{nuc_CC_percent_exp}},
+						{{nuc_CG_percent_exp}},
+						{{nuc_CT_percent_exp}},
+						{{nuc_GA_percent_exp}},
+						{{nuc_GC_percent_exp}},
+						{{nuc_GG_percent_exp}},
+						{{nuc_GT_percent_exp}},
+						{{nuc_TA_percent_exp}},
+						{{nuc_TC_percent_exp}},
+						{{nuc_TG_percent_exp}},
+						{{nuc_TT_percent_exp}}
+					]
+		        }, {
+		            name: 'Percent Total',
+		            data: [
+						{{nuc_A_percent_obs}},
+						{{nuc_C_percent_obs}},
+						{{nuc_G_percent_obs}},
+						{{nuc_T_percent_obs}},
+						{{nuc_AA_percent_obs}},
+						{{nuc_AC_percent_obs}},
+						{{nuc_AG_percent_obs}},
+						{{nuc_AT_percent_obs}},
+						{{nuc_CA_percent_obs}},
+						{{nuc_CC_percent_obs}},
+						{{nuc_CG_percent_obs}},
+						{{nuc_CT_percent_obs}},
+						{{nuc_GA_percent_obs}},
+						{{nuc_GC_percent_obs}},
+						{{nuc_GG_percent_obs}},
+						{{nuc_GT_percent_obs}},
+						{{nuc_TA_percent_obs}},
+						{{nuc_TC_percent_obs}},
+						{{nuc_TG_percent_obs}},
+						{{nuc_TT_percent_obs}}
+					]
+		        }]
+		    });
 		{{end_deletion_nucleotide_coverage}}	
 
 		{{start_deletion_mbias}}	
@@ -1051,11 +1030,110 @@
 	<table class="data" id="nucleotide_coverage_table">
 		<thead>
 			<th>Nucleotide Class</th>
-			<th>Observed</th>
-			<th>Expected</th>
-			<th>log2(Obs/Exp)</th>
+			<th>Total</th>
+			<th>Genome</th>
 		</thead>
 		<tbody>
+			<tr>
+			    <th>A</th>
+			    <td>{{nuc_A_percent_obs}}</td>
+			    <td>{{nuc_A_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>C</th>
+			    <td>{{nuc_C_percent_obs}}</td>
+			    <td>{{nuc_C_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>G</th>
+			    <td>{{nuc_G_percent_obs}}</td>
+			    <td>{{nuc_G_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>T</th>
+			    <td>{{nuc_T_percent_obs}}</td>
+			    <td>{{nuc_T_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>AA</th>
+			    <td>{{nuc_AA_percent_obs}}</td>
+			    <td>{{nuc_AA_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>AC</th>
+			    <td>{{nuc_AC_percent_obs}}</td>
+			    <td>{{nuc_AC_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>AG</th>
+			    <td>{{nuc_AG_percent_obs}}</td>
+			    <td>{{nuc_AG_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>AT</th>
+			    <td>{{nuc_AT_percent_obs}}</td>
+			    <td>{{nuc_AT_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>CA</th>
+			    <td>{{nuc_CA_percent_obs}}</td>
+			    <td>{{nuc_CA_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>CC</th>
+			    <td>{{nuc_CC_percent_obs}}</td>
+			    <td>{{nuc_CC_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>CG</th>
+			    <td>{{nuc_CG_percent_obs}}</td>
+			    <td>{{nuc_CG_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>CT</th>
+			    <td>{{nuc_CT_percent_obs}}</td>
+			    <td>{{nuc_CT_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>GA</th>
+			    <td>{{nuc_GA_percent_obs}}</td>
+			    <td>{{nuc_GA_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>GC</th>
+			    <td>{{nuc_GC_percent_obs}}</td>
+			    <td>{{nuc_GC_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>GG</th>
+			    <td>{{nuc_GG_percent_obs}}</td>
+			    <td>{{nuc_GG_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>GT</th>
+			    <td>{{nuc_GT_percent_obs}}</td>
+			    <td>{{nuc_GT_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>TA</th>
+			    <td>{{nuc_TA_percent_obs}}</td>
+			    <td>{{nuc_TA_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>TC</th>
+			    <td>{{nuc_TC_percent_obs}}</td>
+			    <td>{{nuc_TC_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>TG</th>
+			    <td>{{nuc_TG_percent_obs}}</td>
+			    <td>{{nuc_TG_percent_exp}}</td>
+			</tr>
+			<tr>
+			    <th>TT</th>
+			    <td>{{nuc_TT_percent_obs}}</td>
+			    <td>{{nuc_TT_percent_exp}}</td>
+			</tr>
 		</tbody>
 	</table>
 	<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
