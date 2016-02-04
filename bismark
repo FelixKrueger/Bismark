@@ -827,6 +827,7 @@ foreach my $filename (@filenames){
 	    my @args;
 	    push @args, "--genome $genome_folder";
 	    push @args, "--dir '$output_dir'";
+	    push @args, "--samtools_path $samtools_path";
 	    push @args, $final_output_filename;
 	    print "@args","\n"; sleep(3);
 	    
@@ -9904,6 +9905,15 @@ Output:
                          entries such as the methylation call etc. These ambiguous BAM files are intended to be used as 
                          coverage estimators for variant callers. 
 
+--nucleotide_coverage    Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM
+                         file and compares it to the genomic average composition once alignments are complete by calling 'bam2nuc'. 
+                         Since this calculation may take a while, bam2nuc attempts to write the genomic sequence composition
+                         into a file called 'genomic_nucleotide_frequencies.txt' indside the reference genome folder so it can
+                         be re-used the next time round instead of calculating it once again. If a file 'nucleotide_stats.txt' is
+                         found with the Bismark reports it will be automatically detected and used for the Bismark HTML report.
+                         This option works only for BAM or CRAM files. 
+
+
 Other:
 
 -h/--help                Displays this help file.
@@ -10072,7 +10082,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 14 Jan 2016.
+Last edited on 04 Feb 2016.
 
 HOW_TO
 }

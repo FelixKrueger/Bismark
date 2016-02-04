@@ -639,11 +639,11 @@ sub read_nucleotide_coverage_report{
 
 	    # calculating log2 observed/expected
 	    my $ratio = $nuc_obs/$nuc_exp;
-	    my $logratio = sprintf ("%.2f",log($ratio)/log(2));
-	    if (abs($logratio) > $minmax){
-		$minmax = abs($logratio);
-	    } 
-	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\tlog2 ratio: $logratio\n" if $verbose;
+	    #  my $logratio = sprintf ("%.2f",log($ratio)/log(2));
+	    # if (abs($logratio) > $minmax){
+	    # $minmax = abs($logratio);
+	    # } 
+	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\n" if $verbose;
 	    $doc =~ s/\{\{nuc_${key}_p_obs\}\}/$nuc_obs/g;
 	    $doc =~ s/\{\{nuc_${key}_p_exp\}\}/$nuc_exp/g;
 	    $doc =~ s/\{\{nuc_${key}_counts_obs\}\}/$counts_obs/g;

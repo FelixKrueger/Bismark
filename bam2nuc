@@ -41,6 +41,7 @@ warn '='x53,"\n";
 warn "Output directory:\t\t\t>$output_dir<\n";
 warn "Parent directory:\t\t\t>$parent_dir<\n";
 warn "Genome directory:\t\t\t>$genome_folder<\n";
+warn "Samtools installation:\t\t\t>$samtools_path<\n\n";
 
 my $total_number_of_words_counted = 0;
   
@@ -66,7 +67,7 @@ sub generate_nucleotide_report {
     if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
 	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
 	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
-	warn "="x146,"\n";
+	warn "="x188,"\n";
 	
 	while (<GF>){
 	    chomp;
@@ -110,6 +111,9 @@ sub generate_nucleotide_report {
     if ($infile =~ /\.bam$/){
 	open (IN,"$samtools_path view -h $infile |") or die "Unable to read from BAM file $infile: $!\n";
     }
+    elsif ($infile =~ /\.cram$/){
+	open (IN,"$samtools_path view -h $infile |") or die "Unable to read from CRAM file $infile: $!. Please note that CRAM files require Samtools version 1.2 or above...\n";
+    }  
     else{
 	open (IN,$infile) or die "Unable to read from $infile: $!\n";
     }
@@ -305,7 +309,6 @@ sub process_commandline{
     my $help;
     my $output_dir;
     my $genome_folder;
-    my $cytosine_out;
     my $parent_dir;
     my $samtools_path;
     my $version;
@@ -313,7 +316,6 @@ sub process_commandline{
     my $command_line = GetOptions ('help' => \$help,
 				   'dir=s' => \$output_dir,
 				   'g|genome_folder=s' => \$genome_folder,
-				   'o|output=s' => \$cytosine_out,
 				   'parent_dir=s' => \$parent_dir,
 				   'samtools_path=s' => \$samtools_path,
 				   'version' => \$version,
@@ -526,25 +528,64 @@ sub print_helpfile{
   and compares it to the average genomic sequence composition. Reads harbouring InDels are not
   taken into consideration. Mono- or Dinucleotides containing Ns are ignored as well.
 
+  bam2nuc handles both Bismark single-end and paired-end files (determined automatically). Both 
+  BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is
+  required for CRAM files.
 
-  USAGE: bam2nuc [options] --genome_folder <path> [input.bam]
 
+  USAGE: bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 
--o/--output <filename>   Name of the output file, mandatory.
 
 --dir                    Output directory. Output is written to the current directory if not specified explicitly.
 
 --genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
                          formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
 
+--samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                         explicitly if Samtools is in the PATH already
+
+
 --help                   Displays this help message and exits
 
 
+GENOMIC composition
+===================
 
-OUTPUT FORMAT:
+Since the calculation of the average genomic (di-)nucleotide composition may take a while bam2nuc attempts to
+write a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The 
+next time bam2nuc is run it will then use this file instead of calculating the average genome composition again.
 
 
-                              Script last modified: 29 January 2016
+OUTPUT FORMAT
+=============
+
+bam2nuc writes out a file ending in .nucleotide_stats.txt in the following format (tab-delimited):
+
+(di-)nucleotide count sample    % sample  count genomic   % genomic
+        A       1432    30.47   3768086 30.98
+        C       849     18.06   2321832 19.09
+        G       871     18.53   2318192 19.06
+        T       1548    32.94   3754886 30.87
+        AA      498     10.81   1321485 10.86
+        AC      227     4.93    639783  5.26
+        AG      233     5.06    709163  5.83
+        AT      442     9.60    1097652 9.02
+        CA      279     6.06    786744  6.47
+        CC      179     3.89    473900  3.90
+        CG      121     2.63    355535  2.92
+        CT      249     5.41    705653  5.80
+        GA      275     5.97    756411  6.22
+        GC      144     3.13    453607  3.73
+        GG      178     3.86    470732  3.87
+        GT      265     5.75    637436  5.24
+        TA      352     7.64    903441  7.43
+        TC      275     5.97    754531  6.20
+        TG      327     7.10    782761  6.44
+        TT      562     12.20   1314144 10.80
+
+This file is picked up and plotted by bismark2report automatically if found in the folder.
+
+                              Script last modified: 04 February 2016
 
 EOF
     ;
