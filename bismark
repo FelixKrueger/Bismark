@@ -5,7 +5,8 @@ use IO::Handle;
 use Cwd;
 $|++;
 use Getopt::Long;
-
+use FindBin qw($Bin);
+use lib "$Bin/../lib";
 
 ## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
 
@@ -24,7 +25,7 @@ use Getopt::Long;
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.15.0';
+my $bismark_version = 'v0.15.1';
 my $command_line = join (" ",@ARGV);
 
 
@@ -36,12 +37,13 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
 my %SQ_order;    # stores the order of sequences in the reference. This is to produce SAM/BAM files with a known order of chromosomes
 my %counting;    # counting various events
+my $final_output_filename; # required for the nucleotide coverage report 
 my @pids; # storing the process IDs of child processes in parallel mode
 
 
@@ -818,6 +820,26 @@ foreach my $filename (@filenames){
 
   if ($pid){ # only for the Parent
     warn "\n====================\nBismark run complete\n====================\n\n";
+
+    if ($nucleotide_coverage){
+	warn "Now calculating observed and expected nucleotide coverage statistics... \n\n";
+	if ($final_output_filename =~ /(bam|cram)|/){
+	    my @args;
+	    push @args, "--genome $genome_folder";
+	    push @args, "--dir '$output_dir'";
+	    push @args, "--samtools_path $samtools_path";
+	    push @args, $final_output_filename;
+	    print "@args","\n"; sleep(3);
+	    
+	    system ("$Bin/bam2nuc @args");
+	    warn "Finished bam2nuc calculation ...\n\n";
+	   
+	}
+	else{
+	    warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
+	}
+    }
+    
   }
 
 }
@@ -1286,14 +1308,18 @@ sub merge_individual_BAM_files{
       $merged_name = "${basename}_pe.bam";
     }
   }
+  
+
   if ($cram){
       $merged_name =~ s/bam$/cram/;
       warn "At this stage we write out a single CRAM file and delete all temporary BAM files\n";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
+      $final_output_filename = "${output_dir}${merged_name}";
       
       open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
   }
   else{
+      $final_output_filename = "${output_dir}${merged_name}";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
       open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
   }  
@@ -1321,6 +1347,7 @@ sub merge_individual_BAM_files{
   warn "\n";
 
   close OUT or warn "Failed to close output filehandle\n\n";
+  
 }
 
 
@@ -1435,11 +1462,13 @@ sub start_methylation_call_procedure_single_ends {
       }
       else{ # single-core mode
 	  $outfile =~ s/sam$/cram/;
+	  $final_output_filename = "${output_dir}${outfile}";
 	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
       }
   }
   elsif($bam == 1){ ### Samtools is installed, writing out BAM directly
       $outfile =~ s/sam$/bam/;
+      $final_output_filename = "${output_dir}${outfile}";
       open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
@@ -1633,11 +1662,13 @@ sub start_methylation_call_procedure_paired_ends {
       }
       else{ # single-core mode
 	  $outfile =~ s/sam$/cram/;
+	  $final_output_filename = "${output_dir}${outfile}";	  
 	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
       }
   }
   elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
       $outfile =~ s/sam$/bam/;
+      $final_output_filename = "${output_dir}${outfile}";	  
       open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
@@ -2259,7 +2290,9 @@ sub process_single_end_fastA_file_for_methylation_call{
     }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
-
+ 
+  close OUT or warn "Failed to close filehandle OUT: $!\n";
+  
   print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 
 }
@@ -2341,6 +2374,8 @@ sub process_single_end_fastQ_file_for_methylation_call{
     }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
+
+  close OUT or warn "Failed to close filehandle OUT: $!\n";
 
   print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
   if ($ambig_bam){
@@ -7546,6 +7581,7 @@ sub process_command_line{
   my $ambig_bam;
   my $cram;
   my $cram_ref;
+  my $nucleotide_coverage;
   
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7601,6 +7637,7 @@ sub process_command_line{
 				 'ambig_bam'               => \$ambig_bam,
 				 'cram'                    => \$cram,
 				 'cram_ref=s'              => \$cram_ref,
+				 'nucleotide_coverage'     => \$nucleotide_coverage,
 				);
 
 
@@ -8385,7 +8422,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage);
 }
 
 
@@ -9868,6 +9905,15 @@ Output:
                          entries such as the methylation call etc. These ambiguous BAM files are intended to be used as 
                          coverage estimators for variant callers. 
 
+--nucleotide_coverage    Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM
+                         file and compares it to the genomic average composition once alignments are complete by calling 'bam2nuc'. 
+                         Since this calculation may take a while, bam2nuc attempts to write the genomic sequence composition
+                         into a file called 'genomic_nucleotide_frequencies.txt' indside the reference genome folder so it can
+                         be re-used the next time round instead of calculating it once again. If a file 'nucleotide_stats.txt' is
+                         found with the Bismark reports it will be automatically detected and used for the Bismark HTML report.
+                         This option works only for BAM or CRAM files. 
+
+
 Other:
 
 -h/--help                Displays this help file.
@@ -10036,7 +10082,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 14 Jan 2016.
+Last edited on 04 Feb 2016.
 
 HOW_TO
 }

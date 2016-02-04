@@ -1,0 +1,594 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+$|++;
+use Getopt::Long;
+use Cwd;
+use Carp;
+
+## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+### This script bam2nuc reads BAM files and calculates the nucleotide coverage of the reads
+### (using the genomic sequence rather than the observed sequence in the reads themselves)
+### and compares it to the average genomic sequence composition. Reads harbouring InDels
+### are not taken into consideration. Mono- or Dinucleotides containing Ns are ignored as well
+
+my %chromosomes; # storing sequence information of all chromosomes/scaffolds
+my %freqs;   # keeping a record of which chromosomes have been processed
+my %genomic_freqs;
+my %processed;
+
+my $bam2nuc_version = 'v0.15.1';
+
+my ($output_dir,$genome_folder,$parent_dir,$samtools_path) = process_commandline();
+
+warn "Summary of parameters for nucleotide coverage report:\n";
+warn '='x53,"\n";
+# warn "Input BAM file:\t\t\t$coverage_infile\n";
+warn "Output directory:\t\t\t>$output_dir<\n";
+warn "Parent directory:\t\t\t>$parent_dir<\n";
+warn "Genome directory:\t\t\t>$genome_folder<\n";
+warn "Samtools installation:\t\t\t>$samtools_path<\n\n";
+
+my $total_number_of_words_counted = 0;
+  
+read_genome_into_memory($parent_dir);
+warn "Stored sequence information of ",scalar keys %chromosomes," chromosomes/scaffolds in total\n\n";
+
+foreach my $infile(@ARGV){
+    generate_nucleotide_report($infile);
+}
+
+sub generate_nucleotide_report {
+    my $infile = shift;
+    %freqs = ();
+    %genomic_freqs = ();
+    
+    warn  "="x66,"\n";
+    warn "Mono- and di-nucleotide coverage will now be written into a report\n";
+    warn  "="x66,"\n\n";
+
+    my $number_processed = 0;
+
+    ### GENOMIC NUCLEOTIDE FREQUENCIES
+    if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
+	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
+	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
+	warn "="x188,"\n";
+	
+	while (<GF>){
+	    chomp;
+	    my ($element,$freq) = (split /\t/);
+	    $genomic_freqs{$element} = $freq;
+	    # warn "$element\t$freq\n";
+	}
+	close GF;
+    }
+    else{
+	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
+	warn "="x164,"\n";
+	foreach my $chr (keys %chromosomes){
+	    warn "Processing chromosome >> $chr <<\n";
+	    process_sequence($chromosomes{$chr});
+	}
+
+	%genomic_freqs = %freqs;
+	%freqs = (); # resetting to store the read composition now
+	
+	### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
+	### if this fails
+	if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
+	    warn "Writing genomic nucleotide frequencies to the >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
+	    foreach my $f(sort keys %genomic_freqs){
+		warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
+		print FREQS "$f\t$genomic_freqs{$f}\n";
+	    }
+	    close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
+	}
+	else{
+	    warn "Failed to open filehandle for ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!, skipping writing out genomic frequency table\n";
+	}
+	
+    }
+    warn "\n\n";
+    
+    warn "Calculating read frequencies from file '$infile'\n";
+    warn "="x90,"\n";
+
+    if ($infile =~ /\.bam$/){
+	open (IN,"$samtools_path view -h $infile |") or die "Unable to read from BAM file $infile: $!\n";
+    }
+    elsif ($infile =~ /\.cram$/){
+	open (IN,"$samtools_path view -h $infile |") or die "Unable to read from CRAM file $infile: $!. Please note that CRAM files require Samtools version 1.2 or above...\n";
+    }  
+    else{
+	open (IN,$infile) or die "Unable to read from $infile: $!\n";
+    }
+
+    my ($single,$paired) = test_file($infile);
+    # warn "returned $single and $paired\n";
+    
+    if ($single){
+	warn "Determined the file to be single-end\n";
+    }
+    elsif ($paired){
+	warn "Determined the file to be paired-end\n";
+    }
+    else{
+	die "Failed to figure out SE or PE...\n";
+    }
+    sleep(1);
+    
+    my $count = 0;
+    my $skipped = 0;
+    while (<IN>){
+	chomp;
+	if (/^\@/) {
+	    #  warn "$_\n";
+	    next;
+	}
+	++$count;
+	if ($count%500000 == 0){
+	    warn "Processed $count lines\n";
+	}
+	my ($flag,$chr,$start,$cigar,$sequence) = (split(/\t/))[1,2,3,5,9];
+ 	# warn "$flag\t$chr\t$start\t$cigar\t$sequence\n"; sleep(1);
+
+	### checking CIGAR string for insertions or deletions, and chucking the sequence if they are no linear matches
+	if ($cigar =~ /[ID]/){
+	    # warn "ignoring sequence:\n $_\n"; sleep(1);
+	    ++$skipped;
+	    next;
+	}
+	
+	### extracting the genomic sequence instead
+ 	my $extracted_sequence = substr($chromosomes{$chr},$start - 1,length$sequence);
+	# warn "Old sequence: $sequence\nExt sequence: $extracted_sequence\n";
+	
+	if ($single){
+	    calc_single_end($extracted_sequence,$flag);
+	}
+	else{
+	    calc_paired_end($extracted_sequence,$flag);
+	}
+    }
+    warn "\n\n";
+
+    ### Time to calculate averages and print to a file
+
+    my $outfile = $infile;
+    die "file needs to be in BAM or CRAM format (ending in .bam or .cram). Terminating process...\n" unless ($outfile =~s /(bam|cram)$/nucleotide_stats.txt/);
+    warn "Printing nucleotide stats to >> $outfile <<\n";
+    open (OUT,'>',$outfile) or die "Failed to write to file $outfile: $!\n\n";
+
+    calculate_averages();
+
+    close OUT or  warn "Failed to close filehandle CLOSE: $!\n\n";    
+
+}
+
+sub calc_paired_end{
+    my ($sequence,$flag) = @_;
+    # warn "FLAG: $flag\n$sequence\n"; sleep(1);    
+    
+    if ($flag == 99 or $flag == 147){ # OT or CTOT
+	# warn "flag 99 or 147. Don't need to do anything\n"; # fine, don't need to do anything
+    }
+    elsif ($flag == 83 or 163){ # OB or CTOB
+	# reverse complementing
+	$sequence = reverse $sequence;
+	$sequence =~ tr/GATC/CTAG/;
+    }
+    else{
+	die "failed to detect valid Bismark FLAG tag: $flag\n";
+    }
+    process_sequence($sequence);
+}
+
+sub calc_single_end{
+    my ($sequence,$flag) = @_;
+    
+    if ($flag == 0){
+	# warn "flag 0\n"; # fine, don't need to do anything
+    }
+    elsif ($flag == 16){
+	# reverse complementing
+	$sequence = reverse $sequence;
+	$sequence =~ tr/GATC/CTAG/;
+    }
+    else{
+	die "failed to detect valid Bismark FLAG tag: $flag\n";
+    }
+    process_sequence($sequence);
+}
+
+
+sub test_file{
+    my $in = shift;   
+    open (TEST,"samtools view -H $in |") or die $!;
+    
+    while (<TEST>){
+	chomp;
+	if (/^\@PG/) {
+	    if (/\s-1\s+/ and /\s+-2\s/){ # paired-end
+		close TEST or warn $!;
+		return (0,1);
+	    }
+	    else{ # single-end
+		close TEST or warn $!;
+		return (1,0);	
+	    }
+	}
+    }
+
+}
+
+
+sub calculate_averages {
+    
+    warn "Final Stage: Calculating averages\n";
+    warn "="x33,"\n\n";
+    my $total_number_of_words_counted;
+    my $total_number_of_words_counted_genomic;
+    
+    warn "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
+    print OUT "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
+    
+    foreach my $word ('A','C','G','T') {
+	$total_number_of_words_counted += $freqs{$word}; 
+	$total_number_of_words_counted_genomic += $genomic_freqs{$word};
+    }
+
+    foreach my $word ('A','C','G','T') {
+	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
+	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+    }
+    
+    $total_number_of_words_counted = 0;
+    $total_number_of_words_counted_genomic = 0;
+    
+    foreach my $word ('AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT') {
+	$total_number_of_words_counted += $freqs{$word}; 
+	$total_number_of_words_counted_genomic += $genomic_freqs{$word};
+    }
+    
+    foreach my $word ('AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT') {
+      	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
+	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+    }
+    
+}
+
+
+sub process_sequence{
+    
+    my $seq = shift;
+    my $mono;
+    my $di;
+
+    foreach my $index (0..(length$seq)-1){
+	my $counted = 0;
+	if ($index%10000000==0){
+	    # warn "Current index number is $index\n";
+	}
+
+	$mono = substr($seq,$index,1);
+	unless ( $mono eq 'N'){
+	    $freqs{$mono}++;
+	}
+
+	unless ( ($index + 2) > length$seq ){
+	    $di = substr($seq,$index,2);
+	    if (index($di,'N') < 0) {
+		$freqs{$di}++;
+	    }
+	}
+    }
+    
+}
+
+
+sub process_commandline{
+    my $help;
+    my $output_dir;
+    my $genome_folder;
+    my $parent_dir;
+    my $samtools_path;
+    my $version;
+    
+    my $command_line = GetOptions ('help' => \$help,
+				   'dir=s' => \$output_dir,
+				   'g|genome_folder=s' => \$genome_folder,
+				   'parent_dir=s' => \$parent_dir,
+				   'samtools_path=s' => \$samtools_path,
+				   'version' => \$version,
+	);
+  
+  ### EXIT ON ERROR if there were errors with any of the supplied options
+  unless ($command_line){
+      die "Please respecify command line options\n";
+  }
+
+  ### HELPFILE
+  if ($help){
+    print_helpfile();
+    exit;
+  }
+
+  if ($version){
+    print << "VERSION";
+
+
+                        Bismark Nucleotide Coverage Module -
+                                     bam2nuc
+
+                           Bismark Version: $bam2nuc_version
+              Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+
+
+VERSION
+    exit;
+  }
+
+    ### no files provided
+    unless (@ARGV){
+	warn "You need to provide one or more BAM files to continue. Please respecify!\n";
+	sleep(1);
+	
+	print_helpfile();
+	exit;
+    }
+    
+    unless ($parent_dir){
+	$parent_dir = getcwd();
+    }
+    unless ($parent_dir =~ /\/$/){
+	$parent_dir =~ s/$/\//;
+    }
+    
+    ### OUTPUT DIR PATH
+    if (defined $output_dir){
+	unless ($output_dir eq ''){ # if the output dir has been passed on by Bismark and is an empty string we don't want to change it
+	    unless ($output_dir =~ /\/$/){
+		$output_dir =~ s/$/\//;
+	    }
+	}
+    }
+    else{
+	$output_dir = '';
+    }
+    
+    ### GENOME folder
+    if ($genome_folder){
+	unless ($genome_folder =~/\/$/){
+	    $genome_folder =~ s/$/\//;
+	}
+    }
+    else{
+	die "Please specify a genome folder to proceed (full path only)\n";
+    }
+
+    ## PATH TO SAMTOOLS
+    if (defined $samtools_path){
+	# if Samtools was specified as full command
+	if ($samtools_path =~ /samtools$/){
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+	else{
+	    unless ($samtools_path =~ /\/$/){
+		$samtools_path =~ s/$/\//;
+	    }
+	    $samtools_path .= 'samtools';
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+    }
+    # Check whether Samtools is in the PATH if no path was supplied by the user
+    else{
+	if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+	    $samtools_path = `which samtools`;
+	    chomp $samtools_path;
+	}
+    }
+    
+    return ($output_dir,$genome_folder,$parent_dir,$samtools_path);
+}
+
+
+
+####
+####
+
+
+
+sub read_genome_into_memory{
+
+  ## reading in and storing the specified genome in the %chromosomes hash
+  chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
+  warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
+
+  my @chromosome_filenames =  <*.fa>;
+
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  unless (@chromosome_filenames){
+    @chromosome_filenames =  <*.fasta>;
+  }
+  unless (@chromosome_filenames){
+    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+  }
+
+  foreach my $chromosome_filename (@chromosome_filenames){
+
+    # skipping the tophat entire mouse genome fasta file
+    next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
+
+    open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    ### first line needs to be a fastA header
+    my $first_line = <CHR_IN>;
+    chomp $first_line;
+    $first_line =~ s/\r//; # removing /r carriage returns
+
+    ### Extracting chromosome name from the FastA header
+    my $chromosome_name = extract_chromosome_name($first_line);
+	
+    my $sequence;
+    while (<CHR_IN>){
+      chomp;
+      $_ =~ s/\r//; # removing /r carriage returns
+
+      if ($_ =~ /^>/){
+	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
+	if (exists $chromosomes{$chromosome_name}){
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+	}
+	else {
+	  if (length($sequence) == 0){
+	    warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+	  }
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  $chromosomes{$chromosome_name} = $sequence;
+	  $processed{$chromosome_name} = 0; # processed chromosomes will be set to 1 later to allow a record of which chromosome has been processed
+	}
+	### resetting the sequence variable
+	$sequence = '';
+	### setting new chromosome name
+	$chromosome_name = extract_chromosome_name($_);
+      }
+      else{
+	$sequence .= uc$_;
+      }
+    }
+
+    if (exists $chromosomes{$chromosome_name}){
+      warn "chr $chromosome_name (",length $sequence ," bp)\t";
+      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+    }
+    else{
+      if (length($sequence) == 0){
+	warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
+      }
+      warn "chr $chromosome_name (",length $sequence ," bp)\n";
+      $chromosomes{$chromosome_name} = $sequence;
+      $processed{$chromosome_name} = 0; # processed chromosomes will be set to 1 later to allow a record of which chromosome has been processed
+    }
+  }
+  warn "\n";
+  chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
+}
+
+sub extract_chromosome_name {
+  ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
+  my $fasta_header = shift;
+  if ($fasta_header =~ s/^>//){
+    my ($chromosome_name) = split (/\s+/,$fasta_header);
+    return $chromosome_name;
+  }
+  else{
+    die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
+  }
+}
+
+
+sub print_helpfile{
+
+  warn <<EOF
+
+  SYNOPSIS:
+      
+  This script bam2nuc reads BAM files and calculates the mono- and di-nucleotide coverage of the
+  reads (using the genomic sequence rather than the observed sequence in the reads themselves)
+  and compares it to the average genomic sequence composition. Reads harbouring InDels are not
+  taken into consideration. Mono- or Dinucleotides containing Ns are ignored as well.
+
+  bam2nuc handles both Bismark single-end and paired-end files (determined automatically). Both 
+  BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is
+  required for CRAM files.
+
+
+  USAGE: bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
+
+
+--dir                    Output directory. Output is written to the current directory if not specified explicitly.
+
+--genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
+                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+
+--samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                         explicitly if Samtools is in the PATH already
+
+
+--help                   Displays this help message and exits
+
+
+GENOMIC composition
+===================
+
+Since the calculation of the average genomic (di-)nucleotide composition may take a while bam2nuc attempts to
+write a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The 
+next time bam2nuc is run it will then use this file instead of calculating the average genome composition again.
+
+
+OUTPUT FORMAT
+=============
+
+bam2nuc writes out a file ending in .nucleotide_stats.txt in the following format (tab-delimited):
+
+(di-)nucleotide count sample    % sample  count genomic   % genomic
+        A       1432    30.47   3768086 30.98
+        C       849     18.06   2321832 19.09
+        G       871     18.53   2318192 19.06
+        T       1548    32.94   3754886 30.87
+        AA      498     10.81   1321485 10.86
+        AC      227     4.93    639783  5.26
+        AG      233     5.06    709163  5.83
+        AT      442     9.60    1097652 9.02
+        CA      279     6.06    786744  6.47
+        CC      179     3.89    473900  3.90
+        CG      121     2.63    355535  2.92
+        CT      249     5.41    705653  5.80
+        GA      275     5.97    756411  6.22
+        GC      144     3.13    453607  3.73
+        GG      178     3.86    470732  3.87
+        GT      265     5.75    637436  5.24
+        TA      352     7.64    903441  7.43
+        TC      275     5.97    754531  6.20
+        TG      327     7.10    782761  6.44
+        TT      562     12.20   1314144 10.80
+
+This file is picked up and plotted by bismark2report automatically if found in the folder.
+
+                              Script last modified: 04 February 2016
+
+EOF
+    ;
+  exit 1;
+}
+

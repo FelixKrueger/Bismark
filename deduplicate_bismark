@@ -69,7 +69,7 @@ if ($version){
                            Bismark Deduplication Module
 
                           Deduplicator Version: $dedup_version
-              Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
 
 

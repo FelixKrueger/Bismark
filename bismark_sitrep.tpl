@@ -74,8 +74,8 @@
 		.data tr:first-child td {
 			border-top:0;
 		}
-		.data tbody tr:last-child th,
-		.data tbody tr:last-child td {
+		.data tr:last-child th,
+		.data tr:last-child td {
 			border-bottom: 2px solid #666;
 		}
 		.plot {
@@ -125,28 +125,17 @@
 		
 		// Alignment
 		$(function () {
+			
+			// Set defaults for Highcharts
+			Highcharts.setOptions({
+			    colors: ['#0d233a','#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'],
+			    title: { text: null },
+				credits: { enabled: false }
+			});
+			
+			// Alignment
 			$('#alignment').highcharts({
-				colors: [
-				   '#0d233a', 
-				   '#2f7ed8', 
-				   '#8bbc21', 
-				   '#910000', 
-				   '#1aadce', 
-				   '#492970',
-				   '#f28f43', 
-				   '#77a1e5', 
-				   '#c42525', 
-				   '#a6c96a'
-				],
-				chart: {
-					type: 'pie'
-				},
-				title: {
-					text: ''
-				},
-				credits: {
-					enabled: false
-				},
+				chart: { type: 'pie' },
 				tooltip: {
 					formatter: function() {
 						return '<b>'+ this.point.name + ':</b>'+this.percentage.toFixed(1) + '%';
@@ -180,47 +169,12 @@
 					]
 				}]
 			});
-		});
-		
-		// Aligment Context
-		$(function () {
+
+			// Aligment Context
 			$('#alignment_context').highcharts({
-				colors: [
-				   '#0d233a', 
-				   '#2f7ed8', 
-				   '#8bbc21', 
-				   '#910000', 
-				   '#1aadce', 
-				   '#492970',
-				   '#f28f43', 
-				   '#77a1e5', 
-				   '#c42525', 
-				   '#a6c96a'
-				],
-				chart: {
-					type: 'column'
-				},
-				title: {
-					text: ''
-				},
-				xAxis: {
-					categories: ['OT', 
-						     'CTOT',
-						     'CTOB',
-						     'OB'
-						 ]
-				},
-				yAxis: {
-					title: {
-						text: 'Number of Alignments'
-					}
-				},
-				credits: {
-					enabled: false
-				},
-				legend: {
-					enabled: false
-				},
+				chart: { type: 'column' },
+				xAxis: { categories: ['OT', 'CTOT', 'CTOB', 'OB' ] },
+				yAxis: { title: { text: 'Number of Alignments' } },
 				tooltip: {
 					formatter: function() {
 						if(this.x == 'OT'){
@@ -245,44 +199,16 @@
 					data: [ {{number_OT}}, {{number_CTOT}}, {{number_CTOB}}, {{number_OB}} ]
 				}]
 			});
-		});
-		
-		// Methylation Context
-		$(function () {
+
+			// Methylation Context
 			$('#methylation_context').highcharts({
-				colors: [
-				   '#0d233a', 
-				   '#2f7ed8', 
-				   '#8bbc21', 
-				   '#910000', 
-				   '#1aadce', 
-				   '#492970',
-				   '#f28f43', 
-				   '#77a1e5', 
-				   '#c42525', 
-				   '#a6c96a'
-				],
-				chart: {
-					type: 'column'
-				},
-				title: {
-					text: ''
-				},
-				xAxis: {
-					categories: ['CpG', 'CHG', 'CHH']
-				},
+				chart: { type: 'column' },
+				xAxis: { categories: ['CpG', 'CHG', 'CHH'] },
 				yAxis: {
-					title: {
-						text: '% Methylation'
-					},
+					title: { text: '% Methylation' },
 					max: 100
 				},
-				credits: {
-					enabled: false
-				},
-				legend: {
-					enabled: false
-				},
+				legend: { enabled: false },
 				tooltip: {
 					headerFormat: '',
 					pointFormat: '<b>{point.category} Methylation</b>: {point.y}%'
@@ -300,27 +226,7 @@
 		
 		$(function () {
 			$('#deduplication_plot').highcharts({
-				colors: [
-				   '#0d233a', 
-				   '#2f7ed8', 
-				   '#8bbc21', 
-				   '#910000', 
-				   '#1aadce', 
-				   '#492970',
-				   '#f28f43', 
-				   '#77a1e5', 
-				   '#c42525', 
-				   '#a6c96a'
-				],
-				chart: {
-					type: 'pie'
-				},
-				title: {
-					text: ''
-				},
-				credits: {
-					enabled: false
-				},
+				chart: { type: 'pie' },
 				tooltip: {
 					formatter: function() {
 						return '<b>'+ this.point.name + ':</b>'+this.percentage.toFixed(1) + '%';
@@ -356,39 +262,13 @@
 		// Methylation Context after Extraction
 		$(function () {
 			$('#dedup_methylation_context').highcharts({
-				colors: [
-				   '#0d233a', 
-				   '#2f7ed8', 
-				   '#8bbc21', 
-				   '#910000', 
-				   '#1aadce', 
-				   '#492970',
-				   '#f28f43', 
-				   '#77a1e5', 
-				   '#c42525', 
-				   '#a6c96a'
-				],
-				chart: {
-					type: 'column'
-				},
-				title: {
-					text: ''
-				},
-				xAxis: {
-					categories: ['CpG', 'CHG', 'CHH']
-				},
+				chart: { type: 'column' },
+				xAxis: { categories: ['CpG', 'CHG', 'CHH'] },
 				yAxis: {
-					title: {
-						text: '% Methylation'
-					},
+					title: { text: '% Methylation' },
 					max: 100
 				},
-				credits: {
-					enabled: false
-				},
-				legend: {
-					enabled: false
-				},
+				legend: { enabled: false },
 				tooltip: {
 					headerFormat: '',
 					pointFormat: '<b>{point.category} Methylation</b>: {point.y}%'
@@ -402,67 +282,99 @@
 
 		{{end_deletion_splitting}}	
 
+		
+		{{start_deletion_nucleotide_coverage}}	
+		// Nucleotide coverage
+		$(function(){
+		    $('#nucleotide_coverage').highcharts({
+		        chart: {
+		            type: 'bar'
+		        },
+		        xAxis: {
+		            categories: ['A','C','G','T','AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT'],
+		            title: { text: null }
+		        },
+		        yAxis: {
+		            min: 0,
+		            title: { text: null }
+		        },
+		        tooltip: {
+					valueDecimals: 1,
+		            valueSuffix: '%',
+		            shared: true,
+		            headerFormat: '<span style="text-decoration:underline; font-weight:bold; font-size: 1.1em;">{point.key}</span><br/>'
+		        },
+				plotOptions: {
+					series: {
+						borderWidth: 0,
+						groupPadding: 0.1
+					}
+				},
+		        series: [{
+		            name: 'Percent Genomic',
+		            data: [
+						{{nuc_A_p_exp}},{{nuc_C_p_exp}},{{nuc_G_p_exp}},{{nuc_T_p_exp}},
+						{{nuc_AA_p_exp}},{{nuc_AC_p_exp}},{{nuc_AG_p_exp}},{{nuc_AT_p_exp}},
+						{{nuc_CA_p_exp}},{{nuc_CC_p_exp}},{{nuc_CG_p_exp}},{{nuc_CT_p_exp}},
+						{{nuc_GA_p_exp}},{{nuc_GC_p_exp}},{{nuc_GG_p_exp}},{{nuc_GT_p_exp}},
+						{{nuc_TA_p_exp}},{{nuc_TC_p_exp}},{{nuc_TG_p_exp}},{{nuc_TT_p_exp}},
+					]
+		        }, {
+		            name: 'Percent Sample',
+		            data: [
+						{{nuc_A_p_obs}},{{nuc_C_p_obs}},{{nuc_G_p_obs}},{{nuc_T_p_obs}},
+						{{nuc_AA_p_obs}},{{nuc_AC_p_obs}},{{nuc_AG_p_obs}},{{nuc_AT_p_obs}},
+						{{nuc_CA_p_obs}},{{nuc_CC_p_obs}},{{nuc_CG_p_obs}},{{nuc_CT_p_obs}},
+						{{nuc_GA_p_obs}},{{nuc_GC_p_obs}},{{nuc_GG_p_obs}},{{nuc_GT_p_obs}},
+						{{nuc_TA_p_obs}},{{nuc_TC_p_obs}},{{nuc_TG_p_obs}},{{nuc_TT_p_obs}},
+					]
+		        }]
+		    });
+		});
+		{{end_deletion_nucleotide_coverage}}	
+
 		{{start_deletion_mbias}}	
 
-		// M-Bias Plot 1
+		// M-Bias Plots
 		$(function () {
-			$('#m_bias_1').highcharts({
-				colors: [
-					'#CCF0E1',
-					'#EDD3A8',
-					'#69798A', 
-					'#21BCA2',
-					'#F29D13',
-					'#0d233a', 
-					'#f28f43', 
-					'#77a1e5', 
-					'#c42525', 
-					'#a6c96a'
-				],
+			
+			// Set plot defaults to be used twice
+			var m_bias_settings = {
+				colors: [ '#CCF0E1','#EDD3A8','#69798A','#21BCA2','#F29D13','#0d233a','#f28f43','#77a1e5','#c42525','#a6c96a'],
 				chart: {
 					zoomType: 'x',
 					marginRight: 80,
 					alignTicks: false,
 					plotBorderWidth:1
 				},
-				title: {
-					text: 'Read 1'
-				},
+				title: { text: 'Read 1' },
 				subtitle: {
 					text: document.ontouchstart === undefined ?
 						'Click and drag in the plot area to zoom in' :
 						'Drag your finger over the plot to zoom in'
 				},
 				xAxis: {
-					title: {
-						text: 'Position (bp)'
-					},
+					title: { text: 'Position (bp)' },
 					tickInterval: 5,
 					minTickInterval: 0,
 					min: 0,
 				},
 				yAxis: [{
-					title: {
-						text: '% Methylation'
-					},
+					title: { text: '% Methylation' },
 					min: 0,
 					max: 100,
 					gridLineWidth: 0,
 					tickWidth: 1,
 					lineWidth: 1
 				}, { // secondary axis
-					title: {
-						text: '# Methylation Calls'
-					},
+					title: { text: '# Methylation Calls' },
 					min:0,
 					gridLineWidth: 0,
 					lineWidth: 1,
 					tickWidth: 1,
 					opposite: true
 				}],
-				credits: {
-					enabled: false
-				},
+				credits: { enabled: false },
 				tooltip: {
 					shared: true,
 					headerFormat: '<b>Base {point.x}</b><table>',
@@ -480,69 +392,52 @@
 				plotOptions: {
 					line: {
 						lineWidth: 1,
-						marker: {
-							enabled: false
-						},
+						marker: { enabled: false },
 						shadow: false
 					}
 				},
-				
-				// Reverse order to get lines stacked correctly
 				series: [{
 					name: 'CHH Total Calls',
 					yAxis: 1,
 					lineWidth: 2,
 					legendIndex: 5,
-					data: [
-						{{CHH_total_calls_R1}}
-						]
-				},
-				{
+					data: [ {{CHH_total_calls_R1}} ]
+				},{
 					name: 'CHG Total Calls',
 					yAxis: 1,
 					lineWidth: 2,
 					legendIndex: 4,
-					data: [
-						{{CHG_total_calls_R1}}	
-						]
-				},
-				{
+					data: [ {{CHG_total_calls_R1}} ]
+				},{
 					name: 'CpG Total Calls',
 					yAxis: 1,
 					lineWidth: 2,
 					legendIndex: 3,
-					data: [
-						{{CpG_total_calls_R1}}
-						]
-				},
-				{
+					data: [ {{CpG_total_calls_R1}} ]
+				},{
 					name: 'CHH Methylation',
 					yAxis: 0,
 					lineWidth: 3,
 					legendIndex: 2,
-					data: [
-						{{CHH_methylation_R1}}	
-					]
-				},
-				{
+					data: [ {{CHH_methylation_R1}} ]
+				},{
 					name: 'CHG Methylation',
 					yAxis: 0,
 					lineWidth: 3,
 					legendIndex: 1,
-					data: [
-						{{CHG_methylation_R1}}
-						]
-				},
-				{
+					data: [ {{CHG_methylation_R1}} ]
+				},{
 					name: 'CpG Methylation',
 					yAxis: 0,
 					lineWidth: 3,
 					legendIndex: 0,
-					data: [
-						{{CpG_methylation_R1}}
-						]
+					data: [ {{CpG_methylation_R1}} ]
 				}]
-			});
+			};
+			
+			// Plot the graph
+			$('#m_bias_1').highcharts(m_bias_settings);
+			
 		});
 		{{end_deletion_mbias}}
 
@@ -552,143 +447,49 @@
 	
 		// M-Bias Plot 2
 		$(function () {
-			$('#m_bias_2').highcharts({
-				colors: [
-					'#CCF0E1',
-					'#EDD3A8',
-					'#69798A', 
-					'#21BCA2',
-					'#F29D13',
-					'#0d233a', 
-					'#f28f43', 
-					'#77a1e5', 
-					'#c42525', 
-					'#a6c96a'
-				],
-				chart: {
-					zoomType: 'x',
-					marginRight: 80,
-					alignTicks: false,
-					plotBorderWidth:1
-				},
-				title: {
-					text: 'Read 2'
-				},
-				subtitle: {
-					text: document.ontouchstart === undefined ?
-						'Click and drag in the plot area to zoom in' :
-						'Drag your finger over the plot to zoom in'
-				},
-				xAxis: {
-					title: {
-						text: 'Position (bp)'
-					},
-					tickInterval: 5,
-					minTickInterval: 0,
-					min: 1,
-				},
-				yAxis: [{
-					title: {
-						text: '% Methylation'
-					},
-					min: 0,
-					max: 100,
-					gridLineWidth: 0,
-					lineWidth: 1,
-					tickWidth: 1
-				}, { // secondary axis
-					title: {
-						text: '# Methylation Calls'
-					},
-					min:0,
-					gridLineWidth: 0,
-					opposite: true,
-					lineWidth: 1,
-					tickWidth: 1
-				}],
-				credits: {
-					enabled: false
-				},
-				tooltip: {
-					shared: true,
-					headerFormat: '<b>Base {point.x}</b><table>',
-					pointFormat: '<tr><td><span style="color:{series.color};">{series.name} Methylation:</span></td><td>{point.y}</td></tr>',
-					footerFormat: '</table>',
-					useHTML: true
-				},
-				legend: {
-					layout: 'vertical',
-					align: 'right',
-					verticalAlign: 'top',
-					x: -60,
-					backgroundColor: '#FFFFFF'
-				},
-				plotOptions: {
-					line: {
-						lineWidth: 1,
-						marker: {
-							enabled: false
-						},
-						shadow: false
-					}
-				},
-				
-				// Reverse order to get lines stacked correctly
-				series: [{
-					name: 'CHH Total Calls',
-					yAxis: 1,
-					lineWidth: 2,
-					legendIndex: 5,
-					data: [
-						{{CHH_total_calls_R2}}					
-						]
-				},
-				{
-					name: 'CHG Total Calls',
-					yAxis: 1,
-					lineWidth: 2,
-					legendIndex: 4,
-					data: [
-						{{CHG_total_calls_R2}}
-						]
-				},
-				{
-					name: 'CpG Total Calls',
-					yAxis: 1,
-					lineWidth: 2,
-					legendIndex: 3,
-					data: [
-						{{CpG_total_calls_R2}}
-						]
-				},
-				{
-					name: 'CHH Methylation',
-					yAxis: 0,
-					lineWidth: 3,
-					legendIndex: 2,
-					data: [
-						{{CHH_methylation_R2}}	
-						]	
-				},
-				{
-					name: 'CHG Methylation',
-					yAxis: 0,
-					lineWidth: 3,
-					legendIndex: 1,
-					data: [
-						{{CHG_methylation_R2}}	
-						]
-				},
-				{
-					name: 'CpG Methylation',
-					yAxis: 0,
-					lineWidth: 3,
-					legendIndex: 0,
-					data: [
-						{{CpG_methylation_R2}}	
-						]
-				}]
-			});
+			
+			// M-bias plot 2 data
+			m_bias_settings['title']['text'] = 'Read 2';
+			m_bias_settings['series'] = [{
+				name: 'CHH Total Calls',
+				yAxis: 1,
+				lineWidth: 2,
+				legendIndex: 5,
+				data: [ {{CHH_total_calls_R2}} ]
+			},{
+				name: 'CHG Total Calls',
+				yAxis: 1,
+				lineWidth: 2,
+				legendIndex: 4,
+				data: [ {{CHG_total_calls_R2}} ]
+			},{
+				name: 'CpG Total Calls',
+				yAxis: 1,
+				lineWidth: 2,
+				legendIndex: 3,
+				data: [ {{CpG_total_calls_R2}} ]
+			},{
+				name: 'CHH Methylation',
+				yAxis: 0,
+				lineWidth: 3,
+				legendIndex: 2,
+				data: [ {{CHH_methylation_R2}} ]	
+			},{
+				name: 'CHG Methylation',
+				yAxis: 0,
+				lineWidth: 3,
+				legendIndex: 1,
+				data: [ {{CHG_methylation_R2}} ]
+			},{
+				name: 'CpG Methylation',
+				yAxis: 0,
+				lineWidth: 3,
+				legendIndex: 0,
+				data: [ {{CpG_methylation_R2}} ]
+			}];
+			
+			// Plot graph
+			$('#m_bias_2').highcharts(m_bias_settings);
 		});
 	
 	    	{{end_deletion_mbias_2}}
@@ -944,6 +745,36 @@
 	<hr>
 
 	{{end_deletion_splitting}}
+	
+	<h2>Nucleotide Coverage</h2>
+	<table class="data" id="nucleotide_coverage_table">
+		<thead>
+			<tr><th>Nucleotide Class</th> <th>Counts Sample</th> <th>Counts Genome</th><th>% in Sample</th> <th>% in Genome</th> </thead>
+		<tbody>
+		  <tr><th>A</th>	<td>{{nuc_A_counts_obs}}</td> <td>{{nuc_A_counts_exp}}</td> <td>{{nuc_A_p_obs}} %</td>  <td>{{nuc_A_p_exp}} %</td>	</tr>
+			<tr><th>C</th>	<td>{{nuc_C_counts_obs}}</td> <td>{{nuc_C_counts_exp}}</td> <td>{{nuc_C_p_obs}} %</td>  <td>{{nuc_C_p_exp}} %</td>	</tr>
+			<tr><th>G</th>	<td>{{nuc_G_counts_obs}}</td> <td>{{nuc_G_counts_exp}}</td> <td>{{nuc_G_p_obs}} %</td>  <td>{{nuc_G_p_exp}} %</td>	</tr>
+			<tr><th>T</th>	<td>{{nuc_T_counts_obs}}</td> <td>{{nuc_T_counts_exp}}</td> <td>{{nuc_T_p_obs}} %</td>  <td>{{nuc_T_p_exp}} %</td>	</tr>
+			<tr><th>AA</th>	<td>{{nuc_AA_counts_obs}}</td> <td>{{nuc_AA_counts_exp}}</td> <td>{{nuc_AA_p_obs}} %</td> <td>{{nuc_AA_p_exp}} %</td>	</tr>
+			<tr><th>AC</th>	<td>{{nuc_AC_counts_obs}}</td> <td>{{nuc_AC_counts_exp}}</td> <td>{{nuc_AC_p_obs}} %</td> <td>{{nuc_AC_p_exp}} %</td>	</tr>
+			<tr><th>AG</th>	<td>{{nuc_AG_counts_obs}}</td> <td>{{nuc_AG_counts_exp}}</td> <td>{{nuc_AG_p_obs}} %</td> <td>{{nuc_AG_p_exp}} %</td>	</tr>
+			<tr><th>AT</th>	<td>{{nuc_AT_counts_obs}}</td> <td>{{nuc_AT_counts_exp}}</td> <td>{{nuc_AT_p_obs}} %</td> <td>{{nuc_AT_p_exp}} %</td>	</tr>
+			<tr><th>CA</th>	<td>{{nuc_CA_counts_obs}}</td> <td>{{nuc_CA_counts_exp}}</td> <td>{{nuc_CA_p_obs}} %</td> <td>{{nuc_CA_p_exp}} %</td>	</tr>
+			<tr><th>CC</th>	<td>{{nuc_CC_counts_obs}}</td> <td>{{nuc_CC_counts_exp}}</td> <td>{{nuc_CC_p_obs}} %</td> <td>{{nuc_CC_p_exp}} %</td>	</tr>
+			<tr><th>CG</th>	<td>{{nuc_CG_counts_obs}}</td> <td>{{nuc_CG_counts_exp}}</td> <td>{{nuc_CG_p_obs}} %</td> <td>{{nuc_CG_p_exp}} %</td>	</tr>
+			<tr><th>CT</th>	<td>{{nuc_CT_counts_obs}}</td> <td>{{nuc_CT_counts_exp}}</td> <td>{{nuc_CT_p_obs}} %</td> <td>{{nuc_CT_p_exp}} %</td>	</tr>
+			<tr><th>GA</th>	<td>{{nuc_GA_counts_obs}}</td> <td>{{nuc_GA_counts_exp}}</td> <td>{{nuc_GA_p_obs}} %</td> <td>{{nuc_GA_p_exp}} %</td>	</tr>
+			<tr><th>GC</th>	<td>{{nuc_GC_counts_obs}}</td> <td>{{nuc_GC_counts_exp}}</td> <td>{{nuc_GC_p_obs}} %</td> <td>{{nuc_GC_p_exp}} %</td>	</tr>
+			<tr><th>GG</th>	<td>{{nuc_GG_counts_obs}}</td> <td>{{nuc_GG_counts_exp}}</td> <td>{{nuc_GG_p_obs}} %</td> <td>{{nuc_GG_p_exp}} %</td>	</tr>
+			<tr><th>GT</th>	<td>{{nuc_GT_counts_obs}}</td> <td>{{nuc_GT_counts_exp}}</td> <td>{{nuc_GT_p_obs}} %</td> <td>{{nuc_GT_p_exp}} %</td>	</tr>
+			<tr><th>TA</th>	<td>{{nuc_TA_counts_obs}}</td> <td>{{nuc_TA_counts_exp}}</td> <td>{{nuc_TA_p_obs}} %</td> <td>{{nuc_TA_p_exp}} %</td>	</tr>
+			<tr><th>TC</th>	<td>{{nuc_TC_counts_obs}}</td> <td>{{nuc_TC_counts_exp}}</td> <td>{{nuc_TC_p_obs}} %</td> <td>{{nuc_TC_p_exp}} %</td>	</tr>
+			<tr><th>TG</th>	<td>{{nuc_TG_counts_obs}}</td> <td>{{nuc_TG_counts_exp}}</td> <td>{{nuc_TG_p_obs}} %</td> <td>{{nuc_TG_p_exp}} %</td>	</tr>
+			<tr><th>TT</th>	<td>{{nuc_TT_counts_obs}}</td> <td>{{nuc_TT_counts_exp}}</td> <td>{{nuc_TT_p_obs}} %</td> <td>{{nuc_TT_p_exp}} %</td>	</tr>
+		</tbody>
+	</table>
+	<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
+	<hr>
 
 	{{start_deletion_mbias}}
 
