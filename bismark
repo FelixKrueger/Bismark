@@ -1271,11 +1271,13 @@ sub merge_individual_BAM_files{
 
   my ($tempbam,$original_filename,$single_end) = @_;
   my $merged_name = $original_filename;
-
-  # warn "merged name is: $merged_name\n";
+  
+  #warn "merged name is: $merged_name\n";
   $merged_name =~ s/.*\///; # deleting path information
-  # warn "merged name is: $merged_name\n"; sleep(1);
-
+  # warn "merged name is: $merged_name\n";
+  $merged_name =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+  # warn "merged name is: $merged_name\n"; sleep(5);
+  
   foreach my $temp_bam(@$tempbam){
     $temp_bam =~ s/.*\///; # deleting path information
   }
@@ -1427,6 +1429,10 @@ sub start_methylation_call_procedure_single_ends {
 
   ### printing all alignments to a results file
   my $outfile = $filename;
+  # warn "Outfile: $outfile\n";
+  $outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+  # warn "Outfile: $outfile\n";sleep(5);
+  
   if ($prefix){
     $outfile = "$prefix.$outfile";
   }
@@ -1627,6 +1633,9 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### printing all alignments to a results file
   my $outfile = $filename_1;
+  warn "Outfile: $outfile\n";
+  $outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+  warn "Outfile: $outfile\n";sleep(5);
 
   if ($prefix){
     $outfile = "$prefix.$outfile";
@@ -10082,7 +10091,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 04 Feb 2016.
+Last edited on 05 Feb 2016.
 
 HOW_TO
 }
