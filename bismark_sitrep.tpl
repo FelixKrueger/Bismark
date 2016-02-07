@@ -746,6 +746,8 @@
 
 	{{end_deletion_splitting}}
 	
+	{{start_deletion_nucleotide_coverage}}
+
 	<h2>Nucleotide Coverage</h2>
 	<table class="data" id="nucleotide_coverage_table">
 		<thead>
@@ -775,6 +777,7 @@
 	</table>
 	<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
 	<hr>
+	{{end_deletion_nucleotide_coverage}}
 
 	{{start_deletion_mbias}}
 
