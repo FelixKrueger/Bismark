@@ -849,6 +849,8 @@ sub merge_individual_mapping_reports{
   my ($temp_reports,$original_filename_1,$single_end,$original_filename_2) = @_;
   my $report_file = $original_filename_1;
   $report_file =~ s/.*\///; # removing path information
+  $report_file =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+ 
   if ($prefix){
     $report_file = "${prefix}.${report_file}";
   }
@@ -1495,6 +1497,8 @@ sub start_methylation_call_procedure_single_ends {
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $filename;
+  $reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+
   if ($prefix){
     $reportfile = "$prefix.$reportfile";
   }
@@ -1697,6 +1701,8 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $filename_1;
+  $reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+
   if ($prefix){
     $reportfile = "$prefix.$reportfile";
   }
