@@ -145,8 +145,11 @@ sub generate_nucleotide_report {
 	    warn "Processed $count lines\n";
 	}
 	my ($flag,$chr,$start,$cigar,$sequence) = (split(/\t/))[1,2,3,5,9];
- 	# warn "$flag\t$chr\t$start\t$cigar\t$sequence\n"; sleep(1);
-
+	#warn "$flag\t$chr\t$start\t$cigar\t$sequence\n"; sleep(1);
+	
+	# $chr =~ s/^.*\|//; # just a temporary measure for the Bonasio et al dataset
+	# warn "chr after replacing: $chr\n";
+	
 	### checking CIGAR string for insertions or deletions, and chucking the sequence if they are no linear matches
 	if ($cigar =~ /[ID]/){
 	    # warn "ignoring sequence:\n $_\n"; sleep(1);
@@ -156,7 +159,7 @@ sub generate_nucleotide_report {
 	
 	### extracting the genomic sequence instead
  	my $extracted_sequence = substr($chromosomes{$chr},$start - 1,length$sequence);
-	# warn "Old sequence: $sequence\nExt sequence: $extracted_sequence\n";
+	# warn "Old sequence: $sequence\nExt sequence: $extracted_sequence\n"; sleep(1);
 	
 	if ($single){
 	    calc_single_end($extracted_sequence,$flag);

@@ -21,47 +21,46 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.15.0';
+my $bismark2bedGraph_version = 'v0.15.1';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
 my @sorting_files;
 
-my ($bedGraph_output,$parent_dir,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero) = process_commandline();
+my ($bedGraph_output,$parent_dir,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero,$input_dir) = process_commandline();
 
-# warn "Using these input files: @sorting_files\n";
-
+warn "Using these input files: @sorting_files\n";
 warn "\nSummary of parameters for bismark2bedGraph conversion:\n";
 warn '='x54,"\n";
 warn "bedGraph output:\t\t$bedGraph_output\n";
 warn "output directory:\t\t>$output_dir<\n";
 if ($remove){
-  warn "remove whitespaces:\t\tyes\n";
+    warn "remove whitespaces:\t\tyes\n";
 }
 else{
-  warn "remove whitespaces:\t\tno\n";
+    warn "remove whitespaces:\t\tno\n";
 }
 if ($CX_context){
-  warn "CX context:\t\t\tyes\n";
+    warn "CX context:\t\t\tyes\n";
 }
 else{
-  warn "CX context:\t\t\tno (CpG context only, default)\n";
+    warn "CX context:\t\t\tno (CpG context only, default)\n";
 }
 if ($no_header){
-  warn "No-header selected:\t\tyes\n";
+    warn "No-header selected:\t\tyes\n";
 }
 else{
-  warn "No-header selected:\t\tno\n";
+    warn "No-header selected:\t\tno\n";
 }
 
 if ($ample_mem){
-  warn "Sorting method:\t\t\tArray-based (faster, but larger memory footprint)\n";
+    warn "Sorting method:\t\t\tArray-based (faster, but larger memory footprint)\n";
 }
 else{
-  warn "Sorting method:\t\t\tUnix sort-based (smaller memory footprint, but slower)\n";
+    warn "Sorting method:\t\t\tUnix sort-based (smaller memory footprint, but slower)\n";
 }
 unless($ample_mem){
-  warn "Sort buffer size:\t\t$sort_size\n";
+    warn "Sort buffer size:\t\t$sort_size\n";
 }
 warn "Coverage threshold:\t\t$coverage_threshold\n";
 
@@ -73,33 +72,42 @@ sleep (2);
 
 ### deciding which files to use for bedGraph conversion
 foreach my $filename (@sorting_files){
-  # warn "Infile name before replacement: $filename\n";
-
-  if ($filename =~ /\//){ # if files are in a different output folder we extract the filename again
-    $filename =~ s/.*\///; # replacing everything up to the last slash in the filename
-    # warn "After replacement: $filename\n";
-  }
-
-  if ($CX_context){
-    push @bedfiles,$output_dir.$filename;
-  }
-  else{ ## CpG context only (default)
-    if ($filename =~ /^CpG/){ # only testing the actual filename without the path information
-      push @bedfiles,$output_dir.$filename; # we are adding the full path to the filename
+    
+    ### DETERMINING THE FULL PATH OF INPUT FILES
+    if ($filename =~ /^(.*\/)(.*)$/){ # if files are in a different output folder we extract the filename again
+	# warn "folder name: $1\nfilename: $2\n\n";
+	chdir $1 or die "Failed to change directory to $1\n"; # $1 might be a relative path 
+	$input_dir = getcwd();                                # this will always be the full path
+	$filename = $2;
+	# warn "Full Input folder: $input_dir\nFilename: $filename\n\n"; sleep (1);
+	chdir $parent_dir or die "Failed to move back to the parent directory\n\n"; # moving back
     }
     else{
-      # skipping CHH or CHG files
+	$input_dir = $parent_dir;
+    }   
+    $input_dir .= '/';
+    
+    if ($CX_context){
+	# push @bedfiles,$output_dir.$filename;
+ 	push @bedfiles,$input_dir.$filename;
     }
-  }
+    else{ ## CpG context only (default)
+	if ($filename =~ /^CpG/){ # only testing the actual filename without the path information
+	    push @bedfiles,$input_dir.$filename; # we are adding the full path to the filename
+	}
+	else{
+	    # skipping CHH or CHG files
+	}
+    }
 }
 
 if (@bedfiles){
-  warn "Using the following files as Input:\n";
-  print join ("\t",@bedfiles),"\n\n";
-  sleep (2);
+    warn "Using the following files as Input:\n";
+    print join ("\t",@bedfiles),"\n\n";
+    sleep (2);
 }
 else{
-  die "It seems that you are trying to generate bedGraph files for files not starting with CpG.... Please specify the option '--CX' and try again\n\n";
+    die "It seems that you are trying to generate bedGraph files for files not starting with CpG.... Please specify the option '--CX' and try again\n\n";
 }
 
 open (OUT,"| gzip -c - > ${output_dir}${bedGraph_output}") or die "Problems with the bedGraph output filename detected: file path: '$output_dir'\tfile name: '$bedGraph_output' $!\n";
@@ -136,179 +144,180 @@ unless ($output_dir eq ''){ # default
 }
 
 if ($gazillion){
-  if (scalar @bedfiles == 1){
-    warn "The genome of interest was specified to contain gazillions of chromosomes or scaffolds. Sorting everything in memory instead of writing out individual chromosome files ...\n";
-  }
-  else{
-    warn "The genome of interest was specified to contain gazillions of chromosomes or scaffolds. Merging all input files and sorting everything in memory instead of writing out individual chromosome files...\n";
-    my $merge = "$bedGraph_output.methylation_calls.merged";
-    open (MERGE,'>',$merge) or die "Failed to write to temporary merged file $merge: $!\n";
-    warn "Writing all merged methylation calls to temp file $merge\n\n"; sleep(2);
-    push @temp_files, $merge;
-  }
+    if (scalar @bedfiles == 1){
+	warn "The genome of interest was specified to contain gazillions of chromosomes or scaffolds. Sorting everything in memory instead of writing out individual chromosome files ...\n";
+    }
+    else{
+	warn "The genome of interest was specified to contain gazillions of chromosomes or scaffolds. Merging all input files and sorting everything in memory instead of writing out individual chromosome files...\n";
+	my $merge = "$bedGraph_output.methylation_calls.merged";
+	open (MERGE,'>',$merge) or die "Failed to write to temporary merged file $merge: $!\n";
+	warn "Writing all merged methylation calls to temp file $merge\n\n"; sleep(2);
+	push @temp_files, $merge;
+    }
 }
 
 foreach my $infile (@bedfiles) {
-
-  if ($remove) {
-    warn "Now replacing whitespaces in the sequence ID field of the Bismark methylation extractor output $infile prior to bedGraph conversion\n\n";
-
+    
+    # warn "Processing $infile\n";
+    
+    if ($remove) {
+	warn "Now replacing whitespaces in the sequence ID field of the Bismark methylation extractor output $infile prior to bedGraph conversion\n\n";
+	
+	if ($infile =~ /gz$/){
+	    open (READ,"zcat $infile |") or die $!;
+	}
+	else{
+	    open (READ,$infile) or die $!;
+	}
+	
+	my $removed_spaces_outfile = $infile;
+	$removed_spaces_outfile =~ s/$/.spaces_removed.txt/;
+	$removed_spaces_outfile =~ s/.*\///;# replacing everything up to the last slash in the filename
+    
+	warn "Attempting to write to file ${output_dir}${removed_spaces_outfile}\n\n";
+	open (REM,'>',$output_dir.$removed_spaces_outfile) or die "Couldn't write to file $removed_spaces_outfile: $!\n";
+	
+	unless ($no_header){
+	    $_ = <READ>;		### Bismark version header
+	    print REM $_;		### Bismark version header
+	}
+	
+	while (<READ>) {
+	    chomp;
+	    my ($id,$strand,$chr,$pos,$context) = (split (/\t/));
+	    $id =~ s/\s+/_/g;
+	    print REM join ("\t",$id,$strand,$chr,$pos,$context),"\n";
+	}
+	
+	close READ or die $!;
+	close REM or die $!;
+	
+	### changing the infile name to the new file without spaces
+	$infile = $removed_spaces_outfile; # at this stage we are already in the output directory so it should pick it up correctly
+    }
+    
+    # opening infile
     if ($infile =~ /gz$/){
-      open (READ,"zcat $infile |") or die $!;
+	open (IN,"zcat $infile |") or die "Couldn't find file '$infile': $!\n";
     }
     else{
-      open (READ,$infile) or die $!;
+	open (IN,$infile) or die "Couldn't find file '$infile': $!\n";
     }
-
-    my $removed_spaces_outfile = $infile;
-    $removed_spaces_outfile =~ s/$/.spaces_removed.txt/;
-
-    open (REM,'>',$output_dir.$removed_spaces_outfile) or die "Couldn't write to file $removed_spaces_outfile: $!\n";
-
-    unless ($no_header){
-      $_ = <READ>;		### Bismark version header
-      print REM $_;		### Bismark version header
+    
+    if ($infile =~ /\//){ # if input files are in a different folders we extract the filename again
+	$infile =~ s/.*\///;# replacing everything up to the last slash in the filename
+	# warn "Renamed Infile: $infile\n";
     }
+    
+    ### People these days seem to be aligning their data to newly assembled genomes more and more, which sometimes conist of up to half a million scaffolds instead of ~23 chromosomes. This
+    ### does normally clash with the operating system's limit of files that can be open for writing at the same time, and it is difficult and probably not advisable to increase this
+    ### limit (some even say there is a reason for the OS doing so...).
+    ### To still allow then generation of bedGraph files we will in these cases sort everything using the Linux sort command instead, which will sort by chromosome and position (the
+    ### chromosome sorting is not carried out for chromosome sorted files which makes the sort MUCH faster).
+    
+    if ($gazillion){
+	# using all infiles instead of sorting
+	if (scalar @bedfiles == 1){
+	    push @temp_files, $infile;
+	}
+	else{
+	    ## always ignoring the version header
+	    unless ($no_header){
+		$_ = <IN>;		### Bismark version header
+	    }
 
-    while (<READ>) {
-      chomp;
-      my ($id,$strand,$chr,$pos,$context) = (split (/\t/));
-      $id =~ s/\s+/_/g;
-      print REM join ("\t",$id,$strand,$chr,$pos,$context),"\n";
-    }
-
-    close READ or die $!;
-    close REM or die $!;
-
-    ### changing the infile name to the new file without spaces
-    $infile = $removed_spaces_outfile;
-  }
-
-  # opening infile
-  if ($infile =~ /gz$/){
-    open (IN,"zcat $infile |") or die "Couldn't find file '$infile': $!\n";
-  }
-  else{
-    open (IN,$infile) or die "Couldn't find file '$infile': $!\n";
-  }
-
-  # warn "reading from Infile: $infile\n";
-  if ($infile =~ /\//){ # if files are in a different output folder we extract the filename again
-    $infile =~ s/.*\///;# replacing everything up to the last slash in the filename
-    # warn "Renamed Infile: $infile\n";
-  }
-
-  ### People these days seem to be aligning their data to newly assembled genomes more and more, which sometimes conist of up to half a million scaffolds instead of ~23 chromosomes. This
-  ### does normally clash with the operating system's limit of files that can be open for writing at the same time, and it is difficult and probably not advisable to increase this
-  ### limit (some even say there is a reason for the OS doing so...).
-  ### To still allow then generation of bedGraph files we will in these cases sort everything using the Linux sort command instead, which will sort by chromosome and position (the
-  ### chromosome sorting is not carried out for chromosome sorted files which makes the sort MUCH faster).
-
-  if ($gazillion){
-    # using all infiles instead of sorting
-    if (scalar @bedfiles == 1){
-      push @temp_files, $infile;
+	    while (<IN>) {
+		if ($_ =~ /^Bismark /){
+		    warn "Found Bismark version information. Skipping this line (should still work fine) but consider using '--no_header' next time...\n";
+		    next;
+		}
+		print MERGE;
+	    }
+	    warn "Finished writing methylation calls from $infile to merged temp file\n";
+	}
     }
     else{
-      ## always ignoring the version header
-      unless ($no_header){
-	$_ = <IN>;		### Bismark version header
-      }
-
-      while (<IN>) {
-	if ($_ =~ /^Bismark /){
-	  warn "Found Bismark version information. Skipping this line (should still work fine) but consider using '--no_header' next time...\n";
-	  next;
-	}
-	print MERGE;
-      }
-      warn "Finished writing methylation calls from $infile to merged temp file\n";
-    }
-  }
-  else{
-    warn "Now writing methylation information for file $infile to individual files for each chromosome\n";
-
-    ## always ignoring the version header
-    unless ($no_header){
-      $_ = <IN>;		### Bismark version header
-    }
+	warn "Now writing methylation information for file >>$infile<< to individual files for each chromosome\n";
 	
-    while (<IN>) {
-      if ($_ =~ /^Bismark /){
-	warn "Found Bismark version information. Skipping this line (should still work fine) but consider losing '--no_header' next time...\n";
-	next;
-      }
-
-      chomp;
-
-      my ($chr,$pos) = (split (/\t/))[2,3];
-
-      ### If --ample_mem was specified we are keeping track of the highest position for each chromosome as this will determine the size of the array we need to create in the next step
-      if ($ample_mem){
-	### setting the first position for this chromosome
-	unless (defined $chr_lengths{$chr} ){
-	  $chr_lengths{$chr} = $pos;
+	## always ignoring the version header
+	unless ($no_header){
+	    $_ = <IN>;		### Bismark version header
 	}
-	# for all subsequent postions for this chromosome
-	if ($pos > $chr_lengths{$chr} ){
-	  $chr_lengths{$chr} = $pos; # set the current position as the new highest position
-	}
-      }
-
-      # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
-      $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
-      # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
-      unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
-
-	my $temp_file_name = $infile.'.chr'.$chr.'.methXtractor.temp';
-	# warn "using temp file name: $temp_file_name\n"; sleep(1);
 	
-	open ($temp_fhs{$chr},'>',$infile.'.chr'.$chr.'.methXtractor.temp') or die "Failed to open filehandle: $!";
-	push @temp_files, $temp_file_name; # storing temp files as we open them instead
-      }
+	while (<IN>) {
+	    if ($_ =~ /^Bismark /){
+		warn "Found Bismark version information. Skipping this line (should still work fine) but consider losing '--no_header' next time...\n";
+		next;
+	    }
 
-      print {$temp_fhs{$chr}} "$_\n";
+	    chomp;
+	    
+	    my ($chr,$pos) = (split (/\t/))[2,3];
+	    
+	    ### If --ample_mem was specified we are keeping track of the highest position for each chromosome as this will determine the size of the array we need to create in the next step
+	    if ($ample_mem){
+		### setting the first position for this chromosome
+		unless (defined $chr_lengths{$chr} ){
+		    $chr_lengths{$chr} = $pos;
+		}
+		# for all subsequent postions for this chromosome
+		if ($pos > $chr_lengths{$chr} ){
+		    $chr_lengths{$chr} = $pos; # set the current position as the new highest position
+		}
+	    }
+	    
+	    # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
+	    $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
+	    # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
+	    unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
+		
+		my $temp_file_name = $infile.'.chr'.$chr.'.methXtractor.temp';
+		# warn "Using temp file name: $temp_file_name\n"; sleep(1);
+		
+		open ($temp_fhs{$chr},'>',$infile.'.chr'.$chr.'.methXtractor.temp') or die "Failed to open filehandle: $!";
+		push @temp_files, $temp_file_name; # storing temp files as we open them instead
+	    }
+	    
+	    print {$temp_fhs{$chr}} "$_\n";
+	}
+	
+	warn "Finished writing out individual chromosome files for $infile\n";
     }
-
-    warn "Finished writing out individual chromosome files for $infile\n";
-  }
 }
 
 # closing temporary filehandles to force writing out buffered content
 foreach my $temp_fh(keys %temp_fhs){
-  close $temp_fhs{$temp_fh} or warn "Failed to close temporary filehandle $temp_fhs{$temp_fh}: $!\n";
+    close $temp_fhs{$temp_fh} or warn "Failed to close temporary filehandle $temp_fhs{$temp_fh}: $!\n";
 }
 
 ### printing out the determined maximum position for each chromosome
 if ($ample_mem){
-  foreach my $chr (sort keys %chr_lengths){
-    warn "Highest determined position for chromosome $chr:\t\t$chr_lengths{$chr} bp\n";
-  }
-  warn "\n";
+    foreach my $chr (sort keys %chr_lengths){
+	warn "Highest determined position for chromosome $chr:\t\t$chr_lengths{$chr} bp\n";
+    }
+    warn "\n";
 }
 
 unless ($gazillion){
-  warn "\n";
-  warn "Collecting temporary chromosome file information...\n";
-  sleep (1);
-  warn "processing the following input file(s):\n";
-  warn join ("\n",@temp_files),"\n\n";
-  sleep (1);
+    warn "\n";
+    warn "Collecting temporary chromosome file information... Processing the following input file(s):\n";
+    warn join ("\n",@temp_files),"\n\n";
+    sleep (1);
 }
 
 if ($gazillion){
-  if (scalar @bedfiles > 1){
-    close (MERGE) or die "Failed to close filehandle MERGE: $!\n";
-  }
+    if (scalar @bedfiles > 1){
+	close (MERGE) or die "Failed to close filehandle MERGE: $!\n";
+    }
 }
 
 foreach my $in (@temp_files) {
 
-  if ($sort_size){
-    warn "Sorting input file $in by positions (using -S of $sort_size)\n" unless ($ample_mem);
-  }
-
-  my $ifh;
+    if ($sort_size){
+	warn "Sorting input file $in by positions (using -S of $sort_size)\n" unless ($ample_mem);
+    }
+    
+    my $ifh;
 
   my $name;
   my $meth_state;
@@ -580,6 +589,7 @@ sub process_commandline{
   my $gazillion;
   my $ample_mem;
   my $zero;
+  my $input_dir;
 
   my $command_line = GetOptions ('help|man'            => \$help,
 				 'dir=s'               => \$output_dir,
@@ -633,20 +643,22 @@ VERSION
     print_helpfile();
     exit;
   }
-
+ 
+  ### PARENT DIRECTORY
+  my $parent_dir = getcwd();
+  # warn "parent directory is: $parent_dir\n";
+  
   ### OUTPUT DIR PATH
   if (defined $output_dir){
-    my $parent_dir = getcwd();
-    # warn "parent directory is: $parent_dir\n";
-
+ 
     unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
-      unless ($output_dir =~ /\/$/){
-	$output_dir =~ s/$/\//;
-      }
-      unless (-d $output_dir){
-	mkdir $output_dir or die "Failed to create output directory $output_dir: $!\n\n";
-	warn "Created output directory $output_dir\n";
-      }
+	unless ($output_dir =~ /\/$/){
+	    $output_dir =~ s/$/\//;
+	}
+	unless (-d $output_dir){
+	    mkdir $output_dir or die "Failed to create output directory $output_dir: $!\n\n";
+	    warn "Created output directory $output_dir\n";
+	}
 
       ### want to get an absolute path for the output directory instead of a relative one
       chdir $output_dir or die "Failed to move into output directory '$output_dir': $!\n\n";
@@ -667,11 +679,15 @@ VERSION
   }
 
   unless (defined $bedGraph_output){
-    die "Please provide the name of the output file using the option -o/--output filename\n";
+      die "Please provide the name of the output file using the option -o/--output filename\n";
   }
-  ### 22 07 2015: Output will be gzip compressed
+  
+  if ($bedGraph_output =~ /\//){ # this is supposed a filename and not a path name
+      die "Please specify a file name without any path information (or use --dir if necessary)\n\n";
+  }
+  
   unless ($bedGraph_output =~ /\.gz$/){
-    $bedGraph_output = "${bedGraph_output}.gz";
+      $bedGraph_output = "${bedGraph_output}.gz";  ### 22 07 2015: Output will be gzip compressed
   }
 
   ### NO HEADER
@@ -718,7 +734,7 @@ VERSION
     }
   }
 
-  return ($bedGraph_output,$parent_dir,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero);
+  return ($bedGraph_output,$parent_dir,$output_dir,$remove,$CX_context,$no_header,$sort_size,$coverage_threshold,$counts,$gazillion,$ample_mem,$zero,$input_dir);
 }
 
 
