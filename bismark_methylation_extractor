@@ -402,7 +402,7 @@ foreach my $filename (@filenames){
       $coverage_output =~ s/bedGraph$/bismark.cov.gz/;
       
       push @args, $output_dir . $coverage_output; # this will be the infile
-
+      #warn "Handing over the following infile: ${output_dir}$coverage_output\n"; sleep (5);
       system ("$Bin/coverage2cytosine @args");
       # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
       warn "\n\nFinished generating genome-wide cytosine report\n\n";
@@ -5800,8 +5800,8 @@ bedGraph specific options:
                          instead of using 1-based coordinates throughout. Default: OFF.
 
 
---cutoff [threshold]     The minimum number of times a methylation state has to be seen for that nucleotide
-                         before its methylation percentage is reported. Default: 1.
+--cutoff [threshold]     The minimum number of times any methylation state (methylated or unmethylated) has to be seen
+                         for a nucleotide before its methylation percentage is reported. Default: 1.
 
 --remove_spaces          Replaces whitespaces in the sequence ID field with underscores to allow sorting.
 
@@ -5901,7 +5901,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 14 January 2016.
+This script was last modified on 25 February 2016.
 
 HOW_TO
 }
