@@ -5749,7 +5749,7 @@ OPTIONS:
                          batch processing.
 
 -o/--output DIR          Allows specification of a different output directory (absolute or relative
-                         path). If not specified explicitely, the output will be written to the current directory.
+                         path). If not specified explicitly, the output will be written to the current directory.
 
 --samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                          explicitly if Samtools is in the PATH already.
