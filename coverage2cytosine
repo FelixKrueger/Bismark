@@ -296,11 +296,12 @@ sub generate_genome_wide_cytosine_report {
   }
 
   my $in = shift;
+  # infiles handed over by the methylation extractor will be just the filename on their own. The directory should have been handed over with --dir
   if ($in =~ /gz$/){
-    open (IN,"zcat $in |") or die "Failed to read from gzippd file $in: $!\n";
+      open (IN,"zcat $in |") or die "Failed to read from gzippd file $in: $!\n";
   }
   else{
-    open (IN,"$in") or die "Failed to read from file $in: $!\n";
+      open (IN,"$in") or die "Failed to read from file $in: $!\n";
   }
 
 

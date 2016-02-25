@@ -401,10 +401,10 @@ foreach my $filename (@filenames){
       my $coverage_output = $bedGraph_output;
       $coverage_output =~ s/bedGraph$/bismark.cov.gz/;
       
-      push @args, $output_dir . $coverage_output; # this will be the infile
-      #warn "Handing over the following infile: ${output_dir}$coverage_output\n"; sleep (5);
+      push @args, $coverage_output; # this will be the infile
+      # warn "Handing over the following infile: $coverage_output\n"; sleep (5);
       system ("$Bin/coverage2cytosine @args");
-      # generate_genome_wide_cytosine_report($bedGraph_output,$cytosine_out);
+      
       warn "\n\nFinished generating genome-wide cytosine report\n\n";
     }
   }
