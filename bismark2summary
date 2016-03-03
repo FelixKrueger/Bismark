@@ -17,12 +17,56 @@ use strict;
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.15.1';
+my $bismark_version = '0.15.2';
+
+# Last modified 03 03 2016
+
 
 my @bam_files = @ARGV; # user supplied BAM files
 unless (@bam_files){
+    my @detected_files;
+
     # If not user supplied we try to find BAM files automatically. Note that this will go horribly wrong if there were BAM files from another aligner in the same folder as well
-    @bam_files = <*bt2.bam>; # may also be bt2_pe.bam for Bowtie2 mode at least
+
+    @detected_files = <*bismark_bt2.bam>; # SE Bowtie2
+    if (@detected_files){
+	warn "Found Bismark/Bowtie2 single-end files\n";
+	push (@bam_files,@detected_files); # appending found files
+	@detected_files = ();
+    }
+    else{
+	warn "No Bismark/Bowtie2 single-end BAM files detected\n";
+    }
+
+    @detected_files = <*bismark_bt2_pe.bam>; # PE Bowtie2
+    if (@detected_files){
+	warn "Found Bismark/Bowtie2 paired-end files\n";
+	push (@bam_files,@detected_files); # appending found files
+	@detected_files = ();
+    }
+    else{
+	warn "No Bismark/Bowtie2 paired-end BAM files detected\n"; 
+    }
+    
+    @detected_files = <*bismark.bam>; # SE Bowtie1
+    if (@detected_files){
+	warn "Found Bismark/Bowtie single-end files\n";
+	push (@bam_files,@detected_files); # appending found files
+	@detected_files = ();
+    }
+    else{
+	warn "No Bismark/Bowtie single-end BAM files detected\n";
+    }	
+
+    @detected_files = <*bismark_pe.bam>; # PE Bowtie
+    if (@detected_files){
+	warn "Found Bismark/Bowtie paired-end files\n";
+	push (@bam_files,@detected_files); # appending found files
+	@detected_files = ();
+    }
+    else{
+	warn "No Bismark/Bowtie paired-end BAM files detected\n\n"; 
+    }
 }
 
 if(scalar @bam_files == 0){
