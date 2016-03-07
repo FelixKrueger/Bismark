@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.15.1';
+my $bismark_version = 'v0.15.2';
 my $command_line = join (" ",@ARGV);
 
 
@@ -37,7 +37,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -7597,6 +7597,7 @@ sub process_command_line{
   my $cram;
   my $cram_ref;
   my $nucleotide_coverage;
+  my $dovetail;
   
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7653,6 +7654,7 @@ sub process_command_line{
 				 'cram'                    => \$cram,
 				 'cram_ref=s'              => \$cram_ref,
 				 'nucleotide_coverage'     => \$nucleotide_coverage,
+				 'dovetail'                => \$dovetail,
 				);
 
 
@@ -8222,6 +8224,12 @@ VERSION
       if ($bowtie2){
 	  push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
 	  push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
+	  if ($dovetail){
+	      if ($old_flag){
+		  die "The option  --dovetail may only be specified with the current SAM FLAG values. Please respecify...\n";
+	      }
+	      push @bowtie_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT alignments
+	  }
       }
       
       if ($old_flag){
@@ -8437,7 +8445,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail);
 }
 
 
@@ -8930,12 +8938,12 @@ sub paired_end_SAM_output{
   my $cigar_2;
 
   if ($bowtie2){
-    $cigar_1 = $methylation_call_params->{$id}->{CIGAR_1};             # Actual CIGAR string reported by Bowtie 2
-    $cigar_2 = $methylation_call_params->{$id}->{CIGAR_2};
+      $cigar_1 = $methylation_call_params->{$id}->{CIGAR_1};             # Actual CIGAR string reported by Bowtie 2
+      $cigar_2 = $methylation_call_params->{$id}->{CIGAR_2};
   }
   else{
-    $cigar_1 = length($actual_seq_1) . "M";                            # Assume no indels for Bowtie 1  mapping (only matches and mismatches)
-    $cigar_2 = length($actual_seq_2) . "M";
+      $cigar_1 = length($actual_seq_1) . "M";                            # Assume no indels for Bowtie 1  mapping (only matches and mismatches)
+      $cigar_2 = length($actual_seq_2) . "M";
   }
 
   #####
@@ -8951,87 +8959,113 @@ sub paired_end_SAM_output{
 
   my $tlen_1;                                                          # signed observed Template LENgth (or inferred fragment size)
   my $tlen_2;
-
+  
   if ($bowtie2){
-
-    if ($start_read_1 <= $start_read_2){
-
-      # Read 1 alignment is leftmost
-
-      if ($end_read_2 >= $end_read_1){
-	
-	# ------------------------->     read 1   reads overlapping
-	#  <-------------------------    read 2
-	#
-	# or
-	#
-	# ------------------------->     read 1
-	#   <-----------------------     read 2   read 2 contained within read 1
-	#
-	# or
-	#
-	# ------------------------->     read 1   reads 1 and 2 exactly overlapping
-	# <-------------------------     read 2
-	#
-
-	# dovetailing of reads is not enabled for Bowtie 2 alignments
-
-	$tlen_1 = $end_read_2 - $start_read_1 + 1;                         # Leftmost read has a + sign,
-	$tlen_2 = $start_read_1 - $end_read_2 - 1;                         # Rightmost read has a - sign
+      
+      if ($start_read_1 <= $start_read_2){
+	  
+	  # Read 1 alignment is leftmost
+	  
+	  if ($end_read_2 >= $end_read_1){
+	      
+	      if ($flag_1 == 83 and $dovetail){   # R1 has a reverse orientation
+		  #         ----------------->     read 2   reads are dovetailing, that is one mate alignment extends past the beginning of the other 
+		  #  <-------------------          read 1   such that the wrong mate begins upstream
+		  # warn "FLAG 1: $flag_1\nFLAG 2: $flag_2\n";
+		  # warn "Reads are dovetailing\n";
+		  $tlen_1 = $start_read_1 - $end_read_2 - 1;     # Read 1 still receives a - sign even though it is the leftmost one
+		  $tlen_2 = $end_read_2 - $start_read_1 + 1;     # Read 2 receives a + sign,
+		  # warn "TLEN 1: $tlen_1\nTLEN 2: $tlen_2\n";
+	      }
+	      else{     
+		  # ------------->                 read 1   reads not overlapping
+		  #                 <----------    read 2
+		  #             or
+		  # ------------------->           read 1   reads overlapping
+		  #        <-------------------    read 2
+		  #             or
+		  # ------------------------->     read 1
+		  #   <-----------------------     read 2   read 2 contained within read 1
+		  #             or
+		  # ------------------------->     read 1   reads 1 and 2 exactly overlapping
+		  # <-------------------------     read 2
+		  #
+		  
+		  $tlen_1 = $end_read_2 - $start_read_1 + 1;                         # Leftmost read has a + sign,
+		  $tlen_2 = $start_read_1 - $end_read_2 - 1;                         # Rightmost read has a - sign
+	   	  # warn "Reads are non/overlapping\nTLEN 1: $tlen_1\nTLEN 2: $tlen_2\n";
+	      }
+	  }
+	  elsif ($end_read_2 < $end_read_1){
+	      
+	      # ------------------------->     read 1
+	      #       <-----------             read 2   read 2 contained within read 1
+	      #
+	      # or
+	      #
+	      # ------------------------->     read 1
+	      # <------------------------      read 2   read 2 contained within read 1
+	      
+	      # start and end of read 2  are fully contained within read 1, using the length of read 1 for the TLEN variable
+	      $tlen_1 = $end_read_1 - $start_read_1 + 1;          # Set to length of read 1   Leftmost read has a + sign,
+	      $tlen_2 = ($end_read_1 - $start_read_1 + 1) * -1;   # Set to length of read 1   Rightmost read has a - sign. well this is debatable. Changed this
+	      ### as a request by frozenlyse on SeqAnswers on 24 July 2013
+	  }
+	  
       }
-      elsif ($end_read_2 < $end_read_1){
+      
+      elsif ($start_read_2 < $start_read_1){
 
-	# ------------------------->     read 1
-	#       <-----------             read 2   read 2 contained within read 1
-	#
-	# or
-	#
-	# ------------------------->     read 1
-	# <------------------------      read 2   read 2 contained within read 1
+	  # Read 2 alignment is leftmost
+	  
+	  if ($end_read_1 >= $end_read_2){
+	      
+	      # Read 2 alignment is leftmost
+	      if ($flag_1 == 99 and $dovetail){   # R1 has a forward orientation
 
-	# start and end of read 2  are fully contained within read 1, using the length of read 1 for the TLEN variable
-	$tlen_1 = $end_read_1 - $start_read_1 + 1;          # Set to length of read 1   Leftmost read has a + sign,
-	$tlen_2 = ($end_read_1 - $start_read_1 + 1) * -1;   # Set to length of read 1   Rightmost read has a - sign. well this is debatable. Changed this
-                                                            ### as a request by frozenlyse on SeqAnswers on 24 July 2013
+		  #         ----------------->     read 1   reads are dovetailing, that is one mate alignment extends past the beginning of the other 
+		  #  <-------------------          read 2   such that the wrong mate begins upstream
+
+		  # warn "FLAG 1: $flag_1\nFLAG 2: $flag_2\n";
+		  # warn "Reads are dovetailing\n";
+		  $tlen_1 = $end_read_1 - $start_read_2 + 1;     # Read 1 still receives a + sign even though it is not leftmost
+		  $tlen_2 = $start_read_2 - $end_read_1 - 1;   
+		  # warn "TLEN 1: $tlen_1\nTLEN 2: $tlen_2\n";
+	      }
+	      else{
+		  # ------------->                 read 2   reads not overlapping
+		  #                 <----------    read 1
+		  #             or
+	   	  # ------------------------->     read 2   reads overlapping
+		  #  <-------------------------    read 1
+		  #             or
+		  # ------------------------->     read 2
+		  #   <-----------------------     read 1   read 1 contained within read 2
+		  #             or
+		  # ------------------------->     read 2
+		  #   <-----------------------     read 1   read 1 contained within read 2
+		  # warn "FLAG 1: $flag_1\nFLAG 2: $flag_2\n";
+		  # warn "Read 2 has a forward orientation\n";	  
+		  $tlen_2 = $end_read_1 - $start_read_2 + 1;                         # Leftmost read has a + sign,
+		  $tlen_1 = $start_read_2 - $end_read_1 - 1;                         # Rightmost read has a - sign
+	      }
+	  }
+	  elsif ($end_read_1 < $end_read_2){
+	      
+	      # ------------------------->     read 2
+	      #       <-----------             read 1   read 1 contained within read 2
+	      #
+	      # or
+	      #
+	      # ------------------------->     read 2
+	      #  <------------------------      read 1   read 1 contained within read 2
+	      
+	      # start and end of read 1  are fully contained within read 2, using the length of read 2 for the TLEN variable
+	      $tlen_1 = ($end_read_2 - $start_read_2 + 1) * -1;          # Set to length of read 2   Shorter read receives a - sign,
+	      $tlen_2 = $end_read_2 - $start_read_2 + 1;                 # Set to length of read 2   Longer read receives a +. Well this is debatable. Changed this
+	      ### as a request by frozenlyse on SeqAnswers on 24 July 2013
+	  }
       }
-
-    }
-
-    elsif ($start_read_2 < $start_read_1){
-
-      if ($end_read_1 >= $end_read_2){
-
-      # Read 2 alignment is leftmost
-
-	# ------------------------->     read 2   reads overlapping
-	#  <-------------------------    read 1
-	#
-	# or
-	#
-	# ------------------------->     read 2
-	#   <-----------------------     read 1   read 1 contained within read 2
-	#
-	#
-
-	$tlen_2 = $end_read_1 - $start_read_2 + 1;                         # Leftmost read has a + sign,
-	$tlen_1 = $start_read_2 - $end_read_1 - 1;                         # Rightmost read has a - sign
-      }
-      elsif ($end_read_1 < $end_read_2){
-
-	# ------------------------->     read 2
-	#       <-----------             read 1   read 1 contained within read 2
-	#
-	# or
-	#
-	# ------------------------->     read 2
-	#  <------------------------      read 1   read 1 contained within read 2
-	
-	# start and end of read 1  are fully contained within read 2, using the length of read 2 for the TLEN variable
-	$tlen_1 = ($end_read_2 - $start_read_2 + 1) * -1;          # Set to length of read 2   Shorter read receives a - sign,
-	$tlen_2 = $end_read_2 - $start_read_2 + 1;                 # Set to length of read 2   Longer read receives a +. Well this is debatable. Changed this
-	                                                           ### as a request by frozenlyse on SeqAnswers on 24 July 2013
-     }
-    }
   }
 
   else{ # Bowtie 1
@@ -10097,7 +10131,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 05 Feb 2016.
+Last edited on 07 March 2016.
 
 HOW_TO
 }
