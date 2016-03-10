@@ -8224,6 +8224,11 @@ VERSION
       if ($bowtie2){
 	  push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
 	  push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
+
+	  if ($pbat){
+	      $dovetail = 1; # setting the option $dovetail for PBAT paired-end alignments
+	  }
+
 	  if ($dovetail){
 	      if ($old_flag){
 		  die "The option  --dovetail may only be specified with the current SAM FLAG values. Please respecify...\n";
@@ -10011,6 +10016,18 @@ Bowtie 2 paired-end options:
                          satisfy the paired-end constraints (--fr/--rf/--ff, -I, -X). This option disables that behavior
                          and it is on by default.
 
+--dovetail               It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending
+                         "past" each other as in this example:
+
+                         Mate 1:                 GTCAGCTACGATATTGTTTGGGGTGACACATTACGC
+                         Mate 2:            TATGAGTCAGCTACGATATTGTTTGGGGTGACACAT                   
+                         Reference: GCAGATTATATGAGTCAGCTACGATATTGTTTGGGGTGACACATTACGCGTCTTTGAC
+
+                         By default, dovetailing is considered inconsistent with concordant alignment, but setting --dovetail
+                         causes Bowtie 2 to consider dovetailing alignments as concordant. This becomes relevant whenever
+                         Reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues.
+                         --dovetail is set automatically for PBAT libraries.
+
 
 Bowtie 2 effort options:
 
@@ -10131,7 +10148,7 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 07 March 2016.
+Last edited on 10 March 2016.
 
 HOW_TO
 }
