@@ -1,4 +1,13 @@
-RELEASE NOTES FOR Bismark v0.14.6 (08 01 2016)
+RELEASE NOTES FOR Bismark v0.15.2 (08 04 2016)
+----------------------------------------------
+
+coverage2cytosine
+=================
+
+Changed zcat for gunzip -c when reading a gzipped coverage file.
+
+
+RELEASE NOTES FOR Bismark v0.15.0 (08 01 2016)
 ----------------------------------------------
 
 Bismark
@@ -8,10 +17,10 @@ Added option '--se/--single_end <list>'. This sets single-end mapping mode expli
 list of file names as <list>. The filenames may be provided as a comma [,] or colon [:]-separated
 list.
 
-Added option '--genome_folder <path/to/genome>' as alternative to supplying the genome as the 
+Added option '--genome_folder <path/to/genome>' as alternative to supplying the genome as the
 first argument.
 
-Added an option '--rg_tag' to print an @RG header line as well as and RG:Z: tag to each read. 
+Added an option '--rg_tag' to print an @RG header line as well as and RG:Z: tag to each read.
 The ID and SAMPLE fields default to 'SAMPLE', but can be specified manually with '--rg_id' or
 '--rg_sample'.
 
@@ -56,7 +65,7 @@ coverage2cytosine
 =================
 
 Added option --gzip to compress output files. This currently only works for the default CpG_report
-and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip 
+and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip
 is now also passed on from the bismark_methylation_extractor.
 
 Added a check to coverage2cytosine to bail if no information was found in the coverage file, e.g. if
@@ -67,7 +76,8 @@ bismark2bedGraph
 ================
 
 Changed the way gzip compressed input files are handled when using the unix sort command (i.e. with
---scaffolds/--gazillion or without --ample_memory. 
+--scaffolds/--gazillion or without --ample_memory.
+
 
 
 
