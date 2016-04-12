@@ -1,5 +1,14 @@
-RELEASE NOTES FOR Bismark v0.15.2 (08 04 2016)
+RELEASE NOTES FOR Bismark v0.15.2 (12 04 2016)
 ----------------------------------------------
+
+bismark2_sitrep.tpl
+===================
+
+Removed an extra function call in bismark_sitrep.tpl so that the M-bias 2 plot is drawn once
+the M-bias 1 plot has finished drawing (parallel processing could with certain browsers and data
+may have resulted in a white spaceholder only).
+
+
 
 coverage2cytosine
 =================
