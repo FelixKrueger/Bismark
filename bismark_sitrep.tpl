@@ -437,7 +437,7 @@
 			// Plot the graph
 			$('#m_bias_1').highcharts(m_bias_settings);
 			
-		});
+		//);
 		{{end_deletion_mbias}}
 
 		{{start_deletion_mbias}}
@@ -445,7 +445,7 @@
 		{{start_deletion_mbias_2}}	
 	
 		// M-Bias Plot 2
-		$(function () {
+		//$(function () {
 			
 			// M-bias plot 2 data
 			m_bias_settings['title']['text'] = 'Read 2';

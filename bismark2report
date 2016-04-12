@@ -914,22 +914,22 @@ sub read_mbias_report{
 
   # Read 2 M-bias
   if (%mbias_2){
-    my $r2_CpG_coverage = join (',',@{$mbias_2{'CpG'}->{coverage}});
-    my $r2_CpG_perc     = join (',',@{$mbias_2{'CpG'}->{perc}});
-
-    my $r2_CHG_coverage = join (',',@{$mbias_2{'CHG'}->{coverage}});
-    my $r2_CHG_perc     = join (',',@{$mbias_2{'CHG'}->{perc}});
-
-    my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
-    my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
-
-    $doc =~ s/\{\{CpG_total_calls_R2\}\}/$r2_CpG_coverage/g;
-    $doc =~ s/\{\{CHG_total_calls_R2\}\}/$r2_CHG_coverage/g;
-    $doc =~ s/\{\{CHH_total_calls_R2\}\}/$r2_CHH_coverage/g;
-
-    $doc =~ s/\{\{CpG_methylation_R2\}\}/$r2_CpG_perc/g;
-    $doc =~ s/\{\{CHG_methylation_R2\}\}/$r2_CHG_perc/g;
-    $doc =~ s/\{\{CHH_methylation_R2\}\}/$r2_CHH_perc/g;
+      my $r2_CpG_coverage = join (',',@{$mbias_2{'CpG'}->{coverage}});
+      my $r2_CpG_perc     = join (',',@{$mbias_2{'CpG'}->{perc}});
+      
+      my $r2_CHG_coverage = join (',',@{$mbias_2{'CHG'}->{coverage}});
+      my $r2_CHG_perc     = join (',',@{$mbias_2{'CHG'}->{perc}});
+      
+      my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
+      my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
+      
+      $doc =~ s/\{\{CpG_total_calls_R2\}\}/$r2_CpG_coverage/g;
+      $doc =~ s/\{\{CHG_total_calls_R2\}\}/$r2_CHG_coverage/g;
+      $doc =~ s/\{\{CHH_total_calls_R2\}\}/$r2_CHH_coverage/g;
+      
+      $doc =~ s/\{\{CpG_methylation_R2\}\}/$r2_CpG_perc/g;
+      $doc =~ s/\{\{CHG_methylation_R2\}\}/$r2_CHG_perc/g;
+      $doc =~ s/\{\{CHH_methylation_R2\}\}/$r2_CHH_perc/g;
   }
   warn "Complete\n\n";
 
