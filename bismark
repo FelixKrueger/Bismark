@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.15.2';
+my $bismark_version = 'v0.15.1_dev';
 my $command_line = join (" ",@ARGV);
 
 
@@ -1637,9 +1637,9 @@ sub start_methylation_call_procedure_paired_ends {
 
   ### printing all alignments to a results file
   my $outfile = $filename_1;
-  warn "Outfile: $outfile\n";
+  # warn "Outfile: $outfile\n";
   $outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
-  warn "Outfile: $outfile\n";sleep(5);
+  # warn "Outfile: $outfile\n";sleep(5);
 
   if ($prefix){
     $outfile = "$prefix.$outfile";
@@ -3009,19 +3009,24 @@ sub check_bowtie_results_single_end_bowtie2{
       my @fields = split (/\t/,$fhs[$index]->{last_line});
 
       foreach (11..$#fields){
-	if ($fields[$_] =~ /AS:i:(.*)/){
-	  $alignment_score = $1;
-	}
-	elsif ($fields[$_] =~ /XS:i:(.*)/){
-	  $second_best = $1;
-	}
-	elsif ($fields[$_] =~ /MD:Z:(.*)/){
-	  $MD_tag = $1;
-	}
+	  if ($fields[$_] =~ /AS:i:(.*)/){
+	      $alignment_score = $1;
+	  }
+	  elsif ($fields[$_] =~ /XS:i:(.*)/){
+	      $second_best = $1;
+	  }
+	  elsif ($fields[$_] =~ /MD:Z:(.*)/){
+	      $MD_tag = $1;
+	  }
       }
-
+      
+      my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
+      # the read will be assigned to the wrong strand which may result in incorrect methylation calls.
+      # this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
+      
       if (!defined $best_AS_so_far){
 	  $best_AS_so_far = $alignment_score;
+	  $overwrite++;
 	  # warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
 	  if ($ambig_bam){ # also setting the first_ambig_alignment
 	      $first_ambig_alignment = $fhs[$index]->{last_line};
@@ -3032,11 +3037,12 @@ sub check_bowtie_results_single_end_bowtie2{
       else{
 	  if ($alignment_score > $best_AS_so_far){ # AS are generally negative with a maximum of 0
 	      $best_AS_so_far = $alignment_score;
+	      $overwrite++;
 	      # warn "Found better alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
 	      # resetting the ambiguous within thread memory (if applicable at all)
 	      # warn "Resetting amb within thread value to 0\n";
 	      $amb_same_thread = 0;
-
+	      
 	      if ($ambig_bam){ # also setting a new first_ambig_alignment
 		  $first_ambig_alignment = $fhs[$index]->{last_line};
 		  $first_ambig_alignment =~ s/_(CT|GA)_converted//;
@@ -3047,125 +3053,126 @@ sub check_bowtie_results_single_end_bowtie2{
 	      # warn "current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
 	  }
       }
-
+      
       # warn "First  best alignment_score is: '$alignment_score'\n";
       # warn "MD tag is: '$MD_tag'\n";
       die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag) from line $fhs[$index]->{last_line}!\n" unless (defined $alignment_score and defined $MD_tag);
-
+      
       if (defined $second_best){
-	# warn "second best alignment_score is: '$second_best'\n\n";
-
-	# If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
-	if ($alignment_score == $second_best){
-
-	  # checking to see if this read produced the best alignment
-	  if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
-	    # warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
-	    $amb_same_thread = 1;
+	  # warn "second best alignment_score is: '$second_best'\n\n";
+	  
+	  # If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
+	  if ($alignment_score == $second_best){
+	      
+	      # checking to see if this read produced the best alignment
+	      if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
+		  # warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+		  $amb_same_thread = 1;
+	      }
+	      else{
+		  # warn "This read has a worse alignments score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+	      }
+	      ### if there is a better alignment later on -> fine. If not, the read will get booted altogether
+	      
+	      ## need to read and discard all additional ambiguous reads until we reach the next sequence
+	      until ($fhs[$index]->{last_seq_id} ne $identifier){
+		  my $newline = $fhs[$index]->{fh}-> getline();
+		  if ($newline){
+		      chomp $newline;
+		      my ($seq_id) = split (/\t/,$newline);
+		      $fhs[$index]->{last_seq_id} = $seq_id;
+		      $fhs[$index]->{last_line} = $newline;
+		  }
+		  else{
+		      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+		      $fhs[$index]->{last_seq_id} = undef;
+		      $fhs[$index]->{last_line} = undef;
+		      last; # break free in case we have reached the end of the alignment output
+		  }
+	      }
+	      #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
 	  }
-	  else{
-	    # warn "This read has a worse alignments score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+	  else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
+	      
+	      my $alignment_location = join (":",$chromosome,$position);
+	      
+	      ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+	      ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
+	      ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
+	      ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
+	      
+	      if ($overwrite){
+		  $alignments{$alignment_location}->{seq_id} = $id; 
+		  $alignments{$alignment_location}->{alignment_score} = $alignment_score;
+		  $alignments{$alignment_location}->{alignment_score_second_best} = $second_best;
+		  $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
+		  $alignments{$alignment_location}->{index} = $index;
+		  $alignments{$alignment_location}->{chromosome} = $chromosome;
+		  $alignments{$alignment_location}->{position} = $position;
+		  $alignments{$alignment_location}->{CIGAR} = $cigar;
+		  $alignments{$alignment_location}->{MD_tag} = $MD_tag;
+	      }
+	      
+	      ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
+	      until ($fhs[$index]->{last_seq_id} ne $identifier){
+		  my $newline = $fhs[$index]->{fh}-> getline();
+		  if ($newline){
+		      chomp $newline;
+		      my ($seq_id) = split (/\t/,$newline);
+		      $fhs[$index]->{last_seq_id} = $seq_id;
+		      $fhs[$index]->{last_line} = $newline;
+		  }
+		  else{
+		      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+		      $fhs[$index]->{last_seq_id} = undef;
+		      $fhs[$index]->{last_line} = undef;
+		      last; # break free in case we have reached the end of the alignment output
+		  }
+	      }
+	      #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
 	  }
-	  ### if there is a better alignment later on -> fine. If not, the read will get booted altogether
-
-	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
-	  until ($fhs[$index]->{last_seq_id} ne $identifier){
-	    my $newline = $fhs[$index]->{fh}-> getline();
-	    if ($newline){
-	      chomp $newline;
-	      my ($seq_id) = split (/\t/,$newline);
-	      $fhs[$index]->{last_seq_id} = $seq_id;
-	      $fhs[$index]->{last_line} = $newline;
-	    }
-	    else{
-	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-	      $fhs[$index]->{last_seq_id} = undef;
-	      $fhs[$index]->{last_line} = undef;
-	      last; # break free in case we have reached the end of the alignment output
-	    }
-	  }
-	  #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
-	}
-	else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
-
+      }
+      else{ # there is no second best hit, so we can just store this one and read in the next sequence
+	  
 	  my $alignment_location = join (":",$chromosome,$position);
-	
+	  
 	  ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
 	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
 	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
 	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
-	
-	  unless (exists $alignments{$alignment_location}){
-	    $alignments{$alignment_location}->{seq_id} = $id; 
-	    $alignments{$alignment_location}->{alignment_score} = $alignment_score;
-	    $alignments{$alignment_location}->{alignment_score_second_best} = $second_best;
-	    $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
-	    $alignments{$alignment_location}->{index} = $index;
-	    $alignments{$alignment_location}->{chromosome} = $chromosome;
-	    $alignments{$alignment_location}->{position} = $position;
-	    $alignments{$alignment_location}->{CIGAR} = $cigar;
-	    $alignments{$alignment_location}->{MD_tag} = $MD_tag;
+	  
+	  if ($overwrite){
+	      #  unless (exists $alignments{$alignment_location}){
+	      $alignments{$alignment_location}->{seq_id} = $id; 
+	      $alignments{$alignment_location}->{alignment_score} = $alignment_score;
+	      $alignments{$alignment_location}->{alignment_score_second_best} = undef;
+	      $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
+	      $alignments{$alignment_location}->{index} = $index;
+	      $alignments{$alignment_location}->{chromosome} = $chromosome;
+	      $alignments{$alignment_location}->{position} = $position;
+	      $alignments{$alignment_location}->{MD_tag} = $MD_tag;
+	      $alignments{$alignment_location}->{CIGAR} = $cigar;
 	  }
-	
-	  ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
-	  until ($fhs[$index]->{last_seq_id} ne $identifier){
-	    my $newline = $fhs[$index]->{fh}-> getline();
-	    if ($newline){
+	  
+	  my $newline = $fhs[$index]->{fh}-> getline();
+	  if ($newline){
 	      chomp $newline;
 	      my ($seq_id) = split (/\t/,$newline);
 	      $fhs[$index]->{last_seq_id} = $seq_id;
 	      $fhs[$index]->{last_line} = $newline;
-	    }
-	    else{
+	      if ($seq_id eq $identifier){
+		  die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
+	      }
+	  }
+	  else{
 	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
 	      $fhs[$index]->{last_seq_id} = undef;
 	      $fhs[$index]->{last_line} = undef;
-	      last; # break free in case we have reached the end of the alignment output
-	    }
 	  }
-	  #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
-	}
-      }
-      else{ # there is no second best hit, so we can just store this one and read in the next sequence
-	
-	my $alignment_location = join (":",$chromosome,$position);
-	
-	### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
-	### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
-	### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
-	### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
-
-	unless (exists $alignments{$alignment_location}){
-	  $alignments{$alignment_location}->{seq_id} = $id; 
-	  $alignments{$alignment_location}->{alignment_score} = $alignment_score;
-	  $alignments{$alignment_location}->{alignment_score_second_best} = undef;
-	  $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
-	  $alignments{$alignment_location}->{index} = $index;
-	  $alignments{$alignment_location}->{chromosome} = $chromosome;
-	  $alignments{$alignment_location}->{position} = $position;
-	  $alignments{$alignment_location}->{MD_tag} = $MD_tag;
-	  $alignments{$alignment_location}->{CIGAR} = $cigar;
-	}
-	
-	my $newline = $fhs[$index]->{fh}-> getline();
-	if ($newline){
-	  chomp $newline;
-	  my ($seq_id) = split (/\t/,$newline);
-	  $fhs[$index]->{last_seq_id} = $seq_id;
-	  $fhs[$index]->{last_line} = $newline;
-	  if ($seq_id eq $identifier){
-	    die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
-	  }
-	}
-	else{
-	    # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-	    $fhs[$index]->{last_seq_id} = undef;
-	    $fhs[$index]->{last_line} = undef;
-	}
       }
     }
   }
-
+  
   ### If there were several equally good alignments for the best alignment score we will boot the read
   if ($amb_same_thread){
       $alignment_ambiguous = 1;
@@ -3800,7 +3807,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
   my $first_ambig_alignment_line2; # R2
 
   my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
-  my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
+  my $amb_same_thread = 0;   ## if a read's primary and secondary alignments have the same alignment score we set this to true.
 
   ### reading from the Bowtie 2 output filehandles
 
@@ -3892,276 +3899,282 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	}
       }
 
-      ### If there are one or more proper alignments we can extract the chromosome number
-      my ($chromosome_1,$chromosome_2);
-      if ($mapped_chromosome_1 =~ s/_(CT|GA)_converted$//){
-	$chromosome_1 = $mapped_chromosome_1;
-      }	
-      else{
-	die "Chromosome number extraction failed for $mapped_chromosome_1\n";
-      }
-      if ($mapped_chromosome_2 =~ s/_(CT|GA)_converted$//){
-	$chromosome_2 = $mapped_chromosome_2;
-      }
-      else{
-	die "Chromosome number extraction failed for $mapped_chromosome_2\n";
-      }
-
-      die "Paired-end alignments need to be on the same chromosome\n" unless ($chromosome_1 eq $chromosome_2);
-
-      ### We will use the optional fields to determine the best alignments. Later on we extract the number of mismatches and/or indels from the CIGAR string
-      my ($alignment_score_1,$alignment_score_2,$second_best_1,$second_best_2,$MD_tag_1,$MD_tag_2);
-
-      my @fields_1 = split (/\t/,$fhs[$index]->{last_line_1});
-      my @fields_2 = split (/\t/,$fhs[$index]->{last_line_2});
-
-      foreach (11..$#fields_1){
-	if ($fields_1[$_] =~ /AS:i:(.*)/){
-	  $alignment_score_1 = $1;
-	}
-	elsif ($fields_1[$_] =~ /XS:i:(.*)/){
-	  $second_best_1 = $1;
-	}
-	elsif ($fields_1[$_] =~ /MD:Z:(.*)/){
-	  $MD_tag_1 = $1;
-	}
-      }
-
-      foreach (11..$#fields_2){
-	if ($fields_2[$_] =~ /AS:i:(.*)/){
-	  $alignment_score_2 = $1;
-	}
-	elsif ($fields_2[$_] =~ /XS:i:(.*)/){
-	  $second_best_2 = $1;
-	}
-	elsif ($fields_2[$_] =~ /MD:Z:(.*)/){
-	  $MD_tag_2 = $1;
-	}
-      }
-
-      die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
-      die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
-
-      # warn "First read 1 alignment score is: '$alignment_score_1'\n";
-      # warn "First read 2 alignment score is: '$alignment_score_2'\n";
-      # warn "MD tag 1 is: '$MD_tag_1'\n";
-      # warn "MD tag 2 is: '$MD_tag_2'\n";
-
-      ### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
-      my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
-      # warn "sum of alignment scores: $sum_of_alignment_scores_1\n\n";
-
-      if (!defined $best_AS_so_far){
-	$best_AS_so_far = $sum_of_alignment_scores_1;
-	# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
-	if ($ambig_bam){ # also setting the first_ambig_alignment
-	    # Read 1
-	    $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
-	    $first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
-	    # Read 2
-	    $first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
-	    $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
-	    # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
-	}
-      }
-      else{
-	  if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
-	      $best_AS_so_far = $sum_of_alignment_scores_1;
-	      # warn "Found better sum of alignment scores ($sum_of_alignment_scores), setting \$best_AS_so_far to $best_AS_so_far\n";
-	      # resetting the ambiguous within thread memory (if applicable at all)
-	      # warn "Resetting amb within thread value to 0\n";
-	      $amb_same_thread = 0;
-
-	      if ($ambig_bam){ # also setting a new first_ambig_alignment
-		  # Read 1
-		  $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
-		  $first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
-		  # Read 2
-		  $first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
-		  $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
-		  # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
-	      }
-	  }
-	  else{
-	      # warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
-	  }
-      }
-
-      if (defined $second_best_1 and defined $second_best_2){
-	my $sum_of_alignment_scores_second_best = $second_best_1 + $second_best_2;
-	# warn "Second best alignment_score_1 is: '$second_best_1'\n";
-	# warn "Second best alignment_score_2 is: '$second_best_2'\n";
-	# warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
-	
-	# If the first alignment score for the first read pair is the same as the alignment score of the second best hit we we keep a memory of this
-	if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
-
-	  # checking to see if this read pair produced the best alignment
-	  if ($sum_of_alignment_scores_1 == $best_AS_so_far){  # yes this is the best read pair so far, either within the thread or between threads, however it is ambiguous
-	    # warn "Read pair is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
-	    $amb_same_thread = 1;
-	  }
-	  else{
-	    # warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
-	  }
-
-	  ### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
-
- 	  ## need to read and discard all additional ambiguous reads until we reach the next sequence
- 	  until ($fhs[$index]->{last_seq_id} ne $identifier){
- 	    my $newline_1 = $fhs[$index]->{fh}-> getline();
-	    my $newline_2 = $fhs[$index]->{fh}-> getline();
-	    if ($newline_1 and $newline_2){
-	      chomp $newline_1;
-	      chomp $newline_2;
-	      my ($seq_id_1) = split (/\t/,$newline_1);
-	      my ($seq_id_2) = split (/\t/,$newline_2);
-	      $seq_id_1 =~ s/\/1$//;
-	      $seq_id_2 =~ s/\/2$//;
-	      # print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
-
-	      $fhs[$index]->{last_seq_id} = $seq_id_1;
-	      $fhs[$index]->{last_line_1} = $newline_1;
-	      $fhs[$index]->{last_line_2} = $newline_2;
-		}
- 	    else{
- 	      # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
- 	      $fhs[$index]->{last_seq_id} = undef;
- 	      $fhs[$index]->{last_line_1} = undef;
-	      $fhs[$index]->{last_line_2} = undef;
-	      last; # break free if the end of the alignment output was reached
- 	    }
- 	  }
-	  #  if ($fhs[$index]->{last_seq_id}){
-	  #    warn "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
-	  #  }
-	}
- 	else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
-	
-	  my $alignment_location;
-	  if ($position_1 <= $position_2){
-	    $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
-	  }
-	  elsif($position_2 < $position_1){	
-	    $alignment_location = join(":",$chromosome_1,$position_2,$position_1);
-	  }
-	
- 	  ### If a sequence aligns to exactly the same location twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
- 	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
- 	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
- 	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB 
-	
-	  unless (exists $alignments{$alignment_location}){
-	    $alignments{$alignment_location}->{seq_id} = $id_1;
- 	    $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
-	    $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
-	    $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
-	    $alignments{$alignment_location}->{sum_of_alignment_scores_second_best} = $sum_of_alignment_scores_second_best;
-	    $alignments{$alignment_location}->{bowtie_sequence_1} = $bowtie_sequence_1;
-	    $alignments{$alignment_location}->{bowtie_sequence_2} = $bowtie_sequence_2;
-	    $alignments{$alignment_location}->{index} = $index;
- 	    $alignments{$alignment_location}->{chromosome} = $chromosome_1; # either is fine
- 	    $alignments{$alignment_location}->{position_1} = $position_1;
-	    $alignments{$alignment_location}->{position_2} = $position_2;
- 	    $alignments{$alignment_location}->{mismatch_info_1} = $MD_tag_1;
- 	    $alignments{$alignment_location}->{mismatch_info_2} = $MD_tag_2;
-	    $alignments{$alignment_location}->{CIGAR_1} = $cigar_1;
-	    $alignments{$alignment_location}->{CIGAR_2} = $cigar_2;
-	    $alignments{$alignment_location}->{flag_1} = $flag_1;
-	    $alignments{$alignment_location}->{flag_2} = $flag_2;
- 	  }
-	  # warn "added best of several alignments to \%alignments hash\n";
-	
- 	  ### now reading and discarding all (inferior) alignments of this read pair until we hit the next sequence
-	  until ($fhs[$index]->{last_seq_id} ne $identifier){
- 	    my $newline_1 = $fhs[$index]->{fh}-> getline();
-	    my $newline_2 = $fhs[$index]->{fh}-> getline();
-	    if ($newline_1 and $newline_2){
-	      chomp $newline_1;
-	      chomp $newline_2;
-	      my ($seq_id_1) = split (/\t/,$newline_1);
-	      my ($seq_id_2) = split (/\t/,$newline_2);
-	      $seq_id_1 =~ s/\/1$//;
-	      $seq_id_2 =~ s/\/2$//;
-	      # print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
-
-	      $fhs[$index]->{last_seq_id} = $seq_id_1;
-	      $fhs[$index]->{last_line_1} = $newline_1;
-	      $fhs[$index]->{last_line_2} = $newline_2;
-	    }
- 	    else{
- 	      # assigning undef to last_seq_id and last_line_1 and _2 and jumping to the next index (end of Bowtie 2 output)
- 	      $fhs[$index]->{last_seq_id} = undef;
- 	      $fhs[$index]->{last_line_1} = undef;
-	      $fhs[$index]->{last_line_2} = undef;
-	      last; # break free if the end of the alignment output was reached
- 	    }
-	  }
-	  # if($fhs[$index]->{last_seq_id}){
-	  #   warn "Index: $index\tThis Seq-ID is $identifier, skipped all other alignments until the next ID was reached which is: $fhs[$index]->{last_seq_id}\n";
-	  # }
+	### If there are one or more proper alignments we can extract the chromosome number
+	my ($chromosome_1,$chromosome_2);
+	if ($mapped_chromosome_1 =~ s/_(CT|GA)_converted$//){
+	    $chromosome_1 = $mapped_chromosome_1;
 	}	
-      }
-      else{ # there is no second best hit, so we can just store this one and read in the next sequence
-	
-	my $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
-	# print "$alignment_location\n";
-	### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
- 	### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
- 	### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
- 	### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB
-
-	unless (exists $alignments{$alignment_location}){
-	  $alignments{$alignment_location}->{seq_id} = $id_1;
-	  $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
-	  $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
-	  $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
-	  $alignments{$alignment_location}->{sum_of_alignment_scores_second_best} = undef;
-	  $alignments{$alignment_location}->{bowtie_sequence_1} = $bowtie_sequence_1;
-	  $alignments{$alignment_location}->{bowtie_sequence_2} = $bowtie_sequence_2;
-	  $alignments{$alignment_location}->{index} = $index;
-	  $alignments{$alignment_location}->{chromosome} = $chromosome_1; # either is fine
-	  $alignments{$alignment_location}->{position_1} = $position_1;
-	  $alignments{$alignment_location}->{position_2} = $position_2;
-	  $alignments{$alignment_location}->{mismatch_info_1} = $MD_tag_1;
-	  $alignments{$alignment_location}->{mismatch_info_2} = $MD_tag_2;
-	  $alignments{$alignment_location}->{CIGAR_1} = $cigar_1;
-	  $alignments{$alignment_location}->{CIGAR_2} = $cigar_2;
-	  $alignments{$alignment_location}->{flag_1} = $flag_1;
-	  $alignments{$alignment_location}->{flag_2} = $flag_2;
-	}
-	
-	# warn "added unique alignment to \%alignments hash\n";
-
-	# Now reading and storing the next read pair
-	my $newline_1 = $fhs[$index]->{fh}-> getline();
-	my $newline_2 = $fhs[$index]->{fh}-> getline();
-	if ($newline_1 and $newline_2){
-	  chomp $newline_1;
-	  chomp $newline_2;
-	  # print "$newline_1\n";
-	  # print "$newline_2\n";
-	  my ($seq_id_1) = split (/\t/,$newline_1);
-	  my ($seq_id_2) = split (/\t/,$newline_2);
-	  $seq_id_1 =~ s/\/1$//;
-	  $seq_id_2 =~ s/\/2$//;
-	  # print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
-
-	  $fhs[$index]->{last_seq_id} = $seq_id_1;
-	  $fhs[$index]->{last_line_1} = $newline_1;
-	  $fhs[$index]->{last_line_2} = $newline_2;
-
-	  if ($seq_id_1 eq $identifier){
- 	    die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
- 	  }
-  	}
 	else{
-	  # assigning undef to last_seq_id and last_line_1 and _2 and jumping to the next index (end of Bowtie 2 output)
-	  $fhs[$index]->{last_seq_id} = undef;
-	  $fhs[$index]->{last_line_1} = undef;
-	  $fhs[$index]->{last_line_2} = undef;
+	    die "Chromosome number extraction failed for $mapped_chromosome_1\n";
 	}
-      }
+	if ($mapped_chromosome_2 =~ s/_(CT|GA)_converted$//){
+	    $chromosome_2 = $mapped_chromosome_2;
+	}
+	else{
+	    die "Chromosome number extraction failed for $mapped_chromosome_2\n";
+	}
+
+	die "Paired-end alignments need to be on the same chromosome\n" unless ($chromosome_1 eq $chromosome_2);
+
+	### We will use the optional fields to determine the best alignments. Later on we extract the number of mismatches and/or indels from the CIGAR string
+	my ($alignment_score_1,$alignment_score_2,$second_best_1,$second_best_2,$MD_tag_1,$MD_tag_2);
+	
+	my @fields_1 = split (/\t/,$fhs[$index]->{last_line_1});
+	my @fields_2 = split (/\t/,$fhs[$index]->{last_line_2});
+	
+	foreach (11..$#fields_1){
+	    if ($fields_1[$_] =~ /AS:i:(.*)/){
+		$alignment_score_1 = $1;
+	    }
+	    elsif ($fields_1[$_] =~ /XS:i:(.*)/){
+		$second_best_1 = $1;
+	    }
+	    elsif ($fields_1[$_] =~ /MD:Z:(.*)/){
+		$MD_tag_1 = $1;
+	    }
+	}
+	
+	foreach (11..$#fields_2){
+	    if ($fields_2[$_] =~ /AS:i:(.*)/){
+		$alignment_score_2 = $1;
+	    }
+	    elsif ($fields_2[$_] =~ /XS:i:(.*)/){
+		$second_best_2 = $1;
+	    }
+	    elsif ($fields_2[$_] =~ /MD:Z:(.*)/){
+		$MD_tag_2 = $1;
+	    }
+	}
+	
+	die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
+	die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
+	
+	# warn "First read 1 alignment score is: '$alignment_score_1'\n";
+	# warn "First read 2 alignment score is: '$alignment_score_2'\n";
+	# warn "MD tag 1 is: '$MD_tag_1'\n";
+	# warn "MD tag 2 is: '$MD_tag_2'\n";
+	
+	### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
+	my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
+	# warn "sum of alignment scores: $sum_of_alignment_scores_1\n\n"; sleep(1);
+
+	my $overwrite = 0; # If there are 2 alternative alignments to the same position, e.g. OT with 50 mismatches and CTOB with 0 mismatches, the CTOB one trumps the OT one.
+	# introduced 13 April 2016 as a suggestion by Sylvain Foret, ANU Canberra
+	
+	if (!defined $best_AS_so_far){
+	    $overwrite = 1;
+	    $best_AS_so_far = $sum_of_alignment_scores_1;
+	    # warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+	    if ($ambig_bam){ # also setting the first_ambig_alignment
+		# Read 1
+		$first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
+		$first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
+		# Read 2
+		$first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
+		$first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
+		# warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
+	    }
+	}
+	else{
+	    if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+		$best_AS_so_far = $sum_of_alignment_scores_1;
+		$overwrite = 1;
+		# warn "Found better sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
+		# resetting the ambiguous within thread memory (if applicable at all)
+		# warn "Resetting amb within thread value to 0\n";
+		$amb_same_thread = 0;
+
+		if ($ambig_bam){ # also setting a new first_ambig_alignment
+		    # Read 1
+		    $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
+		    $first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
+		    # Read 2
+		    $first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
+		    $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
+		    # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
+		}
+	    }
+	    else{
+		# warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	    }
+	}
+
+	if (defined $second_best_1 and defined $second_best_2){
+	    my $sum_of_alignment_scores_second_best = $second_best_1 + $second_best_2;
+	    # warn "Second best alignment_score_1 is: '$second_best_1'\n";
+	    # warn "Second best alignment_score_2 is: '$second_best_2'\n";
+	    # warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
+	    
+	    # If the first alignment score for the first read pair is the same as the alignment score of the second best hit we we keep a memory of this
+	    if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
+		
+		# checking to see if this read pair produced the best alignment
+		if ($sum_of_alignment_scores_1 == $best_AS_so_far){  # yes this is the best read pair so far, either within the thread or between threads, however it is ambiguous
+		    # warn "Read pair is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+		    $amb_same_thread = 1;
+		}
+		else{
+		    # warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+		}
+		
+		### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
+
+		## need to read and discard all additional ambiguous reads until we reach the next sequence
+		until ($fhs[$index]->{last_seq_id} ne $identifier){
+		    my $newline_1 = $fhs[$index]->{fh}-> getline();
+		    my $newline_2 = $fhs[$index]->{fh}-> getline();
+		    if ($newline_1 and $newline_2){
+			chomp $newline_1;
+			chomp $newline_2;
+			my ($seq_id_1) = split (/\t/,$newline_1);
+			my ($seq_id_2) = split (/\t/,$newline_2);
+			$seq_id_1 =~ s/\/1$//;
+			$seq_id_2 =~ s/\/2$//;
+			# print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
+
+			$fhs[$index]->{last_seq_id} = $seq_id_1;
+			$fhs[$index]->{last_line_1} = $newline_1;
+			$fhs[$index]->{last_line_2} = $newline_2;
+		    }
+		    else{
+			# assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+			$fhs[$index]->{last_seq_id} = undef;
+			$fhs[$index]->{last_line_1} = undef;
+			$fhs[$index]->{last_line_2} = undef;
+			last; # break free if the end of the alignment output was reached
+		    }
+		}
+		#  if ($fhs[$index]->{last_seq_id}){
+		#    warn "Index: $index\tThis Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
+		#  }
+	    }
+	    else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
+		
+		my $alignment_location;
+		if ($position_1 <= $position_2){
+		    $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
+		}
+		elsif($position_2 < $position_1){	
+		    $alignment_location = join(":",$chromosome_1,$position_2,$position_1);
+		}
+		
+		### If a sequence aligns to exactly the same location twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+		### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
+		### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
+		### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB 
+		
+		if ($overwrite){ # see comment above at "my $overwrite = ..."
+		    #unless (exists $alignments{$alignment_location}){
+		    $alignments{$alignment_location}->{seq_id} = $id_1;
+		    $alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
+		    $alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
+		    $alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
+		    $alignments{$alignment_location}->{sum_of_alignment_scores_second_best} = $sum_of_alignment_scores_second_best;
+		    $alignments{$alignment_location}->{bowtie_sequence_1} = $bowtie_sequence_1;
+		    $alignments{$alignment_location}->{bowtie_sequence_2} = $bowtie_sequence_2;
+		    $alignments{$alignment_location}->{index} = $index;
+		    $alignments{$alignment_location}->{chromosome} = $chromosome_1; # either is fine
+		    $alignments{$alignment_location}->{position_1} = $position_1;
+		    $alignments{$alignment_location}->{position_2} = $position_2;
+		    $alignments{$alignment_location}->{mismatch_info_1} = $MD_tag_1;
+		    $alignments{$alignment_location}->{mismatch_info_2} = $MD_tag_2;
+		    $alignments{$alignment_location}->{CIGAR_1} = $cigar_1;
+		    $alignments{$alignment_location}->{CIGAR_2} = $cigar_2;
+		    $alignments{$alignment_location}->{flag_1} = $flag_1;
+		    $alignments{$alignment_location}->{flag_2} = $flag_2;
+		    # warn "added best of several alignments to \%alignments hash\n";
+		}
+		
+		### now reading and discarding all (inferior) alignments of this read pair until we hit the next sequence
+		until ($fhs[$index]->{last_seq_id} ne $identifier){
+		    my $newline_1 = $fhs[$index]->{fh}-> getline();
+		    my $newline_2 = $fhs[$index]->{fh}-> getline();
+		    if ($newline_1 and $newline_2){
+			chomp $newline_1;
+			chomp $newline_2;
+			my ($seq_id_1) = split (/\t/,$newline_1);
+			my ($seq_id_2) = split (/\t/,$newline_2);
+			$seq_id_1 =~ s/\/1$//;
+			$seq_id_2 =~ s/\/2$//;
+			# print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
+			
+			$fhs[$index]->{last_seq_id} = $seq_id_1;
+			$fhs[$index]->{last_line_1} = $newline_1;
+			$fhs[$index]->{last_line_2} = $newline_2;
+		    }
+		    else{
+			# assigning undef to last_seq_id and last_line_1 and _2 and jumping to the next index (end of Bowtie 2 output)
+			$fhs[$index]->{last_seq_id} = undef;
+			$fhs[$index]->{last_line_1} = undef;
+			$fhs[$index]->{last_line_2} = undef;
+			last; # break free if the end of the alignment output was reached
+		    }
+		}
+		# if($fhs[$index]->{last_seq_id}){
+		#   warn "Index: $index\tThis Seq-ID is $identifier, skipped all other alignments until the next ID was reached which is: $fhs[$index]->{last_seq_id}\n";
+		# }
+	    }	
+	}
+	else{ # there is no second best hit, so we can just store this one and read in the next sequence
+	    
+	    my $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
+	    # print "$alignment_location\n";
+	    ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+	    ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
+	    ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
+	    ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB
+	    
+	    #unless (exists $alignments{$alignment_location}){ # see comment above at my $overwrite = ...
+	    if ($overwrite){
+		$alignments{$alignment_location}->{seq_id} = $id_1;
+		$alignments{$alignment_location}->{alignment_score_1} = $alignment_score_1;
+		$alignments{$alignment_location}->{alignment_score_2} = $alignment_score_2;
+		$alignments{$alignment_location}->{sum_of_alignment_scores} = $sum_of_alignment_scores_1;
+		$alignments{$alignment_location}->{sum_of_alignment_scores_second_best} = undef;
+		$alignments{$alignment_location}->{bowtie_sequence_1} = $bowtie_sequence_1;
+		$alignments{$alignment_location}->{bowtie_sequence_2} = $bowtie_sequence_2;
+		$alignments{$alignment_location}->{index} = $index;
+		$alignments{$alignment_location}->{chromosome} = $chromosome_1; # either is fine
+		$alignments{$alignment_location}->{position_1} = $position_1;
+		$alignments{$alignment_location}->{position_2} = $position_2;
+		$alignments{$alignment_location}->{mismatch_info_1} = $MD_tag_1;
+		$alignments{$alignment_location}->{mismatch_info_2} = $MD_tag_2;
+		$alignments{$alignment_location}->{CIGAR_1} = $cigar_1;
+		$alignments{$alignment_location}->{CIGAR_2} = $cigar_2;
+		$alignments{$alignment_location}->{flag_1} = $flag_1;
+		$alignments{$alignment_location}->{flag_2} = $flag_2;
+		# warn "added unique alignment to \%alignments hash\n";
+	    }
+	    
+	    # Now reading and storing the next read pair
+	    my $newline_1 = $fhs[$index]->{fh}-> getline();
+	    my $newline_2 = $fhs[$index]->{fh}-> getline();
+	    if ($newline_1 and $newline_2){
+		chomp $newline_1;
+		chomp $newline_2;
+		# print "$newline_1\n";
+		# print "$newline_2\n";
+		my ($seq_id_1) = split (/\t/,$newline_1);
+		my ($seq_id_2) = split (/\t/,$newline_2);
+		$seq_id_1 =~ s/\/1$//;
+		$seq_id_2 =~ s/\/2$//;
+		# print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
+		
+		$fhs[$index]->{last_seq_id} = $seq_id_1;
+		$fhs[$index]->{last_line_1} = $newline_1;
+		$fhs[$index]->{last_line_2} = $newline_2;
+		
+		if ($seq_id_1 eq $identifier){
+		    die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
+		}
+	    }
+	    else{
+		# assigning undef to last_seq_id and last_line_1 and _2 and jumping to the next index (end of Bowtie 2 output)
+		$fhs[$index]->{last_seq_id} = undef;
+		$fhs[$index]->{last_line_1} = undef;
+		$fhs[$index]->{last_line_2} = undef;
+	    }
+	}
     }
   }
 
@@ -4290,53 +4303,53 @@ sub check_bowtie_results_paired_ends_bowtie2{
     my $best_sum_of_alignment_scores;
     my $best_alignment_location;
     foreach my $alignment_location (sort {$alignments{$b}->{sum_of_alignment_scores} <=> $alignments{$a}->{sum_of_alignment_scores}} keys %alignments){
-
-      # warn "$alignments{$alignment_location}->{sum_of_alignment_scores}\n"; sleep(1);
-
-      unless (defined $best_sum_of_alignment_scores){
-	$best_sum_of_alignment_scores = $alignments{$alignment_location}->{sum_of_alignment_scores};
-	$best_alignment_location = $alignment_location;
-	# print "setting best alignment score to: $best_sum_of_alignment_scores\n";
-      }
-      else{
-	### if the second best alignment has the same sum of alignment scores as the first one, the sequence pair will get booted
-	if ($alignments{$alignment_location}->{sum_of_alignment_scores} == $best_sum_of_alignment_scores){
-	  # warn "Same sum of alignment scores for 2 different alignments, the sequence pair will get booted!\n";
-	  $sequence_pair_fails = 1;
-	  last; # exiting since we know that the sequence has ambiguous alignments
+	
+	warn "$alignments{$alignment_location}->{sum_of_alignment_scores}\n"; sleep(1);
+	
+	unless (defined $best_sum_of_alignment_scores){
+	    $best_sum_of_alignment_scores = $alignments{$alignment_location}->{sum_of_alignment_scores};
+	    $best_alignment_location = $alignment_location;
+	    print "setting best alignment score to: $best_sum_of_alignment_scores\n";
 	}
-	### else we are going to store the best alignment for further processing
 	else{
-	  $methylation_call_params->{$identifier}->{bowtie_sequence_1} = $alignments{$best_alignment_location}->{bowtie_sequence_1};
-	  $methylation_call_params->{$identifier}->{bowtie_sequence_2} = $alignments{$best_alignment_location}->{bowtie_sequence_2};
-	  $methylation_call_params->{$identifier}->{chromosome}        = $alignments{$best_alignment_location}->{chromosome};
-	  $methylation_call_params->{$identifier}->{position_1}        = $alignments{$best_alignment_location}->{position_1};
-	  $methylation_call_params->{$identifier}->{position_2}        = $alignments{$best_alignment_location}->{position_2};
-	  $methylation_call_params->{$identifier}->{index}             = $alignments{$best_alignment_location}->{index};
-	  $methylation_call_params->{$identifier}->{alignment_score_1} = $alignments{$best_alignment_location}->{alignment_score_1};
-	  $methylation_call_params->{$identifier}->{alignment_score_2} = $alignments{$best_alignment_location}->{alignment_score_2};
-	  $methylation_call_params->{$identifier}->{sum_of_alignment_scores} = $alignments{$best_alignment_location}->{sum_of_alignment_scores};
-	  $methylation_call_params->{$identifier}->{mismatch_info_1}   = $alignments{$best_alignment_location}->{mismatch_info_1};
-	  $methylation_call_params->{$identifier}->{mismatch_info_2}   = $alignments{$best_alignment_location}->{mismatch_info_2};
-	  $methylation_call_params->{$identifier}->{CIGAR_1}           = $alignments{$best_alignment_location}->{CIGAR_1};
-	  $methylation_call_params->{$identifier}->{CIGAR_2}           = $alignments{$best_alignment_location}->{CIGAR_2};
-	  $methylation_call_params->{$identifier}->{flag_1}            = $alignments{$best_alignment_location}->{flag_1};
-	  $methylation_call_params->{$identifier}->{flag_2}            = $alignments{$best_alignment_location}->{flag_2};
+	    ### if the second best alignment has the same sum of alignment scores as the first one, the sequence pair will get booted
+	    if ($alignments{$alignment_location}->{sum_of_alignment_scores} == $best_sum_of_alignment_scores){
+		# warn "Same sum of alignment scores for 2 different alignments, the sequence pair will get booted!\n";
+		$sequence_pair_fails = 1;
+		last; # exiting since we know that the sequence has ambiguous alignments
+	    }
+	    ### else we are going to store the best alignment for further processing
+	    else{
+		$methylation_call_params->{$identifier}->{bowtie_sequence_1} = $alignments{$best_alignment_location}->{bowtie_sequence_1};
+		$methylation_call_params->{$identifier}->{bowtie_sequence_2} = $alignments{$best_alignment_location}->{bowtie_sequence_2};
+		$methylation_call_params->{$identifier}->{chromosome}        = $alignments{$best_alignment_location}->{chromosome};
+		$methylation_call_params->{$identifier}->{position_1}        = $alignments{$best_alignment_location}->{position_1};
+		$methylation_call_params->{$identifier}->{position_2}        = $alignments{$best_alignment_location}->{position_2};
+		$methylation_call_params->{$identifier}->{index}             = $alignments{$best_alignment_location}->{index};
+		$methylation_call_params->{$identifier}->{alignment_score_1} = $alignments{$best_alignment_location}->{alignment_score_1};
+		$methylation_call_params->{$identifier}->{alignment_score_2} = $alignments{$best_alignment_location}->{alignment_score_2};
+		$methylation_call_params->{$identifier}->{sum_of_alignment_scores} = $alignments{$best_alignment_location}->{sum_of_alignment_scores};
+		$methylation_call_params->{$identifier}->{mismatch_info_1}   = $alignments{$best_alignment_location}->{mismatch_info_1};
+		$methylation_call_params->{$identifier}->{mismatch_info_2}   = $alignments{$best_alignment_location}->{mismatch_info_2};
+		$methylation_call_params->{$identifier}->{CIGAR_1}           = $alignments{$best_alignment_location}->{CIGAR_1};
+		$methylation_call_params->{$identifier}->{CIGAR_2}           = $alignments{$best_alignment_location}->{CIGAR_2};
+		$methylation_call_params->{$identifier}->{flag_1}            = $alignments{$best_alignment_location}->{flag_1};
+		$methylation_call_params->{$identifier}->{flag_2}            = $alignments{$best_alignment_location}->{flag_2};
 
-	  if (defined $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best} and ( $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best} > $alignments{$alignment_location}->{sum_of_alignment_scores} )) {
-	    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best};
-	  }
-	  else {
-	    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$alignment_location}->{sum_of_alignment_scores};
-	  }
-
-	  last; # exiting since the sequence produced a unique best alignment
+		if (defined $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best} and ( $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best} > $alignments{$alignment_location}->{sum_of_alignment_scores} )) {
+		    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$best_alignment_location}->{sum_of_alignment_scores_second_best};
+		}
+		else {
+		    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$alignment_location}->{sum_of_alignment_scores};
+		}
+		
+		last; # exiting since the sequence produced a unique best alignment
+	    }
 	}
-      }
     }
   }
   else{
-    die "There are too many potential hits for this sequence pair (1-4 expected, but found: '",scalar keys %alignments,"')\n";;
+      die "There are too many potential hits for this sequence pair (1-4 expected, but found: '",scalar keys %alignments,"')\n";;
   }
 
   ### skipping the sequence completely if there were multiple alignments with the same best sum of alignment scores at different positions
@@ -10148,7 +10161,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 10 March 2016.
-
+Last edited on 13 April 2016
 HOW_TO
 }

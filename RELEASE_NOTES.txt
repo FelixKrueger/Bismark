@@ -1,5 +1,18 @@
-RELEASE NOTES FOR Bismark v0.15.2 (12 04 2016)
+RELEASE NOTES FOR Bismark v0.15.1_dev (12 04 2016)
 ----------------------------------------------
+
+Bismark
+=======
+
+Changed the behaviour of corner cases to where several non-directional alignments could have existed
+for the very same position but to different strands so that now the best alignment trumps the weaker
+one. As an example: If you relaxed the alignment criteria of a given alignment to allow ~ 60 mismatches
+for PE alignment we did find an alignment to the OT strand with a combined AS of -324, but there also
+was an alignment to the CTOB strand with and AS of 0 (perfect alignment). The CTOB now trumps the OT
+alignment, and the methylation information information is now reported for the bottom strand.
+
+Credits go to Sylvain Foret (ANU, Canberra) for bringing this to our attention!
+
 
 bismark2_sitrep.tpl
 ===================
@@ -9,11 +22,12 @@ the M-bias 1 plot has finished drawing (parallel processing could with certain b
 may have resulted in a white spaceholder only).
 
 
-
 coverage2cytosine
 =================
 
 Changed zcat for gunzip -c when reading a gzipped coverage file.
+
+
 
 
 RELEASE NOTES FOR Bismark v0.15.0 (08 01 2016)
