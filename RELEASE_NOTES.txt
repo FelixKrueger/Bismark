@@ -1,8 +1,15 @@
-RELEASE NOTES FOR Bismark v0.15.1_dev (12 04 2016)
+RELEASE NOTES FOR Bismark v0.15.1_dev (18 04 2016)
 ----------------------------------------------
 
 Bismark
 =======
+
+File endings .fastq | .fq | .fastq.gz | .fq.gz are now removed from the output file (unless they were
+specified with --basename) in a bid to reduce the length of the already long filenames.
+
+Enabled the new option '--dovetail' (which will be turned on by default for '--pbat' libraries) which
+will now allow dovetailing reads to be reported. For a more in-depth description see
+https://github.com/FelixKrueger/Bismark/issues/14.
 
 Changed the behaviour of corner cases to where several non-directional alignments could have existed
 for the very same position but to different strands so that now the best alignment trumps the weaker
@@ -10,8 +17,29 @@ one. As an example: If you relaxed the alignment criteria of a given alignment t
 for PE alignment we did find an alignment to the OT strand with a combined AS of -324, but there also
 was an alignment to the CTOB strand with and AS of 0 (perfect alignment). The CTOB now trumps the OT
 alignment, and the methylation information information is now reported for the bottom strand.
-
 Credits go to Sylvain Foret (ANU, Canberra) for bringing this to our attention!
+
+
+
+New module: bismark2summary
+===========================
+
+bismark2summary accepts Bismark BAM files as input. It will then try to identify Bismark reports,
+and optionally deduplication reports or methylation extractor (splitting) reports automatically based
+the BAM file basename. It produces a tab delimited overview table (.txt) as well as a graphical HTML
+report. 
+Examples can be found at http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.html
+and http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.txt. Thanks to
+@ewels for help with the Java Script part!
+
+
+New module: bam2nuc
+===================
+
+The new Bismark module bam2nuc calculcates the average mono- and di-nucleotide coverage of libraries
+and compares this to the genomic average composition. bam2nuc can be called straight from within
+Bismark (option '--nucleotide_coverage') or run stand-alone. bam2nuc creates a '...nucleotide_stats.txt'
+file that is also automatically detected by bismark2report and incorporated into the HTML report.
 
 
 bismark2_sitrep.tpl
@@ -22,10 +50,32 @@ the M-bias 1 plot has finished drawing (parallel processing could with certain b
 may have resulted in a white spaceholder only).
 
 
+methylation extractor
+=====================
+
+Altering the file path handling of coverage2cytosine and bismark2bedGraph also required some changes
+in the methylation extractor.
+
+
+bismark2bedGraph
+================
+
+Input file path handling has been completely reworked. The output file which can be specified as
+'-o output.bedGraph' now has to be a single file name and mustn't contain any path information.
+A particular output folder may be specified with '-dir /any/path/'.
+
+Addressing the file path handling issue also fixed a similar issue with the option --remove_spaces
+when -o had been specified.
+
+
 coverage2cytosine
 =================
 
 Changed zcat for gunzip -c when reading a gzipped coverage file.
+
+Changed the way in which the coverage input file is handed over from the methylation_extractor
+to coverage2cytosine (previously the path information might have been part of the filename, but
+instead it will now be only part of the --dir output_directory option.
 
 
 
@@ -1985,8 +2035,8 @@ be implemented please let us know.
 You can report feedback or bug reports either though our bug-
 reporting tool at:
 
-www.bioinformatics.bbsrc.ac.uk/bugzilla/
+www.bioinformatics.babraham.ac.uk/bugzilla/
 
-...or directly to felix.krueger@bbsrc.ac.uk
+...or directly to felix.krueger@babraham.ac.uk
 
 
