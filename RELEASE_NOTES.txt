@@ -1,4 +1,4 @@
-RELEASE NOTES FOR Bismark v0.15.1_dev (18 04 2016)
+RELEASE NOTES FOR Bismark v0.16.0 (20 04 2016)
 ----------------------------------------------
 
 Bismark

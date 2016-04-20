@@ -30,7 +30,7 @@ use Getopt::Long;
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
 
-my $dedup_version = 'v0.14.6';
+my $dedup_version = 'v0.16.0';
 
 
 my $help;

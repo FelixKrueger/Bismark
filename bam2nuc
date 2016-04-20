@@ -31,7 +31,7 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.15.1';
+my $bam2nuc_version = 'v0.16.0';
 
 my ($output_dir,$genome_folder,$parent_dir,$samtools_path) = process_commandline();
 
