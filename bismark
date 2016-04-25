@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.16.0';
+my $bismark_version = 'v0.16.1';
 my $command_line = join (" ",@ARGV);
 
 
@@ -4304,12 +4304,12 @@ sub check_bowtie_results_paired_ends_bowtie2{
     my $best_alignment_location;
     foreach my $alignment_location (sort {$alignments{$b}->{sum_of_alignment_scores} <=> $alignments{$a}->{sum_of_alignment_scores}} keys %alignments){
 	
-	warn "$alignments{$alignment_location}->{sum_of_alignment_scores}\n"; sleep(1);
+	# warn "$alignments{$alignment_location}->{sum_of_alignment_scores}\n"; sleep(1);
 	
 	unless (defined $best_sum_of_alignment_scores){
 	    $best_sum_of_alignment_scores = $alignments{$alignment_location}->{sum_of_alignment_scores};
 	    $best_alignment_location = $alignment_location;
-	    print "setting best alignment score to: $best_sum_of_alignment_scores\n";
+	    # print "setting best alignment score to: $best_sum_of_alignment_scores\n";
 	}
 	else{
 	    ### if the second best alignment has the same sum of alignment scores as the first one, the sequence pair will get booted

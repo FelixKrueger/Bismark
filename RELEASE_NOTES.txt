@@ -1,3 +1,15 @@
+RELEASE NOTES FOR Bismark v0.16.1 (25 04 2016)
+----------------------------------------------
+
+Bismark
+=======
+
+Removed unintended warn/sleep statement during PE/Bowtie 2 alignments that would slow alignments down
+dramatically. Sorry for that.
+
+
+
+
 RELEASE NOTES FOR Bismark v0.16.0 (20 04 2016)
 ----------------------------------------------
 
