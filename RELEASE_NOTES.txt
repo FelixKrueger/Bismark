@@ -83,7 +83,7 @@ when -o had been specified.
 coverage2cytosine
 =================
 
-Changed zcat for gunzip -c when reading a gzipped coverage file.
+Changed gunzip -c for gunzip -c when reading a gzipped coverage file.
 
 Changed the way in which the coverage input file is handed over from the methylation_extractor
 to coverage2cytosine (previously the path information might have been part of the filename, but

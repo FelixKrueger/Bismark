@@ -116,7 +116,7 @@ sub subset_input_file_FastQ{
   my ($filename,$process_id,$offset) = @_;
 
   if ($filename =~ /gz$/){
-    open (OFFSET,"zcat $filename |") or die "Couldn't read from file '$filename': $!\n";
+    open (OFFSET,"gunzip -c $filename |") or die "Couldn't read from file '$filename': $!\n";
   }
   else{
     open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
@@ -172,7 +172,7 @@ sub subset_input_file_FastA{
   my ($filename,$process_id,$offset) = @_;
 
   if ($filename =~ /gz$/){
-    open (OFFSET,"zcat $filename |") or die "Couldn't read from file '$filename': $!\n";
+    open (OFFSET,"gunzip -c $filename |") or die "Couldn't read from file '$filename': $!\n";
   }
   else{
     open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
@@ -1176,7 +1176,7 @@ sub merge_individual_ambiguous_files{
   foreach my $temp(@$temp_ambiguous){
     warn "Merging from file >> $temp <<\n";
     if ($temp =~ /gz$/){
-      open (IN,"zcat ${output_dir}$temp |") or die "Failed to read from ambiguous temp file '${output_dir}$temp'\n";
+      open (IN,"gunzip -c ${output_dir}$temp |") or die "Failed to read from ambiguous temp file '${output_dir}$temp'\n";
     }
     else{
       open (IN,"${output_dir}$temp") or die "Failed to read from ambiguous temp file '${output_dir}$temp'\n";
@@ -1252,7 +1252,7 @@ sub merge_individual_unmapped_files{
   foreach my $temp(@$temp_unmapped){
     warn "Merging from file >> $temp <<\n";
     if ($temp =~ /gz$/){
-      open (IN,"zcat ${output_dir}${temp} |") or die "Failed to read from unmapped temp file '${output_dir}$temp'\n";
+      open (IN,"gunzip -c ${output_dir}${temp} |") or die "Failed to read from unmapped temp file '${output_dir}$temp'\n";
     }
     else{
       open (IN,"${output_dir}${temp}") or die "Failed to read from unmapped temp file '${output_dir}${temp}'\n";
@@ -2245,7 +2245,7 @@ sub process_single_end_fastA_file_for_methylation_call{
 
   ### gzipped version of the infile
   if ($sequence_file =~ /\.gz$/){
-    open (IN,"zcat $sequence_file |") or die $!;
+    open (IN,"gunzip -c $sequence_file |") or die $!;
   }
   else{
     open (IN,$sequence_file) or die $!;
@@ -2322,7 +2322,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
   ### gzipped version of the infile
   if ($sequence_file =~ /\.gz$/){
-    open (IN,"zcat $sequence_file |") or die $!;
+    open (IN,"gunzip -c $sequence_file |") or die $!;
   }
   else{
     open (IN,$sequence_file) or die $!;
@@ -2407,8 +2407,8 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
   ### gzipped version of the infiles
   if ($sequence_file_1 =~ /\.gz$/ and $sequence_file_2 =~ /\.gz$/){
-    open (IN1,"zcat $sequence_file_1 |") or die "Failed to open zcat pipe to $sequence_file_1 $!\n";
-    open (IN2,"zcat $sequence_file_2 |") or die "Failed to open zcat pipe to $sequence_file_2 $!\n";
+    open (IN1,"gunzip -c $sequence_file_1 |") or die "Failed to open gunzip -c pipe to $sequence_file_1 $!\n";
+    open (IN2,"gunzip -c $sequence_file_2 |") or die "Failed to open gunzip -c pipe to $sequence_file_2 $!\n";
   }
   else{
     open (IN1,$sequence_file_1) or die $!;
@@ -2501,8 +2501,8 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
   ### gzipped version of the infiles
   if ($sequence_file_1 =~ /\.gz$/ and $sequence_file_2 =~ /\.gz$/){
-    open (IN1,"zcat $sequence_file_1 |") or die "Failed to open zcat pipe to $sequence_file_1 $!\n";
-    open (IN2,"zcat $sequence_file_2 |") or die "Failed to open zcat pipe to $sequence_file_2 $!\n";
+    open (IN1,"gunzip -c $sequence_file_1 |") or die "Failed to open gunzip -c pipe to $sequence_file_1 $!\n";
+    open (IN2,"gunzip -c $sequence_file_2 |") or die "Failed to open gunzip -c pipe to $sequence_file_2 $!\n";
   }
   else{
     open (IN1,$sequence_file_1) or die $!;
@@ -5886,7 +5886,7 @@ sub biTransformFastAFiles {
 
   ### gzipped version of the infile
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
     open (IN,$file) or die "Couldn't read from file $file: $!\n";
@@ -6006,7 +6006,7 @@ sub biTransformFastAFiles_paired_end {
 
   ### gzipped version of the infile
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
     open (IN,$file) or die "Couldn't read from file $file: $!\n";
@@ -6158,7 +6158,7 @@ sub biTransformFastQFiles {
 
   ### gzipped version of the infile
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
     open (IN,$file) or die "Couldn't read from file $file: $!\n";
@@ -6317,7 +6317,7 @@ sub biTransformFastQFiles_paired_end {
 
   ### gzipped version of the infile
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Couldn't read from file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Couldn't read from file $file: $!\n";
   }
   else{
     open (IN,$file) or die "Couldn't read from file $file: $!\n";
@@ -6495,14 +6495,14 @@ sub biTransformFastQFiles_paired_end_bowtie1_gzip {
 
   ### gzipped version of infile 1
   if ($file_1 =~ /\.gz$/){
-    open (IN_1,"zcat $file_1 |") or die "Couldn't read from file $file_1: $!\n";
+    open (IN_1,"gunzip -c $file_1 |") or die "Couldn't read from file $file_1: $!\n";
   }
   else{
     open (IN_1,$file_1) or die "Couldn't read from file $file_1: $!\n";
   }
   ### gzipped version of infile 2
   if ($file_2 =~ /\.gz$/){
-    open (IN_2,"zcat $file_2 |") or die "Couldn't read from file $file_2: $!\n";
+    open (IN_2,"gunzip -c $file_2 |") or die "Couldn't read from file $file_2: $!\n";
   }
   else{
     open (IN_2,$file_2) or die "Couldn't read from file $file_2: $!\n";
@@ -7014,7 +7014,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 
     if ($gzip){
       warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1}, with the options: $bt_options)\n";
-      open ($fh->{fh},"zcat ${temp_dir}$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
+      open ($fh->{fh},"gunzip -c ${temp_dir}$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
     }
     else{
       warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1} and ${temp_dir}$fh->{inputfile_2}, with the options: $bt_options))\n";
@@ -7188,7 +7188,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
 
     warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt_options)\n";
     if ($gzip){
-      open ($fh->{fh},"zcat $temp_dir$fh->{inputfile} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
+      open ($fh->{fh},"gunzip -c $temp_dir$fh->{inputfile} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
     }
     else{
       open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!"; # command for uncompressed data
@@ -7309,7 +7309,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     sleep (5);
 
     if ($gzip){
-      open ($fh->{fh},"zcat $temp_dir$fh->{inputfile} | $path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
+      open ($fh->{fh},"gunzip -c $temp_dir$fh->{inputfile} | $path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
     }
     else{
       open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!"; # command for uncompressed data
