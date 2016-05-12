@@ -437,7 +437,7 @@
 			// Plot the graph
 			$('#m_bias_1').highcharts(m_bias_settings);
 			
-		//);
+		});
 		{{end_deletion_mbias}}
 
 		{{start_deletion_mbias}}
