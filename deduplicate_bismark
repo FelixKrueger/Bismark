@@ -202,7 +202,7 @@ foreach my $file (@filenames){
 
     ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
     if ($file =~ /\.gz$/){
-      open (DETERMINE,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+      open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
       open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
@@ -271,7 +271,7 @@ foreach my $file (@filenames){
     my %positions;
 
     if ($file =~ /\.gz$/){
-      open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+      open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
       open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
@@ -584,7 +584,7 @@ sub deduplicate_barcoded_rrbs{
   my %positions;
 
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
   }
   elsif ($file =~ /\.bam$/){
     open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
@@ -925,7 +925,7 @@ sub test_positional_sorting{
   sleep(1);
 
   if ($filename =~ /\.gz$/) {
-    open (TEST,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
+    open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
   }
   elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
     if ($samtools_path){
@@ -987,9 +987,9 @@ sub isBam{
   my $filename = shift;
 
   # reading the first line of the input file to see if it is a BAM file in disguise (i.e. a BAM file that does not end in *.bam which may be produced by Galaxy)
-  open (DISGUISE,"zcat $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
+  open (DISGUISE,"gunzip -c $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
 
-  ### when BAM files read through a zcat stream they start with BAM...
+  ### when BAM files read through a gunzip -c stream they start with BAM...
   my $bam_in_disguise = <DISGUISE>;
   # warn "BAM in disguise: $bam_in_disguise\n\n";
 
@@ -1032,7 +1032,7 @@ sub deduplicate_representative {
 
   ### going through the file first and storing all positions as well as their methylation call strings in a hash
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
   }
   elsif ($file =~ /\.bam$/){
     open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
