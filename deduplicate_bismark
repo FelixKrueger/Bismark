@@ -904,12 +904,12 @@ sub bam_isEmpty{
     }
     my $count = 0;
     while (<EMPTY>){
-	$count++;
 	if ($_){
-	    # warn "found: $_";
-	    last; # file contains data, fine.	  
+	    $count++;  # file contains data, fine.
 	}
+	last; # one line is enough
     }
+
     if ($count == 0){
 	die "\n### File appears to be empty, terminating deduplication process. Please make sure the input file has not been truncated. ###\n\n";
     }
