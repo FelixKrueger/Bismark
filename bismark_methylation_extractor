@@ -5686,12 +5686,12 @@ ARGUMENTS:
 OPTIONS:
 
 -s/--single-end          Input file(s) are Bismark result file(s) generated from single-end
-                         read data. Specifying either --single-end or --paired-end is
-                         mandatory.
+                         read data. If neither -s nor -p is set the type of experiment will
+                         be determined automatically.
 
 -p/--paired-end          Input file(s) are Bismark result file(s) generated from paired-end
-                         read data. Specifying either --paired-end or --single-end is
-                         mandatory.
+                         read data. If neither -s nor -p is set the type of experiment will
+                         be determined automatically.
 
 --vanilla                The Bismark result input file(s) are in the old custom Bismark format
                          (up to version 0.5.x) and not in SAM format which is the default as

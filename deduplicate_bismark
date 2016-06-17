@@ -30,8 +30,7 @@ use Getopt::Long;
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
 
-my $dedup_version = 'v0.16.0';
-
+my $dedup_version = 'v0.16.2';
 
 my $help;
 my $representative;
@@ -174,15 +173,15 @@ else{
 
 if ($representative){
   warn "\nIf there are several alignments to a single position in the genome the alignment with the most representative methylation call will be chosen (this might be the most highly amplified PCR product...)\n\n";
-  sleep (2);
+  sleep (1);
 }
 elsif($rrbs){
   warn "\nIf the input is a multiplexed sample with several alignments to a single position in the genome, only alignments with a unique barcode will be chosen)\n\n";
-  sleep (2);
+  sleep (1);
 }
 else{ # default; random (=first) alignment
   warn "\nIf there are several alignments to a single position in the genome the first alignment will be chosen. Since the input files are not in any way sorted this is a near-enough random selection of reads.\n\n";
-  sleep (2);
+  sleep (1);
 }
 
 foreach my $file (@filenames){
@@ -231,6 +230,11 @@ foreach my $file (@filenames){
     close DETERMINE or warn "$!\n";
   }
 
+  if ($file =~ /(\.bam$|\.sam$)/){
+      bam_isEmpty($file);
+  }
+  
+
   ### OPTIONS
   unless ($single or $paired){
     die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
@@ -242,6 +246,7 @@ foreach my $file (@filenames){
       test_positional_sorting($file);
     }
   }
+
 
   ### writing to a report file
   my $report = $file;
@@ -887,7 +892,29 @@ sub deduplicate_barcoded_rrbs{
 
 }
 
+sub bam_isEmpty{
+      
+    my $file = shift;
 
+    if ($file =~ /\.bam$/){
+	open (EMPTY,"$samtools_path view $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+	open (EMPTY,$file) or die "Unable to read from $file: $!\n";
+    }
+    my $count = 0;
+    while (<EMPTY>){
+	$count++;
+	if ($_){
+	    # warn "found: $_";
+	    last; # file contains data, fine.	  
+	}
+    }
+    if ($count == 0){
+	die "\n### File appears to be empty, terminating deduplication process. Please make sure the input file has not been truncated. ###\n\n";
+    }
+    close EMPTY or warn "$!\n";
+}
 
 
 sub print_helpfile{
