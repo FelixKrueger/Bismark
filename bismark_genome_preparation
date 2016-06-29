@@ -1,8 +1,7 @@
-#!/usr/bin/perl --
+#!/usr/bin/env perl
 use strict;
 use warnings;
 use Cwd;
-# use File::Path qw(rmtree);
 $|++;
 
 
@@ -34,7 +33,7 @@ my $single_fasta;
 my $bowtie2;
 my $bowtie1;
 
-my $bismark_version = 'v0.16.0';
+my $bismark_version = 'v0.16.2';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
