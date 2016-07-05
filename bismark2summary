@@ -1,6 +1,9 @@
 #!/usr/bin/env perl
 use warnings;
 use strict;
+use Getopt::Long;
+use FindBin qw($Bin);
+use lib "$Bin/../lib";
 
 ## This program is Copyright (C) 2010-16, Felix Krueger <felix.krueger@babraham.ac.uk>
 ## and Phil Ewels <phil.ewels@scilifelab.se>
@@ -19,9 +22,91 @@ use strict;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 my $bismark_version = '0.16.2';
 
-# Last modified 03 03 2016
+# Last modified 05 07 2016
+
+my ($report_basename,$page_title) = process_commandline();
+
+sub process_commandline{
+    my $help;
+    my $version;
+    my $title;
+    my $manual_output_file;
+    
+    my $command_line = GetOptions ('help|man'              => \$help,
+				   'o|basename=s'          => \$manual_output_file,
+				   'title=s'               => \$title,
+				   'version'               => \$version,
+	);
+    
+    ### EXIT ON ERROR if there were errors with any of the supplied options
+    unless ($command_line){
+	die "Please respecify command line options\n";
+    }
+    
+    ### HELPFILE
+    if ($help){
+	print_helpfile();
+	exit;
+    }
+    
+    if ($version){
+	print << "VERSION";
+	
+
+                             Bismark HTML Summary Report
+
+                           bismark2summary version: $bismark_version
+                            Copyright 2010-16 Felix Krueger
+                               Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+                    https://github.com/FelixKrueger/Bismark
 
 
+
+VERSION
+		    exit;
+    }
+    unless (defined $title){
+	$title = '';
+    }
+    unless (defined $manual_output_file){
+	$manual_output_file = '';
+    }
+    
+
+    return ($manual_output_file,$title);
+}
+
+sub print_helpfile{
+  print <<EOF
+
+  SYNOPSIS:
+
+  This script uses a Bismark alignment report to generate a graphical HTML report page. Optionally, further reports of
+  the Bismark suite such as deduplication, methylation extractor splitting or M-bias reports can be specified as well. If several
+  Bismark reports are found in the same folder, a separate report will be generated for each of these, whereby the output filename
+  will be derived from the Bismark alignment report file. Bismark2report attempts to find optional reports automatically based
+  on the file basename.
+
+
+  USAGE: bismark2summary [options]
+
+
+  -o/--basename <filename>    Basename of the output file (optional). Generate a text file with all relevant extracted values
+                              ('basename.txt') as well as an HTML report ('basename.html'). If not specified explicitly, the
+                              the basename is 'bismark_summary_report'.
+
+  --title <string>            Optional HTML report title; use "speech marks for text with spaces". Default: 'Bismark Summary Report'. 			      
+
+
+                                                Script last modified: 05 July 2016
+
+EOF
+    ;
+  exit 1;
+}
+
+### AUTO-DETECTING BISMARK BAM FILES
 my @bam_files = @ARGV; # user supplied BAM files
 unless (@bam_files){
     my @detected_files;
@@ -76,8 +161,12 @@ else {
     warn("Generating Bismark summary report from ",scalar @bam_files," Bismark BAM file(s)...\n");
 }
 
-my $report_basename = 'bismark_summary_report';
-my $page_title = 'Bismark Summary Report';
+unless ($report_basename){
+    $report_basename = 'bismark_summary_report';
+}
+unless ($page_title){
+    $page_title = 'Bismark Summary Report';
+}
 
 my @categories_arr;
 my @not_aligned_arr;
