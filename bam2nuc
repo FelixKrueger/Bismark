@@ -247,19 +247,20 @@ sub calculate_averages {
     my $total_number_of_words_counted;
     my $total_number_of_words_counted_genomic;
     
-    warn "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
-    print OUT "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
+    warn "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\tcoverage\n";
+    print OUT "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\tcoverage\n";
     
     foreach my $word ('A','C','G','T') {
 	$total_number_of_words_counted += $freqs{$word}; 
 	$total_number_of_words_counted_genomic += $genomic_freqs{$word};
     }
-
+    
     foreach my $word ('A','C','G','T') {
 	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
 	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
-	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
-  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+	my $overall_coverage   = sprintf ("%.3f",$freqs{$word}/$genomic_freqs{$word});
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
     }
     
     $total_number_of_words_counted = 0;
@@ -273,8 +274,9 @@ sub calculate_averages {
     foreach my $word ('AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT') {
       	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
 	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
-	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
-  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+	my $overall_coverage   = sprintf ("%.3f",$freqs{$word}/$genomic_freqs{$word});
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
     }
     
 }
@@ -564,31 +566,33 @@ OUTPUT FORMAT
 
 bam2nuc writes out a file ending in .nucleotide_stats.txt in the following format (tab-delimited):
 
-(di-)nucleotide count sample    % sample  count genomic   % genomic
-        A       1432    30.47   3768086 30.98
-        C       849     18.06   2321832 19.09
-        G       871     18.53   2318192 19.06
-        T       1548    32.94   3754886 30.87
-        AA      498     10.81   1321485 10.86
-        AC      227     4.93    639783  5.26
-        AG      233     5.06    709163  5.83
-        AT      442     9.60    1097652 9.02
-        CA      279     6.06    786744  6.47
-        CC      179     3.89    473900  3.90
-        CG      121     2.63    355535  2.92
-        CT      249     5.41    705653  5.80
-        GA      275     5.97    756411  6.22
-        GC      144     3.13    453607  3.73
-        GG      178     3.86    470732  3.87
-        GT      265     5.75    637436  5.24
-        TA      352     7.64    903441  7.43
-        TC      275     5.97    754531  6.20
-        TG      327     7.10    782761  6.44
-        TT      562     12.20   1314144 10.80
+
+(di-)nucleotide count sample    percent sample  count genomic   percent genomic coverage
+A       14541   30.91   3768086 30.98   0.004
+C       8893    18.90   2321832 19.09   0.004
+G       9019    19.17   2318192 19.06   0.004
+T       14597   31.02   3754886 30.87   0.004
+AA      5008    10.86   1321485 10.86   0.004
+AC      2355    5.11    639783  5.26    0.004
+AG      2692    5.84    709163  5.83    0.004
+AT      4191    9.09    1097652 9.02    0.004
+CA      2912    6.32    786744  6.47    0.004
+CC      1812    3.93    473900  3.90    0.004
+CG      1341    2.91    355535  2.92    0.004
+CT      2659    5.77    705653  5.80    0.004
+GA      2903    6.30    756411  6.22    0.004
+GC      1724    3.74    453607  3.73    0.004
+GG      1817    3.94    470732  3.87    0.004
+GT      2402    5.21    637436  5.24    0.004
+TA      3419    7.42    903441  7.43    0.004
+TC      2823    6.12    754531  6.20    0.004
+TG      2996    6.50    782761  6.44    0.004
+TT      5055    10.96   1314144 10.80   0.004
+
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 04 February 2016
+                              Script last modified: 06 July 2016
 
 EOF
     ;
