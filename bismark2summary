@@ -106,6 +106,9 @@ sub print_helpfile{
   --title <string>            Optional HTML report title; use --title "speech marks for text with spaces". Default: 
                               'Bismark Summary Report'. 			      
 
+
+  --version                   Displays version information and exits.
+			      
   --help                      Displays this help message and exits.
 
 
