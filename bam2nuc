@@ -33,7 +33,7 @@ my %processed;
 
 my $bam2nuc_version = 'v0.16.2';
 
-my ($output_dir,$genome_folder,$parent_dir,$samtools_path) = process_commandline();
+my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
 warn "Summary of parameters for nucleotide coverage report:\n";
 warn '='x53,"\n";
@@ -44,15 +44,25 @@ warn "Genome directory:\t\t\t>$genome_folder<\n";
 warn "Samtools installation:\t\t\t>$samtools_path<\n\n";
 
 my $total_number_of_words_counted = 0;
-  
+
 read_genome_into_memory($parent_dir);
 warn "Stored sequence information of ",scalar keys %chromosomes," chromosomes/scaffolds in total\n\n";
 
+### Genomic nucleotide frequencies only
+if ($genome_freq_only){
+    get_genomic_frequencies();
+    warn "Finished processing genomic nucleotide frequencies\n\n";
+    exit;
+}
+
+# Processing data files
 foreach my $infile(@ARGV){
     generate_nucleotide_report($infile);
 }
 
+
 sub generate_nucleotide_report {
+
     my $infile = shift;
     %freqs = ();
     %genomic_freqs = ();
@@ -63,46 +73,8 @@ sub generate_nucleotide_report {
 
     my $number_processed = 0;
 
-    ### GENOMIC NUCLEOTIDE FREQUENCIES
-    if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
-	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
-	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
-	warn "="x188,"\n";
-	
-	while (<GF>){
-	    chomp;
-	    my ($element,$freq) = (split /\t/);
-	    $genomic_freqs{$element} = $freq;
-	    # warn "$element\t$freq\n";
-	}
-	close GF;
-    }
-    else{
-	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
-	warn "="x164,"\n";
-	foreach my $chr (keys %chromosomes){
-	    warn "Processing chromosome >> $chr <<\n";
-	    process_sequence($chromosomes{$chr});
-	}
-
-	%genomic_freqs = %freqs;
-	%freqs = (); # resetting to store the read composition now
-	
-	### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
-	### if this fails
-	if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
-	    warn "Writing genomic nucleotide frequencies to the >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
-	    foreach my $f(sort keys %genomic_freqs){
-		warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
-		print FREQS "$f\t$genomic_freqs{$f}\n";
-	    }
-	    close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
-	}
-	else{
-	    warn "Failed to open filehandle for ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!, skipping writing out genomic frequency table\n";
-	}
-	
-    }
+    get_genomic_frequencies();
+    
     warn "\n\n";
     
     warn "Calculating read frequencies from file '$infile'\n";
@@ -182,6 +154,65 @@ sub generate_nucleotide_report {
     close OUT or  warn "Failed to close filehandle CLOSE: $!\n\n";    
 
 }
+
+sub get_genomic_frequencies{
+ 
+    ### GENOMIC NUCLEOTIDE FREQUENCIES
+    if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
+	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
+	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
+	warn "="x188,"\n";
+	
+	while (<GF>){
+	    chomp;
+	    my ($element,$freq) = (split /\t/);
+	    $genomic_freqs{$element} = $freq;
+	    # warn "$element\t$freq\n";
+	}
+	close GF;
+    }
+    else{
+	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
+	warn "="x164,"\n";
+	foreach my $chr (keys %chromosomes){
+	    warn "Processing chromosome >> $chr <<\n";
+	    process_sequence($chromosomes{$chr});
+	}
+
+	%genomic_freqs = %freqs;
+	%freqs = (); # resetting to store the read composition now
+	
+	### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
+	### if this fails
+	if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
+	    warn "Writing genomic nucleotide frequencies to the file >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
+	    foreach my $f(sort keys %genomic_freqs){
+		warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
+		print FREQS "$f\t$genomic_freqs{$f}\n";
+	    }
+	    close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
+	}
+	else{
+	    warn "Failed to write out file ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!\n";
+	    sleep(1);
+	    warn "Attempting to write to the output directory ('$output_dir') instead\n\n";
+	    
+	    ### Attempting to write a genomic nucleotide frequency table out to the output folder
+	    if  ( open (FREQS,'>',"${output_dir}genomic_nucleotide_frequencies.txt") ){
+		warn "Writing genomic nucleotide frequencies to the file >${output_dir}genomic_nucleotide_frequencies.txt< for future re-use\n";
+		foreach my $f(sort keys %genomic_freqs){
+		    warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
+		    print FREQS "$f\t$genomic_freqs{$f}\n";
+		}
+		close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
+	    }
+	    else{
+		warn "Failed to write out file ${output_dir}genomic_nucleotide_frequencies.txt because of: $! skipping writing out genomic frequency table\n";
+	    }
+	}
+    }
+}
+
 
 sub calc_paired_end{
     my ($sequence,$flag) = @_;
@@ -316,6 +347,7 @@ sub process_commandline{
     my $genome_folder;
     my $parent_dir;
     my $samtools_path;
+    my $genomic_composition_only;
     my $version;
     
     my $command_line = GetOptions ('help' => \$help,
@@ -323,6 +355,7 @@ sub process_commandline{
 				   'g|genome_folder=s' => \$genome_folder,
 				   'parent_dir=s' => \$parent_dir,
 				   'samtools_path=s' => \$samtools_path,
+				   'genomic_composition_only' => \$genomic_composition_only,
 				   'version' => \$version,
 	);
   
@@ -355,11 +388,13 @@ VERSION
 
     ### no files provided
     unless (@ARGV){
-	warn "You need to provide one or more BAM files to continue. Please respecify!\n";
-	sleep(1);
 	
-	print_helpfile();
-	exit;
+	unless ($genomic_composition_only){ # don't require data input files for genomic composition only
+	    warn "You need to provide one or more BAM files to continue. Please respecify!\n";
+	    sleep(1);
+	    print_helpfile();
+	    exit;
+	}
     }
     
     unless ($parent_dir){
@@ -422,8 +457,8 @@ VERSION
 	    chomp $samtools_path;
 	}
     }
-    
-    return ($output_dir,$genome_folder,$parent_dir,$samtools_path);
+        
+    return ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genomic_composition_only);
 }
 
 
@@ -541,24 +576,29 @@ sub print_helpfile{
   USAGE: bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 
 
---dir                    Output directory. Output is written to the current directory if not specified explicitly.
+--dir                       Output directory. Output is written to the current directory if not specified explicitly.
 
---genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
-                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+--genome_folder <path>      Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
+                            formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
 
---samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
-                         explicitly if Samtools is in the PATH already
+--samtools_path             The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                            explicitly if Samtools is in the PATH already
 
+--genomic_composition_only  Only calculate and extract the genomic sequence composition and exit thereafter. This option will
+                            attempt to write the genomic composition table 'genomic_nucleotide_frequencies.txt' to the genome
+                            folder or to the output directory instead if that doesn't succeed.
 
---help                   Displays this help message and exits
+--help                      Displays this help message and exits
 
 
 GENOMIC composition
 ===================
 
 Since the calculation of the average genomic (di-)nucleotide composition may take a while bam2nuc attempts to
-write a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The 
-next time bam2nuc is run it will then use this file instead of calculating the average genome composition again.
+write out a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The 
+next time bam2nuc is run it will then use this file instead of calculating the average genome composition again. If
+writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory
+instead.
 
 
 OUTPUT FORMAT
@@ -592,7 +632,7 @@ TT      5055    10.96   1314144 10.80   0.004
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 06 July 2016
+                              Script last modified: 07 July 2016
 
 EOF
     ;

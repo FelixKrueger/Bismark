@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use Cwd;
+use Getopt::Long;
 $|++;
 
 
@@ -20,9 +21,6 @@ $|++;
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use Getopt::Long;
-use Cwd;
-
 my $verbose;
 my $help;
 my $version;
@@ -32,6 +30,11 @@ my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
 my $bowtie1;
+my $parent_dir = getcwd();
+
+my $genomic_composition;
+my %genomic_freqs; # storing the genomic sequence composition
+my %freqs;
 
 my $bismark_version = 'v0.16.2';
 
@@ -43,6 +46,7 @@ GetOptions ('verbose' => \$verbose,
 	    'single_fasta' => \$single_fasta,
 	    'bowtie2' => \$bowtie2,
 	    'bowtie1' => \$bowtie1,
+	    'genomic_composition' => \$genomic_composition,
 	   );
 
 if ($help or $man){
@@ -56,7 +60,7 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
 
 VERSION
@@ -68,20 +72,20 @@ my %chromosomes; # checking if chromosome names are unique (required)
 
 # Ensuring a genome folder has been specified
 if ($genome_folder){
-  unless ($genome_folder =~ /\/$/){
-    $genome_folder =~ s/$/\//;
-  }
-  $verbose and print "Path to genome folder specified as: $genome_folder\n";
-  chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
-
-  # making the genome folder path abolsolute so it won't break if the path was specified relative
-  $genome_folder = getcwd;
-  unless ($genome_folder =~ /\/$/){
-    $genome_folder =~ s/$/\//;
-  }
+    unless ($genome_folder =~ /\/$/){
+	$genome_folder =~ s/$/\//;
+    }
+    $verbose and print "Path to genome folder specified as: $genome_folder\n";
+    chdir $genome_folder or die "Could't move to directory $genome_folder. Make sure the directory exists! $!";
+    
+    # making the genome folder path abolsolute so it won't break if the path was specified relative
+    $genome_folder = getcwd();
+    unless ($genome_folder =~ /\/$/){
+	$genome_folder =~ s/$/\//;
+    }
 }
 else{
-  die "Please specify a genome folder to be used for bisulfite conversion\n\n";
+    die "Please specify a genome folder to be used for bisulfite conversion\n\n";
 }
 
 
@@ -116,6 +120,12 @@ else{
 }
 
 my @filenames = create_bisulfite_genome_folders();
+
+if ($genomic_composition){
+    get_genomic_frequencies();
+    warn "Finished processing genomic nucleotide frequencies\n\n";
+    %chromosomes = (); # resetting
+}
 
 process_sequence_files ();
 
@@ -337,20 +347,73 @@ sub process_sequence_files {
   warn "\nStep II - Genome bisulfite conversions - completed\n\n\n";
 }
 
+sub get_genomic_frequencies{
+    
+    warn "Calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
+    warn "="x164,"\n";
+    read_genome_into_memory($parent_dir);
+    foreach my $chr (keys %chromosomes){
+	warn "Processing chromosome >> $chr <<\n";
+	process_sequence($chromosomes{$chr});
+    }
+    
+    %genomic_freqs = %freqs;
+    
+    ### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
+    ### if this fails
+    if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
+	warn "Writing genomic nucleotide frequencies to the file >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
+	foreach my $f(sort keys %genomic_freqs){
+	    warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
+	    print FREQS "$f\t$genomic_freqs{$f}\n";
+	}
+	close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
+    }
+    else{
+	warn "Failed to write out file ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!. Skipping writing out genomic frequency table\n\n";
+    }
+}
+
+
+sub process_sequence{
+    
+    my $seq = shift;
+    my $mono;
+    my $di;
+
+    foreach my $index (0..(length$seq)-1){
+	my $counted = 0;
+	if ($index%10000000==0){
+	    # warn "Current index number is $index\n";
+	}
+	
+	$mono = substr($seq,$index,1);
+	unless ( $mono eq 'N'){
+	    $freqs{$mono}++;
+	}
+	
+	unless ( ($index + 2) > length$seq ){
+	    $di = substr($seq,$index,2);
+	    if (index($di,'N') < 0) {
+		$freqs{$di}++;
+	    }
+	}
+    }
+    
+}
+
 sub extract_chromosome_name {
-
-  my $header = shift;
-
-  ## Bowtie extracts the first string after the initial > in the FASTA file, so we are doing this as well
-
-  if ($header =~ s/^>//){
-    my ($chromosome_name) = split (/\s+/,$header);
+  ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
+  my $fasta_header = shift;
+  if ($fasta_header =~ s/^>//){
+    my ($chromosome_name) = split (/\s+/,$fasta_header);
     return $chromosome_name;
   }
   else{
-    die "The specified chromosome file doesn't seem to be in FASTA format as required! $!\n";
+    die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
   }
 }
+
 
 sub create_bisulfite_genome_folders{
 
@@ -424,6 +487,83 @@ sub create_bisulfite_genome_folders{
   return @filenames;
 }
 
+sub read_genome_into_memory{
+
+  ## reading in and storing the specified genome in the %chromosomes hash
+  chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
+  warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
+
+  my @chromosome_filenames =  <*.fa>;
+
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  unless (@chromosome_filenames){
+    @chromosome_filenames =  <*.fasta>;
+  }
+  unless (@chromosome_filenames){
+    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+  }
+
+  foreach my $chromosome_filename (@chromosome_filenames){
+
+    # skipping the tophat entire mouse genome fasta file
+    next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
+
+    open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    ### first line needs to be a fastA header
+    my $first_line = <CHR_IN>;
+    chomp $first_line;
+    $first_line =~ s/\r//; # removing /r carriage returns
+
+    ### Extracting chromosome name from the FastA header
+    my $chromosome_name = extract_chromosome_name($first_line);
+	
+    my $sequence;
+    while (<CHR_IN>){
+      chomp;
+      $_ =~ s/\r//; # removing /r carriage returns
+
+      if ($_ =~ /^>/){
+	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
+	if (exists $chromosomes{$chromosome_name}){
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+	}
+	else {
+	  if (length($sequence) == 0){
+	    warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+	  }
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  $chromosomes{$chromosome_name} = $sequence;
+	}
+	### resetting the sequence variable
+	$sequence = '';
+	### setting new chromosome name
+	$chromosome_name = extract_chromosome_name($_);
+      }
+      else{
+	$sequence .= uc$_;
+      }
+    }
+
+    if (exists $chromosomes{$chromosome_name}){
+      warn "chr $chromosome_name (",length $sequence ," bp)\t";
+      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+    }
+    else{
+      if (length($sequence) == 0){
+	warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
+      }
+      warn "chr $chromosome_name (",length $sequence ," bp)\n";
+      $chromosomes{$chromosome_name} = $sequence;
+    }
+  }
+  warn "\n";
+  chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
+}
+
+
+
+
 sub print_helpfile{
   print << 'HOW_TO';
 
@@ -474,6 +614,11 @@ OPTIONS:
                          genomes may contain 20000-500000 contigs of scaffold files which do exceed
                          this list length limit).
 
+--genomic_composition    Calculate and extract the genomic sequence composition for mono and di-nucleotides
+                         and write the genomic composition table 'genomic_nucleotide_frequencies.txt' to the
+                         genome folder. This may be useful later on when using bam2nuc or the Bismark option
+                         --nucleotide_coverage.
+
 
 ARGUMENTS:
 
@@ -482,6 +627,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-This script was last modified on 25 August 2015.
+This script was last modified on 07 July 2016.
 HOW_TO
 }
