@@ -3035,7 +3035,8 @@ sub check_bowtie_results_single_end_bowtie2{
 	  }	
       }
       else{
-	  if ($alignment_score > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+	  if ($alignment_score >= $best_AS_so_far){ # AS are generally negative with a maximum of 0;
+	      # 19 07 2016: changed this to >= so that equally good alignments are also added. Ambiguous alignments from different threads will be identified later on
 	      $best_AS_so_far = $alignment_score;
 	      $overwrite++;
 	      # warn "Found better alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
@@ -3050,7 +3051,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	      }
 	  }
 	  else{
-	      # warn "current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	      # warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
 	  }
       }
       
@@ -3133,16 +3134,15 @@ sub check_bowtie_results_single_end_bowtie2{
 	  }
       }
       else{ # there is no second best hit, so we can just store this one and read in the next sequence
-	  
+
 	  my $alignment_location = join (":",$chromosome,$position);
-	  
+	  # warn "There is no second best hit. Overwrite status: $overwrite\n";
 	  ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
 	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
 	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
 	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
 	  
 	  if ($overwrite){
-	      #  unless (exists $alignments{$alignment_location}){
 	      $alignments{$alignment_location}->{seq_id} = $id; 
 	      $alignments{$alignment_location}->{alignment_score} = $alignment_score;
 	      $alignments{$alignment_location}->{alignment_score_second_best} = undef;
@@ -3976,14 +3976,15 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	    }
 	}
 	else{
-	    if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
+	    if ($sum_of_alignment_scores_1 >= $best_AS_so_far){ # AS are generally negative with a maximum of 0
+		# 19 07 2016 Changed to >= so that equally good alignments to different positions get added as well. Ambiguous alignments are identified and removed later.
 		$best_AS_so_far = $sum_of_alignment_scores_1;
 		$overwrite = 1;
 		# warn "Found better sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
 		# resetting the ambiguous within thread memory (if applicable at all)
 		# warn "Resetting amb within thread value to 0\n";
 		$amb_same_thread = 0;
-
+		
 		if ($ambig_bam){ # also setting a new first_ambig_alignment
 		    # Read 1
 		    $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
@@ -10161,6 +10162,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 13 April 2016
+Last edited on 19 July 2016
 HOW_TO
 }

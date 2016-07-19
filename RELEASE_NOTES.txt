@@ -1,3 +1,53 @@
+RELEASE NOTES FOR Bismark v0.16.2 (19 07 2016)
+-------------------------------------------------
+
+Bismark
+=======
+
+Fixed a bug for Bowtie 2 alignments where reads that should be considered ambiguous were incorrectly
+assigned to the first alignment thread. This error had crept in during the 'changing the behavior of 
+corner cases' in v0.16.0). Thanks to John Gaspar for spotting this!
+
+Changed the Shebang in all scripts of the Bismark suite to "#!/usr/bin/env perl" instead of 
+"#!/usr/bin/perl".
+
+deduplicate_bismark
+===================
+
+Does now bail with a useful error message when the input files are empty.
+
+
+bismark_genome_preparation
+==========================
+
+Added new option --genomic_composition so that the genomic composition can be calculated and written right
+at the genome preparation stage rather than by using bam2nuc.
+
+
+bam2nuc
+=======
+
+Now also calculates a fold coverage for the various (di-)nucleotides. The changes in the nucleotide_stats
+text file are also picked up and plotted by bismark2report.
+
+Added a new option --genomic_composition_only to just process the genomic sequence without requiring
+any data files.
+
+
+bismark2summary
+===============
+
+Added option -o/--basename <filename> to specify a certain filename. If not specified the name will
+remain 'bismark_summary_report.txt/html'.
+
+Added documentation and the options --help and --version to be consistent with the rest of Bismark.
+
+Added option --title <string> to give the HTML report a different title
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.16.1 (25 04 2016)
 ----------------------------------------------
 
