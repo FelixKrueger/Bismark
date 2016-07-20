@@ -3035,8 +3035,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	  }	
       }
       else{
-	  if ($alignment_score >= $best_AS_so_far){ # AS are generally negative with a maximum of 0;
-	      # 19 07 2016: changed this to >= so that equally good alignments are also added. Ambiguous alignments from different threads will be identified later on
+	  if ($alignment_score > $best_AS_so_far){ # AS are generally negative with a maximum of 0;
 	      $best_AS_so_far = $alignment_score;
 	      $overwrite++;
 	      # warn "Found better alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
@@ -3049,6 +3048,9 @@ sub check_bowtie_results_single_end_bowtie2{
 		  $first_ambig_alignment =~ s/_(CT|GA)_converted//;
 		  # warn "$first_ambig_alignment\n"; sleep(1);
 	      }
+	  }
+	  elsif ($alignment_score == $best_AS_so_far) {
+	      $amb_same_thread = 1;
 	  }
 	  else{
 	      # warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
@@ -3976,8 +3978,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	    }
 	}
 	else{
-	    if ($sum_of_alignment_scores_1 >= $best_AS_so_far){ # AS are generally negative with a maximum of 0
-		# 19 07 2016 Changed to >= so that equally good alignments to different positions get added as well. Ambiguous alignments are identified and removed later.
+	    if ($sum_of_alignment_scores_1 > $best_AS_so_far){ # AS are generally negative with a maximum of 0
 		$best_AS_so_far = $sum_of_alignment_scores_1;
 		$overwrite = 1;
 		# warn "Found better sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
@@ -3994,6 +3995,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		    $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
 		    # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
 		}
+	    }
+	    elsif ($sum_of_alignment_scores_1 == $best_AS_so_far){
+	        $amb_same_thread = 1;
 	    }
 	    else{
 		# warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
