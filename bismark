@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.16.2';
+my $bismark_version = 'v0.16.2_dev';
 my $command_line = join (" ",@ARGV);
 
 
@@ -7869,6 +7869,9 @@ VERSION
   my $bt2_small_index_present = 1;
   my $bt2_large_index_present = 1;
 
+  my $bt_small_index_present = 1;
+  my $bt_large_index_present = 1;
+
   if ($bowtie2){ ### Bowtie 2
 
     ### Checking for small indixes first (ending in .bt2)
@@ -7935,22 +7938,64 @@ VERSION
   }
 
   else{ ### Bowtie 1
-    ### checking the integrity of $CT_dir
-    chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-    my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
-    foreach my $file(@CT_bowtie_index){
-      unless (-f $file){
-	die "The Bowtie index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation before running Bismark.\n";
+      ### Checking for small indixes first (ending in .ebwt)
+      ### checking the integrity of $CT_dir
+      chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+      my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
+      foreach my $file(@CT_bowtie_index){
+	  unless (-f $file){
+	      warn "The Bowtie index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
+	      $bt_small_index_present = 0;
+	  }
       }
-    }
-    ### checking the integrity of $GA_dir
-    chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-    my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
-    foreach my $file(@GA_bowtie_index){
-      unless (-f $file){
-	die "The Bowtie index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation before running Bismark.\n";
+
+      ### checking the integrity of $GA_dir
+      chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+      my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
+      foreach my $file(@GA_bowtie_index){
+	  unless (-f $file){
+	      warn "The Bowtie index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
+	      $bt_small_index_present = 0;
+	  }
       }
-    }
+
+      ### Using the small index preferentially
+      if ($bt_small_index_present){
+	  $bt_large_index_present = 0;
+      }
+      else{  # only checking for large indexes if the 'normal' one can't be found
+	  warn "\nCouldn't find a traditional small Bowtie index for the genome specified (ending in .ebwt). Now searching for a large index instead (64-bit index ending in .ebwtl)...\n";
+	  
+	  ### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .ebwtl)
+	  
+	  ### checking the integrity of $CT_dir
+	  chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+	  my @CT_bowtie_index = ('BS_CT.1.ebwtl','BS_CT.2.ebwtl','BS_CT.3.ebwtl','BS_CT.4.ebwtl','BS_CT.rev.1.ebwtl','BS_CT.rev.2.ebwtl');
+	  foreach my $file(@CT_bowtie_index){
+	      unless (-f $file){
+		  warn "The Bowtie index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
+		  $bt_large_index_present = 0;
+	      }
+	  }
+	  
+	  ### checking the integrity of $GA_dir
+	  chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+	  my @GA_bowtie_index = ('BS_GA.1.ebwtl','BS_GA.2.ebwtl','BS_GA.3.ebwtl','BS_GA.4.ebwtl','BS_GA.rev.1.ebwtl','BS_GA.rev.2.ebwtl');
+	  foreach my $file(@GA_bowtie_index){
+	      unless (-f $file){
+		  warn "The Bowtie index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
+		  $bt_large_index_present = 0;
+	      }
+	  }
+
+	  if ($bt_large_index_present){
+	      warn "64-bit large genome Bowtie index found...\n";
+	  }
+	  else{
+	      die "Failed to detect either a standard (.ebwt) or 64-bit (.ebwtl) Bowtie index for the genome specified. Please run the bismark_genome_preparation --bowtie1 before launching Bismark\n\n";
+	  }
+      }
+      
   }
 
   my $CT_index_basename = "${CT_dir}BS_CT";
@@ -10162,6 +10207,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 19 July 2016
+Last edited on 20 July 2016
 HOW_TO
 }
