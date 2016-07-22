@@ -3055,7 +3055,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	      }
 	  }
 	  else{
-	      warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+	      # warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
 	  }
       }
       
