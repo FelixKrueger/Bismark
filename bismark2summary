@@ -20,7 +20,7 @@ use lib "$Bin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.16.2';
+my $bismark_version = '0.16.3';
 
 # Last modified 05 07 2016
 

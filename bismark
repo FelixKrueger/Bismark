@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd;
-my $bismark_version = 'v0.16.2_dev';
+my $bismark_version = 'v0.16.3';
 my $command_line = join (" ",@ARGV);
 
 
@@ -3041,17 +3041,16 @@ sub check_bowtie_results_single_end_bowtie2{
 	      $overwrite++;
 	      # warn "Found better or equal alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
 	      
-	      # resetting the ambiguous within thread memory (if applicable at all) only if the current alignment is really better than the previous one.
-	      # 22 07 2016: ambiguous score within same read only resets if the current alignment is really better than the previous one
+	      # 22 07 2016: resetting the ambiguous score within same thread only if the current alignment is really better than the previous one
 	      if ($alignment_score > $best_AS_so_far){
 		  # warn "Resetting amb within thread value to 0\n";
 		  $amb_same_thread = 0;
-	      }
-	      
-	      if ($ambig_bam){ # also setting a new first_ambig_alignment
-		  $first_ambig_alignment = $fhs[$index]->{last_line};
-		  $first_ambig_alignment =~ s/_(CT|GA)_converted//;
-		  # warn "$first_ambig_alignment\n"; sleep(1);
+		  
+		  if ($ambig_bam){ # also setting a new first_ambig_alignment
+		      $first_ambig_alignment = $fhs[$index]->{last_line};
+		      $first_ambig_alignment =~ s/_(CT|GA)_converted//;
+		      # warn "$first_ambig_alignment\n"; sleep(1);
+		  }
 	      }
 	  }
 	  else{
@@ -3985,23 +3984,23 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		# 19 07 2016 Changed to >= so that equally good alignments to different positions get added as well. Ambiguous alignments are identified and removed later.
 		$best_AS_so_far = $sum_of_alignment_scores_1;
 		$overwrite = 1;
-
+		
 		# warn "Found better or equal sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
 		# resetting the ambiguous within thread memory (if applicable at all) only if the current alignment is really better than the previous one.
-		# 22 07 2016: ambiguous score within same read only resets if the current alignment is really better than the previous one
+		# 22 07 2016: ambiguous score within same thread only resets if the current alignment is really better than the previous one
 		if ($sum_of_alignment_scores_1 > $best_AS_so_far){
 		    # warn "Resetting amb within thread value to 0\n";
 		    $amb_same_thread = 0;
-		}
-		
-		if ($ambig_bam){ # also setting a new first_ambig_alignment
-		    # Read 1
-		    $first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
-		    $first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
-		    # Read 2
-		    $first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
-		    $first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
-		    # warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
+		    
+		    if ($ambig_bam){ # also setting a new first_ambig_alignment
+			# Read 1
+			$first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
+			$first_ambig_alignment_line1 =~ s/_(CT|GA)_converted//;
+			# Read 2
+			$first_ambig_alignment_line2 = $fhs[$index]->{last_line_2};
+			$first_ambig_alignment_line2 =~ s/_(CT|GA)_converted//;
+			# warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
+		    }
 		}
 	    }
 	    else{
@@ -10216,6 +10215,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 22 July 2016
+Last edited on 25 July 2016
 HOW_TO
 }

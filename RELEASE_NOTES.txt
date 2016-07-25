@@ -1,3 +1,22 @@
+RELEASE NOTES FOR Bismark v0.16.3 (25 07 2016)
+-------------------------------------------------
+
+Bismark
+=======
+
+Fixed another bug where a subset of ambiguous Bowtie 2 alignments where considered unique even though
+they had been ambiguous in a different thread before, e.g.: 
+Read 1: AS:i:0 XS:i:0
+Read 2: AS:i:0
+In such cases the 'ambiguous within thread' variable is now only reset if the second alignment is truly better. This
+also affects the 'ambig.bam' output.
+
+Added support for large Bowtie (1) index files ending in .ebwtl which had been added in Bowtie v1.1.0.
+
+
+
+
+
 RELEASE NOTES FOR Bismark v0.16.2 (19 07 2016)
 -------------------------------------------------
 
