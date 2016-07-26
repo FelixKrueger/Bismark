@@ -236,7 +236,7 @@ foreach my $filename (@filenames){
   ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
   unless ($vanilla){
     if ($paired){
-      test_positional_sorting($filename);
+	test_positional_sorting($filename);
     }
   }
 
@@ -1335,7 +1335,7 @@ sub test_positional_sorting{
       $id_2_trunc =~ s/\/2$//;
 
       unless ($id_1_trunc eq $id_2_trunc){
-	die "The IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead\n\n";
+	  die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be the result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead or sort the file using 'samtools sort -n' (by read name). This may also occur using samtools merge as it does not guarantee the read order. To properly merge files please use 'samtools merge -n' or 'samtools cat'.\n\n";
       }
     }
   }
@@ -2475,6 +2475,22 @@ sub process_Bismark_results_file{
 	    $start_read_1 +=  $MD_count_1 - 1; ### Passing on the start position on the reverse strand
 	  }
 
+	  ### 26 07 2016: Adding a check to see if ID1 and ID2 are the same. If this got out of sync the following extractions will contain wrong strand identification and overlap detection
+	  if ($id_1 eq $id_2){
+	      # warn "IDs are the same, fine.\n";
+	  }
+	  
+	  else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
+	      my $id_1_trunc = $id_1;
+	      $id_1_trunc =~ s/\/1$//;
+	      my $id_2_trunc = $id_2;
+	      $id_2_trunc =~ s/\/2$//;
+	      
+	      unless ($id_1_trunc eq $id_2_trunc){
+		  die "FATAL ERROR: The IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be the result of sorting the BAM files by chromosomal position or merging several files with Samtools sort, and this is not compatible with correct methylation extraction. Please use an unsorted file instead or sort the file by name using the command 'samtools sort -n'. Paired-end files may be merged properly (without risking this error) using either 'samtools merge -n' or 'samtools cat'.\n\n";
+	      }
+	  }
+	  
 	  if ($strand eq '+') {
 	    ## we first pass the first read which is in + orientation on the forward strand; the last value is the read identity
 	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id_1,'+',$index,0,0,$cigar_1,1);
@@ -5901,7 +5917,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 25 February 2016.
+This script was last modified on 26 July 2016.
 
 HOW_TO
 }
