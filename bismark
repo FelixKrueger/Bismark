@@ -24,8 +24,8 @@ use lib "$Bin/../lib";
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 
-my $parent_dir = getcwd;
-my $bismark_version = 'v0.16.3';
+my $parent_dir = getcwd();
+my $bismark_version = 'v0.16.3_dev';
 my $command_line = join (" ",@ARGV);
 
 
@@ -240,7 +240,7 @@ foreach my $filename (@filenames){
 
   ### if 2 or more files are provided we can hold the genome in memory and don't need to read it in a second time
   unless (%chromosomes){
-      my $cwd = getcwd; # storing the path of the current working directory
+      my $cwd = getcwd(); # storing the path of the current working directory
       warn "Current working directory is: $cwd\n\n";
       read_genome_into_memory($cwd);
   }
@@ -7817,7 +7817,7 @@ VERSION
 	  if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
 	      $samtools_path = `which samtools`;
 	      chomp $samtools_path;
-	      warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n"; sleep(1);
+	      warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n";
 	      $bam = 1;
 	  }
       }
@@ -7860,7 +7860,7 @@ VERSION
   }
 
   if (chdir $genome_folder){
-    my $absolute_genome_folder = getcwd; ## making the genome folder path absolute
+    my $absolute_genome_folder = getcwd(); ## making the genome folder path absolute
     unless ($absolute_genome_folder =~/\/$/){
       $absolute_genome_folder =~ s/$/\//;
     }
@@ -8298,7 +8298,7 @@ VERSION
 
 	  if ($dovetail){
 	      if ($old_flag){
-		  die "The option  --dovetail may only be specified with the current SAM FLAG values. Please respecify...\n";
+		  die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
 	      }
 	      push @bowtie_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT alignments
 	  }
@@ -8312,6 +8312,9 @@ VERSION
   elsif ($mates2){
       die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
   }
+  
+  chdir $parent_dir or die "Failed to move back to parent directory: $!\n\n";
+  my $current = getcwd();
   
   ### SINGLE-END MAPPING
   # Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
@@ -8330,10 +8333,40 @@ VERSION
       }
       
       @filenames = (split(/,/,$singles));
-      warn "\nFiles to be analysed:\n";
-      warn "@filenames\n\n";
-      sleep (3);
   }
+  
+  warn "\nInput files to be analysed (in current folder '$current'):\n";
+  # checking if files exist and bail if they don't
+  foreach my $f (@filenames){
+      if ($mates1 and $mates2){
+	  my ($f1,$f2) = (split (/,/,$f));
+	  # mate 1
+	  if (-e $f1){
+	      warn "$f1\n";
+	  }
+	  else{
+	      die "Supplied filename '$f1' does not exist, please respecify!\n\n";   
+	  }
+	  # mate 2
+	  if (-e $f2){
+	      warn "$f2\n";
+	  }
+	  else{
+	      die "Supplied filename '$f2' does not exist, please respecify!\n\n";   
+	  }
+	  
+      }
+      else{
+	  if (-e $f){
+	      warn "$f\n";
+	  }
+	  else{
+	      die "Supplied filename '$f' does not exist, please respecify!\n\n";   
+	  }
+      }
+  }
+  sleep(1);
+ 
 
   ### MININUM INSERT SIZE (PAIRED-END ONLY)
   if (defined $minins){
@@ -10215,6 +10248,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 25 July 2016
+Last edited on 01 August 2016
 HOW_TO
 }
