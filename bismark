@@ -37,7 +37,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -7408,6 +7408,28 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   }
 }
 
+sub ensure_the_bowties_are_working{
+
+    my $path_info = shift;
+    
+    # Before we start let's have quick look if the selected Bowtie seems to be working with the path information provided
+    # To change the path to Bowtie (1/2) use --path_to_bowtie /full/path/to/the/Bowtie/executable
+    
+    my $bowtie_version;
+    my $return = system "$path_info --version >/dev/null 2>&1";
+    if ($return ne 0){
+	die "Failed to execute Bowtie porperly (return code of '$path_info --version' was $return). Please install Bowtie (1/2) first and make sure it is in the PATH, or specify the path to the Bowtie (1/2) using --path_to_bowtie /path/to/bowtie\n\n";
+    }
+    else{
+	$bowtie_version = `$path_info --version`;
+       	chomp $bowtie_version;
+	$bowtie_version =~ /bowtie.*\s+version\s+(\d+\.\d+\.\d+)/;
+	$bowtie_version = $1;
+	warn "Bowtie seems to be working fine (tested command '$path_info --version' [$bowtie_version])\n";
+    }
+    return $bowtie_version;
+}
+
 ###########################################################################################################################################
 
 sub reset_counters_and_fhs{
@@ -7748,6 +7770,8 @@ VERSION
     }
   }
 
+  ### testing if the Bowtie's appear to be working
+  my $bowtie_version = ensure_the_bowties_are_working($path_to_bowtie);
 
   if ($sam){
       warn "Output format manually set as SAM\n";
@@ -8550,7 +8574,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version);
 }
 
 
@@ -10248,6 +10272,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 01 August 2016
+Last edited on 04 August 2016
 HOW_TO
 }
