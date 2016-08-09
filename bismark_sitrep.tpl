@@ -445,12 +445,71 @@
 		{{start_deletion_mbias_2}}	
 	
 		// M-Bias Plot 2
-		//$(function () {
+		$(function () {
 			
 			// M-bias plot 2 data
-			m_bias_settings['title']['text'] = 'Read 2';
-			m_bias_settings['series'] = [{
-				name: 'CHH Total Calls',
+
+		var m_bias_settings = {
+				colors: [ '#CCF0E1','#EDD3A8','#69798A','#21BCA2','#F29D13','#0d233a','#f28f43','#77a1e5','#c42525','#a6c96a'],
+				chart: {
+					zoomType: 'x',
+					marginRight: 80,
+					alignTicks: false,
+					plotBorderWidth:1
+				},
+				subtitle: {
+					text: document.ontouchstart === undefined ?
+						'Click and drag in the plot area to zoom in' :
+						'Drag your finger over the plot to zoom in'
+				},
+				xAxis: {
+					title: { text: 'Position (bp)' },
+					tickInterval: 5,
+					minTickInterval: 0,
+					min: 0,
+				},
+				yAxis: [{
+					title: { text: '% Methylation' },
+					min: 0,
+					max: 100,
+					gridLineWidth: 0,
+					tickWidth: 1,
+					lineWidth: 1
+				}, { // secondary axis
+					title: { text: '# Methylation Calls' },
+					min:0,
+					gridLineWidth: 0,
+					lineWidth: 1,
+					tickWidth: 1,
+					opposite: true
+				}],
+				credits: { enabled: false },
+				tooltip: {
+					shared: true,
+					headerFormat: '<b>Base {point.x}</b><table>',
+					pointFormat: '<tr><td><span style="color:{series.color};">{series.name} Methylation:</span></td><td>{point.y}</td></tr>',
+					footerFormat: '</table>',
+					useHTML: true
+				},
+				legend: {
+					layout: 'vertical',
+					align: 'right',
+					verticalAlign: 'top',
+					x: -60,
+					backgroundColor: '#FFFFFF'
+				},
+				plotOptions: {
+					line: {
+						lineWidth: 1,
+						marker: { enabled: false },
+						shadow: false
+					}
+				},
+		                title: {
+		                        text: 'Read 2'
+		                },
+		                series: [{
+                         		name: 'CHH Total Calls',
 				yAxis: 1,
 				lineWidth: 2,
 				legendIndex: 5,
@@ -485,7 +544,8 @@
 				lineWidth: 3,
 				legendIndex: 0,
 				data: [ {{CpG_methylation_R2}} ]
-			}];
+			}]
+		}
 			
 			// Plot graph
 			$('#m_bias_2').highcharts(m_bias_settings);
@@ -756,7 +816,8 @@
 		  <tr><th>T</th>	<td>{{nuc_T_counts_obs}}</td> <td>{{nuc_T_counts_exp}}</td> <td>{{nuc_T_p_obs}}</td>  <td>{{nuc_T_p_exp}}</td>  <td>{{nuc_T_coverage}}</td></tr>
 		  <tr><th>C</th>	<td>{{nuc_C_counts_obs}}</td> <td>{{nuc_C_counts_exp}}</td> <td>{{nuc_C_p_obs}}</td>  <td>{{nuc_C_p_exp}}</td>  <td>{{nuc_C_coverage}}</td></tr>
 		  <tr><th>G</th>	<td>{{nuc_G_counts_obs}}</td> <td>{{nuc_G_counts_exp}}</td> <td>{{nuc_G_p_obs}}</td>  <td>{{nuc_G_p_exp}}</td>	<td>{{nuc_G_coverage}}</td></tr>
-	          </tbody><tbody>
+		</tbody>
+		<tbody>
 		  <tr><th>AC</th>	<td>{{nuc_AC_counts_obs}}</td> <td>{{nuc_AC_counts_exp}}</td> <td>{{nuc_AC_p_obs}}</td> <td>{{nuc_AC_p_exp}}</td> <td>{{nuc_AC_coverage}}</tr>
 		  <tr><th>CA</th>	<td>{{nuc_CA_counts_obs}}</td> <td>{{nuc_CA_counts_exp}}</td> <td>{{nuc_CA_p_obs}}</td> <td>{{nuc_CA_p_exp}}</td> <td>{{nuc_CA_coverage}}</tr>
 		  <tr><th>TC</th>	<td>{{nuc_TC_counts_obs}}</td> <td>{{nuc_TC_counts_exp}}</td> <td>{{nuc_TC_p_obs}}</td> <td>{{nuc_TC_p_exp}}</td> <td>{{nuc_TC_coverage}}</tr>
