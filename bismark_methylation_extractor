@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.16.3';
+my $version = 'v0.16.3_dev';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -233,11 +233,16 @@ foreach my $filename (@filenames){
   %mbias_2 = ();
 
 
-  ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
   unless ($vanilla){
-    if ($paired){
-	test_positional_sorting($filename);
-    }
+      # Testing if the file appears to be truncated, in which case we bail with a big scary warning message
+      if ($filename =~ /(\.bam$)/){
+	  bam_isTruncated($filename);
+      }
+      
+      ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
+      if ($paired){
+	  test_positional_sorting($filename);
+      }
   }
 
   my ($pid,$pids,$report_basename) = process_Bismark_results_file($filename);
@@ -1069,41 +1074,78 @@ VERSION
     }
     else{ # SAM/BAM format
 
-      my $file = $filenames[0];
-      warn "Trying to determine the type of mapping from the SAM header line of file $file\n"; sleep(1);
-	
-      ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
-      if ($file =~ /\.gz$/){
-	open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
-      }
-      elsif ($file =~ /\.cram$/ || $file =~ /\.bam$/ || isBam($file) ){ ### this would allow to read BAM files that do not end in *.bam
-	open (DETERMINE,"samtools view -h $file |") or die "Unable to read from BAM/CRAM file $file: $!\n";
-      }
-      else{
-	open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
-      }
-
-      while (<DETERMINE>){
-	last unless (/^\@/);
-	if ($_ =~ /^\@PG/){
-	  # warn "found the \@PG line:\n";
-	  # warn "$_";
-	
-	  if ($_ =~ /\s+-1\s+/ and $_ =~ /\s+-2\s+/){
-	    warn "Treating file(s) as paired-end data (as extracted from \@PG line)\n\n"; sleep(1);
-	    $paired_end = 1;
-	    $single_end = 0;
-	  }
-	  else{
-	    warn "Treating file(s) as single-end data (as extracted from \@PG line)\n\n"; sleep(1);
-	    $paired_end = 0;
-	    $single_end = 1;
-	  }
+	### PATH TO SAMTOOLS
+	if (defined $samtools_path){
+	    # if Samtools was specified as full command
+	    if ($samtools_path =~ /samtools$/){
+		if (-e $samtools_path){
+		    # Samtools executable found
+		}
+		else{
+		    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+		}
+	    }
+	    else{
+		unless ($samtools_path =~ /\/$/){
+		    $samtools_path =~ s/$/\//;
+		}
+		$samtools_path .= 'samtools';
+		if (-e $samtools_path){
+		    # Samtools executable found
+		}
+		else{
+		    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+		}
+	    }
 	}
-      }
-
-      # close DETERMINE or warn $!; # this always throws an error anyway...
+	# Check whether Samtools is in the PATH if no path was supplied by the user
+	else{
+	    if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+		$samtools_path = `which samtools`;
+		chomp $samtools_path;
+	    }
+	}
 	
+	unless (defined $samtools_path){
+	    $samtools_path = '';
+	}
+	
+	
+	my $file = $filenames[0];
+
+	warn "Trying to determine the type of mapping from the SAM header line of file $file\n"; sleep(1);
+	
+	### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
+	if ($file =~ /\.gz$/){
+	    open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+	}
+	elsif ($file =~ /\.cram$/ || $file =~ /\.bam$/ || isBam($file) ){ ### this would allow to read BAM files that do not end in *.bam
+	    open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM/CRAM file $file: $!\n";
+	}
+	else{
+	    open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
+	}
+	
+	while (<DETERMINE>){
+	    last unless (/^\@/);
+	    if ($_ =~ /^\@PG/){
+		# warn "found the \@PG line:\n";
+		# warn "$_";
+		
+		if ($_ =~ /\s+-1\s+/ and $_ =~ /\s+-2\s+/){
+		    warn "Treating file(s) as paired-end data (as extracted from \@PG line)\n\n"; sleep(1);
+		    $paired_end = 1;
+	    $single_end = 0;
+		}
+		else{
+		    warn "Treating file(s) as single-end data (as extracted from \@PG line)\n\n"; sleep(1);
+		    $paired_end = 0;
+		    $single_end = 1;
+		}
+	    }
+	}
+	
+	# close DETERMINE or warn $!; # this always throws an error anyway...
     }
   }
 
@@ -1137,15 +1179,15 @@ VERSION
   ### NO OVERLAP
   ### --no_overlap is the default (as of version 0.12.6), unless someone explicitly asks to include overlaps
   if ($include_overlap){
-    die "The option '--include_overlap' can only be specified for paired-end input!\n" unless ($paired_end);
-    warn "Setting option '--inlcude_overlap' for paired-end data (user-defined)\n\n";
-    $no_overlap = 0;
+      die "The option '--include_overlap' can only be specified for paired-end input!\n" unless ($paired_end);
+      warn "Setting option '--inlcude_overlap' for paired-end data (user-defined)\n\n";
+      $no_overlap = 0;
   }
   else{ # default
-    if ($paired_end){
-      warn "Setting option '--no_overlap' since this is (normally) the right thing to do for paired-end data\n\n";
-      $no_overlap = 1;
-    }
+      if ($paired_end){
+	  warn "Setting option '--no_overlap' since this is (normally) the right thing to do for paired-end data\n\n";
+	  $no_overlap = 1;
+      }
   }
 
   ### COMPREHENSIVE OUTPUT
@@ -1221,42 +1263,7 @@ VERSION
     warn "\n";
   }
 
-  ### PATH TO SAMTOOLS
-  if (defined $samtools_path){
-    # if Samtools was specified as full command
-    if ($samtools_path =~ /samtools$/){
-      if (-e $samtools_path){
-	# Samtools executable found
-      }
-      else{
-	die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-      }
-    }
-    else{
-      unless ($samtools_path =~ /\/$/){
-	$samtools_path =~ s/$/\//;
-      }
-      $samtools_path .= 'samtools';
-      if (-e $samtools_path){
-	# Samtools executable found
-      }
-      else{
-	die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-      }
-    }
-  }
-  # Check whether Samtools is in the PATH if no path was supplied by the user
-  else{
-    if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
-      $samtools_path = `which samtools`;
-      chomp $samtools_path;
-    }
-  }
-
-  unless (defined $samtools_path){
-    $samtools_path = '';
-  }
-
+ 
 
   if ($gazillion){
     if ($ample_mem){
@@ -1280,6 +1287,28 @@ VERSION
   return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore);
 }
 
+sub bam_isTruncated{
+    
+    my ($file) = @_;
+    warn "Checking file >>$file<< for signs of file truncation...\n";
+    
+    open (TRUNC,"$samtools_path view 2>&1 $file |") or die "Unable to read from BAM file $file: $!\n"; # 2>&1 redirects stderr to stdout, so we should be able to capture problems
+    
+    my $count = 0;
+    while (<TRUNC>){
+	chomp;
+	++$count;
+	# errors tend to start with a [], I have seen e.g.: 
+	# [W::bam_hdr_read] EOF marker is absent. The input is probably truncated.
+	if ($_ =~ /^\[/){ 
+	    if ($_ =~ /[EOF|truncated]/){ 
+		die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
+	    }
+	}
+	last if ($count == 10); 	# this should be enough
+    }
+    close TRUNC or warn "$!\n";
+}
 
 sub test_positional_sorting{
 
@@ -5917,7 +5946,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 26 July 2016.
+This script was last modified on 06 September 2016.
 
 HOW_TO
 }
