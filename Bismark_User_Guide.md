@@ -1,6 +1,6 @@
 # Bismark Bisulfite Mapper
-## User Guide - v0.15.0
-#### January 14, 2016
+## User Guide - v0.16.3
+#### 09 September, 2016
 
 -----------------------------
 
@@ -109,7 +109,7 @@ In addition, Bismark retains much of the flexibility of Bowtie 1 / Bowtie 2 (adj
 Sequence reads are first transformed into fully bisulfite-converted forward (C->T) and reverse read (G->A conversion of the forward strand) versions, before they are aligned to similarly converted versions of the genome (also C->T and G->A converted). Sequence reads that produce a unique best alignment from the four alignment processes against the bisulfite genomes (which are running in parallel) are then compared to the normal genomic sequence and the methylation state of all cytosine positions in the read is inferred. For use with Bowtie 1, a read is considered to align uniquely if one alignment exists that has with fewer mismatches to the genome than any other alignment (or if there is no other alignment). For Bowtie 2, a read is considered to align uniquely if an alignment has a unique best alignment score (as reported by the Bowtie 2 `AS:i` field). If a read produces several alignments with the same number of mismatches or with the same alignment score (`AS:i` field), a read (or a read-pair) is discarded altogether.
 
 ## Bismark alignment and methylation call report
-Upon completion, Bismark produces a run report containing information about the following: 
+Upon completion, Bismark produces a run report containing information about the following:
 - Summary of alignment parameters used
 
 - Number of sequences analysed
@@ -246,7 +246,7 @@ Bismark can generate a comprehensive alignment and methylation call output file 
 3. `4`
 4. `122893213`
 5. `122893242`
-6. `TGGGTTTTTAAGATTTTGTGTAGTTGGGGTTTGGAGATGG` 
+6. `TGGGTTTTTAAGATTTTGTGTAGTTGGGGTTTGGAGATGG`
 7. `CGGGCCCTCAAGACCCTGCGCAGCTGGGGCCTGGAGACGGAG`
 8. `z...hhh.h....hhx..z.x..x.....hx......z..`
 9. `CT`
@@ -338,7 +338,7 @@ Examples for cytosines in CHH context:
 ```
 HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920184 h
 ```
-  
+
 The `bismark_methylation_extractor` comes with a few options, such as ignoring the first <int> number of positions in the methylation call string, e.g. to remove a restriction enzyme site (if RRBS is performed with non-directional BS-Seq libraries it might be required to remove reconstituted MspI sites at the beginning of each read as they will introduce a bias into the first methylation call (please send me an email if you require further information on this)). Another useful option for paired-end reads is called `--no_overlap`: specifying this option will extract the methylation calls of overlapping parts in the middle of paired-end reads only once (using the calls from the first read which is presumably the one with a lowest error rate).
 
 For a full list of options type `bismark_methylation_extractor --help` at the command line or refer to the Appendix section at the end of this User Guide.
@@ -432,7 +432,7 @@ bismark_methylation_extractor -s --bedGraph --counts --buffer_size 10G -- cytosi
 
 If you get stuck at any point or have any questions or comments please contact me via email: [felix.krueger@babraham.ac.uk](felix.krueger@babraham.ac.uk)
 
- 
+
 
 # 4) APPENDIX - Full list of options
 ## Appendix (I): Bismark Genome Preparation
@@ -498,13 +498,13 @@ bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 - `-s <int>` / `--skip <int>`
   - Skip (i.e. do not align) the first <int> reads or read pairs from the input.
 - `-u <int>` / `--qupto <int>`
-  - Only aligns the first <int> reads or read pairs from the input. 
+  - Only aligns the first <int> reads or read pairs from the input.
   - Default: no limit.
 - `--phred33-quals`
-  - FastQ qualities are ASCII chars equal to the Phred quality plus 33. 
+  - FastQ qualities are ASCII chars equal to the Phred quality plus 33.
   - Default: on.
 - `--phred64-quals`
-  - FastQ qualities are ASCII chars equal to the Phred quality plus 64. 
+  - FastQ qualities are ASCII chars equal to the Phred quality plus 64.
   - Default: off.
 - `--solexa-quals`
   - Convert FastQ qualities from solexa-scaled (which can be negative) to phred-scaled (which can't). The formula for conversion is: phred-qual = 10 * log(1 + 10 ** (solexa-qual/10.0)) / log(10). Used with -q. This is usually the right option for use with (unconverted) reads emitted by the GA Pipeline versions prior to 1.3.
@@ -853,7 +853,7 @@ chromosome number.
 
 The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
 
-  
+
 
 <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
 
@@ -875,7 +875,7 @@ The genome-wide cytosine report (optional) is tab-delimited in the following for
 
 <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
 
-      
+
 
 Appendix (IV): Bismark reports for the test data set
 
@@ -978,4 +978,3 @@ C methylated in CpG context: 64.7% C methylated in CHG context: 0.3% C methylate
 11368
 
 32063
-
