@@ -195,6 +195,9 @@ if ($bedGraph){
       unless ($genome_folder =~/\/$/){
 	$genome_folder =~ s/$/\//;
       }
+      unless (-d $genome_folder){
+	  die "The specified genome folder does not appear to be a directory. Please respecify and try again!\n\n";
+      }
       warn "Genome folder was specified as $genome_folder\n";
     }
     else{
@@ -1057,6 +1060,43 @@ VERSION
   ### OLD (VANILLA) OUTPUT FORMAT
   unless ($vanilla){
     $vanilla = 0;
+
+    ### PATH TO SAMTOOLS
+    if (defined $samtools_path){
+	# if Samtools was specified as full command
+	if ($samtools_path =~ /samtools$/){
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+	else{
+	    unless ($samtools_path =~ /\/$/){
+		$samtools_path =~ s/$/\//;
+	    }
+	    $samtools_path .= 'samtools';
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+    }
+    # Check whether Samtools is in the PATH if no path was supplied by the user
+    else{
+	if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+	    $samtools_path = `which samtools`;
+	    chomp $samtools_path;
+	}
+    }
+    
+    unless (defined $samtools_path){
+	$samtools_path = '';
+    }
+	
   }
 
   if ($single_end){
@@ -1074,43 +1114,6 @@ VERSION
     }
     else{ # SAM/BAM format
 
-	### PATH TO SAMTOOLS
-	if (defined $samtools_path){
-	    # if Samtools was specified as full command
-	    if ($samtools_path =~ /samtools$/){
-		if (-e $samtools_path){
-		    # Samtools executable found
-		}
-		else{
-		    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-		}
-	    }
-	    else{
-		unless ($samtools_path =~ /\/$/){
-		    $samtools_path =~ s/$/\//;
-		}
-		$samtools_path .= 'samtools';
-		if (-e $samtools_path){
-		    # Samtools executable found
-		}
-		else{
-		    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-		}
-	    }
-	}
-	# Check whether Samtools is in the PATH if no path was supplied by the user
-	else{
-	    if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
-		$samtools_path = `which samtools`;
-		chomp $samtools_path;
-	    }
-	}
-	
-	unless (defined $samtools_path){
-	    $samtools_path = '';
-	}
-	
-	
 	my $file = $filenames[0];
 
 	warn "Trying to determine the type of mapping from the SAM header line of file $file\n"; sleep(1);
