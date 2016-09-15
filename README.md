@@ -8,6 +8,8 @@ Bismark is a program to map bisulfite treated sequencing reads to a genome of in
 * Alignment seed length, number of mismatches etc. are adjustable
 * Output discriminates between cytosine methylation in `CpG`, `CHG` and `CHH` `*` context
 
+Bismark is also hosted at the [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) homepage where you can see the changelogs for the last few years.
+
 This link will take you to the [Bismark](http://www.ncbi.nlm.nih.gov/pubmed/21493656) publication.
 
 This link will take you to our review about primary data analysis in [BS-Seq](http://www.ncbi.nlm.nih.gov/pubmed/22290186).
