@@ -29,6 +29,8 @@ use Getopt::Long;
 ### Just for reference, here is the the text:
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
+### 16 09 2016
+### to detect paired-end command from the @PG line we now allow -1 and -2 or --1 and --2 (or a combination thereof)
 
 my $dedup_version = 'v0.16.3_dev';
 
@@ -220,7 +222,7 @@ foreach my $file (@filenames){
 		# warn "found the \@PG line:\n";
 		# warn "$_";
 		
-		if ($_ =~ /\s+-1\s+/ and $_ =~ /\s+-2\s+/){
+		if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
 		    warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
 		    $paired = 1;
 		    $single = 0;
@@ -965,7 +967,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on September 06, 2016\n\n";
+  print "This script was last modified on September 16, 2016\n\n";
 }
 
 

@@ -1132,7 +1132,7 @@ VERSION
 		# warn "found the \@PG line:\n";
 		# warn "$_";
 		
-		if ($_ =~ /\s+-1\s+/ and $_ =~ /\s+-2\s+/){
+		if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1  and --2 (or a combination thereof). 15 09 2016
 		    warn "Treating file(s) as paired-end data (as extracted from \@PG line)\n\n"; sleep(1);
 		    $paired_end = 1;
 	    $single_end = 0;
@@ -5946,7 +5946,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 06 September 2016.
+This script was last modified on 15 September 2016.
 
 HOW_TO
 }
