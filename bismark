@@ -5775,7 +5775,7 @@ sub read_genome_into_memory{
     }
 
     unless (@chromosome_filenames){
-      die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+	die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
     }
 
     my $SQ_count = 0;
@@ -5789,6 +5789,9 @@ sub read_genome_into_memory{
 	$first_line =~ s/\r//;
 	### Extracting chromosome name from the FastA header
 	my $chromosome_name = extract_chromosome_name($first_line);
+	if ($chromosome_name eq ''){ # should prevent chromosome name with spaces at the start such as > chr1, > chr2
+	    die "Chromosome names must not be empty! Please check that there are no spaces at the start of the FastA header(s) and try again\n\n";
+	}
 	my $sequence;
 
 	while (<CHR_IN>){
@@ -5816,6 +5819,9 @@ sub read_genome_into_memory{
 	    $sequence = '';
 	    ### setting new chromosome name
 	    $chromosome_name = extract_chromosome_name($_);
+	    if ($chromosome_name eq ''){ # should prevent chromosome name with spaces at the start such as > chr1, > chr2
+		die "Chromosome names must not be empty! Please check that there are no spaces at the start of the FastA header(s) and try again.\n\n";
+	    }
 	  }
 	  else{
 	    $sequence .= uc$_;
@@ -6615,7 +6621,7 @@ sub biTransformFastQFiles_paired_end_bowtie1_gzip {
     }
   }
 
-  close CTPLUSGA or die "Couldn't close filehandle\n";
+  close CTPLUSGA or die "Couldn't close filehandle: $!\n";
   warn "\nCreated C -> T converted version of FastQ file '$file_1' and G -> A converted version of FastQ file '$file_2' ($count sequences in total)\n";
 
   if ($directional){
@@ -10272,6 +10278,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 04 August 2016
+Last edited on 19 September 2016
 HOW_TO
 }
