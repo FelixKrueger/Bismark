@@ -811,287 +811,278 @@ bismark\_methylation\_extractor [options] <filenames>
 ```
 
 
-# STOPPED HERE FOR TODAY
 #### ARGUMENTS:
 
-  &lt;filenames>
+-  `<filenames>`
+
+  A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads. For alignment files in the older custom Bismark output see option `--vanilla`.
 
 #### OPTIONS:
 
-- `-s/--single-end `
+- `-s/--single-end`
 
--p/--paired-end
+  Input file(s) are Bismark result file(s) generated from single-end read data. If neither `-s` nor `-p` is set the type of experiment will be determined automatically.
 
---vanilla
+- `-p/--paired-end`
 
---no_overlap
+  Input file(s) are Bismark result file(s) generated from paired-end read data. If neither -s nor -p is set the type of experiment will be determined automatically.
 
---include_overlap
+- `--vanilla`
 
---ignore <int>
+  The Bismark result input file(s) are in the old custom Bismark format (up to version 0.5.x) and not in SAM format which is the default as of Bismark version 0.6.x or higher. Default: OFF.
+ 
+- `--no_overlap`
 
---ignore_r2 <int>
+  For paired-end reads it is theoretically possible that Read 1 and Read 2 overlap. This option avoids scoring overlapping methylation calls twice (only methylation calls of read 1 are used for in the process since read 1 has historically higher quality basecalls than read 2). Whilst this option removes a bias towards more  methylation calls in the center of sequenced fragments it may *de facto* remove a sizeable proportion of the data. This option is on by default for paired-end data but can be disabled using `--include_overlap`.  Default: ON.
+ 
+- `--include_overlap`
 
-A space-separated list of result files in Bismark format from which methylation information is extracted for every cytosine in the read. The files may be gzip compressed (ending in .gz).
+  For paired-end data all methylation calls will be extracted irrespective of whether they overlap or not. Default: OFF.
 
-Input file(s) are Bismark result file(s) generated from single-end read data. Specifying either --single-end or --paired-end is mandatory.
+- `--ignore <int>`
 
-Input file(s) are Bismark result file(s) generated from paired-end read data. Specifying either --paired-end or --single-end is mandatory.
+  Ignore the first &lt;int> bp from the 5' end of Read 1 (or single-end alignment files) when processing the methylation call string. This can remove e.g. a restriction enzyme site at the start of each read or any other source of bias (such as PBAT-Seq data).
 
-The Bismark result input file(s) are in the old custom Bismark format (up to version 0.5.x) and not in SAM format which is the default as of Bismark version 0.6.x or higher. Default: OFF.
+- `--ignore_r2 <int>`
 
-For paired-end reads it is theoretically possible that Read 1 and Read 2 overlap. This option avoids scoring overlapping methylation calls twice (only methylation calls of read 1 are used for in the process since read 1 has historically higher quality basecalls than read 2). Whilst this option removes a bias towards more methylation calls in the center of sequenced fragments it may de facto remove a sizable proportion of the data. This option is on by default for paired-end data but can be disabled using -- include_overlap. Default: ON.
+  Ignore the first &lt;int> bp from the 5' end of Read 2 of paired-end sequencing results only. Since the first couple of bases in Read 2 of BS-Seq experiments show a severe bias towards non-methylation as a result of end-repairing sonicated fragments with unmethylated cytosines (see M-bias plot), it is recommended that the first couple of bp of Read 2 are removed before starting downstream analysis. Please see the section on M-bias plots in the Bismark User Guide for more details.
 
-For paired-end data all methylation calls will be extracted irrespective of whether they overlap or not. Default: OFF.
+- `--ignore_3prime <int>`
 
-Ignore the first <int> bp from the 5’ end of Read 1 when processing the methylation call string. This can remove e.g. a restriction enzyme site at the start of each read or any other source of bias (e.g. PBAT-Seq data).
+  Ignore the last &lt;int> bp from the 3' end of Read 1 (or single-end alignment files) when processing the methylation call string. This can remove unwanted biases from the end of reads.
 
-Ignorethefirst<int>bpfromthe5'endofRead2ofpaired-endsequencingresults only. Since the first couple of bases in Read 2 of BS-Seq experiments show a severe bias towards non-methylation as a result of end-repairing sonicated fragments with unmethylated cytosines (see M-bias plot), it is recommended that the first couple of bp of Read 2 are removed before starting downstream analysis. Please see the section on M-bias plots in the Bismark User Guide for more details. The options --ignore <int> and --ignore_r2 <int> can be combined in any desired way.
+- `--ignore_3prime_r2 <int>` 
 
---ignore_3prime <int> Ignore the last <int> bp from the 3' end of Read 1 (or single-end alignment files) when processing the methylation call string. This can remove unwanted biases
+  Ignore the last &lt;int> bp from the 3' end of Read 2 of paired-end sequencing results only. This can remove unwanted biases from the end of reads.
 
-from the end of reads.
+- `--comprehensive`
 
---ignore_3prime_r2 <int> Ignore the last <int> bp from the 3' end of Read 2 of paired-end sequencing results only. This can remove unwanted biases from the end of reads.
+  Specifying this option will merge all four possible strand-specific methylation info into context-dependent output files. The default contexts are:
+     
+     - CpG context
+     - CHG context
+     - CHH context
 
---comprehensive
+- `--merge_non_CpG`
 
---merge_non_CpG
+  This will produce two output files (in `--comprehensive mode`) or eight strand-specific output files (default) for Cs in 
 
---no_header
+     - CpG context
+     - non-CpG context
 
--o/--output DIR
+- `--report`
 
---report
+  Prints out a short methylation summary as well as the parameters used to run this script. Default: ON.
+ 
+- `--no_header`
 
---samtools_path
+  Suppresses the Bismark version header line in all output files for more convenient batch processing.
 
---gzip
+- `-o/--output DIR`
 
---version
+  Allows specification of a different output directory (absolute or relative path). If not specified explicitly, the output will be written to the current directory.
 
--h/--help
+- `--samtools_path`
+ 
+  The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.
 
---mbias_only
+- `--gzip`
 
---multicore <int>
+  The methylation extractor files (CpG\_OT\_..., CpG\_OB\_... etc) will be written out in a `GZIP` compressed form to save disk space. This option is also passed on to the genome-wide cytosine report. BedGraph and coverage files are written out as `.gz` by default.
 
-Specifying this option will merge all four possible strand-specific methylation info into context-dependent output files. The default contexts are:
+- `--version`
 
-(i) CpG context (ii) CHG context (iii) CHH context
+  Displays version information.
 
-(Depending on the C content of the Bismark result file, the output file size might reach 10-30GB!).
+- `-h/--help`
 
-This will produce two output files (in --comprehensive mode) or eight strand- specific output files (default) for Cs in
+  Displays this help file and exits.
 
-(i) CpG context
+- `--mbias_only`
 
-(ii) any non-CpG context
+  The methylation extractor will read the entire file but only output the M-bias table and plots as well as a report (optional) and then quit. Default: OFF.
 
-(Depending on the C content of the Bismark result file, the output file size might reach 10-30GB!).
+- `--mbias_off`
 
-Suppresses the Bismark version header line in all output files for more convenient batch processing.
+  The methylation extractor will process the entire file as usual but doesn't write out any M-bias report. Only recommended for users who deliberately want to keep an earlier version of the M-bias report. Default: OFF.
 
-Allows specification of a different output directory (absolute or relative path). If not specified explicitely, the output will be written to the current directory.
+- `--multicore <int>`
 
-Prints out a short methylation summary and the parameters used to run this script. Default: ON.
+  Sets the number of cores to be used for the methylation extraction process. If system resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out `.gz` output streams will in fact use ~3 cores per value of `--multicore <int>` specified (1 for the methylation extractor itself, 1 for a Samtools stream, 1 for a GZIP stream), so `--multicore 10` is likely to use around 30 cores of system resources. This option has no bearing on the `bismark2bedGraph` or `coverage2cytosine` (genome-wide cytosine report) processes.
 
-The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.
 
-The methylation extractor files (CpG_OT_..., CpG_OB_... etc) will be written out in a GZIP compressed form to save disk space. This option does not work on bedGraph and genome-wide cytosine reports as they are 'tiny' anyway.
+##### bedGraph specific options:
 
-Displays the version information. Displays this help file and exits.
+- `--bedGraph`
 
-The methylation extractor will read the entire file but only output the M-bias table and plots as well as a report (optional) and then quit. Default: OFF.
+  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take *MUCH* longer!). The `bedGraph` conversion step is performed by the external module `bismark2bedGraph`; this script needs to reside in the same folder as the bismark\_methylation\_extractor itself.
 
-Setsthenumberofcorestobeusedforthemethylationextractionprocess.Ifsystem resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out '.gz' output streams will in fact use ~3 cores per value of --multicore <int> specified (1 for the methylation extractor
+- `--zero_based`
 
-itself, 1 for a Samtools stream, 1 for GZIP stream), so --multicore 10 is likely to use around 30 cores of system resources. This option has no bearing on the speed of the bismark2bedGraph or genome-wide cytosine report processes.
+  Write out an additional coverage file (ending in `.zero.cov`) that uses 0-based genomic start and 1-based genomic end coordinates (zero-based, half-open), like used in the `bedGraph` file, instead of using 1-based coordinates throughout. Default: OFF.
 
-bedGraph specific options:
+- `--cutoff [threshold]`
 
---bedGraph
+ The minimum number of times any methylation state (methylated or unmethylated) has to be seen for a nucleotide before its methylation percentage is reported. Default: 1.
 
-After finishing the methylation extraction, the methylation output is written into a sorted bedGraph file that reports the position of a given cytosine and its methylation state (in %, seem details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with -o/--output); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context will be sorted. The option --CX_context may be used to report all cytosines irrespective of sequence context (this will take MUCH longer!). The bedGraph conversion step is performed by the external module 'bismark2bedGraph'; this script needs to reside in the same folder as the bismark_methylation_extractor itself.
+- `--remove_spaces`
 
-Write out an additional coverage file (ending in .zero.cov) that uses 0-based genomic start and 1-based genomic end coordinates (zero-based, half-open), like used in the bedGraph file, instead of using 1-based coordinates throughout. Default: OFF.
+  Replaces white spaces in the sequence ID field with underscores to allow sorting.
 
---zero_based
+- `--CX/--CX_context`
 
---cutoff [threshold] The minimum number of times a methylation state has to be seen for that nucleotide before its methylation percentage is reported. Default: 1 (i.e. all covered
+  The sorted `bedGraph` output file contains information on every single cytosine that was covered in the experiment irrespective of its sequence context. This applies to both forward and reverse strands. Please be aware that this option may generate large temporary and output files and may take a long time to sort (up to many hours). Default: OFF (i.e. Default = CpG context only).
 
-cytosines).
+- `--buffer_size <string>`
+ 
+  This allows you to specify the main memory sort buffer when sorting the methylation information. Either specify a percentage of physical memory by appending % (e.g. `--buffer_size 50%`) or a multiple of 1024 bytes, e.g. `K` multiplies by 1024, `M` by 1048576 and so on for `T` etc. (e.g. `--buffer_size 20G`). For more information on sort type `info sort` on a command line. Defaults to 2G.
 
-Replaces whitespaces in the sequence ID field with underscores to allow sorting.
+- `--scaffolds/--gazillion` 
 
-ThesortedbedGraphoutputfilecontainsinformationoneverysinglecytosinethat was covered in the experiment irrespective of its sequence context. This applies to both forward and reverse strands. Please be aware that this option may generate large temporary and output files and may take a long time to sort (up to many hours). Default: OFF. (i.e. Default = CpG context only).
+  Users working with unfinished genomes sporting tens or even hundreds of thousands of scaffolds/contigs/chromosomes frequently encountered errors with pre-sorting reads to individual chromosome files. These errors were caused by the operating system's limit of the number of filehandles that can be written to at any one time (typically 1024; to find out this limit on Linux, type: `ulimit -a`). To bypass the limitation of open filehandles, the option `--scaffolds` does not pre-sort methylation calls into individual chromosome files. Instead, all input files are temporarily merged into a single file (unless there is only a single file), and this file will then be sorted by both chromosome AND position using the Unix sort command. Please be aware that this option might take a l*ooooo*ng time to complete, depending on the size of the input files, and the memory you allocate to this process (see `--buffer_size`). Nevertheless, it seems to be working.
 
---remove_spaces
+- `--ample_memory`
 
---CX/--CX_context
+  Using this option will not sort chromosomal positions using the UNIX `sort` command, but will instead use two arrays to sort methylated and unmethylated calls. This may result in a faster sorting process of very large files, but this comes at the cost of a larger memory footprint (two arrays of the length of the largest human chromosome 1 (~250M bp) consume around 16GB of RAM). Due to overheads in creating and looping through these arrays it seems that it will actually be *slower* for small files (few million alignments), and we are currently testing at which point it is advisable to use this option. Note that `--ample_memory` is not compatible with options `--scaffolds/--gazillion` (as it requires pre-sorted files to begin with).
 
---buffer_size <string> This allows you to specify the main memory sort buffer when sorting the methylation information. Either specify a percentage of physical memory by appending % (e.g. --buffer_size 50%) or a multiple of 1024 bytes, e.g. 'K' multiplies by 1024, 'M' by 1048576 and so on for 'T' etc. (e.g. --buffer_size 20G). For more
+##### Genome-wide cytosine methylation report specific options:
 
-information on sort, type 'info sort' on a command line. Defaults to 2G.
+- `--cytosine_report`
 
---scaffolds/--gazillion Users working with unfinished genomes sporting tens or even hundreds of thousands of scaffolds/contigs/chromosomes frequently encountered errors with pre-sorting reads to individual chromosome files. These errors were caused by the operating system's limit of the number of filehandle that can be written to at any one
+  After the conversion to bedGraph has completed, the option `--cytosine_report` produces a genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all cytosine context is optional). The output considers all Cs on both forward and reverse strands and reports their position, strand, trinucleotide content and methylation state (counts are 0 if not covered). The cytosine report conversion step is performed by the external module `coverage2cytosine`; this script needs to reside in the same folder as the bismark\_methylation\_extractor itself.
 
-time (typically 1024; to find out this limit on Linux, type: ulimit -a).
+- `--CX/--CX_context`
 
-To bypass the limitation of open filehandles, the option —scaffolds does not pre- sort methylation calls into individual chromosome files. Instead, all input files are temporarily merged into a single file (unless there is only a single file), and this file
+  The output file contains information on every single cytosine in the genome irrespective of its context. This applies to both forward and reverse strands. Please be aware that this will generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse. Default: OFF (i.e. Default = CpG context only).
 
---ample_memory
+- `--zero_based`
+  
+  Uses 0-based genomic coordinates instead of 1-based coordinates. Default: OFF.
 
-will then be sorted by both chromosome AND position using the UNIX sort command. Please be aware that this option might take a looooong time to complete, depending on the size of the input files, and the memory you allocate to this process (see --buffer_size).
+- `--genome_folder <path>`
+ 
+  Enter the genome folder you wish to use to extract sequences from (full path only). Accepted formats are FastA files ending with `.fa` or `.fasta`. Specifying a genome folder path is mandatory.
 
-Using this option will not sort chromosomal positions using the UNIX sort command, but will instead use two arrays to sort methylated and unmethylated calls. This may result in a faster sorting process of very large files, but this comes at the cost of a larger memory footprint (two arrays of the length of the largest human chromosome 1 (~250M bp) consume around 16GB of RAM). Due to overheads in creating and looping through these arrays it seems that it will actually be *slower* for small files (few million alignments), and we are currently testing at which point it is advisable to use this option. Note that --ample_memory is not compatible with options --scaffolds/--gazillion (as it requires pre-sorted files to begin with).
+- `--split_by_chromosome`
 
-Genome-wide cytosine methylation report specific options:
+  Writes the output into individual files for each chromosome instead of a single output file. Files are named to include the input filename as well as the chromosome number.
 
---cytosine_report
+#### OUTPUT
+##### The bismark\_methylation_extractor output is in the form (tab delimited, 1-based coords):
 
-After the conversion to bedGraph has completed, the option --cytosine_report produces a genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based chromosome coordinates (zero-based cords are optional) and reports CpG context only (all cytosine context is optional). The output considers all Cs on both forward and reverse strands and reports their position, strand, trinucleotide content and methylation state (counts are 0 if not covered). The cytsoine report conversion step is performed by the external module 'bedGraph2cytosine'; this script needs to reside in the same folder as the bismark_methylation_extractor itself.
 
-The output file contains information on every single cytosine in the genome irrespective of its context. This applies to both forward and reverse strands. Please be aware that this will generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse. Default: OFF (i.e. Default = CpG context only).
 
-Uses zero-based coordinates like used in e.g. bed files instead of 1-based coordinates. Default: OFF.
+    <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
 
---CX/--CX_context
+      Methylated cytosines receive a '+' orientation,
+    Unmethylated cytosines receive a '-' orientation.
 
---zero_based
+##### The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
 
---genome_folder <path> Enterthegenomefolderyouwishtousetoextractsequencesfrom(fullpath only). Accepted formats are FastA files ending with '.fa' or '.fasta'. Specifying a
+    track type=bedGraph (header line)
+    <chromosome> <start position> <end position> <methylation percentage>
 
-genome folder path is mandatory.
+##### The coverage output looks like this (tab-delimited; 1-based genomic coords):
 
---split_by_chromosome Writes the output into individual files for each chromosome instead of a single output file. Files will be named to include the input filename and the
-
-chromosome number.
-
-The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
-
-
-
-<seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
-
-* Methylated cytosines receive a '+' orientation,
-
-* Unmethylated cytosines receive a '-' orientation.
-
-The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
-
-track type=bedGraph (header line)
-
-<chromosome> <start position> <end position> <methylation percentage>
-
-The coverage output looks like this (tab-delimited; 1-based genomic coords):
-
-<chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
-
-The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
-
-<chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
-
-
-
-Appendix (IV): Bismark reports for the test data set
-
-UsingBowtie 1:
-
-Running Bismark with the default options (e.g. bismark /data/public/Genomes/Human/GRCh37/
-
-test_data.fastq) should result in this mapping report:
-
-Bismark report for: test_data.fastq (version: v0.7.8)
-
-Option '--directional' specified: alignments to complementary strands will be ignored (i.e. not performed!)
-
-Bowtie was run against the bisulfite genome of /data/public/Genomes/Human/GRCh37/ with the specified options: -q -n 1 -k 2 --best --chunkmbs 512
-
-Final Alignment report
-
-======================
-
-Sequences analysed in total: 10000
-
-Number of alignments with a unique best hit from the different alignments: 6361 Mapping efficiency: 63.6%
-
-Sequences with no alignments under any condition: 2626
-
-Sequences did not map uniquely: 1013
-
-Sequences which were discarded because genomic sequence could not be extracted: 0
-
-Number of sequences with unique best (first) alignment came from the bowtie output:
-
-CT/CT: 3187 CT/GA: 3174 GA/CT: 0 GA/GA: 0
-
-((converted) top strand) ((converted) bottom strand)
-
-(complementary to (converted) top strand) (complementary to (converted) bottom strand)
-
-Number of alignments to (merely theoretical) complementary strands being rejected in total: 0
-
-Final Cytosine Methylation Report ================================= Total number of C's analysed: 52942
-
-Total methylated C's in CpG context: 1740 Total methylated C's in CHG context: 36 Total methylated C's in CHH context: 171
-
-Total C to T conversions in CpG context: Total C to T conversions in CHG context: Total C to T conversions in CHH context:
-
-C methylated in CpG context: 62.9% C methylated in CHG context: 0.3% C methylated in CHH context: 0.5%
-
-1027
-
-12889
-
-37079
-
-UsingBowtie 2:
-
-Running Bismark with the default options (e.g. bismark -–bowtie2 --score-min L,0,-0.6
-
-/data/public/Genomes/Human/GRCh37/ test_data.fastq) should result in this mapping report:
-
-Bismark report for: test_data.fastq (version: v0.7.8)
-
-Option '--directional' specified: alignments to complementary strands will be ignored (i.e. not performed!)
-
-Bowtie was run against the bisulfite genome of /data/public/Genomes/Human/GRCh37/ with the specified options: -q -- score-min L,0,-0.6 --ignore-quals
-
-Final Alignment report
-
-======================
-
-Sequences analysed in total: 10000
-
-Number of alignments with a unique best hit from the different alignments: 5658 Mapping efficiency: 56.6%
-
-Sequences with no alignments under any condition: 2893
-
-Sequences did not map uniquely: 1449
-
-Sequences which were discarded because genomic sequence could not be extracted: 0
-
-Number of sequences with unique best (first) alignment came from the bowtie output:
-
-CT/CT: 2820 CT/GA: 2838 GA/CT: 0 GA/GA: 0
-
-((converted) top strand) ((converted) bottom strand)
-
-(complementary to (converted) top strand) (complementary to (converted) bottom strand)
-
-Number of alignments to (merely theoretical) complementary strands being rejected in total: 0
-
-Final Cytosine Methylation Report ================================= Total number of C's analysed: 45985
-
-Total methylated C's in CpG context: 1550 Total methylated C's in CHG context: 34 Total methylated C's in CHH context: 126
-
-Total C to T conversions in CpG context: Total C to T conversions in CHG context: Total C to T conversions in CHH context:
-
-C methylated in CpG context: 64.7% C methylated in CHG context: 0.3% C methylated in CHH context: 0.4%
-
-844
-
-11368
-
-32063
+
+    <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
+
+##### The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
+
+
+    <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
+
+
+
+# Appendix (IV): Bismark reports for the test data set
+
+##### Using Bowtie:
+
+    Running Bismark with the default options (e.g. bismark --bowtie1 /data/public/Genomes/Human/GRCh37/ test_data.fastq) should result in this mapping report:
+    
+    Bismark report for: test_data.fastq (version: v0.7.8)
+    
+    Option '--directional' specified: alignments to complementary strands will be ignored (i.e. not performed!)
+    Bowtie was run against the bisulfite genome of /data/public/Genomes/Human/GRCh37/ with the specified options: -q -n 1 -k 2 --best --chunkmbs 512
+    
+    Final Alignment report
+    ======================
+    Sequences analysed in total: 10000
+    Number of alignments with a unique best hit from the different alignments: 6361 Mapping efficiency: 63.6%
+  	Sequences with no alignments under any condition: 2626
+    Sequences did not map uniquely: 1013
+    Sequences which were discarded because genomic sequence could not be extracted: 0
+    Number of alignments to (merely theoretical) complementary strands being rejected in total: 0
+    
+    Number of sequences with unique best (first) alignment came from the bowtie output:
+    CT/CT: 3187 ((converted) top strand)
+    CT/GA: 3174 ((converted) bottom strand)
+    GA/CT: 0    (complementary to (converted) top strand)
+    GA/GA: 0    (complementary to (converted) bottom strand)
+    
+    Final Cytosine Methylation Report
+    ================================= 
+    Total number of C's analysed: 52942
+
+    Total methylated C's in CpG context: 1740
+    Total methylated C's in CHG context: 36 
+    Total methylated C's in CHH context: 171
+    
+    Total C to T conversions in CpG context: 1027
+    Total C to T conversions in CHG context: 12889
+    Total C to T conversions in CHH context: 37079
+    
+    C methylated in CpG context: 62.9% 
+    C methylated in CHG context: 0.3% 
+    C methylated in CHH context: 0.5%
+    
+       
+    
+    
+
+##### Using Bowtie 2:
+
+    Running Bismark with the following options (e.g. bismark --score-min L,0,-0.6 /data/public/Genomes/Human/GRCh37/ test_data.fastq) should result in this mapping report:
+    
+    Bismark report for: test_data.fastq (version: v0.7.8)
+    Option '--directional' specified: alignments to complementary strands will be ignored (i.e. not performed!)
+    Bowtie2 was run against the bisulfite genome of /data/public/Genomes/Human/GRCh37/ with the specified options: -q -- score-min L,0,-0.6 --ignore-quals
+    
+    Final Alignment report
+    ======================
+    Sequences analysed in total: 10000
+    
+    Number of alignments with a unique best hit from the different alignments: 5658 Mapping efficiency: 56.6%
+    Sequences with no alignments under any condition: 2893
+    Sequences did not map uniquely: 1449
+    Sequences which were discarded because genomic sequence could not be extracted: 0
+    Number of alignments to (merely theoretical) complementary strands being rejected in total: 0
+    
+    Number of sequences with unique best (first) alignment came from the bowtie output:
+    
+    CT/CT: 2820 ((converted) top strand) 
+    CT/GA: 2838 ((converted) bottom strand)
+    GA/CT: 0    (complementary to (converted) top strand) 
+    GA/GA: 0    (complementary to (converted) bottom strand)
+       
+    Final Cytosine Methylation Report
+    ================================= 
+    Total number of C's analysed: 45985
+    
+    Total methylated C's in CpG context: 1550
+    Total methylated C's in CHG context: 34 
+    Total methylated C's in CHH context: 126
+    
+    Total C to T conversions in CpG context: 844
+    Total C to T conversions in CHG context: 11368
+    Total C to T conversions in CHH context:32063
+    
+    C methylated in CpG context: 64.7% 
+    C methylated in CHG context: 0.3% 
+    C methylated in CHH context: 0.4%
+    
+    
+    
+    
+    
+    
