@@ -2,13 +2,13 @@
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
 ## User Guide - v0.16.3
-#### 06 October, 2016
+#### 07 October, 2016
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
 # 1) Quick Reference
 
-Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie](http://bowtie-bio.sourceforge.net/index.shtml) or [Bowtie 2](http://bowtie- bio.sourceforge.net/bowtie2) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
+Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie](http://bowtie-bio.sourceforge.net/index.shtml) or [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
 
 As of version 0.14.0 or higher, Bismark may be run using parallelisation for both the alignment and the methylation extraction step. Search for `--multicore` for more details below.
 
@@ -47,7 +47,7 @@ This will produce two output files:
 
 
 
-## (III) Running the `bismark_methylation_extractor`
+## (III) Running `bismark_methylation_extractor`
 **USAGE:**
 ```
 bismark_methylation_extractor [options] <filenames>
@@ -96,7 +96,7 @@ Alignment speed depends largely on the read length and alignment parameters used
 ## BS-Seq test data set
 A test BS-Seq data set is available for download from the Bismark project or Github pages. It contains 10,000 single- end shotgun BS reads from human ES cells in FastQ format (from SRR020138, Lister et al., 2009; trimmed to 50 bp; base call qualities are Sanger encoded Phred values (Phred33)).
 
-## Which kind of BS-Seq files and/or experiments are supported?
+## Which kind of BS-Seq files are supported?
 Bismark supports the alignment of bisulfite-treated reads (whole genome shotgun BS-Seq (WGSBS), reduced-representation BS-Seq (RRBS) or PBAT-Seq (Post-Bisulfite Adapter Tagging) for the following conditions:
 
 - sequence format either `FastQ` or `FastA`
@@ -158,7 +158,7 @@ A typical command could look like this:
 bismark_genome_preparation --path_to_bowtie /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
 ```
 
-## (II) Bismark alignment step
+## (II) Bismark Alignment Step
 
 This step represents the actual bisulfite alignment and methylation calling part. Bismark requires the user to specify only two things:
 
@@ -418,7 +418,7 @@ For more on this topic please also see [this post on QCFail.com](https://sequenc
 
 The M-bias plot should enable researchers to make an informed decision whether or not to leave the bias in the final data or to remove it (e.g. using the methylation extractor option `--ignore`).
 
-## (III) Running `bismark_methylation_extractor`
+### (III) Running `bismark_methylation_extractor`
 **USAGE:** `bismark_methylation_extractor [options] <filenames>`
 
 A typical command for a single-end file could look like this: 
@@ -823,7 +823,7 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 
 
-# Appendix (III): Bismark Methylation Extractor
+## Appendix (III): Bismark Methylation Extractor
 
 A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing `bismark_methylation_extractor --help`
 
@@ -1009,7 +1009,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
     <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
 
 
-# Appendix (IV): Bismark reports for the test data set
+## Appendix (IV): Bismark reports for the test data set
 Please note that this has been run with a fairly early version however I wouldn't expect the numbers to change much.
 
 ##### Using Bowtie:
