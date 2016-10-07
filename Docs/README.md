@@ -1,17 +1,14 @@
 # Bismark Bisulfite Mapper
-
-![Bismark](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark.png)
+<img title="Bismark" id="header_img" src="Images/bismark.png">
 
 ## User Guide - v0.16.3
 #### 06 October, 2016
 
-This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [`QCFail.com`](https://sequencing.qcfail.com/).
-
----
+This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
 # 1) Quick Reference
 
-Bismark needs a working version of Perl and it is run from the command line. Furthermore, [`Bowtie`](http://bowtie-bio.sourceforge.net/index.shtml) or [`Bowtie 2`](http://bowtie- bio.sourceforge.net/bowtie2) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
+Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie](http://bowtie-bio.sourceforge.net/index.shtml) or [Bowtie 2](http://bowtie- bio.sourceforge.net/bowtie2) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
 
 As of version 0.14.0 or higher, Bismark may be run using parallelisation for both the alignment and the methylation extraction step. Search for `--multicore` for more details below.
 
@@ -1101,7 +1098,7 @@ Please note that this has been run with a fairly early version however I wouldn'
     C methylated in CHH context: 0.4%
     
     
-    
-    
-    
-    
+# Credits
+Bismark was written by Felix Krueger at the [Babraham Bioinformatics Group](http://www.bioinformatics.babraham.ac.uk/).
+
+![Babraham Bioinformatics](Images/bioinformatics_logo.png)
