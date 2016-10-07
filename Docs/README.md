@@ -96,7 +96,7 @@ Bismark holds the reference genome in memory and in addition to that runs up to 
 
 Alignment speed depends largely on the read length and alignment parameters used. Allowing many mismatches and using a short seed length (which is the default option for Bowtie 1, see below) tends to be fairly slow, whereas looking for near perfect matches can align around 5-25 million sequences per hour (using Bowtie 1). Since we haven’t tested Bowtie 2 very much yet we can’t give recommendations about alignment parameters and speed of Bowtie 2 at the current time.
 
-## BS-Seq test data set
+## BS-Seq test data set
 A test BS-Seq data set is available for download from the Bismark project or Github pages. It contains 10,000 single- end shotgun BS reads from human ES cells in FastQ format (from SRR020138, Lister et al., 2009; trimmed to 50 bp; base call qualities are Sanger encoded Phred values (Phred33)).
 
 ## Which kind of BS-Seq files and/or experiments are supported?
@@ -235,7 +235,7 @@ By default, Bismark generates SAM output for all alignment modes. Please note th
 
 The mate read of paired-end alignments is written out as an additional separate line in the same format.
 
-### Custom (‘vanilla’) Bismark output (Bowtie 1 only)
+### Custom (‘vanilla’) Bismark output (Bowtie 1 only)
 Bismark can generate a comprehensive alignment and methylation call output file for each input file or set of paired-end input files. The sequence basecall qualities of the input FastQ files are written out into the Bismark output file as well to allow filtering on quality thresholds. Please note that the quality values are encoded in Sanger format (Phred 33 scale), even if the input was in Phred64 or the old Solexa format.
 
 ### The single-end output contains the following information (1 line per sequence, tab delimited):
@@ -610,7 +610,7 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
   Disables the `--best` option which is on by default. This can speed up the alignment process, e.g. for testing purposes, but for credible results it is not recommended to disable `--best`.
 
-##### Output:
+##### Output:
 
 - `--non_directional`
   The sequencing library was constructed in a non strand-specific manner, alignments to all four bisulfite strands will be reported.
