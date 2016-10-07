@@ -8,14 +8,25 @@ Bismark is a program to map bisulfite treated sequencing reads to a genome of in
 * Alignment seed length, number of mismatches etc. are adjustable
 * Output discriminates between cytosine methylation in `CpG`, `CHG` and `CHH` `*` context
 
-Bismark is also hosted at the [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) homepage where you can see the changelogs for the last few years.
+## Installation
+Bismark is written in Perl and is executed from the command line. To install Bismark simply download the latest release of the code from the [Releases page](https://github.com/FelixKrueger/Bismark/releases) and extract the files into a Bismark installation folder.
 
-This link will take you to the [Bismark](http://www.ncbi.nlm.nih.gov/pubmed/21493656) publication.
+Bismark needs the following tools to be installed and available in the `PATH`:
+* [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [Bowtie1](http://bowtie-bio.sourceforge.net/)
+* [Samtools](http://www.htslib.org/)
 
-This link will take you to our review about primary data analysis in [BS-Seq](http://www.ncbi.nlm.nih.gov/pubmed/22290186).
+## Documentation
+The Bismark documentation can be found with the code in the [Docs](Docs) subfolder and also read online.
 
-This link will take you to our protocol '[Quality Control, trimming and alignment of Bisulfite-Seq data](http://www.epigenesys.eu/en/protocols/bio-informatics/483-quality-control-trimming-and-alignment-of-bisulfite-seq-data-prot-57)' at the Epigenesys website.
+There is also an overview of the alignment modes that are currently supported by Bismark: [Bismark alignment modes](http://www.bioinformatics.babraham.ac.uk/projects/bismark/Bismark_alignment_modes.pdf) (pdf).
 
-Here you can access the Bismark documentation [Bismark User Guide](http://www.bioinformatics.babraham.ac.uk/projects/bismark/Bismark_User_Guide.pdf) (pdf).
+## Links
+* Bismark Publication
+    * http://www.ncbi.nlm.nih.gov/pubmed/21493656
+* Our review about primary data analysis in BS-Seq
+    * http://www.ncbi.nlm.nih.gov/pubmed/22290186
+* Our protocol _"Quality Control, trimming and alignment of Bisulfite-Seq data"_
+    * http://www.epigenesys.eu/en/protocols/bio-informatics/483-quality-control-trimming-and-alignment-of-bisulfite-seq-data-prot-57
 
-Here is an overview of the alignment modes that are currently supported by Bismark: [Bismark alignment modes](http://www.bioinformatics.babraham.ac.uk/projects/bismark/Bismark_alignment_modes.pdf) (pdf).
+## Credits
+Bismark was written by Felix Krueger, part of the [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) group.
