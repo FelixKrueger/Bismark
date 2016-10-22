@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
+use Text::Markdown 'markdown';
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -15,10 +16,18 @@ use warnings;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-use Text::Markdown 'markdown';
+### This script takes an input Markdown file, typically the Bismark User Guide
+### and converts it to HTML using the Text::Markdown perl package.
+### It inserts this into a static template and builds a side navigation
+### / table of contents automatically, based on level 1/2 headings.
+
+# Command line arguments
+my ($input_fn, $output_fn) = @ARGV;
+if (not defined $output_fn) {
+  die "Usage: make_docs.pl input.md output.html\n";
+}
 
 # Load the markdown file specified on the command line
-my $input_fn = $ARGV[0];
 open my $fh_i, '<', $input_fn or die;
 $/ = undef;
 my $md = <$fh_i>;
@@ -30,8 +39,6 @@ my $html = markdown($md);
 # Add ID attributes to headings, collect for ToC
 my @toc;
 sub cleanid {
-    # I leave it as an excercise to the reader to make a more elegant cleanup script.
-    # I'm doing this on a train and I'm going to have to get off soon.
     my ($text, $level) = @_;
     (my $id = $text) =~ s/[^A-Za-z]+/-/g;
     $id = lc($id);
@@ -63,22 +70,53 @@ foreach (@toc){
     $toclevel = $_->{'level'};
 }
 $tocstring .= '</li></ul>';
-# use Data::Dumper;
-# print Dumper(@toc);
 
-# Load the template file
-my $template_fn = 'docs_template.html';
-open my $fh_t, '<', $template_fn or die;
-$/ = undef;
-my $template = <$fh_t>;
-close $fh_t;
+my $template = << 'DOCS_TEMPLATE';
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>Bismark User Guide</title>
+  <style type="text/css">
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol";margin:10px;color:#333}
+    blockquote{font-style:italic;font-size:.9em;color:#999}
+    h1{margin-top:80px;padding-bottom:5px;border-bottom:1px solid #dedede}
+    img{max-width:100%}
+    pre{max-width:100%;overflow:auto;background-color:#ededed;border-radius:5px;padding:8px}
+    code{white-space:pre-wrap;background-color:#f9f9f9;padding:3px 5px;font-family:Consolas,"Liberation Mono",Menlo,Courier,monospace;font-size:90%}
+    pre code{background-color:#ededed;white-space:pre}
+    hr{margin:30px 0;border:0;border-top:1px solid #dedede;height:0}
+    #header_img{float:right;max-width:30%;margin-top:-60px}
+    #TOC::before{content:'Table of Contents';font-weight:700;font-size:2em}
+    #TOC{font-size:.9em;background-color:#ededed;border-radius:10px;padding:10px}
+    #TOC ul{padding:0;list-style-type:none;margin-bottom:10px}
+    #TOC ul ul{margin-left:10px;text-decoration:italic}
+    #TOC ul li{margin-top:5px}
+    #TOC a{text-decoration:none;color:#333}
+    #TOC ul ul a{color:#999}
+    #TOC ul ul a code{background-color:transparent}
+    @media screen and (min-width: 700px) {
+      body{margin:20px 420px 20px 20px}
+      #TOC{position:fixed;right:20px;top:20px;bottom:20px;width:350px;max-height:100%;overflow:auto}
+    }
+    #bismark-bisulfite-mapper{margin-top:0;font-size:6em;font-weight:100;border:none}
+  </style>
+  <!--[if lt IE 9]><script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script><![endif]-->
+</head>
+<body>
+<nav id="TOC">{{ TOC }}</nav>
+{{ CONTENT }}
+</body>
+</html>
+DOCS_TEMPLATE
+
 
 # Insert the content
 $template =~ s/{{ TOC }}/$tocstring/;
 $template =~ s/{{ CONTENT }}/$html/;
 
 # Print to output
-my $output_fn = $ARGV[1];
 open(my $fh_o, '>', $output_fn) or die;
 print $fh_o $template;
 close $fh_o;
