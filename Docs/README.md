@@ -537,7 +537,7 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
   Skip (i.e. do not align) the first &lt;int> reads or read pairs from the input.
 
-- `-u <int>` / `--qupto <int>`
+- `-u <int>` / `--upto <int>`
 
   Only aligns the first &lt;int> reads or read pairs from the input. Default: no limit.
 
