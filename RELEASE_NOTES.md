@@ -1,5 +1,14 @@
 # Bismark Release Notes
 
+## RELEASE NOTES FOR Bismark v0.16.3_dev (03 11 2016)
+
+### Bismark
+
+The option `--dovetail` is now the default behaviour for paired-end Bowtie2 libraries to assist with
+alignments that have undergone 5'-end trimming. Can be disabled using the new option `--no_dovetail`.
+
+
+
 ## RELEASE NOTES FOR Bismark v0.16.3 (25 07 2016)
 
 

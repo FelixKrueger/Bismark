@@ -7648,6 +7648,7 @@ sub process_command_line{
   my $cram_ref;
   my $nucleotide_coverage;
   my $dovetail;
+  my $no_dovetail;
   
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7704,7 +7705,7 @@ sub process_command_line{
 				 'cram'                    => \$cram,
 				 'cram_ref=s'              => \$cram_ref,
 				 'nucleotide_coverage'     => \$nucleotide_coverage,
-				 'dovetail'                => \$dovetail,
+				 'no_dovetail'             => \$no_dovetail,
 				);
 
 
@@ -8322,15 +8323,15 @@ VERSION
 	  push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
 	  push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
 
-	  if ($pbat){
-	      $dovetail = 1; # setting the option $dovetail for PBAT paired-end alignments
+	  unless ($no_dovetail){
+	      $dovetail = 1; # setting the option $dovetail automatically so that 5' trimmed sequences align better
 	  }
-
+	  
 	  if ($dovetail){
 	      if ($old_flag){
 		  die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
 	      }
-	      push @bowtie_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT alignments
+	      push @bowtie_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
 	  }
       }
       
@@ -10156,7 +10157,9 @@ Bowtie 2 paired-end options:
                          By default, dovetailing is considered inconsistent with concordant alignment, but setting --dovetail
                          causes Bowtie 2 to consider dovetailing alignments as concordant. This becomes relevant whenever
                          Reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues.
-                         --dovetail is set automatically for PBAT libraries.
+                         --dovetail is set automatically for paired-end libraries.
+
+--no_dovetail            Disables the --dovetail option for paired-end alignments. Default: OFF.
 
 
 Bowtie 2 effort options:
@@ -10278,6 +10281,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 19 September 2016
+Last edited on 03 November 2016
 HOW_TO
 }
