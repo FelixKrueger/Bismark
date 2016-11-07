@@ -36,7 +36,7 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.16.3';
+my $bismark_version = 'v0.16.3_dev';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
@@ -223,10 +223,13 @@ sub launch_bowtie_indexer{
 
 sub process_sequence_files {
 
+
   my ($total_CT_conversions,$total_GA_conversions) = (0,0);
   $verbose and print "Bismark Genome Preparation - Step II: Bisulfite converting reference genome\n\n";
-  sleep (3);
-
+  sleep (1);
+  
+  chdir $genome_folder or die "Could't move to directory $genome_folder $!";
+  
   $verbose and print "conversions performed:\n";
   $verbose and print join("\t",'chromosome','C->T','G->A'),"\n";
 
@@ -451,8 +454,8 @@ sub create_bisulfite_genome_folders{
     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions\n";
   }
 
-  warn "Bisulfite Genome Indexer version $bismark_version (last modified 25 August 2015)\n\n";
-  sleep (3);
+  warn "Bisulfite Genome Indexer version $bismark_version (last modified 07 November 2016)\n";
+  sleep (1);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
   my $bisulfite_dir = "${genome_folder}Bisulfite_Genome/";
@@ -462,7 +465,7 @@ sub create_bisulfite_genome_folders{
   }
   else{
     print "\nA directory called $bisulfite_dir already exists. Bisulfite converted sequences and/or already existing Bowtie (1 or 2) indices will be overwritten!\n\n";
-    sleep(5);
+    sleep(2);
   }
 
   chdir $bisulfite_dir or die "Unable to move to $bisulfite_dir\n";
@@ -627,6 +630,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-This script was last modified on 07 July 2016.
+This script was last modified on 07 November 2016.
 HOW_TO
 }
