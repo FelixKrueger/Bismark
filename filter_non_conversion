@@ -1,0 +1,147 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Getopt::Long;
+use Cwd;
+use FindBin qw($Bin);
+use lib "$Bin/../lib";
+$|++;
+
+## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+my $parent_dir = getcwd();
+my $filter_version = 'v0.16.3_dev';
+
+process_commandline();
+
+foreach my $infile (@ARGV){
+    unless ($infile =~ /bam$/){
+	die "Please provide a BAM file to continue!\n";
+    }
+
+    process_file($infile);
+}
+
+sub process_file{
+    my $infile = shift;
+    open (IN,"samtools view -h $infile |") or die $!;
+    
+    my $outfile = $infile;
+    $outfile =~ s/$/_nonCpG_filtered.bam/;
+    open (OUT,"| samtools view -bS - > $outfile") or die $!;
+    
+    my $removed = $infile;
+    $removed =~ s/$/_removed_seqs.txt/;
+    open (REMOVED,'>',$removed) or die $!;
+    
+    my $count = 0;
+    my $kicked = 0;
+    
+    while (<IN>){
+	++$count;
+	if ($_ =~ /^\@/){
+	    print OUT;
+	    print REMOVED;
+	    next;
+	}
+	# last if ($count == 50);
+	my ($meth_call) = $1 if ($_ =~ /XM:Z:(.+?)\s/);
+	# warn "$meth_call\n"; sleep(1);
+	my $sequence_fails = 0;
+	my $nonCpG_count = 0;
+	
+	my @chars = split //,$meth_call;
+	
+	foreach my $char(@chars){
+	    if ( ($char eq 'H') or ($char eq 'X') ){
+		++$nonCpG_count;
+	    }
+	    elsif ( ($char eq 'z') or ($char eq 'Z') ){
+		# $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+	    }
+	    
+	    if ($nonCpG_count >= 3){
+		$sequence_fails = 1;
+		last;
+	    }
+	}
+
+	if ($sequence_fails){
+	    ++$kicked;
+	    print REMOVED;
+	}
+	else{
+	    print OUT;
+	}
+	
+    }
+    warn "Analysed $count sequences in total\n";
+    my $percent = sprintf ("%.1f",$kicked/$count*100);
+    warn "Sequences removed because of too much non-CpG methylation: $kicked ($percent%)\n\n";
+    
+    close OUT or warn "Couldn't close OUT... $!\n";
+}
+
+
+sub process_commandline{
+    
+    my $help;
+    my $representative;
+    my $single;
+    my $paired;
+    my $global_single;
+    my $global_paired;
+    my $vanilla;
+    my $samtools_path;
+    my $bam;
+    my $rrbs;
+    my $version;
+    
+    my $command_line = GetOptions ('help' => \$help,
+				   'representative' => \$representative,
+				   's|single' => \$global_single,
+				   'p|paired' => \$global_paired,
+				   'vanilla' => \$vanilla,
+				   'samtools_path=s' => \$samtools_path,
+				   'bam' => \$bam,
+				   'barcode' => \$rrbs,
+				   'version' => \$version,
+	);
+    
+    die "Please respecify command line options\n\n" unless ($command_line);
+    
+    if ($help){
+	print_helpfile();
+	exit;
+    }
+    
+    if ($version){
+	print << "VERSION";
+	
+                	Bismark non-conversion filtering
+	    
+               	    Bismark non-conversion version: $filter_version
+	    Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+                    https://github.com/FelixKrueger/Bismark
+		
+		
+VERSION
+		exit;
+    }
+
+    return;
+}
