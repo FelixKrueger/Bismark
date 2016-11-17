@@ -539,6 +539,9 @@ by read name first (e.g. using samtools sort -n)  ***
 --threshold [int]      The number of methylated cytosines in non-CG context at which reads or read pairs are filtered
                        out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
 
+--samtools_path        The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                       explicitly if Samtools is in the PATH already.
+
 
 --help                 Displays this help text end exits.
 
