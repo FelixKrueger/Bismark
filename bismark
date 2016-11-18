@@ -23,7 +23,7 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-
+my $start_run = time();
 my $parent_dir = getcwd;
 my $bismark_version = 'v0.15.2';
 my $command_line = join (" ",@ARGV);
@@ -9642,6 +9642,12 @@ sub make_mismatch_string{
   return $MD_tag;
 
 }
+
+my $end_run = time();
+my $run_time = $end_run - $start_run;
+
+print REPORT "Job took $run_time seconds\n";
+
 
 ### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
 ### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
