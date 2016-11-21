@@ -10134,9 +10134,9 @@ Bowtie 2 alignment options:
 
 -L <int>                 Sets the length of the seed substrings to align during multiseed alignment. Smaller values
                          make alignment slower but more senstive. Default: the --sensitive preset of Bowtie 2 is
-                         used by default, which sets -L to 20. maximum of L can be set to 32. the length of the seed
-			 would effect the alignment speed dramatically while the larger of L, the faster of the aligment.
-			 This option is only available for Bowtie 2 (for Bowtie 1 see -l).
+                         used by default, which sets -L to 20. maximum of L can be set to 32. The length of the seed
+                         would effect the alignment speed dramatically while the larger L, the faster the aligment.
+                         This option is only available for Bowtie 2 (for Bowtie 1 see -l).
 
 --ignore-quals           When calculating a mismatch penalty, always consider the quality value at the mismatched
                          position to be the highest possible, regardless of the actual value. I.e. input is treated
