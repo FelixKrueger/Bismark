@@ -26,6 +26,7 @@ use lib "$Bin/../lib";
 
 my $parent_dir = getcwd();
 my $bismark_version = 'v0.16.3_dev';
+my $start_run = time();
 my $command_line = join (" ",@ARGV);
 
 
@@ -43,7 +44,7 @@ my @fhs;         # stores alignment process names, bisulfite index location, bow
 my %chromosomes; # stores the chromosome sequences of the mouse genome
 my %SQ_order;    # stores the order of sequences in the reference. This is to produce SAM/BAM files with a known order of chromosomes
 my %counting;    # counting various events
-my $final_output_filename; # required for the nucleotide coverage report 
+my $final_output_filename; # required for the nucleotide coverage report
 my @pids; # storing the process IDs of child processes in parallel mode
 
 
@@ -255,7 +256,7 @@ foreach my $filename (@filenames){
   my ($single_end,$paired_end);
   ### PAIRED-END ALIGNMENTS
   if ($filename =~ ','){
-      
+
     $single_end = 0;
     $paired_end = 1;
 
@@ -280,7 +281,7 @@ foreach my $filename (@filenames){
 	my $temp_filename_1 = subset_input_file_FastA($filename_1,$pid,$offset);
 	warn "Using the subset file >${temp_dir}$temp_filename_1< as new in-file 1 (instead of >$filename_1<)\n";
 	$filename_1 = "${temp_dir}$temp_filename_1";
-	
+
 	my $temp_filename_2 = subset_input_file_FastA($filename_2,$pid,$offset);
 	warn "Using the subset file >${temp_dir}$temp_filename_2< as new in-file 2 (instead of >$filename_2<)\n";
 	$filename_2 = "${temp_dir}$temp_filename_2";
@@ -345,7 +346,7 @@ foreach my $filename (@filenames){
 	if ($bowtie2){
 	  ($C_to_T_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	  ($G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
-	
+
 	  $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 	  $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
 	  $fhs[1]->{inputfile_1} = undef;
@@ -358,7 +359,7 @@ foreach my $filename (@filenames){
 	else{ # Bowtie 1 alignments
 	  if ($gzip){
 	    ($C_to_T_infile_1) = biTransformFastQFiles_paired_end_bowtie1_gzip ($filename_1,$filename_2); # passing both reads at the same time
-	
+
 	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1; # this file contains both read 1 and read 2 in tab delimited format
 	    $fhs[0]->{inputfile_2} = undef; # no longer needed
 	    $fhs[1]->{inputfile_1} = undef;
@@ -371,7 +372,7 @@ foreach my $filename (@filenames){
 	  else{
 	    ($C_to_T_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	    ($G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
-	
+
 	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 	    $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
 	    $fhs[1]->{inputfile_1} = undef;
@@ -387,7 +388,7 @@ foreach my $filename (@filenames){
 	### At the moment we are only performing alignments only with uncompressed FastQ files
 	($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
-	
+
 	$fhs[0]->{inputfile_1} = undef;
 	$fhs[0]->{inputfile_2} = undef;
 	$fhs[1]->{inputfile_1} = $G_to_A_infile_1;
@@ -401,7 +402,7 @@ foreach my $filename (@filenames){
 	if ($bowtie2){
 	  ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	  ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
-	
+
 	  $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 	  $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
 	  $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
@@ -414,7 +415,7 @@ foreach my $filename (@filenames){
 	else{ # Bowtie 1 alignments
 	  if ($gzip){
 	    ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end_bowtie1_gzip ($filename_1,$filename_2); # passing both reads at the same time
-	
+
 	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 	    $fhs[0]->{inputfile_2} = undef; # not needed for compressed temp files
 	    $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
@@ -427,7 +428,7 @@ foreach my $filename (@filenames){
 	  else{ # uncompressed temp files
 	    ($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 	    ($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastQFiles_paired_end ($filename_2,2);
-	
+
 	    $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 	    $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
 	    $fhs[1]->{inputfile_1} = $G_to_A_infile_1;
@@ -443,7 +444,7 @@ foreach my $filename (@filenames){
 	paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
       }
       else{
-       	paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);	
+       	paired_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
       }
     }
     start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
@@ -563,7 +564,7 @@ foreach my $filename (@filenames){
       my @temp_unmapped_2;
       my @temp_ambiguous_1; # will store single end reads or R1 of paired-end
       my @temp_ambiguous_2;
-      my @temp_ambig_bam; 
+      my @temp_ambig_bam;
 
       for (1..$offset){
 
@@ -599,17 +600,17 @@ foreach my $filename (@filenames){
 
 	# Temp Output Files
 	if ($single_end){
-	
+
 	  if ($bowtie2){
 	    if ($gzip){
 		push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_bt2.bam";
 		push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_bt2_SE_report.txt";
-		push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_bt2.ambig.bam";   # only for Bowtie 2 
+		push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_bismark_bt2.ambig.bam";   # only for Bowtie 2
 	    }
 	    else{
 		push @temp_output,     "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.bam";
 		push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2_SE_report.txt";
-		push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2 
+		push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
 	    }
 	  }
 	  else{
@@ -622,7 +623,7 @@ foreach my $filename (@filenames){
 	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename}.temp.${_}_bismark_SE_report.txt";
 	    }
 	  }
-	
+
 	  if ($unmapped){
 	    if ($gzip){
 	      push @temp_unmapped_1,   "${output_dir}${add_prefix}${original_filename}.temp.${_}.gz_unmapped_reads.fq";
@@ -640,19 +641,19 @@ foreach my $filename (@filenames){
 	      push @temp_ambiguous_1,  "${output_dir}${add_prefix}${original_filename}.temp.${_}_ambiguous_reads.fq";
 	    }
 	  }
-	
+
 	}
 	elsif($paired_end){
 	  if ($bowtie2){
 	    if ($gzip){
 	      push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_bt2_pe.bam";
 	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_bt2_PE_report.txt";
-	      push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_bt2_pe.ambig.bam";      # only for Bowtie 2 
+	      push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename_1}.temp.${_}.gz_bismark_bt2_pe.ambig.bam";      # only for Bowtie 2
 	    }
 	    else{
 	      push @temp_output,     "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.bam";
 	      push @temp_reports,    "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
-	      push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.ambig.bam";         # only for Bowtie 2 
+	      push @temp_ambig_bam,  "${output_dir}${add_prefix}${original_filename_1}.temp.${_}_bismark_bt2_pe.ambig.bam";         # only for Bowtie 2
 	    }
 	  }
 	  else{
@@ -687,7 +688,7 @@ foreach my $filename (@filenames){
 	      push @temp_ambiguous_2,   "${output_dir}${add_prefix}${original_filename_2}.temp.${_}_ambiguous_reads_2.fq";
 	    }
 	  }
-	
+
 	}
       }
 
@@ -710,7 +711,7 @@ foreach my $filename (@filenames){
       else{
 	merge_individual_BAM_files(\@temp_output,$original_filename_1,$single_end);
       }
-      
+
       # deleting temp BAM files
       warn "Deleting temporary BAM files...\n";
       foreach my $temp (@temp_output){
@@ -720,7 +721,7 @@ foreach my $filename (@filenames){
 	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary BAM file ${output_dir}${temp}: $!\n";
       }
       print "\n\n";
-      
+
       ### AMBIGUOUS BAM files
       if ($ambig_bam){
 
@@ -731,7 +732,7 @@ foreach my $filename (@filenames){
 	  else{
 	      merge_individual_ambig_BAM_files(\@temp_ambig_bam,$original_filename_1,$single_end);
 	  }
-	  
+
 	  # deleting temp BAM files
 	  warn "Deleting temporary ambiguous BAM files...\n";
 	  foreach my $temp (@temp_ambig_bam){
@@ -830,16 +831,16 @@ foreach my $filename (@filenames){
 	    push @args, "--samtools_path $samtools_path";
 	    push @args, $final_output_filename;
 	    print "@args","\n"; sleep(3);
-	    
+
 	    system ("$Bin/bam2nuc @args");
 	    warn "Finished bam2nuc calculation ...\n\n";
-	   
+
 	}
 	else{
 	    warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
 	}
     }
-    
+
   }
 
 }
@@ -850,7 +851,7 @@ sub merge_individual_mapping_reports{
   my $report_file = $original_filename_1;
   $report_file =~ s/.*\///; # removing path information
   $report_file =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
- 
+
   if ($prefix){
     $report_file = "${prefix}.${report_file}";
   }
@@ -1273,13 +1274,13 @@ sub merge_individual_BAM_files{
 
   my ($tempbam,$original_filename,$single_end) = @_;
   my $merged_name = $original_filename;
-  
+
   #warn "merged name is: $merged_name\n";
   $merged_name =~ s/.*\///; # deleting path information
   # warn "merged name is: $merged_name\n";
   $merged_name =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
   # warn "merged name is: $merged_name\n"; sleep(5);
-  
+
   foreach my $temp_bam(@$tempbam){
     $temp_bam =~ s/.*\///; # deleting path information
   }
@@ -1312,24 +1313,24 @@ sub merge_individual_BAM_files{
       $merged_name = "${basename}_pe.bam";
     }
   }
-  
+
 
   if ($cram){
       $merged_name =~ s/bam$/cram/;
       warn "At this stage we write out a single CRAM file and delete all temporary BAM files\n";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
       $final_output_filename = "${output_dir}${merged_name}";
-      
+
       open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
   }
   else{
       $final_output_filename = "${output_dir}${merged_name}";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
       open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
-  }  
+  }
 
   my $first = 0;
-  
+
   foreach my $temp_bam(@$tempbam){
     # $temp_bam =~ s/.*\///; # deleting path information
 
@@ -1351,15 +1352,15 @@ sub merge_individual_BAM_files{
   warn "\n";
 
   close OUT or warn "Failed to close output filehandle\n\n";
-  
+
 }
 
 
 sub merge_individual_ambig_BAM_files{
-    
+
     my ($tempbam,$original_filename,$single_end) = @_;
     my $merged_name = $original_filename;
-    
+
     # warn "merged name is: $merged_name\n";
     $merged_name =~ s/.*\///; # deleting path information
     # warn "merged name is: $merged_name\n"; sleep(1);
@@ -1367,16 +1368,16 @@ sub merge_individual_ambig_BAM_files{
     foreach my $temp_bam(@$tempbam){
 	$temp_bam =~ s/.*\///; # deleting path information
     }
-    
+
     if ($prefix){
 	$merged_name = "$prefix.$merged_name";
     }
-    
+
     if ($single_end){
 	if ($bowtie2){ # BAM format is the default for Bowtie 2
 	    $merged_name .= '_bismark_bt2.ambig.bam';
 	}
-	
+
 	if ($basename){ # Output file basename is set using the -B argument
 	    $merged_name = "${basename}.ambig.bam";
 	}
@@ -1385,7 +1386,7 @@ sub merge_individual_ambig_BAM_files{
 	if ($bowtie2){ # BAM format is the default for Bowtie 2
 	    $merged_name .= '_bismark_bt2_pe.ambig.bam';
 	}
-	
+
 	if ($basename){ # Output file basename is set using the -B argument
 	    $merged_name = "${basename}_pe.ambig.bam";
 	}
@@ -1394,12 +1395,12 @@ sub merge_individual_ambig_BAM_files{
     warn "Now merging ambiguous BAM files @$tempbam into >>> $merged_name <<<\n";
     open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
     my $first = 0;
-    
+
     foreach my $temp_bam(@$tempbam){
 	# $temp_bam =~ s/.*\///; # deleting path information
-	
+
 	warn "Merging from file >> $temp_bam <<\n";
-	
+
 	if ($first > 0){
 	    open (IN,"$samtools_path view ${output_dir}${temp_bam} |") or die "Failed to read from BAM file ${output_dir}${temp_bam}\n";
 	}
@@ -1414,7 +1415,7 @@ sub merge_individual_ambig_BAM_files{
 	++$first;
     }
     warn "\n";
-    
+
     close OUT or warn "Failed to close output filehandle\n\n";
 }
 
@@ -1434,7 +1435,7 @@ sub start_methylation_call_procedure_single_ends {
   # warn "Outfile: $outfile\n";
   $outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
   # warn "Outfile: $outfile\n";sleep(5);
-  
+
   if ($prefix){
     $outfile = "$prefix.$outfile";
   }
@@ -1453,7 +1454,7 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   $bam = 0 unless (defined $bam);
-  
+
   if ($ambig_bam){
       my $ambig_bam_out = $outfile;
       $ambig_bam_out =~ s/sam$/ambig.bam/;
@@ -1488,9 +1489,9 @@ sub start_methylation_call_procedure_single_ends {
   }
   warn "\n>>> Writing bisulfite mapping results to $output_dir$outfile <<<\n\n";
 
- 
+
   sleep(1);
-  
+
   if ($vanilla){
     print OUT "Bismark version: $bismark_version\n";
   }
@@ -1592,7 +1593,7 @@ sub start_methylation_call_procedure_single_ends {
   else{
       print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n";
   }
-  
+
   if ($bowtie2){
       print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
@@ -1600,11 +1601,11 @@ sub start_methylation_call_procedure_single_ends {
       print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
   }
 
-  
+
   unless ($vanilla or $sam_no_hd){
       generate_SAM_header();
   }
-  
+
   ### Input file is in FastA format
   if ($sequence_file_format eq 'FASTA'){
     process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
@@ -1618,14 +1619,14 @@ sub start_methylation_call_procedure_single_ends {
 sub start_methylation_call_procedure_paired_ends {
   my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
   my ($dir_1,$filename_1);
-    
+
   if ($sequence_file_1 =~ /\//){
       ($dir_1,$filename_1) = $sequence_file_1 =~ m/(.*\/)(.*)$/;
   }
   else{
       $filename_1 = $sequence_file_1;
   }
-  
+
   my ($dir_2,$filename_2);
 
   if  ($sequence_file_2 =~ /\//){
@@ -1658,16 +1659,16 @@ sub start_methylation_call_procedure_paired_ends {
   if ($basename){ # Output file basename is set using the -B argument
     $outfile = "${basename}_pe.sam";
   }
-  
+
   if ($ambig_bam){
       my $ambig_bam_out = $outfile;
       $ambig_bam_out =~ s/sam$/ambig.bam/;
       warn "Ambiguous BAM output: $ambig_bam_out\n";
       open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
   }
-  
+
   $bam = 0 unless (defined $bam);
-  
+
   if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
       if ($multicore > 1){
 	  $outfile =~ s/sam$/bam/;
@@ -1675,13 +1676,13 @@ sub start_methylation_call_procedure_paired_ends {
       }
       else{ # single-core mode
 	  $outfile =~ s/sam$/cram/;
-	  $final_output_filename = "${output_dir}${outfile}";	  
+	  $final_output_filename = "${output_dir}${outfile}";
 	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
       }
   }
   elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
       $outfile =~ s/sam$/bam/;
-      $final_output_filename = "${output_dir}${outfile}";	  
+      $final_output_filename = "${output_dir}${outfile}";
       open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
@@ -2294,20 +2295,20 @@ sub process_single_end_fastA_file_for_methylation_call{
 
     # print the sequence to ambiguous.out if --ambiguous was specified
     if ($ambiguous and $return == 2){
-      print AMBIG ">$identifier\n";	
+      print AMBIG ">$identifier\n";
       print AMBIG "$sequence\n";
     }
 
     # print the sequence to <unmapped.out> file if --un was specified
     elsif ($unmapped and $return == 1){
-      print UNMAPPED ">$identifier\n";	
+      print UNMAPPED ">$identifier\n";
       print UNMAPPED "$sequence\n";
     }
   }
   print "Processed $counting{sequences_count} sequences in total\n\n";
- 
+
   close OUT or warn "Failed to close filehandle OUT: $!\n";
-  
+
   print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 
 }
@@ -2374,17 +2375,17 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
     # print the sequence to ambiguous.out if --ambiguous was specified
     if ($ambiguous and $return == 2){
-      print AMBIG "\@$identifier\n";	
+      print AMBIG "\@$identifier\n";
       print AMBIG "$sequence\n";
-      print AMBIG $identifier_2;	
+      print AMBIG $identifier_2;
       print AMBIG "$quality_value\n";
     }
 
     # print the sequence to <unmapped.out> file if --un was specified
     elsif ($unmapped and $return == 1){
-      print UNMAPPED "\@$identifier\n";	
+      print UNMAPPED "\@$identifier\n";
       print UNMAPPED "$sequence\n";
-      print UNMAPPED $identifier_2;	
+      print UNMAPPED $identifier_2;
       print UNMAPPED "$quality_value\n";
     }
   }
@@ -2469,17 +2470,17 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
     # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
     if ($ambiguous and $return == 2){
-      print AMBIG_1 $orig_identifier_1;	
+      print AMBIG_1 $orig_identifier_1;
       print AMBIG_1 "$sequence_1\n";
-      print AMBIG_2 $orig_identifier_2;	
+      print AMBIG_2 $orig_identifier_2;
       print AMBIG_2 "$sequence_2\n";
     }
 
     # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
     elsif ($unmapped and $return == 1){
-      print UNMAPPED_1 $orig_identifier_1;	
+      print UNMAPPED_1 $orig_identifier_1;
       print UNMAPPED_1 "$sequence_1\n";
-      print UNMAPPED_2 $orig_identifier_2;	
+      print UNMAPPED_2 $orig_identifier_2;
       print UNMAPPED_2 "$sequence_2\n";
     }
   }
@@ -2569,28 +2570,28 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     # print the sequences to ambiguous_1 and _2 if --ambiguous was specified
     if ($ambiguous and $return == 2){
       # seq_1
-      print AMBIG_1 $orig_identifier_1;	
+      print AMBIG_1 $orig_identifier_1;
       print AMBIG_1 "$sequence_1\n";
-      print AMBIG_1 $ident_1;	
+      print AMBIG_1 $ident_1;
       print AMBIG_1 "$quality_value_1\n";
 	# seq_2
-      print AMBIG_2 $orig_identifier_2;	
+      print AMBIG_2 $orig_identifier_2;
       print AMBIG_2 "$sequence_2\n";
-      print AMBIG_2 $ident_2;	
+      print AMBIG_2 $ident_2;
       print AMBIG_2 "$quality_value_2\n";
     }
 
     # print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
     elsif ($unmapped and $return == 1){
       # seq_1
-      print UNMAPPED_1 $orig_identifier_1;	
+      print UNMAPPED_1 $orig_identifier_1;
       print UNMAPPED_1 "$sequence_1\n";
-      print UNMAPPED_1 $ident_1;	
+      print UNMAPPED_1 $ident_1;
       print UNMAPPED_1 "$quality_value_1\n";
       # seq_2
-      print UNMAPPED_2 $orig_identifier_2;	
+      print UNMAPPED_2 $orig_identifier_2;
       print UNMAPPED_2 "$sequence_2\n";
-      print UNMAPPED_2 $ident_2;	
+      print UNMAPPED_2 $ident_2;
       print UNMAPPED_2 "$quality_value_2\n";
     }
   }
@@ -2686,7 +2687,7 @@ sub check_bowtie_results_single_end{
 	  $fhs[$index]->{last_seq_id} = undef;
 	  $fhs[$index]->{last_line} = undef;
 	  next;
-	}	
+	}
 	my $valid_alignment_found_2 = decide_whether_single_end_alignment_is_valid($index,$identifier);
 	### we only continue to extract useful information about this second alignment if 1 was returned
 	if ($valid_alignment_found_2 == 1){
@@ -2695,10 +2696,10 @@ sub check_bowtie_results_single_end{
 	  my ($id,$strand,$mapped_chromosome,$position,$bowtie_sequence,$mismatch_info) = (split (/\t/,$fhs[$index]->{last_line},-1))[0,1,2,3,4,7];
 	  unless($mismatch_info){
 	    $mismatch_info = '';
-	  }	
+	  }
 	  chomp $mismatch_info;
 
-	  my $chromosome;	
+	  my $chromosome;
 	  if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
 	    $chromosome = $mapped_chromosome;
 	  }
@@ -2741,14 +2742,14 @@ sub check_bowtie_results_single_end{
 	    $fhs[$index]->{last_seq_id} = $seq_id;
 	    $fhs[$index]->{last_line} = $newline;
 	    next;
-	  }	
+	  }
 	  else {
 	    # assigning undef to last_seq_id and last_line and jumping to the next index (end of bowtie output)
 	    $fhs[$index]->{last_seq_id} = undef;
 	    $fhs[$index]->{last_line} = undef;
 	    next;
 	  }
-	  ### still within the 2nd sequence in correct orientation found	
+	  ### still within the 2nd sequence in correct orientation found
 	}
 	### still withing the 1st sequence in correct orientation found
       }
@@ -2917,7 +2918,7 @@ sub check_bowtie_results_single_end_bowtie2{
   # as of version Bowtie 2 2.0.0 beta7, when input reads are unpaired, Bowtie 2 no longer removes the trailing /1 or /2 from the read name.
   # $identifier =~ s/\/[1234567890]+$//; # some sequencers don't just have /1 or /2 at the end of read IDs
   # print "sequence $sequence\nid $identifier\nquality: '$quality_value'\n";
-  
+
   my $alignment_ambiguous = 0;
   my $first_ambig_alignment; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified
   my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
@@ -3019,11 +3020,11 @@ sub check_bowtie_results_single_end_bowtie2{
 	      $MD_tag = $1;
 	  }
       }
-      
+
       my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
       # the read will be assigned to the wrong strand which may result in incorrect methylation calls.
       # this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
-      
+
       if (!defined $best_AS_so_far){
 	  $best_AS_so_far = $alignment_score;
 	  $overwrite++;
@@ -3032,7 +3033,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	      $first_ambig_alignment = $fhs[$index]->{last_line};
 	      $first_ambig_alignment =~ s/_(CT|GA)_converted//;
 	      # warn "$first_ambig_alignment\n"; sleep(1);
-	  }	
+	  }
       }
       else{
 	  if ($alignment_score >= $best_AS_so_far){ # AS are generally negative with a maximum of 0;
@@ -3040,12 +3041,12 @@ sub check_bowtie_results_single_end_bowtie2{
 	      $best_AS_so_far = $alignment_score;
 	      $overwrite++;
 	      # warn "Found better or equal alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
-	      
+
 	      # 22 07 2016: resetting the ambiguous score within same thread only if the current alignment is really better than the previous one
 	      if ($alignment_score > $best_AS_so_far){
 		  # warn "Resetting amb within thread value to 0\n";
 		  $amb_same_thread = 0;
-		  
+
 		  if ($ambig_bam){ # also setting a new first_ambig_alignment
 		      $first_ambig_alignment = $fhs[$index]->{last_line};
 		      $first_ambig_alignment =~ s/_(CT|GA)_converted//;
@@ -3057,17 +3058,17 @@ sub check_bowtie_results_single_end_bowtie2{
 	      # warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
 	  }
       }
-      
+
       # warn "First  best alignment_score is: '$alignment_score'\n";
       # warn "MD tag is: '$MD_tag'\n";
       die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag) from line $fhs[$index]->{last_line}!\n" unless (defined $alignment_score and defined $MD_tag);
-      
+
       if (defined $second_best){
 	  # warn "second best alignment_score is: '$second_best'\n\n";
-	  
+
 	  # If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
 	  if ($alignment_score == $second_best){
-	      
+
 	      # checking to see if this read produced the best alignment
 	      if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
 		  # warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
@@ -3076,9 +3077,9 @@ sub check_bowtie_results_single_end_bowtie2{
 	      else{
 		  # warn "This read has a worse alignments score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
 	      }
-	      
+
 	      ### if there is a better alignment later on -> fine. If not, the read will get booted altogether
-	      
+
 	      ## need to read and discard all additional ambiguous reads until we reach the next sequence
 	      until ($fhs[$index]->{last_seq_id} ne $identifier){
 		  my $newline = $fhs[$index]->{fh}-> getline();
@@ -3098,16 +3099,16 @@ sub check_bowtie_results_single_end_bowtie2{
 	      #  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
 	  }
 	  else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
-	      
+
 	      my $alignment_location = join (":",$chromosome,$position);
-	      
+
 	      ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
 	      ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
 	      ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
-	      ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
-	      
+	      ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB
+
 	      if ($overwrite){
-		  $alignments{$alignment_location}->{seq_id} = $id; 
+		  $alignments{$alignment_location}->{seq_id} = $id;
 		  $alignments{$alignment_location}->{alignment_score} = $alignment_score;
 		  $alignments{$alignment_location}->{alignment_score_second_best} = $second_best;
 		  $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
@@ -3117,7 +3118,7 @@ sub check_bowtie_results_single_end_bowtie2{
 		  $alignments{$alignment_location}->{CIGAR} = $cigar;
 		  $alignments{$alignment_location}->{MD_tag} = $MD_tag;
 	      }
-	      
+
 	      ### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
 	      until ($fhs[$index]->{last_seq_id} ne $identifier){
 		  my $newline = $fhs[$index]->{fh}-> getline();
@@ -3144,10 +3145,10 @@ sub check_bowtie_results_single_end_bowtie2{
 	  ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
 	  ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
 	  ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
-	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB 
-	  
+	  ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB
+
 	  if ($overwrite){
-	      $alignments{$alignment_location}->{seq_id} = $id; 
+	      $alignments{$alignment_location}->{seq_id} = $id;
 	      $alignments{$alignment_location}->{alignment_score} = $alignment_score;
 	      $alignments{$alignment_location}->{alignment_score_second_best} = undef;
 	      $alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
@@ -3157,7 +3158,7 @@ sub check_bowtie_results_single_end_bowtie2{
 	      $alignments{$alignment_location}->{MD_tag} = $MD_tag;
 	      $alignments{$alignment_location}->{CIGAR} = $cigar;
 	  }
-	  
+
 	  my $newline = $fhs[$index]->{fh}-> getline();
 	  if ($newline){
 	      chomp $newline;
@@ -3176,7 +3177,7 @@ sub check_bowtie_results_single_end_bowtie2{
       }
     }
   }
-  
+
   ### If there were several equally good alignments for the best alignment score we will boot the read
   if ($amb_same_thread){
       $alignment_ambiguous = 1;
@@ -3193,10 +3194,10 @@ sub check_bowtie_results_single_end_bowtie2{
       # my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
       # print "$ambiguous_read_output\n";
 
-      if ($ambig_bam){ 
+      if ($ambig_bam){
 	  # warn "Sequence is ambiguous, printing out BAM file:\n";
 	  print AMBIBAM "$first_ambig_alignment\n";
-      }  
+      }
 
       if ($ambiguous){
 	  return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.txt if '--ambiguous' was specified
@@ -3400,7 +3401,7 @@ sub decide_whether_single_end_alignment_is_valid{
       my $newline = $fhs[$index]->{fh}->getline();
       if ($newline){
 		($id,$strand) = (split (/\t/,$newline))[0,1];
-		
+
 	### ensuring that the next entry is still the correct sequence
 	if ($id eq $identifier){
 	  ### checking orientation again
@@ -3504,12 +3505,12 @@ sub check_bowtie_results_paired_ends{
 	my ($id_2,$strand_2,$mapped_chromosome_2,$position_2,$bowtie_sequence_2,$mismatch_info_2) = (split (/\t/,$fhs[$index]->{last_line_2},-1))[0,1,2,3,4,7];
 	chomp $mismatch_info_1;
 	chomp $mismatch_info_2;
-	
+
 	### need to extract the chromosome number from the bowtie output (which is either XY_CT_converted or XY_GA_converted
 	my ($chromosome_1,$chromosome_2);
 	if ($mapped_chromosome_1 =~ s/_(CT|GA)_converted$//){
 	  $chromosome_1 = $mapped_chromosome_1;
-	}	
+	}
 	else{
 	  die "Chromosome number extraction failed for $mapped_chromosome_1\n";
 	}
@@ -3519,7 +3520,7 @@ sub check_bowtie_results_paired_ends{
 	else{
 	  die "Chromosome number extraction failed for $mapped_chromosome_2\n";
 	}
-	
+
 	### Now extracting the number of mismatches to the converted genome
 	my $number_of_mismatches_1;
 	my $number_of_mismatches_2;
@@ -3576,7 +3577,7 @@ sub check_bowtie_results_paired_ends{
 	if ($newline_1 and $newline_2){
 	  my ($seq_id_1) = split (/\t/,$newline_1);
 	  my ($seq_id_2) = split (/\t/,$newline_2);
-	
+
 	  if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
 	    $fhs[$index]->{last_seq_id} = $seq_id_1;
 	  }
@@ -3586,7 +3587,7 @@ sub check_bowtie_results_paired_ends{
 	  else{
 	    die "Either read 1 or read 2 needs to end on '/1'\n";
 	  }
-	
+
 	  $fhs[$index]->{last_line_1} = $newline_1;
 	  $fhs[$index]->{last_line_2} = $newline_2;
 	}
@@ -3610,7 +3611,7 @@ sub check_bowtie_results_paired_ends{
 	  ### need to extract the chromosome number from the bowtie output (which is either _CT_converted or _GA_converted)
 	  if ($mapped_chromosome_1 =~ s/_(CT|GA)_converted$//){
 	    $chromosome_1 = $mapped_chromosome_1;
-	  }	
+	  }
 	  else{
 	    die "Chromosome number extraction failed for $mapped_chromosome_1\n";
 	  }
@@ -3620,7 +3621,7 @@ sub check_bowtie_results_paired_ends{
 	  else{
 	    die "Chromosome number extraction failed for $mapped_chromosome_2\n";
 	  }
-	
+
 	  $number_of_mismatches_1='';
 	  $number_of_mismatches_2='';
 	  ### Now extracting the number of mismatches to the converted genome
@@ -3827,11 +3828,11 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
     ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
     if ($fhs[$index]->{last_seq_id} eq $identifier) {
-	
+
 	my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
 	my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
       #  print "Index: $index\t$fhs[$index]->{last_line_1}\n";
-      #  print "Index: $index\t$fhs[$index]->{last_line_2}\n";	
+      #  print "Index: $index\t$fhs[$index]->{last_line_2}\n";
       #  print join ("\t",$id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1),"\n";
       #  print join ("\t",$id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2),"\n";
       $id_1 =~ s/\/1$//;
@@ -3876,7 +3877,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	## reading in the next alignment, which must be the next sequence
 	my $newline_1 = $fhs[$index]->{fh}-> getline();
 	my $newline_2 = $fhs[$index]->{fh}-> getline();
-	
+
 	if ($newline_1 and $newline_2){
 	  chomp $newline_1;
 	  chomp $newline_2;
@@ -3907,7 +3908,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	my ($chromosome_1,$chromosome_2);
 	if ($mapped_chromosome_1 =~ s/_(CT|GA)_converted$//){
 	    $chromosome_1 = $mapped_chromosome_1;
-	}	
+	}
 	else{
 	    die "Chromosome number extraction failed for $mapped_chromosome_1\n";
 	}
@@ -3922,10 +3923,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
 
 	### We will use the optional fields to determine the best alignments. Later on we extract the number of mismatches and/or indels from the CIGAR string
 	my ($alignment_score_1,$alignment_score_2,$second_best_1,$second_best_2,$MD_tag_1,$MD_tag_2);
-	
+
 	my @fields_1 = split (/\t/,$fhs[$index]->{last_line_1});
 	my @fields_2 = split (/\t/,$fhs[$index]->{last_line_2});
-	
+
 	foreach (11..$#fields_1){
 	    if ($fields_1[$_] =~ /AS:i:(.*)/){
 		$alignment_score_1 = $1;
@@ -3937,7 +3938,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		$MD_tag_1 = $1;
 	    }
 	}
-	
+
 	foreach (11..$#fields_2){
 	    if ($fields_2[$_] =~ /AS:i:(.*)/){
 		$alignment_score_2 = $1;
@@ -3949,22 +3950,22 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		$MD_tag_2 = $1;
 	    }
 	}
-	
+
 	die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
 	die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
-	
+
 	# warn "First read 1 alignment score is: '$alignment_score_1'\n";
 	# warn "First read 2 alignment score is: '$alignment_score_2'\n";
 	# warn "MD tag 1 is: '$MD_tag_1'\n";
 	# warn "MD tag 2 is: '$MD_tag_2'\n";
-	
+
 	### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
 	my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
 	# warn "sum of alignment scores: $sum_of_alignment_scores_1\n\n"; sleep(1);
 
 	my $overwrite = 0; # If there are 2 alternative alignments to the same position, e.g. OT with 50 mismatches and CTOB with 0 mismatches, the CTOB one trumps the OT one.
 	# introduced 13 April 2016 as a suggestion by Sylvain Foret, ANU Canberra
-	
+
 	if (!defined $best_AS_so_far){
 	    $overwrite = 1;
 	    $best_AS_so_far = $sum_of_alignment_scores_1;
@@ -3984,14 +3985,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		# 19 07 2016 Changed to >= so that equally good alignments to different positions get added as well. Ambiguous alignments are identified and removed later.
 		$best_AS_so_far = $sum_of_alignment_scores_1;
 		$overwrite = 1;
-		
+
 		# warn "Found better or equal sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
 		# resetting the ambiguous within thread memory (if applicable at all) only if the current alignment is really better than the previous one.
 		# 22 07 2016: ambiguous score within same thread only resets if the current alignment is really better than the previous one
 		if ($sum_of_alignment_scores_1 > $best_AS_so_far){
 		    # warn "Resetting amb within thread value to 0\n";
 		    $amb_same_thread = 0;
-		    
+
 		    if ($ambig_bam){ # also setting a new first_ambig_alignment
 			# Read 1
 			$first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
@@ -4013,10 +4014,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	    # warn "Second best alignment_score_1 is: '$second_best_1'\n";
 	    # warn "Second best alignment_score_2 is: '$second_best_2'\n";
 	    # warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
-	    
+
 	    # If the first alignment score for the first read pair is the same as the alignment score of the second best hit we we keep a memory of this
 	    if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
-		
+
 		# checking to see if this read pair produced the best alignment
 		if ($sum_of_alignment_scores_1 == $best_AS_so_far){  # yes this is the best read pair so far, either within the thread or between threads, however it is ambiguous
 		    # warn "Read pair is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
@@ -4025,7 +4026,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		else{
 		    # warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
 		}
-		
+
 		### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
 
 		## need to read and discard all additional ambiguous reads until we reach the next sequence
@@ -4058,20 +4059,20 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		#  }
 	    }
 	    else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
-		
+
 		my $alignment_location;
 		if ($position_1 <= $position_2){
 		    $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
 		}
-		elsif($position_2 < $position_1){	
+		elsif($position_2 < $position_1){
 		    $alignment_location = join(":",$chromosome_1,$position_2,$position_1);
 		}
-		
+
 		### If a sequence aligns to exactly the same location twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
 		### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
 		### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
-		### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB 
-		
+		### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB
+
 		if ($overwrite){ # see comment above at "my $overwrite = ..."
 		    #unless (exists $alignments{$alignment_location}){
 		    $alignments{$alignment_location}->{seq_id} = $id_1;
@@ -4093,7 +4094,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		    $alignments{$alignment_location}->{flag_2} = $flag_2;
 		    # warn "added best of several alignments to \%alignments hash\n";
 		}
-		
+
 		### now reading and discarding all (inferior) alignments of this read pair until we hit the next sequence
 		until ($fhs[$index]->{last_seq_id} ne $identifier){
 		    my $newline_1 = $fhs[$index]->{fh}-> getline();
@@ -4106,7 +4107,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 			$seq_id_1 =~ s/\/1$//;
 			$seq_id_2 =~ s/\/2$//;
 			# print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
-			
+
 			$fhs[$index]->{last_seq_id} = $seq_id_1;
 			$fhs[$index]->{last_line_1} = $newline_1;
 			$fhs[$index]->{last_line_2} = $newline_2;
@@ -4122,17 +4123,17 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		# if($fhs[$index]->{last_seq_id}){
 		#   warn "Index: $index\tThis Seq-ID is $identifier, skipped all other alignments until the next ID was reached which is: $fhs[$index]->{last_seq_id}\n";
 		# }
-	    }	
+	    }
 	}
 	else{ # there is no second best hit, so we can just store this one and read in the next sequence
-	    
+
 	    my $alignment_location = join(":",$chromosome_1,$position_1,$position_2);
 	    # print "$alignment_location\n";
 	    ### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
 	    ### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
 	    ### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
 	    ### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 3, i.e. OT and OB
-	    
+
 	    #unless (exists $alignments{$alignment_location}){ # see comment above at my $overwrite = ...
 	    if ($overwrite){
 		$alignments{$alignment_location}->{seq_id} = $id_1;
@@ -4154,7 +4155,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		$alignments{$alignment_location}->{flag_2} = $flag_2;
 		# warn "added unique alignment to \%alignments hash\n";
 	    }
-	    
+
 	    # Now reading and storing the next read pair
 	    my $newline_1 = $fhs[$index]->{fh}-> getline();
 	    my $newline_2 = $fhs[$index]->{fh}-> getline();
@@ -4168,11 +4169,11 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		$seq_id_1 =~ s/\/1$//;
 		$seq_id_2 =~ s/\/2$//;
 		# print "New Seq IDs:\t$seq_id_1\t$seq_id_2\n";
-		
+
 		$fhs[$index]->{last_seq_id} = $seq_id_1;
 		$fhs[$index]->{last_line_1} = $newline_1;
 		$fhs[$index]->{last_line_2} = $newline_2;
-		
+
 		if ($seq_id_1 eq $identifier){
 		    die "Sequence with ID $identifier did not have a second best alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
 		}
@@ -4196,7 +4197,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
   else{
       # warn "alignment won't be considered ambiguous. This time....\n";
   }
-  
+
 
   ### if the read produced several ambiguous alignments for a single instance of Bowtie 2 we can return already now. If --ambiguous was specified the read sequence will be printed out in FastQ format
   if ($alignment_ambiguous == 1){
@@ -4206,19 +4207,19 @@ sub check_bowtie_results_paired_ends_bowtie2{
       #  my $ambiguous_read_2 = join("\t",$identifier.'/2','256','*','0','0','*','*','0','0',$sequence_2,$quality_value_2);
       #  print "$ambiguous_read_1\n";
       #  print "$ambiguous_read_2\n";
-      
-      if ($ambig_bam){ 
+
+      if ($ambig_bam){
 	  # warn "Sequence is ambiguous, printing out to ambiguous BAM file:\n";
-	  # replacing the first /1\t in the ID of R1 
+	  # replacing the first /1\t in the ID of R1
 	  # warn "Was\n$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
 	  $first_ambig_alignment_line1 =~ s/\/1\t/\t/;
  	  $first_ambig_alignment_line2 =~ s/\/2\t/\t/;
 	  # warn "Is:\n$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n";
-	  
+
 	  print AMBIBAM "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
    	  # print "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n";
-      }  
-      
+      }
+
       if ($ambiguous){
 	  return 2; # => exits to next sequence pair, and prints it out to _ambiguous_reads_1.txt and _ambiguous_reads_2.txt if '--ambiguous' was specified
       }
@@ -4312,9 +4313,9 @@ sub check_bowtie_results_paired_ends_bowtie2{
     my $best_sum_of_alignment_scores;
     my $best_alignment_location;
     foreach my $alignment_location (sort {$alignments{$b}->{sum_of_alignment_scores} <=> $alignments{$a}->{sum_of_alignment_scores}} keys %alignments){
-	
+
 	# warn "$alignments{$alignment_location}->{sum_of_alignment_scores}\n"; sleep(1);
-	
+
 	unless (defined $best_sum_of_alignment_scores){
 	    $best_sum_of_alignment_scores = $alignments{$alignment_location}->{sum_of_alignment_scores};
 	    $best_alignment_location = $alignment_location;
@@ -4351,7 +4352,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		else {
 		    $methylation_call_params->{$identifier}->{sum_of_alignment_scores_second_best} = $alignments{$alignment_location}->{sum_of_alignment_scores};
 		}
-		
+
 		last; # exiting since the sequence produced a unique best alignment
 	    }
 	}
@@ -4589,7 +4590,7 @@ sub decide_whether_paired_end_alignment_is_valid{
 	else{
 	  die "One of the two reads needs to end on /1!!";
 	}
-	
+
 	### ensuring that the next entry is still the correct sequence
 	if ($seq_id_1 eq $identifier or  $seq_id_2 eq $identifier){
 	  ### checking orientation again
@@ -4610,7 +4611,7 @@ sub decide_whether_paired_end_alignment_is_valid{
 	    if ($newline_1 and $newline_2){
 	      ($seq_id_1) = split (/\t/,$newline_1);
 	      ($seq_id_2) = split (/\t/,$newline_2);
-	
+
 	      $seqid = '';
 	      if ($seq_id_1 =~ s/\/1$//){ # removing the read /1 tag
 		$seqid = $seq_id_1;
@@ -4621,7 +4622,7 @@ sub decide_whether_paired_end_alignment_is_valid{
 	      else{
 		die "One of the two reads needs to end on /1!!";
 	      }
-	
+
 	      ### check if the next 2 lines still have the same seq ID (must not happen), and if not overwrite the current seq-ID and bowtie output with
 	      ### the same fields of the just read next entry
 	      die "Same seq ID 3 or more times in a row!(should be 2 max)" if ($seqid eq $identifier);
@@ -5090,7 +5091,7 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence_2} = $non_bisulfite_sequence_2;
   $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag_1} = $genomic_seq_for_MD_tag_1;
   $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag_2} = $genomic_seq_for_MD_tag_2;
-  
+
   ## the end position of a read is stored in $pos
   $methylation_call_params->{$sequence_identifier}->{end_position_1} = $pos_1;
   $methylation_call_params->{$sequence_identifier}->{end_position_2} = $pos_2;
@@ -5113,9 +5114,9 @@ sub print_bisulfite_mapping_result_single_end{
     $quality_value = convert_solexa_quals_to_phred33($quality_value);
   }
 
-  ### We will add +1 bp to the starting position of single-end reads, as Bowtie 1 reports the index and not the bp position. 
+  ### We will add +1 bp to the starting position of single-end reads, as Bowtie 1 reports the index and not the bp position.
   $methylation_call_params->{$identifier}->{position} += 1;
-	
+
   ### writing every uniquely mapped read and its methylation call to the output file
   if ($vanilla){
     my $bowtie1_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
@@ -5166,7 +5167,7 @@ sub print_bisulfite_mapping_results_paired_ends{
   $methylation_call_params->{$identifier}->{start_seq_1} += 1;
 
   ### writing every single aligned read and its methylation call to the output file
-  if ($vanilla){	
+  if ($vanilla){
     my $bowtie1_output_paired_end = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{read_conversion_1},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value_1,$quality_value_2);
     print OUT "$bowtie1_output_paired_end\n";
   }
@@ -5197,8 +5198,8 @@ sub print_bisulfite_mapping_results_paired_ends_bowtie2{
   paired_end_SAM_output($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2); # at the end of the script
 
 }
-	
-	
+
+
 sub convert_phred64_quals_to_phred33{
 
   my $qual = shift;
@@ -5413,7 +5414,7 @@ sub extract_corresponding_genomic_sequence_single_end_bowtie2{
     $non_bisulfite_sequence .= substr ($chromosomes{$methylation_call_params->{$sequence_identifier}->{chromosome}},$pos-2,2);
   }
 
-  my $indels = 0;	
+  my $indels = 0;
 
   foreach (0..$#len){
     if ($ops[$_] eq 'M'){
@@ -5577,7 +5578,7 @@ sub methylation_call{
 	if ($genomic[$index] eq 'C') {
 	  ### If the residue is a C we want to know if it was in CpG context or in any other context
 	  my $downstream_base = $genomic[$index+1];
-	
+
 	  if ($downstream_base eq 'G'){
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C, methylated, in CpG context
@@ -5585,11 +5586,11 @@ sub methylation_call{
 	  elsif ($downstream_base eq 'N'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
 	    ++$methyl_C_unknown_count;
 	    push @match,'U'; # protected C, methylated, in Unknown context
-	  }	
+	  }
 	  else {
 	    ### C in not in CpG-context, determining the second downstream base context
 	    my $second_downstream_base = $genomic[$index+2];
-	
+
 	    if ($second_downstream_base eq 'G'){
 	      ++$methyl_CHG_count;
 	      push @match,'X'; # protected C, methylated, in CHG context
@@ -5614,7 +5615,7 @@ sub methylation_call{
 	if ($genomic[$index] eq 'C' and $seq[$index] eq 'T') {
 	  ### If the residue was converted to T we want to know if it was in CpG, CHG or CHH  context
 	  my $downstream_base = $genomic[$index+1];
-	
+
 	  if ($downstream_base eq 'G'){
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C, not methylated, in CpG context
@@ -5626,7 +5627,7 @@ sub methylation_call{
 	  else{
 	    ### C in not in CpG-context, determining the second downstream base context
 	    my $second_downstream_base = $genomic[$index+2];
-	
+
 	    if ($second_downstream_base eq 'G'){
 	      ++$unmethylated_CHG_count;
 	      push @match,'x'; # converted C, not methylated, in CHG context
@@ -5662,7 +5663,7 @@ sub methylation_call{
 	  ### to look if the base upstream is a C
 
 	  my $upstream_base = $genomic[$index+1];
-	
+
 	  if ($upstream_base eq 'C'){
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C on opposing strand, methylated, in CpG context
@@ -5674,7 +5675,7 @@ sub methylation_call{
 	  else{
 	    ### C in not in CpG-context, determining the second upstream base context
 	    my $second_upstream_base = $genomic[$index];
-	
+
 	    if ($second_upstream_base eq 'C'){
 	      ++$methyl_CHG_count;
 	      push @match,'X'; # protected C on opposing strand, methylated, in CHG context
@@ -5713,7 +5714,7 @@ sub methylation_call{
 	  else{
 	    ### C in not in CpG-context, determining the second upstream base context
 	    my $second_upstream_base = $genomic[$index];
-	
+
 	    if ($second_upstream_base eq 'C'){
 	      ++$unmethylated_CHG_count;
 	      push @match,'x'; # converted C on opposing strand, not methylated, in CHG context
@@ -5762,7 +5763,7 @@ sub read_genome_into_memory{
 
     ## working directoy
     my $cwd = shift;
-    
+
     ## reading in and storing the specified genome in the %chromosomes hash
     chdir ($genome_folder) or die "Can't move to $genome_folder: $!";
     warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
@@ -5798,7 +5799,7 @@ sub read_genome_into_memory{
 	  chomp;
 	  $_ =~ s/\r//; # removing carriage returns if present
 	  if ($_ =~ /^>/){
-	
+
 	    ### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
 	    if (exists $chromosomes{$chromosome_name}){
 	      print "chr $chromosome_name (",length $sequence ," bp)\n";
@@ -5827,7 +5828,7 @@ sub read_genome_into_memory{
 	    $sequence .= uc$_;
 	  }
 	}
-	
+
  	### Processing last chromosome of a multi Fasta File or the only entry in case of single entry FastA files
 
 	if (exists $chromosomes{$chromosome_name}){
@@ -5852,7 +5853,7 @@ sub read_genome_into_memory{
     ### If no single multi-FastA genome file was specified explicitely we will generate one here and write it to the output directory
     if ($cram){
 	unless (defined $cram_ref){
-	    warn "Reconstituting a single multi-FastA genome file as CRAM reference (you may specify such a file using --cram_ref <file> explicitely to prevent this behaviour)\n";	
+	    warn "Reconstituting a single multi-FastA genome file as CRAM reference (you may specify such a file using --cram_ref <file> explicitely to prevent this behaviour)\n";
 
 	    $cram_ref = "${output_dir}Bismark_genome_CRAM_reference.mfa";
 	    warn "Writing multi-FastA file to $cram_ref\n";
@@ -5863,9 +5864,9 @@ sub read_genome_into_memory{
 	    warn "Complete\n";
 	    close REF or warn "Failed to close filehandle REF: $!\n";
 	}
-	
+
     }
-    
+
 
 
 }
@@ -6100,7 +6101,7 @@ sub biTransformFastAFiles_paired_end {
       if ($bowtie2){
 	$header =~ s/$/\/1\/1/;
       }
-      else{	
+      else{
 	$header =~ s/$/\/1/;
       }
     }
@@ -7417,10 +7418,10 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 sub ensure_the_bowties_are_working{
 
     my $path_info = shift;
-    
+
     # Before we start let's have quick look if the selected Bowtie seems to be working with the path information provided
     # To change the path to Bowtie (1/2) use --path_to_bowtie /full/path/to/the/Bowtie/executable
-    
+
     my $bowtie_version;
     my $return = system "$path_info --version >/dev/null 2>&1";
     if ($return ne 0){
@@ -7649,7 +7650,7 @@ sub process_command_line{
   my $nucleotide_coverage;
   my $dovetail;
   my $no_dovetail;
-  
+
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
 				 '2=s'                     => \$mates2,
@@ -7790,7 +7791,7 @@ VERSION
 	  unless (-e $cram_ref){
 	      die "There is a problem with the CRAM reference '$cram_ref': $!\n\n";
 	  }
-	  
+
 	  # determining full path information for the cram reference
 	  if ($cram_ref =~/\//){
 	      if (chdir $cram_ref){
@@ -7839,7 +7840,7 @@ VERSION
 		  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
 	      }
 	  }
-	  
+
 	  warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
 	  $bam = 1;
       }
@@ -7852,7 +7853,7 @@ VERSION
 	      $bam = 1;
 	  }
       }
-      
+
       unless (defined $samtools_path){
 	  $bam = 2;
 	  warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
@@ -8004,9 +8005,9 @@ VERSION
       }
       else{  # only checking for large indexes if the 'normal' one can't be found
 	  warn "\nCouldn't find a traditional small Bowtie index for the genome specified (ending in .ebwt). Now searching for a large index instead (64-bit index ending in .ebwtl)...\n";
-	  
+
 	  ### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .ebwtl)
-	  
+
 	  ### checking the integrity of $CT_dir
 	  chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
 	  my @CT_bowtie_index = ('BS_CT.1.ebwtl','BS_CT.2.ebwtl','BS_CT.3.ebwtl','BS_CT.4.ebwtl','BS_CT.rev.1.ebwtl','BS_CT.rev.2.ebwtl');
@@ -8016,7 +8017,7 @@ VERSION
 		  $bt_large_index_present = 0;
 	      }
 	  }
-	  
+
 	  ### checking the integrity of $GA_dir
 	  chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
 	  my @GA_bowtie_index = ('BS_GA.1.ebwtl','BS_GA.2.ebwtl','BS_GA.3.ebwtl','BS_GA.4.ebwtl','BS_GA.rev.1.ebwtl','BS_GA.rev.2.ebwtl');
@@ -8034,7 +8035,7 @@ VERSION
 	      die "Failed to detect either a standard (.ebwt) or 64-bit (.ebwtl) Bowtie index for the genome specified. Please run the bismark_genome_preparation --bowtie1 before launching Bismark\n\n";
 	  }
       }
-      
+
   }
 
   my $CT_index_basename = "${CT_dir}BS_CT";
@@ -8302,11 +8303,11 @@ VERSION
 
   ### PAIRED-END MAPPING
   if ($mates1){
-      
+
       if (defined $singles){ # if --single_end has been set explicitely
 	  die "You cannot set --single_end and supply files in paired-end format (-1 <mates1> -2 <mates2>). Please respecify!\n";
       }
-      
+
       my @mates1 = (split (/,/,$mates1));
       die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
       my @mates2 = (split(/,/,$mates2));
@@ -8326,7 +8327,7 @@ VERSION
 	  unless ($no_dovetail){
 	      $dovetail = 1; # setting the option $dovetail automatically so that 5' trimmed sequences align better
 	  }
-	  
+
 	  if ($dovetail){
 	      if ($old_flag){
 		  die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
@@ -8334,7 +8335,7 @@ VERSION
 	      push @bowtie_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
 	  }
       }
-      
+
       if ($old_flag){
 	  warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n" unless($vanilla);
 	  sleep(3);
@@ -8343,13 +8344,13 @@ VERSION
   elsif ($mates2){
       die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
   }
-  
+
   chdir $parent_dir or die "Failed to move back to parent directory: $!\n\n";
   my $current = getcwd();
-  
+
   ### SINGLE-END MAPPING
   # Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
-  
+
   unless ($mates1 and $mates2){
       if (defined $singles){ # if --single_end has been set explicitely
 	  warn "Mapping set to single-end mode (user defined). File names need to be separated by commas [,] or colons [:]! Supplied file names are: $singles\n";
@@ -8362,10 +8363,10 @@ VERSION
 	  }
 	  $singles =~ s/\s/,/g; # replacing spaces with commas
       }
-      
+
       @filenames = (split(/,/,$singles));
   }
-  
+
   warn "\nInput files to be analysed (in current folder '$current'):\n";
   # checking if files exist and bail if they don't
   foreach my $f (@filenames){
@@ -8376,28 +8377,28 @@ VERSION
 	      warn "$f1\n";
 	  }
 	  else{
-	      die "Supplied filename '$f1' does not exist, please respecify!\n\n";   
+	      die "Supplied filename '$f1' does not exist, please respecify!\n\n";
 	  }
 	  # mate 2
 	  if (-e $f2){
 	      warn "$f2\n";
 	  }
 	  else{
-	      die "Supplied filename '$f2' does not exist, please respecify!\n\n";   
+	      die "Supplied filename '$f2' does not exist, please respecify!\n\n";
 	  }
-	  
+
       }
       else{
 	  if (-e $f){
 	      warn "$f\n";
 	  }
 	  else{
-	      die "Supplied filename '$f' does not exist, please respecify!\n\n";   
+	      die "Supplied filename '$f' does not exist, please respecify!\n\n";
 	  }
       }
   }
   sleep(1);
- 
+
 
   ### MININUM INSERT SIZE (PAIRED-END ONLY)
   if (defined $minins){
@@ -8587,23 +8588,23 @@ VERSION
 
 
 sub generate_SAM_header{
-    
+
     print OUT "\@HD\tVN:1.0\tSO:unsorted\n";          # @HD = header, VN = version, SO = sort order
     if ($ambig_bam){
-	print AMBIBAM "\@HD\tVN:1.0\tSO:unsorted\n";    
+	print AMBIBAM "\@HD\tVN:1.0\tSO:unsorted\n";
     }
-    
+
     #  Unordered printing of @SQ headers
     #  foreach my $chr (keys %chromosomes){
     #    my $length = length ($chromosomes{$chr});
     #    print "\@SQ\tSN:$chr\tLN:$length\n";
     #    print OUT "\@SQ\tSN:$chr\tLN:$length\n";        # @SQ = sequence, SN = seq name, LN = length
     #  }
-    
+
     foreach my $chr (sort {$a<=>$b} keys %SQ_order){
 	# warn "$chr\t$SQ_order{$chr}\n";
 	my $length = length ($chromosomes{$SQ_order{$chr}});
-	print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length   
+	print OUT "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n"; # @SQ = sequence, SN = seq name, LN = length
 	if ($ambig_bam){
 	    print AMBIBAM "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n";
 	}
@@ -8613,7 +8614,7 @@ sub generate_SAM_header{
     if ($rg_tag){
 	print OUT "\@RG\tPL:ILLUMINA\tID:$rg_id\tSM:$rg_sample\n";  # @RG = Read Group, PL = Platform, ID: required, SM: sample, can be a description
     }
-    
+
     print OUT "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";        # @PG = program, ID = unique identifier, PN = program name name, VN = program version
     if ($ambig_bam){
 	print AMBIBAM "\@PG\tID:Bismark\tVN:$bismark_version\tCL:\"bismark $command_line\"\n";
@@ -8627,9 +8628,9 @@ sub single_end_SAM_output{
 
   my ($id,$actual_seq,$methylation_call_params,$qual) = @_;
   my $strand            = $methylation_call_params->{$id}->{alignment_strand};
-  my $chr               = $methylation_call_params->{$id}->{chromosome};	
-  my $start             = $methylation_call_params->{$id}->{position};	
-  my $stop              = $methylation_call_params->{$id}->{end_position};	
+  my $chr               = $methylation_call_params->{$id}->{chromosome};
+  my $start             = $methylation_call_params->{$id}->{position};
+  my $stop              = $methylation_call_params->{$id}->{end_position};
   my $ref_seq           = $methylation_call_params->{$id}->{unmodified_genomic_sequence};
   my $methcall          = $methylation_call_params->{$id}->{methylation_call};
   my $read_conversion   = $methylation_call_params->{$id}->{read_conversion};
@@ -8637,7 +8638,7 @@ sub single_end_SAM_output{
   my $number_of_mismatches;
 
   if ($bowtie2){
-    $number_of_mismatches= $methylation_call_params->{$id}->{alignment_score};	
+    $number_of_mismatches= $methylation_call_params->{$id}->{alignment_score};
   }
   else{
     $number_of_mismatches= $methylation_call_params->{$id}->{number_of_mismatches};
@@ -8708,7 +8709,7 @@ sub single_end_SAM_output{
     $cigar = length($actual_seq) . "M";                               # Bowtie 1 output does not contain indels (only matches and mismatches)
   }
 
-  #####	
+  #####
 
   my $rnext = "*";                                                    # Paired-end variable
 
@@ -8778,18 +8779,18 @@ sub single_end_SAM_output{
   if ($non_bs_mm) {
     if ($bowtie2) {
 
-      $number_of_mismatches =~ s/-//; # removing the minus sign	
-	
+      $number_of_mismatches =~ s/-//; # removing the minus sign
+
 	### if Bowtie 2 was used we need to analyse the CIGAR string whether the read contained any indels to determine the number of mismatches
 	if ($cigar =~ /(D|I)/) {
 	  # warn "$cigar\n";
-	
+
 	  # parsing CIGAR string
 	  my @len = split (/\D+/,$cigar); # storing the length per operation
 	  my @ops = split (/\d+/,$cigar); # storing the operation
 	  shift @ops;		# remove the empty first element
 	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-	
+
 	  foreach (0..$#len) {
 	    if ($ops[$_] eq 'M') {
 	      # warn "skipping\n";
@@ -8866,7 +8867,7 @@ sub paired_end_SAM_output{
   my ($id,$actual_seq_1,$actual_seq_2,$methylation_call_params,$qual_1,$qual_2) = @_;
   my $strand_1                = $methylation_call_params->{$id}->{alignment_read_1}; # Bowtie 1 only reports the read 1 alignment strand
   my $strand_2                = $methylation_call_params->{$id}->{alignment_read_2};
-  my $chr                     = $methylation_call_params->{$id}->{chromosome};	
+  my $chr                     = $methylation_call_params->{$id}->{chromosome};
   my $ref_seq_1               = $methylation_call_params->{$id}->{unmodified_genomic_sequence_1};
   my $ref_seq_2               = $methylation_call_params->{$id}->{unmodified_genomic_sequence_2};
   my $methcall_1              = $methylation_call_params->{$id}->{methylation_call_1};
@@ -8895,7 +8896,7 @@ sub paired_end_SAM_output{
 
   if ($read_conversion_1 eq 'CT' and $genome_conversion eq 'CT'){
     $index = 0; ## this is OT   (original top strand)
-  }	
+  }
   elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'GA'){
     $index = 1; ## this is CTOB (complementary to OB)
   }
@@ -8928,7 +8929,7 @@ sub paired_end_SAM_output{
   }
 
 
-	
+
   ### we need to remove 2 bp of the genomic sequence as we were extracting read + 2bp long fragments to make a methylation call at the
   ### first or last position.
 
@@ -9095,17 +9096,17 @@ sub paired_end_SAM_output{
 
   my $tlen_1;                                                          # signed observed Template LENgth (or inferred fragment size)
   my $tlen_2;
-  
+
   if ($bowtie2){
-      
+
       if ($start_read_1 <= $start_read_2){
-	  
+
 	  # Read 1 alignment is leftmost
-	  
+
 	  if ($end_read_2 >= $end_read_1){
-	      
+
 	      if ($flag_1 == 83 and $dovetail){   # R1 has a reverse orientation
-		  #         ----------------->     read 2   reads are dovetailing, that is one mate alignment extends past the beginning of the other 
+		  #         ----------------->     read 2   reads are dovetailing, that is one mate alignment extends past the beginning of the other
 		  #  <-------------------          read 1   such that the wrong mate begins upstream
 		  # warn "FLAG 1: $flag_1\nFLAG 2: $flag_2\n";
 		  # warn "Reads are dovetailing\n";
@@ -9113,7 +9114,7 @@ sub paired_end_SAM_output{
 		  $tlen_2 = $end_read_2 - $start_read_1 + 1;     # Read 2 receives a + sign,
 		  # warn "TLEN 1: $tlen_1\nTLEN 2: $tlen_2\n";
 	      }
-	      else{     
+	      else{
 		  # ------------->                 read 1   reads not overlapping
 		  #                 <----------    read 2
 		  #             or
@@ -9126,14 +9127,14 @@ sub paired_end_SAM_output{
 		  # ------------------------->     read 1   reads 1 and 2 exactly overlapping
 		  # <-------------------------     read 2
 		  #
-		  
+
 		  $tlen_1 = $end_read_2 - $start_read_1 + 1;                         # Leftmost read has a + sign,
 		  $tlen_2 = $start_read_1 - $end_read_2 - 1;                         # Rightmost read has a - sign
 	   	  # warn "Reads are non/overlapping\nTLEN 1: $tlen_1\nTLEN 2: $tlen_2\n";
 	      }
 	  }
 	  elsif ($end_read_2 < $end_read_1){
-	      
+
 	      # ------------------------->     read 1
 	      #       <-----------             read 2   read 2 contained within read 1
 	      #
@@ -9141,31 +9142,31 @@ sub paired_end_SAM_output{
 	      #
 	      # ------------------------->     read 1
 	      # <------------------------      read 2   read 2 contained within read 1
-	      
+
 	      # start and end of read 2  are fully contained within read 1, using the length of read 1 for the TLEN variable
 	      $tlen_1 = $end_read_1 - $start_read_1 + 1;          # Set to length of read 1   Leftmost read has a + sign,
 	      $tlen_2 = ($end_read_1 - $start_read_1 + 1) * -1;   # Set to length of read 1   Rightmost read has a - sign. well this is debatable. Changed this
 	      ### as a request by frozenlyse on SeqAnswers on 24 July 2013
 	  }
-	  
+
       }
-      
+
       elsif ($start_read_2 < $start_read_1){
 
 	  # Read 2 alignment is leftmost
-	  
+
 	  if ($end_read_1 >= $end_read_2){
-	      
+
 	      # Read 2 alignment is leftmost
 	      if ($flag_1 == 99 and $dovetail){   # R1 has a forward orientation
 
-		  #         ----------------->     read 1   reads are dovetailing, that is one mate alignment extends past the beginning of the other 
+		  #         ----------------->     read 1   reads are dovetailing, that is one mate alignment extends past the beginning of the other
 		  #  <-------------------          read 2   such that the wrong mate begins upstream
 
 		  # warn "FLAG 1: $flag_1\nFLAG 2: $flag_2\n";
 		  # warn "Reads are dovetailing\n";
 		  $tlen_1 = $end_read_1 - $start_read_2 + 1;     # Read 1 still receives a + sign even though it is not leftmost
-		  $tlen_2 = $start_read_2 - $end_read_1 - 1;   
+		  $tlen_2 = $start_read_2 - $end_read_1 - 1;
 		  # warn "TLEN 1: $tlen_1\nTLEN 2: $tlen_2\n";
 	      }
 	      else{
@@ -9181,13 +9182,13 @@ sub paired_end_SAM_output{
 		  # ------------------------->     read 2
 		  #   <-----------------------     read 1   read 1 contained within read 2
 		  # warn "FLAG 1: $flag_1\nFLAG 2: $flag_2\n";
-		  # warn "Read 2 has a forward orientation\n";	  
+		  # warn "Read 2 has a forward orientation\n";
 		  $tlen_2 = $end_read_1 - $start_read_2 + 1;                         # Leftmost read has a + sign,
 		  $tlen_1 = $start_read_2 - $end_read_1 - 1;                         # Rightmost read has a - sign
 	      }
 	  }
 	  elsif ($end_read_1 < $end_read_2){
-	      
+
 	      # ------------------------->     read 2
 	      #       <-----------             read 1   read 1 contained within read 2
 	      #
@@ -9195,7 +9196,7 @@ sub paired_end_SAM_output{
 	      #
 	      # ------------------------->     read 2
 	      #  <------------------------      read 1   read 1 contained within read 2
-	      
+
 	      # start and end of read 1  are fully contained within read 2, using the length of read 2 for the TLEN variable
 	      $tlen_1 = ($end_read_2 - $start_read_2 + 1) * -1;          # Set to length of read 2   Shorter read receives a - sign,
 	      $tlen_2 = $end_read_2 - $start_read_2 + 1;                 # Set to length of read 2   Longer read receives a +. Well this is debatable. Changed this
@@ -9303,7 +9304,7 @@ sub paired_end_SAM_output{
   if ($non_bs_mm) {
     if ($bowtie2) {
 
-      $number_of_mismatches_1 =~ s/-//; # removing the minus sign	
+      $number_of_mismatches_1 =~ s/-//; # removing the minus sign
       $number_of_mismatches_2 =~ s/-//;
 
       ### if Bowtie 2 was used we need to analyse the CIGAR strings whether the reads contained any indels to determine the number of mismatches
@@ -9317,7 +9318,7 @@ sub paired_end_SAM_output{
 	my @ops = split (/\d+/,$cigar_1); # storing the operation
 	shift @ops;		# remove the empty first element
 	die "CIGAR string '$cigar_1' contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-	
+
 	foreach (0..$#len) {
 	  if ($ops[$_] eq 'M') {
 	    # warn "skipping\n";
@@ -9354,7 +9355,7 @@ sub paired_end_SAM_output{
 	my @ops = split (/\d+/,$cigar_2); # storing the operation
 	shift @ops;		# remove the empty first element
 	die "CIGAR string '$cigar_2' contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-	
+
 	foreach (0..$#len) {
 	  if ($ops[$_] eq 'M') {
 	    # warn "skipping\n";
@@ -9499,7 +9500,7 @@ sub make_mismatch_string{
 	  $MD_tag .= $prev_matching;
 	  $MD_tag .= $ref_base;
 	}
-	
+
 	$prev_matching = 0; # resetting $prev_matching
       }
 
@@ -9568,7 +9569,7 @@ sub make_mismatch_string{
 	my $current_md_index;
 
   	foreach my $el (@md){
-	
+
 	  unless (defined $current_md_index){
 	    $current_md_index = 0; # first element = index 0
 	  }
@@ -9581,7 +9582,7 @@ sub make_mismatch_string{
 	    $new_MD .= $el;
 	    next;
 	  }
-	
+
 	  if ($verbose){ warn "Current element: $el\n";}
 	  unless (defined $op){ # initialize
 	    $op = $el;
@@ -9628,7 +9629,7 @@ sub make_mismatch_string{
 
 		my $pos_after_deletion = $MD_pos_so_far - $del_pos;
 		my $pos_before_deletion = $op - $pos_after_deletion;
-		if ($verbose){ warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}	
+		if ($verbose){ warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}
 		$MD_tag .= "${pos_before_deletion}^${deleted_bases}";
 		$new_MD .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
 		if ($verbose){ warn "\$newMD after adjusting for the current deletion: $new_MD\n";}
@@ -9638,44 +9639,44 @@ sub make_mismatch_string{
 		if ($verbose){ warn "MD after adjusting for deletion: $MD_pos_so_far\n";	}
 		### also appending the current element because we are writing out the rest of the MD-string unchanged to $new_MD
 		$new_MD .= $el;
-	
+
 		$deletions_processed += 1;
 		$this_deletion_processed = 1;
 
 		if ($deletions_processed == $deletions_total){ # this was the last deletion of the read
 		  if ($verbose){ warn "This was the last deletion in the read ($deletions_processed out of $deletions_total total). Continuing to append \$pos_after_deletion (${pos_after_deletion})..\n";}
 		  $MD_tag .= "${pos_after_deletion}";
-		
+
 		  ### also appending the current element because we are writing out the rest of the MD-string unchanged
 		  if ($verbose){ warn "also appending the current element $el\n";}
 		  $MD_tag .= $el;
 		  ### Finally also adding the length of the deletion to $del_pos
 		  $del_pos += $len[$index];
-		  if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}	
-		}	
+		  if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
+		}
 		else{
 		  if ($verbose){ warn "This wasn't the last deletion in the read. Substituting the last operation with the current deletion and reconstituting \@md\n";}
 		  if ($verbose){ warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";}
 
-		
+
 		  ### This migh need looking at!!
-		
+
 		  $current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
 		  if ($verbose){  warn "Current index = $current_md_index\n";}
-		
+
 		  if ($verbose){ warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";}
 		  $md_index_already_processed = $current_md_index - 1;
-		
+
 		  if ($verbose){ warn "Exiting now and waiting for the next deletion\n";}
 
 		  ### Finally also adding the length of the deletion to $del_pos
 		  $del_pos += $len[$index];
-		  $MD_pos_so_far += $len[$index];	
+		  $MD_pos_so_far += $len[$index];
 		  if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
 		  if ($verbose){ warn "MD-tag so far: $MD_tag ~~\n";}
 		  #setting $op to en empty string so it is not being processed as the last element
 		  $op = '';
-		  # last; # exiting the loop and processing the CIGAR string further until we hit the next deletion	
+		  # last; # exiting the loop and processing the CIGAR string further until we hit the next deletion
 		}
 	      }
 	    }
@@ -9704,21 +9705,21 @@ sub make_mismatch_string{
  	if ($op =~ /\d+/ and $deletions_processed < $deletions_total){
 	  if ($verbose){ warn "\n\nlast operation was $op\n";}
  	  if ($verbose){ warn "Processing operation $op; deletion pos is $del_pos. MD so far was: $MD_pos_so_far\n";}
-	
+
  	  $MD_pos_so_far += $op;
 	  if ($verbose){ warn "Adding $op to MD pos so far: $MD_pos_so_far\n";}
 	  if ($verbose){ warn "Deletions already processed: $deletions_processed, del total: $deletions_total\n\n";}
  	  if ($MD_pos_so_far >= $del_pos){
 	    if ($verbose){ warn "Here we go, this operation covers the deletion position!!\n";}
  	    ### splitting up the number of matching bases in number before and after the deletion
-	
+
  	    my $pos_after_deletion = $MD_pos_so_far - $del_pos;
  	    my $pos_before_deletion = $op - $pos_after_deletion;
 	    if ($verbose){  warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}
-	
+
 	    $MD_tag .= "${pos_before_deletion}^${deleted_bases}";
 	    $new_MD .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
-		
+
 	    #adjusting the MD_position by the number of bases after the deletion
 	    $MD_pos_so_far -= $pos_after_deletion;
 	    if ($verbose){ warn "MD after adjusting for deletion: $MD_pos_so_far\n";	}
@@ -9729,27 +9730,27 @@ sub make_mismatch_string{
 	    if ($deletions_processed == $deletions_total){ # this was the last deletion of the read
 	      if ($verbose){ warn "This was the last deletion in the read ($deletions_processed out of $deletions_total total). Continuing to append \$pos_after_deletion (${pos_after_deletion})..\n";}
 	      $MD_tag .= "${pos_after_deletion}";
-	
-	    }	
+
+	    }
 	    else{
 	      if ($verbose){ warn "This wasn't the last deletion in the read. Substituting the last operation with the current deletion and reconstituting \@md\n";}
 	      if ($verbose){ warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";}
-	
+
 	      $current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
 	      if ($verbose){  warn "Current index = $current_md_index\n";}
-		
+
 	      if ($verbose){ warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";}
 	      # since we are no longer in the loop we don't have to subtract 1 from $current_md_index (tit hasn't been incremented in the first place...)
 	      $md_index_already_processed = $current_md_index;
-		
+
 	      if ($verbose){ warn "Exiting now and waiting for the next deletion\n";}
 
-	      $MD_pos_so_far += $len[$index];	
+	      $MD_pos_so_far += $len[$index];
 	      if ($verbose){ warn "MD-tag so far: $MD_tag ~~\n";}
 	    }
 	    ### Finally also adding the length of the deletion to $del_pos
 	    $del_pos += $len[$index];
-	    if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}	
+	    if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
 	  }
 	  else{
 	    die "Something went wrong, we haven't seen a deletion so far even though we should have...\n\n";
@@ -9773,6 +9774,12 @@ sub make_mismatch_string{
   return $MD_tag;
 
 }
+
+my $end_run = time();
+my $run_time = $end_run - $start_run;
+
+print REPORT "Job took $run_time seconds\n";
+
 
 ### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
 ### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
@@ -9873,7 +9880,7 @@ OPTIONS:
 Input:
 
 --se/--single_end <list> Sets single-end mapping mode explicitly giving a list of file names as <list>.
-                         The filenames may be provided as a comma [,] or colon [:] separated list.       
+                         The filenames may be provided as a comma [,] or colon [:] separated list.
 
 -q/--fastq               The query input files (specified as <mate1>,<mate2> or <singles> are FASTQ
                          files (usually having extension .fg or .fastq). This is the default. See also
@@ -9893,7 +9900,7 @@ Input:
 --phred64-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 64. Default: off.
 
 --solexa-quals           Convert FASTQ qualities from solexa-scaled (which can be negative) to phred-scaled
-                         (which can't). The formula for conversion is: 
+                         (which can't). The formula for conversion is:
                          phred-qual = 10 * log(1 + 10 ** (solexa-qual/10.0)) / log(10). Used with -q. This
                          is usually the right option for use with (unconverted) reads emitted by the GA
                          Pipeline versions prior to 1.3. Works only for Bowtie 1. Default: off.
@@ -9908,7 +9915,7 @@ Input:
 Alignment:
 
 -n/--seedmms <int>       The maximum number of mismatches permitted in the "seed", i.e. the first L base pairs
-                         of the read (where L is set with -l/--seedlen). This may be 0, 1, 2 or 3 and the 
+                         of the read (where L is set with -l/--seedlen). This may be 0, 1, 2 or 3 and the
                          default is 1. This option is only available for Bowtie 1 (for Bowtie 2 see -N).
 
 -l/--seedlen             The "seed length"; i.e., the number of bases of the high quality end of the read to
@@ -10051,7 +10058,7 @@ Output:
                          the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
 
 --cram                   Writes the output to a CRAM file instead of BAM. This requires the use of Samtools 1.2 or higher.
-                         
+
 --cram_ref <ref_file>    CRAM output requires you to specify a reference genome as a single FastA file. If this single-FastA
                          reference file is not supplied explicitly it will be regenerated from the genome .fa sequence(s)
                          used for the Bismark run and written to a file called 'Bismark_genome_CRAM_reference.mfa' into the
@@ -10069,7 +10076,7 @@ Output:
 
 --old_flag               Only in paired-end SAM mode, uses the FLAG values used by Bismark v0.8.2 and before. In addition,
                          this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since
-                         both the appended read IDs and custom FLAG values may cause problems with some downstream tools 
+                         both the appended read IDs and custom FLAG values may cause problems with some downstream tools
                          such as Picard, new defaults were implemented as of version 0.8.3.
 
 
@@ -10087,16 +10094,16 @@ Output:
 
 --ambig_bam              For reads that have multiple alignments a random alignment is written out to a special file ending in
                          '.ambiguous.bam'. The alignments are in Bowtie2 format and do not any contain Bismark specific
-                         entries such as the methylation call etc. These ambiguous BAM files are intended to be used as 
-                         coverage estimators for variant callers. 
+                         entries such as the methylation call etc. These ambiguous BAM files are intended to be used as
+                         coverage estimators for variant callers.
 
 --nucleotide_coverage    Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM
-                         file and compares it to the genomic average composition once alignments are complete by calling 'bam2nuc'. 
+                         file and compares it to the genomic average composition once alignments are complete by calling 'bam2nuc'.
                          Since this calculation may take a while, bam2nuc attempts to write the genomic sequence composition
                          into a file called 'genomic_nucleotide_frequencies.txt' indside the reference genome folder so it can
                          be re-used the next time round instead of calculating it once again. If a file 'nucleotide_stats.txt' is
                          found with the Bismark reports it will be automatically detected and used for the Bismark HTML report.
-                         This option works only for BAM or CRAM files. 
+                         This option works only for BAM or CRAM files.
 
 
 Other:
@@ -10113,7 +10120,7 @@ BOWTIE 2 SPECIFIC OPTIONS
                          appropriate. Default: off.
 
 --bowtie2                Default: ON. Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
-                         alignments, i.e. searches for alignments involving all read characters (also called 
+                         alignments, i.e. searches for alignments involving all read characters (also called
                          untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
                          and/or quality trimmed where appropriate. Both small (.bt2) and large (.bt2l) Bowtie 2
                          indexes are supported.
@@ -10127,8 +10134,9 @@ Bowtie 2 alignment options:
 
 -L <int>                 Sets the length of the seed substrings to align during multiseed alignment. Smaller values
                          make alignment slower but more senstive. Default: the --sensitive preset of Bowtie 2 is
-                         used by default, which sets -L to 20. This option is only available for Bowtie 2 (for
-                         Bowtie 1 see -l).
+                         used by default, which sets -L to 20. maximum of L can be set to 32. the length of the seed
+			 would effect the alignment speed dramatically while the larger of L, the faster of the aligment.
+			 This option is only available for Bowtie 2 (for Bowtie 1 see -l).
 
 --ignore-quals           When calculating a mismatch penalty, always consider the quality value at the mismatched
                          position to be the highest possible, regardless of the actual value. I.e. input is treated
@@ -10151,7 +10159,7 @@ Bowtie 2 paired-end options:
                          "past" each other as in this example:
 
                          Mate 1:                 GTCAGCTACGATATTGTTTGGGGTGACACATTACGC
-                         Mate 2:            TATGAGTCAGCTACGATATTGTTTGGGGTGACACAT                   
+                         Mate 2:            TATGAGTCAGCTACGATATTGTTTGGGGTGACACAT
                          Reference: GCAGATTATATGAGTCAGCTACGATATTGTTTGGGGTGACACATTACGCGTCTTTGAC
 
                          By default, dovetailing is considered inconsistent with concordant alignment, but setting --dovetail
@@ -10216,7 +10224,7 @@ Bowtie 2 Reporting options:
                          Bowtie 2 searches for at most <int>+1 distinct, valid alignments for each read. The search terminates when it
                          can't find more distinct valid alignments, or when it finds <int>+1 distinct alignments, whichever
                          happens first. Only the best alignment is reported. Information from the other alignments is used to
-                         estimate mapping quality and to set SAM optional fields, such as AS:i and XS:i. Increasing -M makes 
+                         estimate mapping quality and to set SAM optional fields, such as AS:i and XS:i. Increasing -M makes
                          Bowtie 2 slower, but increases the likelihood that it will pick the correct alignment for a read that
                          aligns many places. For reads that have more than <int>+1 distinct, valid alignments, Bowtie 2 does not
                          guarantee that the alignment reported is the best possible in terms of alignment score. -M is
