@@ -10278,6 +10278,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 19 September 2016
+Last edited on 20 November 2016
 HOW_TO
 }
