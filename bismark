@@ -27,6 +27,7 @@ use lib "$Bin/../lib";
 my $parent_dir = getcwd();
 my $bismark_version = 'v0.16.3_dev';
 my $start_run = time();
+warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
 
 
@@ -9775,10 +9776,16 @@ sub make_mismatch_string{
 
 }
 
+### Produce Run Time
 my $end_run = time();
 my $run_time = $end_run - $start_run;
+my $days  = int($run_time/(24*60*60));
+my $hours = ($run_time/(60*60))%24;
+my $mins  = ($run_time/60)%60;
+my $secs  = $run_time%60;
 
-print REPORT "Job took $run_time seconds\n";
+warn "Bismark completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+print REPORT "Bismark completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
 
 
 ### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
@@ -10289,6 +10296,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 03 November 2016
+Last edited on 21 November 2016
 HOW_TO
 }
