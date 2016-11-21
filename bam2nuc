@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 $|++;
@@ -31,9 +31,9 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.15.1';
+my $bam2nuc_version = 'v0.16.3';
 
-my ($output_dir,$genome_folder,$parent_dir,$samtools_path) = process_commandline();
+my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
 warn "Summary of parameters for nucleotide coverage report:\n";
 warn '='x53,"\n";
@@ -44,15 +44,25 @@ warn "Genome directory:\t\t\t>$genome_folder<\n";
 warn "Samtools installation:\t\t\t>$samtools_path<\n\n";
 
 my $total_number_of_words_counted = 0;
-  
+
 read_genome_into_memory($parent_dir);
 warn "Stored sequence information of ",scalar keys %chromosomes," chromosomes/scaffolds in total\n\n";
 
+### Genomic nucleotide frequencies only
+if ($genome_freq_only){
+    get_genomic_frequencies();
+    warn "Finished processing genomic nucleotide frequencies\n\n";
+    exit;
+}
+
+# Processing data files
 foreach my $infile(@ARGV){
     generate_nucleotide_report($infile);
 }
 
+
 sub generate_nucleotide_report {
+
     my $infile = shift;
     %freqs = ();
     %genomic_freqs = ();
@@ -63,46 +73,8 @@ sub generate_nucleotide_report {
 
     my $number_processed = 0;
 
-    ### GENOMIC NUCLEOTIDE FREQUENCIES
-    if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
-	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
-	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
-	warn "="x188,"\n";
-	
-	while (<GF>){
-	    chomp;
-	    my ($element,$freq) = (split /\t/);
-	    $genomic_freqs{$element} = $freq;
-	    # warn "$element\t$freq\n";
-	}
-	close GF;
-    }
-    else{
-	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
-	warn "="x164,"\n";
-	foreach my $chr (keys %chromosomes){
-	    warn "Processing chromosome >> $chr <<\n";
-	    process_sequence($chromosomes{$chr});
-	}
-
-	%genomic_freqs = %freqs;
-	%freqs = (); # resetting to store the read composition now
-	
-	### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
-	### if this fails
-	if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
-	    warn "Writing genomic nucleotide frequencies to the >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
-	    foreach my $f(sort keys %genomic_freqs){
-		warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
-		print FREQS "$f\t$genomic_freqs{$f}\n";
-	    }
-	    close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
-	}
-	else{
-	    warn "Failed to open filehandle for ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!, skipping writing out genomic frequency table\n";
-	}
-	
-    }
+    get_genomic_frequencies();
+    
     warn "\n\n";
     
     warn "Calculating read frequencies from file '$infile'\n";
@@ -183,6 +155,65 @@ sub generate_nucleotide_report {
 
 }
 
+sub get_genomic_frequencies{
+ 
+    ### GENOMIC NUCLEOTIDE FREQUENCIES
+    if (-e "${genome_folder}genomic_nucleotide_frequencies.txt"){
+	open ( GF,"${genome_folder}genomic_nucleotide_frequencies.txt") or die "Couldn't read from file '${genome_folder}genomic_nucleotide_frequencies.txt': $!\n";
+	warn "Detected file 'genomic_nucleotide_frequencies.txt' in the genome folder $genome_folder already. Using nucleotide frequencies contained therein ...\n";
+	warn "="x188,"\n";
+	
+	while (<GF>){
+	    chomp;
+	    my ($element,$freq) = (split /\t/);
+	    $genomic_freqs{$element} = $freq;
+	    # warn "$element\t$freq\n";
+	}
+	close GF;
+    }
+    else{
+	warn "Could not find genomic nucleotide frequency table in the genome folder, calculating genomic frequencies (this may take several minutes depending on genome size) ...\n";
+	warn "="x164,"\n";
+	foreach my $chr (keys %chromosomes){
+	    warn "Processing chromosome >> $chr <<\n";
+	    process_sequence($chromosomes{$chr});
+	}
+
+	%genomic_freqs = %freqs;
+	%freqs = (); # resetting to store the read composition now
+	
+	### Attempting to write a genomic nucleotide frequency table out to the genome folder so we can re-use it next time without the need to re-calculate
+	### if this fails
+	if  ( open (FREQS,'>',"${genome_folder}genomic_nucleotide_frequencies.txt") ){
+	    warn "Writing genomic nucleotide frequencies to the file >${genome_folder}genomic_nucleotide_frequencies.txt< for future re-use\n";
+	    foreach my $f(sort keys %genomic_freqs){
+		warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
+		print FREQS "$f\t$genomic_freqs{$f}\n";
+	    }
+	    close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
+	}
+	else{
+	    warn "Failed to write out file ${genome_folder}genomic_nucleotide_frequencies.txt because of: $!\n";
+	    sleep(1);
+	    warn "Attempting to write to the output directory ('$output_dir') instead\n\n";
+	    
+	    ### Attempting to write a genomic nucleotide frequency table out to the output folder
+	    if  ( open (FREQS,'>',"${output_dir}genomic_nucleotide_frequencies.txt") ){
+		warn "Writing genomic nucleotide frequencies to the file >${output_dir}genomic_nucleotide_frequencies.txt< for future re-use\n";
+		foreach my $f(sort keys %genomic_freqs){
+		    warn "Writing count of (di-)nucleotide: $f\t$genomic_freqs{$f}\n";
+		    print FREQS "$f\t$genomic_freqs{$f}\n";
+		}
+		close FREQS or warn "Failed to close filehandle FREQS: $!\n\n";
+	    }
+	    else{
+		warn "Failed to write out file ${output_dir}genomic_nucleotide_frequencies.txt because of: $! skipping writing out genomic frequency table\n";
+	    }
+	}
+    }
+}
+
+
 sub calc_paired_end{
     my ($sequence,$flag) = @_;
     # warn "FLAG: $flag\n$sequence\n"; sleep(1);    
@@ -247,19 +278,20 @@ sub calculate_averages {
     my $total_number_of_words_counted;
     my $total_number_of_words_counted_genomic;
     
-    warn "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
-    print OUT "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\n";
+    warn "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\tcoverage\n";
+    print OUT "(di-)nucleotide\tcount sample\tpercent sample\tcount genomic\tpercent genomic\tcoverage\n";
     
     foreach my $word ('A','C','G','T') {
 	$total_number_of_words_counted += $freqs{$word}; 
 	$total_number_of_words_counted_genomic += $genomic_freqs{$word};
     }
-
+    
     foreach my $word ('A','C','G','T') {
 	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
 	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
-	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
-  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+	my $overall_coverage   = sprintf ("%.3f",$freqs{$word}/$genomic_freqs{$word});
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
     }
     
     $total_number_of_words_counted = 0;
@@ -273,8 +305,9 @@ sub calculate_averages {
     foreach my $word ('AA','AC','AG','AT','CA','CC','CG','CT','GA','GC','GG','GT','TA','TC','TG','TT') {
       	my $percentage = sprintf ("%.2f",100*$freqs{$word}/$total_number_of_words_counted);
 	my $percentage_genomic = sprintf ("%.2f",100*$genomic_freqs{$word}/$total_number_of_words_counted_genomic);
-	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
-  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\n";
+	my $overall_coverage   = sprintf ("%.3f",$freqs{$word}/$genomic_freqs{$word});
+	warn "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
+  	print OUT "$word\t$freqs{$word}\t$percentage\t$genomic_freqs{$word}\t$percentage_genomic\t$overall_coverage\n";
     }
     
 }
@@ -314,6 +347,7 @@ sub process_commandline{
     my $genome_folder;
     my $parent_dir;
     my $samtools_path;
+    my $genomic_composition_only;
     my $version;
     
     my $command_line = GetOptions ('help' => \$help,
@@ -321,6 +355,7 @@ sub process_commandline{
 				   'g|genome_folder=s' => \$genome_folder,
 				   'parent_dir=s' => \$parent_dir,
 				   'samtools_path=s' => \$samtools_path,
+				   'genomic_composition_only' => \$genomic_composition_only,
 				   'version' => \$version,
 	);
   
@@ -353,11 +388,13 @@ VERSION
 
     ### no files provided
     unless (@ARGV){
-	warn "You need to provide one or more BAM files to continue. Please respecify!\n";
-	sleep(1);
 	
-	print_helpfile();
-	exit;
+	unless ($genomic_composition_only){ # don't require data input files for genomic composition only
+	    warn "You need to provide one or more BAM files to continue. Please respecify!\n";
+	    sleep(1);
+	    print_helpfile();
+	    exit;
+	}
     }
     
     unless ($parent_dir){
@@ -420,8 +457,8 @@ VERSION
 	    chomp $samtools_path;
 	}
     }
-    
-    return ($output_dir,$genome_folder,$parent_dir,$samtools_path);
+        
+    return ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genomic_composition_only);
 }
 
 
@@ -539,24 +576,29 @@ sub print_helpfile{
   USAGE: bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 
 
---dir                    Output directory. Output is written to the current directory if not specified explicitly.
+--dir                       Output directory. Output is written to the current directory if not specified explicitly.
 
---genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
-                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+--genome_folder <path>      Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
+                            formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
 
---samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
-                         explicitly if Samtools is in the PATH already
+--samtools_path             The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                            explicitly if Samtools is in the PATH already
 
+--genomic_composition_only  Only calculate and extract the genomic sequence composition and exit thereafter. This option will
+                            attempt to write the genomic composition table 'genomic_nucleotide_frequencies.txt' to the genome
+                            folder or to the output directory instead if that doesn't succeed.
 
---help                   Displays this help message and exits
+--help                      Displays this help message and exits
 
 
 GENOMIC composition
 ===================
 
 Since the calculation of the average genomic (di-)nucleotide composition may take a while bam2nuc attempts to
-write a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The 
-next time bam2nuc is run it will then use this file instead of calculating the average genome composition again.
+write out a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The 
+next time bam2nuc is run it will then use this file instead of calculating the average genome composition again. If
+writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory
+instead.
 
 
 OUTPUT FORMAT
@@ -564,31 +606,33 @@ OUTPUT FORMAT
 
 bam2nuc writes out a file ending in .nucleotide_stats.txt in the following format (tab-delimited):
 
-(di-)nucleotide count sample    % sample  count genomic   % genomic
-        A       1432    30.47   3768086 30.98
-        C       849     18.06   2321832 19.09
-        G       871     18.53   2318192 19.06
-        T       1548    32.94   3754886 30.87
-        AA      498     10.81   1321485 10.86
-        AC      227     4.93    639783  5.26
-        AG      233     5.06    709163  5.83
-        AT      442     9.60    1097652 9.02
-        CA      279     6.06    786744  6.47
-        CC      179     3.89    473900  3.90
-        CG      121     2.63    355535  2.92
-        CT      249     5.41    705653  5.80
-        GA      275     5.97    756411  6.22
-        GC      144     3.13    453607  3.73
-        GG      178     3.86    470732  3.87
-        GT      265     5.75    637436  5.24
-        TA      352     7.64    903441  7.43
-        TC      275     5.97    754531  6.20
-        TG      327     7.10    782761  6.44
-        TT      562     12.20   1314144 10.80
+
+(di-)nucleotide count sample    percent sample  count genomic   percent genomic coverage
+A       14541   30.91   3768086 30.98   0.004
+C       8893    18.90   2321832 19.09   0.004
+G       9019    19.17   2318192 19.06   0.004
+T       14597   31.02   3754886 30.87   0.004
+AA      5008    10.86   1321485 10.86   0.004
+AC      2355    5.11    639783  5.26    0.004
+AG      2692    5.84    709163  5.83    0.004
+AT      4191    9.09    1097652 9.02    0.004
+CA      2912    6.32    786744  6.47    0.004
+CC      1812    3.93    473900  3.90    0.004
+CG      1341    2.91    355535  2.92    0.004
+CT      2659    5.77    705653  5.80    0.004
+GA      2903    6.30    756411  6.22    0.004
+GC      1724    3.74    453607  3.73    0.004
+GG      1817    3.94    470732  3.87    0.004
+GT      2402    5.21    637436  5.24    0.004
+TA      3419    7.42    903441  7.43    0.004
+TC      2823    6.12    754531  6.20    0.004
+TG      2996    6.50    782761  6.44    0.004
+TT      5055    10.96   1314144 10.80   0.004
+
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 04 February 2016
+                              Script last modified: 07 July 2016
 
 EOF
     ;

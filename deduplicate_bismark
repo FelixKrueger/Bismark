@@ -1,4 +1,4 @@
-#!/usr/bin/perl --
+#!/usr/bin/env perl
 use strict;
 use warnings;
 use Getopt::Long;
@@ -29,9 +29,10 @@ use Getopt::Long;
 ### Just for reference, here is the the text:
 ### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
 
+### 16 09 2016
+### to detect paired-end command from the @PG line we now allow -1 and -2 or --1 and --2 (or a combination thereof)
 
-my $dedup_version = 'v0.14.6';
-
+my $dedup_version = 'v0.16.3_dev';
 
 my $help;
 my $representative;
@@ -91,150 +92,159 @@ unless (@filenames){
 
 ### OPTIONS
 unless ($global_single or $global_paired){
-  if ($vanilla){
-    die "Please specify either -s (single-end) or -p (paired-end) for deduplication. Reading this information from the \@PG header line only works for SAM/BAM files\n\n";
-  }
-  warn "\nNeither -s (single-end) nor -p (paired-end) selected for deduplication. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
+    if ($vanilla){
+	die "Please specify either -s (single-end) or -p (paired-end) for deduplication. Reading this information from the \@PG header line only works for SAM/BAM files\n\n";
+    }
+    warn "\nNeither -s (single-end) nor -p (paired-end) selected for deduplication. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
 }
 
 if ($global_paired){
-  if ($global_single){
-    die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
+    if ($global_single){
+	die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
   }
-  if ($vanilla){
+    if ($vanilla){
+	
+	if ($rrbs){
+	    die "Barcode deduplication only works with Bismark SAM (or BAM) output (in attempt to phase out the vanilla format)\n";
+	}
 
-    if ($rrbs){
-      die "Barcode deduplication only works with Bismark SAM (or BAM) output (in attempt to phase out the vanilla format)\n";
+	warn "Processing paired-end custom Bismark output file(s):\n";
+	warn join ("\t",@filenames),"\n\n";
     }
-
-    warn "Processing paired-end custom Bismark output file(s):\n";
-    warn join ("\t",@filenames),"\n\n";
-  }
-  else{
-    warn "Processing paired-end Bismark output file(s) (SAM format):\n";
-    warn join ("\t",@filenames),"\n\n";
-  }
+    else{
+	warn "Processing paired-end Bismark output file(s) (SAM format):\n";
+	warn join ("\t",@filenames),"\n\n";
+    }
 }
 else{
-  if ($vanilla){
-    warn "Processing single-end custom Bismark output file(s):\n";
-    warn join ("\t",@filenames),"\n\n";
-  }
-  else{
-    warn "Processing single-end Bismark output file(s) (SAM format):\n";
-    warn join ("\t",@filenames),"\n\n";
-  }
+    if ($vanilla){
+	warn "Processing single-end custom Bismark output file(s):\n";
+	warn join ("\t",@filenames),"\n\n";
+    }
+    else{
+	warn "Processing single-end Bismark output file(s) (SAM format):\n";
+	warn join ("\t",@filenames),"\n\n";
+    }
 }
 
 ### PATH TO SAMTOOLS
 if (defined $samtools_path){
-  # if Samtools was specified as full command
-  if ($samtools_path =~ /samtools$/){
-    if (-e $samtools_path){
-      # Samtools executable found
+    # if Samtools was specified as full command
+    if ($samtools_path =~ /samtools$/){
+	if (-e $samtools_path){
+	    # Samtools executable found
+	}
+	else{
+	    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	}
     }
     else{
-      die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	unless ($samtools_path =~ /\/$/){
+	    $samtools_path =~ s/$/\//;
+	}
+	$samtools_path .= 'samtools';
+	if (-e $samtools_path){
+	    # Samtools executable found
+	}
+	else{
+	    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	}
     }
-  }
-  else{
-    unless ($samtools_path =~ /\/$/){
-      $samtools_path =~ s/$/\//;
-    }
-    $samtools_path .= 'samtools';
-    if (-e $samtools_path){
-      # Samtools executable found
-    }
-    else{
-      die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-    }
-  }
 }
 # Check whether Samtools is in the PATH if no path was supplied by the user
 else{
-  if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
-    $samtools_path = `which samtools`;
-    chomp $samtools_path;
-  }
+    if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+	$samtools_path = `which samtools`;
+	chomp $samtools_path;
+    }
 }
 
 if ($bam){
-  if (defined $samtools_path){
-    $bam = 1;
-  }
-  else{
-    warn "No Samtools found on your system, writing out a gzipped SAM file instead\n";
-    $bam = 2;
-  }
+    if (defined $samtools_path){
+	$bam = 1;
+    }
+    else{
+	warn "No Samtools found on your system, writing out a gzipped SAM file instead\n";
+	$bam = 2;
+    }
 }
 else{
-  $bam = 0;
+    $bam = 0;
 }
 
 
 if ($representative){
-  warn "\nIf there are several alignments to a single position in the genome the alignment with the most representative methylation call will be chosen (this might be the most highly amplified PCR product...)\n\n";
-  sleep (2);
+    warn "\nIf there are several alignments to a single position in the genome the alignment with the most representative methylation call will be chosen (this might be the most highly amplified PCR product...)\n\n";
+    sleep (1);
 }
 elsif($rrbs){
-  warn "\nIf the input is a multiplexed sample with several alignments to a single position in the genome, only alignments with a unique barcode will be chosen)\n\n";
-  sleep (2);
+    warn "\nIf the input is a multiplexed sample with several alignments to a single position in the genome, only alignments with a unique barcode will be chosen)\n\n";
+    sleep (1);
 }
 else{ # default; random (=first) alignment
-  warn "\nIf there are several alignments to a single position in the genome the first alignment will be chosen. Since the input files are not in any way sorted this is a near-enough random selection of reads.\n\n";
-  sleep (2);
+    warn "\nIf there are several alignments to a single position in the genome the first alignment will be chosen. Since the input files are not in any way sorted this is a near-enough random selection of reads.\n\n";
+    sleep (1);
 }
 
 foreach my $file (@filenames){
 
-  if ($global_single){
-    $paired = 0;
-    $single = 1;
-  }
-  elsif($global_paired){
-    $paired = 1;
-    $single = 0;
-  }
-
-  unless($global_single or $global_paired){
-
-    warn "Trying to determine the type of mapping from the SAM header line\n"; sleep(1);
-
-    ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
-    if ($file =~ /\.gz$/){
-      open (DETERMINE,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+    if ($global_single){
+	$paired = 0;
+	$single = 1;
     }
-    elsif ($file =~ /\.bam$/){
-      open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+    elsif($global_paired){
+	$paired = 1;
+	$single = 0;
     }
-    else{
-      open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
+
+    # Testing if the file appears to be truncated, in which case we bail with a big scary warning message
+    if ($file =~ /(\.bam$)/){
+	bam_isTruncated($file);
     }
-    while (<DETERMINE>){
-      last unless (/^\@/);
-      if ($_ =~ /^\@PG/){
-	# warn "found the \@PG line:\n";
-	# warn "$_";
+  
+    unless($global_single or $global_paired){
 	
-	if ($_ =~ /\s+-1\s+/ and $_ =~ /\s+-2\s+/){
-	  warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
-	  $paired = 1;
-	  $single = 0;
+	warn "Trying to determine the type of mapping from the SAM header line\n"; sleep(1);
+	
+	### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
+	if ($file =~ /\.gz$/){
+	    open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+	}
+	elsif ($file =~ /\.bam$/){
+	    open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
 	}
 	else{
-	  warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
-	  $paired = 0;
-	  $single = 1;
+	    open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
 	}
-      }
+	while (<DETERMINE>){
+	    last unless (/^\@/);
+	    if ($_ =~ /^\@PG/){
+		# warn "found the \@PG line:\n";
+		# warn "$_";
+		
+		if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
+		    warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
+		    $paired = 1;
+		    $single = 0;
+		}
+		else{
+		    warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
+		    $paired = 0;
+		    $single = 1;
+		}
+	    }
+	}
+	close DETERMINE or warn "$!\n";
     }
-    close DETERMINE or warn "$!\n";
-  }
-
-  ### OPTIONS
-  unless ($single or $paired){
-    die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
-  }
+    
+    if ($file =~ /(\.bam$|\.sam$)/){
+	bam_isEmpty($file);
+    }
+  
+    ### OPTIONS
+    unless ($single or $paired){
+	die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
+    }
 
   ### 
   unless ($vanilla){
@@ -242,6 +252,7 @@ foreach my $file (@filenames){
       test_positional_sorting($file);
     }
   }
+
 
   ### writing to a report file
   my $report = $file;
@@ -271,7 +282,7 @@ foreach my $file (@filenames){
     my %positions;
 
     if ($file =~ /\.gz$/){
-      open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+      open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
       open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
@@ -584,7 +595,7 @@ sub deduplicate_barcoded_rrbs{
   my %positions;
 
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
   }
   elsif ($file =~ /\.bam$/){
     open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
@@ -887,7 +898,52 @@ sub deduplicate_barcoded_rrbs{
 
 }
 
+sub bam_isEmpty{
+      
+    my $file = shift;
 
+    if ($file =~ /\.bam$/){
+	open (EMPTY,"$samtools_path view $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+	open (EMPTY,$file) or die "Unable to read from $file: $!\n";
+    }
+    my $count = 0;
+    while (<EMPTY>){
+	if ($_){
+	    $count++;  # file contains data, fine.
+	}
+	last; # one line is enough
+    }
+
+    if ($count == 0){
+	die "\n### File appears to be empty, terminating deduplication process. Please make sure the input file has not been truncated. ###\n\n";
+    }
+    close EMPTY or warn "$!\n";
+}
+
+sub bam_isTruncated{
+    
+    my $file = shift;
+    warn "Checking file >>$file<< for signs of file truncation...\n";
+    
+    open (TRUNC,"$samtools_path view 2>&1 $file |") or die "Unable to read from BAM file $file: $!\n"; # 2>&1 redirects stderr to stdout, so we should be able to capture problems
+    
+    my $count = 0;
+    while (<TRUNC>){
+	chomp;
+	++$count;
+	# errors tend to start with a [], I have seen e.g.: 
+	# [W::bam_hdr_read] EOF marker is absent. The input is probably truncated.
+	if ($_ =~ /^\[/){ 
+	    if ($_ =~ /[EOF|truncated]/){ 
+		die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
+	    }
+	}
+	last if ($count == 10); 	# this should be enough
+    }
+    close TRUNC or warn "$!\n";
+}
 
 
 sub print_helpfile{
@@ -911,7 +967,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on November 04, 2015\n\n";
+  print "This script was last modified on September 16, 2016\n\n";
 }
 
 
@@ -925,7 +981,7 @@ sub test_positional_sorting{
   sleep(1);
 
   if ($filename =~ /\.gz$/) {
-    open (TEST,"zcat $filename |") or die "Can't open gzipped file $filename: $!\n";
+    open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
   }
   elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
     if ($samtools_path){
@@ -987,9 +1043,9 @@ sub isBam{
   my $filename = shift;
 
   # reading the first line of the input file to see if it is a BAM file in disguise (i.e. a BAM file that does not end in *.bam which may be produced by Galaxy)
-  open (DISGUISE,"zcat $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
+  open (DISGUISE,"gunzip -c $filename |") or die "Failed to open filehandle DISGUISE for $filename\n\n";
 
-  ### when BAM files read through a zcat stream they start with BAM...
+  ### when BAM files read through a gunzip -c stream they start with BAM...
   my $bam_in_disguise = <DISGUISE>;
   # warn "BAM in disguise: $bam_in_disguise\n\n";
 
@@ -1032,7 +1088,7 @@ sub deduplicate_representative {
 
   ### going through the file first and storing all positions as well as their methylation call strings in a hash
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Unable to read from gzipped file $file: $!\n";
+    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
   }
   elsif ($file =~ /\.bam$/){
     open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";

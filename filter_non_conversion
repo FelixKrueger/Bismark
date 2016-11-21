@@ -1,0 +1,556 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use Getopt::Long;
+use Cwd;
+use FindBin qw($Bin);
+use lib "$Bin/../lib";
+$|++;
+
+## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
+
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+
+## You should have received a copy of the GNU General Public License
+## along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+my $parent_dir = getcwd();
+my $filter_version = 'v0.16.3_dev';
+my ($single,$paired);
+my ($global_single,$global_paired,$samtools_path,$threshold) = process_commandline();
+
+foreach my $file (@ARGV){
+    $single = $paired = undef; # resetting
+    unless ($file =~ /bam$/){
+	die "Please provide a BAM file to continue!\n";
+    }
+    
+    # Testing if the file appears to be truncated, in which case we bail with a big scary warning message
+    if ($file =~ /(\.bam$)/){
+	bam_isTruncated($file);
+    } 
+    
+    # Testing is th file is empty
+    if ($file =~ /(\.bam$|\.sam$)/){
+	bam_isEmpty($file);
+    }
+    
+    # FILE TYPE
+    if ($global_single){
+	$paired = 0;
+	$single = 1;
+    }
+    elsif($global_paired){
+	$paired = 1;
+	$single = 0;
+    }
+    
+    unless($global_single or $global_paired){
+	determine_file_type($file);
+    }
+    
+    unless ($single or $paired){
+	die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
+    }
+    
+    if ($paired){
+	test_positional_sorting($file);
+    }
+
+    # looks like we should be good to actually do something
+    process_file($file);
+}
+
+warn "Please continue with deduplication or methylation extraction now (depending on your application)\n\n";
+
+
+sub process_file{
+    
+    my $infile = shift;
+    open (IN,"samtools view -h $infile |") or die $!;
+    
+    my $outfile = $infile;
+    $outfile =~ s/\.bam$//;
+    $outfile =~ s/$/.nonCG_filtered.bam/;
+    open (OUT,"| samtools view -bS - > $outfile") or die "Failed to write to file $outfile: $!\n\n";
+    
+    my $removed = $infile;
+    $removed =~ s/\.bam$//;
+    $removed =~ s/$/.nonCG_removed_seqs.bam/;
+    open (REMOVED,"| samtools view -bS - > $removed") or die "Failed to write removed sequences to outfile $removed: $!\n\n";
+    
+    my $report = $infile;
+    $report =~ s/\.bam$//;
+    $report =~ s/$/.non-conversion_filtering.txt/;
+    open (REPORT,'>',$report) or die "Failed to write non-CG filtering report to $report: $!\n\n";
+
+    my $count = 0;
+    my $kicked = 0;
+    if ($single){
+	warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read gets removed\n\n";
+    }
+    else{
+	warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read pair gets removed (either read can fail the entire read pair)\n\n";
+    }
+
+    while (<IN>){
+	
+	if ($_ =~ /^\@/){ # header lines
+	    print OUT;
+	    print REMOVED;
+	    next;
+	}
+	if ($single){
+	    my ($meth_call) = $1 if ($_ =~ /XM:Z:(.+?)\s/);
+	    # warn "$meth_call\n"; sleep(1);
+	    
+	    my $sequence_fails = 0;
+	    my $nonCpG_count = 0;
+	    
+	    ++$count;
+	    
+	    my @chars = split //,$meth_call;
+	    
+	    foreach my $char(@chars){
+		if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
+		    ++$nonCpG_count;
+		}
+		elsif ( ($char eq 'z') or ($char eq 'Z') ){
+		    # $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+		}
+		
+		if ($nonCpG_count >= $threshold){
+		    $sequence_fails = 1;
+		    last;
+		}
+	    }
+	    
+	    if ($sequence_fails){
+		++$kicked;
+		print REMOVED;
+	    }
+	    else{
+		print OUT;
+	    }
+	}
+	else{
+	    
+	    my $line_1 = $_;
+	    $_ = <IN>; # read 2 of a pair
+	    
+	    my ($meth_call_1) = $1 if ($line_1 =~ /XM:Z:(.+?)\s/);
+	    my ($meth_call_2) = $1 if ($_ =~ /XM:Z:(.+?)\s/);
+	    
+	    unless($meth_call_1 and $meth_call_2){
+		die "Failed to extract methylation calls from Read 1 or Read 2 for sequence pair\nRead 1: $line_1\nRead 2: $_\n\n";
+	    }
+	    # warn "$meth_call_1\n$meth_call_2\n"; sleep(1);
+	    
+	    my $sequence_fails = 0;
+	    my $nonCpG_count = 0;
+	    
+	    ++$count; # just one count per sequence pair
+	    
+	    # Read 1
+	    my @chars = split //,$meth_call_1;
+	    
+	    foreach my $char(@chars){
+		if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
+		    ++$nonCpG_count;
+		}
+		elsif ( ($char eq 'z') or ($char eq 'Z') ){
+		    # $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+		}
+		
+		if ($nonCpG_count >= $threshold){
+		    $sequence_fails = 1;
+		    last;
+		}
+	    }
+	    
+	    unless ($sequence_fails){ # if Read 1 has failed the sequence pair already we do not need to look at Read 2
+		
+		# Read 2
+		@chars = split //,$meth_call_2;
+		
+		foreach my $char(@chars){
+		    if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
+			++$nonCpG_count;
+		    }
+		    elsif ( ($char eq 'z') or ($char eq 'Z') ){
+			# $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+		    }
+		    
+		    if ($nonCpG_count >= $threshold){
+			$sequence_fails = 1;
+			last;
+		    }
+		}
+	    }
+
+	    if ($sequence_fails){
+		++$kicked;
+		print REMOVED $line_1;
+		print REMOVED $_;
+	    }
+	    else{
+		print OUT $line_1;
+		print OUT $_;
+	    }
+	}
+	
+    }
+
+    ### SUMMARY
+    warn "NON-CONVERSION SUMMARY\n======================\n";
+    if ($paired){
+	warn "Analysed read pairs (paired-end) in file >> $infile << in total:\t$count\n";
+	print REPORT "Analysed read pairs (paired-end) in file >> $infile <<  in total:\t$count\n";
+    }
+    else{
+	warn "Analysed sequences (single-end) in file >> $infile << in total:\t$count\n";
+	print REPORT "Analysed sequences (single-end) in file >> $infile << in total:\t$count\n";
+    }
+    
+    my $percent;
+
+    if ($count ==0){ 
+	$percent = "N/A";
+    }
+    else{
+	$percent = sprintf ("%.1f",$kicked/$count*100);
+    }
+    
+  
+    if ($paired){
+	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+  	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+    }
+    else{
+	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls per read):\t$kicked ($percent%)\n\n";
+	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls per read):\t$kicked ($percent%)\n\n";
+    }
+    
+    close OUT or warn "Couldn't close OUT... $!\n";
+    close REMOVED or warn "Couldn't close REMOVED... $!\n";
+    
+}
+
+sub determine_file_type{
+    my $file = shift;
+    warn "Trying to determine the type of mapping from the SAM header line\n";
+    
+    ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the BAM file
+    if ($file =~ /\.gz$/){
+	open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+    }
+    elsif ($file =~ /\.bam$/){
+	open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+	open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
+    }
+    while (<DETERMINE>){
+	last unless (/^\@/);
+	if ($_ =~ /^\@PG/){
+	    # warn "found the \@PG line:\n";
+	    # warn "$_";
+	    
+	    if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
+		warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
+		$paired = 1;
+		$single = 0;
+	    }
+	    else{
+		warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
+		$paired = 0;
+		$single = 1;
+	    }
+	}
+    }
+    close DETERMINE or warn "$!\n";
+}
+
+sub test_positional_sorting{
+    
+    my $filename = shift;
+
+    print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
+    sleep(1);
+
+    if ($filename =~ /\.gz$/) {
+	open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
+    }
+    elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
+	if ($samtools_path){
+	    open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
+	}
+	else{
+	    die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
+	}
+    }
+    else {
+	open (TEST,$filename) or die "Can't open file $filename: $!\n";
+    }
+
+    my $count = 0;
+
+    while (<TEST>) {
+	if (/^\@/) {	     # testing header lines if they contain the @SO flag (for being sorted)
+	    if (/^\@SO/) {
+		die "SAM/BAM header line '$_' indicates that the Bismark aligment file has been sorted by chromosomal positions which is is incompatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+	    }
+	    next;
+	}
+	$count++;
+	
+	last if ($count > 100000); # else we test the first 100000 sequences if they start with the same read ID
+	
+	my ($id_1) = (split (/\t/));
+	
+	### reading the next line which should be read 2
+	$_ = <TEST>;
+	my ($id_2) = (split (/\t/));
+	last unless ($id_2);
+	++$count;
+	
+	if ($id_1 eq $id_2){
+	    ### ids are the same
+	    next;
+	}
+	else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
+	    my $id_1_trunc = $id_1;
+	    $id_1_trunc =~ s/\/1$//;
+	    my $id_2_trunc = $id_2;
+	    $id_2_trunc =~ s/\/2$//;
+	    
+	    unless ($id_1_trunc eq $id_2_trunc){
+		die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+	    }
+	}
+    }
+    #  close TEST or die $!; somehow fails on our cluster...
+    ### If it hasen't died so far then it seems the file is in the correct Bismark format (read 1 and read 2 of a pair directly following each other)
+    warn "...passed!\n";
+    sleep(1);
+}
+
+
+sub process_commandline{
+    
+    my $help;
+    my $single;
+    my $paired;
+    my $global_single;
+    my $global_paired;
+    my $samtools_path;
+    my $threshold;
+    my $version;
+    
+    my $command_line = GetOptions ('help' => \$help,
+				   's|single' => \$global_single,
+				   'p|paired' => \$global_paired,
+				   'samtools_path=s' => \$samtools_path,
+				   'threshold=i' => \$threshold,
+				   'version' => \$version,
+	);
+    
+    die "Please respecify command line options\n\n" unless ($command_line);
+    
+    if ($help){
+	print_helpfile();
+	exit;
+    }
+    
+    if ($version){
+	print << "VERSION";
+	
+                	Bismark non-conversion filtering
+	    
+               	    Bismark non-conversion version: $filter_version
+	    Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
+                www.bioinformatics.babraham.ac.uk/projects/bismark/
+                    https://github.com/FelixKrueger/Bismark
+		
+		
+VERSION
+		exit;
+    }
+    
+    unless (@ARGV){
+	print "Please provide one or more Bismark output files for non-bisulfite conversion filtering\n\n";
+	sleep (1);
+	print_helpfile();
+	exit;
+    }
+  
+    ### OPTIONS
+
+    ### USER DEFINED SINGLE OR PAIRED-END MODE
+    unless ($global_single or $global_paired){
+	warn "\nNeither -s (single-end) nor -p (paired-end) selected for non-bisulfite conversion filtering. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
+    }
+    
+    if ($global_paired){
+	if ($global_single){
+	    die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
+	}
+	
+	warn "Processing paired-end Bismark output file(s) (SAM format):\n";
+	warn join ("\t",@ARGV),"\n\n";
+    }
+    elsif ($global_single){
+	warn "Processing single-end Bismark output file(s) (SAM format):\n";
+	warn join ("\t",@ARGV),"\n\n";
+    }
+    
+    ### PATH TO SAMTOOLS
+    if (defined $samtools_path){
+	# if Samtools was specified as full command
+	if ($samtools_path =~ /samtools$/){
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+	else{
+	    unless ($samtools_path =~ /\/$/){
+		$samtools_path =~ s/$/\//;
+	    }
+	    $samtools_path .= 'samtools';
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+    }
+    # Check whether Samtools is in the PATH if no path was supplied by the user
+    else{
+	if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+	    $samtools_path = `which samtools`;
+	    chomp $samtools_path;
+	}
+    }
+
+    if (defined $samtools_path){
+	# fine
+    }
+    else{
+	die "No Samtools found on your system, please install Samtools or specify its path using --samtools_path /path/\n\n";
+    }
+    
+    ### THRESHOLD of methylated Cs in non-CG context
+    if (defined $threshold){
+	unless ($threshold > 0 ){
+	    die "Please use a sensible value for $threshold (positive numbers only, default: [3])\n\n";
+	}
+    }
+    else{
+	$threshold = 3; # default
+    }
+
+    return ($single,$paired,$samtools_path,$threshold);
+}
+
+sub bam_isEmpty{
+      
+    my $file = shift;
+
+    if ($file =~ /\.bam$/){
+	open (EMPTY,"$samtools_path view $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+	open (EMPTY,$file) or die "Unable to read from $file: $!\n";
+    }
+    my $count = 0;
+    while (<EMPTY>){
+	if ($_){
+	    $count++;  # file contains data, fine.
+	}
+	last; # one line is enough
+    }
+
+    if ($count == 0){
+	die "\n### File appears to be empty, terminating deduplication process. Please make sure the input file has not been truncated. ###\n\n";
+    }
+    close EMPTY or warn "$!\n";
+}
+
+sub bam_isTruncated{
+    
+    my $file = shift;
+    warn "Checking file >>$file<< for signs of file truncation...\n";
+    
+    open (TRUNC,"$samtools_path view 2>&1 $file |") or die "Unable to read from BAM file $file: $!\n"; # 2>&1 redirects stderr to stdout, so we should be able to capture problems
+    
+    my $count = 0;
+    while (<TRUNC>){
+	chomp;
+	++$count;
+	# errors tend to start with a [], I have seen e.g.: 
+	# [W::bam_hdr_read] EOF marker is absent. The input is probably truncated.
+	if ($_ =~ /^\[/){ 
+	    if ($_ =~ /[EOF|truncated]/){ 
+		die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
+	    }
+	}
+	last if ($count == 10); 	# this should be enough
+    }
+    close TRUNC or warn "$!\n";
+}
+
+sub print_helpfile{
+  print <<EOF
+
+  SYNOPSIS:
+
+  Filtering incomplete bisulfite conversion from Bismark BAM files. This script examines the methylation calls
+  of reads, or read pairs for paired-end sequencing, and filters out reads that exceed a certain threshold of
+  methylated calls in non-CG context (the default is 3). In the first instance we look for a certain number of
+  methylated non-CG calls, but this could potentially also be extended to a percentage for any given read.
+ 
+  Please be aware that this kind of filtering is not advisable and will introduce biases if you work with organisms
+  which exhibit any appreciable levels of non-CG methylation (e.g. most plants).
+
+  USAGE: filter_non_conversion [options] [Bismark BAM files]
+
+
+*** Please note that for paired-end BAM files the filter_non_conversion script expects Read 1 and Read 2 to
+follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it
+by read name first (e.g. using samtools sort -n)  ***
+
+
+-s/--single            Deduplicate single-end Bismark BAM files. If not specified the library type is auto-detected.
+
+-p/--paired            Deduplicate paired-end Bismark BAM files. If not specified the library type is auto-detected.
+
+--threshold [int]      The number of methylated cytosines in non-CG context at which reads or read pairs are filtered
+                       out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
+
+--samtools_path        The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                       explicitly if Samtools is in the PATH already.
+
+
+--help                 Displays this help text end exits.
+
+--version              Displays version information and exits.
+
+
+                           Last modified: 17 November 2016
+
+EOF
+    ;
+  exit 1;
+}

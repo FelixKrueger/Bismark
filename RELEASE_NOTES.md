@@ -1,17 +1,176 @@
-RELEASE NOTES FOR Bismark v0.14.6 (08 01 2016)
-----------------------------------------------
+# Bismark Release Notes
 
-Bismark
-=======
+## RELEASE NOTES FOR Bismark v0.16.3_dev (03 11 2016)
+
+### Bismark
+
+The option `--dovetail` is now the default behaviour for paired-end Bowtie2 libraries to assist with
+alignments that have undergone 5'-end trimming. Can be disabled using the new option `--no_dovetail`.
+
+
+
+## RELEASE NOTES FOR Bismark v0.16.3 (25 07 2016)
+
+
+### Bismark
+
+Fixed another bug where a subset of ambiguous Bowtie 2 alignments where considered unique even though
+they had been ambiguous in a different thread before, e.g.: 
+Read 1: AS:i:0 XS:i:0
+Read 2: AS:i:0
+In such cases the 'ambiguous within thread' variable is now only reset if the second alignment is truly better. This
+also affects the 'ambig.bam' output.
+
+Added support for large Bowtie (1) index files ending in .ebwtl which had been added in Bowtie v1.1.0.
+
+
+
+
+
+## RELEASE NOTES FOR Bismark v0.16.2 (19 07 2016)
+
+
+### Bismark
+
+Fixed a bug for Bowtie 2 alignments where reads that should be considered ambiguous were incorrectly
+assigned to the first alignment thread. This error had crept in during the 'changing the behavior of 
+corner cases' in v0.16.0). Thanks to John Gaspar for spotting this!
+
+Changed the Shebang in all scripts of the Bismark suite to "#!/usr/bin/env perl" instead of 
+"#!/usr/bin/perl".
+
+### deduplicate_bismark
+
+Does now bail with a useful error message when the input files are empty.
+
+
+### bismark_genome_preparation
+
+Added new option --genomic_composition so that the genomic composition can be calculated and written right
+at the genome preparation stage rather than by using bam2nuc.
+
+
+### bam2nuc
+
+Now also calculates a fold coverage for the various (di-)nucleotides. The changes in the nucleotide_stats
+text file are also picked up and plotted by bismark2report.
+
+Added a new option --genomic_composition_only to just process the genomic sequence without requiring
+any data files.
+
+
+### bismark2summary
+
+Added option -o/--basename <filename> to specify a certain filename. If not specified the name will
+remain 'bismark_summary_report.txt/html'.
+
+Added documentation and the options --help and --version to be consistent with the rest of Bismark.
+
+Added option --title <string> to give the HTML report a different title
+
+
+
+
+
+## RELEASE NOTES FOR Bismark v0.16.1 (25 04 2016)
+
+
+### Bismark
+
+Removed unintended warn/sleep statement during PE/Bowtie 2 alignments that would slow alignments down
+dramatically. Sorry for that.
+
+
+
+
+## RELEASE NOTES FOR Bismark v0.16.0 (20 04 2016)
+
+
+### Bismark
+
+File endings .fastq | .fq | .fastq.gz | .fq.gz are now removed from the output file (unless they were
+specified with --basename) in a bid to reduce the length of the already long filenames.
+
+Enabled the new option '--dovetail' (which will be turned on by default for '--pbat' libraries) which
+will now allow dovetailing reads to be reported. For a more in-depth description see
+https://github.com/FelixKrueger/Bismark/issues/14.
+
+Changed the behaviour of corner cases to where several non-directional alignments could have existed
+for the very same position but to different strands so that now the best alignment trumps the weaker
+one. As an example: If you relaxed the alignment criteria of a given alignment to allow ~ 60 mismatches
+for PE alignment we did find an alignment to the OT strand with a combined AS of -324, but there also
+was an alignment to the CTOB strand with and AS of 0 (perfect alignment). The CTOB now trumps the OT
+alignment, and the methylation information information is now reported for the bottom strand.
+Credits go to Sylvain Foret (ANU, Canberra) for bringing this to our attention!
+
+
+
+### New module: bismark2summary
+
+bismark2summary accepts Bismark BAM files as input. It will then try to identify Bismark reports,
+and optionally deduplication reports or methylation extractor (splitting) reports automatically based
+the BAM file basename. It produces a tab delimited overview table (.txt) as well as a graphical HTML
+report. 
+Examples can be found at http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.html
+and http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.txt. Thanks to
+@ewels for help with the Java Script part!
+
+
+### New module: bam2nuc
+
+The new Bismark module bam2nuc calculcates the average mono- and di-nucleotide coverage of libraries
+and compares this to the genomic average composition. bam2nuc can be called straight from within
+Bismark (option '--nucleotide_coverage') or run stand-alone. bam2nuc creates a '...nucleotide_stats.txt'
+file that is also automatically detected by bismark2report and incorporated into the HTML report.
+
+
+### bismark2_sitrep.tpl
+
+Removed an extra function call in bismark_sitrep.tpl so that the M-bias 2 plot is drawn once
+the M-bias 1 plot has finished drawing (parallel processing could with certain browsers and data
+may have resulted in a white spaceholder only).
+
+
+### Methylation extractor
+
+Altering the file path handling of coverage2cytosine and bismark2bedGraph also required some changes
+in the methylation extractor.
+
+
+### bismark2bedGraph
+
+Input file path handling has been completely reworked. The output file which can be specified as
+'-o output.bedGraph' now has to be a single file name and mustn't contain any path information.
+A particular output folder may be specified with '-dir /any/path/'.
+
+Addressing the file path handling issue also fixed a similar issue with the option --remove_spaces
+when -o had been specified.
+
+
+### coverage2cytosine
+
+Changed gunzip -c for gunzip -c when reading a gzipped coverage file.
+
+Changed the way in which the coverage input file is handed over from the methylation_extractor
+to coverage2cytosine (previously the path information might have been part of the filename, but
+instead it will now be only part of the --dir output_directory option.
+
+
+
+
+## RELEASE NOTES FOR Bismark v0.15.0 (08 01 2016)
+
+
+### Bismark
 
 Added option '--se/--single_end <list>'. This sets single-end mapping mode explicitly giving a
 list of file names as <list>. The filenames may be provided as a comma [,] or colon [:]-separated
 list.
 
-Added option '--genome_folder <path/to/genome>' as alternative to supplying the genome as the 
+Added option '--genome_folder <path/to/genome>' as alternative to supplying the genome as the
 first argument.
 
-Added an option '--rg_tag' to print an @RG header line as well as and RG:Z: tag to each read. 
+Added an option '--rg_tag' to print an @RG header line as well as and RG:Z: tag to each read.
 The ID and SAMPLE fields default to 'SAMPLE', but can be specified manually with '--rg_id' or
 '--rg_sample'.
 
@@ -28,8 +187,7 @@ specified the file is derived from the reference FastA files used for the Bismar
 to the file 'Bismark_genome_CRAM_reference.mfa' into the output directory.
 
 
-deduplicate_bismark
-===================
+### deduplicate_bismark
 
 Added better handling of cases when the input file was empty (died for percentage calculation
 instead of calling it N/A)
@@ -40,53 +198,48 @@ added a check that reads the first 100000 lines to see if the file appears to ha
 and bail out if this is true.
 
 
-Methylation extractor
-=====================
+### Methylation extractor
 
 Added support for CRAM files (this option requires Samtools version 1.2 or higher).
 
 
-bismark_genome_preparation
-==========================
+### bismark_genome_preparation
 
 Added process handling to the child processes.
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Added option --gzip to compress output files. This currently only works for the default CpG_report
-and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip 
+and CX_report output files (and thus not with the option --gc or --split_files. The option --gzip
 is now also passed on from the bismark_methylation_extractor.
 
 Added a check to coverage2cytosine to bail if no information was found in the coverage file, e.g. if
 a wrong file path for a cov.gz file had been specified.
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Changed the way gzip compressed input files are handled when using the unix sort command (i.e. with
---scaffolds/--gazillion or without --ample_memory. 
+--scaffolds/--gazillion or without --ample_memory.
 
 
 
 
-RELEASE NOTES FOR Bismark v0.14.5 (20 08 2015)
-----------------------------------------------
 
-deduplicate_bismark
-===================
+## RELEASE NOTES FOR Bismark v0.14.5 (20 08 2015)
+
+
+### deduplicate_bismark
 
 Changed all instances of literal calls of 'samtools' calls to '$samtools_path'.
 
 
 
-RELEASE NOTES FOR Bismark v0.14.4 (17 08 2015)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.14.4 (17 08 2015)
 
-Bismark
-=======
+
+### Bismark
 
 Input files specified with filepath information for FastA files are now handled properly in 
 --multicore runs (this was fixed only for FastQ files in the previous patch).
@@ -116,8 +269,7 @@ compressed files so they don't have to be gzipped manually every single time.
 
 
 
-Bismark Genome Preparation
-==========================
+### Bismark Genome Preparation
 
 Changed the execution of the genome indexing of the parent process to system() rather
 than an exec() call since this seemed to lead to interesting faults when run in
@@ -127,15 +279,13 @@ Changed the default indexing mode to --bowtie2. Bowtie (1) indexing is still ava
 option --bowtie1.
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 The coverage (.cov) and bedGraph (.bedGraph) files are now written out as gzip compressed files so
 you don't have to gzip them manually every single time.
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Added a new option --gc_context to reprocess the genome and find methylation in GpC context. This might
 be useful for certain applications where GpC methylases had been deployed. The output format is exactly
@@ -143,8 +293,7 @@ the same as for the normal CpG report, and only positions covered by at least on
 coverage file will also be written out.
 
 
-deduplicate_bismark
-===================
+### deduplicate_bismark
 
 Removed redundant close() statements so there shouldn't be any warning messages popping up again.
 
@@ -153,11 +302,10 @@ Removed redundant close() statements so there shouldn't be any warning messages 
 
 
 
-RELEASE NOTES FOR Bismark v0.14.3 (06 May 2015)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.14.3 (06 May 2015)
 
-Bismark
-=======
+
+### Bismark
 
 Changed the renaming settings for paired-end files so that 'sam' within the filename no longer gets
 renamed to 'bam' (e.g. smallsample.sam -> smallbample.sam).
@@ -168,14 +316,12 @@ The --multicore option currently requires the files to be in BAM format, so spec
 same time is disallowed.
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Another bug fix for the same issue as in 0.14.1 that had crept in the 0.14.2 release.
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Changed the option --merge_CpG so that CGs starting at position 1 are not considered (since the 3-base
 sequence context of the bottom strand C at position 2 can not be determined)
@@ -183,22 +329,20 @@ sequence context of the bottom strand C at position 2 can not be determined)
 
 
 
-RELEASE NOTES FOR Bismark v0.14.2 (27 Mar 2015)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.14.2 (27 Mar 2015)
 
-Methylation Extractor
-=====================
+
+### Methylation extractor
 
 Added a bug fix for the same issue as in 0.14.1 that was overlooked in the earlier release. Apologies
 
 
 
 
-RELEASE NOTES FOR Bismark v0.14.1 (27 Mar 2015)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.14.1 (27 Mar 2015)
 
-Bismark
-=======
+
+### Bismark
 
 Fixed the cleaning up stage in a --multicore run when --gzip had been specified as well.
 
@@ -206,15 +350,13 @@ Fixed the handling of files in a --multicore run when the input files had been s
 file path information.
 
 
-deduplicate_bismark 
-===================
+### deduplicate_bismark
 
 Now also removing newline characters from the read conversion tag in case other programs interfered
 with the tag ordering and put this tag into the very last column.
 
 
-Methylation_extractor
-=====================
+### Methylation_extractor
 
 Fixed a bug with paired-end reads when the reads should have been trimmed from their 3' ends (option
 --ignore_3prime). More specifically the position of reads on the - strand wasn't adjusted appropriately 
@@ -224,11 +366,10 @@ Thanks to V. Brendel for spotting this!
 
 
 
-RELEASE NOTES FOR Bismark v0.14.0 (06 Mar 2015)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.14.0 (06 Mar 2015)
 
-Bismark
-=======
+
+### Bismark
 
 Finally added parallelization to the Bismark alignment step using the option '--muticore <int>' 
 which sets the number of parallel instances of Bismark to be run concurrently. At least in this
@@ -253,16 +394,14 @@ No longer generates a piechart (.png) with the alignment stats. bismark2report g
 a much nicer report anyway.
 
 
-Bismark Methylation Extractor
-=============================
+### Bismark Methylation extractor
 
 To detect paired-end alignment mode from the @PG header line, white spaces before and after -1 and
 -2 are now required. Previously files containing e.g. -1-2 in the filenames could have been identified
 incorrectly as paired-end files.
 
 
-deduplicate_bismark 
-===================
+### deduplicate_bismark
 
 To detect paired-end alignment mode from the @PG header line, white spaces before and after -1 and
 -2 are now required. Previously files containing e.g. -1-2 in the filenames could have been identified
@@ -271,32 +410,28 @@ incorrectly as paired-end files.
 
 Added option --version so that Clusterflow can report a version number.
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Fixed path handling for cases where the input files were given with path information and an output
 directory had been specified as well.
 
 
-coverage2bismark
-================
+### coverage2bismark
 
 Fixed a typo in the shebang which prevented coverage2cytosine from running.
 
 
 
 
-RELEASE NOTES FOR Bismark v0.13.1 (26 Dec 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.13.1 (26 Dec 2014)
 
-Bismark Genome Preparation
-==========================
+
+### Bismark Genome Preparation
 
 Added a check for unique chromosome names to the Bismark indexer to avoid disappointments later.
 
 
-Bismark Methylation Extractor
-=============================
+### Bismark Methylation extractor
 
 Added a new option --mbias_off, which processes the files as normal but does not write out any M-bias
 files. This option is meant for users who run the methylation extractor two times, the first time to
@@ -312,8 +447,7 @@ Added closing statements for the BAM in disguise filehandle.
 
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Deferred removal of the input file path information a little so that specifying file paths doesn't prevent
 bismark2bedGraph from finding the input files anymore.
@@ -326,8 +460,7 @@ sequence names are numbered scaffolds (without left-buffering of zeros). Omit th
 very wrong in the tallying of reads.")
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Added a new option --merge_CpG that will post-process the genome-wide report to write out an
 additional coverage file which has the top and bottom strand methylation evidence pooled into a 
@@ -352,18 +485,16 @@ This should make runs more reproducible.
 
 
 
-RELEASE NOTES FOR Bismark v0.13.0 (01 Oct 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.13.0 (01 Oct 2014)
 
-Bismark
-=======
+
+### Bismark
 
 Fixed renaming issue for SAM to BAM files (which would have replaced any occurrence of sam in the
 file name, e.g. sample1_... instead of the file extension .sam).
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Added new option '--multicore <int>' to set the number of cores to be used for the methylation
 extraction process. If system resources are plentiful this is a viable option to speed up the
@@ -390,8 +521,7 @@ a patch.
 
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Fixed the location of the sorting directory which could have failed if an output directory had been
 specified.
@@ -400,11 +530,10 @@ specified.
 
 
 
-RELEASE NOTES FOR Bismark v0.12.5 (21 July 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.12.5 (21 July 2014)
 
-Bismark
-=======
+
+### Bismark
 
 Added one more check to improve the ambiguous alignment detection. In more detail this adds a check
 whether the current ambiguous alignment is worse than the best alignment so far, in which case the
@@ -412,11 +541,10 @@ sequence does not get flagged as ambiguous. Thanks to Ashwath Kumar for spotting
 
 
 
-RELEASE NOTES FOR Bismark v0.12.4 (21 July 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.12.4 (21 July 2014)
 
-Bismark
-=======
+
+### Bismark
 
 Improved the way ambiguous alignments are handled in Bowtie 2 mode. Previously, sequences were
 classified as ambiguously aligning as soon as a sequence produced several equally good alignments
@@ -433,8 +561,7 @@ previously only because Bowtie 2 did not check it properly and automatically use
 now it does check...).
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Line endings are now chomped at an earlier stage so that interfering with the optional fields in the
 Bismark BAM file doesn't break the methylation extractor (e.g. reordering of optional tags by
@@ -443,11 +570,10 @@ Picard).
 
 
 
-RELEASE NOTES FOR Bismark v0.12.3 (17 June 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.12.3 (17 June 2014)
 
-Bismark
-=======
+
+### Bismark
 
 Replaced the XX-tag field (base-by-base mismatches to the reference, excluding indels) by an MD:Z:
 field that now properly reflects mismatches as well as indels.
@@ -456,8 +582,7 @@ Fixed the hemming distance value (NM:i: field) for reads containing insertions (
 which was previously offset by the number of insertions in the read.
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Changed the '--zero_based' option of the methylation extractor and bismark2bedGraph to write out an
 additional coverage file (ending in .zero.cov) which uses the UCSC zero-based, half-open standard.
@@ -467,8 +592,8 @@ Changed the requirement of CpG context files to start with CpG... (from CpG_...)
 
 
 
-RELEASE NOTES FOR Bismark v0.12.2 (14 May 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.12.2 (14 May 2014)
+
 
 Added support for the new 64-bit large index file for very large genomes in Bowtie 2 mode. The
 indexes end in .bt2l (instead of .bt2 for small genomes). If both small (.bt2) and large index
@@ -482,8 +607,7 @@ When the option --basename is specified, SE amibiguous file names now feature an
 pie chart file names are derived from the the basename.
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Introduced a length check when the options --ignore or --ignore_r2 were set to ensure that only reads
 that are long enough are being processed.
@@ -491,8 +615,8 @@ that are long enough are being processed.
 
 
 
-RELEASE NOTES FOR Bismark v0.12.1 (29 Apr 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.12.1 (29 Apr 2014)
+
 
 Added calculation of MAPQ values for SAM/BAM output generated with Bowtie 2 for both single-end and
 paired-end mode. The calculation is implemented like in Bowtie 2 itself, so please don't ask me why
@@ -505,8 +629,7 @@ aligned to the very start of a chromosome (this only affected the warning itself
 any results).
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Changed this module so that all chromosomes or scaffolds are processed irrespective of whether they
 were covered in the sequencing experiment. For organisms with few chromosomes and lots of reads the
@@ -518,8 +641,8 @@ this to my attention.
 
 
 
-RELEASE NOTES FOR Bismark v0.11.1 (07 Apr 2014)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.11.1 (07 Apr 2014)
+
 
 The option --pbat now also works for use with Bowtie 2, in both single-end and paired-end mode. The
 only limitation to that is that it only works with FastQ files and uncompressed temporary files.
@@ -535,8 +658,7 @@ Unmapped or ambiguous files now end in .fq or.fa for FastA or FastQ files, respe
 of .txt files).
 
 
-Methylation extractor
-=====================
+### Methylation extractor
 
 The methylation extractor willl no longer attempt to delete unused files if --mbias_only was speficied.
 
@@ -546,11 +668,10 @@ the file using Samtools view.
 
 
 
-RELEASE NOTES FOR Bismark v0.10.1 (26 Nov 2013)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.10.1 (26 Nov 2013)
 
-Methylation extractor
-=====================
+
+### Methylation extractor
 
 The methylation extractor does now detect automatically whether Bismark alignment file(s) were run
 in single-end or paired-end mode (this detection only happens once for the first file to be analysed
@@ -559,8 +680,7 @@ The automatic detection can be overridden by manually specifying -s or -p, and t
 available for SAM/BAM files.
 
 
-deduplicate_bismark
-===================
+### deduplicate_bismark
 
 The deduplication script does now detect automatically whether a Bismark alignment file was run
 in single-end or paired-end mode (this happens separately for every file analysed). The automatic
@@ -568,8 +688,7 @@ detection can be overridden by manually specifying -s or -p, and this option is 
 for SAM/BAM files.
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 When run in stand-alone mode, the coverage file will replace 'bedGraph' as the file ending with 
 'bismark.cov'. If the output filename is anything other than 'bedGraph', '.bismark.cov' will be
@@ -603,15 +722,13 @@ results to the default sort option.
 
 
 
-bismark2report
-==============
+### bismark2report
 
 Specifying a single file for each of the optional reports does now will now work as intended, instead
 of being skipped.
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Added some counting and statements to indicate when the run finished successfully (it proved to be
 difficult to follow the report process for a genome with nearly half a million scaffolds...)
@@ -619,19 +736,17 @@ difficult to follow the report process for a genome with nearly half a million s
 
 
 
-RELEASE NOTES FOR Bismark v0.10.0 (11 Oct 2013)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.10.0 (11 Oct 2013)
 
-Bismark
-=======
+
+### Bismark
 
 The option --prefix <some.prefix> does now also work for the C->T and G->A transcribed temporary
 files to allow multiple instances of Bismark to be run on the same file in the same folder (e.g.
 using Bowtie and Bowtie 2 or some stricter and laxer parameters concurrently).
 
 
-Bismark Genome Preparation
-==========================
+### Bismark Genome Preparation
 
 Made a couple of changes to make the genome preparation fully non-interactive. This means that the 
 path to the genome folder and to Bowtie (1/2) have to be specified up front (for Bowtie (1/2) it 
@@ -642,16 +757,14 @@ non-interactive mode got stuck in loops asking whether it is alright to proceed 
 therabyte sized log files without ever starting doing anything useful...).
 
 
-Methylation extractor
-=====================
+### Methylation extractor
 
 The methylation extractor will now delete unused methylation context files (e.g. CTOT and CTOB files
 for a directional library). I finally got round to implementing this after having to delete manually 
 thousands of files containing the header line only...
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Dropped the option -k3,3 from the sort command to result in a dramatic speed increase while sorting.
 This option had been used previously to enable sorting by chromosome in addition to position, but 
@@ -668,8 +781,7 @@ This module does now produces these two output files:
 
 
 
-coverage2cytosine
-=================
+### coverage2cytosine
 
 Changed the name of this module from 'bedGraph2cytosine' to 'coverage2cytosine' to reflect the change	
 that this module now requires the methylation coverage file produced by the bismark2bedGraph module	
@@ -679,8 +791,7 @@ Previously, the cytosine report would always report every C position in any cont
 the default should have reported CpG positions only. This has now been fixed.
 
 
-bismark2report
-==============
+### bismark2report
 
 Changed the behavior of this module to automatically find all Bismark mapping reports in the current 
 working directory, and to try and work out whether the optional reports are present as well (i.e.
@@ -690,8 +801,7 @@ the automatic detection.
 
 
 
-deduplicate_bismark
-===================
+### deduplicate_bismark
 
 Renamed the rather long deduplication script to this slightly shorter one. Also added some filehandle
 closing statements that might have caused buffering issues under certain circumstances.
@@ -699,11 +809,10 @@ closing statements that might have caused buffering issues under certain circums
 
 
 
-RELEASE NOTES FOR Bismark v0.9.0 (16 Aug 2013)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.9.0 (16 Aug 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Implemented the new methylation call symbols 'U' and 'u' for methylated or unmethylated cytosines
 in unknown sequence context, respectively. If the sequence context bases contain any N, e.g. CN or
@@ -723,15 +832,13 @@ Fixed a bug that occurred when generating the alignment overview pie chart that 
 libraries only.
 
 
-Methylation extractor
-=====================
+### Methylation extractor
 
 Added handling of the newly introduced methylation call U/u for cytosines in Unknown sequence context.
 These methylation calls are simply ignored to not cause too much confusion for downstream analysis.
 
 
-bismark2report
-==============
+### bismark2report
 
 With this version, we are introducing the new module 'bismark2report' which generates a graphical HTML
 report of Bismark alignment, deduplication, splitting and M-bias statistics. The alignment report is
@@ -745,8 +852,7 @@ been run, bismark2report requires the user to specify the relevant reports as in
 to Phil Ewels (@tallphil) for the conceptual design and his help with this report!
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 Added a check to see whether input files start with CpG_* or not. If they don't, please include the
 option '--CX' to work properly. This is only relevant when bismark2bedGraph is run as a stand-alone
@@ -755,11 +861,10 @@ tool.
 
 
 
-RELEASE NOTES FOR Bismark v0.8.3 (26 Jul 2013)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.8.3 (26 Jul 2013)
 
-Bismark
-=======
+
+### Bismark
 
 In paired-end SAM mode, Bismark deliberately used to set somewhat unconventional FLAG values
 due to the weird nature of bisulfite reads. In addition, the read IDs for read 1 and read 2 had
@@ -784,8 +889,7 @@ time (however this option might disappear entirely in future versions.
 Thanks to Peter Hickey, Australia, for bringing this to my attention and for contributing a patch.
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Implemented two quick tests for paired-end SAM/BAM files to see if the file had been sorted by
 chromosomal position prior to using the methylation extractor. This would cause problems with
@@ -803,11 +907,10 @@ system drawing of the M-bias plot will be skipped.
 
 
 
-RELEASE NOTES FOR Bismark v0.8.2 (24 Jul 2013)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.8.2 (24 Jul 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Changed the values of the TLEN values in paired-end SAM format generated by Bowtie 2 whenever
 one read was completely contained within the other, like this:
@@ -825,8 +928,7 @@ to '...bismark_bt2.sam' so that single-end and paired-end file names are more co
 
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Added a new option '--mbias_only'. If this option is specified, the M-bias plot(s) and their
 data are being written out. The standard methylation report ('--report') is optional. Since
@@ -843,18 +945,16 @@ drawing of the M-bias plot will be skipped.
 
 
 
-RELEASE NOTES FOR Bismark v0.8.1 (16 Jul 2013)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.8.1 (16 Jul 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Changed the way in which the alignment overview file is being named to not generate a warning
 message.
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Changed the function of '--ignore <int>' to ignore the first <int> bp from the 5' end of 
 single-end reads or Read 1 of paired-end files. In addition, added a new option '--ignore_r2 <int>' 
@@ -871,11 +971,10 @@ is still not happy...
 
 
 
-RELEASE NOTES FOR Bismark v0.8.0 (12 Jul 2013)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.8.0 (12 Jul 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Added new option '--prefix <prefix>' to add <prefix> to the output filenames. Trailing
 dots will be replaced by a single one. For example. '--prefix test' with 'file.fq'
@@ -891,8 +990,7 @@ was impossible to extract the chromosomal sequence. Drawing this plot will requi
 module GD::Graph; if it is not found on the system the plot will be skipped.
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 Upon completion, the methylation extractor will now produce an M-bias (methylation bias)
 plot, which shows the methylation proportion across each possible read position (described
@@ -906,18 +1004,16 @@ calls per position.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.12 (10 May 2013)
------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.12 (10 May 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Removed a rogue sleep(1) command that would slow down single-end Bowtie 2 alignments
 for a single lane of HiSeq (200M sequences) from ~1 day to 6 years and 4 months (roughly).
 
 
-bismark2bedGraph
-================
+### bismark2bedGraph
 
 bismark2bedGraph now keeps track of the temp files it just created instead of using
 all files in the output folder ending in ".methXtractor.temp". This lets you kick off
@@ -927,11 +1023,10 @@ desired.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.11 (22 Apr 2013)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.11 (22 Apr 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Fixed non-functional single-end alignments with Bowtie2 which were accidentally broken
 by introducing the option '--pbat' in v0.7.10 (an evil 'if' instead of 'elsif'...).
@@ -947,8 +1042,7 @@ Bowtie 1 does. This works for fine reads with up to and including 5 N's (which i
 a lot...). 
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 To avoid duplication and keep code modular, the bedGraph conversion step invoked by
 the option '--bedGraph' is now been farmed out to the module 'bismark2bedGraph'. This
@@ -973,18 +1067,16 @@ script (which is now included in the Bismark package) needs to reside in the sam
 as the 'bismark_methylation_extractor' itself.
 
 
-Deduplication script
-====================
+### Deduplication script
 
 Fixed some warnings that were thrown if '--bam' was not specified.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.10 (18 Apr 2013)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.10 (18 Apr 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Added new option '--gzip' that causes temporary bisulfite conversion files to be
 written out in a GZIP compressed form in order to save disk space. This option is
@@ -1010,8 +1102,7 @@ threads to the CTOT and CTOB strands instead of the normal OT and OB ones. The o
 uncompressed temporary files only).
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 The methylation extractor does now also read BAM files, however this requires a working
 copy of Samtools. For this we added the new option '--samtools_path' to point the Bismark
@@ -1026,8 +1117,7 @@ The methylation extractor does now treat InDel free reads differently than befor
 results in a ~60% increase in extraction speed for ungapped alignments in SAM format!
 
 
-Deduplication script
-====================
+### Deduplication script
 
 The deduplication script does now also read BAM files, however this requires a working
 copy of Samtools. The new option '--samtools_path' may point the script to your Samtools
@@ -1041,11 +1131,10 @@ will be compressed with GZIP instead (yielding a .sam.gz output file).
 
 
 
-RELEASE NOTES FOR Bismark v0.7.9 (05 Mar 2013)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.9 (05 Mar 2013)
 
-Methylation Extractor
-=====================
+
+### Methylation extractor
 
 The new function '--buffer_size <string>' for the bedGraph sort command is set to the
 new default value of 2G (sort would die if this option was not set).
@@ -1060,11 +1149,10 @@ presence of several chromosomes with the same name...).
 
 
 
-RELEASE NOTES FOR Bismark v0.7.8 (01 Mar 2013)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.8 (01 Mar 2013)
 
-Bismark
-=======
+
+### Bismark
 
 Added an option '--non_bs_mm' which prints an extra column at the end of SAM files
 showing the number of non-nisulfite mismatches of a read. This option is not available
@@ -1085,8 +1173,7 @@ bt2_bismark_(SE/PE)_report.txt (Bowtie 2) to keep it more uniform.
 
 
 
-Methylation Extractor
-=====================
+### Methylation extractor
 
 The input file(s) may now be specified with a file path which abrogates the need to be in
 the same directory as the input file(s) when calling the methylation extractor.
@@ -1107,11 +1194,10 @@ report outputs and Appendix IV is now showing alignment stats for the test data.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.7 (02 Oct 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.7 (02 Oct 2012)
 
-Bismark
-=======
+
+### Bismark
 
 When reading in the genome file Bismark does now automatically remove \r line ending
 characters as well. This sometimes caused problems when genome files had been edited
@@ -1122,8 +1208,7 @@ to adjust the gap open and extension penalties for both read and reference seque
 This might be useful for very special conditions (e.g. PacBio data...)
 
 
-Bismark methylation extractor
-=============================
+### Bismark Methylation extractor
 
 Added new function '-o/--output' to specify an output directory. This became necessary for
 better integration into Galaxy.
@@ -1135,7 +1220,7 @@ Renamed methylation extractor to bismark_methylation_extractor.
 
 
 bedGraph output:
-----------------
+
 
 Added option '--bedGraph' to produce a bedGraph output file once the methylation extraction
 has finished; this reports the genomic location of a cytosine and its methylation state (in %).
@@ -1159,7 +1244,7 @@ on every single cytosine that was covered in the experiment irrespective of its 
 
 
 Genome-wide cytosine methylation report output:
------------------------------------------------
+
 
 Added option '--cytosine_report' which produces a genome-wide methylation report for all cytosines
 in the genome. By default, the output uses 1-based chromosome coordinates (zero-based cords are
@@ -1184,7 +1269,7 @@ chromosome files instead of to one single large file.
 
 
 UPDATE for genome_methylation2bedGraph script (23 Aug 2012)
------------------------------------------------------------
+
 
 Added an option '--split_by_chromosome' to enable sorting of very large files. The methylation
 extractor output is first written into temporary files chromosome by chromosome. These
@@ -1200,8 +1285,8 @@ additional calculations with the output.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.6 (31 Jul 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.6 (31 Jul 2012)
+
 
 Methylation extractor
 
@@ -1218,8 +1303,8 @@ positional shifts of methylation calls.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.5 (16 Jul 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.5 (16 Jul 2012)
+
 
 Bismark
 
@@ -1253,8 +1338,8 @@ Does now read both raw and gzipped (.gz) Bismark mapping files.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.4 (26 Apr 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.4 (26 Apr 2012)
+
 
 Bismark
 
@@ -1269,8 +1354,8 @@ the input files.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.3 (05 Apr 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.3 (05 Apr 2012)
+
 
 Bismark
 
@@ -1291,8 +1376,8 @@ already ending in .txt.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.2 (14 Mar 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.2 (14 Mar 2012)
+
 
 methylation_extractor
 
@@ -1302,8 +1387,8 @@ to avoid confusing these files with SAM formatted Bismark output files.
 
 
 
-RELEASE NOTES FOR Bismark v0.7.1 (29 Feb 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.1 (29 Feb 2012)
+
 
 Bismark
 
@@ -1339,8 +1424,8 @@ shorter than a certain length (25bp by default).
 
 
 
-RELEASE NOTES FOR Bismark v0.7.0 (24 Feb 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.7.0 (24 Feb 2012)
+
 
 Bismark
 
@@ -1366,8 +1451,8 @@ Harris for this suggestion.
 
 
 
-RELEASE NOTES FOR Bismark v0.6.4 (06 Feb 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.6.4 (06 Feb 2012)
+
 
 Bismark
 
@@ -1390,8 +1475,8 @@ Suppressed debugging warning meassages that were printed in error for Bowtie2 al
 
 
 
-RELEASE NOTES FOR Bismark v0.6.3 (04 Jan 2012)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.6.3 (04 Jan 2012)
+
 
 Bismark
 
@@ -1408,8 +1493,8 @@ type "methylation_extractor --help" or refer to the Bismark User Guide for more 
 
 
 
-RELEASE NOTES FOR Bismark v0.6.beta2 (15 Dec 2011)
---------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.6.beta2 (15 Dec 2011)
+
 
 Bismark
 
@@ -1425,8 +1510,8 @@ requires at least Bowtie 2 version 2.0.0-beta5 or higher (released on Dec 15, 20
 
 
 
-RELEASE NOTES FOR Bismark v0.6.beta1 (08 Dec 2011)
--------------------------------------------------
+## RELEASE NOTES FOR Bismark v0.6.beta1 (08 Dec 2011)
+
 
 Bismark_genome_preparation
 
@@ -1499,8 +1584,8 @@ call strings if a sequence was reverse complemented for SAM output.
 
 
 
-RELEASE NOTES FOR Bismark v0.5.4 (17 Oct 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.5.4 (17 Oct 2011)
+
 
 Bismark
 
@@ -1527,8 +1612,8 @@ by a new line.
 
 
 
-RELEASE NOTES FOR Bismark v0.5.3 (13 Sep 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.5.3 (13 Sep 2011)
+
 
 Bismark
 
@@ -1560,8 +1645,8 @@ bringing this to my attention and for his contributions to this new version.
 
 
 
-RELEASE NOTES FOR Bismark v0.5.2 (16 Aug 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.5.2 (16 Aug 2011)
+
 
 Bismark
 
@@ -1587,8 +1672,8 @@ for single-end reverse strand alignments when the option '--ignore' was specifie
 
 
 
-RELEASE NOTES FOR Bismark v0.5.1 (16 June 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.5.1 (16 June 2011)
+
 
 Bismark_genome_preparation:
 
@@ -1610,8 +1695,8 @@ files will be written into the current working directory.
 
 
 
-RELEASE NOTES FOR Bismark v0.5.0 (21 Apr 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.5.0 (21 Apr 2011)
+
 
 Bismark
 
@@ -1642,8 +1727,8 @@ incorrectly assigned to the CTOB strand and vice versa.
 
 
 
-RELEASE NOTES FOR Bismark v0.4.1 (10 Feb 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.4.1 (10 Feb 2011)
+
 
 Bismark_genome_preparation:
 
@@ -1667,8 +1752,8 @@ showed a 100% protection, i.e. methylation, of all Cs and if --directional was s
 
 
 
-RELEASE NOTES FOR Bismark v0.4.0 (04 Feb 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.4.0 (04 Feb 2011)
+
 
 The option '--directional' is now also working for paired-end alignments. If 
 the BS-Seq library was generated in a strand-specific way (i.e. only the
@@ -1683,8 +1768,8 @@ such or the output of the methylation extractor were not affected).
 
 
 
-RELEASE NOTES FOR Bismark v0.3.0 (26 Jan 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.3.0 (26 Jan 2011)
+
 
 The Bismark documentation received a complete overhaul. The Bismark User Guide
 replaces the previous documentation (INSTALL.txt and README.txt). It contains
@@ -1706,8 +1791,8 @@ to .fa.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.6 (18 Jan 2011)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.6 (18 Jan 2011)
+
 
 Fixed a bug which might occur if the alignment parameters are set very laxly.
 This only affected alignments if 10 or more non-bisulfite mismatches are 
@@ -1716,8 +1801,8 @@ many mismatches for BS-Seq!!).
  
 
 
-RELEASE NOTES FOR Bismark v0.2.5 (22 Dec 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.5 (22 Dec 2010)
+
 
 Added the new option --un <filename> to Bismark which will write out all 
 reads failing to align uniquely to <filename> in the same format they were 
@@ -1731,8 +1816,8 @@ reported by --ambiguous will not appear in the output of --un <filename>.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.4 (18 Nov 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.4 (18 Nov 2010)
+
 
 Bismark
 
@@ -1749,8 +1834,8 @@ otherwise.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.3 (04 Nov 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.3 (04 Nov 2010)
+
 
 Added the new option --directional to Bismark. If the BS-Seq library was
 constructed in a strand-specific way one would expect to see only sequences
@@ -1778,23 +1863,23 @@ allow better readability.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.2 (13 Sep 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.2 (13 Sep 2010)
+
 
 Fixed a bug in the methylation extactor that would offset a subset of
 reverse mapped reads by a couple of bases. Positions should now be correct.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.1 (08 Sep 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.1 (08 Sep 2010)
+
 
 Bismark will now handle multi-fasta-files as intended.
 
 
 
-RELEASE NOTES FOR Bismark v0.2.0 (07 Sep 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.2.0 (07 Sep 2010)
+
 
 Bismark
 
@@ -1837,16 +1922,16 @@ contained within the first line of the mapping result file).
 
 
 
-RELEASE NOTES FOR Bismark v0.1.5 (09 Aug 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.1.5 (09 Aug 2010)
+
 
 Fixed a bug where specifying "-n 0" as alignment parameter would not 
 be executed properly.
 
 
 
-RELEASE NOTES FOR Bismark v0.1.4 (06 Aug 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.1.4 (06 Aug 2010)
+
 
 The Bismark alignment process would previously grind to a halt when it
 encountered DNA ambiguity bases in the reference genome sequence (R,M...)
@@ -1859,8 +1944,8 @@ the four possible strands mixed up (fixed properly this time).
 
 
 
-RELEASE NOTES FOR Bismark v0.1.3 (03 Aug 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.1.3 (03 Aug 2010)
+
 
 Bismark Genome Preparation
 
@@ -1902,8 +1987,8 @@ entirely possible) but rather just use the calls from one read.
 
 
 
-RELEASE NOTES FOR Bismark v0.1.2 (17 Jun 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.1.2 (17 Jun 2010)
+
 
 The Bismark output files for single-end and paired-end reads have been
 modified so that they contain only vital information, thereby reducing 
@@ -1923,8 +2008,8 @@ call analysis.
 
 
 
-RELEASE NOTES FOR Bismark v0.1.1 (15 Jun 2010)
-----------------------------------------------
+## RELEASE NOTES FOR Bismark v0.1.1 (15 Jun 2010)
+
 
 Both the Bismark genome preparation as well as Bismark itself should
 now also run with genome FASTA files that do not look like Ensembl
@@ -1935,8 +2020,8 @@ per file will be supported soon).
 
 
 
-RELEASE NOTES FOR Bismark v0.1 (14 Jun 2010)
---------------------------------------------
+## RELEASE NOTES FOR Bismark v0.1 (14 Jun 2010)
+
 
 Bismark v0.1 is an initial beta release and as such is still a
 work in progress.
@@ -1952,8 +2037,8 @@ be implemented please let us know.
 You can report feedback or bug reports either though our bug-
 reporting tool at:
 
-www.bioinformatics.bbsrc.ac.uk/bugzilla/
+www.bioinformatics.babraham.ac.uk/bugzilla/
 
-...or directly to felix.krueger@bbsrc.ac.uk
+...or directly to felix.krueger@babraham.ac.uk
 
 

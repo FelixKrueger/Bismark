@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 $|++;
@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.15.1';
+my $bismark2bedGraph_version = 'v0.16.3';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -164,7 +164,7 @@ foreach my $infile (@bedfiles) {
 	warn "Now replacing whitespaces in the sequence ID field of the Bismark methylation extractor output $infile prior to bedGraph conversion\n\n";
 	
 	if ($infile =~ /gz$/){
-	    open (READ,"zcat $infile |") or die $!;
+	    open (READ,"gunzip -c $infile |") or die $!;
 	}
 	else{
 	    open (READ,$infile) or die $!;
@@ -198,7 +198,7 @@ foreach my $infile (@bedfiles) {
     
     # opening infile
     if ($infile =~ /gz$/){
-	open (IN,"zcat $infile |") or die "Couldn't find file '$infile': $!\n";
+	open (IN,"gunzip -c $infile |") or die "Couldn't find file '$infile': $!\n";
     }
     else{
 	open (IN,$infile) or die "Couldn't find file '$infile': $!\n";
@@ -429,7 +429,7 @@ foreach my $in (@temp_files) {
     
     if ($gazillion){
 	if ($in =~ /gz$/){
-	    open $ifh, "zcat $in | sort -S $sort_size -T $sort_dir -k3,3V -k4,4n |" or die "Input file could not be sorted. $!\n";
+	    open $ifh, "gunzip -c $in | sort -S $sort_size -T $sort_dir -k3,3V -k4,4n |" or die "Input file could not be sorted. $!\n";
 	}
 	else{ 
 	    open $ifh, "sort -S $sort_size -T $sort_dir -k3,3V -k4,4n $in |" or die "Input file could not be sorted. $!\n";
@@ -441,7 +441,7 @@ foreach my $in (@temp_files) {
 	### this sort command was used previously and sorts according to chromosome in addition to position. Since the files are being sorted according to chromosomes anyway,
 	### we may drop the -k3,3V option. It has been reported that this will result in a dramatic speed increase
 	if ($in =~ /gz$/){
-	    open $ifh, "zcat $in | sort -S $sort_size -T $sort_dir -k4,4n |" or die "Input file could not be sorted. $!\n";
+	    open $ifh, "gunzip -c $in | sort -S $sort_size -T $sort_dir -k4,4n |" or die "Input file could not be sorted. $!\n";
 	}
 	else{
 	    open $ifh, "sort -S $sort_size -T $sort_dir -k4,4n $in |" or die "Input file could not be sorted. $!\n";
