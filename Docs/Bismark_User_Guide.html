@@ -31,7 +31,7 @@
   <!--[if lt IE 9]><script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script><![endif]-->
 </head>
 <body>
-<nav id="TOC"><ul><li><a href="#bismark-bisulfite-mapper">Bismark Bisulfite Mapper</a><ul><li><a href="#user-guide-v">User Guide - v0.16.3</a></ul></li><li><a href="#quick-reference">1) Quick Reference</a><ul><li><a href="#i-running-bismark-genome-preparation">(I) Running <code>bismark_genome_preparation</code></a></li><li><a href="#ii-running-bismark">(II) Running <code>bismark</code></a></li><li><a href="#iii-running-bismark-methylation-extractor">(III) Running <code>bismark_methylation_extractor</code></a></ul></li><li><a href="#bismark-general-information">2) Bismark - General Information</a><ul><li><a href="#what-is-bismark">What is Bismark?</a></li><li><a href="#installation-notes">Installation notes</a></li><li><a href="#dependencies">Dependencies</a></li><li><a href="#hardware-requirements">Hardware requirements</a></li><li><a href="#bs-seq-test-data-set">BS-Seq test data set</a></li><li><a href="#which-kind-of-bs-seq-files-are-supported">Which kind of BS-Seq files are supported?</a></li><li><a href="#how-does-bismark-work">How does Bismark work?</a></li><li><a href="#bismark-alignment-and-methylation-call-report">Bismark alignment and methylation call report</a></ul></li><li><a href="#running-bismark">3) Running Bismark</a><ul><li><a href="#i-bismark-genome-preparation">(I) Bismark Genome Preparation</a></li><li><a href="#ii-bismark-alignment-step">(II) Bismark Alignment Step</a></li><li><a href="#iii-bismark-methylation-extractor">(III) Bismark methylation extractor</a></ul></li><li><a href="#appendix-full-list-of-options">4) APPENDIX - Full list of options</a><ul><li><a href="#appendix-i-bismark-genome-preparation">Appendix (I): Bismark Genome Preparation</a></li><li><a href="#appendix-ii-bismark">Appendix (II): Bismark</a></li><li><a href="#appendix-iii-bismark-methylation-extractor">Appendix (III): Bismark Methylation Extractor</a></li><li><a href="#appendix-iv-bismark-reports-for-the-test-data-set">Appendix (IV): Bismark reports for the test data set</a></ul></li><li><a href="#credits">Credits</a></li></ul></nav>
+<nav id="TOC"><ul><li><a href="#bismark-bisulfite-mapper">Bismark Bisulfite Mapper</a><ul><li><a href="#user-guide-v">User Guide - v0.16.3</a></ul></li><li><a href="#quick-reference">1) Quick Reference</a><ul><li><a href="#i-running-bismark-genome-preparation">(I) Running <code>bismark_genome_preparation</code></a></li><li><a href="#ii-running-bismark">(II) Running <code>bismark</code></a></li><li><a href="#iii-running-bismark-methylation-extractor">(III) Running <code>bismark_methylation_extractor</code></a></li><li><a href="#iv-running-bismark-report">(IV) Running <code>bismark2report</code></a></li><li><a href="#v-running-bismark-summary">(V) Running <code>bismark2summary</code></a></ul></li><li><a href="#bismark-general-information">2) Bismark - General Information</a><ul><li><a href="#what-is-bismark">What is Bismark?</a></li><li><a href="#installation-notes">Installation notes</a></li><li><a href="#dependencies">Dependencies</a></li><li><a href="#hardware-requirements">Hardware requirements</a></li><li><a href="#bs-seq-test-data-set">BS-Seq test data set</a></li><li><a href="#which-kind-of-bs-seq-files-are-supported">Which kind of BS-Seq files are supported?</a></li><li><a href="#how-does-bismark-work">How does Bismark work?</a></li><li><a href="#bismark-alignment-and-methylation-call-report">Bismark alignment and methylation call report</a></ul></li><li><a href="#running-bismark">3) Running Bismark</a><ul><li><a href="#i-bismark-genome-preparation">(I) Bismark Genome Preparation</a></li><li><a href="#ii-bismark-alignment-step">(II) Bismark Alignment Step</a></li><li><a href="#iii-bismark-methylation-extractor">(III) Bismark methylation extractor</a></li><li><a href="#iv-the-bismark-html-processing-report">(IV) The Bismark HTML Processing Report</a></li><li><a href="#v-the-bismark-summary-report">(V) The Bismark Summary Report</a></li><li><a href="#vi-bismark-nucleotide-coverage-report-bam-nuc">(VI) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</a></li><li><a href="#vii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</a></ul></li><li><a href="#appendix-full-list-of-options">4) APPENDIX - Full list of options</a><ul><li><a href="#appendix-i-bismark-genome-preparation">Appendix (I): Bismark Genome Preparation</a></li><li><a href="#appendix-ii-bismark">Appendix (II): Bismark</a></li><li><a href="#appendix-iii-bismark-methylation-extractor">Appendix (III): Bismark Methylation Extractor</a></li><li><a href="#appendix-iv-bismark-reports-for-the-test-data-set">Appendix (IV): Bismark reports for the test data set</a></ul></li><li><a href="#credits">Credits</a></li></ul></nav>
 <h1 id="bismark-bisulfite-mapper">Bismark Bisulfite Mapper</h1>
 
 <p><img title="Bismark" id="header_img" src="Images/bismark.png"></p>
@@ -104,6 +104,24 @@ bismark_methylation_extractor --gzip test_dataset.fastq_bismark.bam
 <li><code>CHH_context_test_dataset_bismark.txt</code>
 </li>
 </ul>
+
+<h2 id="iv-running-bismark-report">(IV) Running <code>bismark2report</code></h2>
+
+<p><strong>USAGE:</strong>
+<code>
+bismark2report [options]
+</code></p>
+
+<p>This command attempts to find Bismark alignment, deduplication and methylation extraction (splitting) reports as well as M-bias files to generate a graphical HTML report such as this <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html">example Bismark paired-end report</a> for each sample in a directory.</p>
+
+<h2 id="v-running-bismark-summary">(V) Running <code>bismark2summary</code></h2>
+
+<p><strong>USAGE:</strong>
+<code>
+bismark2summary [options]
+</code></p>
+
+<p>This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.html">Bismark Summary Report</a>.</p>
 
 <h1 id="bismark-general-information">2) Bismark - General Information</h1>
 
@@ -627,6 +645,247 @@ bismark_methylation_extractor --gzip --bedGraph --buffer_size 10G sample_bismark
 bismark_methylation_extractor --gzip --bedGraph --buffer_size 10G --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
 </code></p>
 
+<h2 id="iv-the-bismark-html-processing-report">(IV) The Bismark HTML Processing Report</h2>
+
+<p>The script <code>bismark2report</code> uses a Bismark alignment report, and optionally further reports of the Bismark suite such as deduplication, methylation extractor (splitting) or M-bias reports to generate a graphical HTML report page. If several Bismark reports are found in the same folder, a separate report will be generated for each of these, whereby the output filename is derived from the Bismark alignment report file. <code>bismark2report</code> attempts to find optional reports automatically based on the file basename. Here are an example <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/SE_report.html">single-end report</a> and <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html">paired-end report</a>.</p>
+
+<p><strong>USAGE:</strong>
+<code>
+bismark2report [options]
+</code></p>
+
+<h4 id="options">OPTIONS</h4>
+
+<ul>
+<li><p><code>-o/--output &lt;filename&gt;</code></p>
+
+<p>Name of the output file (optional). If not specified explicitly, the output filename will be derived                           from the Bismark alignment report file. Specifying an output filename only works if the HTML report is                            to be generated for a single Bismark alignment report (and potentially additional reports).</p></li>
+<li><p><code>--dir &lt;directory&gt;</code></p></li>
+</ul>
+
+<p>Output directory. Output is written to the current directory if not specified explicitly.</p>
+
+<ul>
+<li><code>--alignment_report FILE</code>
+</li>
+</ul>
+
+<p>If not specified explicitly, <code>bismark2report</code> attempts to find Bismark report file(s) in the current directory and produces a separate HTML report for each mapping report file. Based on the basename of the Bismark mapping report, <code>bismark2report</code> will also attempt to find the other Bismark reports (see below) for inclusion into the HTML report. Specifying a Bismark alignment report file is mandatory.</p>
+
+<ul>
+<li><code>--dedup_report FILE</code>
+</li>
+</ul>
+
+<p>If not specified explicitly, <code>bismark2report</code> attempts to find a deduplication report file with the same                            basename as the Bismark mapping report (generated by <code>deduplicate_bismark</code>) in the current working directory. Including a deduplication report is optional, and using the FILE <em>'none'</em> will skip this step entirely.</p>
+
+<ul>
+<li><p><code>--splitting_report FILE</code></p>
+
+<p>If not specified explicitly, <code>bismark2report</code> attempts to find a splitting report file with the same basename as the Bismark mapping report (generated by the Bismark methylation extractor) in the current working directory. Including a splitting report is optional, and using the FILE <em>'none'</em> will skip this step entirely.</p></li>
+<li><p><code>--mbias_report FILE</code></p></li>
+</ul>
+
+<p>If not specified explicitly, <code>bismark2report</code> attempts to find a single M-bias report file with the same basename as the Bismark mapping report (generated by the Bismark methylation extractor) in the current working directory. Including an M-Bias report is optional, and using the FILE <em>'none'</em> will skip this step entirely.</p>
+
+<ul>
+<li><code>--nucleotide_report FILE</code>
+</li>
+</ul>
+
+<p>If not specified explicitly, <code>bismark2report</code> attempts to find a single nucleotide coverage report file with the same basename as the Bismark mapping report (generated by Bismark with the option <code>--nucleotide_coverage</code>, or <code>bam2nuc</code> directly) in the current working directory. Including a nucleotide coverage statistics                            report is optional, and using the FILE <em>'none'</em> will skip this report entirely.</p>
+
+<h2 id="v-the-bismark-summary-report">(V) The Bismark Summary Report</h2>
+
+<p>This script uses Bismark report files of several (up to hundreds of!?) samples in a run folder to generate a graphical summary HTML report as well as a whopping big table (tab-delimited text) with all relevant alignment and methylation statistics which may be used for graphing purposes in R, Excel or the like. Unless certain BAM files are specified, <code>bismark2summary</code> first identifies Bismark BAM files in a folder (they need to use the Bismark naming conventions) and then automatically detects Bismark alignment, deduplication or methylation extractor (splitting) reports based on the input file basename. If splitting reports are found they overwrite the methylation statistics of the initial alignment report.</p>
+
+<p><strong>USAGE:</strong>
+<code>
+bismark2summary [options]
+</code></p>
+
+<p>This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.html">Bismark Summary Report</a>.</p>
+
+<h4 id="arguments">ARGUMENTS:</h4>
+
+<ul>
+<li><p>BAM file(s)</p>
+
+<p>Optional. If no BAM files are specified explicitly the current working directory is scanned for Bismark alignment files and their associated reports.</p></li>
+</ul>
+
+<h4 id="options">OPTIONS:</h4>
+
+<ul>
+<li><code>-o/--basename &lt;filename&gt;</code>
+</li>
+</ul>
+
+<p>Basename of the output file (optional). Generate a text file with all relevant extracted values '<em>basename</em>.txt') as well as an HTML report ('<em>basename</em>.html'). If not specified explicitly, the basename is '<em>bismark_summary_report</em>'.</p>
+
+<ul>
+<li><code>--title &lt;string&gt;</code>
+</li>
+</ul>
+
+<p>Optional HTML report title; use <code>--title "speech marks for text with spaces"</code>. Default: '<em>Bismark Summary Report</em>'.</p>
+
+<ul>
+<li><code>--version</code>
+</li>
+</ul>
+
+<p>Displays version information and exits.</p>
+
+<ul>
+<li><code>--help</code> <br />
+</li>
+</ul>
+
+<p>Displays this help message and exits.</p>
+
+<h2 id="vi-bismark-nucleotide-coverage-report-bam-nuc">(VI) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</h2>
+
+<p>The script <code>bam2nuc</code> reads BAM files and calculates the mono- and di-nucleotide coverage of the
+reads (using the genomic sequence rather than the observed sequence in the reads themselves)
+and compares it to the average genomic sequence composition. Reads harbouring InDels are not
+taken into consideration. Mono- or dinucleotides containing Ns are ignored as well.</p>
+
+<p><code>bam2nuc</code> handles both Bismark single-end and paired-end files (determined automatically). Both BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is required for CRAM files.</p>
+
+<p><strong>USAGE:</strong>
+<code>
+bam2nuc [options] --genome_folder &lt;path&gt; [input.(bam|cram)]
+</code></p>
+
+<ul>
+<li><code>--dir</code>
+</li>
+</ul>
+
+<p>Output directory. Output is written to the current directory if not specified explicitly.</p>
+
+<ul>
+<li><code>--genome_folder &lt;path&gt;</code>
+</li>
+</ul>
+
+<p>Enter the genome folder you wish to use to extract sequences from (full path only). Accepted formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.</p>
+
+<ul>
+<li><code>--samtools_path</code>
+</li>
+</ul>
+
+<p>The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the <code>PATH</code> already</p>
+
+<ul>
+<li><code>--genomic_composition_only</code>
+</li>
+</ul>
+
+<p>Only calculate and extract the genomic sequence composition and exit thereafter. This option will attempt to write the genomic composition table 'genomic_nucleotide_frequencies.txt' to the genome folder or to the output directory instead if that doesn't succeed.</p>
+
+<ul>
+<li><code>--help</code>
+</li>
+</ul>
+
+<p>Displays this help message and exits</p>
+
+<p><strong>GENOMIC COMPOSITION</strong></p>
+
+<p>Since the calculation of the average genomic (di-)nucleotide composition may take a while, <code>bam2nuc</code> attempts to write out a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The next time <code>bam2nuc</code> is run it will then use this file instead of calculating the average genome composition again. If writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory instead.</p>
+
+<p><strong>OUTPUT FORMAT</strong></p>
+
+<p><code>bam2nuc</code> writes out a file ending in <em>.nucleotide_stats.txt</em> in the following format (tab-delimited):</p>
+
+<pre><code>(di-)nucleotide count sample    percent sample  count genomic   percent genomic coverage
+A       14541   30.91   3768086 30.98   0.004
+C       8893    18.90   2321832 19.09   0.004
+G       9019    19.17   2318192 19.06   0.004
+T       14597   31.02   3754886 30.87   0.004
+AA      5008    10.86   1321485 10.86   0.004
+AC      2355    5.11    639783  5.26    0.004
+AG      2692    5.84    709163  5.83    0.004
+AT      4191    9.09    1097652 9.02    0.004
+CA      2912    6.32    786744  6.47    0.004
+CC      1812    3.93    473900  3.90    0.004
+CG      1341    2.91    355535  2.92    0.004
+CT      2659    5.77    705653  5.80    0.004
+GA      2903    6.30    756411  6.22    0.004
+GC      1724    3.74    453607  3.73    0.004
+GG      1817    3.94    470732  3.87    0.004
+GT      2402    5.21    637436  5.24    0.004
+TA      3419    7.42    903441  7.43    0.004
+TC      2823    6.12    754531  6.20    0.004
+TG      2996    6.50    782761  6.44    0.004
+TT      5055    10.96   1314144 10.80   0.004
+</code></pre>
+
+<p>This file is picked up and plotted by <code>bismark2report</code> automatically if found in the folder in the following manner:</p>
+
+<p><img src="Images/nucleocoverage.png" alt="Nucleotide Coverage Plot" /></p>
+
+<h2 id="vii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</h2>
+
+<p>Filtering incomplete bisulfite conversion from Bismark BAM files (optional). This script examines the methylation calls of reads, or read pairs for paired-end sequencing, and filters out reads that exceed a certain threshold of methylated calls in non-CG context (the default is 3). <code>filter_non_conversion</code> looks for a certain number of methylated non-CG calls, but this could potentially also be extended to a percentage for any given read.</p>
+
+<p><strong>Please Note</strong>: Be aware that this kind of filtering is not advisable - and <em>will</em> introduce biases - if you work with organisms which exhibit any appreciable levels of non-CG methylation (e.g. most plants).</p>
+
+<p>Writes out a file called <em>nonCG_filtered.bam</em>, also a file called <em>nonCG_removed_seqs.bam</em> as well as a short report how many sequences have been analysed and removed.</p>
+
+<p><strong>USAGE:</strong></p>
+
+<p><code>
+filter_non_conversion [options] [Bismark BAM files]
+</code></p>
+
+<p><strong>Please also note</strong> that for paired-end BAM files <code>filter_non_conversion</code> expects Read 1 and Read 2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using <code>samtools sort -n</code>)</p>
+
+<ul>
+<li><code>-s/--single</code>
+</li>
+</ul>
+
+<p>Deduplicate single-end Bismark BAM files. If not specified the library type is auto-detected.</p>
+
+<ul>
+<li><code>-p/--paired</code>
+</li>
+</ul>
+
+<p>Deduplicate paired-end Bismark BAM files. If not specified the library type is auto-detected.</p>
+
+<ul>
+<li><code>--threshold [int]</code>
+</li>
+</ul>
+
+<p>The number of methylated cytosines in non-CG context at which reads or read pairs are filtered out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.</p>
+
+<ul>
+<li><code>--samtools_path</code>
+</li>
+</ul>
+
+<p>The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.</p>
+
+<ul>
+<li><code>--help</code>
+</li>
+</ul>
+
+<p>Displays this help text end exits.</p>
+
+<ul>
+<li><code>--version</code>
+</li>
+</ul>
+
+<p>Displays version information and exits.</p>
+
 <p>If you get stuck at any point or have any questions or comments please contact me via e-mail: <a href="felix.krueger@babraham.ac.uk">felix.krueger@babraham.ac.uk</a></p>
 
 <h1 id="appendix-full-list-of-options">4) APPENDIX - Full list of options</h1>
@@ -813,7 +1072,7 @@ Default: OFF</p></li>
 <p>Performs bisulfite mapping with Bowtie 1 and prints the 'old' custom Bismark output (up to versions 0.5.X) instead of SAM format output.</p></li>
 <li><p><code>--un</code></p>
 
-<p>Write all reads that could not be aligned to the file <code>_unmapped_reads.txt</code> in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within <code>Bowtie</code> or <code>Bismark</code>. Paired-end reads will be written to two parallel files with <code>_1</code> and <code>_2</code> inserted in their filenames, i.e. <code>unmapped_reads_1.fq</code> and <code>unmapped_reads_2.fq</code>. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to <code>unmapped_reads.fq</code> unless <code>--ambiguous</code> is also specified.</p></li>
+<p>Write all reads that could not be aligned to the file <code>_unmapped_reads.fq.gz</code> in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within <code>Bowtie</code> or <code>Bismark</code>. Paired-end reads will be written to two parallel files with <code>_1</code> and <code>_2</code> inserted in their filenames, i.e. <code>unmapped_reads_1.fq.gz</code> and <code>unmapped_reads_2.fq.gz</code>. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to <code>unmapped_reads.fq.gz</code> unless <code>--ambiguous</code> is also specified.</p></li>
 <li><p><code>--ambiguous</code></p>
 
 <p>Write all reads which produce more than one valid alignment with the same number of lowest mismatches or other reads that fail to align uniquely to <code>_ambiguous_reads.fq</code>. Written reads will appear as they did in the input, without any of the translation of quality values that may have taken place within <code>Bowtie</code> or <code>Bismark</code>. Paired-end reads will be written to two parallel files with <code>_1</code> and <code>_2</code> inserted in their filenames, i.e. <code>_ambiguous_reads_1.fq</code> and <code>_ambiguous_reads_2.fq</code>. These reads are not written to the file specified with <code>--un</code>.</p></li>
