@@ -619,6 +619,51 @@ This file is picked up and plotted by `bismark2report` automatically if found in
 ![Nucleotide Coverage Plot](Images/nucleocoverage.png)
 
 
+## (VII) Filtering out non-bisulfite converted reads (`filter_non_conversion`)
+
+Filtering incomplete bisulfite conversion from Bismark BAM files (optional). This script examines the methylation calls of reads, or read pairs for paired-end sequencing, and filters out reads that exceed a certain threshold of methylated calls in non-CG context (the default is 3). `filter_non_conversion` looks for a certain number of methylated non-CG calls, but this could potentially also be extended to a percentage for any given read.
+
+**Please Note**: Be aware that this kind of filtering is not advisable - and *will* introduce biases - if you work with organisms which exhibit any appreciable levels of non-CG methylation (e.g. most plants).
+
+Writes out a file called _nonCG\_filtered.bam_, also a file called _nonCG\_removed\_seqs.bam_ as well as a short report how many sequences have been analysed and removed.
+
+
+**USAGE:**
+
+```
+filter_non_conversion [options] [Bismark BAM files]
+```
+
+**Please also note** that for paired-end BAM files `filter_non_conversion` expects Read 1 and Read 2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using `samtools sort -n`)
+
+
+- `-s/--single`
+
+Deduplicate single-end Bismark BAM files. If not specified the library type is auto-detected.
+
+- `-p/--paired`
+
+Deduplicate paired-end Bismark BAM files. If not specified the library type is auto-detected.
+
+- `--threshold [int]`
+
+The number of methylated cytosines in non-CG context at which reads or read pairs are filtered out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
+
+- `--samtools_path`
+
+The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.
+
+
+- `--help`
+
+Displays this help text end exits.
+
+- `--version`
+
+Displays version information and exits.
+
+
+
 If you get stuck at any point or have any questions or comments please contact me via e-mail: [felix.krueger@babraham.ac.uk](felix.krueger@babraham.ac.uk)
 
 # 4) APPENDIX - Full list of options
