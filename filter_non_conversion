@@ -25,7 +25,7 @@ $|++;
 my $parent_dir = getcwd();
 my $filter_version = 'v0.16.3_dev';
 my ($single,$paired);
-my ($global_single,$global_paired,$samtools_path,$threshold) = process_commandline();
+my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive) = process_commandline();
 
 foreach my $file (@ARGV){
     $single = $paired = undef; # resetting
@@ -100,7 +100,7 @@ sub process_file{
     else{
 	warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read pair gets removed (either read can fail the entire read pair)\n\n";
     }
-
+ 
     while (<IN>){
 	
 	if ($_ =~ /^\@/){ # header lines
@@ -123,8 +123,10 @@ sub process_file{
 		if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
 		    ++$nonCpG_count;
 		}
-		elsif ( ($char eq 'z') or ($char eq 'Z') ){
-		    # $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+		if ($consecutive){
+		    if ( ($char eq 'z') or ($char eq 'h') or ($char eq 'x')){
+			$nonCpG_count = 0; # resetting the counter if there is any kind of non methylated cytosine on the way
+		    }
 		}
 		
 		if ($nonCpG_count >= $threshold){
@@ -141,7 +143,7 @@ sub process_file{
 		print OUT;
 	    }
 	}
-	else{
+	else{ # Paired-end
 	    
 	    my $line_1 = $_;
 	    $_ = <IN>; # read 2 of a pair
@@ -166,8 +168,11 @@ sub process_file{
 		if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
 		    ++$nonCpG_count;
 		}
-		elsif ( ($char eq 'z') or ($char eq 'Z') ){
-		    # $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+
+		if ($consecutive){
+		    if ( ($char eq 'z') or ($char eq 'h') or ($char eq 'x')){
+			$nonCpG_count = 0; # resetting the counter if there is any kind of non methylated cytosine on the way
+		    }
 		}
 		
 		if ($nonCpG_count >= $threshold){
@@ -178,6 +183,8 @@ sub process_file{
 	    
 	    unless ($sequence_fails){ # if Read 1 has failed the sequence pair already we do not need to look at Read 2
 		
+		$nonCpG_count = 0; # resetting counter
+
 		# Read 2
 		@chars = split //,$meth_call_2;
 		
@@ -185,8 +192,11 @@ sub process_file{
 		    if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
 			++$nonCpG_count;
 		    }
-		    elsif ( ($char eq 'z') or ($char eq 'Z') ){
-			# $consecutive_nonCpG_count = 0; # resetting the counter if there is any kind of CpG on the way
+
+		    if ($consecutive){
+			if ( ($char eq 'z') or ($char eq 'h') or ($char eq 'x')){
+			    $nonCpG_count = 0; # resetting the counter if there is any kind of non methylated cytosine on the way
+			}
 		    }
 		    
 		    if ($nonCpG_count >= $threshold){
@@ -229,14 +239,17 @@ sub process_file{
 	$percent = sprintf ("%.1f",$kicked/$count*100);
     }
     
-  
+    my $insert = '';
+    if ($consecutive){
+	$insert = 'consecutive ';
+    }
     if ($paired){
-	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
-  	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+  	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
     }
     else{
-	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls per read):\t$kicked ($percent%)\n\n";
-	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold non-CG calls per read):\t$kicked ($percent%)\n\n";
+	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls per read):\t$kicked ($percent%)\n\n";
+	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls per read):\t$kicked ($percent%)\n\n";
     }
     
     close OUT or warn "Couldn't close OUT... $!\n";
@@ -354,12 +367,14 @@ sub process_commandline{
     my $samtools_path;
     my $threshold;
     my $version;
+    my $consecutive;
     
     my $command_line = GetOptions ('help' => \$help,
 				   's|single' => \$global_single,
 				   'p|paired' => \$global_paired,
 				   'samtools_path=s' => \$samtools_path,
 				   'threshold=i' => \$threshold,
+				   'consecutive' => \$consecutive,
 				   'version' => \$version,
 	);
     
@@ -461,7 +476,7 @@ VERSION
 	$threshold = 3; # default
     }
 
-    return ($single,$paired,$samtools_path,$threshold);
+    return ($single,$paired,$samtools_path,$threshold,$consecutive);
 }
 
 sub bam_isEmpty{
@@ -539,6 +554,9 @@ by read name first (e.g. using samtools sort -n)  ***
 --threshold [int]      The number of methylated cytosines in non-CG context at which reads or read pairs are filtered
                        out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
 
+--consecutive          Non-CG methylation has be found on consecutive non-CGs. Any kind of unmethylated cytosine (in
+                       any context) resets the methylated non-CG counter to 0. Default: OFF.
+
 --samtools_path        The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                        explicitly if Samtools is in the PATH already.
 
@@ -548,7 +566,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version              Displays version information and exits.
 
 
-                           Last modified: 17 November 2016
+                           Last modified: 28 November 2016
 
 EOF
     ;
