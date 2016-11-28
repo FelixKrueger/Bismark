@@ -1,12 +1,15 @@
 # Bismark Release Notes
 
-## RELEASE NOTES FOR Bismark v0.16.3_dev (03 11 2016)
+## RELEASE NOTES FOR Bismark v0.16.3_dev (28 11 2016)
 
 ### Bismark
 
 The option `--dovetail` is now the default behaviour for paired-end Bowtie2 libraries to assist with
 alignments that have undergone 5'-end trimming. Can be disabled using the new option `--no_dovetail`.
 
+### filter_non_conversion
+
+Added a new script that allows filtering out of reads or read-pairs if the apparent non-CG methylation exceeds a certain threshold (3 by default). Optionally, the non-CG count may be forced to occur on consecutive non-CGs using the option `--consecutive`.
 
 
 ## RELEASE NOTES FOR Bismark v0.16.3 (25 07 2016)
