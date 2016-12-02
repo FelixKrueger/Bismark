@@ -953,6 +953,22 @@ sub read_report_template{
   }
 
   close DOC or die $!;
+  
+  # Insert jQuery source
+  warn "Attempting to open file from: $Bin/bismark_sitrep/jquery-3.1.1.js\n\n" if ($verbose);
+  open (JQUERY,"$Bin/bismark_sitrep/jquery-3.1.1.js") or die $!;
+  $jquery_js = <JQUERY>;
+  close JQUERY;
+  $doc =~ s/\{\{jquery_js\}\}/$jquery_js/g;
+  
+  # Insert the Highcharts JS source
+  local $/=undef;
+  warn "Attempting to open file from: $Bin/bismark_sitrep/highcharts.js\n\n" if ($verbose);
+  open (HIGHCHARTS,"$Bin/bismark_sitrep/highcharts.js") or die $!;
+  $highchars_js = <HIGHCHARTS>;
+  close HIGHCHARTS;
+  $doc =~ s/\{\{highcharts_js\}\}/$highchars_js/g;
+  
   return $doc;
 }
 
