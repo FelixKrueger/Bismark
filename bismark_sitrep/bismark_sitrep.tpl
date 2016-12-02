@@ -109,6 +109,8 @@
     		margin-bottom: 20px;
     		border-radius: 4px;
 		}
+    .error-msg h3 { margin: 0; }
+    .error-msg pre { margin: 0; }
 	</style>
 </head>
 <body>
@@ -117,9 +119,9 @@
 		{{highcharts_js}}
 	</script>
 	<script type='text/javascript'>
+	// Alignment
+	$(function () {
 	try { // catch-all for JS errors..
-		// Alignment
-		$(function () {
 			
 			// Set defaults for Highcharts
 			Highcharts.setOptions({
@@ -165,7 +167,7 @@
 					]
 				}]
 			});
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Alignment Pie Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 		
@@ -200,7 +202,7 @@
 				}]
 			});
 
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Alignment Context Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 		
@@ -226,7 +228,7 @@
 				}]
 			});
 
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Methylation Context Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 		
@@ -265,7 +267,7 @@
 
   		{{end_deletion_duplication}}
       
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Deduplication Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 	
@@ -294,7 +296,7 @@
 
   		{{end_deletion_splitting}}
 
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Deduplication Context Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 
@@ -347,7 +349,7 @@
 		    });
   		{{end_deletion_nucleotide_coverage}}	
 
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Nucleotide Coverage Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 
@@ -459,7 +461,7 @@
 			
   		{{end_deletion_mbias}}
 
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the M-Biase R1 Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
 
@@ -579,7 +581,7 @@
 	
 		{{end_deletion_mbias}}
  
-	catch(err) {
+	} catch(err) {
 		$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the M-Biase R1 Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 	}
 
@@ -608,13 +610,14 @@
 			}
 			return x1 + x2;
 		}
-		catch(err) {
+		} catch(err) {
 			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while formatting the report. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 		}
-
-	catch(err) {
+    
+	} catch(err) {
 		$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering this report. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
 	}
+  });
 	</script>
 	
 <div class="container">
