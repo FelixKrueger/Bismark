@@ -114,511 +114,11 @@
 	</style>
 </head>
 <body>
-	<script>
-		{{jquery_js}}
-		{{highcharts_js}}
-	</script>
-	<script type='text/javascript'>
-	// Alignment
-	$(function () {
-	try { // catch-all for JS errors..
-			
-			// Set defaults for Highcharts
-			Highcharts.setOptions({
-			    colors: ['#0d233a','#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'],
-			    title: { text: null },
-				credits: { enabled: false }
-			});
-		
-		try {
-			// Alignment
-			$('#alignment').highcharts({
-				chart: { type: 'pie' },
-				tooltip: {
-					formatter: function() {
-						return '<b>'+ this.point.name + ':</b>'+this.percentage.toFixed(1) + '%';
-					}
-				},
-				plotOptions: {
-					pie: {
-						allowPointSelect: true,
-						cursor: 'pointer',
-						dataLabels: {
-							enabled: true,
-							color: '#000000',
-							connectorColor: '#000000',
-							format: '<b>{point.name}</b>: {point.percentage:.1f} %'
-						}
-					}
-				},
-				series: [{
-					type: 'pie',
-					name: 'Reads',
-					data: [
-						{
-							name: 'Unique Alignments',
-							y: {{unique_seqs}},
-							sliced: true,
-							selected: true
-						},
-						['No Alignment', {{no_alignments}}],
-						['Multiple Alignments', {{multiple_alignments}}],
-						['No Genomic Sequence', {{no_genomic}}]
-					]
-				}]
-			});
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Alignment Pie Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-		
-		try {
-			// Aligment Context
-			$('#alignment_context').highcharts({
-				chart: { type: 'column' },
-				xAxis: { categories: ['OT', 'CTOT', 'CTOB', 'OB' ] },
-				yAxis: { title: { text: 'Number of Alignments' } },
-				tooltip: {
-					formatter: function() {
-						if(this.x == 'OT'){
-							return '<b>' + this.x + ':</b> ' + (this.y / ( {{number_OT}} + {{number_CTOT}} + {{number_CTOB}} + {{number_OB}} ) * 100).toFixed(1) + '%'
-									+ '<br><em>original top strand</em>';
-						} else if(this.x == 'CTOT'){
-							return '<b>' + this.x + ':</b> ' + (this.y / ( {{number_OT}} + {{number_CTOT}} + {{number_CTOB}} + {{number_OB}} ) * 100).toFixed(1) + '%'
-									+ '<br><em>complementary to original top strand</em>';
-						} else if(this.x == 'CTOB'){
-							return '<b>' + this.x + ':</b> ' + (this.y / ( {{number_OT}} + {{number_CTOT}} + {{number_CTOB}} + {{number_OB}} ) * 100).toFixed(1) + '%'
-									+ '<br><em>complementary to original bottom strand</em>';
-						} else if(this.x == 'OB'){
-							return '<b>' + this.x + ':</b> ' + (this.y / ( {{number_OT}} + {{number_CTOT}} + {{number_CTOB}} + {{number_OB}} ) * 100).toFixed(1) + '%'
-									+ '<br><em>original bottom strand</em>';
-						} else {
-							return false;
-						}
-					}
-				},
-				series: [{
-					name: 'Alignment Context',
-					data: [ {{number_OT}}, {{number_CTOT}}, {{number_CTOB}}, {{number_OB}} ]
-				}]
-			});
-
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Alignment Context Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-		
-		try {
-
-
-			// Methylation Context
-			$('#methylation_context').highcharts({
-				chart: { type: 'column' },
-				xAxis: { categories: ['CpG', 'CHG', 'CHH'] },
-				yAxis: {
-					title: { text: '% Methylation' },
-					max: 100
-				},
-				legend: { enabled: false },
-				tooltip: {
-					headerFormat: '',
-					pointFormat: '<b>{point.category} Methylation</b>: {point.y}%'
-				},
-				series: [{
-					name: 'Methylation Context',
-					data: [{{perc_CpG_graph}}, {{perc_CHG_graph}}, {{perc_CHH_graph}}]
-				}]
-			});
-
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Methylation Context Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-		
-		try {
-      {{start_deletion_duplication}}
-
-      // Deduplication
-			$('#deduplication_plot').highcharts({
-				chart: { type: 'pie' },
-				tooltip: {
-					formatter: function() {
-						return '<b>'+ this.point.name + ':</b>'+this.percentage.toFixed(1) + '%';
-					}
-				},
-				plotOptions: {
-					pie: {
-						allowPointSelect: true,
-						cursor: 'pointer',
-						dataLabels: {
-							enabled: true,
-							color: '#000000',
-							connectorColor: '#000000',
-							format: '<b>{point.name}</b>: {point.percentage:.1f} %'
-						}
-					}
-				},
-				series: [{
-					type: 'pie',
-					name: 'Read Pairs',
-					data: [
-						['Unique', {{unique_alignments_duplicates}}],
-						['Duplicate', {{duplicate_alignments_duplicates}}]
-					]
-				}]
-			});
-
-  		{{end_deletion_duplication}}
-      
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Deduplication Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-	
-		try {
-        
-  		{{start_deletion_splitting}}
-
-      // Methylation Context after Extraction
-			$('#dedup_methylation_context').highcharts({
-				chart: { type: 'column' },
-				xAxis: { categories: ['CpG', 'CHG', 'CHH'] },
-				yAxis: {
-					title: { text: '% Methylation' },
-					max: 100
-				},
-				legend: { enabled: false },
-				tooltip: {
-					headerFormat: '',
-					pointFormat: '<b>{point.category} Methylation</b>: {point.y}%'
-				},
-				series: [{
-					name: 'Methylation Context',
-					data: [{{perc_CpG_graph_splitting}}, {{perc_CHG_graph_splitting}}, {{perc_CHH_graph_splitting}}]
-				}]
-			});
-
-  		{{end_deletion_splitting}}
-
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Deduplication Context Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-
-		try {
-		
-  		{{start_deletion_nucleotide_coverage}}	
-  		// Nucleotide coverage
-		    $('#nucleotide_coverage').highcharts({
-		        chart: {
-		            type: 'bar'
-		        },
-		        xAxis: {
-		            categories: ['A','T','C','G','AC','CA','TC','CT','CC','CG','GC','GG','AG','GA','TG','GT','TT','TA','AT','AA'],
-		            title: { text: null }
-		        },
-		        yAxis: {
-		            min: 0,
-		            title: { text: null }
-		        },
-		        tooltip: {
-					valueDecimals: 1,
-		            valueSuffix: '%',
-		            shared: true,
-		            headerFormat: '<span style="text-decoration:underline; font-weight:bold; font-size: 1.1em;">{point.key}</span><br/>'
-		        },
-				plotOptions: {
-					series: {
-						borderWidth: 0,
-						groupPadding: 0.1
-					}
-				},
-		        series: [{
-		            name: 'Percent Genomic',
-		            data: [
-						{{nuc_A_p_exp}},{{nuc_T_p_exp}},{{nuc_C_p_exp}},{{nuc_G_p_exp}},
-						{{nuc_AC_p_exp}},{{nuc_CA_p_exp}},{{nuc_TC_p_exp}},{{nuc_CT_p_exp}},
-						{{nuc_CC_p_exp}},{{nuc_CG_p_exp}},{{nuc_GC_p_exp}},{{nuc_GG_p_exp}},
-						{{nuc_AG_p_exp}},{{nuc_GA_p_exp}},{{nuc_TG_p_exp}},{{nuc_GT_p_exp}},
-						{{nuc_TT_p_exp}},{{nuc_TA_p_exp}},{{nuc_AT_p_exp}},{{nuc_AA_p_exp}},
-					]	        }, {
-		            name: 'Percent Sample',
-		            data: [
-						{{nuc_A_p_obs}},{{nuc_T_p_obs}},{{nuc_C_p_obs}},{{nuc_G_p_obs}},
-						{{nuc_AC_p_obs}},{{nuc_CA_p_obs}},{{nuc_TC_p_obs}},{{nuc_CT_p_obs}},
-						{{nuc_CC_p_obs}},{{nuc_CG_p_obs}},{{nuc_GC_p_obs}},{{nuc_GG_p_obs}},
-						{{nuc_AG_p_obs}},{{nuc_GA_p_obs}},{{nuc_TG_p_obs}},{{nuc_GT_p_obs}},
-						{{nuc_TT_p_obs}},{{nuc_TA_p_obs}},{{nuc_AT_p_obs}},{{nuc_AA_p_obs}},
-					]
-		        }]
-		    });
-  		{{end_deletion_nucleotide_coverage}}	
-
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the Nucleotide Coverage Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-
-		try {
-
-  		{{start_deletion_mbias}}	
-
-  		// M-Bias Plots
-			
-			// Set plot defaults to be used twice
-			var m_bias_settings = {
-				colors: [ '#CCF0E1','#EDD3A8','#69798A','#21BCA2','#F29D13','#0d233a','#f28f43','#77a1e5','#c42525','#a6c96a'],
-				chart: {
-					zoomType: 'x',
-					marginRight: 80,
-					alignTicks: false,
-					plotBorderWidth:1
-				},
-				title: { text: 'Read 1' },
-				subtitle: {
-					text: document.ontouchstart === undefined ?
-						'Click and drag in the plot area to zoom in' :
-						'Drag your finger over the plot to zoom in'
-				},
-				xAxis: {
-					title: { text: 'Position (bp)' },
-					tickInterval: 5,
-					minTickInterval: 0,
-					min: 0,
-				},
-				yAxis: [{
-					title: { text: '% Methylation' },
-					min: 0,
-					max: 100,
-					gridLineWidth: 0,
-					tickWidth: 1,
-					lineWidth: 1
-				}, { // secondary axis
-					title: { text: '# Methylation Calls' },
-					min:0,
-					gridLineWidth: 0,
-					lineWidth: 1,
-					tickWidth: 1,
-					opposite: true
-				}],
-				credits: { enabled: false },
-				tooltip: {
-					shared: true,
-					headerFormat: '<b>Base {point.x}</b><table>',
-					pointFormat: '<tr><td><span style="color:{series.color};">{series.name} Methylation:</span></td><td>{point.y}</td></tr>',
-					footerFormat: '</table>',
-					useHTML: true
-				},
-				legend: {
-					layout: 'vertical',
-					align: 'right',
-					verticalAlign: 'top',
-					x: -60,
-					backgroundColor: '#FFFFFF'
-				},
-				plotOptions: {
-					line: {
-						lineWidth: 1,
-						marker: { enabled: false },
-						shadow: false
-					}
-				},
-				series: [{
-					name: 'CHH Total Calls',
-					yAxis: 1,
-					lineWidth: 2,
-					legendIndex: 5,
-					data: [ {{CHH_total_calls_R1}} ]
-				},{
-					name: 'CHG Total Calls',
-					yAxis: 1,
-					lineWidth: 2,
-					legendIndex: 4,
-					data: [ {{CHG_total_calls_R1}} ]
-				},{
-					name: 'CpG Total Calls',
-					yAxis: 1,
-					lineWidth: 2,
-					legendIndex: 3,
-					data: [ {{CpG_total_calls_R1}} ]
-				},{
-					name: 'CHH Methylation',
-					yAxis: 0,
-					lineWidth: 3,
-					legendIndex: 2,
-					data: [ {{CHH_methylation_R1}} ]
-				},{
-					name: 'CHG Methylation',
-					yAxis: 0,
-					lineWidth: 3,
-					legendIndex: 1,
-					data: [ {{CHG_methylation_R1}} ]
-				},{
-					name: 'CpG Methylation',
-					yAxis: 0,
-					lineWidth: 3,
-					legendIndex: 0,
-					data: [ {{CpG_methylation_R1}} ]
-				}]
-			};
-			
-			// Plot the graph
-			$('#m_bias_1').highcharts(m_bias_settings);
-			
-  		{{end_deletion_mbias}}
-
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the M-Biase R1 Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-
-		try {
-
-  		{{start_deletion_mbias}}
-
-  		{{start_deletion_mbias_2}}
-	
-  		// M-Bias Plot 2
-			
-			// M-bias plot 2 data
-
-		var m_bias_settings = {
-				colors: [ '#CCF0E1','#EDD3A8','#69798A','#21BCA2','#F29D13','#0d233a','#f28f43','#77a1e5','#c42525','#a6c96a'],
-				chart: {
-					zoomType: 'x',
-					marginRight: 80,
-					alignTicks: false,
-					plotBorderWidth:1
-				},
-				subtitle: {
-					text: document.ontouchstart === undefined ?
-						'Click and drag in the plot area to zoom in' :
-						'Drag your finger over the plot to zoom in'
-				},
-				xAxis: {
-					title: { text: 'Position (bp)' },
-					tickInterval: 5,
-					minTickInterval: 0,
-					min: 0,
-				},
-				yAxis: [{
-					title: { text: '% Methylation' },
-					min: 0,
-					max: 100,
-					gridLineWidth: 0,
-					tickWidth: 1,
-					lineWidth: 1
-				}, { // secondary axis
-					title: { text: '# Methylation Calls' },
-					min:0,
-					gridLineWidth: 0,
-					lineWidth: 1,
-					tickWidth: 1,
-					opposite: true
-				}],
-				credits: { enabled: false },
-				tooltip: {
-					shared: true,
-					headerFormat: '<b>Base {point.x}</b><table>',
-					pointFormat: '<tr><td><span style="color:{series.color};">{series.name} Methylation:</span></td><td>{point.y}</td></tr>',
-					footerFormat: '</table>',
-					useHTML: true
-				},
-				legend: {
-					layout: 'vertical',
-					align: 'right',
-					verticalAlign: 'top',
-					x: -60,
-					backgroundColor: '#FFFFFF'
-				},
-				plotOptions: {
-					line: {
-						lineWidth: 1,
-						marker: { enabled: false },
-						shadow: false
-					}
-				},
-		                title: {
-		                        text: 'Read 2'
-		                },
-		                series: [{
-                         		name: 'CHH Total Calls',
-				yAxis: 1,
-				lineWidth: 2,
-				legendIndex: 5,
-				data: [ {{CHH_total_calls_R2}} ]
-			},{
-				name: 'CHG Total Calls',
-				yAxis: 1,
-				lineWidth: 2,
-				legendIndex: 4,
-				data: [ {{CHG_total_calls_R2}} ]
-			},{
-				name: 'CpG Total Calls',
-				yAxis: 1,
-				lineWidth: 2,
-				legendIndex: 3,
-				data: [ {{CpG_total_calls_R2}} ]
-			},{
-				name: 'CHH Methylation',
-				yAxis: 0,
-				lineWidth: 3,
-				legendIndex: 2,
-				data: [ {{CHH_methylation_R2}} ]
-			},{
-				name: 'CHG Methylation',
-				yAxis: 0,
-				lineWidth: 3,
-				legendIndex: 1,
-				data: [ {{CHG_methylation_R2}} ]
-			},{
-				name: 'CpG Methylation',
-				yAxis: 0,
-				lineWidth: 3,
-				legendIndex: 0,
-				data: [ {{CpG_methylation_R2}} ]
-			}]
-		}
-			
-			// Plot graph
-			$('#m_bias_2').highcharts(m_bias_settings);
-		});
-	
-	    	{{end_deletion_mbias_2}}
-	
-		{{end_deletion_mbias}}
- 
-	} catch(err) {
-		$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering the M-Biase R1 Chart. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-	}
-
-	try {
-
-// adds commas to big numbers for better readability
-
-			$('table tbody tr td').each(function(){
-				if(isNumber($(this).text())){
-					$(this).text(addCommas($(this).text()));
-				}
-			});
-
-		function isNumber(n) {
-			return !isNaN(parseFloat(n)) && isFinite(n);
-		}
-		
-		function addCommas(nStr) {
-			nStr += '';
-			x = nStr.split('.');
-			x1 = x[0];
-			x2 = x.length > 1 ? '.' + x[1] : '';
-			var rgx = /(\d+)(\d{3})/;
-			while (rgx.test(x1)) {
-				x1 = x1.replace(rgx, '$1' + ',' + '$2');
-			}
-			return x1 + x2;
-		}
-		} catch(err) {
-			$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while formatting the report. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-		}
-    
-	} catch(err) {
-		$('#header_hr').after('<div class="error-msg"><h3>Error</h3><p>Apologies - something has gone wrong while rendering this report. If this keeps happening, please open a <a href="https://github.com/FelixKrueger/Bismark/issues/new" target="_blank">bug report</a>.</p><p>Error message:</p><pre><code>'+err.message+'</code></pre></div>');
-	}
-  });
-	</script>
+<script>
+{{jquery_js}}
+{{highcharts_js}}
+{{bismark_sitrep_js}}
+</script>
 	
 <div class="container">
 	<div class="header">
@@ -699,11 +199,11 @@
 				<th>Unmethylated C's in CHH context</th>
 				<td>{{unmeth_CHH}}</td>
 			</tr>
-			{{unmeth_unknown}}	
+			{{unmeth_unknown}}
 		</tbody>
 		<tbody>
 			<tr>
-				<th>Percentage methylation (CpG context)</th>	
+				<th>Percentage methylation (CpG context)</th>
 				<td>{{perc_CpG}}%</td>
 			</tr>
 			<tr>
@@ -714,7 +214,7 @@
 				<th>Percentage methylation (CHH context)</th>
 				<td>{{perc_CHH}}%</td>
 			</tr>
-			{{perc_unknown}}	
+			{{perc_unknown}}
 		</tbody>
 	</table>
 	<div id="methylation_context" class="plot"></div>
@@ -750,146 +250,136 @@
 
 	<hr>
 	
-	{{start_deletion_duplication}}
+	<div id="bm_duplication" style="display:none;">
 
-	<h2>Deduplication</h2>
-	<table class="data">
-		<tbody>
-			<tr>
-				<th>Alignments analysed</th>
-				<td>{{seqs_total_duplicates}}</td>
-			</tr>
-			<tr>
-				<th>Unique alignments</th>
-				<td>{{unique_alignments_duplicates}}</td>
-			</tr>
-			<tr>
-				<th>Duplicates removed</th>
-				<td>{{duplicate_alignments_duplicates}}</td>
-			</tr>
-		</tbody>
-		<tbody>
-			<tr>
-				<td colspan="2" style="text-align:left;">Duplicated alignments were found at <strong>{{different_positions_duplicates}}</strong> different positions</td>
-			</tr>
-		</tbody>
-	</table>
-	<div id="deduplication_plot" class="plot"></div>
-	<hr>
-
-	{{end_deletion_duplication}}
+		<h2>Deduplication</h2>
+		<table class="data">
+			<tbody>
+				<tr>
+					<th>Alignments analysed</th>
+					<td>{{seqs_total_duplicates}}</td>
+				</tr>
+				<tr>
+					<th>Unique alignments</th>
+					<td>{{unique_alignments_duplicates}}</td>
+				</tr>
+				<tr>
+					<th>Duplicates removed</th>
+					<td>{{duplicate_alignments_duplicates}}</td>
+				</tr>
+			</tbody>
+			<tbody>
+				<tr>
+					<td colspan="2" style="text-align:left;">Duplicated alignments were found at <strong>{{different_positions_duplicates}}</strong> different positions</td>
+				</tr>
+			</tbody>
+		</table>
+		<div id="deduplication_plot" class="plot"></div>
+		<hr>
+	</div>
 	
-	{{start_deletion_splitting}}
+	<div id="bm_splitting" style="display:none;">
+		
+		<h2>Cytosine Methylation after Extraction</h2>
+		<table class="data">
+			<tbody>
+				<tr>
+					<th>Total C's analysed</th>
+					<td>{{total_C_count_splitting}}</td>
+				</tr>
+			</tbody>
+			<tbody>
+				<tr>
+					<th>Methylated C's in CpG context</th>
+					<td>{{meth_CpG_splitting}}</td>
+				</tr>
+				<tr>
+					<th>Methylated C's in CHG context</th>
+					<td>{{meth_CHG_splitting}}</td>
+				</tr>
+				<tr>
+					<th>Methylated C's in CHH context</th>
+					<td>{{meth_CHH_splitting}}</td>
+				</tr>
+				{{meth_unknown_splitting}}
+			</tbody>
+			<tbody>
+				<tr>
+					<th>Unmethylated C's in CpG context</th>
+					<td>{{unmeth_CpG_splitting}}</td>
+				</tr>
+				<tr>
+					<th>Unmethylated C's in CHG context</th>
+					<td>{{unmeth_CHG_splitting}}</td>
+				</tr>
+				<tr>
+					<th>Unmethylated C's in CHH context</th>
+					<td>{{unmeth_CHH_splitting}}</td>
+				</tr>
+				{{unmeth_unknown_splitting}}
+			</tbody>
+			<tbody>
+				<tr>
+					<th>Percentage methylation (CpG context)</th>
+					<td>{{perc_CpG_splitting}}%</td>
+				</tr>
+				<tr>
+					<th>Percentage methylation (CHG context)</th>
+					<td>{{perc_CHG_splitting}}%</td>
+				</tr>
+				<tr>
+					<th>Percentage methylation (CHH context)</th>
+					<td>{{perc_CHH_splitting}}%</td>
+				</tr>
+				{{perc_unknown_splitting}}
+			</tbody>
+		</table>
+		<div id="dedup_methylation_context" class="plot"></div>
+		<hr>
+	</div>
 	
-	<h2>Cytosine Methylation after Extraction</h2>
-	<table class="data">
-		<tbody>
-			<tr>
-				<th>Total C's analysed</th>
-				<td>{{total_C_count_splitting}}</td>
-			</tr>
-		</tbody>
-		<tbody>
-			<tr>
-				<th>Methylated C's in CpG context</th>
-				<td>{{meth_CpG_splitting}}</td>
-			</tr>
-			<tr>
-				<th>Methylated C's in CHG context</th>
-				<td>{{meth_CHG_splitting}}</td>
-			</tr>
-			<tr>
-				<th>Methylated C's in CHH context</th>
-				<td>{{meth_CHH_splitting}}</td>
-			</tr>
-			{{meth_unknown_splitting}}	
-		</tbody>
-		<tbody>
-			<tr>
-				<th>Unmethylated C's in CpG context</th>
-				<td>{{unmeth_CpG_splitting}}</td>
-			</tr>
-			<tr>
-				<th>Unmethylated C's in CHG context</th>
-				<td>{{unmeth_CHG_splitting}}</td>
-			</tr>
-			<tr>
-				<th>Unmethylated C's in CHH context</th>
-				<td>{{unmeth_CHH_splitting}}</td>
-			</tr>
-			{{unmeth_unknown_splitting}}
-		</tbody>
-		<tbody>
-			<tr>
-				<th>Percentage methylation (CpG context)</th>
-				<td>{{perc_CpG_splitting}}%</td>
-			</tr>
-			<tr>
-				<th>Percentage methylation (CHG context)</th>
-				<td>{{perc_CHG_splitting}}%</td>
-			</tr>
-			<tr>
-				<th>Percentage methylation (CHH context)</th>
-				<td>{{perc_CHH_splitting}}%</td>
-			</tr>
-			{{perc_unknown_splitting}}
-		</tbody>
-	</table>
-	<div id="dedup_methylation_context" class="plot"></div>
-	<hr>
+	<div id="bm_nucleotide" style="display:none;">
+		<h2>Nucleotide Coverage</h2>
+		<table class="data" id="nucleotide_coverage_table">
+			<thead>
+				<tr><th>Nucleotide Class</th> <th>Counts Sample</th> <th>Counts Genome</th><th>% in Sample</th> <th>% in Genome</th> <th>fold coverage</th></thead>
+			<tbody>
+				<tr><th>A</th>	<td>{{nuc_A_counts_obs}}</td> <td>{{nuc_A_counts_exp}}</td> <td>{{nuc_A_p_obs}}</td>  <td>{{nuc_A_p_exp}}</td>	<td>{{nuc_A_coverage}}</td></tr>
+				<tr><th>T</th>	<td>{{nuc_T_counts_obs}}</td> <td>{{nuc_T_counts_exp}}</td> <td>{{nuc_T_p_obs}}</td>  <td>{{nuc_T_p_exp}}</td>  <td>{{nuc_T_coverage}}</td></tr>
+				<tr><th>C</th>	<td>{{nuc_C_counts_obs}}</td> <td>{{nuc_C_counts_exp}}</td> <td>{{nuc_C_p_obs}}</td>  <td>{{nuc_C_p_exp}}</td>  <td>{{nuc_C_coverage}}</td></tr>
+				<tr><th>G</th>	<td>{{nuc_G_counts_obs}}</td> <td>{{nuc_G_counts_exp}}</td> <td>{{nuc_G_p_obs}}</td>  <td>{{nuc_G_p_exp}}</td>	<td>{{nuc_G_coverage}}</td></tr>
+			</tbody>
+			<tbody>
+				<tr><th>AC</th>	<td>{{nuc_AC_counts_obs}}</td> <td>{{nuc_AC_counts_exp}}</td> <td>{{nuc_AC_p_obs}}</td> <td>{{nuc_AC_p_exp}}</td> <td>{{nuc_AC_coverage}}</tr>
+				<tr><th>CA</th>	<td>{{nuc_CA_counts_obs}}</td> <td>{{nuc_CA_counts_exp}}</td> <td>{{nuc_CA_p_obs}}</td> <td>{{nuc_CA_p_exp}}</td> <td>{{nuc_CA_coverage}}</tr>
+				<tr><th>TC</th>	<td>{{nuc_TC_counts_obs}}</td> <td>{{nuc_TC_counts_exp}}</td> <td>{{nuc_TC_p_obs}}</td> <td>{{nuc_TC_p_exp}}</td> <td>{{nuc_TC_coverage}}</tr>
+				<tr><th>CT</th>	<td>{{nuc_CT_counts_obs}}</td> <td>{{nuc_CT_counts_exp}}</td> <td>{{nuc_CT_p_obs}}</td> <td>{{nuc_CT_p_exp}}</td> <td>{{nuc_CT_coverage}}</tr>
+				<tr><th>CC</th>	<td>{{nuc_CC_counts_obs}}</td> <td>{{nuc_CC_counts_exp}}</td> <td>{{nuc_CC_p_obs}}</td> <td>{{nuc_CC_p_exp}}</td> <td>{{nuc_CC_coverage}}</tr>
+				<tr><th>CG</th>	<td>{{nuc_CG_counts_obs}}</td> <td>{{nuc_CG_counts_exp}}</td> <td>{{nuc_CG_p_obs}}</td> <td>{{nuc_CG_p_exp}}</td> <td>{{nuc_CG_coverage}}</tr>
+				<tr><th>GC</th>	<td>{{nuc_GC_counts_obs}}</td> <td>{{nuc_GC_counts_exp}}</td> <td>{{nuc_GC_p_obs}}</td> <td>{{nuc_GC_p_exp}}</td> <td>{{nuc_GC_coverage}}</tr>
+				<tr><th>GG</th>	<td>{{nuc_GG_counts_obs}}</td> <td>{{nuc_GG_counts_exp}}</td> <td>{{nuc_GG_p_obs}}</td> <td>{{nuc_GG_p_exp}}</td> <td>{{nuc_GG_coverage}}</tr>
+				<tr><th>AG</th>	<td>{{nuc_AG_counts_obs}}</td> <td>{{nuc_AG_counts_exp}}</td> <td>{{nuc_AG_p_obs}}</td> <td>{{nuc_AG_p_exp}}</td> <td>{{nuc_AG_coverage}}</tr>
+				<tr><th>GA</th>	<td>{{nuc_GA_counts_obs}}</td> <td>{{nuc_GA_counts_exp}}</td> <td>{{nuc_GA_p_obs}}</td> <td>{{nuc_GA_p_exp}}</td> <td>{{nuc_GA_coverage}}</tr>
+				<tr><th>TG</th>	<td>{{nuc_TG_counts_obs}}</td> <td>{{nuc_TG_counts_exp}}</td> <td>{{nuc_TG_p_obs}}</td> <td>{{nuc_TG_p_exp}}</td> <td>{{nuc_TG_coverage}}</tr>
+				<tr><th>GT</th>	<td>{{nuc_GT_counts_obs}}</td> <td>{{nuc_GT_counts_exp}}</td> <td>{{nuc_GT_p_obs}}</td> <td>{{nuc_GT_p_exp}}</td> <td>{{nuc_GT_coverage}}</tr>
+				<tr><th>TT</th>	<td>{{nuc_TT_counts_obs}}</td> <td>{{nuc_TT_counts_exp}}</td> <td>{{nuc_TT_p_obs}}</td> <td>{{nuc_TT_p_exp}}</td> <td>{{nuc_TT_coverage}}</tr>	
+				<tr><th>TA</th>	<td>{{nuc_TA_counts_obs}}</td> <td>{{nuc_TA_counts_exp}}</td> <td>{{nuc_TA_p_obs}}</td> <td>{{nuc_TA_p_exp}}</td> <td>{{nuc_TA_coverage}}</tr>
+				<tr><th>AT</th>	<td>{{nuc_AT_counts_obs}}</td> <td>{{nuc_AT_counts_exp}}</td> <td>{{nuc_AT_p_obs}}</td> <td>{{nuc_AT_p_exp}}</td> <td>{{nuc_AT_coverage}}</tr>
+				<tr><th>AA</th>	<td>{{nuc_AA_counts_obs}}</td> <td>{{nuc_AA_counts_exp}}</td> <td>{{nuc_AA_p_obs}}</td> <td>{{nuc_AA_p_exp}}</td> <td>{{nuc_AA_coverage}}</tr>
+			</tbody>
+		</table>
+		<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
+		<hr>
+	</div>
 
-	{{end_deletion_splitting}}
-	
-	{{start_deletion_nucleotide_coverage}}
+	<div id="bm_mbias" style="display:none;">
+		<h2>M-Bias Plot</h2>
+		<div id="m_bias_1" class="fullWidth_plot"></div>
 
-	<h2>Nucleotide Coverage</h2>
-	<table class="data" id="nucleotide_coverage_table">
-		<thead>
-			<tr><th>Nucleotide Class</th> <th>Counts Sample</th> <th>Counts Genome</th><th>% in Sample</th> <th>% in Genome</th> <th>fold coverage</th></thead>
-		<tbody>
-		  <tr><th>A</th>	<td>{{nuc_A_counts_obs}}</td> <td>{{nuc_A_counts_exp}}</td> <td>{{nuc_A_p_obs}}</td>  <td>{{nuc_A_p_exp}}</td>	<td>{{nuc_A_coverage}}</td></tr>
-		  <tr><th>T</th>	<td>{{nuc_T_counts_obs}}</td> <td>{{nuc_T_counts_exp}}</td> <td>{{nuc_T_p_obs}}</td>  <td>{{nuc_T_p_exp}}</td>  <td>{{nuc_T_coverage}}</td></tr>
-		  <tr><th>C</th>	<td>{{nuc_C_counts_obs}}</td> <td>{{nuc_C_counts_exp}}</td> <td>{{nuc_C_p_obs}}</td>  <td>{{nuc_C_p_exp}}</td>  <td>{{nuc_C_coverage}}</td></tr>
-		  <tr><th>G</th>	<td>{{nuc_G_counts_obs}}</td> <td>{{nuc_G_counts_exp}}</td> <td>{{nuc_G_p_obs}}</td>  <td>{{nuc_G_p_exp}}</td>	<td>{{nuc_G_coverage}}</td></tr>
-		</tbody>
-		<tbody>
-		  <tr><th>AC</th>	<td>{{nuc_AC_counts_obs}}</td> <td>{{nuc_AC_counts_exp}}</td> <td>{{nuc_AC_p_obs}}</td> <td>{{nuc_AC_p_exp}}</td> <td>{{nuc_AC_coverage}}</tr>
-		  <tr><th>CA</th>	<td>{{nuc_CA_counts_obs}}</td> <td>{{nuc_CA_counts_exp}}</td> <td>{{nuc_CA_p_obs}}</td> <td>{{nuc_CA_p_exp}}</td> <td>{{nuc_CA_coverage}}</tr>
-		  <tr><th>TC</th>	<td>{{nuc_TC_counts_obs}}</td> <td>{{nuc_TC_counts_exp}}</td> <td>{{nuc_TC_p_obs}}</td> <td>{{nuc_TC_p_exp}}</td> <td>{{nuc_TC_coverage}}</tr>
-		  <tr><th>CT</th>	<td>{{nuc_CT_counts_obs}}</td> <td>{{nuc_CT_counts_exp}}</td> <td>{{nuc_CT_p_obs}}</td> <td>{{nuc_CT_p_exp}}</td> <td>{{nuc_CT_coverage}}</tr>
-		  <tr><th>CC</th>	<td>{{nuc_CC_counts_obs}}</td> <td>{{nuc_CC_counts_exp}}</td> <td>{{nuc_CC_p_obs}}</td> <td>{{nuc_CC_p_exp}}</td> <td>{{nuc_CC_coverage}}</tr>
-		  <tr><th>CG</th>	<td>{{nuc_CG_counts_obs}}</td> <td>{{nuc_CG_counts_exp}}</td> <td>{{nuc_CG_p_obs}}</td> <td>{{nuc_CG_p_exp}}</td> <td>{{nuc_CG_coverage}}</tr>
-		  <tr><th>GC</th>	<td>{{nuc_GC_counts_obs}}</td> <td>{{nuc_GC_counts_exp}}</td> <td>{{nuc_GC_p_obs}}</td> <td>{{nuc_GC_p_exp}}</td> <td>{{nuc_GC_coverage}}</tr>
-		  <tr><th>GG</th>	<td>{{nuc_GG_counts_obs}}</td> <td>{{nuc_GG_counts_exp}}</td> <td>{{nuc_GG_p_obs}}</td> <td>{{nuc_GG_p_exp}}</td> <td>{{nuc_GG_coverage}}</tr>
-		  <tr><th>AG</th>	<td>{{nuc_AG_counts_obs}}</td> <td>{{nuc_AG_counts_exp}}</td> <td>{{nuc_AG_p_obs}}</td> <td>{{nuc_AG_p_exp}}</td> <td>{{nuc_AG_coverage}}</tr>
-		  <tr><th>GA</th>	<td>{{nuc_GA_counts_obs}}</td> <td>{{nuc_GA_counts_exp}}</td> <td>{{nuc_GA_p_obs}}</td> <td>{{nuc_GA_p_exp}}</td> <td>{{nuc_GA_coverage}}</tr>
-		  <tr><th>TG</th>	<td>{{nuc_TG_counts_obs}}</td> <td>{{nuc_TG_counts_exp}}</td> <td>{{nuc_TG_p_obs}}</td> <td>{{nuc_TG_p_exp}}</td> <td>{{nuc_TG_coverage}}</tr>
-		  <tr><th>GT</th>	<td>{{nuc_GT_counts_obs}}</td> <td>{{nuc_GT_counts_exp}}</td> <td>{{nuc_GT_p_obs}}</td> <td>{{nuc_GT_p_exp}}</td> <td>{{nuc_GT_coverage}}</tr>
-		  <tr><th>TT</th>	<td>{{nuc_TT_counts_obs}}</td> <td>{{nuc_TT_counts_exp}}</td> <td>{{nuc_TT_p_obs}}</td> <td>{{nuc_TT_p_exp}}</td> <td>{{nuc_TT_coverage}}</tr>	
-		  <tr><th>TA</th>	<td>{{nuc_TA_counts_obs}}</td> <td>{{nuc_TA_counts_exp}}</td> <td>{{nuc_TA_p_obs}}</td> <td>{{nuc_TA_p_exp}}</td> <td>{{nuc_TA_coverage}}</tr>
-		  <tr><th>AT</th>	<td>{{nuc_AT_counts_obs}}</td> <td>{{nuc_AT_counts_exp}}</td> <td>{{nuc_AT_p_obs}}</td> <td>{{nuc_AT_p_exp}}</td> <td>{{nuc_AT_coverage}}</tr>
-		  <tr><th>AA</th>	<td>{{nuc_AA_counts_obs}}</td> <td>{{nuc_AA_counts_exp}}</td> <td>{{nuc_AA_p_obs}}</td> <td>{{nuc_AA_p_exp}}</td> <td>{{nuc_AA_coverage}}</tr>
-		</tbody>
-	</table>
-	<div id="nucleotide_coverage" class="plot" style="height: 600px;"></div>
-	<hr>
-	{{end_deletion_nucleotide_coverage}}
+		<div id="m_bias_2" class="fullWidth_plot"></div>
+		<hr>
+	</div>
 
-	{{start_deletion_mbias}}
-
-	
-	<h2>M-Bias Plot</h2>
-	<div id="m_bias_1" class="fullWidth_plot"></div>
-	
-	{{start_deletion_mbias_2}}
-
-	<p>&nbsp;</p>
-	<div id="m_bias_2" class="fullWidth_plot"></div>
-	<hr>
-
-	{{end_deletion_mbias_2}}	
-
-	{{end_deletion_mbias}}	
 	
 	<footer>
 		<a style="float:right;" href="http://www.bioinformatics.babraham.ac.uk/"><img alt="Babraham Bioinformatics" src="data:image/png;base64,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" /></a>
