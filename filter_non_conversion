@@ -7,6 +7,7 @@ use FindBin qw($Bin);
 use lib "$Bin/../lib";
 $|++;
 
+
 ## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
@@ -26,6 +27,10 @@ my $parent_dir = getcwd();
 my $filter_version = 'v0.16.3_dev';
 my ($single,$paired);
 my ($global_single,$global_paired,$samtools_path,$threshold) = process_commandline();
+
+my $start_run = time();
+warn "Run started at: $start_run\n";
+
 
 foreach my $file (@ARGV){
     $single = $paired = undef; # resetting
@@ -511,8 +516,21 @@ sub bam_isTruncated{
     close TRUNC or warn "$!\n";
 }
 
+   ### Produce Run Time
+   my $end_run = time();
+   my $run_time = $end_run - $start_run;
+   my $days  = int($run_time/(24*60*60));
+   my $hours = ($run_time/(60*60))%24;
+   my $mins  = ($run_time/60)%60;
+   my $secs  = $run_time%60;
+
+    warn "filter_non_conversion completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+    print REPORT "filter_non_conversion completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+
 sub print_helpfile{
   print <<EOF
+
+  USAGE: filter_non_conversion [options] [Bismark BAM files]
 
   SYNOPSIS:
 
@@ -524,7 +542,6 @@ sub print_helpfile{
   Please be aware that this kind of filtering is not advisable and will introduce biases if you work with organisms
   which exhibit any appreciable levels of non-CG methylation (e.g. most plants).
 
-  USAGE: filter_non_conversion [options] [Bismark BAM files]
 
 
 *** Please note that for paired-end BAM files the filter_non_conversion script expects Read 1 and Read 2 to
