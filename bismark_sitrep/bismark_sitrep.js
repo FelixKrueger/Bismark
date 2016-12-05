@@ -366,43 +366,44 @@ $(function () {
         yAxis: 1,
         lineWidth: 2,
         legendIndex: 5,
-        data: [ d['CHH_total_calls_R1'] ]
+        data: d['CHH_total_calls_R1']
       },{
         name: 'CHG Total Calls',
         yAxis: 1,
         lineWidth: 2,
         legendIndex: 4,
-        data: [ d['CHG_total_calls_R1'] ]
+        data: d['CHG_total_calls_R1']
       },{
         name: 'CpG Total Calls',
         yAxis: 1,
         lineWidth: 2,
         legendIndex: 3,
-        data: [ d['CpG_total_calls_R1'] ]
+        data: d['CpG_total_calls_R1']
       },{
         name: 'CHH Methylation',
         yAxis: 0,
         lineWidth: 3,
         legendIndex: 2,
-        data: [ d['CHH_methylation_R1'] ]
+        data: d['CHH_methylation_R1']
       },{
         name: 'CHG Methylation',
         yAxis: 0,
         lineWidth: 3,
         legendIndex: 1,
-        data: [ d['CHG_methylation_R1'] ]
+        data: d['CHG_methylation_R1']
       },{
         name: 'CpG Methylation',
         yAxis: 0,
         lineWidth: 3,
         legendIndex: 0,
-        data: [ d['CpG_methylation_R1'] ]
+        data: d['CpG_methylation_R1']
       }]
     };
     // Plot the graph
     $('#m_bias_1').highcharts(m_bias_settings);
     
     if(bm_sections['mbias_2']){
+      $('#m_bias_2').show();
       // M-Bias Plot 2
       var m_bias_settings = {
         colors: [ '#CCF0E1','#EDD3A8','#69798A','#21BCA2','#F29D13','#0d233a','#f28f43','#77a1e5','#c42525','#a6c96a'],
@@ -468,37 +469,37 @@ $(function () {
           yAxis: 1,
           lineWidth: 2,
           legendIndex: 5,
-          data: [ d['CHH_total_calls_R2'] ]
+          data: d['CHH_total_calls_R2']
         },{
           name: 'CHG Total Calls',
           yAxis: 1,
           lineWidth: 2,
           legendIndex: 4,
-          data: [ d['CHG_total_calls_R2'] ]
+          data: d['CHG_total_calls_R2']
         },{
           name: 'CpG Total Calls',
           yAxis: 1,
           lineWidth: 2,
           legendIndex: 3,
-          data: [ d['CpG_total_calls_R2'] ]
+          data: d['CpG_total_calls_R2']
         },{
           name: 'CHH Methylation',
           yAxis: 0,
           lineWidth: 3,
           legendIndex: 2,
-          data: [ d['CHH_methylation_R2'] ]
+          data: d['CHH_methylation_R2']
         },{
           name: 'CHG Methylation',
           yAxis: 0,
           lineWidth: 3,
           legendIndex: 1,
-          data: [ d['CHG_methylation_R2'] ]
+          data: d['CHG_methylation_R2']
         },{
           name: 'CpG Methylation',
           yAxis: 0,
           lineWidth: 3,
           legendIndex: 0,
-          data: [ d['CpG_methylation_R2'] ]
+          data: d['CpG_methylation_R2']
         }]
       }
 

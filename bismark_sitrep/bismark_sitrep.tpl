@@ -376,7 +376,7 @@
 		<h2>M-Bias Plot</h2>
 		<div id="m_bias_1" class="fullWidth_plot"></div>
 
-		<div id="m_bias_2" class="fullWidth_plot"></div>
+		<div id="m_bias_2" class="fullWidth_plot" style="display:none;"></div>
 		<hr>
 	</div>
 

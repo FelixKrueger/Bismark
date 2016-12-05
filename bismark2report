@@ -853,13 +853,13 @@ sub read_mbias_report{
   my $r1_CHH_coverage = join (',',@{$mbias_1{'CHH'}->{coverage}});
   my $r1_CHH_perc     = join (',',@{$mbias_1{'CHH'}->{perc}});
 
-  $doc =~ s/\{\{CpG_total_calls_R1\}\}/$r1_CpG_coverage/g;
-  $doc =~ s/\{\{CHG_total_calls_R1\}\}/$r1_CHG_coverage/g;
-  $doc =~ s/\{\{CHH_total_calls_R1\}\}/$r1_CHH_coverage/g;
+  $doc =~ s/'\{\{CpG_total_calls_R1\}\}'/\[$r1_CpG_coverage\]/g;
+  $doc =~ s/'\{\{CHG_total_calls_R1\}\}'/\[$r1_CHG_coverage\]/g;
+  $doc =~ s/'\{\{CHH_total_calls_R1\}\}'/\[$r1_CHH_coverage\]/g;
 
-  $doc =~ s/\{\{CpG_methylation_R1\}\}/$r1_CpG_perc/g;
-  $doc =~ s/\{\{CHG_methylation_R1\}\}/$r1_CHG_perc/g;
-  $doc =~ s/\{\{CHH_methylation_R1\}\}/$r1_CHH_perc/g;
+  $doc =~ s/'\{\{CpG_methylation_R1\}\}'/\[$r1_CpG_perc\]/g;
+  $doc =~ s/'\{\{CHG_methylation_R1\}\}'/\[$r1_CHG_perc\]/g;
+  $doc =~ s/'\{\{CHH_methylation_R1\}\}'/\[$r1_CHH_perc\]/g;
 
   # Read 2 M-bias
   if (%mbias_2){
@@ -874,13 +874,13 @@ sub read_mbias_report{
     my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
     my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
     
-    $doc =~ s/\{\{CpG_total_calls_R2\}\}/$r2_CpG_coverage/g;
-    $doc =~ s/\{\{CHG_total_calls_R2\}\}/$r2_CHG_coverage/g;
-    $doc =~ s/\{\{CHH_total_calls_R2\}\}/$r2_CHH_coverage/g;
+    $doc =~ s/'\{\{CpG_total_calls_R2\}\}'/\[$r2_CpG_coverage\]/g;
+    $doc =~ s/'\{\{CHG_total_calls_R2\}\}'/\[$r2_CHG_coverage\]/g;
+    $doc =~ s/'\{\{CHH_total_calls_R2\}\}'/\[$r2_CHH_coverage\]/g;
     
-    $doc =~ s/\{\{CpG_methylation_R2\}\}/$r2_CpG_perc/g;
-    $doc =~ s/\{\{CHG_methylation_R2\}\}/$r2_CHG_perc/g;
-    $doc =~ s/\{\{CHH_methylation_R2\}\}/$r2_CHH_perc/g;
+    $doc =~ s/'\{\{CpG_methylation_R2\}\}'/\[$r2_CpG_perc\]/g;
+    $doc =~ s/'\{\{CHG_methylation_R2\}\}'/\[$r2_CHG_perc\]/g;
+    $doc =~ s/'\{\{CHH_methylation_R2\}\}'/\[$r2_CHH_perc\]/g;
   }
   else {
     $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
