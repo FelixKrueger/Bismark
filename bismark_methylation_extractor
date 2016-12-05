@@ -979,6 +979,7 @@ sub process_commandline{
 				 'ignore_3prime=i'      => \$ignore_3prime,
 				 'ignore_3prime_r2=i'   => \$ignore_3prime_r2,
 				 'multicore=i'          => \$multicore,
+				 'mapq=i'           => \$mapq;
 	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -1123,7 +1124,7 @@ VERSION
 	    open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
 	}
 	elsif ($file =~ /\.cram$/ || $file =~ /\.bam$/ || isBam($file) ){ ### this would allow to read BAM files that do not end in *.bam
-	    open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM/CRAM file $file: $!\n";
+	    open (DETERMINE,"$samtools_path view -q $mapq -h $file |") or die "Unable to read from BAM/CRAM file $file: $!\n";
 	}
 	else{
 	    open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
