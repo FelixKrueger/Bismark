@@ -250,7 +250,7 @@
 
 	<hr>
 	
-	<div id="bm_duplication" style="display:none;">
+	<div id="bm_deduplication" style="display:none;">
 
 		<h2>Deduplication</h2>
 		<table class="data">
