@@ -45,128 +45,73 @@ while (@alignment_reports){
   $report_output =~ s/\.txt$//;
   $report_output =~ s/$/.html/;
 
-  # if -o output_file was specified we are going to use that name preferentially. This may only happen if there is a single report in the folder, or if a single report has been specified manually
+  # if -o output_file was specified we are going to use that name preferentially.
+  # This may only happen if there is a single report in the folder, or if a single report has been specified manually
   if ($manual_output_file){
-      warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
-      $report_output = $manual_output_file;
+    warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
+    $report_output = $manual_output_file;
   }
 
   $report_output = $output_dir.$report_output;
   warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
 
-  my $doc = read_report_template(); #reading and storing the entire report template
-
+  # Get the report template into a string
+  my $doc = read_report_template();
+  
+  # Creation timestamp
+  $doc = getLoggingTime($doc);
+  
   # BISMARK ALIGNMENT REPORT (mandatory)
   warn "="x110,"\n";
   warn "Using the following alignment report:\t\t> $alignment_report <\n";
+  $doc = read_alignment_report($alignment_report,$doc);
+  
   # DEDUPLICATION REPORT (optional)
   if ($dedup_report){
-      warn "Using the following deduplication report:\t> $dedup_report <\n";
+    warn "Using the following deduplication report:\t> $dedup_report <\n";
+    $doc =~ s/\{\{bm_deduplication\}\}/true/g;
+    $doc = read_deduplication_report($dedup_report,$doc);
   }
   else{
-      warn "No deduplication report file specified, skipping this step\n";
+    warn "No deduplication report file specified, skipping this step\n";
+    $doc =~ s/\{\{bm_deduplication\}\}/false/g;
   }
 
   # SPLITTING REPORT (optional)
   if ($splitting_report){
     warn "Using the following splitting report:\t\t> $splitting_report <\n";
+    $doc =~ s/\{\{bm_splitting\}\}/true/g;
+    $doc = read_splitting_report($splitting_report,$doc);
   }
   else{
     warn "No splitting report file specified, skipping this step\n";
+    $doc =~ s/\{\{bm_splitting\}\}/false/g;
   }
 
   # M-BIAS REPORT (optional)
   if ($mbias_report){
       warn "Using the following M-bias report:\t\t> $mbias_report <\n";
+      $doc =~ s/\{\{bm_mbias\}\}/true/g;
+      (my $state, $doc) = read_mbias_report($mbias_report,$doc);
   }
   else{
       warn "No M-bias report file specified, skipping this step\n";
+      $doc =~ s/\{\{bm_mbias\}\}/false/g;
+      $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
   }
   
   # NUCLEOTIDE COVERAGE REPORT (optional)
   if ($nuc_report){
       warn "Using the following nucleotide coverage report:\t> $nuc_report <\n";
+      $doc =~ s/\{\{bm_nucleotide\}\}/true/g;
+      $doc = read_nucleotide_coverage_report($nuc_report,$doc);
   }
   else{
       warn "No nucleotide coverage report file specified, skipping this step\n";
-  } 
+      $doc =~ s/\{\{bm_nucleotide\}\}/false/g;
+  }
   warn "="x110,"\n\n\n";
   $verbose and sleep(3);
-
-  # creating timestamp
-  $doc = getLoggingTime($doc);
-
-  $doc = read_alignment_report($alignment_report,$doc); # mandatory
-
-  if ($dedup_report){ # optional
-    $doc = read_deduplication_report($dedup_report,$doc);
-
-    # removing the delete tags in the html template
-    $doc =~ s/\{\{start_deletion_duplication\}\}//g;
-    $doc =~ s/\{\{end_deletion_duplication\}\}//g;
-  }
-  else{
-    # removing the entire graph and table section for the deduplication part
-    warn "Removing the duplication section from the HTML report\n" if ($verbose);
-    $doc =~ s/(\{\{start_deletion_duplication.*?end_deletion_duplication\}\})//gs; # s includes newline chars; non-greedy
-    warn "Deleting the following content:\n$1\n\n" if ($verbose);
-    sleep(3) if ($verbose);
-  }
-
-  if ($nuc_report){ # optional
-      $doc = read_nucleotide_coverage_report($nuc_report,$doc);
-      
-      # removing the delete tags in the html template
-      $doc =~ s/\{\{start_deletion_nucleotide_coverage\}\}//g;
-      $doc =~ s/\{\{end_deletion_nucleotide_coverage\}\}//g;
-  }
-  else{
-      # removing the entire graph and table section for the nucleotide coverage part
-      warn "Removing the nucleotide coverage section from the HTML report\n" if ($verbose);
-      $doc =~ s/(\{\{start_deletion_nucleotide_coverage.*?end_deletion_nucleotide_coverage\}\})//gs; # s includes newline chars; non-greedy
-      warn "Deleting the following content:\n$1\n\n" if ($verbose);
-      sleep(3) if ($verbose);
-  }
-
-  if ($splitting_report){ # optional
-    $doc = read_splitting_report($splitting_report,$doc);
-
-    # removing the delete tags in the html template
-    $doc =~ s/\{\{start_deletion_splitting\}\}//g;
-    $doc =~ s/\{\{end_deletion_splitting\}\}//g;
-  }
-  else{
-    # removing the entire graph and table section for the deduplication part
-    warn "Removing the splitting report section from the HTML report\n" if ($verbose);
-    $doc =~ s/(\{\{start_deletion_splitting.*?end_deletion_splitting\}\})//gs; # s includes newline chars; non-greedy
-    warn "Deleting the following content:\n$1\n\n" if ($verbose);
-    sleep(3) if ($verbose);
-  }
-
-  if ($mbias_report){ # optional
-    (my $state, $doc) = read_mbias_report($mbias_report,$doc);
-
-    # removing the delete tags in the html template
-    $doc =~ s/\{\{start_deletion_mbias\}\}//g;
-    $doc =~ s/\{\{end_deletion_mbias\}\}//g;
-
-    warn "Reported read state: $state\n\n" if ($verbose);
-    # if the report was single-end we need to remove the second plot only
-    if ($state eq 'single'){
-      $doc =~ s/(\{\{start_deletion_mbias_2.*?end_deletion_mbias_2\}\})//gs; # s includes newline chars; non-greedy
-      warn "Deleting the following content:\n$1\n\n" if ($verbose);
-    }
-    else{
-      $doc =~ s/\{\{start_deletion_mbias_2\}\}//g;
-      $doc =~ s/\{\{end_deletion_mbias_2\}\}//g;
-    }
-  }
-  else{
-    # removing the entire graph and table section for the deduplication part
-    $doc =~ s/(\{\{start_deletion_mbias.*?end_deletion_mbias\}\})//gs; # s includes newline chars; non-greedy
-    warn "Deleting the following content:\n$1\n\n" if ($verbose);
-    sleep(3) if ($verbose);
-  }
 
   write_out_report($report_output,$doc);
 
@@ -227,12 +172,12 @@ sub read_alignment_report{
     chomp;
 
     ### General Alignment stats
-    if ($_ =~ /^Sequence pairs analysed in total:/ ){ ## Paired-end
+    if ($_ =~ /^Sequence pairs analysed in total:/ ){                        ## Paired-end
       (undef,$total_seqs) = split /\t/;
-       print "Total paired seqs: >> $total_seqs <<\n" if ($verbose);
+      print "Total paired seqs: >> $total_seqs <<\n" if ($verbose);
       $total_seq_text = 'Sequence pairs analysed in total';
     }
-    elsif ($_ =~ /^Sequences analysed in total:/ ){   ## Single-end
+    elsif ($_ =~ /^Sequences analysed in total:/ ){                          ## Single-end
       (undef,$total_seqs) = split /\t/;
       $total_seq_text = 'Sequences analysed in total';
       print "total single-end seqs >> $total_seqs <<\n" if ($verbose);
@@ -250,7 +195,7 @@ sub read_alignment_report{
       print "Unique PE>> $unique <<\n" if ($verbose);;
       $unique_text = 'Paired-end alignments with a unique best hit';
     }
-    elsif($_ =~ /^Number of alignments with a unique best hit from/){            ## Single-end
+    elsif($_ =~ /^Number of alignments with a unique best hit from/){        ## Single-end
       (undef,$unique) = split /\t/;
       print "Unique SE>> $unique <<\n" if ($verbose);
       $unique_text = 'Single-end alignments with a unique best hit';
@@ -261,18 +206,18 @@ sub read_alignment_report{
       print "No alignment PE >> $no_aln <<\n" if ($verbose);
       $no_aln_text = 'Pairs without alignments under any condition';
     }
-    elsif($_ =~ /^Sequences with no alignments under any condition:/){  ## Single-end
+    elsif($_ =~ /^Sequences with no alignments under any condition:/){       ## Single-end
       (undef,$no_aln) = split /\t/;
       print "No alignments SE>> $no_aln <<\n" if ($verbose);
       $no_aln_text = 'Sequences without alignments under any condition';
     }
 
-    elsif($_ =~ /^Sequence pairs did not map uniquely:/){ ## Paired-end
+    elsif($_ =~ /^Sequence pairs did not map uniquely:/){                    ## Paired-end
       (undef,$multiple) = split /\t/;
       print "Multiple alignments PE >> $multiple <<\n" if ($verbose);
       $multiple_text = 'Pairs that did not map uniquely';
     }
-    elsif($_ =~ /^Sequences did not map uniquely:/){ ## Single-end
+    elsif($_ =~ /^Sequences did not map uniquely:/){                         ## Single-end
       (undef,$multiple) = split /\t/;
       print "Multiple alignments SE >> $multiple <<\n" if ($verbose);
       $multiple_text = 'Sequences that did not map uniquely';
@@ -584,7 +529,7 @@ sub read_nucleotide_coverage_report{
     open (NUC,$nuc_report) or die "Couldn't read from file $nuc_report: $!\n\n";
     
     my %nucs; # storing nucleotides and frequencies
-    my $linecount = 0;    
+    my $linecount = 0;
     
     while (<NUC>){
 	chomp;
@@ -623,13 +568,13 @@ sub read_nucleotide_coverage_report{
 
     # Checking if we got all we need
     my $looksOK = 1;
-    foreach my $key (keys %nucs){ 
+    foreach my $key (keys %nucs){
 	unless ( (defined $nucs{$key}->{obs}) and (defined $nucs{$key}->{exp})){
 	    $looksOK = 0;
 	}
     }
     
-    if ($looksOK){ 
+    if ($looksOK){
 	warn "Got all necessary information, editing HTML report ...\n" if $verbose;
 	my $minmax = 0;
 	foreach my $key (sort {$a cmp $b} keys %nucs){
@@ -644,7 +589,7 @@ sub read_nucleotide_coverage_report{
 	    #  my $logratio = sprintf ("%.2f",log($ratio)/log(2));
 	    # if (abs($logratio) > $minmax){
 	    # $minmax = abs($logratio);
-	    # } 
+	    # }
 	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\n" if $verbose;
 
 	    $doc =~ s/\{\{nuc_${key}_p_obs\}\}/$nuc_obs/g;
@@ -722,7 +667,7 @@ sub read_splitting_report{
     elsif($_ =~ /^Total C to T conversions in Unknown context:/ ){
       (undef,$unmeth_unknown) = split /\t/;
       print "unmeth Unknown >> $unmeth_unknown <<\n" if ($verbose);
-    } 
+    }
 
     elsif($_ =~ /^C methylated in CpG context:/ ){
       (undef,$perc_CpG) = split /\t/;
@@ -908,32 +853,37 @@ sub read_mbias_report{
   my $r1_CHH_coverage = join (',',@{$mbias_1{'CHH'}->{coverage}});
   my $r1_CHH_perc     = join (',',@{$mbias_1{'CHH'}->{perc}});
 
-  $doc =~ s/\{\{CpG_total_calls_R1\}\}/$r1_CpG_coverage/g;
-  $doc =~ s/\{\{CHG_total_calls_R1\}\}/$r1_CHG_coverage/g;
-  $doc =~ s/\{\{CHH_total_calls_R1\}\}/$r1_CHH_coverage/g;
+  $doc =~ s/'\{\{CpG_total_calls_R1\}\}'/\[$r1_CpG_coverage\]/g;
+  $doc =~ s/'\{\{CHG_total_calls_R1\}\}'/\[$r1_CHG_coverage\]/g;
+  $doc =~ s/'\{\{CHH_total_calls_R1\}\}'/\[$r1_CHH_coverage\]/g;
 
-  $doc =~ s/\{\{CpG_methylation_R1\}\}/$r1_CpG_perc/g;
-  $doc =~ s/\{\{CHG_methylation_R1\}\}/$r1_CHG_perc/g;
-  $doc =~ s/\{\{CHH_methylation_R1\}\}/$r1_CHH_perc/g;
+  $doc =~ s/'\{\{CpG_methylation_R1\}\}'/\[$r1_CpG_perc\]/g;
+  $doc =~ s/'\{\{CHG_methylation_R1\}\}'/\[$r1_CHG_perc\]/g;
+  $doc =~ s/'\{\{CHH_methylation_R1\}\}'/\[$r1_CHH_perc\]/g;
 
   # Read 2 M-bias
   if (%mbias_2){
-      my $r2_CpG_coverage = join (',',@{$mbias_2{'CpG'}->{coverage}});
-      my $r2_CpG_perc     = join (',',@{$mbias_2{'CpG'}->{perc}});
-      
-      my $r2_CHG_coverage = join (',',@{$mbias_2{'CHG'}->{coverage}});
-      my $r2_CHG_perc     = join (',',@{$mbias_2{'CHG'}->{perc}});
-      
-      my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
-      my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
-      
-      $doc =~ s/\{\{CpG_total_calls_R2\}\}/$r2_CpG_coverage/g;
-      $doc =~ s/\{\{CHG_total_calls_R2\}\}/$r2_CHG_coverage/g;
-      $doc =~ s/\{\{CHH_total_calls_R2\}\}/$r2_CHH_coverage/g;
-      
-      $doc =~ s/\{\{CpG_methylation_R2\}\}/$r2_CpG_perc/g;
-      $doc =~ s/\{\{CHG_methylation_R2\}\}/$r2_CHG_perc/g;
-      $doc =~ s/\{\{CHH_methylation_R2\}\}/$r2_CHH_perc/g;
+    $doc =~ s/\{\{bm_mbias_2\}\}/true/g;
+    
+    my $r2_CpG_coverage = join (',',@{$mbias_2{'CpG'}->{coverage}});
+    my $r2_CpG_perc     = join (',',@{$mbias_2{'CpG'}->{perc}});
+    
+    my $r2_CHG_coverage = join (',',@{$mbias_2{'CHG'}->{coverage}});
+    my $r2_CHG_perc     = join (',',@{$mbias_2{'CHG'}->{perc}});
+    
+    my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
+    my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
+    
+    $doc =~ s/'\{\{CpG_total_calls_R2\}\}'/\[$r2_CpG_coverage\]/g;
+    $doc =~ s/'\{\{CHG_total_calls_R2\}\}'/\[$r2_CHG_coverage\]/g;
+    $doc =~ s/'\{\{CHH_total_calls_R2\}\}'/\[$r2_CHH_coverage\]/g;
+    
+    $doc =~ s/'\{\{CpG_methylation_R2\}\}'/\[$r2_CpG_perc\]/g;
+    $doc =~ s/'\{\{CHG_methylation_R2\}\}'/\[$r2_CHG_perc\]/g;
+    $doc =~ s/'\{\{CHH_methylation_R2\}\}'/\[$r2_CHH_perc\]/g;
+  }
+  else {
+    $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
   }
   warn "Complete\n\n";
 
@@ -944,8 +894,8 @@ sub read_mbias_report{
 
 sub read_report_template{
   my $doc;
-  warn "Attempting to open file from: $Bin/bismark_sitrep.tpl\n\n" if ($verbose);
-  open (DOC,"$Bin/bismark_sitrep.tpl") or die $!;
+  warn "Attempting to open file from: $Bin/bismark_sitrep/bismark_sitrep.tpl\n\n" if ($verbose);
+  open (DOC,"$Bin/bismark_sitrep/bismark_sitrep.tpl") or die $!;
   while(<DOC>){
     chomp;
     $_ =~ s/\r//g;
@@ -953,6 +903,29 @@ sub read_report_template{
   }
 
   close DOC or die $!;
+  
+  # Insert jQuery source
+  local $/=undef;
+  warn "Attempting to open file from: $Bin/bismark_sitrep/jquery-3.1.1.min.js\n\n" if ($verbose);
+  open (JQUERY,"$Bin/bismark_sitrep/jquery-3.1.1.min.js") or die $!;
+  my $jquery_js = <JQUERY>;
+  close JQUERY;
+  $doc =~ s/\{\{jquery_js\}\}/$jquery_js/g;
+  
+  # Insert the Highcharts JS source
+  warn "Attempting to open file from: $Bin/bismark_sitrep/highcharts.js\n\n" if ($verbose);
+  open (HIGHCHARTS,"$Bin/bismark_sitrep/highcharts.js") or die $!;
+  my $highchars_js = <HIGHCHARTS>;
+  close HIGHCHARTS;
+  $doc =~ s/\{\{highcharts_js\}\}/$highchars_js/g;
+  
+  # Insert the Bismark sitrep JS source
+  warn "Attempting to open file from: $Bin/bismark_sitrep/bismark_sitrep.js\n\n" if ($verbose);
+  open (BMJS,"$Bin/bismark_sitrep/bismark_sitrep.js") or die $!;
+  my $bismark_sitrep_js = <BMJS>;
+  close BMJS;
+  $doc =~ s/\{\{bismark_sitrep_js\}\}/$bismark_sitrep_js/g;
+  
   return $doc;
 }
 
@@ -978,7 +951,7 @@ sub process_commandline{
 				 'dedup_report=s'        => \$dedup_report,
 				 'splitting_report=s'    => \$splitting_report,
 				 'mbias_report=s'        => \$mbias_report,
-				 'nucleotide_report=s'   => \$nucleotide_coverage_report, 
+				 'nucleotide_report=s'   => \$nucleotide_coverage_report,
 				 'version'               => \$version,
 				 'verbose'               => \$verbose,
 				);
