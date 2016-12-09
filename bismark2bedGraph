@@ -267,7 +267,8 @@ foreach my $infile (@bedfiles) {
 	    }
 	    
 	    # warn "This is the chromosome name before replacing '|' characters:\t$chr\n\n";
-	    $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the file names
+	    $chr =~ s/\|/_/g; # replacing pipe ('|') characters in the chromosome names so that they don't interfere with the temp file creation
+	    $chr =~ s/\//_/g; # replacing forward slash ('/') characters in the chromosome names	
 	    # warn "This is the chromosome name AFTER replacing '|' characters:\t$chr\n\n";
 	    unless (exists $temp_fhs{$chr}) { # Including the infile name to the temporary chromosome files to enable parallel processing of multiple files at the same time
 		
