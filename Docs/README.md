@@ -2,7 +2,7 @@
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
 ## User Guide - v0.16.3
-#### 07 October, 2016
+#### 14 December, 2016
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
@@ -665,6 +665,27 @@ Displays version information and exits.
 
 
 If you get stuck at any point or have any questions or comments please contact me via e-mail: [felix.krueger@babraham.ac.uk](felix.krueger@babraham.ac.uk)
+
+
+## (VIII) Notes about different library types and commercial kits
+
+| Technique | Trimming   | Mapping | Deduplication | Extraction   |
+|:--------|:---:|:---:|:---:|:---:|
+|    BS-Seq    | default   | default  | :white_check_mark:  | `--ignore_r2 2`  |
+|   RRBS     | `--rrbs`  | default |  :x: |   |
+|   RRBS (Nugen)     |   |   | :x:  |   |
+|   PBAT     |   |  :mount_fuji: |  :white_check_mark: |   |
+|    single-cell (scBS-Seq)   |   |`--non_directional`  |  :white_check_mark: |   |
+|   EpiGnome     |   |   |  :white_check_mark: |   |
+|    Swift    |   |   | :white_check_mark:  |   |
+|    UMI    |   |   |   |   |
+|  Zymo    Pico-Methyl  |   |   |  :white_check_mark: |   |
+|        |   |   |   |   |   |
+
+**Specific notes**
+
+#### Zymo Pico-Methyl
+
 
 # 4) APPENDIX - Full list of options
 ## Appendix (I): Bismark Genome Preparation
