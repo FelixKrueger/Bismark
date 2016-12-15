@@ -683,7 +683,7 @@ Here is a table about general recommendations for different library types or dif
 |    Accel-NGS (Swift)    | 10 bp  | (10 bp) | :white_large_square:  | :white_check_mark:  |  :white_large_square: |
 |  Zymo    Pico-Methyl  | 10 bp  |  10 bp |  `--non_directional` | :white_check_mark: | :white_large_square:  |
 
-:white_large_square: = default settings (nothing particularly tricky)
+:white_large_square: = default settings (nothing in particular is required)
 :white_check_mark: = Yes, please!
 :x: = No, absolutely not!
 
@@ -706,20 +706,28 @@ Here is a table about general recommendations for different library types or dif
 ([Manufacturer's page](http://www.illumina.com/products/by-type/sequencing-kits/library-prep-kits/truseq-dna-methylation.html)
 
 
-#### Zymo Pico Methyl-Seq 
-([Manufacturer's page](https://www.zymoresearch.com/epigenetics/dna-methylation/genome-wide-5-mc-analysis/pico-methyl-seq-library-prep-kit))
+
+
 
 #### Deduplication in general
-[Problems with random priming](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/)
+[Problems with random priming]
 
+#### Swift
 
+The Accel-NGS Methyl-Seq protocol uses an Adaptase technology for capturing single-stranded DNA in an unbiased (again, not that unbiased actually...) manner.
+
+[Manufacturer's page](https://swiftbiosci.com/products/accel-ngs-methyl-seq-dna-library-kit/)
 #### PBAT
 
-Depends on the length of the oligo used for random priming. If the
+The amount of bases that need to be trimmed from the 5' end depends on the length of the oligo used for random priming, which - as we know - isn't all that random, and in fact causes [misalignments and methylation biases](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/).
 
 #### Single-cell
 
-Depends on the length of the oligo used for random priming.
+The [scBS-Seq method](http://www.nature.com/nmeth/journal/v11/n8/full/nmeth.3035.html) 
+
+#### Zymo Pico Methyl-Seq 
+([Manufacturer's page](https://www.zymoresearch.com/epigenetics/dna-methylation/genome-wide-5-mc-analysis/pico-methyl-seq-library-prep-kit))
+The Pico Methyl-Seq kit also uses a random priming step similar to the PBAT // single-cell methods above. This kit uses random tetramers (4N) for the amplification step, however the biases seen in the base composition and M-bias plots indicate that one should trim off at least the first 10 bp from each read. This kit performs three rounds of amplification which yields non-directional libraries (similar to the scBS-Seq protocol), so all four different bisulfite strands (OT, CTOT, OB, CTOB) may be present. According to the manufacturer, the library construction is designed for a starting input material of 100 ng, but can be scaled up or down (to 10 pg).
 
 #### 3' Trimming in general
 
