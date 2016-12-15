@@ -8,6 +8,7 @@ This User Guide outlines the Bismark suite of tools and gives more details for e
 
 # 1) Quick Reference
 
+
 Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie](http://bowtie-bio.sourceforge.net/index.shtml) or [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
 
 As of version 0.14.0 or higher, Bismark may be run using parallelisation for both the alignment and the methylation extraction step. Search for `--multicore` for more details below.
@@ -669,22 +670,60 @@ If you get stuck at any point or have any questions or comments please contact m
 
 ## (VIII) Notes about different library types and commercial kits
 
-| Technique | Trimming   | Mapping | Deduplication | Extraction   |
-|:--------|:---:|:---:|:---:|:---:|
-|    BS-Seq    | default   | default  | :white_check_mark:  | `--ignore_r2 2`  |
-|   RRBS     | `--rrbs`  | default |  :x: |   |
-|   RRBS (Nugen)     |   |   | :x:  |   |
-|   PBAT     |   |  :mount_fuji: |  :white_check_mark: |   |
-|    single-cell (scBS-Seq)   |   |`--non_directional`  |  :white_check_mark: |   |
-|   EpiGnome     |   |   |  :white_check_mark: |   |
-|    Swift    |   |   | :white_check_mark:  |   |
-|    UMI    |   |   |   |   |
-|  Zymo    Pico-Methyl  |   |   |  :white_check_mark: |   |
-|        |   |   |   |   |   |
+Here is a table about general recommendations for different library types or different commercial kits. Some more specific notes can be found below.
 
-**Specific notes**
+| Technique | 5' Trimming  | 3' Trimming    | Mapping | Deduplication | Extraction   |
+|:--------|:---:|:---:|:---:|:---:|:---:|
+|    BS-Seq    | :white_large_square: | :white_large_square:   | :white_large_square:  | :white_check_mark:  | `--ignore_r2 2`  |
+|   RRBS     | `--rrbs` (R2 only) | `--rrbs` (R1 only) | :white_large_square: |  :x: | (`--ignore_r2 2`)  |
+|   RRBS (NuGEN Ovation) | special processing| special processing  | :white_large_square: | :x:  | `--ignore_r2 2`  |
+|   PBAT     |   6N / 9N | (6N / 9N) |  `--pbat` |  :white_check_mark: | :white_large_square:  |
+|    single-cell (scBS-Seq)   |   6N / 9N | (6N / 9N)  |`--non_directional`  |  :white_check_mark: | :white_large_square:  |
+|   TruSeq (EpiGnome)| 8 bp  | (8 bp) |  :white_large_square:   |  :white_check_mark: | :white_large_square:  |
+|    Accel-NGS (Swift)    | 10 bp  | (10 bp) | :white_large_square:  | :white_check_mark:  |  :white_large_square: |
+|  Zymo    Pico-Methyl  | 10 bp  |  10 bp |  `--non_directional` | :white_check_mark: | :white_large_square:  |
 
-#### Zymo Pico-Methyl
+:white_large_square: = default settings (nothing particularly tricky)
+:white_check_mark: = Yes, please!
+:x: = No, absolutely not!
+
+**5' Trimming** can be accomplished with Trim Galore using: 
+`--clip_r1 <NUMBER>` (Read 1) or 
+`--clip_r2 <NUMBER>` (Read 2)
+
+**3' Trimming** can be accomplished with Trim Galore using:
+`--three_prime_clip_r1 <NUMBER>` (Read 1) or 
+`--three_prime_clip_r2 <NUMBER>` (Read 2).
+
+#### SPECIFIC LIBRARY/KIT NOTES
+
+#### RRBS
+
+#### RRBS NuGEN Ovation Methyl-Seq System 
+([Manufacturer's page](http://www.nugen.com/products/ovation-rrbs-methyl-seq-system))
+
+#### TruSeq DNA-Methylation Kit (formerly EpiGnome) 
+([Manufacturer's page](http://www.illumina.com/products/by-type/sequencing-kits/library-prep-kits/truseq-dna-methylation.html)
+
+
+#### Zymo Pico Methyl-Seq 
+([Manufacturer's page](https://www.zymoresearch.com/epigenetics/dna-methylation/genome-wide-5-mc-analysis/pico-methyl-seq-library-prep-kit))
+
+#### Deduplication in general
+[Problems with random priming](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/)
+
+
+#### PBAT
+
+Depends on the length of the oligo used for random priming. If the
+
+#### Single-cell
+
+Depends on the length of the oligo used for random priming.
+
+#### 3' Trimming in general
+
+Notes about it
 
 
 # 4) APPENDIX - Full list of options
