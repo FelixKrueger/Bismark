@@ -31,14 +31,14 @@
   <!--[if lt IE 9]><script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script><![endif]-->
 </head>
 <body>
-<nav id="TOC"><ul><li><a href="#bismark-bisulfite-mapper">Bismark Bisulfite Mapper</a><ul><li><a href="#user-guide-v">User Guide - v0.16.3</a></ul></li><li><a href="#quick-reference">1) Quick Reference</a><ul><li><a href="#i-running-bismark-genome-preparation">(I) Running <code>bismark_genome_preparation</code></a></li><li><a href="#ii-running-bismark">(II) Running <code>bismark</code></a></li><li><a href="#iii-running-bismark-methylation-extractor">(III) Running <code>bismark_methylation_extractor</code></a></li><li><a href="#iv-running-bismark-report">(IV) Running <code>bismark2report</code></a></li><li><a href="#v-running-bismark-summary">(V) Running <code>bismark2summary</code></a></ul></li><li><a href="#bismark-general-information">2) Bismark - General Information</a><ul><li><a href="#what-is-bismark">What is Bismark?</a></li><li><a href="#installation-notes">Installation notes</a></li><li><a href="#dependencies">Dependencies</a></li><li><a href="#hardware-requirements">Hardware requirements</a></li><li><a href="#bs-seq-test-data-set">BS-Seq test data set</a></li><li><a href="#which-kind-of-bs-seq-files-are-supported">Which kind of BS-Seq files are supported?</a></li><li><a href="#how-does-bismark-work">How does Bismark work?</a></li><li><a href="#bismark-alignment-and-methylation-call-report">Bismark alignment and methylation call report</a></ul></li><li><a href="#running-bismark">3) Running Bismark</a><ul><li><a href="#i-bismark-genome-preparation">(I) Bismark Genome Preparation</a></li><li><a href="#ii-bismark-alignment-step">(II) Bismark Alignment Step</a></li><li><a href="#iii-bismark-methylation-extractor">(III) Bismark methylation extractor</a></li><li><a href="#iv-the-bismark-html-processing-report">(IV) The Bismark HTML Processing Report</a></li><li><a href="#v-the-bismark-summary-report">(V) The Bismark Summary Report</a></li><li><a href="#vi-bismark-nucleotide-coverage-report-bam-nuc">(VI) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</a></li><li><a href="#vii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</a></ul></li><li><a href="#appendix-full-list-of-options">4) APPENDIX - Full list of options</a><ul><li><a href="#appendix-i-bismark-genome-preparation">Appendix (I): Bismark Genome Preparation</a></li><li><a href="#appendix-ii-bismark">Appendix (II): Bismark</a></li><li><a href="#appendix-iii-bismark-methylation-extractor">Appendix (III): Bismark Methylation Extractor</a></li><li><a href="#appendix-iv-bismark-reports-for-the-test-data-set">Appendix (IV): Bismark reports for the test data set</a></ul></li><li><a href="#credits">Credits</a></li></ul></nav>
+<nav id="TOC"><ul><li><a href="#bismark-bisulfite-mapper">Bismark Bisulfite Mapper</a><ul><li><a href="#user-guide-v">User Guide - v0.16.3</a></ul></li><li><a href="#quick-reference">1) Quick Reference</a><ul><li><a href="#i-running-bismark-genome-preparation">(I) Running <code>bismark_genome_preparation</code></a></li><li><a href="#ii-running-bismark">(II) Running <code>bismark</code></a></li><li><a href="#iii-running-bismark-methylation-extractor">(III) Running <code>bismark_methylation_extractor</code></a></li><li><a href="#iv-running-bismark-report">(IV) Running <code>bismark2report</code></a></li><li><a href="#v-running-bismark-summary">(V) Running <code>bismark2summary</code></a></ul></li><li><a href="#bismark-general-information">2) Bismark - General Information</a><ul><li><a href="#what-is-bismark">What is Bismark?</a></li><li><a href="#installation-notes">Installation notes</a></li><li><a href="#dependencies">Dependencies</a></li><li><a href="#hardware-requirements">Hardware requirements</a></li><li><a href="#bs-seq-test-data-set">BS-Seq test data set</a></li><li><a href="#which-kind-of-bs-seq-files-are-supported">Which kind of BS-Seq files are supported?</a></li><li><a href="#how-does-bismark-work">How does Bismark work?</a></li><li><a href="#bismark-alignment-and-methylation-call-report">Bismark alignment and methylation call report</a></ul></li><li><a href="#running-bismark">3) Running Bismark</a><ul><li><a href="#i-bismark-genome-preparation">(I) Bismark Genome Preparation</a></li><li><a href="#ii-bismark-alignment-step">(II) Bismark Alignment Step</a></li><li><a href="#iii-bismark-methylation-extractor">(III) Bismark methylation extractor</a></li><li><a href="#iv-the-bismark-html-processing-report">(IV) The Bismark HTML Processing Report</a></li><li><a href="#v-the-bismark-summary-report">(V) The Bismark Summary Report</a></li><li><a href="#vi-bismark-nucleotide-coverage-report-bam-nuc">(VI) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</a></li><li><a href="#vii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</a></li><li><a href="#viii-notes-about-different-library-types-and-commercial-kits">(VIII) Notes about different library types and commercial kits</a></ul></li><li><a href="#appendix-full-list-of-options">4) APPENDIX - Full list of options</a><ul><li><a href="#appendix-i-bismark-genome-preparation">Appendix (I): Bismark Genome Preparation</a></li><li><a href="#appendix-ii-bismark">Appendix (II): Bismark</a></li><li><a href="#appendix-iii-bismark-methylation-extractor">Appendix (III): Bismark Methylation Extractor</a></li><li><a href="#appendix-iv-bismark-reports-for-the-test-data-set">Appendix (IV): Bismark reports for the test data set</a></ul></li><li><a href="#credits">Credits</a></li></ul></nav>
 <h1 id="bismark-bisulfite-mapper">Bismark Bisulfite Mapper</h1>
 
 <p><img title="Bismark" id="header_img" src="Images/bismark.png"></p>
 
 <h2 id="user-guide-v">User Guide - v0.16.3</h2>
 
-<h4 id="october">07 October, 2016</h4>
+<h4 id="december">14 December, 2016</h4>
 
 <p>This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at <a href="https://sequencing.qcfail.com/">QCFail.com</a>.</p>
 
@@ -887,6 +887,83 @@ filter_non_conversion [options] [Bismark BAM files]
 <p>Displays version information and exits.</p>
 
 <p>If you get stuck at any point or have any questions or comments please contact me via e-mail: <a href="felix.krueger@babraham.ac.uk">felix.krueger@babraham.ac.uk</a></p>
+
+<h2 id="viii-notes-about-different-library-types-and-commercial-kits">(VIII) Notes about different library types and commercial kits</h2>
+
+<p>Here is a table summarising general recommendations for different library types and/or different commercially available kits. Some more specific notes can be found below.</p>
+
+<p>| Technique | 5' Trimming  | 3' Trimming    | Mapping | Deduplication | Extraction   |
+|:--------|:---:|:---:|:---:|:---:|:---:|
+|    BS-Seq    | :white_large_square: | :white_large_square:   | :white_large_square:  | :white_check_mark:  | <code>--ignore_r2 2</code>  |
+|   RRBS     | <code>--rrbs</code> (R2 only) | <code>--rrbs</code> (R1 only) | :white_large_square: |  :x: | (<code>--ignore_r2 2</code>)  |
+|   RRBS (NuGEN Ovation) | special processing| special processing  | :white_large_square: | :x:  | <code>--ignore_r2 2</code>  |
+|   PBAT     |   6N / 9N | (6N / 9N) |  <code>--pbat</code> |  :white_check_mark: | :white_large_square:  |
+|    single-cell (scBS-Seq)   |   6N | (6N)  |<code>--non_directional</code>; single-end mode  |  :white_check_mark: | :white_large_square:  |
+|   TruSeq (EpiGnome)| 8 bp  | (8 bp) |  :white_large_square:   |  :white_check_mark: | :white_large_square:  |
+|    Accel-NGS (Swift)    | 10 bp  | (10 bp) | :white_large_square:  | :white_check_mark:  |  :white_large_square: |
+|  Zymo    Pico-Methyl  | 10 bp  |  (10 bp) |  <code>--non_directional</code> | :white_check_mark: | :white_large_square:  |</p>
+
+<p>:white_large_square: = default settings (nothing in particular is required, just use Trim Galore or Bismark default parameters)
+:white_check_mark: = Yes, please!
+:x: = No, absolutely not!</p>
+
+<p><strong>5' Trimming</strong> can be accomplished with Trim Galore using: 
+<code>--clip_r1 &lt;NUMBER&gt;</code> (Read 1) or 
+<code>--clip_r2 &lt;NUMBER&gt;</code> (Read 2)</p>
+
+<p><strong>3' Trimming</strong> can be accomplished with Trim Galore using:
+<code>--three_prime_clip_r1 &lt;NUMBER&gt;</code> (Read 1) or 
+<code>--three_prime_clip_r2 &lt;NUMBER&gt;</code> (Read 2).</p>
+
+<h4 id="specific-library-kit-notes">SPECIFIC LIBRARY/KIT NOTES</h4>
+
+<h4 id="rrbs">RRBS</h4>
+
+<p>RRBS is a specialised technique to only look at CpG rich regions of the genome by using the restriction enzyme MspI (please see this <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/RRBS_Guide.pdf">RRBS Guide</a> for some more specifics regarding data processing). For reasons explained in the RRBS-guide, the second last position of all reads before reading into the Illumina adapter exhibits an artificially (not methylated) methylation state as a result of the end-repair reaction. The option <code>--rrbs</code> within Trim Galore removes 2 extra bases whenever adapter contamination has been detected. This 3' end trimming that needs to be carried out for single-end runs or Read 1 of paired-end libraries. Read 2 of paired-end libraries is however not affected by this 3' bias, but instead the first couple of positions on the 5' end of Read 2 suffer from the read-through problem as Read 1 (Read 2 is a mere copy of Read 1), so Read 2 needs to have the <strong>first</strong> 2 bp removed instead. As of the current development version of <a href="https://github.com/FelixKrueger/TrimGalore">Trim Galore</a> (v0.4.2_dev; 12/16/2016) the option <code>--rrbs</code> removes:
+- 2 bp from the 3' end of single-end and Read 1 of paired-end reads in addition to adapter contamination, and
+- 2 bp from the 5' end of Read 2 of paired-end reads</p>
+
+<h4 id="rrbs-nugen-ovation-methyl-seq-system">RRBS NuGEN Ovation Methyl-Seq System</h4>
+
+<p>(<a href="http://www.nugen.com/products/ovation-rrbs-methyl-seq-system">Manufacturer's page</a>)</p>
+
+<p>Owing to the fact that the NuGEN Ovation kit attaches a varying number of nucleotides (0-3) after each MspI site Trim Galore should be run <em>WITHOUT</em> the option <code>--rrbs</code>. The trimming is accomplished in a subsequent diversity trimming step afterwards, please see the manufacturer's manual for more details.</p>
+
+<h4 id="pbat">PBAT</h4>
+
+<p>The amount of bases that need to be trimmed from the 5' end depends on the length of the oligo used for random priming, which - as we know - isn't all that random, and in fact causes <a href="https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/">misalignments and methylation biases</a>. While the original PBAT paper used 4N oligoes, these days 6N or 9N seem to be most common. Please also see the section <em>3' Trimming in general</em> below.</p>
+
+<h4 id="single-cell">Single-cell</h4>
+
+<p>The <a href="http://www.nature.com/nmeth/journal/v11/n8/full/nmeth.3035.html">scBS-Seq method</a> uses a PBAT-type protocol but employs five rounds of sequence capture and elongation to amplify the starting material so all four different bisulfite strands (OT, CTOT, OB, CTOB) are sequenced. Since 6N oligos are used to for the random priming step, 6 bp need to be removed from the 5' ends. Since scBS and PBAT libraries tend to result in <a href="https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/">chimaeric fragments</a> we tend to treat scBS-Seq as single-end reads always. Please also see the section <em>3' Trimming in general</em> below.</p>
+
+<h4 id="truseq-dna-methylation-kit-formerly-epignome">TruSeq DNA-Methylation Kit (formerly EpiGnome)</h4>
+
+<p>(<a href="http://www.illumina.com/products/by-type/sequencing-kits/library-prep-kits/truseq-dna-methylation.html">Manufacturer's page</a>)
+This Illumina kit (previously known as EpiGnome kit from epicentre) also employs a post-bisulfite strategy using 6N oligos, but in contrast to the PBAT technique only the standard original top and bottom strands (OT and OB) are sequenced, meaning that Bismark can be run in default (= directional) mode. Even though the random priming is performed with 6N oligoes we often saw that the methylation bias extends to 7 or 8 bp, so trimming 8 bp off the 5' end(s) is recommended initially. Please do have a look at the M-bias plots nevertheless to see of more bases need removing/ignoring during the methylation extraction process. Please also see the section <em>3' Trimming in general</em> below.</p>
+
+<h4 id="zymo-pico-methyl-seq">Zymo Pico Methyl-Seq</h4>
+
+<p>(<a href="https://www.zymoresearch.com/epigenetics/dna-methylation/genome-wide-5-mc-analysis/pico-methyl-seq-library-prep-kit">Manufacturer's page</a>)
+The Pico Methyl-Seq kit also uses a random priming step similar to the PBAT // single-cell methods above. This kit uses random tetramers (4N) for the amplification step, however the biases seen in the base composition and M-bias plots indicate that one should trim off at least the first 10 bp from each read. This kit performs three rounds of amplification which yields non-directional libraries (similar to the scBS-Seq protocol), so all four different bisulfite strands (OT, CTOT, OB, CTOB) are present in the library. According to the manufacturer, the library construction is designed for a starting input material of 100 ng, but can be scaled up or down (to 100 pg). Please also see the section <em>3' Trimming in general</em> below.</p>
+
+<h4 id="swift">Swift</h4>
+
+<p><a href="https://swiftbiosci.com/products/accel-ngs-methyl-seq-dna-library-kit/">Manufacturer's page</a>
+The Accel-NGS Methyl-Seq protocol uses Adaptase technology for capturing single-stranded DNA in an unbiased (again, not that unbiased actually...) manner. Also here, the first ~10 bp show extreme biases in sequence composition and M-bias, so trimming off at <em>least</em> 10 bp is advisable (please check the M-bias plot if even more is needed). Please also see the section <em>3' Trimming in general</em> below.</p>
+
+<h4 id="random-priming-and-trimming-in-general">Random priming and 3' Trimming in general</h4>
+
+<p>As we have seen before, the random priming of post-bisulfite methods (such as PBAT, scBS-Seq, EpiGnome, Pico Methyl, Accel etc.) introduces <a href="https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/">errors, indels and methylation biases</a> that may detrimentally affect your mapping efficiencies and methylation calls. These problems are fairly easy to spot at the 5' ends of reads because all reads will equally suffer from the problems at the same positions at the start (5' end) of reads. 
+The same problems of random priming (indels, mispriming) will however most likely occur on both sides of the fragment to be sequenced, but it is doubtful that one would be able to spot these problems on the 3' end of reads because the problems would be expected on the 3' end of reads just before reading through into the adapter, and this may occur 
+ - at different positions in the read (depending on how short the fragment was)
+ - at different positions within the read because of quality trimming in addition to adapter read-through contamination 
+ - not at all within the read length (whenever a fragment is longer than the sequenced read length)
+ - at the 3' end even without hitting the adapter (i.e. just before the adapter)</p>
+
+<p>I guess there is a trade-off between accepting that a certain proportion of the reads may have a few biased biased positions towards their 5' ends, and preemptively trimming the 3' end by the same amount of bases as the 5' end. As a general rule it is probably safe to say that the shorter the average insert size of a library - the more of a problem the bias is. We have e.g. seen Pico Methyl libraries where ~80% of all fragments were shorter than 100bp, so a 2x125bp run would most likely be affected by the random priming bias on the 5' and 3' ends in nearly all fragments sequenced. We realise that trimming off say 10 bp from the 5' end and 3' end of a 100 bp read already removes 20% of the actually sequenced data, but this is the price you have to pay for using post-bisulfite kits...</p>
+
+<p>For these reasons we have put the <em>3' Trimming</em> values in the table above in <em>(parentheses)</em> as a reminder that you <strong>should</strong> probably perform 3' trimming of the data as well. </p>
 
 <h1 id="appendix-full-list-of-options">4) APPENDIX - Full list of options</h1>
 
