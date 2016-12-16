@@ -87,6 +87,10 @@ my $template = << 'DOCS_TEMPLATE';
     code{white-space:pre-wrap;background-color:#f9f9f9;padding:3px 5px;font-family:Consolas,"Liberation Mono",Menlo,Courier,monospace;font-size:90%}
     pre code{background-color:#ededed;white-space:pre}
     hr{margin:30px 0;border:0;border-top:1px solid #dedede;height:0}
+    table { border-collapse: collapse; }
+    table tbody tr { border-top: 1px solid #ccc; }
+    table tbody tr td, table thead tr th { padding: 6px 13px; border: 1px solid #ddd }
+    table tbody tr:nth-child(2n) { background-color: #f8f8f8; }
     #header_img{float:right;max-width:30%;margin-top:-60px}
     #TOC::before{content:'Table of Contents';font-weight:700;font-size:2em}
     #TOC{font-size:.9em;background-color:#ededed;border-radius:10px;padding:10px}

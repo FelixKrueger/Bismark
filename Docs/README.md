@@ -672,20 +672,91 @@ If you get stuck at any point or have any questions or comments please contact m
 
 Here is a table summarising general recommendations for different library types and/or different commercially available kits. Some more specific notes can be found below.
 
-| Technique | 5' Trimming  | 3' Trimming    | Mapping | Deduplication | Extraction   |
-|:--------|:---:|:---:|:---:|:---:|:---:|
-|    BS-Seq    | :white_large_square: | :white_large_square:   | :white_large_square:  | :white_check_mark:  | `--ignore_r2 2`  |
-|   RRBS     | `--rrbs` (R2 only) | `--rrbs` (R1 only) | :white_large_square: |  :x: | (`--ignore_r2 2`)  |
-|   RRBS (NuGEN Ovation) | special processing| special processing  | :white_large_square: | :x:  | `--ignore_r2 2`  |
-|   PBAT     |   6N / 9N | (6N / 9N) |  `--pbat` |  :white_check_mark: | :white_large_square:  |
-|    single-cell (scBS-Seq)   |   6N | (6N)  |`--non_directional`; single-end mode  |  :white_check_mark: | :white_large_square:  |
-|   TruSeq (EpiGnome)| 8 bp  | (8 bp) |  :white_large_square:   |  :white_check_mark: | :white_large_square:  |
-|    Accel-NGS (Swift)    | 10 bp  | (10 bp) | :white_large_square:  | :white_check_mark:  |  :white_large_square: |
-|  Zymo    Pico-Methyl  | 10 bp  |  (10 bp) |  `--non_directional` | :white_check_mark: | :white_large_square:  |
+<table>
+    <thead>
+        <tr>
+            <th align="left">Technique</th>
+            <th align="center">5' Trimming</th>
+            <th align="center">3' Trimming</th>
+            <th align="center">Mapping</th>
+            <th align="center">Deduplication</th>
+            <th align="center">Extraction</th>
+    </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td align="left">BS-Seq</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><code>--ignore_r2 2</code></td>
+        </tr>
+        <tr>
+            <td align="left">RRBS</td>
+            <td align="center"><code>--rrbs</code> (R2 only)</td>
+            <td align="center"><code>--rrbs</code> (R1 only)</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="x" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/274c.png" ios-version="6.0">❌</g-emoji></td>
+            <td align="center">(<code>--ignore_r2 2</code>)</td>
+        </tr>
+        <tr>
+            <td align="left">RRBS (NuGEN Ovation)</td>
+            <td align="center">special processing</td>
+            <td align="center">special processing</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="x" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/274c.png" ios-version="6.0">❌</g-emoji></td>
+            <td align="center"><code>--ignore_r2 2</code></td>
+        </tr>
+        <tr>
+            <td align="left">PBAT</td>
+            <td align="center">6N / 9N</td>
+            <td align="center">(6N / 9N)</td>
+            <td align="center"><code>--pbat</code></td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+        </tr>
+        <tr>
+            <td align="left">single-cell (scBS-Seq)</td>
+            <td align="center">6N</td>
+            <td align="center">(6N)</td>
+            <td align="center"><code>--non_directional</code>; single-end mode</td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+        </tr>
+        <tr>
+            <td align="left">TruSeq (EpiGnome)</td>
+            <td align="center">8 bp</td>
+            <td align="center">(8 bp)</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+        </tr>
+        <tr>
+            <td align="left">Accel-NGS (Swift)</td>
+            <td align="center">10 bp</td>
+            <td align="center">(10 bp)</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+        </tr>
+        <tr>
+            <td align="left">Zymo    Pico-Methyl</td>
+            <td align="center">10 bp</td>
+            <td align="center">(10 bp)</td>
+            <td align="center"><code>--non_directional</code></td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+        </tr>
+    </tbody>
+</table>
 
-:white_large_square: = default settings (nothing in particular is required, just use Trim Galore or Bismark default parameters)
-:white_check_mark: = Yes, please!
-:x: = No, absolutely not!
+* <g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji> -
+  Default settings (nothing in particular is required, just use Trim Galore or Bismark default parameters)
+* <g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji> -
+  Yes, please!
+* <g-emoji alias="x" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/274c.png" ios-version="6.0">❌</g-emoji> -
+  No, absolutely not!
 
 **5' Trimming** can be accomplished with Trim Galore using: 
 `--clip_r1 <NUMBER>` (Read 1) or 
