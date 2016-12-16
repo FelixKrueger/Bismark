@@ -684,16 +684,23 @@ Here is a table summarising general recommendations for different library types 
 |  Zymo    Pico-Methyl  | 10 bp  |  (10 bp) |  `--non_directional` | :white_check_mark: | :white_large_square:  |
 
 :white_large_square: = default settings (nothing in particular is required, just use Trim Galore or Bismark default parameters)
+
 :white_check_mark: = Yes, please!
+
 :x: = No, absolutely not!
 
 **5' Trimming** can be accomplished with Trim Galore using: 
+
 `--clip_r1 <NUMBER>` (Read 1) or 
+
 `--clip_r2 <NUMBER>` (Read 2)
 
 **3' Trimming** can be accomplished with Trim Galore using:
+
 `--three_prime_clip_r1 <NUMBER>` (Read 1) or 
+
 `--three_prime_clip_r2 <NUMBER>` (Read 2).
+
 
 #### SPECIFIC LIBRARY/KIT NOTES
 
