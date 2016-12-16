@@ -759,12 +759,17 @@ Here is a table summarising general recommendations for different library types 
   No, absolutely not!
 
 **5' Trimming** can be accomplished with Trim Galore using: 
+
 `--clip_r1 <NUMBER>` (Read 1) or 
+
 `--clip_r2 <NUMBER>` (Read 2)
 
 **3' Trimming** can be accomplished with Trim Galore using:
+
 `--three_prime_clip_r1 <NUMBER>` (Read 1) or 
+
 `--three_prime_clip_r2 <NUMBER>` (Read 2).
+
 
 #### SPECIFIC LIBRARY/KIT NOTES
 
