@@ -32,6 +32,10 @@ my $start_run = time();
 warn "Run started at: $start_run\n";
 
 
+my $start_run = time();
+warn "Run started at: $start_run\n";
+
+
 foreach my $file (@ARGV){
     $single = $paired = undef; # resetting
     unless ($file =~ /bam$/){
