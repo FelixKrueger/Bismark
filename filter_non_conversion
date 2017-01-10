@@ -29,7 +29,7 @@ my ($single,$paired);
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive) = process_commandline();
 
 my $start_run = time();
-warn "Run started at: $start_run\n";
+# warn "Run started at: $start_run\n";
 
 
 foreach my $file (@ARGV){
@@ -531,16 +531,17 @@ sub bam_isTruncated{
     close TRUNC or warn "$!\n";
 }
 
-   ### Produce Run Time
-   my $end_run = time();
-   my $run_time = $end_run - $start_run;
-   my $days  = int($run_time/(24*60*60));
-   my $hours = ($run_time/(60*60))%24;
-   my $mins  = ($run_time/60)%60;
-   my $secs  = $run_time%60;
+### Produce Run Time
+my $end_run = time();
+my $run_time = $end_run - $start_run;
+my $days  = int($run_time/(24*60*60));
+my $hours = ($run_time/(60*60))%24;
+my $mins  = ($run_time/60)%60;
+my $secs  = $run_time%60;
 
-    warn "filter_non_conversion completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
-    print REPORT "filter_non_conversion completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+warn "filter_non_conversion completed in ${days}d ${hours}h ${mins}m ${secs}s\n\n";
+print REPORT "filter_non_conversion completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+
 
 sub print_helpfile{
   print <<EOF
@@ -583,7 +584,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version              Displays version information and exits.
 
 
-                           Last modified: 28 November 2016
+                           Last modified: 05 December 2016
 
 EOF
     ;
