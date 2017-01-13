@@ -837,6 +837,8 @@ sub generate_GC_context_report {
 	    warn "Writing cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 	    ++$number_processed;
 	    $processed{$last_chr} = 1;
+	    my $enough = 0;
+	   
 	    while ( $chromosomes{$last_chr} =~ /(GC)/g){
 		
 		# a GC on the top strand automatically means that there is a GC on the bottom strand as well, so we can process both at the same time
@@ -862,17 +864,18 @@ sub generate_GC_context_report {
 		
 		next if (length $tri_nt_top < 3);     # trinucleotide sequence could not be extracted for the top strand
 		next if (length $tri_nt_bottom < 3);  # trinucleotide sequence could not be extracted for the reverse strand
-		
+	
 		# top strand
 		if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based!
 		    $meth_top    = $chr{$last_chr}->{$pos}->{meth};
 		    $nonmeth_top = $chr{$last_chr}->{$pos}->{nonmeth};
 		}
+		
 		# bottom strand
 		if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 1-based! -1 for bottom strand Cs
 		    $meth_bottom    = $chr{$last_chr}->{$pos-1}->{meth};
-		    $nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth};
-		}	
+		    $nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth}; 
+		}
 		
 		### determining cytosine context top strand	
 		if ($tri_nt_top =~ /^CG/){
@@ -909,7 +912,7 @@ sub generate_GC_context_report {
 		    my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
 		    if ($nome and ($context_bottom eq 'CG') ){
 			# not reporting these (see point 2. above)
-			# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";
+			# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";sleep(1);
 		    }
 		    else{
 			print GCCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
@@ -921,21 +924,22 @@ sub generate_GC_context_report {
 		    my $percentage = sprintf ("%.6f",$meth_top/ ($meth_top + $nonmeth_top) *100);
 		    if ($nome and ($context_top eq 'CG') ){
 			# not reporting these (see point 2. above)
-			# print join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
+			# print join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n"; sleep(1);
 		    }
 		    else{
 			print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
 			print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 		    }	
 		}
-		
-		%chr = (); # resetting the hash
-		
-		# new first entry
-		$last_chr = $chr;
-		$chr{$chr}->{$start}->{meth} = $meth;
-		$chr{$chr}->{$start}->{nonmeth} = $nonmeth;
 	    }
+		
+	    %chr = (); # resetting the hash
+	    
+	    # new first entry
+	    $last_chr = $chr;
+	    $chr{$chr}->{$start}->{meth} = $meth;
+	    $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+	    
 	}
     }
     
