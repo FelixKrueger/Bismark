@@ -1176,8 +1176,8 @@ sub print_helpfile{
   SYNOPSIS:
 
   This script generates a cytosine methylation report for a genome of interest and a sorted methylation input file produced
-  by the script "bismark2bedGraph". By default, the output uses 1-based chromosome coordinates and reports CpG positions only
-  (for both strands individually and not merged in any way). Coordinates may be changed to 0-based using the option '--zero_based'.
+  by the script "bismark2bedGraph" or "bismark_methylation_extractor". By default, the input (.cov or .cov.gz) requires 1-based chromosome coordinates and reports CpG positions only
+  (for both strands individually and not merged in any way). Coordinates of the output could be set to 0-based using the option '--zero_based'.
 
   The input file needs to have been generated with the script bismark2bedGraph (the file is called *.cov) or otherwise be
   sorted by position and exactly in the following format:
