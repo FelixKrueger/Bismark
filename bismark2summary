@@ -5,7 +5,7 @@ use Getopt::Long;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
-## This program is Copyright (C) 2010-16, Felix Krueger <felix.krueger@babraham.ac.uk>
+## This program is Copyright (C) 2010-17, Felix Krueger <felix.krueger@babraham.ac.uk>
 ## and Phil Ewels <phil.ewels@scilifelab.se>
 
 ## This program is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@ use lib "$Bin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.16.3';
+my $bismark_version = '0.17.0';
 
 # Last modified 05 07 2016
 
@@ -56,10 +56,10 @@ sub process_commandline{
                              Bismark HTML Summary Report
 
                            bismark2summary version: $bismark_version
-                       Copyright 2010-16 Felix Krueger, Phil Ewels
+                       Copyright 2010-17 Felix Krueger, Phil Ewels
                                Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
-                    https://github.com/FelixKrueger/Bismark
+                     https://github.com/FelixKrueger/Bismark
 
 
 

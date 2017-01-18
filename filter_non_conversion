@@ -8,7 +8,7 @@ use lib "$Bin/../lib";
 $|++;
 
 
-## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.16.3_dev';
+my $filter_version = 'v0.17.0';
 my ($single,$paired);
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive) = process_commandline();
 
@@ -277,7 +277,7 @@ sub determine_file_type{
 	open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
     }
     while (<DETERMINE>){
-	last unless (/^\@/);
+	last nless (/^\@/);
 	if ($_ =~ /^\@PG/){
 	    # warn "found the \@PG line:\n";
 	    # warn "$_";
@@ -396,7 +396,7 @@ sub process_commandline{
                 	Bismark non-conversion filtering
 	    
                	    Bismark non-conversion version: $filter_version
-	    Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
+	    Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                     https://github.com/FelixKrueger/Bismark
 		
@@ -584,7 +584,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version              Displays version information and exits.
 
 
-                           Last modified: 05 December 2016
+                           Last modified: 17 January 2017
 
 EOF
     ;

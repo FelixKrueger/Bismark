@@ -32,7 +32,7 @@ use Getopt::Long;
 ### 16 09 2016
 ### to detect paired-end command from the @PG line we now allow -1 and -2 or --1 and --2 (or a combination thereof)
 
-my $dedup_version = 'v0.16.3_dev';
+my $dedup_version = 'v0.17.0';
 
 my $help;
 my $representative;
@@ -70,8 +70,9 @@ if ($version){
                            Bismark Deduplication Module
 
                           Deduplicator Version: $dedup_version
-              Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
-                www.bioinformatics.babraham.ac.uk/projects/bismark/
+               Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
+                 www.bioinformatics.babraham.ac.uk/projects/bismark/
+                      https://github.com/FelixKrueger/Bismark
 
 
 VERSION

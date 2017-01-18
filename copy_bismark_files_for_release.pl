@@ -12,7 +12,7 @@ unless (-d $dir){
   mkdir $dir or die "Failed to create directory: $!\n\n";
 }
 
-my @files = ('RELEASE_NOTES.txt','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','Bismark_User_Guide.pdf','RRBS_Guide.pdf','deduplicate_bismark','bismark_sitrep.tpl','bam2nuc','bismark2summary','filter_non_conversion');
+my @files = ('RELEASE_NOTES.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','./Docs/Bismark_User_Guide.html','./bismark_sitrep/bismark_sitrep.js','./bismark_sitrep/bismark_sitrep.tpl','./bismark_sitrep/highcharts.js','./bismark_sitrep/jquery-3.1.1.min.js','./Docs/make_docs.pl','RRBS_Guide.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion');
 
 foreach my $file (@files){
   copy_and_warn($file);

@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.16.3_dev';
+my $bismark_version = 'v0.17.0';
 my $start_run = time();
 warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -3488,8 +3488,9 @@ sub decide_whether_single_end_alignment_is_valid{
 #########################
 
 sub check_bowtie_results_paired_ends{
-  my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
 
+    my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
+ 
   ### quality values are not given for FastA files, so they are initialised with a Phred quality of 40
   unless ($quality_value_1){
     $quality_value_1 = 'I'x(length$sequence_1);
@@ -3521,6 +3522,7 @@ sub check_bowtie_results_paired_ends{
       ### STEP I Processing the entry which is stored in last_line_1 and last_line_2 ###
       ##################################################################################
       my $valid_alignment_found = decide_whether_paired_end_alignment_is_valid($index,$identifier);
+      
       ### sequences can fail at this point if there was only 1 alignment in the wrong orientation, or if there were 2 aligments both in the wrong
       ### orientation. We only continue to extract useful information about this alignment if 1 was returned
       if ($valid_alignment_found == 1){
@@ -3818,117 +3820,118 @@ sub check_bowtie_results_paired_ends{
 #########################
 
 sub check_bowtie_results_paired_ends_bowtie2{
-  my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
 
-  ### quality values are not given for FastA files, so they are initialised with a Phred quality of 40
-  unless ($quality_value_1){
-    $quality_value_1 = 'I'x(length$sequence_1);
-  }
+    my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
+    
+    ### quality values are not given for FastA files, so they are initialised with a Phred quality of 40
+    unless ($quality_value_1){
+	$quality_value_1 = 'I'x(length$sequence_1);
+    }
 
-  unless ($quality_value_2){
-    $quality_value_2 = 'I'x(length$sequence_2);
-  }
-  # print "$identifier\n$fhs[0]->{last_seq_id}\n$fhs[1]->{last_seq_id}\n$fhs[2]->{last_seq_id}\n$fhs[3]->{last_seq_id}\n\n";
+    unless ($quality_value_2){
+	$quality_value_2 = 'I'x(length$sequence_2);
+    }
+    # print "Read ID:$identifier\nLast ID [0]: $fhs[0]->{last_seq_id}\nLast ID [1]: $fhs[1]->{last_seq_id}\nLast ID [2]: $fhs[2]->{last_seq_id}\nLast ID [3]: $fhs[3]->{last_seq_id}\n\n"; sleep(1);
+    
+    my %alignments;
+    my $alignment_ambiguous = 0;
+    
+    my $first_ambig_alignment_line1; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified R1
+    my $first_ambig_alignment_line2; # R2
+    
+    my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
+    my $amb_same_thread = 0;   ## if a read's primary and secondary alignments have the same alignment score we set this to true.
 
-  my %alignments;
-  my $alignment_ambiguous = 0;
+    ### reading from the Bowtie 2 output filehandles
+    
+    ### for paired end reads we are reporting alignments to the OT strand first (index 0), then the OB strand (index 3!!), similiar to the single end way.
+    ### alignments to the complementary strands are reported afterwards (CTOT got index 1, and CTOB got index 2).
+    ### This is needed so that alignments which either contain no single C or G or reads which contain only protected Cs are reported to the original strands (OT and OB)
+    ### Before the complementary strands. Remember that it does not make any difference for the methylation calls, but it will matter if alignments to the complementary
+    ### strands are not being reported when '--directional' is specified
 
-  my $first_ambig_alignment_line1; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified R1
-  my $first_ambig_alignment_line2; # R2
+    foreach my $index (0,3,1,2){
+	### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
+	next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and defined $fhs[$index]->{last_seq_id});
 
-  my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
-  my $amb_same_thread = 0;   ## if a read's primary and secondary alignments have the same alignment score we set this to true.
+	### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
+	if ($fhs[$index]->{last_seq_id} eq $identifier) {
+	    my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
+	    my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
+	    #  print "Index: $index\t$fhs[$index]->{last_line_1}\n";
+	    #  print "Index: $index\t$fhs[$index]->{last_line_2}\n";
+	    #  print join ("\t",$id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1),"\n";
+	    #  print join ("\t",$id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2),"\n";
+	    $id_1 =~ s/\/1$//;
+	    $id_2 =~ s/\/2$//;
 
-  ### reading from the Bowtie 2 output filehandles
+	    #  SAM format specifications for Bowtie 2
+	    #  (1) Name of read that aligned
+	    #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
+	    #        1 The read is one of a pair
+	    #        2 The alignment is one end of a proper paired-end alignment
+	    #        4 The read has no reported alignments
+	    #        8 The read is one of a pair and has no reported alignments
+	    #       16 The alignment is to the reverse reference strand
+	    #       32 The other mate in the paired-end alignment is aligned to the reverse reference strand
+	    #       64 The read is mate 1 in a pair
+	    #      128 The read is mate 2 in a pair
+	    #      256 The read has multiple mapping states
+	    #  (3) Name of reference sequence where alignment occurs (unmapped reads have a *)
+	    #  (4) 1-based offset into the forward reference strand where leftmost character of the alignment occurs (0 for unmapped reads)
+	    #  (5) Mapping quality (255 means MAPQ is not available)
+	    #  (6) CIGAR string representation of alignment (* if unavailable)
+	    #  (7) Name of reference sequence where mate's alignment occurs. Set to = if the mate's reference sequence is the same as this alignment's, or * if there is no mate.
+	    #  (8) 1-based offset into the forward reference strand where leftmost character of the mate's alignment occurs. Offset is 0 if there is no mate.
+	    #  (9) Inferred fragment size. Size is negative if the mate's alignment occurs upstream of this alignment. Size is 0 if there is no mate.
+	    # (10) Read sequence (reverse-complemented if aligned to the reverse strand)
+	    # (11) ASCII-encoded read qualities (reverse-complemented if the read aligned to the reverse strand). The encoded quality values are on the Phred quality scale and the encoding is ASCII-offset by 33 (ASCII char !), similarly to a FASTQ file.
+	    # (12) Optional fields. Fields are tab-separated. bowtie2 outputs zero or more of these optional fields for each alignment, depending on the type of the alignment:
+	    # AS:i:<N> Alignment score. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if SAM record is for an aligned read.
+	    # XS:i:<N> Alignment score for second-best alignment. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if the SAM record is for an aligned read and more than one alignment was found for the read.
+	    # YS:i:<N> Alignment score for opposite mate in the paired-end alignment. Only present if the SAM record is for a read that aligned as part of a paired-end alignment.
+	    # XN:i:<N> The number of ambiguous bases in the reference covering this alignment. Only present if SAM record is for an aligned read.
+	    # XM:i:<N> The number of mismatches in the alignment. Only present if SAM record is for an aligned read.
+	    # XO:i:<N> The number of gap opens, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
+	    # XG:i:<N> The number of gap extensions, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
+	    # NM:i:<N> The edit distance; that is, the minimal number of one-nucleotide edits (substitutions, insertions and deletions) needed to transform the read string into the reference string. Only present if SAM record is for an aligned read.
+	    # YF:Z:<N> String indicating reason why the read was filtered out. See also: Filtering. Only appears for reads that were filtered out.
+	    # MD:Z:<S> A string representation of the mismatched reference bases in the alignment. See SAM format specification for details. Only present if SAM record is for an aligned read.
+	    
+	    ### If a sequence has no reported alignments there will be a single output line per sequence with a bit-wise flag value of 77 for read 1 (1+4+8+64), or 141 for read 2 (1+4+8+128).
+	    ### We can store the next alignment and move on to the next Bowtie 2 instance
+	    if ($flag_1 == 77 and $flag_2 == 141){
 
-  ### for paired end reads we are reporting alignments to the OT strand first (index 0), then the OB strand (index 3!!), similiar to the single end way.
-  ### alignments to the complementary strands are reported afterwards (CTOT got index 1, and CTOB got index 2).
-  ### This is needed so that alignments which either contain no single C or G or reads which contain only protected Cs are reported to the original strands (OT and OB)
-  ### Before the complementary strands. Remember that it does not make any difference for the methylation calls, but it will matter if alignments to the complementary
-  ### strands are not being reported when '--directional' is specified
-
-  foreach my $index (0,3,1,2){
-    ### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
-    next unless ($fhs[$index]->{last_line_1} and $fhs[$index]->{last_line_2} and defined $fhs[$index]->{last_seq_id});
-
-    ### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
-    if ($fhs[$index]->{last_seq_id} eq $identifier) {
-
-	my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
-	my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
-      #  print "Index: $index\t$fhs[$index]->{last_line_1}\n";
-      #  print "Index: $index\t$fhs[$index]->{last_line_2}\n";
-      #  print join ("\t",$id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1),"\n";
-      #  print join ("\t",$id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2),"\n";
-      $id_1 =~ s/\/1$//;
-      $id_2 =~ s/\/2$//;
-
-      #  SAM format specifications for Bowtie 2
-      #  (1) Name of read that aligned
-      #  (2) Sum of all applicable flags. Flags relevant to Bowtie are:
-      #        1 The read is one of a pair
-      #        2 The alignment is one end of a proper paired-end alignment
-      #        4 The read has no reported alignments
-      #        8 The read is one of a pair and has no reported alignments
-      #       16 The alignment is to the reverse reference strand
-      #       32 The other mate in the paired-end alignment is aligned to the reverse reference strand
-      #       64 The read is mate 1 in a pair
-      #      128 The read is mate 2 in a pair
-      #      256 The read has multiple mapping states
-      #  (3) Name of reference sequence where alignment occurs (unmapped reads have a *)
-      #  (4) 1-based offset into the forward reference strand where leftmost character of the alignment occurs (0 for unmapped reads)
-      #  (5) Mapping quality (255 means MAPQ is not available)
-      #  (6) CIGAR string representation of alignment (* if unavailable)
-      #  (7) Name of reference sequence where mate's alignment occurs. Set to = if the mate's reference sequence is the same as this alignment's, or * if there is no mate.
-      #  (8) 1-based offset into the forward reference strand where leftmost character of the mate's alignment occurs. Offset is 0 if there is no mate.
-      #  (9) Inferred fragment size. Size is negative if the mate's alignment occurs upstream of this alignment. Size is 0 if there is no mate.
-      # (10) Read sequence (reverse-complemented if aligned to the reverse strand)
-      # (11) ASCII-encoded read qualities (reverse-complemented if the read aligned to the reverse strand). The encoded quality values are on the Phred quality scale and the encoding is ASCII-offset by 33 (ASCII char !), similarly to a FASTQ file.
-      # (12) Optional fields. Fields are tab-separated. bowtie2 outputs zero or more of these optional fields for each alignment, depending on the type of the alignment:
-      # AS:i:<N> Alignment score. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if SAM record is for an aligned read.
-      # XS:i:<N> Alignment score for second-best alignment. Can be negative. Can be greater than 0 in --local mode (but not in --end-to-end mode). Only present if the SAM record is for an aligned read and more than one alignment was found for the read.
-      # YS:i:<N> Alignment score for opposite mate in the paired-end alignment. Only present if the SAM record is for a read that aligned as part of a paired-end alignment.
-      # XN:i:<N> The number of ambiguous bases in the reference covering this alignment. Only present if SAM record is for an aligned read.
-      # XM:i:<N> The number of mismatches in the alignment. Only present if SAM record is for an aligned read.
-      # XO:i:<N> The number of gap opens, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
-      # XG:i:<N> The number of gap extensions, for both read and reference gaps, in the alignment. Only present if SAM record is for an aligned read.
-      # NM:i:<N> The edit distance; that is, the minimal number of one-nucleotide edits (substitutions, insertions and deletions) needed to transform the read string into the reference string. Only present if SAM record is for an aligned read.
-      # YF:Z:<N> String indicating reason why the read was filtered out. See also: Filtering. Only appears for reads that were filtered out.
-      # MD:Z:<S> A string representation of the mismatched reference bases in the alignment. See SAM format specification for details. Only present if SAM record is for an aligned read.
-
-      ### If a sequence has no reported alignments there will be a single output line per sequence with a bit-wise flag value of 77 for read 1 (1+4+8+64), or 141 for read 2 (1+4+8+128).
-      ### We can store the next alignment and move on to the next Bowtie 2 instance
-      if ($flag_1 == 77 and $flag_2 == 141){
-	## reading in the next alignment, which must be the next sequence
-	my $newline_1 = $fhs[$index]->{fh}-> getline();
-	my $newline_2 = $fhs[$index]->{fh}-> getline();
-
-	if ($newline_1 and $newline_2){
-	  chomp $newline_1;
-	  chomp $newline_2;
-	  my ($seq_id_1) = split (/\t/,$newline_1);
-	  my ($seq_id_2) = split (/\t/,$newline_2);
-	  $seq_id_1 =~ s/\/1$//;
-	  $seq_id_2 =~ s/\/2$//;
-	  $fhs[$index]->{last_seq_id} = $seq_id_1;
+		## reading in the next alignment, which must be the next sequence
+		my $newline_1 = $fhs[$index]->{fh}-> getline();
+		my $newline_2 = $fhs[$index]->{fh}-> getline();
+		
+		if ($newline_1 and $newline_2){
+		    chomp $newline_1;
+		    chomp $newline_2;
+		    my ($seq_id_1) = split (/\t/,$newline_1);
+		    my ($seq_id_2) = split (/\t/,$newline_2);
+		    $seq_id_1 =~ s/\/1$//;
+		    $seq_id_2 =~ s/\/2$//;
+		    $fhs[$index]->{last_seq_id} = $seq_id_1;
 	  $fhs[$index]->{last_line_1} = $newline_1;
-	  $fhs[$index]->{last_line_2} = $newline_2;
-
-	  #  print "current sequence ($identifier) did not map, reading in next sequence\n";
-	  #  print "$index\t$fhs[$index]->{last_seq_id}\n";
-	  #  print "$index\t$fhs[$index]->{last_line_1}\n";
-	  #  print "$index\t$fhs[$index]->{last_line_2}\n";
-	  next; # next instance
-	}
-	else{
-	  # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
-	  $fhs[$index]->{last_seq_id} = undef;
-	  $fhs[$index]->{last_line_1} = undef;
-	  $fhs[$index]->{last_line_2} = undef;
-	  next;
-	}
-      }
-
+		    $fhs[$index]->{last_line_2} = $newline_2;
+		    
+		    #  print "current sequence ($identifier) did not map, reading in next sequence\n";
+		    #  print "$index\t$fhs[$index]->{last_seq_id}\n";
+		    #  print "$index\t$fhs[$index]->{last_line_1}\n";
+		    #  print "$index\t$fhs[$index]->{last_line_2}\n";
+		    next; # next instance
+		}
+		else{
+		    # assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+		    $fhs[$index]->{last_seq_id} = undef;
+		    $fhs[$index]->{last_line_1} = undef;
+		    $fhs[$index]->{last_line_2} = undef;
+		    next;
+		}
+	    }
+	    
 	### If there are one or more proper alignments we can extract the chromosome number
 	my ($chromosome_1,$chromosome_2);
 	if ($mapped_chromosome_1 =~ s/_(CT|GA)_converted$//){
@@ -7011,7 +7014,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
   }
 }
 
-### Bowtie 1 (default) | PAIRED-END | FASTQ
+### Bowtie 1 | PAIRED-END | FASTQ
 
 sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
@@ -7058,9 +7061,8 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
       open ($fh->{fh},"gunzip -c ${temp_dir}$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
     }
     else{
-      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1} and ${temp_dir}$fh->{inputfile_2}, with the options: $bt_options))\n";
-      sleep(5);
-      open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+	warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1} and ${temp_dir}$fh->{inputfile_2}, with the options: $bt_options))\n";
+	open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
     }
 
     my $line_1 = $fh->{fh}->getline();
@@ -7101,7 +7103,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
   }
 }
 
-### Bowtie 2 | PAIRED-END | FASTQ
+### Bowtie 2 (default) | PAIRED-END | FASTQ
 
 sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
@@ -7138,10 +7140,10 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
     my $bt2_options = $bowtie_options;
     if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
-      $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+	$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
     else {
-      $bt2_options .= ' --nofw';
+	$bt2_options .= ' --nofw';
     }
 
     warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
@@ -7149,13 +7151,13 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
     ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
     while (1){
-      $_ = $fh->{fh}->getline();
-      if ($_) {
-	last unless ($_ =~ /^\@/); # SAM headers start with @
-      }
-      else{
-	last; # no alignment output
-      }
+	$_ = $fh->{fh}->getline();
+	if ($_) {
+	    last unless ($_ =~ /^\@/); # SAM headers start with @
+	}
+	else{
+	    last; # no alignment output
+	}
     }
 
     my $line_1 = $_;
@@ -7163,35 +7165,35 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
     # if Bowtie produces an alignment we store the first line of the output
     if ($line_1 and $line_2) {
-      chomp $line_1;
-      chomp $line_2;
-      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
-      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+	chomp $line_1;
+	chomp $line_2;
+	### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+	### We will thus identify which sequence was read 1 and store this ID as last_seq_id
 
-      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-
-      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
-	$fh->{last_seq_id} = $id_1;
-      }
-      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
-	$fh->{last_seq_id} = $id_2;
-      }
-      else{
-	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
-      }
-
-      $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
-      $fh->{last_line_2} = $line_2; # this contains read 1 or read 2
-      warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
+	my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
+	my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
+	
+	if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
+	    $fh->{last_seq_id} = $id_1;
+	}
+	elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+	    $fh->{last_seq_id} = $id_2;
+	}
+	else{
+	    die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+	}
+	
+	$fh->{last_line_1} = $line_1; # this contains read 1 or read 2
+	$fh->{last_line_2} = $line_2; # this contains read 1 or read 2
+	# warn "Set last_seq_id as: $fh->{last_seq_id}\n";
+	warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
     }
-
     # otherwise we just initialise last_seq_id and last_lines as undefined
     else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line_1} = undef;
-      $fh->{last_line_2} = undef;
+	warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+	$fh->{last_seq_id} = undef;
+	$fh->{last_line_1} = undef;
+	$fh->{last_line_2} = undef;
     }
   }
 }

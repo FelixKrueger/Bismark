@@ -6,7 +6,7 @@ use Getopt::Long;
 $|++;
 
 
-## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -36,7 +36,7 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.16.3_dev';
+my $bismark_version = 'v0.17.0';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
@@ -60,7 +60,7 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
 
 VERSION

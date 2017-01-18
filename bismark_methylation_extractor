@@ -8,7 +8,7 @@ use Carp;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
-## This program is Copyright (C) 2010-16, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.16.3_dev';
+my $version = 'v0.17.0';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
 
 
@@ -999,8 +999,9 @@ sub process_commandline{
                            Bismark Methylation Extractor
 
                          Bismark Extractor Version: $version
-              Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
+                     https://github.com/FelixKrueger/Bismark
 
 
 VERSION
