@@ -1,6 +1,6 @@
-# Bismark Release Notes
+# Bismark Changelog
 
-## RELEASE NOTES FOR Bismark v0.16.3_dev (14 12 2016)
+## RELEASE NOTES FOR Bismark v0.17.0 (18 01 2017)
 
 ### Bismark
 
@@ -9,6 +9,22 @@ alignments that have undergone 5'-end trimming. Can be disabled using the new op
 
 Added time stamp to the Bismark run.
 
+Chromosome names with leading spaces now cause Bismark to bail.
+
+Fixed path handling for `--multicore` mode when `--prefix` had been specified as well.
+
+Bismark now quits if the Bowties could not be executed properly.
+
+Bails if supplied filenames do not exist.
+
+
+### Documentation
+
+Added Overview of different library types and kits to the Bismark User Guide (https://github.com/FelixKrueger/Bismark/tree/master/Docs#viii-notes-about-different-library-types-and-commercial-kits).
+
+Also added documentation for Bismark modules `bam2nuc`, `bismark2report`, `bismark2summary` and `filter_non_conversion`.
+
+Added a Markdown to HTML coverter (thanks to Phil Ewels).
 
 ### filter_non_conversion
 
@@ -20,9 +36,37 @@ Added time stamp to filtering step.
 
 For the creation of temporary files, we are now replacing `/` characters in the chromosome names with `_` (underscores), similar to `|` (pipe) characters, as these `/` would attempt to write files to non-existing directories.
 
+### deduplicate_bismark
+
+Single-/paired-end detection now also accepts --1 or --2.
+
+Added EOF or truncation detection, causing the deduplicator to die.
+
+### bismark_methylation_extractor
+
+Single-/paired-end detection now also accepts --1 or --2.
+
+Added EOF or truncation detection, causing the methylation extractor to die.
+
+Addded fatal ID1/ID2 check to paired-end extraction so that files which went out-of-sync at a later stage do not complete silently (but incorrectly!)
+
 ### bismark2report
 
-Major refactoring of `bismark2report`, the output should look the same though.
+Major refactoring of `bismark2report`, the output should look the same though. Massive thanks to Phil Ewels for this.
+
+### coverage2cytosine
+
+Added a new option `--NOMe-seq` to filter nucleosome occupancy and methylome sequencing (NOMe-Seq) data where accessible DNA gets enzymatically methylated in a GpC context. The option `--NOMe-seq`:
+
+     i) filters the genome-wide CpG-report to only output cytosines in ACG and TCG context
+    ii) filters the GC context output to only report cytosines in GCA, GCC and GCT context
+Both of these measures aim to reduce unwanted biases, namely the influence of GCG and CCG on endogenous CpG methylation, and the inlfluence of CpG methylation on (the NOMe-Seq specific) GC context methylation. PLEASE NOTE that NOMe-Seq data requires a .cov.gz file as input which has been generated in non-CG mode (`--CX`).
+
+### bismark_genome_preparation
+
+Fixed a bug that arose when `--genomic_composition` was specified (now moving back to the genome directory for _in silico_ conversion).
+
+
 
 
 ## RELEASE NOTES FOR Bismark v0.16.3 (25 07 2016)
