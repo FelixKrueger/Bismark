@@ -1,8 +1,9 @@
 # Bismark Bisulfite Mapper
+
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
-## User Guide - v0.16.3
-#### 14 December, 2016
+## User Guide - v0.17.0
+#### 18 January, 2017
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
