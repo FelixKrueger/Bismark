@@ -24,7 +24,7 @@ Added Overview of different library types and kits to the Bismark User Guide (ht
 
 Also added documentation for Bismark modules `bam2nuc`, `bismark2report`, `bismark2summary` and `filter_non_conversion`.
 
-Added a Markdown to HTML coverter (thanks to Phil Ewels).
+Added a Markdown to HTML converter (make_docs.pl; thanks to Phil Ewels for this).
 
 ### filter_non_conversion
 
