@@ -23,7 +23,7 @@ use Carp;
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
 my %processed;   # keeping a record of which chromosomes have been processed
-my $coverage2cytosine_version = 'v0.17.0';
+my $coverage2cytosine_version = 'v0.17.0_dev';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome) = process_commandline();
 
@@ -470,7 +470,13 @@ sub generate_genome_wide_cytosine_report {
 		}
 		
 		next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
-	      
+		
+		### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
+		### will have been rejected due to insufficient length for $tri_nt
+		if ( (length($chromosomes{$last_chr}) - $pos) == 0){
+		    next;
+		}
+
 		# if (length$penta_nt < 5){
 		# warn "$tri_nt\t$tetra_nt\t$penta_nt\n"; sleep(1);		  
 		# }
@@ -479,6 +485,7 @@ sub generate_genome_wide_cytosine_report {
 		    $meth =  $chr{$last_chr}->{$pos}->{meth};
 		    $nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
 		}
+		
 		
 		### determining cytosine context	
 		if ($tri_nt =~ /^CG/){
@@ -664,6 +671,12 @@ sub generate_genome_wide_cytosine_report {
 	}
 	
 	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+	### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
+	### will have been rejected due to insufficient length for $tri_nt
+	if ( (length($chromosomes{$last_chr}) - $pos) == 0){
+	    next;
+	}
+	
 	# if (length$penta_nt < 5){
 	# warn "$tri_nt\t$tetra_nt\t$penta_nt\n"; sleep(1);		  
 	# }
@@ -1380,7 +1393,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 17 January 2017
+                              Script last modified: 19 January 2017
 
 EOF
     ;
