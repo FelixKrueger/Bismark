@@ -7753,8 +7753,9 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright 2010-15 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
+                https://github.com/FelixKrueger/Bismark
 
 
 VERSION

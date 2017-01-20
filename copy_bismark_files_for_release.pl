@@ -1,6 +1,7 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl
 use warnings;
 use strict;
+use File::Copy::Recursive qw(fcopy rcopy dircopy fmove rmove dirmove);
 use File::Copy "cp";
 
 my $dir = shift@ARGV;
@@ -12,18 +13,58 @@ unless (-d $dir){
   mkdir $dir or die "Failed to create directory: $!\n\n";
 }
 
-my @files = ('RELEASE_NOTES.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','./Docs/Bismark_User_Guide.html','./bismark_sitrep/bismark_sitrep.js','./bismark_sitrep/bismark_sitrep.tpl','./bismark_sitrep/highcharts.js','./bismark_sitrep/jquery-3.1.1.min.js','./Docs/make_docs.pl','RRBS_Guide.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion');
+my @files = ('RELEASE_NOTES.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','RRBS_Guide.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion');
 
-foreach my $file (@files){
-  copy_and_warn($file);
+my @reporting = ('bismark_sitrep.js','bismark_sitrep.tpl','highcharts.js','jquery-3.1.1.min.js');
+
+my @docs = ('make_docs.pl','README.md','Bismark_User_Guide.html');
+
+foreach my $file(@files){ 
+    copy_and_warn($file);
 }
+warn "Finished copying normal files\n\n"; sleep(1);
+
+foreach my $file(@reporting){ 
+    copy_reports_and_warn("bismark_sitrep/$file");
+}
+warn "Finished copying bismark2report files\n\n"; sleep(1);
+
+foreach my $file(@docs){ 
+    copy_docs_and_warn("Docs/$file");
+}
+warn "Finished copying Docs files\n\n"; sleep(1);
 
 sub copy_and_warn{
-  my $file = shift;
-  warn "Now copying '$file' to $dir\n";
-  cp($file,"$dir/") or die "Copy failed: $!";
-
+    my $file = shift;
+    warn "Now copying '$file' to $dir\n";
+    cp($file,"$dir/") or die "Copy failed: $!";
 }
+
+sub copy_reports_and_warn{
+    unless (-d "${dir}/bismark_sitrep/"){
+	warn "Specified directory '$dir/bismark_sitrep/' doesn't exist. Creating it for you...\n\n";
+	mkdir "${dir}/bismark_sitrep/" or die "Failed to create directory '${dir}/bismark_sitrep/': $!\n\n";
+    }
+    
+    my $file = shift;                                                                                                                            
+    warn "Now copying '$file' to $dir/bismark_sitrep/\n";
+    cp($file,"$dir/bismark_sitrep/") or die "Copy to '$dir/bismark_sitrep/' failed: $!\n\n";
+}
+
+sub copy_docs_and_warn{
+    unless (-d "${dir}/Docs/"){
+	warn "Specified directory '$dir/Docs/' doesn't exist. Creating it for you...\n\n";
+	mkdir "${dir}/Docs/" or die "Failed to create directory '${dir}/Docs/': $!\n\n";
+    }
+    
+    my $file = shift;                                                                                                                            
+    warn "Now copying '$file' to $dir/Docs/\n";
+    cp($file,"${dir}/Docs/") or die "Copy to '$dir/Docs/' failed: $!\n\n";
+}
+
+#######################
+### SETTING PERMISSIONS
+#######################
 
 @files = ('bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion');
 
@@ -41,5 +82,4 @@ sub set_permissions{
 ### Taring up the folder
 $dir =~ s/\/$//;
 warn "Tar command:\ntar czvf ${dir}.tar.gz $dir\n\n";
-sleep(3);
 system ("tar czvf ${dir}.tar.gz $dir/");
