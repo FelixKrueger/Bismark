@@ -24,7 +24,7 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.17.0';
+my $filter_version = 'v0.17.1_dev';
 my ($single,$paired);
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive) = process_commandline();
 
@@ -277,7 +277,7 @@ sub determine_file_type{
 	open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
     }
     while (<DETERMINE>){
-	last nless (/^\@/);
+	last unless (/^\@/);
 	if ($_ =~ /^\@PG/){
 	    # warn "found the \@PG line:\n";
 	    # warn "$_";
