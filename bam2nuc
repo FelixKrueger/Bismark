@@ -147,7 +147,7 @@ sub generate_nucleotide_report {
     my $outfile = $infile;
     die "file needs to be in BAM or CRAM format (ending in .bam or .cram). Terminating process...\n" unless ($outfile =~s /(bam|cram)$/nucleotide_stats.txt/);
     warn "Printing nucleotide stats to >> $outfile <<\n";
-    open (OUT,'>',$outfile) or die "Failed to write to file $outfile: $!\n\n";
+    open (OUT,'>',"${output_dir}$outfile") or die "Failed to write to file $outfile: $!\n\n";
 
     calculate_averages();
 
