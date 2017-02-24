@@ -20,9 +20,9 @@ use lib "$Bin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.17.0';
+my $bismark_version = '0.17.1_dev';
 
-# Last modified 05 07 2016
+# Last modified 24 02 2017
 
 my ($report_basename,$page_title) = process_commandline();
 
@@ -853,23 +853,23 @@ HTMLTEMPLATESTRING
 
 
 # Put in our variables
-$html_report =~ s/{{num_samples}}/$num_samples/g;
-$html_report =~ s/{{categories}}/$categories/g;
-$html_report =~ s/{{aligned_seq}}/$aligned/g;
-$html_report =~ s/{{no_seq}}/$no_seq/g;
-$html_report =~ s/{{not_aligned}}/$not_aligned/g;
-$html_report =~ s/{{ambig_aligned}}/$ambig_aligned/g;
-$html_report =~ s/{{dup_alignments}}/$dup_alignments/g;
-$html_report =~ s/{{unique_alignments}}/$unique_alignments/g;
-$html_report =~ s/{{report_timestamp}}/$report_timestamp/g;
-$html_report =~ s/{{page_title}}/$page_title/g;
-$html_report =~ s/{{meth_cpg_string}}/$meth_cpg_string/g;
-$html_report =~ s/{{unmeth_cpg_string}}/$unmeth_cpg_string/g;
-$html_report =~ s/{{meth_cph_string}}/$meth_cph_string/g;
-$html_report =~ s/{{unmeth_cph_string}}/$unmeth_cph_string/g;
-$html_report =~ s/{{meth_chh_string}}/$meth_chh_string/g;
-$html_report =~ s/{{unmeth_chh_string}}/$unmeth_chh_string/g;
-$html_report =~ s/{{bismark_version}}/$bismark_version/g;
+$html_report =~ s/\{\{num_samples}}/$num_samples/g;
+$html_report =~ s/\{\{categories}}/$categories/g;
+$html_report =~ s/\{\{aligned_seq}}/$aligned/g;
+$html_report =~ s/\{\{no_seq}}/$no_seq/g;
+$html_report =~ s/\{\{not_aligned}}/$not_aligned/g;
+$html_report =~ s/\{\{ambig_aligned}}/$ambig_aligned/g;
+$html_report =~ s/\{\{dup_alignments}}/$dup_alignments/g;
+$html_report =~ s/\{\{unique_alignments}}/$unique_alignments/g;
+$html_report =~ s/\{\{report_timestamp}}/$report_timestamp/g;
+$html_report =~ s/\{\{page_title}}/$page_title/g;
+$html_report =~ s/\{\{meth_cpg_string}}/$meth_cpg_string/g;
+$html_report =~ s/\{\{unmeth_cpg_string}}/$unmeth_cpg_string/g;
+$html_report =~ s/\{\{meth_cph_string}}/$meth_cph_string/g;
+$html_report =~ s/\{\{unmeth_cph_string}}/$unmeth_cph_string/g;
+$html_report =~ s/\{\{meth_chh_string}}/$meth_chh_string/g;
+$html_report =~ s/\{\{unmeth_chh_string}}/$unmeth_chh_string/g;
+$html_report =~ s/\{\{bismark_version}}/$bismark_version/g;
 
 # Write the HTML report to disk
 my $html_fn = "${report_basename}.html";
