@@ -25,7 +25,7 @@ use lib "$Bin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.17.0';
+my $bismark_version = 'v0.17.1_dev';
 my $start_run = time();
 warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -5810,7 +5810,7 @@ sub read_genome_into_memory{
     my $SQ_count = 0;
 
     foreach my $chromosome_filename (@chromosome_filenames){
-
+	# warn "Now processing: $chromosome_filename\n";
 	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
 	### first line needs to be a fastA header
 	my $first_line = <CHR_IN>;
@@ -5839,10 +5839,9 @@ sub read_genome_into_memory{
 	      }
 	      print "chr $chromosome_name (",length $sequence ," bp)\n";
 	      $chromosomes{$chromosome_name} = $sequence;
-	      $SQ_order{$SQ_count} = $chromosome_name;
-
+	      # warn "$SQ_count\t$chromosome_name\n";
 	      ++$SQ_count;
-
+	      $SQ_order{$SQ_count} = $chromosome_name;
 	    }
 	    ### resetting the sequence variable
 	    $sequence = '';
@@ -5869,7 +5868,7 @@ sub read_genome_into_memory{
 	    }
 
 	    ++$SQ_count;
-
+	    # warn "$SQ_count\t$chromosome_name\n";
 	    print "chr $chromosome_name (",length $sequence ," bp)\n";
 	    $chromosomes{$chromosome_name} = $sequence;
 	    $SQ_order{$SQ_count} = $chromosome_name;
@@ -8637,7 +8636,7 @@ sub generate_SAM_header{
 	    print AMBIBAM "\@SQ\tSN:$SQ_order{$chr}\tLN:$length\n";
 	}
     }
-
+    
     # 18 11 2015: Added @RG as a header line if --rg_tag or --rg_id/--rg_sample were set as well
     if ($rg_tag){
 	print OUT "\@RG\tPL:ILLUMINA\tID:$rg_id\tSM:$rg_sample\n";  # @RG = Read Group, PL = Platform, ID: required, SM: sample, can be a description
@@ -8885,7 +8884,7 @@ sub single_end_SAM_output{
       print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$read_group)),"\n";
     }
     else{
-      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+	print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
     }
   }
 }
@@ -10314,6 +10313,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 10 January 2017
+Last edited on 03 March 2017
 HOW_TO
 }
