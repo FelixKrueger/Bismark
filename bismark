@@ -7723,7 +7723,7 @@ sub process_command_line{
 				 'old_flag'                => \$old_flag,
 				 'B|basename=s'            => \$basename,
 				 'sam'                     => \$sam,
-				 'multicore=i'             => \$multicore,
+				 'parallel|multicore=i'    => \$multicore,
 				 'rg_tag'                  => \$rg_tag,
 				 'rg_id=s'                 => \$rg_id,
 				 'rg_sample=s'             => \$rg_sample,
@@ -9969,19 +9969,19 @@ Alignment:
                          60-bp gap between them, that alignment is considered valid (as long as -I is also satisfied).
                          A 61-bp gap would not be valid in that case. Default: 500.
 
---multicore <int>        Sets the number of parallel instances of Bismark to be run concurrently. This forks the
-                         Bismark alignment step very early on so that each individual Spawn of Bismark processes
-                         only every n-th sequence (n being set by --multicore). Once all processes have completed,
+--parallel <int>         (May also be --multicore <int>) Sets the number of parallel instances of Bismark to be run concurrently.
+                         This forks the Bismark alignment step very early on so that each individual Spawn of Bismark processes
+                         only every n-th sequence (n being set by --parallel). Once all processes have completed,
                          the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged
                          into single files in very much the same way as they would have been generated running Bismark
                          conventionally with only a single instance.
 
                          If system resources are plentiful this is a viable option to speed up the alignment process
-                         (we observed a near linear speed increase for up to --multicore 8 tested). However, please note
+                         (we observed a near linear speed increase for up to --parallel 8 tested). However, please note
                          that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads of
                          Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory depending on the choice of aligner
-                         and genome. WARNING: Bismark Parallel (BP?) is resource hungry! Each value of --multicore specified
-                         will effectively lead to a linear increase in compute and memory requirements, so --multicore 4 for
+                         and genome. WARNING: Bismark Parallel (BP?) is resource hungry! Each value of --parallel specified
+                         will effectively lead to a linear increase in compute and memory requirements, so --parallel 4 for
                          e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~40GB or RAM, but at the same time
                          reduce the alignment time to ~25-30%. You have been warned.
 
@@ -10313,6 +10313,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 03 March 2017
+Last edited on 15 March 2017
 HOW_TO
 }
