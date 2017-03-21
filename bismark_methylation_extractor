@@ -29,8 +29,8 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.17.0';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore) = process_commandline();
+my $version = 'v0.17.1_dev';
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$cheeky) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -944,6 +944,7 @@ sub process_commandline{
   my $ignore_3prime;
   my $ignore_3prime_r2;
   my $multicore;
+  my $cheeky;
   
   my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -978,7 +979,8 @@ sub process_commandline{
 				 'include_overlap'      => \$include_overlap,
 				 'ignore_3prime=i'      => \$ignore_3prime,
 				 'ignore_3prime_r2=i'   => \$ignore_3prime_r2,
-				 'multicore=i'          => \$multicore,
+				 'parallel|multicore=i' => \$multicore,
+				 'cheeky'               => \$cheeky,
 	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -1288,7 +1290,13 @@ VERSION
     warn "Setting core usage to single-threaded (default). Consider using --multicore <int> to speed up the extraction process.\n\n";
   }
 
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore);
+  if ($cheeky){
+      die "The option '--cheeky' requires the '--comprehensive' option! Please respecify!\n\n" unless ($full);
+      die "The option '--cheeky' requires the '--merge_non_CpG' option! Please respecify!\n\n" unless ($merge_non_CpG);      
+      die "The option '--cheeky' requires single end files! Please respecify!\n\n" unless ($single_end);
+  }
+
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$cheeky);
 }
 
 sub bam_isTruncated{
@@ -2533,12 +2541,12 @@ sub process_Bismark_results_file{
 	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_2,$id_2,'-',$index,$no_overlap,$end_read_1,$cigar_2,2);
 	  }
 	  else {
-	    ## we first pass the first read which is in - orientation on the reverse strand
-	    print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id_1,'-',$index,0,0,$cigar_1,1);
-	
-	    # we next pass the second read which is in + orientation on the forward strand
-	    ### if --no_overlap was specified we also pass the end of read 1. If read 2 starts to overlap with read 1 we will stop extracting methylation calls from read 2
-	    print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_2,$id_2,'+',$index,$no_overlap,$end_read_1,$cigar_2,2);
+	      ## we first pass the first read which is in - orientation on the reverse strand
+	      print_individual_C_methylation_states_paired_end_files($meth_call_1,$chrom,$start_read_1,$id_1,'-',$index,0,0,$cigar_1,1);
+	      
+	      # we next pass the second read which is in + orientation on the forward strand
+	      ### if --no_overlap was specified we also pass the end of read 1. If read 2 starts to overlap with read 1 we will stop extracting methylation calls from read 2
+	      print_individual_C_methylation_states_paired_end_files($meth_call_2,$chrom,$start_read_2,$id_2,'+',$index,$no_overlap,$end_read_1,$cigar_2,2);
 	  }
 	
 	  $methylation_call_strings_processed += 2; # paired-end = 2 methylation call strings
@@ -2905,11 +2913,11 @@ sub print_mbias_report_multicore{
 
 sub print_individual_C_methylation_states_paired_end_files{
 
-  my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index,$no_overlap,$end_read_1,$cigar,$read_identity) = @_;
+    my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index,$no_overlap,$end_read_1,$cigar,$read_identity) = @_;
 
-  unless (defined $meth_call) {
-    return; # skip this read
-  }
+    unless (defined $meth_call) {
+	return; # skip this read
+    }
 
   ### we will use the read identity for the M-bias plot to discriminate read 1 and read 2
   die "Read identity was neither 1 nor 2: $read_identity\n\n" unless ($read_identity == 1 or $read_identity == 2);
@@ -2985,8 +2993,8 @@ sub print_individual_C_methylation_states_paired_end_files{
 
       ### single-file CpG and non-CpG context output
       if ($full) {
-	if ($strand eq '+') {
-	  for my $index (0..$#methylation_calls) {
+	  if ($strand eq '+') {
+	      for my $index (0..$#methylation_calls) {
 	
 	    if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 	      my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
@@ -2999,16 +3007,16 @@ sub print_individual_C_methylation_states_paired_end_files{
 	    if ($start+$index+$pos_offset >= $end_read_1) {
 	      return;
 	    }
-
+	    
 	    if ($methylation_calls[$index] eq 'X') {
-	      $counting{total_meCHG_count}++;
-	      print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	      if ($read_identity == 1){
-		$mbias_1{CHG}->{$index+1}->{meth}++;
-	      }
-	      else{
-		$mbias_2{CHG}->{$index+1}->{meth}++;
-	      }
+		$counting{total_meCHG_count}++;
+		print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		if ($read_identity == 1){
+		    $mbias_1{CHG}->{$index+1}->{meth}++;
+		}
+		else{
+		    $mbias_2{CHG}->{$index+1}->{meth}++;
+		}
 	    }
 	    elsif ($methylation_calls[$index] eq 'x') {
 	      $counting{total_unmethylated_CHG_count}++;
@@ -3323,7 +3331,7 @@ sub print_individual_C_methylation_states_paired_end_files{
       }
     }
 
-    ### this is the default paired-end procedure allowing overlaps and using every single C position
+    ### this is the paired-end procedure allowing overlaps and using every single C position
     ### Still within the 2-CONTEXT ONLY optional section
     else {
       ### single-file CpG and non-CpG context output
@@ -4408,8 +4416,9 @@ sub check_cigar_string {
 sub print_individual_C_methylation_states_single_end{
 
   my ($meth_call,$chrom,$start,$id,$strand,$filehandle_index,$cigar) = @_;
+  my $end = $start; # determinining end further down
   my @methylation_calls = split(//,$meth_call);
-
+ 
   #################################################################
   ### . for bases not involving cytosines                       ###
   ### X for methylated C in CHG context (was protected)         ###
@@ -4435,70 +4444,84 @@ sub print_individual_C_methylation_states_single_end{
   if ($cigar){ # parsing CIGAR string
 
     ### Checking whether the CIGAR string is a linear genomic match or whether it requires indel processing
-    if ($cigar =~ /^\d+M$/){
-      #  warn "See!? I told you so! $cigar\n";
-      # sleep(1);
-    }
-    else{
-
-      my @len;
-      my @ops;
-
-      @len = split (/\D+/,$cigar); # storing the length per operation
-      @ops = split (/\d+/,$cigar); # storing the operation
-      shift @ops; # remove the empty first element
-      # die "CIGAR string contained a non-matching number of lengths and operations: id: $id\nmeth call: $meth_call\nCIGAR: $cigar\n".join(" ",@len)."\n".join(" ",@ops)."\n" unless (scalar @len == scalar @ops);
-      die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-
-      foreach my $index (0..$#len){
-	foreach (1..$len[$index]){
-	  # print  "$ops[$index]";
-	  push @comp_cigar, $ops[$index];
-	}
+      if ($cigar =~ /^(\d+)M$/){
+	  # warn "See!? I told you so! $cigar\n";
+	  # sleep(1);
+	  if ($cheeky and $strand eq '+') { # adding to $end only for forward reads
+	      $end += $1 - 1;
+	  }
       }
+      else{
+	  
+	  my @len;
+	  my @ops;
+	  
+	  @len = split (/\D+/,$cigar); # storing the length per operation
+	  @ops = split (/\d+/,$cigar); # storing the operation
+	  shift @ops; # remove the empty first element
+	  # die "CIGAR string contained a non-matching number of lengths and operations: id: $id\nmeth call: $meth_call\nCIGAR: $cigar\n".join(" ",@len)."\n".join(" ",@ops)."\n" unless (scalar @len == scalar @ops);
+	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+	  
+	  foreach my $index (0..$#len){
+	      foreach (1..$len[$index]){
+		  # print  "$ops[$index]";
+		  push @comp_cigar, $ops[$index];
+	      }
+	  }
+	  
+	  #  Determining end of the read for optional fragment length output
+	  if ($cheeky and $strand eq '+'){ # adding to $end only for forward reads
+	      my $MD_count = 0;
+	      foreach (@comp_cigar){
+		  ++$MD_count if ($_ eq 'M' or $_ eq 'D'); # Matching bases or deletions affect the genomic position of the 3' ends of reads, insertions don't
+	      }
+	      $end += $MD_count - 1;
+	  }
+      
+      # warn "\nDetected CIGAR string: $cigar\n";
+      # warn "Length of methylation call: ",length $meth_call,"\n";
+      # warn "number of operations: ",scalar @ops,"\n";
+      # warn "number of length digits: ",scalar @len,"\n\n";
+      # print @comp_cigar,"\n";
+      # print "$meth_call\n\n";
+      # sleep (1);
     }
-    # warn "\nDetected CIGAR string: $cigar\n";
-    # warn "Length of methylation call: ",length $meth_call,"\n";
-    # warn "number of operations: ",scalar @ops,"\n";
-    # warn "number of length digits: ",scalar @len,"\n\n";
-    # print @comp_cigar,"\n";
-    # print "$meth_call\n\n";
-    # sleep (1);
   }
 
   ### adjusting the start position for all reads mapping to the reverse strand
   if ($strand eq '-') {
 
-    if (@comp_cigar){ # only needed for SAM reads with InDels
-      @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
-      # print @comp_cigar,"\n";
-    }
+      if (@comp_cigar){ # only needed for SAM reads with InDels
+	  @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
+	  # print @comp_cigar,"\n";
+      }
 
-    unless ($ignore){  ### if --ignore was specified the start position has already been corrected
+      unless ($ignore){  ### if --ignore was specified the start position has already been corrected
 
-      if ($cigar){ ### SAM format
-	if ($cigar =~ /^(\d+)M$/){ # linear match
-	  $start += $1 - 1;
-	}
-	else{ # InDel read
-	  my $MD_count = 0;
-	  foreach (@comp_cigar){
-	    ++$MD_count if ($_ eq 'M' or $_ eq 'D'); # Matching bases or deletions affect the genomic position of the 3' ends of reads, insertions don't
+	  if ($cigar){ ### SAM format
+	      if ($cigar =~ /^(\d+)M$/){ # linear match
+		  $start += $1 - 1;
+	      }
+	      else{ # InDel read
+		  my $MD_count = 0;
+		  foreach (@comp_cigar){
+		      ++$MD_count if ($_ eq 'M' or $_ eq 'D'); # Matching bases or deletions affect the genomic position of the 3' ends of reads, insertions don't
+		  }
+		  $start += $MD_count - 1;
+	      }
 	  }
-	  $start += $MD_count - 1;
-	}
+	  else{ ### vanilla format
+	      $start += length($meth_call)-1;
+	  }
       }
-      else{ ### vanilla format
-	$start += length($meth_call)-1;
-      }
-    }
   }
-
+  
   ### THIS IS THE CpG and Non-CpG SECTION (OPTIONAL)
 
   ### single-file CpG and other-context output
   if ($full and $merge_non_CpG) {
-    if ($strand eq '+') {
+      # warn "$chrom\t$start\t$end\t$strand\t$cigar\n";
+      if ($strand eq '+') {
       for my $index (0..$#methylation_calls) {
 	
 	if ($cigar and @comp_cigar){ # only needed for SAM alignments with InDels
@@ -4507,47 +4530,79 @@ sub print_individual_C_methylation_states_single_end{
 	  $cigar_offset += $cigar_mod;
 	  $pos_offset += $pos_mod;
 	}
+
+	my $line;
 	
 	### methylated Cs (any context) will receive a forward (+) orientation
 	### not methylated Cs (any context) will receive a reverse (-) orientation
 	if ($methylation_calls[$index] eq 'X') {
 	  $counting{total_meCHG_count}++;
-	  my $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  if ($cheeky){
+	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  }
+	  else{
+	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  }
 	  print {$fhs{other_context}} $line unless($mbias_only);
 	  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	  $counting{total_unmethylated_CHG_count}++;
-	  my $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  if ($cheeky){
+	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  }
+	  else{
+	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  }
 	  print {$fhs{other_context}} $line unless($mbias_only);
 	  #  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'Z') {
 	  $counting{total_meCpG_count}++;
-	  my $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  if ($cheeky){
+	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  }
+	  else{
+	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  }
 	  print {$fhs{CpG_context}} $line unless($mbias_only);
 	  # print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	  $counting{total_unmethylated_CpG_count}++;
-	  my $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  if ($cheeky){
+	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  }
+	  else{
+	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  }
 	  print {$fhs{CpG_context}} $line unless($mbias_only);
 	  # print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	  $counting{total_meCHH_count}++;
-	  my $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  if ($cheeky){
+	     $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  }
+	  else{
+	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  }
 	  print {$fhs{other_context}} $line unless($mbias_only);
 	  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	  $counting{total_unmethylated_CHH_count}++;
-	  my $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  if ($cheeky){
+	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  }
+	  else{
+	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+	  }
 	  print {$fhs{other_context}} $line unless($mbias_only);
 	  # print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
@@ -4555,7 +4610,7 @@ sub print_individual_C_methylation_states_single_end{
 	elsif ($methylation_calls[$index] eq '.') {}
 	elsif (lc$methylation_calls[$index] eq 'u'){}
 	else{
-	  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
 	}
       }
     }
@@ -4572,44 +4627,76 @@ sub print_individual_C_methylation_states_single_end{
 	  $pos_offset += $pos_mod;
 	}
 
+	my $line;
+
 	if ($methylation_calls[$index] eq 'X') {
-	  $counting{total_meCHG_count}++;
-	  my $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  #print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHG}->{$index+1}->{meth}++;
+	    $counting{total_meCHG_count}++;
+	    if ($cheeky){
+		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	    }
+	    else{
+		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	    }
+	    print {$fhs{other_context}} $line unless($mbias_only);
+	    #print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	    $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
-	  $counting{total_unmethylated_CHG_count}++;
-	  my $line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	    $counting{total_unmethylated_CHG_count}++;
+	    if ($cheeky){
+		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	    }
+	    else{
+		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	    }
 	  print {$fhs{other_context}} $line unless($mbias_only);
 	  #print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CHG}->{$index+1}->{un}++;
 	}
-	elsif ($methylation_calls[$index] eq 'Z') {
-	  $counting{total_meCpG_count}++;
-	  my $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
-	  print {$fhs{CpG_context}} $line unless($mbias_only);
-	  #print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CpG}->{$index+1}->{meth}++;
-	}
+	  elsif ($methylation_calls[$index] eq 'Z') {
+	      $counting{total_meCpG_count}++;
+	      if ($cheeky){
+		  $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	      }
+	      else{
+		  $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	      }
+	      print {$fhs{CpG_context}} $line unless($mbias_only);
+	      #print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	      $mbias_1{CpG}->{$index+1}->{meth}++;
+	  }
 	elsif ($methylation_calls[$index] eq 'z') {
-	  $counting{total_unmethylated_CpG_count}++;
-	  my $line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
-	  print {$fhs{CpG_context}} $line unless($mbias_only);
-	  #print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CpG}->{$index+1}->{un}++;
+	    $counting{total_unmethylated_CpG_count}++;
+	    if ($cheeky){
+		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	    }
+	    else{
+		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n"; 
+	    }
+	    print {$fhs{CpG_context}} $line unless($mbias_only);
+	    #print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	    $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
-	  $counting{total_meCHH_count}++;
-	  my $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  #print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHH}->{$index+1}->{meth}++;
+	    $counting{total_meCHH_count}++;
+	    if ($cheeky){
+		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	    }
+	    else{
+		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	    }
+	    print {$fhs{other_context}} $line unless($mbias_only);
+	    #print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	    $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
-	  $counting{total_unmethylated_CHH_count}++;
-	  my $line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	    $counting{total_unmethylated_CHH_count}++;
+	    if ($cheeky){
+		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	    }
+	    else{
+		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+	    }
 	  print {$fhs{other_context}} $line unless($mbias_only);
 	  #print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	  $mbias_1{CHH}->{$index+1}->{un}++;
@@ -5818,12 +5905,12 @@ OPTIONS:
                          Only recommended for users who deliberately want to keep an earlier version of the M-bias report. 
                          Default: OFF.
 
---multicore <int>        Sets the number of cores to be used for the methylation extraction process. If system resources
-                         are plentiful this is a viable option to speed up the extraction process (we observed a near linear
-                         speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file
-                         and writing out '.gz' output streams will in fact use ~3 cores per value of --multicore <int>
+--parallel <int>         May also be --multicore <int>. Sets the number of cores to be used for the methylation extraction process.
+                         If system resources are plentiful this is a viable option to speed up the extraction process (we observed a
+                         near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file
+                         and writing out '.gz' output streams will in fact use ~3 cores per value of --parallel <int>
                          specified (1 for the methylation extractor itself, 1 for a Samtools stream, 1 for GZIP stream), so
-                         --multicore 10 is likely to use around 30 cores of system resources. This option has no bearing
+                         --parallel 10 is likely to use around 30 cores of system resources. This option has no bearing
                          on the bismark2bedGraph or genome-wide cytosine report processes.
 
 
@@ -5950,7 +6037,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 15 September 2016.
+This script was last modified on 21 March 2017.
 
 HOW_TO
 }
