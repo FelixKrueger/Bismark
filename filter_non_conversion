@@ -584,7 +584,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version              Displays version information and exits.
 
 
-                           Last modified: 17 January 2017
+                           Last modified: 30 January 2017
 
 EOF
     ;
