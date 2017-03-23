@@ -46,6 +46,94 @@ warn "All done, the end...\n";
 per_read_filtering($coverage_infile);
 
 
+sub cg_lookup{
+    
+
+    my ($seq,$start) = @_; # start is the start of the sequence which we will use as the offset
+    warn "$seq\nOffset: $start\n";	
+    my $strand;
+    my $tri_nt;
+    my $upstream_context; # for NOMe-Seq
+    my $context;
+    
+    while ($seq =~ /([CG])/g){ # C or G
+ 
+	### TODO: Make sure the sequences come in with 2bp added to the front and back!
+
+	my $pos = pos$seq;
+	
+	if ($1 eq 'C'){    # C on forward strand
+	    $tri_nt = substr ($seq,$pos - 1,3);   # positions are 0-based!
+	    if ($nome){
+		$upstream_context = substr ($seq,$pos - 2,3);
+		warn "$1\t$pos\t$tri_nt\t$upstream_context\n"; sleep(1);
+	    }
+	    $strand = '+';
+	}
+	elsif ($1 eq 'G'){ # C on reverse strand
+	    
+	    $tri_nt = substr ($seq,$pos - 3,3);   # positions are 0-based!
+	    $tri_nt = reverse $tri_nt;
+	    $tri_nt =~ tr/ACTG/TGAC/;
+	    
+	    if ($nome){
+		$upstream_context = substr ($seq,$pos - 2,3);
+		$upstream_context = reverse $upstream_context;
+		$upstream_context =~ tr/ACTG/TGAC/;
+		warn "$1\t$pos\t$tri_nt\t$upstream_context\n"; sleep(1);
+	    }
+	    $strand = '-';
+	}
+    
+	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+    
+	### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
+	### will have been rejected due to insufficient length for $tri_nt
+	#	if ( (length($chromosomes{$last_chr}) - $pos) == 0){
+	#	    next;
+	#	}
+    
+	#	if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! (as of v0.9.1)
+	#	    $meth =  $chr{$last_chr}->{$pos}->{meth};
+	#	    $nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
+	#	} 
+	
+	### determining cytosine context	
+	if ($tri_nt =~ /^CG/){
+	    $context = 'CG';
+	}
+	elsif ($tri_nt =~ /^C.{1}G$/){
+	    $context = 'CHG';
+	}
+	elsif ($tri_nt =~ /^C.{2}$/){
+	    $context = 'CHH';
+	}
+	else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+	    warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
+	    next;
+	}
+    
+	if ($CpG_only){
+	    if ($tri_nt =~ /^CG/){ # CpG context is the default
+		if ($nome){ # NOMe-Seq is CpG context only
+		    if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){
+			# fine
+		    }
+		    else{
+			next; # skipping this base
+		    }
+		}
+		
+		# print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+		
+	    }
+	}
+	else{ ## all cytosines, specified with --CX
+	    # print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	}
+    }
+}
+
 sub per_read_filtering {
     
     warn  "="x78,"\n";
@@ -120,14 +208,18 @@ sub per_read_filtering {
 	    else{ # reverse read
 		$length = $last_start - $last_end + 1;
 	    }
-	    
+	    # TODO: process last read
+    
 	    # exract genome sequence for the last read
 	    # warn "Last Start: $last_start\nLast End: $last_end\nLength: $length\n";
 	    my $seq = substr($chromosomes{$last_chr},$last_start,$length);
-	    warn "$seq\n";
+	    #  warn "$seq\n";
+
+	    cg_lookup ($seq,$last_start);
 	    
 	    warn "\n$id (new read)\n";sleep(1);
-	    # TODO: process last read
+
+	    # Storing new read
 	    $last_read = $id;
 	    $last_start = $start;
 	    $last_end = $end;
@@ -142,6 +234,10 @@ sub per_read_filtering {
     }
     
     close IN or warn $!;
+    
+
+
+    
     
     while (0){ # 
 	my ($state,$chr,$pos,$context,$start,$end,$strand,$meth,$nonmeth);
@@ -419,7 +515,7 @@ sub process_commandline{
   my $version;
   my $merge_CpGs;
   my $gc_context;
-  my $nome; 
+  my $nome = 1; 
 
   my $command_line = GetOptions ('help|man'               => \$help,
 				 'dir=s'                  => \$output_dir,
@@ -522,14 +618,11 @@ VERSION
   }
   
   if ($nome){
-      die "NOMe-Seq filtering only works for CpG context, please drop the '--CX' option\n" if ($CX_context);
-      die "NOMe-Seq filtering does not work in conjunction with --merge_CpG (because some postions may be filtered out). Please respecify\ns" if ($merge_CpGs);
       unless ($gc_context){
 	  warn "Sample specified as NOMe-Seq. Also setting `--gc` context\n\n";
 	  $gc_context = 1;
       }
   }
-
   
   return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$nome);
 }
