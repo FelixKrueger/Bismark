@@ -49,8 +49,8 @@ per_read_filtering($coverage_infile);
 sub cg_lookup{
     
 
-    my ($seq,$offset,$ext_seq,$read) = @_; # start is the start of the sequence which we will use as the offset
-    warn "  $seq\n$ext_seq\nOffset: $offset\n";	
+    my ($chr,$seq,$offset,$ext_seq,$read) = @_; # start is the start of the sequence which we will use as the offset
+    warn "  $seq\n$ext_seq\nOffset: $offset\tchr: $chr\n";	
     my $strand;
     my $tri_nt;
     my $upstream_context; # for NOMe-Seq
@@ -64,29 +64,27 @@ sub cg_lookup{
 
     while ($seq =~ /([CG])/g){ # C or G
  
-	### TODO: Make sure the sequences come in with 2bp added to the front and back!
-
 	my $pos = pos$seq;
 	
 	if ($1 eq 'C'){    # C on forward strand
-	    $tri_nt = substr ($seq,$pos - 1,3);   # positions are 0-based!
+	    $tri_nt = substr ($ext_seq,$pos + 1,3);   # positions are 0-based!
 	    if ($nome){
-		$upstream_context = substr ($seq,$pos - 2,3);
-		warn "$1\t$pos\t",$pos + $offset,"\t$tri_nt\t$upstream_context\n"; sleep(1);
+		$upstream_context = substr ($ext_seq,$pos - 1,3);
+		warn "$1\t$pos\t",$pos + $offset - 1,"\t$tri_nt\t$upstream_context\n"; sleep(1);
 	    }
 	    $strand = '+';
 	}
 	elsif ($1 eq 'G'){ # C on reverse strand
 	    
-	    $tri_nt = substr ($seq,$pos - 3,3);   # positions are 0-based!
+	    $tri_nt = substr ($ext_seq,$pos - 1,3);   # positions are 0-based!
 	    $tri_nt = reverse $tri_nt;
 	    $tri_nt =~ tr/ACTG/TGAC/;
 	    
 	    if ($nome){
-		$upstream_context = substr ($seq,$pos - 2,3);
+		$upstream_context = substr ($ext_seq,$pos + 1, 3);
 		$upstream_context = reverse $upstream_context;
 		$upstream_context =~ tr/ACTG/TGAC/;
-		warn "$1\t$pos\t",$pos + $offset,"\t$tri_nt\t$upstream_context\n"; sleep(1);
+		warn "$1\t$pos\t",$pos + $offset - 1,"\t$tri_nt\t$upstream_context\n"; sleep(1);
 	    }
 	    $strand = '-';
 	}
@@ -224,16 +222,27 @@ sub per_read_filtering {
 	    my $seq;
 	    my $ext_seq;
 	    if ($last_start - 2 > 1 and length($chromosomes{$last_chr}) >= ($last_start - 2 + $length + 4) ){ # making sure the extended sequence can be extracted
-		$seq = substr($chromosomes{$last_chr},$last_start,$length);
-		$ext_seq = substr($chromosomes{$last_chr},$last_start - 2,$length + 4); # we potentially need 2 extra bases on either side for a context lookup
+		if ($last_end >= $last_start){
+		    $seq = substr($chromosomes{$last_chr},$last_start - 1,$length);
+		    $ext_seq = substr($chromosomes{$last_chr},$last_start - 3,$length + 4); # we potentially need 2 extra bases on either side for a context lookup
+		}
+		else{
+		    $seq = substr($chromosomes{$last_chr},$last_end - 1,$length);
+		    $ext_seq = substr($chromosomes{$last_chr},$last_end - 3,$length + 4); # we potentially need 2 extra bases on either side for a context lookup
+		}
 	    }
 	    else{
 		next;
 	    }
 	    #  warn "$seq\n$ext_seq\n";
 	    
-	    ### TODO: Need to pass in the true start of the read, so the end for reverse reads
-	    cg_lookup ($seq,$last_start,$ext_seq,$read);
+	    ### Need to pass in the true start of the read, so the end for reverse reads
+	    if ($last_end >= $last_start){
+		cg_lookup ($last_chr,$seq,$last_start,$ext_seq,$read);
+	    }
+	    else{
+		cg_lookup ($last_chr,$seq,$last_end,$ext_seq,$read);
+	    }
 	    
 	    warn "\n$id (new read)\n";sleep(1);
 
@@ -388,7 +397,7 @@ sub per_read_filtering {
     
     while ( $chromosomes{$last_chr} =~ /([CG])/g){
       
-	$tri_nt = ''; # clearing
+	$tri_nt  = ''; # clearing
 	$context = '';
 	
 	if ($nome){
