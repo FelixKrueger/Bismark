@@ -132,12 +132,25 @@ sub combine_CpGs_to_single_CG_entity{
     # print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
     # print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n"; sleep(1);
 
-    if ($pos1 < 2){
-      $line1 = $line2;
-      $line2 = <IN>;
-      chomp $line2;
-      ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-      ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+    # If there is a CpG right at the start of the reference chromosome it will be present for the top strand,
+    # but will be missing for the reverse strand because it is impossible to determine a trinucleotide context
+    if ($zero){ # if the CpG report was written out with zero-based coordinates 
+   	if ($pos1 < 1){ # the position has to be adjusted to by -1
+	    $line1 = $line2;
+	    $line2 = <IN>;
+	    chomp $line2;
+	    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+	    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	}
+    }
+    else{ # default
+	if ($pos1 < 2){
+	    $line1 = $line2;
+	    $line2 = <IN>;
+	    chomp $line2;
+	    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+	    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	}
     }
 
     # a few sanity checks
@@ -148,7 +161,7 @@ sub combine_CpGs_to_single_CG_entity{
       die "The strand of line 1 and line 2 were not + and -:\nline1:\t$line1\nline2:\t$line2\n";
     }
     unless ($pos2 eq ($pos1 + 1)){
-      die "The reported position were not spaced 1bp apart:\nline1:\t$line1\nline2:\t$line2\n";
+      die "The reported position were not spaced 1 bp apart:\nline1:\t$line1\nline2:\t$line2\n";
     }
     unless($chr1 eq $chr2){
       die "The chromsome information for line 1 and 2 did not match:\nline1:\t$line1\nline2:\t$line2\n";
@@ -167,7 +180,13 @@ sub combine_CpGs_to_single_CG_entity{
     # print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n";
     # print join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
     # sleep(1);
-    print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+    if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
+	print OUT join ("\t",$chr1,$pos1-1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+    }
+    else{
+	print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+    }
+
   }
 
   warn "CpG merging complete. Good luck finding DMRs with bsseq!\n\n";
