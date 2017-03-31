@@ -46,15 +46,15 @@ warn "All done, the end...\n";
 per_read_filtering($coverage_infile);
 
 
-sub cg_lookup{
+sub cytosine_lookup{
     
-
     my ($chr,$seq,$offset,$ext_seq,$read) = @_; # start is the start of the sequence which we will use as the offset
     warn "  $seq\n$ext_seq\nOffset: $offset\tchr: $chr\n";	
     my $strand;
     my $tri_nt;
     my $upstream_context; # for NOMe-Seq
     my $context;
+    my ($meth_CG,$unmeth_CG,$meth_nonCG,$unmeth_nonCG) = (0,0,0,0); # keeping count for the entire read
 
     warn "Stored the following methylation info: \n";
     foreach my $pos (keys %{$read}){
@@ -69,7 +69,7 @@ sub cg_lookup{
 	if ($1 eq 'C'){    # C on forward strand
 	    $tri_nt = substr ($ext_seq,$pos + 1,3);   # positions are 0-based!
 	    if ($nome){
-		$upstream_context = substr ($ext_seq,$pos - 1,3);
+		$upstream_context = substr ($ext_seq,$pos,3);
 		warn "$1\t$pos\t",$pos + $offset - 1,"\t$tri_nt\t$upstream_context\n"; sleep(1);
 	    }
 	    $strand = '+';
@@ -81,7 +81,7 @@ sub cg_lookup{
 	    $tri_nt =~ tr/ACTG/TGAC/;
 	    
 	    if ($nome){
-		$upstream_context = substr ($ext_seq,$pos + 1, 3);
+		$upstream_context = substr ($ext_seq,$pos, 3);
 		$upstream_context = reverse $upstream_context;
 		$upstream_context =~ tr/ACTG/TGAC/;
 		warn "$1\t$pos\t",$pos + $offset - 1,"\t$tri_nt\t$upstream_context\n"; sleep(1);
@@ -116,26 +116,70 @@ sub cg_lookup{
 	    warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
 	    next;
 	}
-    
-	if ($CpG_only){
-	    if ($tri_nt =~ /^CG/){ # CpG context is the default
-		if ($nome){ # NOMe-Seq is CpG context only
-		    if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){
-			# fine
+
+	if (exists $read->{$pos + $offset - 1}){
+	    warn "Position was covered\nUpstream context: $upstream_context\ntrinuc context: $context\nreported context: ",$read->{$pos + $offset-1}->{context},"\n";
+
+	    # for NOMe-Seq (nucleosome occupancy and methylome sequencing) we limit the reporting of 
+	    # 1. CpGs to A-C-G and T-C-G
+	    # 2. GpC report files / cov files that only include G-C-A, G-C-C and G-C-T
+	    
+	    if ($context eq 'CG'){
+		if ( ($read->{$pos + $offset-1}->{context}) eq 'z' or ($read->{$pos + $offset-1}->{context}) eq 'Z'){
+		    warn "Agreeing CG context calls. Fine!\n";
+		    if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){ # filtering out NOMe-biased CG positions
+			# warn "Fine\n";
+			if( ($read->{$pos + $offset-1}->{state}) eq '+'){
+			    $meth_CG++;
+			}
+			elsif( ($read->{$pos + $offset-1}->{state}) eq '-' ){
+			    $unmeth_CG++
+			}
+			else{
+			    die "This should never happen\n";
+			}
 		    }
 		    else{
+			# warn "Potentially biased context, skipping\n";
 			next; # skipping this base
 		    }
+		    
 		}
-		
-		# print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+		else{
+		    warn "Change in call context, disregarding...\n";
+		}
+	    }
+	    elsif($context eq 'CHG'){
+		if ( ($read->{$pos + $offset-1}->{context}) eq 'x' or ($read->{$pos + $offset-1}->{context}) eq 'X'){
+		    warn "Agreeing context calls. Fine!\n";
+		}
+		else{
+		    warn "Change in call context, disregarding...\n";
+		}	
+	    }	    
+	    elsif($context eq 'CHH'){
+		if ( ($read->{$pos + $offset-1}->{context}) eq 'h' or ($read->{$pos + $offset-1}->{context}) eq 'H'){
+		    warn "Agreeing context calls. Fine!\n";
+		}
+		else{
+		    warn "Change in call context, disregarding...\n";
+		}
+	    }
+	    else{
 		
 	    }
+	    warn "\n";
 	}
-	else{ ## all cytosines, specified with --CX
-	    # print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	}
+	
+	
+	my $meth = 0;
+	my $nonmeth = 0;
+	# print join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+	# print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
     }
+
+    print join ("\t",$chr,$offset,$meth_CG,$unmeth_CG,$meth_nonCG,$unmeth_nonCG),"\n";
+
 }
 
 sub per_read_filtering {
@@ -238,10 +282,10 @@ sub per_read_filtering {
 	    
 	    ### Need to pass in the true start of the read, so the end for reverse reads
 	    if ($last_end >= $last_start){
-		cg_lookup ($last_chr,$seq,$last_start,$ext_seq,$read);
+		cytosine_lookup ($last_chr,$seq,$last_start,$ext_seq,$read);
 	    }
 	    else{
-		cg_lookup ($last_chr,$seq,$last_end,$ext_seq,$read);
+		cytosine_lookup ($last_chr,$seq,$last_end,$ext_seq,$read);
 	    }
 	    
 	    warn "\n$id (new read)\n";sleep(1);
@@ -264,256 +308,11 @@ sub per_read_filtering {
     unless (defined $last_read){
 	die "No last read was defined, something must have gone wrong while reading the data in (e.g. was the input file empty?). Please check your command!\n\n";
     }
-    
+
     close IN or warn $!;
-    
-
-
-    
-    
-    while (0){ # 
-	my ($state,$chr,$pos,$context,$start,$end,$strand,$meth,$nonmeth);
-	
-	my $tri_nt;
-	my $upstream_context; # for NOMe-Seq
-       
-       $processed{$last_chr} = 1;
-       while ( $chromosomes{$last_chr} =~ /([CG])/g){ # C or G
-	   
-	   $tri_nt = '';
-	   $context = '';
-	   
-	   if ($nome){
-	       $upstream_context = '';
-	   }
-	   
-	   my $pos = pos$chromosomes{$last_chr};
-	   
-	   my $strand;
-	   my $meth = 0;
-	   my $nonmeth = 0;
-	   
-	   if ($1 eq 'C'){    # C on forward strand
-	       $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
-
-	       if ($nome){
-		   $upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-		   # warn "$1\t$upstream_context\n"; sleep(1);
-	       }
-	       $strand = '+';
-	   }
-	   elsif ($1 eq 'G'){ # C on reverse strand
-	       
-	       $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
-	       $tri_nt = reverse $tri_nt;
-	       $tri_nt =~ tr/ACTG/TGAC/;
-	       
-	       if ($nome){
-		   $upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-		   $upstream_context = reverse $upstream_context;
-		   $upstream_context =~ tr/ACTG/TGAC/;
-		   # warn "$1\t$upstream_context\n"; sleep(1);
-	       }
-	       $strand = '-';
-	   }
-	   
-	   next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
-	   
-	   ### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
-	   ### will have been rejected due to insufficient length for $tri_nt
-	   if ( (length($chromosomes{$last_chr}) - $pos) == 0){
-	       next;
-	   }
-
-	   
-	   if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! (as of v0.9.1)
-	       $meth =  $chr{$last_chr}->{$pos}->{meth};
-	       $nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
-	   }
-	   
-	   
-	   ### determining cytosine context	
-	   if ($tri_nt =~ /^CG/){
-	       $context = 'CG';
-	   }
-	   elsif ($tri_nt =~ /^C.{1}G$/){
-	       $context = 'CHG';
-	   }
-	   elsif ($tri_nt =~ /^C.{2}$/){
-	       $context = 'CHH';
-	   }
-	   else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
-	       warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
-	       next;
-	   }
-
-	   if ($CpG_only){
-	       if ($tri_nt =~ /^CG/){ # CpG context is the default
-		   if ($nome){ # NOMe-Seq is CpG context only
-		       if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){
-			   # fine
-		       }
-		       else{
-			   next; # skipping this base
-		       }
-		   }
-		   
-		   if ($zero){ # zero based coordinates
-		       $pos -= 1;
-		       print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-		   }
-		   else{ # default
-		       print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-		   }
-	       }
-	   }
-	   else{ ## all cytosines, specified with --CX
-	       if ($zero){ # zero based coordinates
-		   $pos -= 1;
-		   print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n"
-	       }
-	       else{ # default
-		   print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	       }
-	   }
-       }
-	    
-       %chr = (); # resetting the hash
-	    
-       # new first entry
-       $last_chr = $chr;
-       $chr{$chr}->{$start}->{meth} = $meth;
-       $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
-   }
-    
-    
-    
-    warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
-    $processed{$last_chr} = 1;
-    
-    my $tri_nt;
-    my $context;
-    my $upstream_context;
-    
-    while ( $chromosomes{$last_chr} =~ /([CG])/g){
-      
-	$tri_nt  = ''; # clearing
-	$context = '';
-	
-	if ($nome){
-	    $upstream_context = ''; # clearing
-	}
-	
-	my $pos = pos$chromosomes{$last_chr};
-	
-	my $strand;
-	my $meth = 0;
-	my $nonmeth = 0;
-      
-	if ($1 eq 'C'){    # C on forward strand
-	    $tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
-	    $strand = '+';
-	    
-	    if ($nome){
-		$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-		# warn "$1\t$upstream_context\n"; sleep(1);
-	    }
-	}
-	elsif ($1 eq 'G'){ # C on reverse strand
-	    $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
-	    $tri_nt = reverse $tri_nt;
-	    $tri_nt =~ tr/ACTG/TGAC/;
-	    $strand = '-';
-	    
-	    if ($nome){
-		$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-		$upstream_context = reverse $upstream_context;
-		$upstream_context =~ tr/ACTG/TGAC/;
-		# warn "$1\t$upstream_context\n"; sleep(1);
-	    }
-	}
-	
-	if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! as of v0.9.1
-	    $meth =  $chr{$last_chr}->{$pos}->{meth};
-	    $nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
-	}
-	
-	next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
-	### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
-	### will have been rejected due to insufficient length for $tri_nt
-	if ( (length($chromosomes{$last_chr}) - $pos) == 0){
-	    next;
-	}
-	
-	### determining cytosine context 
-	if ($tri_nt =~ /^CG/){
-	    $context = 'CG';
-	}
-	elsif ($tri_nt =~ /^C.{1}G$/){
-	    $context = 'CHG';
-	}
-	elsif ($tri_nt =~ /^C.{2}$/){
-	    $context = 'CHH';
-	}
-	else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
-	    warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
-	    next;
-	}
-	
-	if ($CpG_only){
-	    if ($tri_nt =~ /^CG/){ # CpG context is the default
-		if ($nome){ 
-		    if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){
-			# fine
-		    }
-		    else{
-			next; # skipping this base
-		    }
-		}
-		if ($zero){ # zero-based coordinates
-		    $pos -= 1;
-		    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-		}
-		else{ # default
-		    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-		}
-	    }
-	}
-	else{ ## all cytosines, specified with --CX
-	    if ($zero){ # zero based coordinates
-		$pos -= 1;
-		print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	    }
-	    else{ # default
-		print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	    }
-	}
-    }
 
     if ($nome){
 	warn "Finished writing out NOMe-Seq specific cytosine report for covered chromosomes (only reporting CGs in ACG and TCG context; processed $number_processed chromosomes/scaffolds in total)\n\n";
-    }
-    else{
-	warn "Finished writing out cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
-    }
-    
-    ### Now processing chromosomes that were not covered in the coverage file
-    warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
-    my $unprocessed = 0;
-    
-    foreach my $chr (sort keys %processed) {
-	unless ( $processed{$chr} ) {
-	    ++$unprocessed;
-	    ++$number_processed;
-	    process_unprocessed_chromosomes($chr);
-	}
-    }
-    
-    if ($unprocessed == 0) {
-	warn "All chromosomes in the genome were covered by at least some reads. coverage2cytosine processing complete.\n\n";
-    }
-    else{
-	warn "Finished writing out cytosine report (processed $number_processed chromosomes/scaffolds in total). coverage2cytosine processing complete.\n\n";
     }
     
     close CYT or warn $!;
@@ -1198,14 +997,6 @@ sub print_helpfile{
                          PLEASE NOTE that NOMe-Seq data requires a .cov.gz file as input which has been generated in
                          non-CG mode (--CX), else the GpC output file will be empty... Default: OFF. 
 
---ff                     In addition to the standard output selecting --ff will also extract a four and five (tetra/penta)
-                         nucleotide context for the cytosines in question. Too short sequences (e.g. at the edges of the
-                         chromosome) will be left blank; sequences containing Ns are ignored.
-
---zero_based             Uses 0-based coordinates instead of 1-based coordinates throughout. Default: OFF.
-
---split_by_chromosome    Writes the output into individual files for each chromosome instead of a single output file. Files
-                         will be named to include the input filename and the chromosome number.
 
 --gzip                   Output file will be GZIP compressed (ending in .gz). Only works for standard CpG- and CX-output.
  
