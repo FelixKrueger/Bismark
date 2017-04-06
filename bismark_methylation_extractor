@@ -30,7 +30,7 @@ my $parent_dir = getcwd();
 my %fhs;
 
 my $version = 'v0.17.1_dev';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$cheeky) = process_commandline();
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht) = process_commandline();
 
 
 ### only needed for bedGraph output
@@ -944,7 +944,7 @@ sub process_commandline{
   my $ignore_3prime;
   my $ignore_3prime_r2;
   my $multicore;
-  my $cheeky;
+  my $yacht;
   
   my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -980,7 +980,7 @@ sub process_commandline{
 				 'ignore_3prime=i'      => \$ignore_3prime,
 				 'ignore_3prime_r2=i'   => \$ignore_3prime_r2,
 				 'parallel|multicore=i' => \$multicore,
-				 'cheeky'               => \$cheeky,
+				 'yacht'                => \$yacht,
 	);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -1290,13 +1290,18 @@ VERSION
     warn "Setting core usage to single-threaded (default). Consider using --multicore <int> to speed up the extraction process.\n\n";
   }
 
-  if ($cheeky){
-      die "The option '--cheeky' requires the '--comprehensive' option! Please respecify!\n\n" unless ($full);
-      die "The option '--cheeky' requires the '--merge_non_CpG' option! Please respecify!\n\n" unless ($merge_non_CpG);      
-      die "The option '--cheeky' requires single end files! Please respecify!\n\n" unless ($single_end);
+  # --yacht will produce a single output file (any_C_context_...) that will merge information from both CpG and non-CG contexts.
+  if ($yacht){
+      # setting --comprehensive option
+      $full = 1;
+      # setting --merge_non_CpG option
+      $merge_non_CpG = 1;
+      # single-end only working with single-cell, single-end non-directional data at the moment only 06 04 2017
+      die "The option '--yacht' requires single end files! Please respecify!\n\n" unless ($single_end);
+      die "The option '--yacht' does not work together with '--mbias_only'! Please respecify!\n\n" if ($mbias_only);
   }
-
-  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$cheeky);
+  
+  return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht);
 }
 
 sub bam_isTruncated{
@@ -4447,7 +4452,7 @@ sub print_individual_C_methylation_states_single_end{
       if ($cigar =~ /^(\d+)M$/){
 	  # warn "See!? I told you so! $cigar\n";
 	  # sleep(1);
-	  if ($cheeky and $strand eq '+') { # adding to $end only for forward reads
+	  if ($yacht and $strand eq '+') { # adding to $end only for forward reads
 	      $end += $1 - 1;
 	  }
       }
@@ -4470,7 +4475,7 @@ sub print_individual_C_methylation_states_single_end{
 	  }
 	  
 	  #  Determining end of the read for optional fragment length output
-	  if ($cheeky and $strand eq '+'){ # adding to $end only for forward reads
+	  if ($yacht and $strand eq '+'){ # adding to $end only for forward reads
 	      my $MD_count = 0;
 	      foreach (@comp_cigar){
 		  ++$MD_count if ($_ eq 'M' or $_ eq 'D'); # Matching bases or deletions affect the genomic position of the 3' ends of reads, insertions don't
@@ -4522,99 +4527,105 @@ sub print_individual_C_methylation_states_single_end{
   if ($full and $merge_non_CpG) {
       # warn "$chrom\t$start\t$end\t$strand\t$cigar\n";
       if ($strand eq '+') {
-      for my $index (0..$#methylation_calls) {
-	
-	if ($cigar and @comp_cigar){ # only needed for SAM alignments with InDels
-	  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
-	  # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
-	  $cigar_offset += $cigar_mod;
-	  $pos_offset += $pos_mod;
-	}
-
-	my $line;
-	
-	### methylated Cs (any context) will receive a forward (+) orientation
-	### not methylated Cs (any context) will receive a reverse (-) orientation
-	if ($methylation_calls[$index] eq 'X') {
-	  $counting{total_meCHG_count}++;
-	  if ($cheeky){
-	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+	  for my $index (0..$#methylation_calls) {
+	      
+	      if ($cigar and @comp_cigar){ # only needed for SAM alignments with InDels
+		  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
+		  # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
+		  $cigar_offset += $cigar_mod;
+		  $pos_offset += $pos_mod;
+	      }
+	      
+	      my $line;
+	      
+	      ### methylated Cs (any context) will receive a forward (+) orientation
+	      ### not methylated Cs (any context) will receive a reverse (-) orientation
+	      if ($methylation_calls[$index] eq 'X') {
+		  $counting{total_meCHG_count}++;
+		  if ($yacht){
+		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		      print {$fhs{any_context}} $line;
+		  }
+		  else{
+		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+		      print {$fhs{other_context}} $line unless($mbias_only);
+		  }
+		  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		  $mbias_1{CHG}->{$index+1}->{meth}++;
+	      }
+	      elsif ($methylation_calls[$index] eq 'x') {
+		  $counting{total_unmethylated_CHG_count}++;
+		  if ($yacht){
+		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		      print {$fhs{any_context}} $line;
+		  }
+		  else{
+		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+		      print {$fhs{other_context}} $line unless($mbias_only);
+		  }
+		  #  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		  $mbias_1{CHG}->{$index+1}->{un}++;
+	      }
+	      elsif ($methylation_calls[$index] eq 'Z') {
+		  $counting{total_meCpG_count}++;
+		  if ($yacht){
+		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		      print {$fhs{any_context}} $line;
+		  }
+		  else{
+		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+		      print {$fhs{CpG_context}} $line unless($mbias_only);
+		  }
+		  # print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		  $mbias_1{CpG}->{$index+1}->{meth}++;
+	      }
+	      elsif ($methylation_calls[$index] eq 'z') {
+		  $counting{total_unmethylated_CpG_count}++;
+		  if ($yacht){
+		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		      print {$fhs{any_context}} $line;
+		  }
+		  else{
+		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+		      print {$fhs{CpG_context}} $line unless($mbias_only);
+		  }
+		  # print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		  $mbias_1{CpG}->{$index+1}->{un}++;
+	      }
+	      elsif ($methylation_calls[$index] eq 'H') {
+		  $counting{total_meCHH_count}++;
+		  if ($yacht){
+		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		      print {$fhs{any_context}} $line;
+		  }
+		  else{
+		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+		      print {$fhs{other_context}} $line unless($mbias_only);
+		  }
+		  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		  $mbias_1{CHH}->{$index+1}->{meth}++;
+	      }
+	      elsif ($methylation_calls[$index] eq 'h') {
+		  $counting{total_unmethylated_CHH_count}++;
+		  if ($yacht){
+		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		      print {$fhs{any_context}} $line;
+		  }
+		  else{
+		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+		      print {$fhs{other_context}} $line unless($mbias_only);
+		  }
+		  # print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+		  $mbias_1{CHH}->{$index+1}->{un}++;
+	      }
+	      elsif ($methylation_calls[$index] eq '.') {}
+	      elsif (lc$methylation_calls[$index] eq 'u'){}
+	      else{
+		  die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
+	      }
 	  }
-	  else{
-	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-	  }
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHG}->{$index+1}->{meth}++;
-	}
-	elsif ($methylation_calls[$index] eq 'x') {
-	  $counting{total_unmethylated_CHG_count}++;
-	  if ($cheeky){
-	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-	  }
-	  else{
-	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-	  }
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  #  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHG}->{$index+1}->{un}++;
-	}
-	elsif ($methylation_calls[$index] eq 'Z') {
-	  $counting{total_meCpG_count}++;
-	  if ($cheeky){
-	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-	  }
-	  else{
-	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-	  }
-	  print {$fhs{CpG_context}} $line unless($mbias_only);
-	  # print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CpG}->{$index+1}->{meth}++;
-	}
-	elsif ($methylation_calls[$index] eq 'z') {
-	  $counting{total_unmethylated_CpG_count}++;
-	  if ($cheeky){
-	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-	  }
-	  else{
-	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-	  }
-	  print {$fhs{CpG_context}} $line unless($mbias_only);
-	  # print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CpG}->{$index+1}->{un}++;
-	}
-	elsif ($methylation_calls[$index] eq 'H') {
-	  $counting{total_meCHH_count}++;
-	  if ($cheeky){
-	     $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-	  }
-	  else{
-	      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-	  }
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHH}->{$index+1}->{meth}++;
-	}
-	elsif ($methylation_calls[$index] eq 'h') {
-	  $counting{total_unmethylated_CHH_count}++;
-	  if ($cheeky){
-	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-	  }
-	  else{
-	      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-	  }
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  # print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHH}->{$index+1}->{un}++;
-	}
-	elsif ($methylation_calls[$index] eq '.') {}
-	elsif (lc$methylation_calls[$index] eq 'u'){}
-	else{
-	    die "The methylation call string contained the following unrecognised character: $methylation_calls[$index]\n";
-	}
       }
-    }
-    elsif ($strand eq '-') {
+      elsif ($strand eq '-') {
 
       for my $index (0..$#methylation_calls) {
 	### methylated Cs (any context) will receive a forward (+) orientation
@@ -4631,75 +4642,82 @@ sub print_individual_C_methylation_states_single_end{
 
 	if ($methylation_calls[$index] eq 'X') {
 	    $counting{total_meCHG_count}++;
-	    if ($cheeky){
+	    if ($yacht){
 		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		print {$fhs{any_context}} $line;
 	    }
 	    else{
 		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+		print {$fhs{other_context}} $line unless($mbias_only);
 	    }
-	    print {$fhs{other_context}} $line unless($mbias_only);
+	   
 	    #print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	    $mbias_1{CHG}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'x') {
 	    $counting{total_unmethylated_CHG_count}++;
-	    if ($cheeky){
+	    if ($yacht){
 		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		print {$fhs{any_context}} $line;
 	    }
 	    else{
 		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+		print {$fhs{other_context}} $line unless($mbias_only);
 	    }
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  #print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHG}->{$index+1}->{un}++;
+	    #print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	    $mbias_1{CHG}->{$index+1}->{un}++;
 	}
-	  elsif ($methylation_calls[$index] eq 'Z') {
-	      $counting{total_meCpG_count}++;
-	      if ($cheeky){
-		  $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-	      }
-	      else{
-		  $line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
-	      }
-	      print {$fhs{CpG_context}} $line unless($mbias_only);
-	      #print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	      $mbias_1{CpG}->{$index+1}->{meth}++;
-	  }
+	elsif ($methylation_calls[$index] eq 'Z') {
+	    $counting{total_meCpG_count}++;
+	    if ($yacht){
+		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		print {$fhs{any_context}} $line;
+	    }
+	    else{
+		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+		print {$fhs{CpG_context}} $line unless($mbias_only);	  
+	    }
+	    #print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	    $mbias_1{CpG}->{$index+1}->{meth}++;
+	}
 	elsif ($methylation_calls[$index] eq 'z') {
 	    $counting{total_unmethylated_CpG_count}++;
-	    if ($cheeky){
+	    if ($yacht){
 		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		print {$fhs{any_context}} $line;
 	    }
 	    else{
 		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n"; 
+		print {$fhs{CpG_context}} $line unless($mbias_only);
 	    }
-	    print {$fhs{CpG_context}} $line unless($mbias_only);
 	    #print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	    $mbias_1{CpG}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq 'H') {
 	    $counting{total_meCHH_count}++;
-	    if ($cheeky){
+	    if ($yacht){
 		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		print {$fhs{any_context}} $line;
 	    }
 	    else{
 		$line = join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+		print {$fhs{other_context}} $line unless($mbias_only);
 	    }
-	    print {$fhs{other_context}} $line unless($mbias_only);
 	    #print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
 	    $mbias_1{CHH}->{$index+1}->{meth}++;
 	}
 	elsif ($methylation_calls[$index] eq 'h') {
 	    $counting{total_unmethylated_CHH_count}++;
-	    if ($cheeky){
+	    if ($yacht){
 		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+		print {$fhs{any_context}} $line;
 	    }
 	    else{
 		$line = join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n";
+		print {$fhs{other_context}} $line unless($mbias_only);
 	    }
-	  print {$fhs{other_context}} $line unless($mbias_only);
-	  #print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-	  $mbias_1{CHH}->{$index+1}->{un}++;
+	    #print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start-$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+	    $mbias_1{CHH}->{$index+1}->{un}++;
 	}
 	elsif ($methylation_calls[$index] eq '.'){}
 	elsif (lc$methylation_calls[$index] eq 'u'){}
@@ -5112,9 +5130,37 @@ sub open_output_filehandles{
 
   #####   open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 
+  ### --YACHT: Yet Another Context Hunting Tool: Cytosine output irrespective of cytosine context. THIS SECTION IS OPTIONAL
+  ### and meant to be fed into the NOMe_filtering script afterwards
+  ### if --comprehensive AND --merge_non_CpG AND --yacht were specified we only write out a single "any_C_context" result file
+  if ($yacht){
+      my $cytosine_output = $output_filename;
+      ### C in CpG context
+      $cytosine_output =~ s/^/any_C_context_/;
+      $cytosine_output =~ s/sam$/txt/;
+      $cytosine_output =~ s/bam$/txt/;
+      $cytosine_output =~ s/cram$/txt/;
+      $cytosine_output =~ s/$/.txt/ unless ($cytosine_output =~ /\.txt$/);
+      $cytosine_output = $output_dir . $cytosine_output;
+      
+      if ($gzip){
+	  $cytosine_output .= '.gz';
+	  open ($fhs{any_context},"| gzip -c - > $cytosine_output") or die "Failed to write to $cytosine_output $! \n";
+      }
+      else{ ### disclaimer: I am aware of "The Useless Use of Cat Awards", but I saw no other option...
+	  open ($fhs{any_context},"| cat > $cytosine_output") or die "Failed to write to $cytosine_output $! \n";
+      }
+      
+      warn "Writing result file containing methylation information for C in any context to $cytosine_output\n";
+      push @sorting_files,$cytosine_output;
+      
+      unless ($no_header) {
+	  print {$fhs{any_context}} "Bismark methylation extractor version $version\n";
+      }
+  }
   ### CpG-context and non-CpG context. THIS SECTION IS OPTIONAL
   ### if --comprehensive AND --merge_non_CpG was specified we are only writing out one CpG-context and one Any-Other-context result file
-  if ($full and $merge_non_CpG) {
+  elsif ($full and $merge_non_CpG) {
       my $cpg_output = my $other_c_output = $output_filename;
       ### C in CpG context
       $cpg_output =~ s/^/CpG_context_/;
@@ -5165,7 +5211,6 @@ sub open_output_filehandles{
 	  print {$fhs{other_context}} "Bismark methylation extractor version $version\n" unless($mbias_only);
       }
   }
-  
   ### if only --merge_non_CpG was specified we will write out 8 different output files, depending on where the (first) unique best alignment has been found
   elsif ($merge_non_CpG) {
       
@@ -5913,7 +5958,16 @@ OPTIONS:
                          --parallel 10 is likely to use around 30 cores of system resources. This option has no bearing
                          on the bismark2bedGraph or genome-wide cytosine report processes.
 
+--yacht                  This option (Yet Another Context Hunting Tool) writes out additional information about the read a methylation
+                         call belongs to, and its output is meant to be fed into the NOMe_filtering script. This option writes out
+                         a single 'any_C_context' file that contains all methylation calls for a read consecutively. Its intended use
+                         is single-cell NOMe-Seq data, and thus this option works only in single-end mode (paired-end reads often suffer
+                         from chimaera problems...)
 
+                         --yacht will add three additional columns to the standard methylation call files:
+                                    <read start>  <read end>  <read orientation>
+                         For forward reads (+ orientation) the start position is the left-most position wheras for reverse reads
+                         (- orientation) it is the rightmost position.
 
 
 bedGraph specific options:
@@ -6013,6 +6067,12 @@ The bismark_methylation_extractor output is in the form:
 * Methylated cytosines receive a '+' orientation,
 * Unmethylated cytosines receive a '-' orientation.
 
+The bismark_methylation_extractor output with --yacht (optional) specified is in the form:
+==========================================================================================
+<seq-ID>  <methylation state*>  <chromosome>  <start position (= end position)>  <methylation call>  <read start>  <read end>  <read orientation>
+
+* Methylated cytosines receive a '+' orientation,
+* Unmethylated cytosines receive a '-' orientation.
 
 
 The bedGraph output (optional) looks like this (tab-delimited; 0-based start coords, 1-based end coords):
@@ -6023,11 +6083,11 @@ track type=bedGraph (header line)
 <chromosome>  <start position>  <end position>  <methylation percentage>
 
 
-
 The coverage output looks like this (tab-delimited, 1-based genomic coords; zero-based half-open coordinates available with '--zero_based'):
 ============================================================================================================================================
 
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
+
 
 
 
@@ -6037,7 +6097,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 21 March 2017.
+This script was last modified on 06 April 2017.
 
 HOW_TO
 }
