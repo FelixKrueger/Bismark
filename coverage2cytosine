@@ -1371,6 +1371,8 @@ sub print_helpfile{
 
 			 This option is currently experimental, and only works if CpG context only and a single genome-wide report
                          were specified (i.e. it doesn't work with the options --CX or --split_by_chromosome).
+                         If --zero_based was specified as well the output coverage file is in zero-based half-open format like
+                         bedGraph files.
 
 --gc/--gc_context        In addition to normal processing this option will reprocess the genome to find methylation in 
                          GpC context. This might be useful for specialist applications where GpC methylases had been
@@ -1412,7 +1414,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 19 January 2017
+                              Script last modified: 31 March 2017
 
 EOF
     ;
