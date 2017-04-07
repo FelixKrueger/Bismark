@@ -2,6 +2,43 @@
 
 ## Changelog for Bismark v0.17.1_dev
 
+### bismark_methylation_extractor
+
+Added new option `--yacht` (for **Y**et **A**nother **C**ontext **H**unting **T**ool) that writes out additional information about the read a methylation call belongs to, and its output is meant to be fed into the NOMe_filtering script (see below). This option writes out a single 'any_C_context' file that contains all methylation calls for a read consecutively. Its intended use is single-cell NOMe-Seq data, so it only works in single-end mode (paired-end reads often suffer from chimaera problems...)
+
+`--yacht` adds three additional columns to the standard methylation call files:
+
+`<read start>  <read end>  <read orientation>`
+
+For forward reads (+ orientation) the start position is the left-most position wheras for reverse reads (- orientation) it is the rightmost position.
+
+### NOMe_filtering
+
+This script reads in methylation call files from the Bismark methylation extractor that contain additional information about the reads that methylation calls belonged to. It processes entire (single-end) reads and then filters calls for NOMe-Seq positions (nucleosome occupancy and methylome sequencing) where accessible DNA gets methylated in a GpC context:
+
+     (i) filters CpGs to only output cytosines in A-CG and T-CG context
+    (ii) filters GC context to only report cytosines in GC-A, GC-C and GC-T context
+
+Both of these measures aim to reduce unwanted biases, i.e. the influence of G-CG (intended) and C-CG (off-target) on endogenous CpG  methylation, and the influence of CpG methylation on (the NOMe-Seq specific) GC context methylation.
+
+The NOMe-Seq filtering output reports cytosines in CpG context only if they are in A-CG or T-CG context,
+and cytosines in GC context only when the C is not in CpG context. The output file is tab-delimited and in
+the following format (1-based coords):
+
+```
+<readID>  <chromosome>  <read start>  <read end>  <count methylated CpG>  <count non-methylated CpG>  <count methylated GC>  <count non-methylated GC>
+HWI-D00436:298:C9KY4ANXX:1:1101:2035:2000_1:N:0:_ACAGTGGT 10 8517979 8518098 0 1 0 1
+HWI-D00436:298:C9KY4ANXX:1:1101:5072:1993_1:N:0:_ACAGTGGT 8 9476630 9476748 0 0 0 2
+```
+
+### coverage2cytosine
+Fixed an [issue](https://github.com/FelixKrueger/Bismark/issues/89) in `--merge_CpG` mode caused by chromosomes ending in CG.
+
+Fixed an [issue](https://github.com/FelixKrueger/Bismark/issues/98) caused by specifying `--zero` as well as `--merge_CpG`. 
+
+### bam2nuc
+
+Fixed an issue where the option `--output_dir` had been ignored.
 
 
 ## RELEASE NOTES FOR Bismark v0.17.0 (18 01 2017)
