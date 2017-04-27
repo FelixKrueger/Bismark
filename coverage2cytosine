@@ -420,7 +420,8 @@ sub generate_genome_wide_cytosine_report {
 	    my $upstream_context; # for NOMe-Seq
 	    
 	    $processed{$last_chr} = 1;
-	    while ( $chromosomes{$last_chr} =~ /([CG])/g){ # C or G
+	    next unless (defined $chromosomes{$last_chr});
+            while ( $chromosomes{$last_chr} =~ /([CG])/g){ # C or G
 		
 		$tri_nt = '';
 		$context = '';
