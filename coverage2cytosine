@@ -25,7 +25,7 @@ my %chromosomes; # storing sequence information of all chromosomes/scaffolds
 my %processed;   # keeping a record of which chromosomes have been processed
 my $coverage2cytosine_version = 'v0.17.0_dev';
 
-my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome) = process_commandline();
+my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$minDepth,$gc_context,$gzip,$tetra,$nome) = process_commandline();
 
 warn "Summary of parameters for genome-wide cytosine report:\n";
 warn '='x78,"\n";
@@ -173,7 +173,7 @@ sub combine_CpGs_to_single_CG_entity{
     my $pooled_u = $u1 + $u2;
 
     # since this is a new coverage file we only write it out if the coverage is at least 1
-    next unless ($pooled_m + $pooled_u) > 0;
+    next unless ($pooled_m + $pooled_u) > $minDepth;
 
     my $pooled_percentage = sprintf ("%.6f",$pooled_m/ ($pooled_m + $pooled_u) *100);
     # print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
@@ -208,6 +208,7 @@ sub process_commandline{
   my $parent_dir;
   my $version;
   my $merge_CpGs;
+  my $minDepth;
   my $gc_context;
   my $tetra;
   my $nome; 
@@ -222,6 +223,7 @@ sub process_commandline{
 				 'parent_dir=s'           => \$parent_dir,
 				 'version'                => \$version,
 				 'merge_CpGs'             => \$merge_CpGs,
+                                 'minDepth=s'	          => \$minDepth,
 				 'GC|GC_context'          => \$gc_context,
 				 'ff|qq'                  => \$tetra,
 				 'gzip'                   => \$gzip,
@@ -309,7 +311,12 @@ VERSION
     if ($CX_context){
       die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if CpG-context is selected only (lose the option --CX)\n";
     }
-    if ($split_by_chromosome){
+
+  unless(defined $minDepth){
+      $minDepth=1;
+  }
+
+   if ($split_by_chromosome){
       die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if a single CpG report is written out (lose the option --split_by_chromosome)\n";
     }
   }
