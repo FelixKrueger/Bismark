@@ -2,8 +2,8 @@
 use warnings;
 use strict;
 use Getopt::Long;
-use FindBin qw($Bin);
-use lib "$Bin/../lib";
+use FindBin qw($RealBin);
+use lib "$RealBin/../lib";
 
 ## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
 
@@ -20,7 +20,7 @@ use lib "$Bin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.17.0';
+my $bismark2report_version = 'v0.17.1_dev';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
@@ -894,8 +894,8 @@ sub read_mbias_report{
 
 sub read_report_template{
   my $doc;
-  warn "Attempting to open file from: $Bin/bismark_sitrep/bismark_sitrep.tpl\n\n" if ($verbose);
-  open (DOC,"$Bin/bismark_sitrep/bismark_sitrep.tpl") or die $!;
+  warn "Attempting to open file from: $RealBin/bismark_sitrep/bismark_sitrep.tpl\n\n" if ($verbose);
+  open (DOC,"$RealBin/bismark_sitrep/bismark_sitrep.tpl") or die $!;
   while(<DOC>){
     chomp;
     $_ =~ s/\r//g;
@@ -906,22 +906,22 @@ sub read_report_template{
   
   # Insert jQuery source
   local $/=undef;
-  warn "Attempting to open file from: $Bin/bismark_sitrep/jquery-3.1.1.min.js\n\n" if ($verbose);
-  open (JQUERY,"$Bin/bismark_sitrep/jquery-3.1.1.min.js") or die $!;
+  warn "Attempting to open file from: $RealBin/bismark_sitrep/jquery-3.1.1.min.js\n\n" if ($verbose);
+  open (JQUERY,"$RealBin/bismark_sitrep/jquery-3.1.1.min.js") or die $!;
   my $jquery_js = <JQUERY>;
   close JQUERY;
   $doc =~ s/\{\{jquery_js\}\}/$jquery_js/g;
   
   # Insert the Highcharts JS source
-  warn "Attempting to open file from: $Bin/bismark_sitrep/highcharts.js\n\n" if ($verbose);
-  open (HIGHCHARTS,"$Bin/bismark_sitrep/highcharts.js") or die $!;
+  warn "Attempting to open file from: $RealBin/bismark_sitrep/highcharts.js\n\n" if ($verbose);
+  open (HIGHCHARTS,"$RealBin/bismark_sitrep/highcharts.js") or die $!;
   my $highchars_js = <HIGHCHARTS>;
   close HIGHCHARTS;
   $doc =~ s/\{\{highcharts_js\}\}/$highchars_js/g;
   
   # Insert the Bismark sitrep JS source
-  warn "Attempting to open file from: $Bin/bismark_sitrep/bismark_sitrep.js\n\n" if ($verbose);
-  open (BMJS,"$Bin/bismark_sitrep/bismark_sitrep.js") or die $!;
+  warn "Attempting to open file from: $RealBin/bismark_sitrep/bismark_sitrep.js\n\n" if ($verbose);
+  open (BMJS,"$RealBin/bismark_sitrep/bismark_sitrep.js") or die $!;
   my $bismark_sitrep_js = <BMJS>;
   close BMJS;
   $doc =~ s/\{\{bismark_sitrep_js\}\}/$bismark_sitrep_js/g;
