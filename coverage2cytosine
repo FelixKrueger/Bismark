@@ -280,6 +280,7 @@ VERSION
     die "Please provide the name of the output file using the option -o/--output filename\n";
   }
 
+
   ### OUTPUT DIR PATH
   if (defined $output_dir){
     unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
