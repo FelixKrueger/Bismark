@@ -173,7 +173,7 @@ sub combine_CpGs_to_single_CG_entity{
     my $pooled_u = $u1 + $u2;
 
     # since this is a new coverage file we only write it out if the coverage is at least 1
-    next unless ($pooled_m + $pooled_u) > 0;
+    next unless ($pooled_m + $pooled_u) > $minDepth;
 
     my $pooled_percentage = sprintf ("%.6f",$pooled_m/ ($pooled_m + $pooled_u) *100);
     # print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
@@ -223,6 +223,7 @@ sub process_commandline{
 				 'version'                => \$version,
 				 'merge_CpGs'             => \$merge_CpGs,
 				 'GC|GC_context'          => \$gc_context,
+				 'minDepth'               => \$minDepth,
 				 'ff|qq'                  => \$tetra,
 				 'gzip'                   => \$gzip,
 				 'nome-seq'               => \$nome,
@@ -1373,6 +1374,8 @@ sub print_helpfile{
                          were specified (i.e. it doesn't work with the options --CX or --split_by_chromosome).
                          If --zero_based was specified as well the output coverage file is in zero-based half-open format like
                          bedGraph files.
+			 
+--minDepth		 Minimum depath (M+U) to be required to output these CpG loci in bedgraph or meged_CpG_bedgraph.
 
 --gc/--gc_context        In addition to normal processing this option will reprocess the genome to find methylation in 
                          GpC context. This might be useful for specialist applications where GpC methylases had been
