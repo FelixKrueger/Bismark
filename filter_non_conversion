@@ -63,7 +63,7 @@ foreach my $file (@ARGV){
     }
     
     unless ($single or $paired){
-	die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
+	die "Please specify either -s (single-end) or -p (paired-end) file, or provide a SAM/BAM file that contains the \@PG header line\n\n";
     }
     
     if ($paired){
@@ -503,7 +503,7 @@ sub bam_isEmpty{
     }
 
     if ($count == 0){
-	die "\n### File appears to be empty, terminating deduplication process. Please make sure the input file has not been truncated. ###\n\n";
+	die "\n### File appears to be empty, terminating non-CG filtering process. Please make sure the input file has not been truncated. ###\n\n";
     }
     close EMPTY or warn "$!\n";
 }
@@ -565,9 +565,9 @@ follow each other in consecutive lines! If the file has been sorted by position 
 by read name first (e.g. using samtools sort -n)  ***
 
 
--s/--single            Deduplicate single-end Bismark BAM files. If not specified the library type is auto-detected.
+-s/--single            Filter single-end Bismark BAM files. If not specified the library type is auto-detected.
 
--p/--paired            Deduplicate paired-end Bismark BAM files. If not specified the library type is auto-detected.
+-p/--paired            Filter paired-end Bismark BAM files. If not specified the library type is auto-detected.
 
 --threshold [int]      The number of methylated cytosines in non-CG context at which reads or read pairs are filtered
                        out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
@@ -584,7 +584,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version              Displays version information and exits.
 
 
-                           Last modified: 30 January 2017
+                           Last modified: 28 April 2017
 
 EOF
     ;
