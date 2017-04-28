@@ -2,6 +2,8 @@
 
 ## Changelog for Bismark v0.17.1_dev
 
+Changed `FindBin qw($Bin)` to `FindBin qw($RealBin)` for `bismark`, `bismark_methylation_extractor`, `bismark2report` and `bismark2summary` so that symlinks are resolved before calling different modules.
+
 ### bismark_methylation_extractor
 
 Added new option `--yacht` (for **Y**et **A**nother **C**ontext **H**unting **T**ool) that writes out additional information about the read a methylation call belongs to, and its output is meant to be fed into the NOMe_filtering script (see below). This option writes out a single 'any_C_context' file that contains all methylation calls for a read consecutively. Its intended use is single-cell NOMe-Seq data, so it only works in single-end mode (paired-end reads often suffer from chimaera problems...)
@@ -11,6 +13,8 @@ Added new option `--yacht` (for **Y**et **A**nother **C**ontext **H**unting **T*
 `<read start>  <read end>  <read orientation>`
 
 For forward reads (+ orientation) the start position is the left-most position wheras for reverse reads (- orientation) it is the rightmost position.
+
+Changed FindBin qw($Bin) to FindBin qw($RealBin) so that symlinks are resolved before calling different modules.
 
 ### NOMe_filtering
 
@@ -39,6 +43,10 @@ Fixed an [issue](https://github.com/FelixKrueger/Bismark/issues/98) caused by sp
 ### bam2nuc
 
 Fixed an issue where the option `--output_dir` had been ignored.
+
+### filter_non_conversion
+
+Removed help text indicating that this script also did the deduplication.
 
 
 ## RELEASE NOTES FOR Bismark v0.17.0 (18 01 2017)
