@@ -5,8 +5,8 @@ $|++;
 use Getopt::Long;
 use Cwd;
 use Carp;
-use FindBin qw($Bin);
-use lib "$Bin/../lib";
+use FindBin qw($RealBin);
+use lib "$RealBin/../lib";
 
 ## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
 
@@ -364,7 +364,7 @@ foreach my $filename (@filenames){
 
     #  print join "\t",@args,"\n";
 
-    system ("$Bin/bismark2bedGraph @args");
+    system ("$RealBin/bismark2bedGraph @args");
 
     warn "Finished BedGraph conversion ...\n\n";
     sleep(1);
@@ -411,7 +411,7 @@ foreach my $filename (@filenames){
       
       push @args, $coverage_output; # this will be the infile
       # warn "Handing over the following infile: $coverage_output\n"; sleep (5);
-      system ("$Bin/coverage2cytosine @args");
+      system ("$RealBin/coverage2cytosine @args");
       
       warn "\n\nFinished generating genome-wide cytosine report\n\n";
     }

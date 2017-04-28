@@ -2,8 +2,8 @@
 use warnings;
 use strict;
 use Getopt::Long;
-use FindBin qw($Bin);
-use lib "$Bin/../lib";
+use FindBin qw($RealBin);
+use lib "$RealBin/../lib";
 
 ## This program is Copyright (C) 2010-17, Felix Krueger <felix.krueger@babraham.ac.uk>
 ## and Phil Ewels <phil.ewels@scilifelab.se>

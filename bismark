@@ -5,8 +5,8 @@ use IO::Handle;
 use Cwd;
 $|++;
 use Getopt::Long;
-use FindBin qw($Bin);
-use lib "$Bin/../lib";
+use FindBin qw($RealBin);
+use lib "$RealBin/../lib";
 
 ## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
 
@@ -857,7 +857,7 @@ foreach my $filename (@filenames){
 	    push @args, $final_output_filename;
 	    print "@args","\n"; sleep(3);
 
-	    system ("$Bin/bam2nuc @args");
+	    system ("$RealBin/bam2nuc @args");
 	    warn "Finished bam2nuc calculation ...\n\n";
 
 	}
