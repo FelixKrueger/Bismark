@@ -27,7 +27,7 @@ use lib "$RealBin/../lib";
 my $parent_dir = getcwd();
 my $bismark_version = 'v0.17.1_dev';
 my $start_run = time();
-warn "Run started at: $start_run\n";
+# warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
 
 
@@ -3982,10 +3982,10 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	die "Failed to extract alignment score 1 ($alignment_score_1) and MD tag ($MD_tag_1)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_1 and defined $MD_tag_1);
 	die "Failed to extract alignment score 2 ($alignment_score_2) and MD tag ($MD_tag_2)!\nlast alignment 1: $fhs[$index]->{last_line_1}\nlast alignment 2: $fhs[$index]->{last_line_2}\n" unless (defined $alignment_score_2 and defined $MD_tag_2);
 
-	# warn "First read 1 alignment score is: '$alignment_score_1'\n";
-	# warn "First read 2 alignment score is: '$alignment_score_2'\n";
-	# warn "MD tag 1 is: '$MD_tag_1'\n";
-	# warn "MD tag 2 is: '$MD_tag_2'\n";
+	    # warn "First read 1 alignment score is: '$alignment_score_1'\n";
+	    # warn "First read 2 alignment score is: '$alignment_score_2'\n";
+	    # warn "MD tag 1 is: '$MD_tag_1'\n";
+	    # warn "MD tag 2 is: '$MD_tag_2'\n";
 
 	### To decide whether a sequence pair has a unique best alignment we will look at the highest sum of alignment scores from both alignments
 	my $sum_of_alignment_scores_1 = $alignment_score_1 + $alignment_score_2 ;
@@ -4036,23 +4036,33 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		# warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
 	    }
 	}
-
+	    
+	    # If either of the reads has a second best alignment but the other one doesn't we assign a value of the best alignment, i.e. the AS score
+	    if (defined $second_best_1 or defined $second_best_2){    
+		unless (defined $second_best_1){
+		    $second_best_1 = $alignment_score_1;
+		}
+		unless (defined $second_best_2){
+		    $second_best_2 = $alignment_score_2;
+		}
+		# warn "\n\n#############################\n\nXS Read 1: $second_best_1\nXS Read 2: $second_best_2\n\n##########################\n\n";
+	    }
+	    
 	if (defined $second_best_1 and defined $second_best_2){
 	    my $sum_of_alignment_scores_second_best = $second_best_1 + $second_best_2;
 	    # warn "Second best alignment_score_1 is: '$second_best_1'\n";
 	    # warn "Second best alignment_score_2 is: '$second_best_2'\n";
 	    # warn "Second best alignment sum of alignment scores is: '$sum_of_alignment_scores_second_best'\n";
-
+	    
 	    # If the first alignment score for the first read pair is the same as the alignment score of the second best hit we we keep a memory of this
 	    if ($sum_of_alignment_scores_1 == $sum_of_alignment_scores_second_best){
-
 		# checking to see if this read pair produced the best alignment
 		if ($sum_of_alignment_scores_1 == $best_AS_so_far){  # yes this is the best read pair so far, either within the thread or between threads, however it is ambiguous
-		    # warn "Read pair is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+		    #warn "Read pair is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
 		    $amb_same_thread = 1;
 		}
 		else{
-		    # warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+		    warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
 		}
 
 		### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
@@ -6339,11 +6349,10 @@ sub biTransformFastQFiles {
     return ($G_to_A_infile);
   }
   else{
-    close CTOT or die "Failed to close filehandle $!\n";
-    close GTOA or die "Failed to close filehandle $!\n";
-    warn "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
+      close CTOT or die "Failed to close filehandle $!\n";
+      close GTOA or die "Failed to close filehandle $!\n";
+      warn "\nCreated C -> T as well as G -> A converted versions of the FastQ file $filename ($count sequences in total)\n\n";
   }
-
   return ($C_to_T_infile,$G_to_A_infile);
 }
 
@@ -6516,9 +6525,9 @@ sub biTransformFastQFiles_paired_end {
     }
   }
   else{
-    close CTOT or die "Failed to close filehandle $!\n";
-    close GTOA or die "Failed to close filehandle $!\n";
-    return ($C_to_T_infile,$G_to_A_infile);
+      close CTOT or die "Failed to close filehandle $!\n";
+      close GTOA or die "Failed to close filehandle $!\n";
+      return ($C_to_T_infile,$G_to_A_infile);
   }
 }
 
@@ -10313,6 +10322,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 15 March 2017
+Last edited on 03 May 2017
 HOW_TO
 }
