@@ -4,6 +4,10 @@
 
 Changed `FindBin qw($Bin)` to `FindBin qw($RealBin)` for `bismark`, `bismark_methylation_extractor`, `bismark2report` and `bismark2summary` so that symlinks are resolved before calling different modules.
 
+### Bismark
+
+Fixed the behaviour of (very rare) ambiguous [corner cases](https://github.com/FelixKrueger/Bismark/issues/105) where a sequence had a perfect sequence duplication within the valid paired-end distance.
+
 ### bismark_methylation_extractor
 
 Added new option `--yacht` (for **Y**et **A**nother **C**ontext **H**unting **T**ool) that writes out additional information about the read a methylation call belongs to, and its output is meant to be fed into the NOMe_filtering script (see below). This option writes out a single 'any_C_context' file that contains all methylation calls for a read consecutively. Its intended use is single-cell NOMe-Seq data, so it only works in single-end mode (paired-end reads often suffer from chimaera problems...)
