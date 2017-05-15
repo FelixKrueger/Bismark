@@ -13,7 +13,7 @@ unless (-d $dir){
   mkdir $dir or die "Failed to create directory: $!\n\n";
 }
 
-my @files = ('RELEASE_NOTES.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','RRBS_Guide.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion');
+my @files = ('CHANGELOG.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','RRBS_Guide.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion','NOMe_filtering');
 
 my @reporting = ('bismark_sitrep.js','bismark_sitrep.tpl','highcharts.js','jquery-3.1.1.min.js');
 
@@ -66,7 +66,7 @@ sub copy_docs_and_warn{
 ### SETTING PERMISSIONS
 #######################
 
-@files = ('bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion');
+@files = ('bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion','NOMe_filtering');
 
 foreach my $file (@files){
   set_permissions($file);

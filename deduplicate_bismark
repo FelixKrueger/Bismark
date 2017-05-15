@@ -32,7 +32,7 @@ use Getopt::Long;
 ### 16 09 2016
 ### to detect paired-end command from the @PG line we now allow -1 and -2 or --1 and --2 (or a combination thereof)
 
-my $dedup_version = 'v0.17.0';
+my $dedup_version = 'v0.18.0';
 
 my $help;
 my $representative;
