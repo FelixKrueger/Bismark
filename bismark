@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.18.0';
+my $bismark_version = 'v0.18.1_dev';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -4062,7 +4062,7 @@ sub check_bowtie_results_paired_ends_bowtie2{
 		    $amb_same_thread = 1;
 		}
 		else{
-		    warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+		    # warn "This read pair has a worse alignment score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
 		}
 
 		### if there is a better alignment later on -> fine. If not, the read will get booted altogether one way or another
@@ -10322,6 +10322,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 03 May 2017
+Last edited on 22 May 2017
 HOW_TO
 }
