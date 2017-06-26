@@ -2633,8 +2633,8 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 }
 
 sub check_bowtie_results_single_end{
-  my ($sequence,$identifier,$quality_value) = @_;
 
+  my ($sequence,$identifier,$quality_value) = @_;
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
     $quality_value = 'I'x(length$sequence);
   }
@@ -2804,6 +2804,7 @@ sub check_bowtie_results_single_end{
   ### Declaring an empty hash reference which will store all information we need for the methylation call
   my $methylation_call_params; # hash reference!
   ### sorting in ascending order
+
   foreach my $mismatch_number (sort {$a<=>$b} keys %mismatches){
 
     ### if there is only 1 entry in the hash with the lowest number of mismatches we accept it as the best alignment
@@ -2950,7 +2951,7 @@ sub check_bowtie_results_single_end_bowtie2{
   my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
 
   my %alignments = ();
-
+  
   ### reading from the Bowtie 2 output filehandles
   foreach my $index (0..$#fhs){
     #  print "Index: $index\n";
@@ -3063,21 +3064,21 @@ sub check_bowtie_results_single_end_bowtie2{
       else{
 	  if ($alignment_score >= $best_AS_so_far){ # AS are generally negative with a maximum of 0;
 	      # 19 07 2016: changed this to >= so that equally good alignments are also added. Ambiguous alignments from different threads will be identified later on
-	      $best_AS_so_far = $alignment_score;
 	      $overwrite++;
-	      # warn "Found better or equal alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
-
+	      
 	      # 22 07 2016: resetting the ambiguous score within same thread only if the current alignment is really better than the previous one
 	      if ($alignment_score > $best_AS_so_far){
 		  # warn "Resetting amb within thread value to 0\n";
 		  $amb_same_thread = 0;
-
+		  
 		  if ($ambig_bam){ # also setting a new first_ambig_alignment
 		      $first_ambig_alignment = $fhs[$index]->{last_line};
 		      $first_ambig_alignment =~ s/_(CT|GA)_converted//;
 		      # warn "$first_ambig_alignment\n"; sleep(1);
 		  }
 	      }
+	      $best_AS_so_far = $alignment_score; # 26 06 2017: moved this down so that the $amb_same_thread gets a chance to reset
+	      # warn "Found better or equal alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
 	  }
 	  else{
 	      # warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
@@ -3093,7 +3094,7 @@ sub check_bowtie_results_single_end_bowtie2{
 
 	  # If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
 	  if ($alignment_score == $second_best){
-
+	      
 	      # checking to see if this read produced the best alignment
 	      if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
 		  # warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
@@ -4011,16 +4012,14 @@ sub check_bowtie_results_paired_ends_bowtie2{
 	else{
 	    if ($sum_of_alignment_scores_1 >= $best_AS_so_far){ # AS are generally negative with a maximum of 0
 		# 19 07 2016 Changed to >= so that equally good alignments to different positions get added as well. Ambiguous alignments are identified and removed later.
-		$best_AS_so_far = $sum_of_alignment_scores_1;
 		$overwrite = 1;
 
-		# warn "Found better or equal sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
 		# resetting the ambiguous within thread memory (if applicable at all) only if the current alignment is really better than the previous one.
 		# 22 07 2016: ambiguous score within same thread only resets if the current alignment is really better than the previous one
 		if ($sum_of_alignment_scores_1 > $best_AS_so_far){
 		    # warn "Resetting amb within thread value to 0\n";
 		    $amb_same_thread = 0;
-
+		    
 		    if ($ambig_bam){ # also setting a new first_ambig_alignment
 			# Read 1
 			$first_ambig_alignment_line1 = $fhs[$index]->{last_line_1};
@@ -4031,6 +4030,8 @@ sub check_bowtie_results_paired_ends_bowtie2{
 			# warn "$first_ambig_alignment_line1\n$first_ambig_alignment_line2\n\n"; sleep(1);
 		    }
 		}
+		$best_AS_so_far = $sum_of_alignment_scores_1; # moved this down so that $amb_within_thread gets a chance to be reset
+		# warn "Found better or equal sum of alignment scores ($sum_of_alignment_scores_1), setting \$best_AS_so_far to $best_AS_so_far\n";
 	    }
 	    else{
 		# warn "current alignment (AS $sum_of_alignment_scores) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
@@ -10322,6 +10323,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last edited on 22 May 2017
+Last modified on 26 June 2017
 HOW_TO
 }
