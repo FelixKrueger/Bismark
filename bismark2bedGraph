@@ -712,11 +712,18 @@ VERSION
     $coverage_threshold = 1;
   }
 
+ 
   ### SORT buffer size
   if (defined $sort_size){
-    unless ($sort_size =~ /^\d+\%$/ or $sort_size =~ /^\d+(K|M|G|T)$/){
-      die "Please select a buffer size as percentage (e.g. --buffer_size 20%) or a number to be multiplied with K, M, G, T etc. (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line\n";
-    }
+
+      ### Using ample memory and the UNIX SORT are mutually exclusive
+      if ($ample_mem){
+	  die "The options '--ample_mem' and using the UNIX sort function are mutually exclusive. Please make your pick!\n\n"; 
+      }
+      
+      unless ($sort_size =~ /^\d+\%$/ or $sort_size =~ /^\d+(K|M|G|T)$/){
+	  die "Please select a buffer size as percentage (e.g. --buffer_size 20%) or a number to be multiplied with K, M, G, T etc. (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line\n";
+      }
   }
   else{
     $sort_size = '2G';
@@ -824,7 +831,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 09 December 2015
+                          Script last modified: 07 June 2017
 
 EOF
     ;
