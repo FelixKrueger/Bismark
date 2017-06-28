@@ -7684,7 +7684,7 @@ sub process_command_line{
   my $cram;
   my $cram_ref;
   my $nucleotide_coverage;
-  my $dovetail;
+  my $dovetail_flag;
   my $no_dovetail;
 
   my $command_line = GetOptions ('help|man'                => \$help,
@@ -7742,6 +7742,7 @@ sub process_command_line{
 				 'cram'                    => \$cram,
 				 'cram_ref=s'              => \$cram_ref,
 				 'nucleotide_coverage'     => \$nucleotide_coverage,
+				 'dovetail'                => \$dovetail_flag, # Not used. Kept here for backwards compatability.
 				 'no_dovetail'             => \$no_dovetail,
 				);
 
