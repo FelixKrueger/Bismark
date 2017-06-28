@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.18.1_dev
+## Changelog for Bismark v0.18.2
 
 ### Bismark
 
