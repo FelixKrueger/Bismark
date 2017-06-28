@@ -10190,19 +10190,19 @@ Bowtie 2 paired-end options:
                          satisfy the paired-end constraints (--fr/--rf/--ff, -I, -X). This option disables that behavior
                          and it is on by default.
 
---dovetail               It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending
+--no_dovetail            It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending
                          "past" each other as in this example:
 
                          Mate 1:                 GTCAGCTACGATATTGTTTGGGGTGACACATTACGC
                          Mate 2:            TATGAGTCAGCTACGATATTGTTTGGGGTGACACAT
                          Reference: GCAGATTATATGAGTCAGCTACGATATTGTTTGGGGTGACACATTACGCGTCTTTGAC
 
-                         By default, dovetailing is considered inconsistent with concordant alignment, but setting --dovetail
-                         causes Bowtie 2 to consider dovetailing alignments as concordant. This becomes relevant whenever
-                         Reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues.
-                         --dovetail is set automatically for paired-end libraries.
+                         By default, dovetailing is considered inconsistent with concordant alignment, but by default
+                         Bismark calls Bowtie 2 with --dovetail, causing it to consider dovetailing alignments as
+                         concordant. This becomes relevant whenever reads are clipped from their 5' end prior to mapping,
+                         e.g. because of quality or bias issues.
 
---no_dovetail            Disables the --dovetail option for paired-end alignments. Default: OFF.
+                         Specify --no_dovetail to turn off this behaviour for paired-end libraries. Default: OFF.
 
 
 Bowtie 2 effort options:
