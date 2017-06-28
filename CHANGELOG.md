@@ -1,6 +1,21 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.17.1_dev
+## Changelog for Bismark v0.18.1_dev
+
+### Bismark
+
+Changed the timing of when ambiguous within same thread alignments are reset. Previously some alignments were incorrectly considered ambiguous ([see here](https://github.com/FelixKrueger/Bismark/issues/108)). 
+
+### bismark2bedGraph
+
+The option `--ample_mem` is now mutually exclusive with specifying memory for the `UNIX sort` command via the option `--buffer_size`.
+
+
+## Changelog for Bismark v0.18.1
+
+Commented out warning messages for certain ambiguous alignments for paired-end alignments.
+
+## Changelog for Bismark v0.18.0
 
 Changed `FindBin qw($Bin)` to `FindBin qw($RealBin)` for `bismark`, `bismark_methylation_extractor`, `bismark2report` and `bismark2summary` so that symlinks are resolved before calling different modules.
 
