@@ -23,26 +23,29 @@ use Carp;
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
 my %processed;   # keeping a record of which chromosomes have been processed
-my $coverage2cytosine_version = 'v0.18.2';
+my $coverage2cytosine_version = 'v0.18.2_dev';
 
-my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome) = process_commandline();
+my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco) = process_commandline();
 
 warn "Summary of parameters for genome-wide cytosine report:\n";
 warn '='x78,"\n";
-warn "Coverage infile:\t\t\t$coverage_infile\n";
-warn "Output directory:\t\t\t>$output_dir<\n";
-warn "Parent directory:\t\t\t>$parent_dir<\n";
-warn "Genome directory:\t\t\t>$genome_folder<\n";
+warn "Coverage infile:\t\t\t\t$coverage_infile\n";
+warn "Output directory:\t\t\t\t>$output_dir<\n";
+warn "Parent directory:\t\t\t\t>$parent_dir<\n";
+warn "Genome directory:\t\t\t\t>$genome_folder<\n";
 
 if ($CX_context){
-  warn "CX context:\t\t\t\tyes\n";
+  warn "CX context:\t\t\t\t\tyes\n";
 }
 else{
-  warn "CX context:\t\t\t\tno (CpG context only, default)\n";
+  warn "CX context:\t\t\t\t\tno (CpG context only, default)\n";
 }
 
 if ($merge_CpGs){
-  warn "Pooling CpG top/bottom strand evidence:\tyes\n";
+  warn "Pooling CpG top/bottom strand evidence:\t\tyes\n";
+  if (defined $disco){
+      warn "Applying top/bottom strand discrepancy filter:\tyes ($disco% methylation difference tolerated)\n";
+  }
 }
 
 if($nome){
@@ -59,28 +62,28 @@ if($gc_context){
 }
 
 if ($tetra){
-    warn "Tetra/Penta nucleotide context:\t\tyes\n";
+    warn "Tetra/Penta nucleotide context:\t\t\tyes\n";
 }
 
 if ($zero){
-  warn "Genome coordinates used:\t\t0-based (user specified)\n";
+  warn "Genome coordinates used:\t\t\t0-based (user specified)\n";
 }
 else{
-  warn "Genome coordinates used:\t\t1-based (default)\n";
+  warn "Genome coordinates used:\t\t\t1-based (default)\n";
 }
 
 if ($gzip){
-    warn "GZIP compression:\t\t\tyes\n";
+    warn "GZIP compression:\t\t\t\tyes\n";
 }
 else{
-    warn "GZIP compression:\t\t\tno\n";
+    warn "GZIP compression:\t\t\t\tno\n";
 }
 
 if ($split_by_chromosome){
-  warn "Split by chromosome:\t\t\tyes\n\n\n";
+  warn "Split by chromosome:\t\t\t\tyes\n\n\n";
 }
 else{
-  warn "Split by chromosome:\t\t\tno\n\n\n";
+  warn "Split by chromosome:\t\t\t\tno\n\n\n";
 }
 sleep (3);
 
@@ -109,87 +112,132 @@ if ($gc_context){
 
 
 sub combine_CpGs_to_single_CG_entity{
-  my $CpG_report_file = shift;
-  warn "Now merging top and bottom strand CpGs into a single CG dinucleotide entity\n";
 
-  open (IN,$CpG_report_file) or die "Failed to open file $CpG_report_file: $!\n\n";
-  my $pooled_CG = $CpG_report_file;
-  $pooled_CG =~ s/$/.merged_CpG_evidence.cov/;
-  open (OUT,'>',$pooled_CG) or die "Failed to write to file '$pooled_CG': $!\n\n";
-  warn ">>> Writing a new coverage file with top and bottom strand CpG methylation evidence merged to $pooled_CG <<<\n\n";
-  sleep(1);
+    my $CpG_report_file = shift;
+    
+    warn "Now merging top and bottom strand CpGs into a single CG dinucleotide entity (writing to file >> $CpG_report_file <<)\n";
+    
+    open (IN,$CpG_report_file) or die "Failed to open file $CpG_report_file: $!\n\n";
+    
+    my $pooled_CG        = $CpG_report_file;
+    my $disco_CpG_report = $CpG_report_file;
+    $pooled_CG        =~ s/$/.merged_CpG_evidence.cov/;
+    $disco_CpG_report =~ s/$/.merged_CpG_evidence.discordant.cov/;
+    
+    open (OUT,'>',$pooled_CG) or die "Failed to write to file '$pooled_CG': $!\n\n";
+    warn ">>> Writing a new coverage file with top and bottom strand CpG methylation evidence merged to $pooled_CG <<<\n\n";
 
-  while (1){
-    my $line1 = <IN>;
-    my $line2 = <IN>;
-    last unless ($line1 and $line2);
+    if ($disco){
+	warn "CpG dinucleotides that disagree in their methylation values between top and bottom strand more than $disco% are written to a $disco_CpG_report\n\n";
+	open (DISCO,'>',$disco_CpG_report) or die "Failed to write to file $disco_CpG_report: $!\n\n";
+    }
+    
+    while (1){
+	my $line1 = <IN>;
+	my $line2 = <IN>;
+	last unless ($line1 and $line2);
 
-    chomp $line1;
-    chomp $line2;
+	chomp $line1;
+	chomp $line2;
 
-    my ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-    my ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
-    # print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
-    # print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n"; sleep(1);
+	my ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+	my ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	# print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
+	# print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n"; sleep(1);
 
-    # If there is a CpG right at the start of the reference chromosome it will be present for the top strand,
-    # but will be missing for the reverse strand because it is impossible to determine a trinucleotide context
-    if ($zero){ # if the CpG report was written out with zero-based coordinates 
-   	if ($pos1 < 1){ # the position has to be adjusted to by -1
-	    $line1 = $line2;
-	    $line2 = <IN>;
-	    chomp $line2;
-	    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-	    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	# If there is a CpG right at the start of the reference chromosome it will be present for the top strand,
+	# but will be missing for the reverse strand because it is impossible to determine a trinucleotide context
+	if ($zero){ # if the CpG report was written out with zero-based coordinates 
+	    if ($pos1 < 1){ # the position has to be adjusted to by -1
+		$line1 = $line2;
+		$line2 = <IN>;
+		chomp $line2;
+		($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+		($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	    }
 	}
-    }
-    else{ # default
-	if ($pos1 < 2){
-	    $line1 = $line2;
-	    $line2 = <IN>;
-	    chomp $line2;
-	    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-	    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	else{ # default
+	    if ($pos1 < 2){
+		$line1 = $line2;
+		$line2 = <IN>;
+		chomp $line2;
+		($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+		($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+	    }
 	}
+
+	# a few sanity checks
+	die "The context of the first line was not CG:\t$line1"  unless ($context1 eq 'CG');
+	die "The context of the second line was not CG:\t$line2" unless ($context2 eq 'CG');
+
+	unless ($strand1 eq '+' and $strand2 eq'-'){
+	    die "The strand of line 1 and line 2 were not + and -:\nline1:\t$line1\nline2:\t$line2\n";
+	}
+	unless ($pos2 eq ($pos1 + 1)){
+	    die "The reported position were not spaced 1 bp apart:\nline1:\t$line1\nline2:\t$line2\n";
+	}
+	unless($chr1 eq $chr2){
+	    die "The chromsome information for line 1 and 2 did not match:\nline1:\t$line1\nline2:\t$line2\n";
+	}
+
+	my $percentage_top;
+	my $percentage_bottom;
+
+	# If the two strands produce discordant methylation percentages we print them to the discordant file instead
+	my $discordant = 0; 
+	if ( ($m1 + $u1 == 0) or ($m2 + $u2 == 0)){
+	    # if either the top strand or bottom strand was not measured at all we cannot judge their discordance. 
+	    # In this case the results are written out the standard merged CpG report file
+
+	    # warn "At least one C was not measured at all:\n$line1\n$line2\n\n";sleep(1);
+	}
+	else{
+	    $percentage_top    = sprintf ("%.1f",$m1/ ($m1 + $u1) * 100);
+	    $percentage_bottom = sprintf ("%.1f",$m2/ ($m2 + $u2) * 100);
+	    if ( abs($percentage_top - $percentage_bottom) > $disco){
+		# warn "difference was greater than threshold! (",abs($percentage_top - $percentage_bottom),"). Discordant...\n";
+		# warn "$line1\n$line2\n\n##################\n";sleep(1);
+		$discordant = 1;
+	    }
+	    else{ # fine
+		# warn "difference withing limits! (",abs($percentage_top - $percentage_bottom),"). Fine...\n";
+		# warn "$line1\n$line2\n\n~~~~~~~~~~~~~~~~~\n";sleep(1);
+	    }
+	}
+	
+	# This looks alright, let's pool the 2 strands
+	my $pooled_m = $m1 + $m2;
+	my $pooled_u = $u1 + $u2;
+	
+	# since this is a new coverage file we only write it out if the coverage is at least 1
+	next unless ($pooled_m + $pooled_u) > 0;
+	
+	my $pooled_percentage = sprintf ("%.6f",$pooled_m/ ($pooled_m + $pooled_u) *100);
+	
+	# print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
+	# print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n";
+	# print join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+	# sleep(1);
+	if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
+	    if ($discordant){
+		print DISCO join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+	    }
+	    else{
+		print OUT join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+	    }
+	}
+	else{
+	    if ($discordant){
+		print DISCO join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+	    }
+	    else{
+		print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+	    }
+	}
+
     }
 
-    # a few sanity checks
-    die "The context of the first line was not CG:\t$line1"  unless ($context1 eq 'CG');
-    die "The context of the second line was not CG:\t$line2" unless ($context2 eq 'CG');
-
-    unless ($strand1 eq '+' and $strand2 eq'-'){
-      die "The strand of line 1 and line 2 were not + and -:\nline1:\t$line1\nline2:\t$line2\n";
-    }
-    unless ($pos2 eq ($pos1 + 1)){
-      die "The reported position were not spaced 1 bp apart:\nline1:\t$line1\nline2:\t$line2\n";
-    }
-    unless($chr1 eq $chr2){
-      die "The chromsome information for line 1 and 2 did not match:\nline1:\t$line1\nline2:\t$line2\n";
-    }
-
-    # This looks alright from what I can tell, lets pool the 2 strands
-
-    my $pooled_m = $m1 + $m2;
-    my $pooled_u = $u1 + $u2;
-
-    # since this is a new coverage file we only write it out if the coverage is at least 1
-    next unless ($pooled_m + $pooled_u) > 0;
-
-    my $pooled_percentage = sprintf ("%.6f",$pooled_m/ ($pooled_m + $pooled_u) *100);
-    # print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
-    # print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n";
-    # print join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-    # sleep(1);
-    if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
-	print OUT join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-    }
-    else{
-	print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-    }
-
-  }
-
-  warn "CpG merging complete. Good luck finding DMRs with bsseq!\n\n";
+    warn "CpG merging complete. Good luck finding DMRs with bsseq!\n\n";
 
 }
 
@@ -211,6 +259,7 @@ sub process_commandline{
   my $gc_context;
   my $tetra;
   my $nome; 
+  my $disco;
 
   my $command_line = GetOptions ('help|man'               => \$help,
 				 'dir=s'                  => \$output_dir,
@@ -226,6 +275,7 @@ sub process_commandline{
 				 'ff|qq'                  => \$tetra,
 				 'gzip'                   => \$gzip,
 				 'nome-seq'               => \$nome,
+				 'discordance_filter=i'     => \$disco,
       );
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -323,8 +373,17 @@ VERSION
       }
   }
 
+  # Discordance Filter of top and bottom strand CpGs
+  if (defined $disco){
+      die "Top/bottom strand CpG discordance filtering requires the option '--merge_CpG' as well. Please respecify!\n\n" unless ($merge_CpGs);
+      
+      # The discordance filter is the absolute percent methylation difference between top and bottom strand CpGs
+      unless ($disco > 0 and $disco <= 100){
+	  die "The discordance between the top and bottom strand methylation of a CpG dinucleotides has to be a methylation percentage difference between 1 and 100. Please respecify!\n\n";
+      }
+  }
   
-  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome);
+  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco);
 }
 
 
@@ -1374,6 +1433,19 @@ sub print_helpfile{
                          If --zero_based was specified as well the output coverage file is in zero-based half-open format like
                          bedGraph files.
 
+--discordance <int>      When in '--merge_CpG' mode, apply a filter for the maximum allowed discordance between top and bottom
+                         strand methylation values expressed as the absolute difference in percent methylation. Discordant CpGs
+                         are written to a file called 'merged_CpG_evidence.discordant.cov'. As example consider:
+ 
+                         top:     gi|170079663|ref|NC_010473.1|   573     +       5       6       CG      CGC
+                         bottom:  gi|170079663|ref|NC_010473.1|   574     -       13      4       CG      CGG
+                         with '--discordance 20'
+
+                         The methylation % difference here is 31%, so the read would go into the discordant.cov file. CpG positions
+                         for which either the top or bottom strand was not measured at all will not be assessed for discordance, and
+                         hence appear in the regular 'merged_CpG_evidence.cov' file.
+
+
 --gc/--gc_context        In addition to normal processing this option will reprocess the genome to find methylation in 
                          GpC context. This might be useful for specialist applications where GpC methylases had been
                          deployed. The output format is exactly the same as for the normal cytosine report, and only
@@ -1414,7 +1486,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 31 March 2017
+                              Script last modified: 13 July 2017
 
 EOF
     ;
