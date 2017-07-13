@@ -122,7 +122,7 @@ sub combine_CpGs_to_single_CG_entity{
     my $pooled_CG        = $CpG_report_file;
     my $disco_CpG_report = $CpG_report_file;
     $pooled_CG        =~ s/$/.merged_CpG_evidence.cov/;
-    $disco_CpG_report =~ s/$/.merged_CpG_evidence.discordant.cov/;
+    $disco_CpG_report =~ s/$/.discordant_CpG_evidence.cov/;
     
     open (OUT,'>',$pooled_CG) or die "Failed to write to file '$pooled_CG': $!\n\n";
     warn ">>> Writing a new coverage file with top and bottom strand CpG methylation evidence merged to $pooled_CG <<<\n\n";
@@ -184,7 +184,6 @@ sub combine_CpGs_to_single_CG_entity{
 	my $percentage_bottom;
 
 	# If the two strands produce discordant methylation percentages we print them to the discordant file instead
-	my $discordant = 0; 
 	if ( ($m1 + $u1 == 0) or ($m2 + $u2 == 0)){
 	    # if either the top strand or bottom strand was not measured at all we cannot judge their discordance. 
 	    # In this case the results are written out the standard merged CpG report file
@@ -192,12 +191,21 @@ sub combine_CpGs_to_single_CG_entity{
 	    # warn "At least one C was not measured at all:\n$line1\n$line2\n\n";sleep(1);
 	}
 	else{
-	    $percentage_top    = sprintf ("%.1f",$m1/ ($m1 + $u1) * 100);
-	    $percentage_bottom = sprintf ("%.1f",$m2/ ($m2 + $u2) * 100);
+	    $percentage_top    = sprintf ("%.6f",$m1/ ($m1 + $u1) * 100);
+	    $percentage_bottom = sprintf ("%.6f",$m2/ ($m2 + $u2) * 100);
 	    if ( abs($percentage_top - $percentage_bottom) > $disco){
 		# warn "difference was greater than threshold! (",abs($percentage_top - $percentage_bottom),"). Discordant...\n";
 		# warn "$line1\n$line2\n\n##################\n";sleep(1);
-		$discordant = 1;
+		
+		if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
+		    print DISCO join ("\t",$chr1,$pos1,$pos1+1,$percentage_top,$m1,$u1),"\n";
+		    print DISCO join ("\t",$chr2,$pos2,$pos2+1,$percentage_bottom,$m2,$u2),"\n";
+		}	
+		else{
+		    print DISCO join ("\t",$chr1,$pos1,$pos1,$percentage_top,$m1,$u1),"\n";
+		    print DISCO join ("\t",$chr2,$pos2,$pos2,$percentage_bottom,$m2,$u2),"\n";
+		}
+		next; # not proceeding to merging
 	    }
 	    else{ # fine
 		# warn "difference withing limits! (",abs($percentage_top - $percentage_bottom),"). Fine...\n";
@@ -219,20 +227,10 @@ sub combine_CpGs_to_single_CG_entity{
 	# print join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
 	# sleep(1);
 	if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
-	    if ($discordant){
-		print DISCO join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-	    }
-	    else{
-		print OUT join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-	    }
+	    print OUT join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
 	}
 	else{
-	    if ($discordant){
-		print DISCO join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-	    }
-	    else{
-		print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
-	    }
+	    print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
 	}
 
     }
@@ -275,7 +273,7 @@ sub process_commandline{
 				 'ff|qq'                  => \$tetra,
 				 'gzip'                   => \$gzip,
 				 'nome-seq'               => \$nome,
-				 'discordance_filter=i'     => \$disco,
+				 'discordance_filter=i'   => \$disco,
       );
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -1435,7 +1433,7 @@ sub print_helpfile{
 
 --discordance <int>      When in '--merge_CpG' mode, apply a filter for the maximum allowed discordance between top and bottom
                          strand methylation values expressed as the absolute difference in percent methylation. Discordant CpGs
-                         are written to a file called 'merged_CpG_evidence.discordant.cov'. As example consider:
+                         are written to a file called 'discordant_CpG_evidence.cov' (not merged). As example consider:
  
                          top:     gi|170079663|ref|NC_010473.1|   573     +       5       6       CG      CGC
                          bottom:  gi|170079663|ref|NC_010473.1|   574     -       13      4       CG      CGG
