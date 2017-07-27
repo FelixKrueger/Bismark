@@ -15,7 +15,7 @@ Bismark needs the following tools to be installed and available in the `PATH`:
 * [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [Bowtie1](http://bowtie-bio.sourceforge.net/)
 * [Samtools](http://www.htslib.org/)
 
-## Documentation
+## Documentation
 The Bismark documentation can be found with the code in the [Docs](Docs) subfolder and also read online.
 
 There is also an overview of the alignment modes that are currently supported by Bismark: [Bismark alignment modes](http://www.bioinformatics.babraham.ac.uk/projects/bismark/Bismark_alignment_modes.pdf) (pdf).
