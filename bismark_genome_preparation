@@ -261,7 +261,7 @@ sub process_sequence_files {
 
     ### Exiting if a chromosome with the same name was present already
     if (exists $chromosomes{$chromosome_name}){
-      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+      die "Exiting because chromosome name '$chromosome_name' already exists. Please make sure all chromosomes have a unique name!\n";
     }
     else{
       $chromosomes{$chromosome_name}++;
@@ -529,7 +529,7 @@ sub read_genome_into_memory{
 	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
 	if (exists $chromosomes{$chromosome_name}){
 	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
-	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name!\n";
+	  die "Exiting because chromosome name '$chromosome_name' already exists. Please make sure all chromosomes have a unique name!\n";
 	}
 	else {
 	  if (length($sequence) == 0){
@@ -550,7 +550,7 @@ sub read_genome_into_memory{
 
     if (exists $chromosomes{$chromosome_name}){
       warn "chr $chromosome_name (",length $sequence ," bp)\t";
-      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+      die "Exiting because chromosome name '$chromosome_name' already exists. Please make sure all chromosomes have a unique name.\n";
     }
     else{
       if (length($sequence) == 0){
@@ -630,6 +630,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta). Specifying this path is mandatory.
 
 
-This script was last modified on 07 November 2016.
+This script was last modified on 15 August 2017.
 HOW_TO
 }
