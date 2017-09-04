@@ -49,15 +49,15 @@ if ($merge_CpGs){
 }
 
 if($nome){
-    warn "Sample specified as NOMe-Seq\t\tyes (only reporting ACG and TCG context)\n";
+    warn "Sample specified as NOMe-Seq\t\t\tyes (only reporting ACG and TCG context)\n";
 }
 
 if($gc_context){
     if($nome){
-	warn "Optional GC context track:\t\tyes (NOMe-Seq; only reporting GCA, GCC and GCT context)\n";
+	warn "Optional GC context track:\t\t\tyes (NOMe-Seq; only reporting GCA, GCC and GCT context)\n";
     }
     else{
-	warn "Optional GC context track:\t\tyes\n";
+	warn "Optional GC context track:\t\t\tyes\n";
     }
 }
 
@@ -327,17 +327,36 @@ VERSION
   }
 
   ### OUTPUT DIR PATH
+  chdir $parent_dir or die "Failed to move back to current working directory\n";
+
   if (defined $output_dir){
-    unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
-      unless ($output_dir =~ /\/$/){
-	$output_dir =~ s/$/\//;
+      unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
+	  unless ($output_dir =~ /\/$/){
+	      $output_dir =~ s/$/\//;
+	  }
+	  
+	  if (chdir $output_dir){
+	      $output_dir = getcwd(); #  making the path absolute
+	      unless ($output_dir =~ /\/$/){
+		  $output_dir =~ s/$/\//;
+	      }
+	  }
+	  else{
+	      mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
+	      warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; sleep(1);
+	      chdir $output_dir or die "Failed to move to $output_dir\n";
+	      $output_dir = getcwd(); #  making the path absolute
+	      unless ($output_dir =~ /\/$/){
+		  $output_dir =~ s/$/\//;
+	      }
+	  }
+	  warn "Output will be written into the directory: $output_dir\n";
       }
-    }
   }
   else{
-    $output_dir = '';
+      $output_dir = '';
   }
-
+  
   unless ($CX_context){
     $CX_context = 0;
     $CpG_only = 1;
@@ -1484,7 +1503,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 13 July 2017
+                              Script last modified: 04 September 2017
 
 EOF
     ;
