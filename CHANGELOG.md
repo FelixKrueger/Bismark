@@ -1,5 +1,12 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.18.2_dev
+
+### filter_non_conversion
+
+Added new options `--percentage_cutoff [int]` and `--minimum_count [int]` to allow filtering reads for non-bisulfite conversion using an overall methylation percentage and count cutoff.
+
+
 ## Changelog for Bismark v0.18.2
 
 ### Bismark
