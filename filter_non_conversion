@@ -22,9 +22,9 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.18.2';
+my $filter_version = 'v0.18.2_dev';
 my ($single,$paired);
-my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive) = process_commandline();
+my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count) = process_commandline();
 
 my $start_run = time();
 # warn "Run started at: $start_run\n";
@@ -98,12 +98,22 @@ sub process_file{
     my $count = 0;
     my $kicked = 0;
     if ($single){
-	warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read gets removed\n\n";
+	if (defined $percentage_cutoff){
+	    warn "Using an overall percentage of >> $percentage_cutoff% << and a minimum count of >> $minimum_count << cytosines in non-CG context as filtering criteria before a read gets removed\n\n";
+	}
+	else{
+	    warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read gets removed\n\n";
+	}
     }
     else{
-	warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read pair gets removed (either read can fail the entire read pair)\n\n";
+	if (defined $percentage_cutoff){
+	    warn "Using an overall percentage of >> $percentage_cutoff% << and a minimum count of >> $minimum_count << cytosines in non-CG context as filtering criteria before a read pair gets removed (either read can fail the entire read pair)\n\n";
+	}
+	else{
+	    warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read pair gets removed (either read can fail the entire read pair)\n\n";
+	}
     }
- 
+    
     while (<IN>){
 	
 	if ($_ =~ /^\@/){ # header lines
@@ -117,27 +127,52 @@ sub process_file{
 	    
 	    my $sequence_fails = 0;
 	    my $nonCpG_count = 0;
+	    my $total_nonCG = 0;
 	    
 	    ++$count;
 	    
 	    my @chars = split //,$meth_call;
 	    
 	    foreach my $char(@chars){
+
 		if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
 		    ++$nonCpG_count;
+		    ++$total_nonCG;
 		}
+		elsif ( ($char eq 'h') or ($char eq 'x') ){ # unmethylated non-CG calls
+		    ++$total_nonCG;
+		}
+
 		if ($consecutive){
 		    if ( ($char eq 'z') or ($char eq 'h') or ($char eq 'x')){
 			$nonCpG_count = 0; # resetting the counter if there is any kind of non methylated cytosine on the way
 		    }
 		}
 		
-		if ($nonCpG_count >= $threshold){
-		    $sequence_fails = 1;
-		    last;
+		unless (defined $percentage_cutoff){ # an absolute value of non-CG methylation is only relevant if --percentage_cutoff was not specified
+		    if ($nonCpG_count >= $threshold){
+			$sequence_fails = 1;
+			last;
+		    }
 		}
 	    }
 	    
+	    if (defined $percentage_cutoff){
+		# warn "total non-CGs:\t$total_nonCG\nminimum count:\t$minimum_count\n";
+		
+		if ($total_nonCG >= $minimum_count){
+		    
+		    my $perc = sprintf("%.1f",$nonCpG_count / $total_nonCG * 100); # $total_nonCG is always > 0 as minumum count has to be >= 1
+		    # warn "Sequence methylation overall: $perc\n"; sleep(1);
+		    if ($perc >= $percentage_cutoff){
+			$sequence_fails = 1;
+		    }
+		}
+		else{
+		    # warn "not enough evidence in this read to filter it out with confidence\n";
+		}
+	    }
+
 	    if ($sequence_fails){
 		++$kicked;
 		print REMOVED;
@@ -161,52 +196,100 @@ sub process_file{
 	    
 	    my $sequence_fails = 0;
 	    my $nonCpG_count = 0;
-	    
+	    my $total_nonCG = 0;
 	    ++$count; # just one count per sequence pair
 	    
-	    # Read 1
+	    ### READ 1
 	    my @chars = split //,$meth_call_1;
 	    
 	    foreach my $char(@chars){
 		if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
 		    ++$nonCpG_count;
+		    ++$total_nonCG;
 		}
-
+		elsif ( ($char eq 'h') or ($char eq 'x') ){ # unmethylated non-CG calls
+		    ++$total_nonCG;
+		}
+		
 		if ($consecutive){
 		    if ( ($char eq 'z') or ($char eq 'h') or ($char eq 'x')){
 			$nonCpG_count = 0; # resetting the counter if there is any kind of non methylated cytosine on the way
 		    }
 		}
 		
-		if ($nonCpG_count >= $threshold){
-		    $sequence_fails = 1;
-		    last;
+		unless (defined $percentage_cutoff){ # an absolute value of non-CG methylation is only relevant if --percentage_cutoff was not specified
+		    if ($nonCpG_count >= $threshold){
+			$sequence_fails = 1;
+			last;
+		    }
+		}
+	    }
+
+	    if (defined $percentage_cutoff){
+		# warn "total non-CGs:\t$total_nonCG\nminimum count:\t$minimum_count\n";
+		
+		if ($total_nonCG >= $minimum_count){
+		    
+		    my $perc = sprintf("%.1f",$nonCpG_count / $total_nonCG * 100); # $total_nonCG is always > 0 as minumum count has to be >= 1
+		    # warn "Sequence methylation overall: $perc\n";
+		    if ($perc >= $percentage_cutoff){
+			$sequence_fails = 1;
+			# warn "Read 1 sequence fails\n"; sleep(1);
+		    }
+		}
+		else{
+		    #  warn "not enough evidence in this read to filter it out with confidence\n";
 		}
 	    }
 	    
 	    unless ($sequence_fails){ # if Read 1 has failed the sequence pair already we do not need to look at Read 2
 		
 		$nonCpG_count = 0; # resetting counter
-
-		# Read 2
+		$total_nonCG = 0;
+		
+		### READ 2
 		@chars = split //,$meth_call_2;
 		
 		foreach my $char(@chars){
 		    if ( ($char eq 'H') or ($char eq 'X') ){ # methylated non-CG calls
 			++$nonCpG_count;
+			++$total_nonCG;
 		    }
-
+		    elsif ( ($char eq 'h') or ($char eq 'x') ){ # unmethylated non-CG calls
+			++$total_nonCG;
+		    }  
+		    
 		    if ($consecutive){
 			if ( ($char eq 'z') or ($char eq 'h') or ($char eq 'x')){
 			    $nonCpG_count = 0; # resetting the counter if there is any kind of non methylated cytosine on the way
 			}
 		    }
 		    
-		    if ($nonCpG_count >= $threshold){
-			$sequence_fails = 1;
-			last;
+		    unless (defined $percentage_cutoff){ # an absolute value of non-CG methylation is only relevant if --percentage_cutoff was not specified
+			if ($nonCpG_count >= $threshold){
+			    $sequence_fails = 1;
+			    last;
+			}
 		    }
 		}
+		
+		if (defined $percentage_cutoff){
+		    # warn "total non-CGs:\t$total_nonCG\nminimum count:\t$minimum_count\n";
+		    
+		    if ($total_nonCG >= $minimum_count){
+			
+			my $perc = sprintf("%.1f",$nonCpG_count / $total_nonCG * 100); # $total_nonCG is always > 0 as minumum count has to be >= 1
+			# warn "Sequence methylation overall: $perc\n";
+			if ($perc >= $percentage_cutoff){
+			    $sequence_fails = 1;
+			    # warn "Read 2 sequence fails\n"; sleep(1);
+			}
+		    }
+		    else{
+			# warn "not enough evidence in this read to filter it out with confidence\n";
+		    }
+		}
+		
 	    }
 
 	    if ($sequence_fails){
@@ -221,7 +304,7 @@ sub process_file{
 	}
 	
     }
-
+    
     ### SUMMARY
     warn "NON-CONVERSION SUMMARY\n======================\n";
     if ($paired){
@@ -247,12 +330,24 @@ sub process_file{
 	$insert = 'consecutive ';
     }
     if ($paired){
-	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
-  	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+	if (defined $percentage_cutoff){
+	    warn "Sequences removed because of apparent non-bisulfite conversion (at least $percentage_cutoff% methylation and $minimum_count non-CG calls in total in at least one of the reads):\t$kicked ($percent%)\n\n";
+	    print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $percentage_cutoff% methylation and $minimum_count non-CG calls in total in at least one of the reads):\t$kicked ($percent%)\n\n";
+	}
+	else{
+	    warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+	    print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls in one of the reads):\t$kicked ($percent%)\n\n";
+	}
     }
     else{
-	warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls per read):\t$kicked ($percent%)\n\n";
-	print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls per read):\t$kicked ($percent%)\n\n";
+	if (defined $percentage_cutoff){
+	    warn "Sequences removed because of apparent non-bisulfite conversion (at least $percentage_cutoff% methylation and $minimum_count non-CG calls in total per read):\t$kicked ($percent%)\n\n";
+	    print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $percentage_cutoff% methylation and $minimum_count non-CG calls in total per read):\t$kicked ($percent%)\n\n";
+	}
+	else{
+	    warn "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls per read):\t$kicked ($percent%)\n\n";
+	    print REPORT "Sequences removed because of apparent non-bisulfite conversion (at least $threshold ${insert}non-CG calls per read):\t$kicked ($percent%)\n\n";
+	}
     }
     
     close OUT or warn "Couldn't close OUT... $!\n";
@@ -371,14 +466,18 @@ sub process_commandline{
     my $threshold;
     my $version;
     my $consecutive;
+    my $percentage_cutoff;
+    my $minimum_count;
     
-    my $command_line = GetOptions ('help' => \$help,
-				   's|single' => \$global_single,
-				   'p|paired' => \$global_paired,
-				   'samtools_path=s' => \$samtools_path,
-				   'threshold=i' => \$threshold,
-				   'consecutive' => \$consecutive,
-				   'version' => \$version,
+    my $command_line = GetOptions ('help'                 => \$help,
+				   's|single'             => \$global_single,
+				   'p|paired'             => \$global_paired,
+				   'samtools_path=s'      => \$samtools_path,
+				   'threshold=i'          => \$threshold,
+				   'consecutive'          => \$consecutive,
+				   'version'              => \$version,
+				   'percentage_cutoff=i'  => \$percentage_cutoff, 
+				   'minimum_count=i'      => \$minimum_count,
 	);
     
     die "Please respecify command line options\n\n" unless ($command_line);
@@ -411,6 +510,24 @@ VERSION
     }
   
     ### OPTIONS
+
+    if (defined $percentage_cutoff){
+	die "The options --percentage_cutoff and --consecutive are mutually exclusive. Please respecify!\n\n" if ($consecutive);
+	
+	unless ($percentage_cutoff >= 0 and $percentage_cutoff <= 100){
+	    die "The percentage cutoff value has to be within the range of 0-100 [%]. Please repecify!\n\n";
+	}
+
+	# If a percentage cutoff was selected, we also need a minimum count of non-CGs per read before we will use the percentage as a filtering criterion
+	if (defined $minimum_count){
+	    unless ($minimum_count > 0){
+		die "Please select a sensible number of non-CG cytosines as minimum count (1 or more...)\n\n";
+	    }
+	}
+	else{
+	    $minimum_count = 5; # default
+	}
+    }
 
     ### USER DEFINED SINGLE OR PAIRED-END MODE
     unless ($global_single or $global_paired){
@@ -479,7 +596,8 @@ VERSION
 	$threshold = 3; # default
     }
 
-    return ($single,$paired,$samtools_path,$threshold,$consecutive);
+ 
+    return ($single,$paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count);
 }
 
 sub bam_isEmpty{
@@ -563,26 +681,37 @@ follow each other in consecutive lines! If the file has been sorted by position 
 by read name first (e.g. using samtools sort -n)  ***
 
 
--s/--single            Filter single-end Bismark BAM files. If not specified the library type is auto-detected.
+-s/--single                 Filter single-end Bismark BAM files. If not specified the library type is auto-detected.
 
--p/--paired            Filter paired-end Bismark BAM files. If not specified the library type is auto-detected.
+-p/--paired                 Filter paired-end Bismark BAM files. If not specified the library type is auto-detected.
 
---threshold [int]      The number of methylated cytosines in non-CG context at which reads or read pairs are filtered
-                       out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
+--threshold [int]           The number of methylated cytosines in non-CG context at which reads or read pairs are filtered
+                            out. For paired-end files either Read 1 or Read 2 can fail the entire read pair. Default: 3.
 
---consecutive          Non-CG methylation has be found on consecutive non-CGs. Any kind of unmethylated cytosine (in
-                       any context) resets the methylated non-CG counter to 0. Default: OFF.
+--percentage_cutoff [int]   Instead of filtering on an absolute count of methylated cytosines in non-CG context (see 
+                            '--threshold [int]') this option allows you to define an overall percentage of methylation in
+                            non-CG context (both CHH and CHG) which, if reached or exceeded, results in the read or read
+                            pair being filtered out. For paired-end files either Read 1 or Read 2 can fail the entire read
+                            pair. Also requires a minimum number of cytosines in non-CG context to make confident filtering
+                            choices (see '--minimum_count [int]').
 
---samtools_path        The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
-                       explicitly if Samtools is in the PATH already.
+--minimum_count [int]       At least this number of cytosines in non-CG context (CHH or CHG) have to be seen in a read
+                            (irrespective of their methylation state) before the '--percentage_cutoff' filter kicks in.
+			    Default: 5.
+
+--consecutive               Non-CG methylation has be found on consecutive non-CGs. Any kind of unmethylated cytosine (in
+                            any context) resets the methylated non-CG counter to 0. Default: OFF.
+
+--samtools_path             The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
+                            explicitly if Samtools is in the PATH already.
 
 
---help                 Displays this help text end exits.
+--help                      Displays this help text end exits.
 
---version              Displays version information and exits.
+--version                   Displays version information and exits.
 
 
-                           Last modified: 28 April 2017
+                                Last modified: 06 September 2017
 
 EOF
     ;
