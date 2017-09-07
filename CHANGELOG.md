@@ -4,8 +4,19 @@
 
 ### filter_non_conversion
 
-Added new options `--percentage_cutoff [int]` and `--minimum_count [int]` to allow filtering reads for non-bisulfite conversion using an overall methylation percentage and count cutoff.
+Added new options `--percentage_cutoff [int]` and `--minimum_count [int]` to allow filtering reads for non-bisulfite conversion using an overall methylation percentage and count cutoff. Here is [issue #122](https://github.com/FelixKrueger/Bismark/issues/122).
 
+### deduplicate_bismark
+
+Added option `--multiple` to the deduplicator to treat several input SAM/BAM files as the same sample. Here is [issue #107](https://github.com/FelixKrueger/Bismark/issues/107).
+
+Added option `-output_dir` to `deduplicate_bismark` so that it can be used in the Google cloud. Here is [issue #123](https://github.com/FelixKrueger/Bismark/issues/123)
+
+### coverage2cytosine
+
+Improved handling of the `--output_dir`, i.e. the folder will be created if it doesn't exist already and making the path absolute. 
+
+Added new option `--discordance <int>` to allow filtering for discordance pf top and bottom strand when in `--merge_CpG` mode. CpG positions for which either the top or bottom strand was not measured at all will not be assessed for discordance and hence appear in the regular 'merged_CpG_evidence.cov' file. More details in [issue #91](https://github.com/FelixKrueger/Bismark/issues/91).
 
 ## Changelog for Bismark v0.18.2
 
