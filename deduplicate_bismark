@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Getopt::Long;
-
+use Cwd;
 
 ### This script is supposed to remove alignments to the same position in the genome which can arise by e.g. PCR amplification
 ### Paired-end alignments are considered a duplicate if both partner reads start and end at the exact same position
@@ -36,160 +36,13 @@ use Getopt::Long;
 ### adding the option to supply 2 (or more) filenames that are both used for deduplication. This is supposed to be an alternative to merging and mapping straight at the FastQ stage
 
 my $dedup_version = 'v0.18.2_dev';
+my @filenames;
 
-my $help;
-my $representative;
-my $single;
-my $paired;
-my $global_single;
-my $global_paired;
-my $vanilla;
-my $samtools_path;
-my $bam;
-my $rrbs;
-my $version;
-my $multiple; # for multiple input files for the same sample
+my ($representative,$single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir) = process_commandline();
 
-my $command_line = GetOptions ('help'                => \$help,
-			       'representative'      => \$representative,
-			       's|single'            => \$global_single,
-			       'p|paired'            => \$global_paired,
-			       'vanilla'             => \$vanilla,
-			       'samtools_path=s'     => \$samtools_path,
-			       'bam'                 => \$bam,
-			       'barcode'             => \$rrbs,
-			       'version'             => \$version,
-			       'multiple'            => \$multiple, 
-			      );
-
-die "Please respecify command line options\n\n" unless ($command_line);
-
-if ($help){
-  print_helpfile();
-  exit;
-}
-
-if ($version){
-  print << "VERSION";
-
-                           Bismark Deduplication Module
-
-                          Deduplicator Version: $dedup_version
-               Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
-                 www.bioinformatics.babraham.ac.uk/projects/bismark/
-                      https://github.com/FelixKrueger/Bismark
-
-
-VERSION
-    exit;
-  }
-
-
-
-my @filenames = @ARGV;
-
-unless (@filenames){
-  print "Please provide one or more Bismark output files for deduplication\n\n";
-  sleep (2);
-  print_helpfile();
-  exit;
-}
-
-# ensuring we have at least 2 files
-if ($multiple){
-    unless(scalar @filenames > 1){
-	die "Please supply 2 or more files when using '--multiple'\n";	
-    }
-    if ($representative){
-	die "The option --multiple is only working in default (= random alignment) mode\n\n";
-    }
-    if ($rrbs){
-	die "The option --multiple is currently only working in default (= random alignment) mode\n\n";
-    }
-}
-
-### OPTIONS
-unless ($global_single or $global_paired){
-    if ($vanilla){
-	die "Please specify either -s (single-end) or -p (paired-end) for deduplication. Reading this information from the \@PG header line only works for SAM/BAM files\n\n";
-    }
-    warn "\nNeither -s (single-end) nor -p (paired-end) selected for deduplication. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
-}
-
-if ($global_paired){
-    if ($global_single){
-	die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
-  }
-    if ($vanilla){
-	
-	if ($rrbs){
-	    die "Barcode deduplication only works with Bismark SAM (or BAM) output (in attempt to phase out the vanilla format)\n";
-	}
-
-	warn "Processing paired-end custom Bismark output file(s):\n";
-	warn join ("\t",@filenames),"\n\n";
-    }
-    else{
-	warn "Processing paired-end Bismark output file(s) (SAM format):\n";
-	warn join ("\t",@filenames),"\n\n";
-    }
-}
-else{
-    if ($vanilla){
-	warn "Processing single-end custom Bismark output file(s):\n";
-	warn join ("\t",@filenames),"\n\n";
-    }
-    else{
-	warn "Processing single-end Bismark output file(s) (SAM format):\n";
-	warn join ("\t",@filenames),"\n\n";
-    }
-}
-
-### PATH TO SAMTOOLS
-if (defined $samtools_path){
-    # if Samtools was specified as full command
-    if ($samtools_path =~ /samtools$/){
-	if (-e $samtools_path){
-	    # Samtools executable found
-	}
-	else{
-	    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-	}
-    }
-    else{
-	unless ($samtools_path =~ /\/$/){
-	    $samtools_path =~ s/$/\//;
-	}
-	$samtools_path .= 'samtools';
-	if (-e $samtools_path){
-	    # Samtools executable found
-	}
-	else{
-	    die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-	}
-    }
-}
-# Check whether Samtools is in the PATH if no path was supplied by the user
-else{
-    if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
-	$samtools_path = `which samtools`;
-	chomp $samtools_path;
-    }
-}
-
-if ($bam){
-    if (defined $samtools_path){
-	$bam = 1;
-    }
-    else{
-	warn "No Samtools found on your system, writing out a gzipped SAM file instead\n";
-	$bam = 2;
-    }
-}
-else{
-    $bam = 0;
-}
-
+###########################
+### START OF PROCESSING ###
+###########################
 
 if ($representative){
     warn "\nIf there are several alignments to a single position in the genome the alignment with the most representative methylation call will be chosen (this might be the most highly amplified PCR product...)\n\n";
@@ -291,7 +144,7 @@ foreach my $file (@filenames){
 	$report =~ s/deduplication/multiple.deduplication/;
     }
   
-    open (REPORT,'>',$report) or die "Failed to write to report file to $report: $!\n\n";
+    open (REPORT,'>',"${output_dir}$report") or die "Failed to write to report file to ${output_dir}$report: $!\n\n";
 
 
     ### for representative methylation calls we need to discriminate between single-end and paired-end files as the latter have 2 methylation call strings
@@ -361,15 +214,14 @@ foreach my $file (@filenames){
 	warn "Output file is: $outfile\n\n";
 
 	if ($bam == 1){
-	    # open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $outfile") or die "Failed to write to $outfile: $!\n";
-	    open (OUT,"| $samtools_path view -bS - > $outfile") or die "Failed to write to $outfile: $!\n";
+	    open (OUT,"| $samtools_path view -bS - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
 	}
 	elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-	    open (OUT,"| gzip -c - > $outfile") or die "Failed to write to $outfile: $!\n";
+	    open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
 	}
 	
 	else{
-	    open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
+	    open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
 	}
 
 	### need to proceed slightly differently for the custom Bismark and Bismark SAM output
@@ -690,13 +542,13 @@ sub deduplicate_barcoded_rrbs{
     }
   }
   if ($bam == 1){
-    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $outfile") or die "Failed to write to $outfile: $!\n";
+    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
   }
   elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-    open (OUT,"| gzip -c - > $outfile") or die "Failed to write to $outfile: $!\n";
+    open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
   }
   else{
-    open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
+    open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
   }
 
   ### This mode only supports Bismark SAM output
@@ -1024,6 +876,7 @@ sub print_helpfile{
 
   print "-s/--single\t\tdeduplicate single-end Bismark files (default format: SAM)\n";
   print "-p/--paired\t\tdeduplicate paired-end Bismark files (default format: SAM)\n\n";
+  print "--output_dir [path]\tOutput directory, either relative or absolute. Output is written to the current directory if not\n\t\t\tspecified explicitly.\n\n";
   print "--vanilla\t\tThe input file is in the old custom Bismark format and not in SAM format\n\n";
   print "--barcode\t\tIn addition to chromosome, start position and orientation this will also take a potential barcode into\n                        consideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
   print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
@@ -1034,7 +887,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on July 10, 2017\n\n";
+  print "This script was last modified on 07 September 2017\n\n";
 }
 
 
@@ -1132,6 +985,203 @@ sub isBam{
   }
 }
 
+sub process_commandline{
+
+    my $help;
+    my $representative;
+    my $single;
+    my $paired;
+    my $global_single;
+    my $global_paired;
+    my $vanilla;
+    my $samtools_path;
+    my $bam;
+    my $rrbs;
+    my $version;
+    my $multiple; # for multiple input files for the same sample
+    my $output_dir;
+
+    my $command_line = GetOptions ('help'                => \$help,
+				   'representative'      => \$representative,
+				   's|single'            => \$global_single,
+				   'p|paired'            => \$global_paired,
+				   'vanilla'             => \$vanilla,
+				   'samtools_path=s'     => \$samtools_path,
+				   'bam'                 => \$bam,
+				   'barcode'             => \$rrbs,
+				   'version'             => \$version,
+				   'multiple'            => \$multiple, 
+				   'output_dir=s'        => \$output_dir,
+	);
+
+    die "Please respecify command line options\n\n" unless ($command_line);
+
+    if ($help){
+	print_helpfile();
+	exit;
+    }
+
+
+
+    if ($version){
+	print << "VERSION";
+
+                  Bismark Deduplication Module
+
+	      Deduplicator Version: $dedup_version
+      Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
+	www.bioinformatics.babraham.ac.uk/projects/bismark/
+	    https://github.com/FelixKrueger/Bismark
+  	  
+	  
+VERSION
+	  exit;
+    }
+
+    ### PARENT DIRECTORY
+    my $parent_dir = getcwd();
+    unless ($parent_dir =~ /\/$/){
+	$parent_dir =~ s/$/\//;
+    }
+
+    ### OUTPUT DIRECTORY
+    if (defined $output_dir){
+	unless ($output_dir eq ''){
+	    unless ($output_dir =~ /\/$/){
+		$output_dir =~ s/$/\//;
+	    }
+	    
+	    if (chdir $output_dir){
+		$output_dir = getcwd(); #  making the path absolute
+		unless ($output_dir =~ /\/$/){
+		    $output_dir =~ s/$/\//;
+		}
+	    }
+	    else{
+		mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
+		warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; sleep(1);
+		chdir $output_dir or die "Failed to move to $output_dir\n";
+		$output_dir = getcwd(); #  making the path absolute
+		unless ($output_dir =~ /\/$/){
+		    $output_dir =~ s/$/\//;
+		}
+	    }
+	    warn "Output will be written into the directory: $output_dir\n";
+	}
+    }
+    else{
+	$output_dir = '';
+    }
+
+    # Changing back to parent directory
+    chdir $parent_dir or die "Failed to move to $parent_dir\n";
+
+    @filenames = @ARGV;
+    unless (@filenames){
+	print "Please provide one or more Bismark output files for deduplication\n\n";
+	sleep (2);
+	print_helpfile();
+	exit;
+    }
+
+    # ensuring we have at least 2 files
+    if ($multiple){
+	unless(scalar @filenames > 1){
+	    die "Please supply 2 or more files when using '--multiple'\n";	
+	}
+	if ($representative){
+	    die "The option --multiple is only working in default (= random alignment) mode\n\n";
+	}
+	if ($rrbs){
+	    die "The option --multiple is currently only working in default (= random alignment) mode\n\n";
+	}
+    }
+
+    ### OPTIONS
+    unless ($global_single or $global_paired){
+	if ($vanilla){
+	    die "Please specify either -s (single-end) or -p (paired-end) for deduplication. Reading this information from the \@PG header line only works for SAM/BAM files\n\n";
+	}
+	warn "\nNeither -s (single-end) nor -p (paired-end) selected for deduplication. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
+    }
+
+    if ($global_paired){
+	if ($global_single){
+	    die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
+	}
+	if ($vanilla){
+	    
+	    if ($rrbs){
+		die "Barcode deduplication only works with Bismark SAM (or BAM) output (in attempt to phase out the vanilla format)\n";
+	    }
+
+	    warn "Processing paired-end custom Bismark output file(s):\n";
+	    warn join ("\t",@filenames),"\n\n";
+	}
+	else{
+	    warn "Processing paired-end Bismark output file(s) (SAM format):\n";
+	    warn join ("\t",@filenames),"\n\n";
+	}
+    }
+    else{
+	if ($vanilla){
+	    warn "Processing single-end custom Bismark output file(s):\n";
+	    warn join ("\t",@filenames),"\n\n";
+	}
+	else{
+	    warn "Processing single-end Bismark output file(s) (SAM format):\n";
+	    warn join ("\t",@filenames),"\n\n";
+	}
+    }
+
+    ### PATH TO SAMTOOLS
+    if (defined $samtools_path){
+	# if Samtools was specified as full command
+	if ($samtools_path =~ /samtools$/){
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+	else{
+	    unless ($samtools_path =~ /\/$/){
+		$samtools_path =~ s/$/\//;
+	    }
+	    $samtools_path .= 'samtools';
+	    if (-e $samtools_path){
+		# Samtools executable found
+	    }
+	    else{
+		die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+	    }
+	}
+    }
+ 
+    # Check whether Samtools is in the PATH if no path was supplied by the user
+    else{
+	if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+	    $samtools_path = `which samtools`;
+	    chomp $samtools_path;
+	}
+    }
+
+    if ($bam){
+	if (defined $samtools_path){
+	    $bam = 1;
+	}
+	else{
+	    warn "No Samtools found on your system, writing out a gzipped SAM file instead\n";
+	    $bam = 2;
+	}
+    }
+    else{
+	$bam = 0;
+    }
+
+    return ($representative,$single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir);
+}
 
 
 
@@ -1188,13 +1238,13 @@ sub deduplicate_representative {
     }
 
     if ($bam == 1){
-      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $outfile") or die "Failed to write to $outfile: $!\n";
+      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
     }
     elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-      open (OUT,"| gzip -c - > $outfile") or die "Failed to write to $outfile: $!\n";
+      open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
     }
     else{
-      open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
+      open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
     }
 
     warn "Reading and storing all alignment positions\n";
@@ -1259,7 +1309,7 @@ sub deduplicate_representative {
       $outfile =~ s/$/_deduplicated_to_representative_sequences_pe.sam/;
     }
 
-    open (OUT,'>',$outfile) or die "Unable to write to $outfile: $!\n";
+    open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
     warn "Reading and storing all alignment positions\n";
 
     ### need to proceed slightly differently for the custom Bismark and Bismark SAM output
