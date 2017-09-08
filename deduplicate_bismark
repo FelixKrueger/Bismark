@@ -133,7 +133,9 @@ foreach my $file (@filenames){
 
     ### writing to a report file
     my $report = $file;
-
+    # now would be a good time to get rid of the path information
+    $report =~ s/.*\///; # removing path information
+    # warn "Now: $report\n";
     $report =~ s/\.gz$//;
     $report =~ s/\.sam$//;
     $report =~ s/\.bam$//;
@@ -187,6 +189,9 @@ foreach my $file (@filenames){
 	}
 	
 	my $outfile = $file;
+	# now would be a good time to get rid of the path information
+	$outfile =~ s/.*\///; # removing path information
+
 	$outfile =~ s/\.gz$//;
 	$outfile =~ s/\.sam$//;
 	$outfile =~ s/\.bam$//;
