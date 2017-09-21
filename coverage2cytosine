@@ -430,43 +430,44 @@ sub generate_genome_wide_cytosine_report {
     }
 
     ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
-    unless ($split_by_chromosome){ ### writing all output to a single file (default)
-	my $cytosine_coverage;
-	my $cytosine_nome_outfile;
+    # We are given a single output file name template, and derive everything from it.
+    # nome-seq output will have the NOME.CpG{.cov._report.txt} appended, normal output will lack the NOME particle
+    $cytosine_out =~ s/\.bismark\.cov\.gz$//; # if the outfile name is derived from the coverage file, e.g. in a for loop
+    $cytosine_out =~ s/\.gz$//; # else append CpG report
+    my $filenames_function = sub {
+	my $chromo = shift;
+	$chromo = defined($chromo) ? '.chr' . $chromo : '';
+	my $coverage_filename = $cytosine_out . $chromo;
+	my $report_filename = $cytosine_out . $chromo;
+	if ($nome) {
+	    $report_filename .= '.NOMe.CpG_report.txt';
+	    $coverage_filename .= '.NOMe.CpG.cov';
+	}
+	else {
+	    $report_filename .= '.CpG_report.txt';
+	    $coverage_filename .= '.CpG.cov';
+	}
+	if ($gzip) {
+	    $coverage_filename = "| gzip -c - > $coverage_filename" . '.gz';
+	    $report_filename   = "| gzip -c - > $report_filename" . '.gz';
+	}
+	else {
+	    $coverage_filename = "> $coverage_filename";
+	    $report_filename   = "> $report_filename";
+	}
+	return($report_filename,$coverage_filename)
+    };
 
-	if ($gzip){
-	    unless ($cytosine_out =~ /\.gz$/){
-		$cytosine_out .= '.gz';
-	    }
-	    open (CYT,"| gzip -c - > $cytosine_out") or die "Failed to write to file $cytosine_out: $!\n";
-	}
-       	else{   
-	    if ($nome){
-		warn "We are going to write out both a CpG report and NOMe filtered coverage file (for consistency reasons)\n";
-		$cytosine_out =~ s/\.bismark\.cov\.gz$//; # if the outfile name is derived from the coverage file, e.g. in a for loop
-		$cytosine_out =~ s/\.gz$//; # else append CpG report
-	        $cytosine_coverage = $cytosine_out;
-		$cytosine_nome_outfile = $cytosine_out;
-		unless ($cytosine_nome_outfile =~ /CpG_report.txt$/){
-		    $cytosine_nome_outfile .= '.NOMe.CpG_report.txt.gz';
-		    $cytosine_coverage .= '.NOMe.CpG.cov.gz'; 
-		}
-		
-		open (CYT,"| gzip -c - > $cytosine_nome_outfile") or die "Failed to write to file $cytosine_nome_outfile: $!\n";
-		open (CYTCOV,"| gzip -c - > $cytosine_coverage") or die "Failed to write to file $cytosine_coverage: $!\n";
-	    }
-	    else{
-		open (CYT,'>',$cytosine_out) or die "Failed to write to file $cytosine_out: $!\n";
-	    }
-	}
-	
-	if ($nome){
-	    warn ">>> Writing genome-wide cytosine report to: $cytosine_nome_outfile <<<\n";
-	    warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage <<<\n\n";
-	}
-	else{
-	    warn ">>> Writing genome-wide cytosine report to: $cytosine_out <<<\n\n";
-	}
+    unless ($split_by_chromosome){ ### writing all output to a single file (default)
+	# FIXME: Should messages go for split-by-chromosome as well ?
+	my ($cytosine_nome_outfile,$cytosine_coverage) = $filenames_function->();
+	open (CYT,$cytosine_nome_outfile) or die "Failed to write to file ".($cytosine_nome_outfile =~ s/^[^>]*> //r).": $!\n";
+	open (CYTCOV,$cytosine_coverage) or die "Failed to write to file ".($cytosine_coverage =~ s/^[^>]*> //r).": $!\n";
+	warn "We are going to write out both a CpG report and NOMe filtered coverage file (for consistency reasons)\n" if ($nome);
+	$cytosine_nome_outfile =~ s/^[^>]*> //;
+	$cytosine_coverage =~ s/^[^>]*> //;
+	warn ">>> Writing genome-wide cytosine report to: $cytosine_nome_outfile <<<\n";
+	warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage <<<\n\n";
 	sleep (1);
     }
 
@@ -496,14 +497,9 @@ sub generate_genome_wide_cytosine_report {
 	    ++$number_processed;
 	    
 	    if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-		my $chromosome_out = $cytosine_out;
-		if ($chromosome_out =~ /\.txt$/){
-		    $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
-		}
-		else{
-		    $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-		}
-		open (CYT,'>',$chromosome_out) or die $!;
+		my ($cytosine_nome_outfile,$cytosine_coverage) = $filenames_function->($last_chr);
+		open (CYT,$cytosine_nome_outfile) or die "Failed to write to file ".($cytosine_nome_outfile =~ s/^[^>]*> //r).": $!\n";
+		open (CYTCOV,$cytosine_coverage) or die "Failed to write to file ".($cytosine_coverage =~ s/^[^>]*> //r).": $!\n";
 		# warn "Writing output for $last_chr to $chromosome_out\n";
 	    }
 	    
@@ -552,7 +548,7 @@ sub generate_genome_wide_cytosine_report {
 		    }
 		    if ($nome){
 			$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-		 	# warn "$1\t$upstream_context\n"; sleep(1);
+			# warn "$1\t$upstream_context\n"; sleep(1);
 		    }
 		    $strand = '+';
 		}
@@ -642,7 +638,7 @@ sub generate_genome_wide_cytosine_report {
 			    else{
 				if ($nome){ # added 20 Sept 2017
 				    unless ($meth + $nonmeth == 0){ # if the position was not covered it won't be reported
-			     		my $percentage = sprintf ("%.6f",$meth/ ($meth + $nonmeth) *100);
+					my $percentage = sprintf ("%.6f",$meth/ ($meth + $nonmeth) *100);
 					print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 					print CYTCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth,$nonmeth),"\n";
 				    }
@@ -712,15 +708,9 @@ sub generate_genome_wide_cytosine_report {
     $processed{$last_chr} = 1;
     
     if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-	my $chromosome_out = $cytosine_out;
-	if ($chromosome_out =~ /\.txt$/){ # files passed on by the methylation extractor end in _report.txt
-	    $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
-	}
-	else{ # user specified output file name
-	    $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-	}
-	open (CYT,'>',$chromosome_out) or die $!;
-	# warn "Writing output for $last_chr to $chromosome_out\n";
+	my ($cytosine_nome_outfile,$cytosine_coverage) = $filenames_function->($last_chr);
+	open (CYT,$cytosine_nome_outfile) or die "Failed to write to file ".($cytosine_nome_outfile =~ s/^[^>]*> //r).": $!\n";
+	open (CYTCOV,$cytosine_coverage) or die "Failed to write to file ".($cytosine_coverage =~ s/^[^>]*> //r).": $!\n";
     }
     
     my $tri_nt;
@@ -933,7 +923,8 @@ sub generate_genome_wide_cytosine_report {
     }
     
     close CYT or warn $!;
-    
+    close CYTCOV or warn $!;
+
 }
 
 
