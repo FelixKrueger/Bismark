@@ -459,7 +459,7 @@ sub generate_genome_wide_cytosine_report {
     };
 
     unless ($split_by_chromosome){ ### writing all output to a single file (default)
-
+	# FIXME: Should messages go for split-by-chromosome as well ?
 	my ($cytosine_nome_outfile,$cytosine_coverage) = $filenames_function->();
 	open (CYT,$cytosine_nome_outfile) or die "Failed to write to file ".($cytosine_nome_outfile =~ s/^[^>]*> //r).": $!\n";
 	open (CYTCOV,$cytosine_coverage) or die "Failed to write to file ".($cytosine_coverage =~ s/^[^>]*> //r).": $!\n";
