@@ -914,25 +914,39 @@ sub generate_genome_wide_cytosine_report {
     }
     
     ### Now processing chromosomes that were not covered in the coverage file
-    warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
-    my $unprocessed = 0;
+
     
-    foreach my $chr (sort keys %processed) {
-	unless ( $processed{$chr} ) {
-	    ++$unprocessed;
-	    ++$number_processed;
-	    process_unprocessed_chromosomes($chr);
+    if($nome){
+	# 22 Sepember update: We have changed the NOMe-Seq processing process so that only positions that are actually covered are getting reported,
+	# both for the CpG report as well as for the coverage file
+	
+	warn "NOMe-Seq processing only reports covered positions, so chromosomes that were not covered by any methylation calls in the coverage file are simply skipped...\ncoverage2cytosine processing complete\n\n";
+    }
+    else{
+	warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
+	
+        my $unprocessed = 0;
+	
+	foreach my $chr (sort keys %processed) {
+	    unless ( $processed{$chr} ) {
+		++$unprocessed;
+		++$number_processed;
+		process_unprocessed_chromosomes($chr);
+	    }
+	}
+	
+	if ($unprocessed == 0) {
+	    warn "All chromosomes in the genome were covered by at least some reads. coverage2cytosine processing complete.\n\n";
+	}
+	else{
+	    warn "Finished writing out cytosine report (processed $number_processed chromosomes/scaffolds in total). coverage2cytosine processing complete.\n\n";
 	}
     }
     
-    if ($unprocessed == 0) {
-	warn "All chromosomes in the genome were covered by at least some reads. coverage2cytosine processing complete.\n\n";
-    }
-    else{
-	warn "Finished writing out cytosine report (processed $number_processed chromosomes/scaffolds in total). coverage2cytosine processing complete.\n\n";
-    }
-    
     close CYT or warn $!;
+    if ($nome){
+	close CYTCOV or warn $!;
+    }
     
 }
 
