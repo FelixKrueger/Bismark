@@ -557,8 +557,13 @@ sub generate_genome_wide_cytosine_report {
 		    $strand = '+';
 		}
 		elsif ($1 eq 'G'){ # C on reverse strand
+		    if ($pos-3 < 0) { # VB 28 09 2017 ; also, it would be more efficient to put this out of the loop...
+			$tri_nt = substr ($chromosomes{$last_chr},0,$pos);
+		    }
+		    else{
+			$tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+		    }
 		    
-		    $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
 		    $tri_nt = reverse $tri_nt;
 		    $tri_nt =~ tr/ACTG/TGAC/;
 		    
@@ -773,7 +778,13 @@ sub generate_genome_wide_cytosine_report {
 	    }
 	}
 	elsif ($1 eq 'G'){ # C on reverse strand
-	    $tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+	    if ($pos-3 < 0) { # VB: 28 09 2017
+		$tri_nt = substr ($chromosomes{$last_chr},0,$pos);
+	    }
+	    else{
+		$tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
+	    }
+
 	    $tri_nt = reverse $tri_nt;
 	    $tri_nt =~ tr/ACTG/TGAC/;
 	    $strand = '-';
@@ -1299,7 +1310,13 @@ sub process_unprocessed_chromosomes{
 	  }
       }
       elsif ($1 eq 'G'){ # C on reverse strand
-	  $tri_nt = substr ($chromosomes{$chr},($pos-3),3);   # positions are 0-based!
+	  if ($pos-3 < 0) { # VB 28 09 2017
+	      $tri_nt = substr ($chromosomes{$chr},0,$pos);
+	  }
+	  else{
+	      $tri_nt = substr ($chromosomes{$chr},($pos-3),3);   # positions are 0-based!
+	  }
+
 	  $tri_nt = reverse $tri_nt;
 	  $tri_nt =~ tr/ACTG/TGAC/;
 	  $strand = '-';
@@ -1582,7 +1599,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 20 September 2017
+                              Script last modified: 28 September 2017
 
 EOF
     ;
