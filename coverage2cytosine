@@ -1344,6 +1344,13 @@ sub process_unprocessed_chromosomes{
       
       next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
 
+      ### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
+      ### will have been rejected due to insufficient length for $tri_nt
+      ### 03 Oct 2017: Changed this to be in agreement with positions on covered chromosomes where this position is also excluded
+      if ( (length($chromosomes{$chr}) - $pos) == 0){
+	  next;
+      }
+
       ### determining cytosine context	
       if ($tri_nt =~ /^CG/){
 	  $context = 'CG';
@@ -1599,7 +1606,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 28 September 2017
+                              Script last modified: 03 October 2017
 
 EOF
     ;
