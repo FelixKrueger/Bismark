@@ -10065,7 +10065,7 @@ Output:
                          mismatches or other reads that fail to align uniquely to a file in the output directory.
                          Written reads will appear as. they did in the input, without any of the translation of quality
                          values that may have taken place within Bowtie or Bismark. Paired-end reads will be written to two
-                         parallel files with _1 and _2 inserted in theit filenames, i.e. _ambiguous_reads_1.txt and
+                         parallel files with _1 and _2 inserted in their filenames, i.e. _ambiguous_reads_1.txt and
                          _ambiguous_reads_2.txt. These reads are not written to the file specified with --un.
 
 -o/--output_dir <dir>    Write all output files into this directory. By default the output files will be written into
