@@ -437,12 +437,15 @@ sub generate_genome_wide_cytosine_report {
 	my $my_chr = shift;
 	my $cytosine_coverage_file = $cytosine_out;
 	my $cytosine_report_file;
+
 	if (defined $my_chr and $split_by_chromosome) {
 	    ## writing output to 1 file per chromosome
 	    $cytosine_coverage_file =~ s/$/.chr${my_chr}/;
 	}
+	
+	$cytosine_report_file = $cytosine_coverage_file; # required in any case
+
 	if ($nome) {
-	    $cytosine_report_file = $cytosine_coverage_file;
 	    $cytosine_report_file .= '.NOMe.CpG_report.txt';
 	    $cytosine_coverage_file .= '.NOMe.CpG.cov';
 	    if ($gzip) {
@@ -451,8 +454,16 @@ sub generate_genome_wide_cytosine_report {
 	    }
 	}
 	else {
-	    $cytosine_coverage_file .= $gzip ? '.CpG.cov.gz' : '.CpG.cov';
+	    if ($CX_context){
+		$cytosine_report_file   .= $gzip ? '.CX_report.txt.gz' : '.CX_report.txt';
+		$cytosine_coverage_file .= $gzip ? '.CX.cov.gz' : '.CX.cov';
+	    }
+	    else{
+		$cytosine_report_file   .= $gzip ? '.CpG_report.txt.gz' : '.CpG_report.txt';
+		$cytosine_coverage_file .= $gzip ? '.CpG.cov.gz' : '.CpG.cov';
+	    }
 	}
+	
 	if ($gzip) {
 	    open (CYT,"| gzip -c - > $cytosine_report_file") or die "Failed to write to file $cytosine_report_file: $!\n";
 	    if ($nome) {
@@ -465,6 +476,7 @@ sub generate_genome_wide_cytosine_report {
 		open (CYTCOV,'>',$cytosine_coverage_file) or die "Failed to open uncompressed file $cytosine_coverage_file: $!\n";
 	    }
 	}
+
 	if ($nome){
 	    warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n";
 	    warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage_file <<<\n\n";
@@ -472,12 +484,14 @@ sub generate_genome_wide_cytosine_report {
 	else{
 	    warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n\n";
 	}
+
 	sleep (1);
 	return(defined $my_chr ? $my_chr : '');
     };
 
     $current_out_chr = ${filehandles_func}->() unless ($split_by_chromosome); ### writing all output to a single file (default)
-
+    # warn "Returned the following current out chr: >>>$current_out_chr<<<\n";
+    
     my $last_chr;
     my %chr; # storing reads for one chromosome at a time
     
@@ -486,12 +500,12 @@ sub generate_genome_wide_cytosine_report {
 	chomp;
 	++$count;
 	my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
-      
+	
 	# defining the first chromosome
 	unless (defined $last_chr){
 	    $last_chr = $chr;
 	    ++$number_processed;
-	    # warn "Storing all covered cytosine positions for chromosome: $chr\n";
+	    #warn "Storing all covered cytosine positions for chromosome: $chr\n";
 	}
 	
 	### As of version 0.9.1 the start positions are 1-based!
