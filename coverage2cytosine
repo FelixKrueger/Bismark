@@ -99,7 +99,7 @@ generate_genome_wide_cytosine_report($coverage_infile);
 # which recommends this merging process to increase coverage per CpG and reduce the memory burden for its processing
 # Merge CpGs does not work in conjuction with --nome-seq (since some positions are filtered out).
 
-if ($merge_CpGs){
+if ($merge_CpGs) {
     # we only allow this operation if the report is limited to CpG context, and for a single report for the entire genome for the time being
     combine_CpGs_to_single_CG_entity($cytosine_out);
 }
@@ -413,6 +413,7 @@ sub generate_genome_wide_cytosine_report {
     sleep (2);
     
     my $number_processed = 0;
+    my $current_out_chr = '';
     
     ### changing to the output directory again
     unless ($output_dir eq ''){ # default
@@ -429,46 +430,53 @@ sub generate_genome_wide_cytosine_report {
 	open (IN,"$in") or die "Failed to read from file $in: $!\n";
     }
 
+    # Local function to handle file names and options.  Assume $cytosine_out has been cleaned from unwanted suffixes
+    # First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
     ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
-    unless ($split_by_chromosome){ ### writing all output to a single file (default)
-	my $cytosine_coverage;
-	my $cytosine_nome_outfile;
-
-	if ($gzip){
-	    unless ($cytosine_out =~ /\.gz$/){
-		$cytosine_out .= '.gz';
-	    }
-	    open (CYT,"| gzip -c - > $cytosine_out") or die "Failed to write to file $cytosine_out: $!\n";
+    my $filehandles_func = sub {
+	my $my_chr = shift;
+	my $cytosine_coverage_file = $cytosine_out;
+	my $cytosine_report_file;
+	if (defined $my_chr and $split_by_chromosome) {
+	    ## writing output to 1 file per chromosome
+	    $cytosine_coverage_file =~ s/$/.chr${my_chr}/;
 	}
-       	else{   
-	    if ($nome){
-		warn "We are going to write out both a CpG report and NOMe filtered coverage file (for consistency reasons)\n";
-		$cytosine_out =~ s/\.bismark\.cov\.gz$//; # if the outfile name is derived from the coverage file, e.g. in a for loop
-		$cytosine_out =~ s/\.gz$//; # else append CpG report
-	        $cytosine_coverage = $cytosine_out;
-		$cytosine_nome_outfile = $cytosine_out;
-		unless ($cytosine_nome_outfile =~ /CpG_report.txt$/){
-		    $cytosine_nome_outfile .= '.NOMe.CpG_report.txt.gz';
-		    $cytosine_coverage .= '.NOMe.CpG.cov.gz'; 
-		}
-		
-		open (CYT,"| gzip -c - > $cytosine_nome_outfile") or die "Failed to write to file $cytosine_nome_outfile: $!\n";
-		open (CYTCOV,"| gzip -c - > $cytosine_coverage") or die "Failed to write to file $cytosine_coverage: $!\n";
-	    }
-	    else{
-		open (CYT,'>',$cytosine_out) or die "Failed to write to file $cytosine_out: $!\n";
+	if ($nome) {
+	    $cytosine_report_file = $cytosine_coverage_file;
+	    $cytosine_report_file .= '.NOMe.CpG_report.txt';
+	    $cytosine_coverage_file .= '.NOMe.CpG.cov';
+	    if ($gzip) {
+		$cytosine_coverage_file .= '.gz';
+		$cytosine_report_file .= '.gz';
 	    }
 	}
-	
+	else {
+	    $cytosine_coverage_file .= $gzip ? '.CpG.cov.gz' : '.CpG.cov';
+	}
+	if ($gzip) {
+	    open (CYT,"| gzip -c - > $cytosine_report_file") or die "Failed to write to file $cytosine_report_file: $!\n";
+	    if ($nome) {
+		open (CYTCOV,"| gzip -c - > $cytosine_coverage_file") or die "Failed to write to file $cytosine_coverage_file: $!\n";
+	    }
+	}
+	else {
+	    open (CYT,'>',$cytosine_report_file) or die "Failed to open uncompressed file $cytosine_report_file: $!\n";
+	    if ($nome) {
+		open (CYTCOV,'>',$cytosine_coverage_file) or die "Failed to open uncompressed file $cytosine_coverage_file: $!\n";
+	    }
+	}
 	if ($nome){
-	    warn ">>> Writing genome-wide cytosine report to: $cytosine_nome_outfile <<<\n";
-	    warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage <<<\n\n";
+	    warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n";
+	    warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage_file <<<\n\n";
 	}
 	else{
-	    warn ">>> Writing genome-wide cytosine report to: $cytosine_out <<<\n\n";
+	    warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n\n";
 	}
 	sleep (1);
-    }
+	return(defined $my_chr ? $my_chr : '');
+    };
+
+    $current_out_chr = ${filehandles_func}->() unless ($split_by_chromosome); ### writing all output to a single file (default)
 
     my $last_chr;
     my %chr; # storing reads for one chromosome at a time
@@ -494,19 +502,7 @@ sub generate_genome_wide_cytosine_report {
 	else{
 	    warn "Writing cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
 	    ++$number_processed;
-	    
-	    if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-		my $chromosome_out = $cytosine_out;
-		if ($chromosome_out =~ /\.txt$/){
-		    $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
-		}
-		else{
-		    $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-		}
-		open (CYT,'>',$chromosome_out) or die $!;
-		# warn "Writing output for $last_chr to $chromosome_out\n";
-	    }
-	    
+
 	    my $tri_nt;
 	    my $tetra_nt;
 	    my $penta_nt;
@@ -642,17 +638,23 @@ sub generate_genome_wide_cytosine_report {
 			if ($zero){ # zero based coordinates
 			    $pos -= 1;
 			    if ($tetra){
+				$current_out_chr = ${filehandles_func}->($last_chr)
+				    if ($split_by_chromosome and $current_out_chr ne $last_chr);
 				print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
 			    }
 			    else{
 				if ($nome){ # added 20 Sept 2017
 				    unless ($meth + $nonmeth == 0){ # if the position was not covered it won't be reported
+					$current_out_chr = ${filehandles_func}->($last_chr)
+					    if ($split_by_chromosome and $current_out_chr ne $last_chr);
 			     		my $percentage = sprintf ("%.6f",$meth/ ($meth + $nonmeth) *100);
 					print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 					print CYTCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth,$nonmeth),"\n";
 				    }
 				}
 				else{	
+				    $current_out_chr = ${filehandles_func}->($last_chr)
+					if ($split_by_chromosome and $current_out_chr ne $last_chr);
 				    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 				}
 			    }
@@ -660,17 +662,23 @@ sub generate_genome_wide_cytosine_report {
 			
 			else{ # default
 			    if ($tetra){
+				$current_out_chr = ${filehandles_func}->($last_chr)
+				    if ($split_by_chromosome and $current_out_chr ne $last_chr);
 				print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
 			    }
 			    else{
 				if ($nome){  # added 20 Sept 2017
 				    unless ($meth + $nonmeth == 0){ # if the position was not covered it won't be reported
+					$current_out_chr = ${filehandles_func}->($last_chr)
+					    if ($split_by_chromosome and $current_out_chr ne $last_chr);
 					my $percentage = sprintf ("%.6f",$meth/ ($meth + $nonmeth) *100);
 					print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 					print CYTCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth,$nonmeth),"\n";
 				    }
 				}
 				else{
+				    $current_out_chr = ${filehandles_func}->($last_chr)
+					if ($split_by_chromosome and $current_out_chr ne $last_chr);
 				    print CYT join ("\t",$last_chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 				}
 			    }
@@ -678,6 +686,7 @@ sub generate_genome_wide_cytosine_report {
 		    }
 		}
 		else{ ## all cytosines, specified with --CX
+		    $current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 		    if ($zero){ # zero based coordinates
 			$pos -= 1;
 			if ($tetra){
@@ -715,19 +724,7 @@ sub generate_genome_wide_cytosine_report {
     
     warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
     $processed{$last_chr} = 1;
-    
-    if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-	my $chromosome_out = $cytosine_out;
-	if ($chromosome_out =~ /\.txt$/){ # files passed on by the methylation extractor end in _report.txt
-	    $chromosome_out =~ s/\.txt$/chr${last_chr}.txt/;
-	}
-	else{ # user specified output file name
-	    $chromosome_out =~ s/$/.chr${last_chr}.txt/;
-	}
-	open (CYT,'>',$chromosome_out) or die $!;
-	# warn "Writing output for $last_chr to $chromosome_out\n";
-    }
-    
+
     my $tri_nt;
     my $tetra_nt;
     my $penta_nt;
@@ -973,6 +970,7 @@ sub generate_GC_context_report {
     sleep (2);
     
     my $number_processed = 0;
+    my $current_out_chr = '';
     
     ### changing to the output directory again
     unless ($output_dir eq ''){ # default
@@ -988,28 +986,39 @@ sub generate_GC_context_report {
 	open (IN,"$in") or die "Failed to read from file $in: $!\n";
     }
 
-    my $gc_out;
-    my $gc_cov;
-
-    ### for NOMe-Seq (nucleosome occupancy and methylome sequencing) we limit the reporting of 
+    ### for NOMe-Seq (nucleosome occupancy and methylome sequencing) we limit the reporting of
     # 1. CpGs to A-C-G and T-C-G
     # 2. GpC report files / cov files that only include G-C-A, G-C-C and G-C-T
 
-    if ($nome){
-	$gc_out = $cytosine_out.'.NOMe.GpC_report.txt.gz';
-	$gc_cov = $cytosine_out.'.NOMe.GpC.cov.gz';
-    }
-    else{
-	$gc_out = $cytosine_out.'.GpC_report.txt.gz';
-	$gc_cov = $cytosine_out.'.GpC.cov.gz';
-    }
-    
+    # Local function to handle file names and options, similar to function in generate_genome_wide_cytosine_report().
+    # Assume $cytosine_out has been cleaned from unwanted suffixes
+    # First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
     ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
-    open (GC,"| gzip -c - > $gc_out") or die "Failed to write to GpC file $gc_out: !\n\n";
-    warn ">>> Writing genome-wide GpC cytosine report to: $gc_out <<<\n";
-    open (GCCOV,"| gzip -c - > $gc_cov") or die "Failed to write to GpC coverage file $gc_cov: !\n\n";
-    warn ">>> Writing genome-wide GpC coverage file to: $gc_cov <<<\n\n";
-    
+    my $filehandles_func = sub {
+	my $my_chr = shift;
+	my $partial_name = $cytosine_out;
+	$partial_name =~ s/$/.chr${my_chr}/ if (defined $my_chr and $split_by_chromosome);
+	$partial_name .= '.NOMe' if ($nome);
+	my $gc_out = $partial_name.'.GpC_report.txt';
+	my $gc_cov = $partial_name.'.GpC.cov';
+	if ($gzip) {
+	    $gc_out .= '.gz';
+	    $gc_cov .= '.gz';
+	    open (GC, "| gzip -c - > $gc_out") or die "Failed to write to GpC file $gc_out: !\n\n";
+	    open (GCCOV, "| gzip -c - > $gc_cov") or die "Failed to write to GpC coverage file $gc_cov: !\n\n";
+	}
+	else {
+	    open (GC, '>', $gc_out) or die "Failed to write to GpC file $gc_out: !\n\n";
+	    open (GCCOV, '>', $gc_cov) or die "Failed to write to GpC coverage file $gc_cov: !\n\n";
+	}
+	warn ">>> Writing genome-wide GpC cytosine report to: $gc_out <<<\n";
+	warn ">>> Writing genome-wide GpC coverage file to: $gc_cov <<<\n\n";
+	sleep (1);
+	return(defined $my_chr ? $my_chr : '');
+    };
+
+    $current_out_chr = ${filehandles_func}->() unless ($split_by_chromosome); ### writing all output to a single file (default)
+
     my $last_chr;
     my %chr; # storing reads for one chromosome at a time
     
@@ -1113,6 +1122,7 @@ sub generate_GC_context_report {
 			# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";sleep(1);
 		    }
 		    else{
+			$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 			print GCCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
 			print GC join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
 		    }
@@ -1125,6 +1135,7 @@ sub generate_GC_context_report {
 			# print join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n"; sleep(1);
 		    }
 		    else{
+			$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 			print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
 			print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 		    }	
@@ -1219,6 +1230,7 @@ sub generate_GC_context_report {
 		# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";
 	    }
 	    else{
+		$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 		print GCCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
 		print GC join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
 	    }
@@ -1230,6 +1242,7 @@ sub generate_GC_context_report {
 		# print join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 	    }
 	    else{
+		$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 		print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
 		print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 	    }
