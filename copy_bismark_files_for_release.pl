@@ -3,6 +3,8 @@ use warnings;
 use strict;
 use File::Copy::Recursive qw(fcopy rcopy dircopy fmove rmove dirmove);
 use File::Copy "cp";
+use File::Spec "catfile";
+use File::Spec "splitpath";
 
 my $dir = shift@ARGV;
 
@@ -13,24 +15,26 @@ unless (-d $dir){
   mkdir $dir or die "Failed to create directory: $!\n\n";
 }
 
-my @files = ('CHANGELOG.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','RRBS_Guide.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion','NOMe_filtering');
+my ($volume, $dist_dir, $this_script) = File::Spec->splitpath(__FILE__);
+#my  = abs_path($0);
+my @files = ('CHANGELOG.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','Bismark_alignment_modes.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion','NOMe_filtering');
 
 my @reporting = ('bismark_sitrep.js','bismark_sitrep.tpl','highcharts.js','jquery-3.1.1.min.js');
 
 my @docs = ('make_docs.pl','README.md','Bismark_User_Guide.html');
 
 foreach my $file(@files){ 
-    copy_and_warn($file);
+    copy_and_warn(File::Spec->catfile($dist_dir, $file));
 }
 warn "Finished copying normal files\n\n"; sleep(1);
 
 foreach my $file(@reporting){ 
-    copy_reports_and_warn("bismark_sitrep/$file");
+    copy_reports_and_warn(File::Spec->catfile($dist_dir, "bismark_sitrep", $file));
 }
 warn "Finished copying bismark2report files\n\n"; sleep(1);
 
 foreach my $file(@docs){ 
-    copy_docs_and_warn("Docs/$file");
+    copy_docs_and_warn(File::Spec->catfile($dist_dir, "Docs", $file));
 }
 warn "Finished copying Docs files\n\n"; sleep(1);
 
@@ -46,7 +50,7 @@ sub copy_reports_and_warn{
 	mkdir "${dir}/bismark_sitrep/" or die "Failed to create directory '${dir}/bismark_sitrep/': $!\n\n";
     }
     
-    my $file = shift;                                                                                                                            
+    my $file = shift;
     warn "Now copying '$file' to $dir/bismark_sitrep/\n";
     cp($file,"$dir/bismark_sitrep/") or die "Copy to '$dir/bismark_sitrep/' failed: $!\n\n";
 }
