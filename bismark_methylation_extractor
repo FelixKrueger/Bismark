@@ -1097,7 +1097,7 @@ VERSION
     }
     
     unless (defined $samtools_path){
-	$samtools_path = '';
+	die "No SAMtools installation found. Please add SAMtools to the PATH or specify its location with --samtools_path [path]\n";
     }
 	
   }
