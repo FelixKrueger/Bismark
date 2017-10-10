@@ -5622,7 +5622,7 @@ sub methylation_call{
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C, methylated, in CpG context
 	  }
-	  elsif ($downstream_base eq 'N'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	  elsif ($downstream_base eq 'N' or $downstream_base eq 'X'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
 	    ++$methyl_C_unknown_count;
 	    push @match,'U'; # protected C, methylated, in Unknown context
 	  }
@@ -5634,7 +5634,7 @@ sub methylation_call{
 	      ++$methyl_CHG_count;
 	      push @match,'X'; # protected C, methylated, in CHG context
 	    }
-	    elsif ($second_downstream_base eq 'N'){
+	    elsif ($second_downstream_base eq 'N' or $second_downstream_base eq 'X'){
 	      ++$methyl_C_unknown_count; # if the second downstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
 	      push @match,'U'; # protected C, methylated, in Unknown context
 	    }
@@ -5659,7 +5659,7 @@ sub methylation_call{
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C, not methylated, in CpG context
 	  }
-	  elsif ($downstream_base eq 'N'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	  elsif ($downstream_base eq 'N' or $downstream_base eq 'X'){ # if the downstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
 	    ++$unmethylated_C_unknown_count;
 	    push @match,'u'; # converted C, not methylated, in Unknown context
 	  }
@@ -5671,7 +5671,7 @@ sub methylation_call{
 	      ++$unmethylated_CHG_count;
 	      push @match,'x'; # converted C, not methylated, in CHG context
 	    }
-	    elsif ($second_downstream_base eq 'N'){
+	    elsif ($second_downstream_base eq 'N' or $second_downstream_base eq 'X'){
 	      ++$unmethylated_C_unknown_count; # if the second downstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
 	      push @match,'u'; # converted C, not methylated, in Unknown context
 	    }
@@ -5707,7 +5707,7 @@ sub methylation_call{
 	    ++$methyl_CpG_count;
 	    push @match,'Z'; # protected C on opposing strand, methylated, in CpG context
 	  }
-	  elsif ($upstream_base eq 'N'){ # if the upstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	  elsif ($upstream_base eq 'N' or $upstream_base eq 'X'){ # if the upstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
 	    ++$methyl_C_unknown_count;
 	    push @match,'U'; # protected C on opposing strand, methylated, in Unknown context
 	  }
@@ -5719,7 +5719,7 @@ sub methylation_call{
 	      ++$methyl_CHG_count;
 	      push @match,'X'; # protected C on opposing strand, methylated, in CHG context
 	    }
-	    elsif ($second_upstream_base eq 'N'){
+	    elsif ($second_upstream_base eq 'N' or $second_upstream_base eq 'X'){
 	      ++$methyl_C_unknown_count; # if the second upstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
 	      push @match,'U'; # protected C, methylated, in Unknown context
 	    }
@@ -5746,7 +5746,7 @@ sub methylation_call{
 	    ++$unmethylated_CpG_count;
 	    push @match,'z'; # converted C on opposing strand, not methylated, in CpG context
 	  }
-	  elsif ($upstream_base eq 'N'){ # if the upstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
+	  elsif ($upstream_base eq 'N' or $upstream_base eq 'X'){ # if the upstream base was an N we cannot really be sure about the sequence context (as it might have been a CG)
 	    ++$unmethylated_C_unknown_count;
 	    push @match,'u'; # converted C on opposing strand, not methylated, in Unknown context
 	  }
@@ -5758,7 +5758,7 @@ sub methylation_call{
 	      ++$unmethylated_CHG_count;
 	      push @match,'x'; # converted C on opposing strand, not methylated, in CHG context
 	    }
-	    elsif ($second_upstream_base eq 'N'){
+	    elsif ($second_upstream_base eq 'N' or $second_upstream_base eq 'X'){
 	      ++$unmethylated_C_unknown_count; # if the second upstream base was an N we cannot really be sure about the sequence context (as it might have been a CHH or CHG)
 	      push @match,'u'; # converted C on opposing strand, not methylated, in Unknown context
 	    }
@@ -8896,7 +8896,7 @@ sub single_end_SAM_output{
     }
     else{
 	print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
-    }
+   }
   }
 }
 
