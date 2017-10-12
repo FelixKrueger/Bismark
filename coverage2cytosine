@@ -58,7 +58,7 @@ sub handle_filehandles{
     
     my $my_chr = shift;
     if (defined $my_chr){
-	warn "Working with chromosome in '--split_by_chromosome' mode\n";
+	# warn "Working with chromosome in '--split_by_chromosome' mode\n";
     }
 
     my $cytosine_coverage_file = $cytosine_out;
@@ -72,11 +72,11 @@ sub handle_filehandles{
     $cytosine_report_file = $cytosine_coverage_file; # required in any case
     
     if ($nome) {
-	$cytosine_report_file .= '.NOMe.CpG_report.txt';
+	$cytosine_report_file   .= '.NOMe.CpG_report.txt';
 	$cytosine_coverage_file .= '.NOMe.CpG.cov';
 	if ($gzip) {
 	    $cytosine_coverage_file .= '.gz';
-	    $cytosine_report_file .= '.gz';
+	    $cytosine_report_file   .= '.gz';
 	}
     }
     else {
@@ -111,7 +111,7 @@ sub handle_filehandles{
 	warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n\n";
     }
     
-    return(defined $my_chr ? $my_chr : '');
+    return(defined $my_chr ? $my_chr : ''); # returning chromosome in --split_by_chromosome mode
 }
 
 
@@ -601,7 +601,7 @@ sub generate_genome_wide_cytosine_report {
 	# 22 Sepember update: We have changed the NOMe-Seq processing process so that only positions that are actually covered are getting reported,
 	# both for the CpG report as well as for the coverage file
 	
-	warn "NOMe-Seq processing only reports covered positions, so chromosomes that were not covered by any methylation calls in the coverage file are simply skipped...\ncoverage2cytosine processing complete\n\n";
+	warn "NOMe-Seq processing only reports covered positions, so chromosomes that were not covered by any methylation calls in the coverage file are simply skipped...\nGenome-wide cytosine report processing complete\n\n";
     }
     else{
 	warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
@@ -672,6 +672,10 @@ sub generate_GC_context_report {
     # First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
     my $filehandles_func = sub {
 	my $my_chr = shift;
+	if (defined $my_chr){
+	    # warn "working on chromosome $my_chr in --split_by_chromosome mode\n"; sleep(3);
+	}
+	
 	my $partial_name = $cytosine_out;
 	$partial_name =~ s/$/.chr${my_chr}/ if (defined $my_chr and $split_by_chromosome);
 	$partial_name .= '.NOMe' if ($nome);
@@ -689,7 +693,6 @@ sub generate_GC_context_report {
 	}
 	warn ">>> Writing genome-wide GpC cytosine report to: $gc_out <<<\n";
 	warn ">>> Writing genome-wide GpC coverage file to: $gc_cov <<<\n\n";
-	sleep (1);
 	return(defined $my_chr ? $my_chr : '');
     };
 
@@ -699,10 +702,7 @@ sub generate_GC_context_report {
     my %chr; # storing reads for one chromosome at a time
     
     my $count = 0;
-    if ($split_by_chromosome){
-	warn "Now we need to open a new filehandle in split by chromosome mode\n"; sleep(10);
-    }
-
+ 
     while (<IN>){
 	chomp;
 	++$count;
@@ -713,8 +713,10 @@ sub generate_GC_context_report {
 	    $last_chr = $chr;
 	    ++$number_processed;
 	    warn "Storing all covered cytosine positions for chromosome: $chr\n";
-
-	   	}
+	    if ($split_by_chromosome){
+		$current_out_chr = ${filehandles_func}->($chr);
+	    } 
+	}
 	
 	### start positions are 1-based
 	if ($chr eq $last_chr){
@@ -803,7 +805,6 @@ sub generate_GC_context_report {
 			# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";sleep(1);
 		    }
 		    else{
-			$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 			print GCCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
 			print GC join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
 		    }
@@ -816,7 +817,6 @@ sub generate_GC_context_report {
 			# print join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n"; sleep(1);
 		    }
 		    else{
-			$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
 			print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
 			print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 		    }	
@@ -829,6 +829,17 @@ sub generate_GC_context_report {
 	    $last_chr = $chr;
 	    $chr{$chr}->{$start}->{meth} = $meth;
 	    $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+
+	    if ($split_by_chromosome and $current_out_chr ne $last_chr){
+		# closing old filehandle(s)
+		close GC or warn $!;
+		if ($nome){
+		    close GCCOV or warn $!;
+		}
+		
+		# opening new filehandle
+		$current_out_chr = ${filehandles_func}->($last_chr);
+	    }
 	    
 	}
     }
@@ -936,9 +947,11 @@ sub generate_GC_context_report {
     else{
 	warn "Finished writing out GpC cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
     }
-    
+
+    # closing last filehandles
     close GC or warn $!;
     close GCCOV or warn $!;
+
 }
 
 ####
@@ -948,23 +961,12 @@ sub generate_GC_context_report {
 sub process_unprocessed_chromosomes{
 
   my $chr = shift;
-
+  
   warn "Writing cytosine report for not covered chromosome $chr\n";
   $processed{$chr} = 1;
-  ### TODO: properly handle unprocessed chromosomes
-  # $current_out_chr = handle_filehandles($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
-
+  
   if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-      my $chromosome_out = $cytosine_out;
-      if ($chromosome_out =~ /txt$/){ # files passed on by the methylation extractor end in _report.txt
-	  $chromosome_out =~ s/txt$/chr${chr}.txt/;
-      }
-      else{ # user specified output file name
-	  $chromosome_out =~ s/$/.chr${chr}.txt/;
-      }
-      
-    open (CYT,'>',$chromosome_out) or die $!;
-    # warn "Writing output for $last_chr to $chromosome_out\n";
+      handle_filehandles($chr);
   }
   
   my $tri_nt;
@@ -1104,7 +1106,9 @@ sub process_unprocessed_chromosomes{
       }
   }
 
-  #  close CYT or warn $!;
+  if ($split_by_chromosome){
+      close CYT or warn $!;
+  }
 
 }
 
@@ -1661,7 +1665,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 11 October 2017
+                              Script last modified: 12 October 2017
 
 EOF
     ;
