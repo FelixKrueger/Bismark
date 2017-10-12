@@ -42,6 +42,11 @@ Added new option `--discordance <int>` to allow filtering for discordance pf top
 
 Fixed context extraction for Gs at positions 1 and 2 of a chromosome/contig. Also, last cytosine positions of not covered chromosomes are now ignored in the same way as for covered chromosomes [issue #127](https://github.com/FelixKrueger/Bismark/issues/127)
 
+### copy_files_for_releas
+
+Is now working from any location.
+
+
 ## Changelog for Bismark v0.18.2
 
 ### Bismark
