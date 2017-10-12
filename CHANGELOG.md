@@ -2,6 +2,10 @@
 
 ## Changelog for Bismark v0.18.2_dev
 
+### Bismark
+
+Changed the methylation call behaviour so that insertions in a read (which are filled in with `X` for the methylation call) are also considered as `Unknown context` for the methylation call. Here is [issue#135](https://github.com/FelixKrueger/Bismark/issues/135).
+
 ### filter_non_conversion
 
 Added new options `--percentage_cutoff [int]` and `--minimum_count [int]` to allow filtering reads for non-bisulfite conversion using an overall methylation percentage and count cutoff. Here is [issue #122](https://github.com/FelixKrueger/Bismark/issues/122).
@@ -10,13 +14,33 @@ Added new options `--percentage_cutoff [int]` and `--minimum_count [int]` to all
 
 Added option `--multiple` to the deduplicator to treat several input SAM/BAM files as the same sample. Here is [issue #107](https://github.com/FelixKrueger/Bismark/issues/107).
 
-Added option `-output_dir` to `deduplicate_bismark` so that it can be used in the Google cloud. Here is [issue #123](https://github.com/FelixKrueger/Bismark/issues/123)
+Added option `--output_dir` to `deduplicate_bismark` so that it can be used in the Google cloud. Here is [issue #123](https://github.com/FelixKrueger/Bismark/issues/123)
 
 ### coverage2cytosine
+
+Output files are now handled better and more consistently. Default processing now produces the following output files (with `--gzip`):
+```
+CpG_report.txt(.gz) or
+CX_report.txt(.gz)
+```
+
+The option `--NOMe-Seq` now produces four output files (with `--gzip`):
+
+```
+NOMe.CpG_report.txt(.gz)
+NOMe.CpG.cov(.gz)
+NOMe.GpC_report.txt(.gz)
+NOMe.GpC.cov(.gz)
+```
+The option `--split_by_chromosome` should work in either default, `--gc` or `--NOMe-seq` mode.
+
+NOMe-Seq processing if now ignoring processing that were not covered by any reads.
 
 Improved handling of the `--output_dir`, i.e. the folder will be created if it doesn't exist already and making the path absolute. 
 
 Added new option `--discordance <int>` to allow filtering for discordance pf top and bottom strand when in `--merge_CpG` mode. CpG positions for which either the top or bottom strand was not measured at all will not be assessed for discordance and hence appear in the regular 'merged_CpG_evidence.cov' file. More details in [issue #91](https://github.com/FelixKrueger/Bismark/issues/91).
+
+Fixed context extraction for Gs at positions 1 and 2 of a chromosome/contig. Also, last cytosine positions of not covered chromosomes are now ignored in the same way as for covered chromosomes [issue #127](https://github.com/FelixKrueger/Bismark/issues/127)
 
 ## Changelog for Bismark v0.18.2
 
