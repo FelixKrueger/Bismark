@@ -1,10 +1,10 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.18.2_dev
+## Changelog for Bismark v0.19.0
 
 ### Bismark
 
-Changed the methylation call behaviour so that insertions in a read (which are filled in with `X` for the methylation call) are also considered as `Unknown context` for the methylation call. Here is [issue#135](https://github.com/FelixKrueger/Bismark/issues/135).
+Changed the methylation call behaviour so that insertions in a read (which are filled in with `X` for the methylation call) are also considered as `Unknown context` for the methylation call. Here is [issue #135](https://github.com/FelixKrueger/Bismark/issues/135).
 
 ### filter_non_conversion
 
