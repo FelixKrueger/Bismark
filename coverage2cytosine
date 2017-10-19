@@ -22,7 +22,7 @@ use Carp;
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
 my %processed;   # keeping a record of which chromosomes have been processed
-my $coverage2cytosine_version = 'v0.19.0';
+my $coverage2cytosine_version = 'v0.19.1_dev';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco) = process_commandline();
 
@@ -30,7 +30,7 @@ on_screen_summary();
 
 read_genome_into_memory();
 warn "Stored sequence information of ",scalar keys %chromosomes," chromosomes/scaffolds in total\n\n";
-
+my $global_cyt_report;
 generate_genome_wide_cytosine_report($coverage_infile);
 
 ### 11 December 2014
@@ -42,7 +42,7 @@ generate_genome_wide_cytosine_report($coverage_infile);
 
 if ($merge_CpGs) {
     # we only allow this operation if the report is limited to CpG context, and for a single report for the entire genome for the time being
-    combine_CpGs_to_single_CG_entity($cytosine_out);
+    combine_CpGs_to_single_CG_entity($global_cyt_report);
 }
 
 ### 18 August 2015. Update 12 Jan 2017: Additional restrictions for NOMe-Seq
@@ -51,11 +51,11 @@ if ($gc_context){
     generate_GC_context_report($coverage_infile);
 }
 
-# Local function to handle file names and options.  Assume $cytosine_out has been cleaned from unwanted suffixes
+# function to handle file names and options.  Assume $cytosine_out has been cleaned from unwanted suffixes
 # First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
-### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
+
 sub handle_filehandles{
-    
+
     my $my_chr = shift;
     if (defined $my_chr){
 	# warn "Working with chromosome in '--split_by_chromosome' mode\n";
@@ -91,18 +91,20 @@ sub handle_filehandles{
     }
 	
     if ($gzip) {
-	open (CYT,"| gzip -c - > $cytosine_report_file") or die "Failed to write to file $cytosine_report_file: $!\n";
+	open (CYT,"| gzip -c - > ${output_dir}$cytosine_report_file") or die "Failed to write to file ${output_dir}$cytosine_report_file: $!\n";
 	if ($nome) {
-	    open (CYTCOV,"| gzip -c - > $cytosine_coverage_file") or die "Failed to write to file $cytosine_coverage_file: $!\n";
+	    open (CYTCOV,"| gzip -c - > ${output_dir}$cytosine_coverage_file") or die "Failed to write to file ${output_dir}$cytosine_coverage_file: $!\n";
 	}
     }
     else {
-	open (CYT,'>',$cytosine_report_file) or die "Failed to open uncompressed file $cytosine_report_file: $!\n";
+	open (CYT,'>',"${output_dir}$cytosine_report_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_report_file: $!\n";
 	if ($nome) {
-	    open (CYTCOV,'>',$cytosine_coverage_file) or die "Failed to open uncompressed file $cytosine_coverage_file: $!\n";
+	    open (CYTCOV,'>',"${output_dir}$cytosine_coverage_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_coverage_file: $!\n";
 	}
     }
-    
+
+    $global_cyt_report = $cytosine_report_file; # needed for --merge_CpG option later on
+
     if ($nome){
 	warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n";
 	warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage_file <<<\n\n";
@@ -112,6 +114,7 @@ sub handle_filehandles{
     }
     
     return(defined $my_chr ? $my_chr : ''); # returning chromosome in --split_by_chromosome mode
+
 }
 
 
@@ -126,10 +129,10 @@ sub generate_genome_wide_cytosine_report {
     my $current_out_chr = '';
     
     ### changing to the output directory again
-    unless ($output_dir eq ''){ # default
-	chdir $output_dir or die "Failed to change directory to $output_dir\n";
-	# warn "Changed directory to $output_dir\n";
-    }
+    #unless ($output_dir eq ''){ # default
+    # chdir $output_dir or die "Failed to change directory to $output_dir\n";
+    # warn "Changed directory to $output_dir\n";
+    # }
     
     my $in = shift;
     # infiles handed over by the methylation extractor will be just the filename on their own. The directory should have been handed over with --dir
@@ -156,7 +159,7 @@ sub generate_genome_wide_cytosine_report {
 	unless (defined $last_chr){
 	    $last_chr = $chr;
 	    ++$number_processed;
-	    # warn "Storing all covered cytosine positions for chromosome: $chr\n";
+	    warn "Storing all covered cytosine positions for chromosome: $chr\n";
 	    if ($split_by_chromosome){
 		$current_out_chr = handle_filehandles($chr);
 		# warn "Returned the following current out chr: >>>$current_out_chr<<<\n";
@@ -648,10 +651,10 @@ sub generate_GC_context_report {
     my $current_out_chr = '';
     
     ### changing to the output directory again
-    unless ($output_dir eq ''){ # default
-	chdir $output_dir or die "Failed to change directory to $output_dir\n";
-	# warn "Changed directory to $output_dir\n";
-    }
+    # unless ($output_dir eq ''){ # default
+    #	chdir $output_dir or die "Failed to change directory to $output_dir\n";
+    #	# warn "Changed directory to $output_dir\n";
+    #    }
     
     my $in = shift;
     if ($in =~ /gz$/){
@@ -665,7 +668,6 @@ sub generate_GC_context_report {
     # 1. CpGs to A-C-G and T-C-G
     # 2. GpC report files / cov files that only include G-C-A, G-C-C and G-C-T
 
-    ### note: we are still in the folder: $output_dir, so we do not have to include this into the open commands
  
     # Local function to handle file names and options, similar to function in generate_genome_wide_cytosine_report().
     # Assume $cytosine_out has been cleaned from unwanted suffixes
@@ -684,12 +686,12 @@ sub generate_GC_context_report {
 	if ($gzip) {
 	    $gc_out .= '.gz';
 	    $gc_cov .= '.gz';
-	    open (GC, "| gzip -c - > $gc_out") or die "Failed to write to GpC file $gc_out: !\n\n";
-	    open (GCCOV, "| gzip -c - > $gc_cov") or die "Failed to write to GpC coverage file $gc_cov: !\n\n";
+	    open (GC, "| gzip -c - > ${output_dir}$gc_out") or die "Failed to write to GpC file ${output_dir}$gc_out: !\n\n";
+	    open (GCCOV, "| gzip -c - > ${output_dir}$gc_cov") or die "Failed to write to GpC coverage file ${output_dir}$gc_cov: !\n\n";
 	}
 	else {
-	    open (GC, '>', $gc_out) or die "Failed to write to GpC file $gc_out: !\n\n";
-	    open (GCCOV, '>', $gc_cov) or die "Failed to write to GpC coverage file $gc_cov: !\n\n";
+	    open (GC, '>', "${output_dir}$gc_out") or die "Failed to write to GpC file ${output_dir}$gc_out: !\n\n";
+	    open (GCCOV, '>', "${output_dir}$gc_cov") or die "Failed to write to GpC coverage file ${output_dir}$gc_cov: !\n\n";
 	}
 	warn ">>> Writing genome-wide GpC cytosine report to: $gc_out <<<\n";
 	warn ">>> Writing genome-wide GpC coverage file to: $gc_cov <<<\n\n";
@@ -1271,22 +1273,42 @@ sub extract_chromosome_name {
 sub combine_CpGs_to_single_CG_entity{
 
     my $CpG_report_file = shift;
+    # this input file will now be in the output folder
+    warn "Now merging top and bottom strand CpGs into a single CG dinucleotide entity (reading from file >>$CpG_report_file<<, in output directory '$output_dir')\n";
     
-    warn "Now merging top and bottom strand CpGs into a single CG dinucleotide entity (writing to file >> $CpG_report_file <<)\n";
+    if($CpG_report_file =~ /gz$/){
+	open (IN,"gunzip -c ${output_dir}$CpG_report_file |") or die "Failed to open file >>${output_dir}$CpG_report_file<<: $!\n\n";
+    }
+    else{
+	open (IN,"${output_dir}$CpG_report_file") or die "Failed to open file >>${output_dir}$CpG_report_file<<: $!\n\n";
+    }
     
-    open (IN,$CpG_report_file) or die "Failed to open file $CpG_report_file: $!\n\n";
-    
+    $CpG_report_file =~ s/\.gz$//;
+    $CpG_report_file =~ s/\.txt$//;
     my $pooled_CG        = $CpG_report_file;
     my $disco_CpG_report = $CpG_report_file;
-    $pooled_CG        =~ s/$/.merged_CpG_evidence.cov/;
-    $disco_CpG_report =~ s/$/.discordant_CpG_evidence.cov/;
     
-    open (OUT,'>',$pooled_CG) or die "Failed to write to file '$pooled_CG': $!\n\n";
+    $pooled_CG        =~ s/$/.merged_CpG_evidence.cov/;
+    if ($gzip){
+	$pooled_CG  .= '.gz';
+	open (OUT,"| gzip -c - > ${output_dir}$pooled_CG") or die "Failed to write to file '${output_dir}$pooled_CG': $!\n\n";
+    }
+    else{
+	open (OUT,'>',"${output_dir}$pooled_CG") or die "Failed to write to file '${output_dir}$pooled_CG': $!\n\n";
+    }
     warn ">>> Writing a new coverage file with top and bottom strand CpG methylation evidence merged to $pooled_CG <<<\n\n";
-
+    
     if ($disco){
+	$disco_CpG_report =~ s/$/.discordant_CpG_evidence.cov/;
+	if ($gzip){
+	    $disco_CpG_report  .= '.gz';
+	    open (DISCO,"| gzip -c - > ${output_dir}$disco_CpG_report") or die "Failed to write to file ${output_dir}$disco_CpG_report: $!\n\n";
+	}
+	
+	else{
+	    open (DISCO,'>',"${output_dir}$disco_CpG_report") or die "Failed to write to file ${output_dir}$disco_CpG_report: $!\n\n";
+	}
 	warn "CpG dinucleotides that disagree in their methylation values between top and bottom strand more than $disco% are written to a $disco_CpG_report\n\n";
-	open (DISCO,'>',$disco_CpG_report) or die "Failed to write to file $disco_CpG_report: $!\n\n";
     }
     
     while (1){
@@ -1340,33 +1362,35 @@ sub combine_CpGs_to_single_CG_entity{
 	my $percentage_top;
 	my $percentage_bottom;
 
-	# If the two strands produce discordant methylation percentages we print them to the discordant file instead
-	if ( ($m1 + $u1 == 0) or ($m2 + $u2 == 0)){
-	    # if either the top strand or bottom strand was not measured at all we cannot judge their discordance. 
-	    # In this case the results are written out the standard merged CpG report file
-
-	    # warn "At least one C was not measured at all:\n$line1\n$line2\n\n";sleep(1);
-	}
-	else{
-	    $percentage_top    = sprintf ("%.6f",$m1/ ($m1 + $u1) * 100);
-	    $percentage_bottom = sprintf ("%.6f",$m2/ ($m2 + $u2) * 100);
-	    if ( abs($percentage_top - $percentage_bottom) > $disco){
-		# warn "difference was greater than threshold! (",abs($percentage_top - $percentage_bottom),"). Discordant...\n";
-		# warn "$line1\n$line2\n\n##################\n";sleep(1);
+	if ($disco){
+	    # If the two strands produce discordant methylation percentages we print them to the discordant file instead
+	    if ( ($m1 + $u1 == 0) or ($m2 + $u2 == 0)){
+		# if either the top strand or bottom strand was not measured at all we cannot judge their discordance. 
+		# In this case the results are written out the standard merged CpG report file
 		
-		if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
-		    print DISCO join ("\t",$chr1,$pos1,$pos1+1,$percentage_top,$m1,$u1),"\n";
-		    print DISCO join ("\t",$chr2,$pos2,$pos2+1,$percentage_bottom,$m2,$u2),"\n";
-		}	
-		else{
-		    print DISCO join ("\t",$chr1,$pos1,$pos1,$percentage_top,$m1,$u1),"\n";
-		    print DISCO join ("\t",$chr2,$pos2,$pos2,$percentage_bottom,$m2,$u2),"\n";
-		}
-		next; # not proceeding to merging
+		# warn "At least one C was not measured at all:\n$line1\n$line2\n\n";sleep(1);
 	    }
-	    else{ # fine
-		# warn "difference withing limits! (",abs($percentage_top - $percentage_bottom),"). Fine...\n";
-		# warn "$line1\n$line2\n\n~~~~~~~~~~~~~~~~~\n";sleep(1);
+	    else{
+		$percentage_top    = sprintf ("%.6f",$m1/ ($m1 + $u1) * 100);
+		$percentage_bottom = sprintf ("%.6f",$m2/ ($m2 + $u2) * 100);
+		if ( abs($percentage_top - $percentage_bottom) > $disco){
+		    # warn "difference was greater than threshold! (",abs($percentage_top - $percentage_bottom),"). Discordant...\n";
+		    # warn "$line1\n$line2\n\n##################\n";sleep(1);
+		    
+		    if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
+			print DISCO join ("\t",$chr1,$pos1,$pos1+1,$percentage_top,$m1,$u1),"\n";
+		    print DISCO join ("\t",$chr2,$pos2,$pos2+1,$percentage_bottom,$m2,$u2),"\n";
+		    }	
+		    else{
+			print DISCO join ("\t",$chr1,$pos1,$pos1,$percentage_top,$m1,$u1),"\n";
+			print DISCO join ("\t",$chr2,$pos2,$pos2,$percentage_bottom,$m2,$u2),"\n";
+		    }
+		    next; # not proceeding to merging
+		}
+		else{ # fine
+		    # warn "difference withing limits! (",abs($percentage_top - $percentage_bottom),"). Fine...\n";
+		    # warn "$line1\n$line2\n\n~~~~~~~~~~~~~~~~~\n";sleep(1);
+		}
 	    }
 	}
 	
@@ -1644,7 +1668,7 @@ sub print_helpfile{
 
 --ff                     In addition to the standard output selecting --ff will also extract a four and five (tetra/penta)
                          nucleotide context for the cytosines in question. Too short sequences (e.g. at the edges of the
-                         chromosome) will be left blank; sequences containing Ns are ignored.
+                         chromosome) will be left blank; sequences containing Ns are ignored.ll
 
 --zero_based             Uses 0-based coordinates instead of 1-based coordinates throughout. Default: OFF.
 
@@ -1665,7 +1689,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 12 October 2017
+                              Script last modified: 19 October 2017
 
 EOF
     ;
