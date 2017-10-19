@@ -1,5 +1,11 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.19.1_dev
+
+### coverage2cytosine
+
+Restructured the way output and input file paths are handled. All should be working now, inluding combinations of `--gzip`, `--dir /PATH/`, `--merge_CpG`, `--disco`, `--split_by_chromosome` etc.
+
 ## Changelog for Bismark v0.19.0
 
 ### Bismark
