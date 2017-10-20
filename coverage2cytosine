@@ -1323,25 +1323,82 @@ sub combine_CpGs_to_single_CG_entity{
 	my ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
 	# print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
 	# print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n"; sleep(1);
-
+	
 	# If there is a CpG right at the start of the reference chromosome it will be present for the top strand,
 	# but will be missing for the reverse strand because it is impossible to determine a trinucleotide context
 	if ($zero){ # if the CpG report was written out with zero-based coordinates 
 	    if ($pos1 < 1){ # the position has to be adjusted to by -1
-		$line1 = $line2;
-		$line2 = <IN>;
-		chomp $line2;
-		($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-		($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		if ($chr1 ne $chr2){
+		    # warn "Current chromsosomes mismatch! $chr1 and $chr2. Hmm\n\n";sleep(1);
+		    while (<IN>){ # reading new lines until chromosomes match again
+			$line1 = $line2;
+			$line2 = $_; 
+			chomp $line2;
+			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+			# warn "line1 now: $line1\nline2 now: $line2\n"; sleep(1);
+			if ($chr1 eq $chr2){ # breaking out if we are now on the same chromosome
+			    # warn "Breaking out now\n";
+			    last;
+			}
+		    }
+		    # If we are now on the same chromosome we need to check whether we are looking at a CG at position 0
+		    if ($pos1 < 1){
+			$line1 = $line2;
+			$line2 = <IN>;
+			chomp $line2;
+			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		    }
+		}
+		else{	
+		    $line1 = $line2;
+		    $line2 = <IN>;
+		    chomp $line2;
+		    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+		    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		}
 	    }
 	}
 	else{ # default
 	    if ($pos1 < 2){
-		$line1 = $line2;
-		$line2 = <IN>;
-		chomp $line2;
-		($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-		($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		# In certain cases we might see the following scenario:
+		# Scaffold100808  1       +       0       0       CG      CGC
+		# Scaffold100809  1       +       0       0       CG      CGG
+		# Scaffold100809  4       +       0       0       CG      CGT
+		# Scaffold100809  5       -       0       0       CG      CGC
+		# Scaffold 808 is very short and only contains a single CG at position 1. Scaffold 809 also contains a CG at position 1, so we need to read in more lines
+		# until we have two reads from the same chromosome that are consecutive calls
+		if ($chr1 ne $chr2){
+		    # warn "Current chromsosomes mismatch! $chr1 and $chr2. Hmm\n\n";sleep(1);
+		    while (<IN>){ # reading new lines until chromosomes match again
+			$line1 = $line2;
+			$line2 = $_; 
+			chomp $line2;
+			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+			# warn "line1 now: $line1\nline2 now: $line2\n"; sleep(1);
+			if ($chr1 eq $chr2){ # breaking out if we are now on the same chromosome
+			    # warn "Breaking out now\n";
+			    last;
+			}
+		    }
+		    # If we are now on the same chromosome we need to check whether we are looking at a CG at position 1
+		    if ($pos1 < 2){
+			$line1 = $line2;
+			$line2 = <IN>;
+			chomp $line2;
+			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		    }
+		}
+		else{
+		    $line1 = $line2;
+		    $line2 = <IN>;
+		    chomp $line2;
+		    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+		    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		}
 	    }
 	}
 
@@ -1379,7 +1436,7 @@ sub combine_CpGs_to_single_CG_entity{
 		    
 		    if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
 			print DISCO join ("\t",$chr1,$pos1,$pos1+1,$percentage_top,$m1,$u1),"\n";
-		    print DISCO join ("\t",$chr2,$pos2,$pos2+1,$percentage_bottom,$m2,$u2),"\n";
+			print DISCO join ("\t",$chr2,$pos2,$pos2+1,$percentage_bottom,$m2,$u2),"\n";
 		    }	
 		    else{
 			print DISCO join ("\t",$chr1,$pos1,$pos1,$percentage_top,$m1,$u1),"\n";
@@ -1689,7 +1746,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 19 October 2017
+                              Script last modified: 20 October 2017
 
 EOF
     ;
