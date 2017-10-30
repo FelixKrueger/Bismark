@@ -867,6 +867,13 @@ foreach my $filename (@filenames){
     }
 
   }
+  else{
+      # If multiple files were supplied as the command line, like so:
+      # -1 R1.fastq,simulated_1.fastq,ZZZ_R1.fastq -2 R2.fastq,simulated_2.fastq,ZZZ_R2.fastq --multicore 4
+      # we need to exit from the child processes if we don't want a steady increase of new Bismark instances! Fiexed 30 10 2017
+      # warn "Terminating Child process\n\n"; 
+      exit;
+  }
 
 }
 
@@ -10324,6 +10331,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 10 October 2017
+Last modified on 30 October 2017
 HOW_TO
 }
