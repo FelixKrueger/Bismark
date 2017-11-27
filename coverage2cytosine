@@ -60,7 +60,7 @@ sub handle_filehandles{
     if (defined $my_chr){
 	# warn "Working with chromosome in '--split_by_chromosome' mode\n";
     }
-
+    
     my $cytosine_coverage_file = $cytosine_out;
     my $cytosine_report_file;
     
@@ -70,6 +70,15 @@ sub handle_filehandles{
     }
     
     $cytosine_report_file = $cytosine_coverage_file; # required in any case
+
+    # if the data came from the methylation extractor it will already end in .CX_report.txt or .CpG_report.txt
+    if ($CX_context){
+	$cytosine_report_file =~ s/\.CX_report.txt$//;  # removing to avoid duplication
+    }
+    else{
+	$cytosine_report_file =~ s/\.CpG_report.txt$//; # removing to avoid duplication
+    }
+    
     
     if ($nome) {
 	$cytosine_report_file   .= '.NOMe.CpG_report.txt';
@@ -1746,7 +1755,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 20 October 2017
+                              Script last modified: 27 November 2017
 
 EOF
     ;
