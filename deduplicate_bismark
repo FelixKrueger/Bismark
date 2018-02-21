@@ -35,7 +35,7 @@ use Cwd;
 ### 10 07 2017
 ### adding the option to supply 2 (or more) filenames that are both used for deduplication. This is supposed to be an alternative to merging and mapping straight at the FastQ stage
 
-my $dedup_version = 'v0.19.0';
+my $dedup_version = 'v0.19.0_dev';
 my @filenames;
 
 my ($representative,$single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir) = process_commandline();
@@ -347,7 +347,7 @@ foreach my $file (@filenames){
 			    chomp $genome_conversion;
 			}
 		    }
-		    die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $read_conversion);
+		    die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $genome_conversion);
 
 		    
 		    my $index;
@@ -669,7 +669,7 @@ sub deduplicate_barcoded_rrbs{
 	  chomp $genome_conversion;
 	}
       }
-      die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $read_conversion);
+      die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $genome_conversion);
 
 	
       my $index;
@@ -892,7 +892,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on 07 September 2017\n\n";
+  print "This script was last modified on 21 February 2018\n\n";
 }
 
 
@@ -1034,7 +1034,7 @@ sub process_commandline{
                   Bismark Deduplication Module
 
 	      Deduplicator Version: $dedup_version
-      Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
+      Copyright 2010-18 Felix Krueger, Babraham Bioinformatics
 	www.bioinformatics.babraham.ac.uk/projects/bismark/
 	    https://github.com/FelixKrueger/Bismark
   	  
