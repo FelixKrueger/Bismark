@@ -35,20 +35,21 @@ use Cwd;
 ### 10 07 2017
 ### adding the option to supply 2 (or more) filenames that are both used for deduplication. This is supposed to be an alternative to merging and mapping straight at the FastQ stage
 
-my $dedup_version = 'v0.19.0_dev';
+### 10 03 2018
+### Changing the strand identity from a single + and - to OT, OB, CTOT and CTOB. This may help discriminating between rare cases when OT and CTOB alignments (which are technically both + alignments)
+### start and end at the exact same position
+### Deduplication in --representative mode is now no longer supported. It wasn't what people should have wanted anyway
+
+my $dedup_version = 'v0.19.1_dev';
 my @filenames;
 
-my ($representative,$single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir) = process_commandline();
+my ($single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir) = process_commandline();
 
 ###########################
 ### START OF PROCESSING ###
 ###########################
 
-if ($representative){
-    warn "\nIf there are several alignments to a single position in the genome the alignment with the most representative methylation call will be chosen (this might be the most highly amplified PCR product...)\n\n";
-    sleep (1);
-}
-elsif($rrbs){
+if($rrbs){
     warn "\nIf the input is a multiplexed sample with several alignments to a single position in the genome, only alignments with a unique barcode will be chosen)\n\n";
     sleep (1);
 }
@@ -149,12 +150,7 @@ foreach my $file (@filenames){
     open (REPORT,'>',"${output_dir}$report") or die "Failed to write to report file to ${output_dir}$report: $!\n\n";
 
 
-    ### for representative methylation calls we need to discriminate between single-end and paired-end files as the latter have 2 methylation call strings
-    if($representative){
-	deduplicate_representative($file);
-    }
-
-    elsif($rrbs){
+    if($rrbs){
 	deduplicate_barcoded_rrbs($file);
     }
 
@@ -280,13 +276,54 @@ foreach my $file (@filenames){
 	    else{ # SAM format
 		($strand,$chr,$start,$cigar) = (split (/\t/))[1,2,3,5]; # we are assigning the FLAG value to $strand
 
+		my $read_conversion;
+		my $genome_conversion;
+
+		while ( /(XR|XG):Z:([^\t]+)/g ) {
+		    my $tag = $1;
+		    my $value = $2;
+		    
+		    if ($tag eq "XR") {
+			$read_conversion = $value;
+			$read_conversion =~ s/\r//;
+			chomp $read_conversion;
+		    } elsif ($tag eq "XG") {
+			$genome_conversion = $value;
+			$genome_conversion =~ s/\r//;
+			chomp $genome_conversion;
+		    }
+		}
+		die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $genome_conversion);
+		
+		# Overwriting the FLAG in the strand with more detailed strand identity
+		my $index;
+		if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
+		    $index = 0;
+		    # $strand = '+'; old
+		    $strand = 'OT';
+		} elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
+		    $index = 1;
+		    # $strand = '-'; old
+		    $strand = 'CTOT';
+		} elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
+		    $index = 2;
+		    # $strand = '+'; old
+		    $strand = 'CTOB';
+		} elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
+		    $index = 3;
+		    # $strand = '-';
+		    $strand = 'OB';
+		} else {
+		    die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
+		}
+		
 		### SAM single-end
 		if ($single){
 
-		    if ($strand == 0 ){
+		    if ($index == 0 or $index == 2 ){
 			### read aligned to the forward strand. No action needed
 		    }
-		    elsif ($strand == 16){
+		    else{
 			### read is on reverse strand
 			
 			$start -= 1; # only need to adjust this once
@@ -322,51 +359,15 @@ foreach my $file (@filenames){
 				}
 			    }
 			}
-		    }
+		    }   
 		    $composite = join (":",$strand,$chr,$start);
+		    # warn "Adding the following string:\t$composite\n";    
 		}
 		elsif($paired){
 
 		    ### storing the current line
 		    $line1 = $_;
-
-		    my $read_conversion;
-		    my $genome_conversion;
-
-		    while ( /(XR|XG):Z:([^\t]+)/g ) {
-			my $tag = $1;
-			my $value = $2;
-
-			if ($tag eq "XR") {
-			    $read_conversion = $value;
-			    $read_conversion =~ s/\r//;
-			    chomp $read_conversion;
-			} elsif ($tag eq "XG") {
-			    $genome_conversion = $value;
-			    $genome_conversion =~ s/\r//;
-			    chomp $genome_conversion;
-			}
-		    }
-		    die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $genome_conversion);
-
-		    
-		    my $index;
-		    if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
-			$index = 0;
-			$strand = '+';
-		    } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
-			$index = 1;
-			$strand = '-';
-		    } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
-			$index = 2;
-			$strand = '+';
-		    } elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
-			$index = 3;
-			$strand = '-';
-		    } else {
-			die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
-		    }
-		    
+   		    
 		    # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
 		    if ($index == 0 or $index == 2){
 			
@@ -450,6 +451,7 @@ foreach my $file (@filenames){
 			($start) = (split (/\t/))[3];
 		    }
 		    $composite = join (":",$strand,$chr,$start,$end);
+		    # warn "Adding the following string:\t$composite\n";
 		}
 		
 		else{
@@ -511,312 +513,318 @@ foreach my $file (@filenames){
 
 sub deduplicate_barcoded_rrbs{
 
-  my $file = shift;
+    my $file = shift;
 
-  my %unique_seqs;
-  my %positions;
+    my %unique_seqs;
+    my %positions;
 
-  if ($file =~ /\.gz$/){
-    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
-  }
-  elsif ($file =~ /\.bam$/){
-    open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
-  }
-  else{
-    open (IN,$file) or die "Unable to read from $file: $!\n";
-  }
+    if ($file =~ /\.gz$/){
+	open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+    }
+    elsif ($file =~ /\.bam$/){
+	open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+	open (IN,$file) or die "Unable to read from $file: $!\n";
+    }
 
-  my $outfile = $file;
-  $outfile =~ s/\.gz$//;
-  $outfile =~ s/\.sam$//;
-  $outfile =~ s/\.bam$//;
-  $outfile =~ s/\.txt$//;
+    my $outfile = $file;
+    $outfile =~ s/\.gz$//;
+    $outfile =~ s/\.sam$//;
+    $outfile =~ s/\.bam$//;
+    $outfile =~ s/\.txt$//;
 
-  if ($vanilla){
-    $outfile =~ s/$/_dedup_RRBS.txt/;
-  }
-  else{
+    if ($vanilla){
+	$outfile =~ s/$/_deduplicated.txt/;
+    }
+    else{
+	if ($bam == 1){
+	    $outfile =~ s/$/.deduplicated.bam/;
+	}
+	elsif ($bam == 2){
+	    $outfile =~ s/$/.deduplicated.sam.gz/;
+	}
+	else{
+	    $outfile =~ s/$/.deduplicated.sam/;
+	}
+    }
     if ($bam == 1){
-      $outfile =~ s/$/.dedup_RRBS.bam/;
+	open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
     }
-    elsif ($bam == 2){
-      $outfile =~ s/$/.dedupRRBS.sam.gz/;
-    }
-    else{
-      $outfile =~ s/$/.dedup_RRBS.sam/;
-    }
-  }
-  if ($bam == 1){
-    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
-  }
-  elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-    open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
-  }
-  else{
-    open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
-  }
-
-  ### This mode only supports Bismark SAM output
-  my $count = 0;
-  my $unique_seqs = 0;
-  my $removed = 0;
-
-  while (<IN>){
-
-    if ($count == 0){
-      if ($_ =~ /^Bismark version:/){
-	warn "The file appears to be in the custom Bismark and not SAM format. Please see option --vanilla!\n";
-	sleep (2);
-	print_helpfile();
-	exit;
-      }
-    }
-
-    ### if this was a SAM file we ignore header lines
-    if (/^\@\w{2}\t/){
-      warn "skipping SAM header line:\t$_";
-      print OUT; # Printing the header lines again into the de-duplicated file
-      next;
-    }
-
-    ++$count;
-    my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
-    ### in this barcoded mode we also store the read barcode as additional means of assisting the deduplication
-    ### in effect the $composite string looks like this (separated by ':'):
-
-    ### FLAG:chromosome:start:barcode
-
-    my $end;
-    my $line1;
-
-    # SAM format
-    my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
-
-    $id =~ /:(\w+)$/;
-    my $barcode = $1;
-    unless ($barcode){
-      die "Failed to extract a barcode from the read ID (last element of each read ID needs to be the barcode sequence, e.g. ':CATG'\n\n";
-    }
-
-    ### SAM single-end
-    if ($single){
-
-      if ($strand == 0 ){
-	### read aligned to the forward strand. No action needed
-      }
-      elsif ($strand == 16){
-	### read is on reverse strand
-	
-	$start -= 1; # only need to adjust this once
-	
-	# for InDel free matches we can simply use the M number in the CIGAR string
-	if ($cigar =~ /^(\d+)M$/){ # linear match
-	  $start += $1;
-	}
-	else{
-	  # parsing CIGAR string
-	  my @len = split (/\D+/,$cigar); # storing the length per operation
-	  my @ops = split (/\d+/,$cigar); # storing the operation
-	  shift @ops; # remove the empty first element
-	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-
-	  # warn "CIGAR string; $cigar\n";
-	  ### determining end position of a read
-	  foreach my $index(0..$#len){
-	    if ($ops[$index] eq 'M'){  # standard matching bases
-	      $start += $len[$index];
-	      # warn "Operation is 'M', adding $len[$index] bp\n";
-	    }
-	    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-	      # warn "Operation is 'I', next\n";
-	    }
-	    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-	      #  warn "Operation is 'D',adding $len[$index] bp\n";
-	      $start += $len[$index];
-	    }
-	    else{
-	      die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
-	    }
-	  }
-	}
-      }
-
-      ### Here we take the barcode sequence into consideration
-      $composite = join (":",$strand,$chr,$start,$barcode);
-      # warn "$composite\n\n";
-      # sleep(1);
-    }
-    elsif($paired){
-
-      ### storing the current line
-      $line1 = $_;
-
-      my $read_conversion;
-      my $genome_conversion;
-
-      while ( /(XR|XG):Z:([^\t]+)/g ) {
-	my $tag = $1;
-	my $value = $2;
-	
-	if ($tag eq "XR") {
-	  $read_conversion = $value;
-	  $read_conversion =~ s/\r//;
-	  chomp $read_conversion;
-	}
-	elsif ($tag eq "XG") {
-	  $genome_conversion = $value;
-	  $genome_conversion =~ s/\r//;
-	  chomp $genome_conversion;
-	}
-      }
-      die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $genome_conversion);
-
-	
-      my $index;
-      if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
-	$index = 0;
-	$strand = '+';
-      } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
-	$index = 1;
-	$strand = '-';
-      } elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
-	$index = 2;
-	$strand = '+';
-      } elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
-	$index = 3;
-	$strand = '-';
-      } else {
-	die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
-      }
-	
-      # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
-      if ($index == 0 or $index == 2){
-	
-	### reading in the next line
-	$_ = <IN>;
-	# the only thing we need is the end position
-	($end,my $cigar_2) = (split (/\t/))[3,5];
-
-	$end -= 1; # only need to adjust this once
-	
-	# for InDel free matches we can simply use the M number in the CIGAR string
-	if ($cigar_2 =~ /^(\d+)M$/){ # linear match
-	  $end += $1;
-	}
-	else{
-	  # parsing CIGAR string
-	  my @len = split (/\D+/,$cigar_2); # storing the length per operation
-	  my @ops = split (/\d+/,$cigar_2); # storing the operation
-	  shift @ops; # remove the empty first element
-	  die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
-	
-	  # warn "CIGAR string; $cigar_2\n";
-	  ### determining end position of the read
-	  foreach my $index(0..$#len){
-	    if ($ops[$index] eq 'M'){  # standard matching bases
-	      $end += $len[$index];
-	      # warn "Operation is 'M', adding $len[$index] bp\n";
-	    }
-	    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-	      # warn "Operation is 'I', next\n";
-	    }
-	    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-	      #  warn "Operation is 'D',adding $len[$index] bp\n";
-	      $end += $len[$index];
-	    }
-	    else{
-	      die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
-	    }
-	  }
-	}
-      }
-      else{
-	# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
-	
-	$end = $start - 1; # need to adjust this only once
-	
-	# for InDel free matches we can simply use the M number in the CIGAR string
-	if ($cigar =~ /^(\d+)M$/){ # linear match
-	  $end += $1;
-	}
-	else{
-	  # parsing CIGAR string
-	  my @len = split (/\D+/,$cigar); # storing the length per operation
-	  my @ops = split (/\d+/,$cigar); # storing the operation
-	  shift @ops; # remove the empty first element
-	  die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
-	
-	  # warn "CIGAR string; $cigar\n";
-	  ### determining end position of the read
-	  foreach my $index(0..$#len){
-	    if ($ops[$index] eq 'M'){  # standard matching bases
-	      $end += $len[$index];
-	      # warn "Operation is 'M', adding $len[$index] bp\n";
-	    }
-	    elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
-	      # warn "Operation is 'I', next\n";
-	    }
-	    elsif($ops[$index] eq 'D'){ # deletions do affect the end position
-	      # warn "Operation is 'D',adding $len[$index] bp\n";
-	      $end += $len[$index];
-	    }
-	    else{
-	      die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
-	    }
-	  }
-	}
-	
-	### reading in the next line
-	$_ = <IN>;
-	# the only thing we need is the start position
-	($start) = (split (/\t/))[3];
-      }
-
-      ### Here we take the barcode sequence into consideration
-      $composite = join (":",$strand,$chr,$start,$end,$barcode);
+    elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
+	open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
     }
     else{
-      die "Input must be single or paired-end\n";
+	open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
     }
 
-    if (exists $unique_seqs{$composite}){
-      ++$removed;
-      unless (exists $positions{$composite}){
-	$positions{$composite}++;
-      }
+    ### This mode only supports Bismark SAM/BAM output
+    my $count = 0;
+    my $unique_seqs = 0;
+    my $removed = 0;
+
+    while (<IN>){
+
+	if ($count == 0){
+	    if ($_ =~ /^Bismark version:/){
+		warn "The file appears to be in the custom Bismark and not SAM format. Please see option --vanilla!\n";
+		sleep (2);
+		print_helpfile();
+		exit;
+	    }
+	}
+
+	### if this was a SAM file we ignore header lines
+	if (/^\@\w{2}\t/){
+	    warn "skipping SAM header line:\t$_";
+	    print OUT; # Printing the header lines again into the de-duplicated file
+	    next;
+	}
+
+	++$count;
+	my $composite; # storing positional data. For single end data we are only using the start coordinate since the end might have been trimmed to different lengths
+	### in this barcoded mode we also store the read barcode as additional means of assisting the deduplication
+	### in effect the $composite string looks like this (separated by ':'):
+
+	### strand identity:chromosome:start:barcode
+
+	my $end;
+	my $line1;
+
+	# SAM format
+	my ($id,$strand,$chr,$start,$cigar) = (split (/\t/))[0,1,2,3,5]; # we are assigning the FLAG value to $strand
+
+	$id =~ /:(\w+)$/;
+	my $barcode = $1;
+	unless ($barcode){
+	    die "Failed to extract a barcode from the read ID (last element of each read ID needs to be the barcode sequence, e.g. ':CATG'\n\n";
+	}
+	
+	my $read_conversion;
+	my $genome_conversion;
+	
+	while ( /(XR|XG):Z:([^\t]+)/g ) {
+	    my $tag = $1;
+	    my $value = $2;
+	    
+	    if ($tag eq "XR") {
+		$read_conversion = $value;
+		$read_conversion =~ s/\r//;
+		chomp $read_conversion;
+	    }
+	    elsif ($tag eq "XG") {
+		$genome_conversion = $value;
+		$genome_conversion =~ s/\r//;
+		chomp $genome_conversion;
+	    }
+	}
+	die "Failed to determine read and genome conversion from line: $line1\n\n" unless ($read_conversion and $genome_conversion);
+
+	
+	my $index;
+	if ($read_conversion eq 'CT' and $genome_conversion eq 'CT') { ## original top strand
+	    $index = 0;
+	    # $strand = '+'; # old
+	    $strand = 'OT';
+	} elsif ($read_conversion eq 'GA' and $genome_conversion eq 'CT') { ## complementary to original top strand
+	    $index = 1;
+	    # $strand = '-'; # old
+	    $strand = 'CTOT';
+	} elsif ($read_conversion eq 'GA' and $genome_conversion eq 'GA') { ## complementary to original bottom strand
+	    $index = 2;
+	    # $strand = '+'; # old
+	    $strand = 'CTOB';
+	} elsif ($read_conversion eq 'CT' and $genome_conversion eq 'GA') { ## original bottom strand
+	    $index = 3;
+	    # $strand = '-'; # old
+	    $strand = 'OB';
+	} else {
+	    die "Unexpected combination of read and genome conversion: '$read_conversion' / '$genome_conversion'\n";
+	}
+	
+	
+	### SAM single-end
+	if ($single){
+	    
+	    if ($index == 0 or $index == 2){
+		### read aligned to the forward strand. No action needed
+	    }
+	    else{
+		### read is on reverse strand
+		
+		$start -= 1; # only need to adjust this once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar =~ /^(\d+)M$/){ # linear match
+		    $start += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+
+		    # warn "CIGAR string; $cigar\n";
+		    ### determining end position of a read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $start += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    #  warn "Operation is 'D',adding $len[$index] bp\n";
+			    $start += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+	    }
+
+	    ### Here we take the barcode sequence into consideration
+	    $composite = join (":",$strand,$chr,$start,$barcode);
+	    # warn "Adding the following string:\t$composite\n";    
+	    # sleep(1);
+	}
+	elsif($paired){
+
+	    ### storing the current line
+	    $line1 = $_;
+
+	    # if the read aligns in forward orientation we can certainly use the start position of read 1, and only need to work out the end position of read 2	
+	    if ($index == 0 or $index == 2){
+		
+		### reading in the next line
+		$_ = <IN>;
+		# the only thing we need is the end position
+		($end,my $cigar_2) = (split (/\t/))[3,5];
+
+		$end -= 1; # only need to adjust this once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar_2 =~ /^(\d+)M$/){ # linear match
+		    $end += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar_2); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar_2); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar_2)\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar_2\n";
+		    ### determining end position of the read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $end += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    #  warn "Operation is 'D',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+	    }
+	    else{
+		# else read 1 aligns in reverse orientation and we need to work out the end of the fragment first, and use the start of the next line
+		
+		$end = $start - 1; # need to adjust this only once
+		
+		# for InDel free matches we can simply use the M number in the CIGAR string
+		if ($cigar =~ /^(\d+)M$/){ # linear match
+		    $end += $1;
+		}
+		else{
+		    # parsing CIGAR string
+		    my @len = split (/\D+/,$cigar); # storing the length per operation
+		    my @ops = split (/\d+/,$cigar); # storing the operation
+		    shift @ops; # remove the empty first element
+		    die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
+		    
+		    # warn "CIGAR string; $cigar\n";
+		    ### determining end position of the read
+		    foreach my $index(0..$#len){
+			if ($ops[$index] eq 'M'){  # standard matching bases
+			    $end += $len[$index];
+			    # warn "Operation is 'M', adding $len[$index] bp\n";
+			}
+			elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+			    # warn "Operation is 'I', next\n";
+			}
+			elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+			    # warn "Operation is 'D',adding $len[$index] bp\n";
+			    $end += $len[$index];
+			}
+			else{
+			    die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+			}
+		    }
+		}
+		
+		### reading in the next line
+		$_ = <IN>;
+		# the only thing we need is the start position
+		($start) = (split (/\t/))[3];
+	    }
+
+	    ### Here we take the barcode sequence into consideration
+	    $composite = join (":",$strand,$chr,$start,$end,$barcode);
+	    # warn "Adding the following string:\t$composite\n";   
+	}
+	else{
+	    die "Input must be single or paired-end\n";
+	}
+
+	if (exists $unique_seqs{$composite}){
+	    ++$removed;
+	    unless (exists $positions{$composite}){
+		$positions{$composite}++;
+	    }
+	}
+	else{
+	    if ($paired){
+		print OUT $line1; # printing first paired-end line for SAM output
+	    }
+	    print OUT; # printing single-end SAM alignment or second paired-end line
+	    $unique_seqs{$composite}++;
+	}
+    }
+
+    my $percentage;
+    my $percentage_leftover;
+    my $leftover = $count - $removed;
+
+    unless ($count == 0){
+	$percentage = sprintf("%.2f",$removed/$count*100);
+	$percentage_leftover = sprintf("%.2f",$leftover/$count*100);
     }
     else{
-      if ($paired){
-	print OUT $line1; # printing first paired-end line for SAM output
-      }
-      print OUT; # printing single-end SAM alignment or second paired-end line
-      $unique_seqs{$composite}++;
+	$percentage = 'N/A';
+	$percentage_leftover = 'N/A';
     }
-  }
-
-  my $percentage;
-  my $percentage_leftover;
-  my $leftover = $count - $removed;
-
-  unless ($count == 0){
-    $percentage = sprintf("%.2f",$removed/$count*100);
-    $percentage_leftover = sprintf("%.2f",$leftover/$count*100);
-  }
-  else{
-    $percentage = 'N/A';
-    $percentage_leftover = 'N/A';
-  }
 
 
-  warn "\nTotal number of alignments analysed in $file:\t$count\n";
-  warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
-  warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
-  warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+    warn "\nTotal number of alignments analysed in $file (UMI-mode):\t$count\n";
+    warn "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+    warn "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+    warn "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 
-  print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
-  print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
-  print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
-  print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
+    print REPORT "\nTotal number of alignments analysed in $file (UMI mode):\t$count\n";
+    print REPORT "Total number duplicated alignments removed:\t$removed ($percentage%)\n";
+    print REPORT "Duplicated alignments were found at:\t",scalar keys %positions," different position(s)\n\n";
+    print REPORT "Total count of deduplicated leftover sequences: $leftover ($percentage_leftover% of total)\n\n";
 
 }
 
@@ -892,7 +900,7 @@ sub print_helpfile{
 
   print '='x111,"\n\n";
 
-  print "This script was last modified on 21 February 2018\n\n";
+  print "This script was last modified on 10 March 2018\n\n";
 }
 
 
@@ -1089,13 +1097,14 @@ VERSION
 	exit;
     }
 
+    ### representative mode is no longer available
+    if($representative){
+	die "Deduplication in '--representative' mode is no longer supported. Please stop wanting that.\n";
+    }
     # ensuring we have at least 2 files
     if ($multiple){
 	unless(scalar @filenames > 1){
 	    die "Please supply 2 or more files when using '--multiple'\n";	
-	}
-	if ($representative){
-	    die "The option --multiple is only working in default (= random alignment) mode\n\n";
 	}
 	if ($rrbs){
 	    die "The option --multiple is currently only working in default (= random alignment) mode\n\n";
@@ -1185,239 +1194,9 @@ VERSION
 	$bam = 0;
     }
 
-    return ($representative,$single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir);
+    return ($single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir);
 }
 
-
-
-
-#####################################
-
-### The following subroutine "deduplicate_representative" only works correctly for reads that do not contain any indels (as in only Bowtie1-based alignments). 
-### Please refrain from using it unless you want to test something out.
-
-#####################################
-
-sub deduplicate_representative {
-  my $file = shift;
-
-  my %positions;
-  my %unique_seqs;
-
-  my $count = 0;
-  my $unique_seqs = 0;
-  my $removed = 0;
-
-  ### going through the file first and storing all positions as well as their methylation call strings in a hash
-  if ($file =~ /\.gz$/){
-    open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
-  }
-  elsif ($file =~ /\.bam$/){
-    open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
-  }
-  else{
-    open (IN,$file) or die "Unable to read from $file: $!\n";
-  }
-
-  if ($single){
-
-    my $outfile = $file;
-    $outfile =~ s/\.gz$//;
-    $outfile =~ s/\.sam$//;
-    $outfile =~ s/\.bam$//;
-    $outfile =~ s/\.txt$//;
-
-    if ($vanilla){
-      $outfile =~ s/$/.deduplicated_to_representative_sequences.txt/;
-    }
-    else{
-      if ($bam == 1){
-	$outfile =~ s/$/.deduplicated_to_representative_sequences.bam/;
-      }
-      elsif ($bam == 2){
-	$outfile =~ s/$/.deduplicated_to_representative_sequences.sam.gz/;
-      }
-      else{
-	$outfile =~ s/$/.deduplicated_to_representative_sequences.sam/;
-      }
-    }
-
-    if ($bam == 1){
-      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
-    }
-    elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-      open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
-    }
-    else{
-      open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
-    }
-
-    warn "Reading and storing all alignment positions\n";
-
-    ### need to proceed slightly differently for the custom Bismark and Bismark SAM output
-    if ($vanilla){
-      $_ = <IN>; # Bismark version header
-      print OUT; # Printing the Bismark version to the de-duplicated file again
-    }
-
-    while (<IN>){
-
-      if ($count == 0){
-	if ($_ =~ /^Bismark version:/){
-	  warn "The file appears to be in the custom Bismark and not SAM format. Please see option --vanilla!\n";
-	  sleep (2);
-	  print_helpfile();
-	  exit;
-	}
-      }
-
-      ### if this was a SAM file we ignore header lines
-      unless ($vanilla){
-	if (/^\@\w{2}\t/){
-	  warn "skipping SAM header line:\t$_";
-	  print OUT; # Printing the header lines again into the de-duplicated file
-	  next;
-	}
-      }
-
-      my ($strand,$chr,$start,$end,$meth_call);
-
-      if ($vanilla){
-	($strand,$chr,$start,$end,$meth_call) = (split (/\t/))[1,2,3,4,7];
-      }
-      else{ # SAM format
-
-	($strand,$chr,$start,my $seq,$meth_call) = (split (/\t/))[1,2,3,9,13]; # we are assigning the FLAG value to $strand
-	### SAM single-end
-	$end = $start + length($seq) - 1;
-      }
-
-      my $composite = join (":",$strand,$chr,$start,$end);
-
-      $count++;
-      $positions{$composite}->{$meth_call}->{count}++;
-      $positions{$composite}->{$meth_call}->{alignment} = $_;
-    }
-    warn "Stored ",scalar keys %positions," different positions for $count sequences in total (+ and - alignments to the same position are scored individually)\n\n";
-    close IN or warn $!;
-  }
-
-  elsif ($paired){
-
-    ### we are going to concatenate both methylation call strings from the paired end file to form a joint methylation call string
-
-    my $outfile = $file;
-    if ($vanilla){
-      $outfile =~ s/$/_deduplicated_to_representative_sequences_pe.txt/;
-    }
-    else{
-      $outfile =~ s/$/_deduplicated_to_representative_sequences_pe.sam/;
-    }
-
-    open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
-    warn "Reading and storing all alignment positions\n";
-
-    ### need to proceed slightly differently for the custom Bismark and Bismark SAM output
-    if ($vanilla){
-      $_ = <IN>; # Bismark version header
-      print OUT; # Printing the Bismark version to the de-duplicated file again
-    }
-
-    while (<IN>){
-
-      if ($count == 0){
-	if ($_ =~ /^Bismark version:/){
-	  warn "The file appears to be in the custom Bismark and not SAM format. Please see option --vanilla!\n";
-	  sleep (2);
-	  print_helpfile();
-	  exit;
-	}
-      }
-
-      ### if this was a SAM file we ignore header lines
-      unless ($vanilla){
-	if (/^\@\w{2}\t/){
-	  warn "skipping SAM header line:\t$_";
-	  print OUT; # Printing the header lines again into the de-duplicated file
-	  next;
-	}
-      }
-
-      my ($strand,$chr,$start,$end,$meth_call_1,$meth_call_2);
-      my $line1;
-
-      if ($vanilla){
-	($strand,$chr,$start,$end,$meth_call_1,$meth_call_2) = (split (/\t/))[1,2,3,4,7,10];
-      }
-      else{ # SAM paired-end format
-	
-	($strand,$chr,$start,$meth_call_1) = (split (/\t/))[1,2,3,13]; # we are assigning the FLAG value to $strand
-	
-	### storing the first line (= read 1 alignment)	
-	$line1 = $_;
-	
-	### reading in the next line
-	$_ = <IN>;
-	# we only need the end position and the methylation call
-	(my $pos,my $seq_2,$meth_call_2) = (split (/\t/))[3,9,13];
-	$end = $pos + length($seq_2) - 1;
-      }
-
-      my $composite = join (":",$strand,$chr,$start,$end);
-      $count++;
-      my $meth_call = $meth_call_1.$meth_call_2;
-
-      $positions{$composite}->{$meth_call}->{count}++;
-      if ($vanilla){
-	$positions{$composite}->{$meth_call}->{alignment} = $_;
-      }
-      else{ # SAM PAIRED-END
-	$positions{$composite}->{$meth_call}->{alignment_1} = $line1;
-	$positions{$composite}->{$meth_call}->{alignment_2} = $_;
-      }
-    }
-    warn "Stored ",scalar keys %positions," different positions for $count sequences in total (+ and - alignments to the same position are scored individually)\n\n";
-    close IN or warn $!;
-  }
-
-  ### PRINTING RESULTS
-
-  ### Now going through all stored positions and printing out the methylation call which is most representative, i.e. the one which occurred most often
-  warn "Now printing out alignments with the most representative methylation call(s)\n";
-
-  foreach my $pos (keys %positions){
-    foreach my $meth_call (sort { $positions{$pos}->{$b}->{count} <=> $positions{$pos}->{$a}->{count} }keys %{$positions{$pos}}){
-      if ($paired){
-	if ($vanilla){
-	  print OUT $positions{$pos}->{$meth_call}->{alignment};
-	}
-	else{
-	  print OUT $positions{$pos}->{$meth_call}->{alignment_1}; # SAM read 1
-	  print OUT $positions{$pos}->{$meth_call}->{alignment_2}; # SAM read 2
-	}
-      }
-      else{ # single-end
-	print OUT $positions{$pos}->{$meth_call}->{alignment};
-      }
-      $unique_seqs++;
-      last; ### exiting once we printed a sequence with the most frequent methylation call for a position
-    }
-  }
-
-  my $percentage;
-  unless ($count == 0){
-    $percentage = sprintf ("%.2f",$unique_seqs*100/$count);
-  }
-  else{
-    $percentage = 'N/A';
-  }
-
-  warn "\nTotal number of alignments analysed in $file:\t$count\n";
-  warn "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
-  print REPORT "\nTotal number of alignments analysed in $file:\t$count\n";
-  print REPORT "Total number of representative alignments printed from $file in total:\t$unique_seqs ($percentage%)\n\n";
-
-}
 
 
 
