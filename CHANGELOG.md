@@ -4,11 +4,17 @@
 
 ### Bismark
 
-Child processes are now terminated properly once the mapping and merging steps have completed successfully. This means that supplying a comma-separated list of input files such as `-1 R1.fastq,simulated_1.fastq,ZZZ_R1.fastq -2 R2.fastq,simulated_2.fastq,ZZZ_R2.fastq --multicore 4` does no longer spawn a steadily increasing number of Bismark instances. (issue #138)(https://github.com/FelixKrueger/Bismark/issues/138)
+Child processes are now terminated properly once the mapping and merging steps have completed successfully. This means that supplying a comma-separated list of input files such as `-1 R1.fastq,simulated_1.fastq,ZZZ_R1.fastq -2 R2.fastq,simulated_2.fastq,ZZZ_R2.fastq --multicore 4` does no longer spawn a steadily increasing number of Bismark instances. [issue #138](https://github.com/FelixKrueger/Bismark/issues/138)
 
 ### coverage2cytosine
 
 Restructured the way output and input file paths are handled. All should be working now, inluding combinations of `--gzip`, `--dir /PATH/`, `--merge_CpG`, `--disco`, `--split_by_chromosome` etc.
+
+### deduplicate_bismark
+
+Changed the way strands are handled by replacing `+` and `-` for a strand identity `OT`,`CTOT`, `CTOB` and `OB` instead. This should avoid conflicts in (the extremely rare) occasions where reads with the same starting and end positions might have come from both the `OT` and `CTOB` strands, or its bottom strand equivalent. (see here for more info: [issue #161](https://github.com/FelixKrueger/Bismark/issues/161#issuecomment-371878189) )
+
+Completely removed the code for the `--representative` mode. People should have stopped wanting that anyway.
 
 ## Changelog for Bismark v0.19.0
 
