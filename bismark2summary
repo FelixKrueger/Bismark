@@ -5,7 +5,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-17, Felix Krueger <felix.krueger@babraham.ac.uk>
+## This program is Copyright (C) 2010-18, Felix Krueger <felix.krueger@babraham.ac.uk>
 ## and Phil Ewels <phil.ewels@scilifelab.se>
 
 ## This program is free software: you can redistribute it and/or modify
@@ -20,9 +20,9 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.19.0';
+my $bismark_version = '0.19.1_dev';
 
-# Last modified 24 02 2017
+# Last modified 20 03 2018
 
 my ($report_basename,$page_title) = process_commandline();
 
@@ -112,7 +112,7 @@ sub print_helpfile{
   --help                      Displays this help message and exits.
 
 
-                                                Script last modified: 06 July 2016
+                                                Script last modified: 20 March 2018
 
 EOF
     ;
@@ -700,7 +700,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 					data: [ {{unmeth_cpg_string}} ]
 				},
 	            {
-	                name: 'Methlyated CpG',
+	                name: 'Methylated CpG',
 	                data: [ {{meth_cpg_string}} ]
 	            }],
 				CHG: [{
@@ -708,7 +708,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 					data:  [ {{unmeth_cph_string}} ]
 				},
 				{
-		            name: 'Methlyated CHG',
+		            name: 'Methylated CHG',
 		            data:  [ {{meth_cph_string}} ]
 		        }],
 				CHH: [{
@@ -716,7 +716,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 					data:  [ {{unmeth_chh_string}} ]
 				},
 				{
-		            name: 'Methlyated CHH',
+		            name: 'Methylated CHH',
 		            data:  [ {{meth_chh_string}} ]
 		        }]
 			};
