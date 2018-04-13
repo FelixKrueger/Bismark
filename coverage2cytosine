@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-18, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -1268,15 +1268,15 @@ sub read_genome_into_memory{
 }
 
 sub extract_chromosome_name {
-  ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
-  my $fasta_header = shift;
-  if ($fasta_header =~ s/^>//){
-    my ($chromosome_name) = split (/\s+/,$fasta_header);
-    return $chromosome_name;
-  }
-  else{
-    die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
-  }
+    ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
+    my $fasta_header = shift;
+    if ($fasta_header =~ s/^>//){
+	my ($chromosome_name) = split (/\s+/,$fasta_header);
+	return $chromosome_name;
+    }
+    else{
+	die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
+    }
 }
 
 sub combine_CpGs_to_single_CG_entity{
@@ -1542,7 +1542,7 @@ sub process_commandline{
                                coverage2cytosine
 
                     Bismark coverage2cytosine Version: $coverage2cytosine_version
-              Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-18 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                     https://github.com/FelixKrueger/Bismark
 
@@ -1608,17 +1608,27 @@ VERSION
     $CX_context = 0;
     $CpG_only = 1;
   }
-
+  
   ### GENOME folder
-  if ($genome_folder){
-    unless ($genome_folder =~/\/$/){
-      $genome_folder =~ s/$/\//;
-    }
+  if (defined $genome_folder){
+      
+      if (chdir $genome_folder){
+	  $genome_folder = getcwd(); #  making the path absolute
+	  unless ($genome_folder =~ /\/$/){
+	      $genome_folder =~ s/$/\//;
+	  }
+      }
+      else{
+	  die "Failed to move to '$genome_folder'. Make sure the path to the genome folder is correct, and respecify!\n\n";
+      }
+      
+      # warn "Using the following folder to look for the genome FastA files: $genome_folder\n";sleep(1);
   }
   else{
-    die "Please specify a genome folder to proceed (full path only)\n";
+      die "Please specify a genome folder to proceed\n";
   }
-
+  chdir $parent_dir or die "Failed to move back to current working directory\n";
+  
   if ($merge_CpGs){
     if ($CX_context){
       die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if CpG-context is selected only (lose the option --CX)\n";
@@ -1678,7 +1688,7 @@ sub print_helpfile{
 
 --dir                    Output directory. Output is written to the current directory if not specified explicitly.
 
---genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
+--genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (relative or full path). Accepted
                          formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
 
 -CX/--CX_context         The output file contains information on every single cytosine in the genome irrespective of
@@ -1755,7 +1765,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 27 November 2017
+                              Script last modified: 13 April 2018
 
 EOF
     ;
