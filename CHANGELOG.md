@@ -10,6 +10,8 @@ Child processes are now terminated properly once the mapping and merging steps h
 
 Restructured the way output and input file paths are handled. All should be working now, inluding combinations of `--gzip`, `--dir /PATH/`, `--merge_CpG`, `--disco`, `--split_by_chromosome` etc.
 
+The genome folder may now be specified as full or relative path.
+
 ### deduplicate_bismark
 
 Changed the way strands are handled by replacing `+` and `-` for a strand identity `OT`,`CTOT`, `CTOB` and `OB` instead. This should avoid conflicts in (the extremely rare) occasions where reads with the same starting and end positions might have come from both the `OT` and `CTOB` strands, or its bottom strand equivalent. (see here for more info: [issue #161](https://github.com/FelixKrueger/Bismark/issues/161#issuecomment-371878189) )
