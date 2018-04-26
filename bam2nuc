@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-18, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.19.0';
+my $bam2nuc_version = 'v0.19.1';
 
 my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
@@ -477,11 +477,20 @@ sub read_genome_into_memory{
   warn "Now reading in and storing sequence information of the genome specified in: $genome_folder\n\n";
 
   my @chromosome_filenames =  <*.fa>;
-
-  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fa.gz
   unless (@chromosome_filenames){
-    @chromosome_filenames =  <*.fasta>;
+      @chromosome_filenames =  <*.fa.gz>;
   }
+  ### if there aren't any genomic files with the extension .fa or .fq.gz we will look for files with the extension .fasta
+  unless (@chromosome_filenames){
+      @chromosome_filenames =  <*.fasta>;
+  }
+  ### if there aren't any genomic files with the extension .fa or .fa.gz or .fasta we will look for files with the extension .fasta.gz
+  unless (@chromosome_filenames){
+      @chromosome_filenames =  <*.fasta.gz>;
+  }
+
   unless (@chromosome_filenames){
     die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
   }
@@ -491,7 +500,13 @@ sub read_genome_into_memory{
     # skipping the tophat entire mouse genome fasta file
     next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
 
-    open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    if( $chromosome_filename =~ /\.gz$/){
+	open (CHR_IN,"gunzip -c $chromosome_filename |") or die "Failed to read from sequence file $chromosome_filename $!\n";
+    }
+    else{
+	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    }
+
     ### first line needs to be a fastA header
     my $first_line = <CHR_IN>;
     chomp $first_line;
@@ -581,7 +596,8 @@ sub print_helpfile{
 --dir                       Output directory. Output is written to the current directory if not specified explicitly.
 
 --genome_folder <path>      Enter the genome folder you wish to use to extract sequences from (full path only). Accepted
-                            formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+                            formats are FastA files ending with '.fa' or '.fasta', or their gzipped versions (ending in .gz).
+                            Specifying a genome folder path is mandatory.
 
 --samtools_path             The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
                             explicitly if Samtools is in the PATH already
@@ -634,7 +650,7 @@ TT      5055    10.96   1314144 10.80   0.004
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 22 February 2017
+                              Script last modified: 26 April 2018
 
 EOF
     ;

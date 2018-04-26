@@ -20,7 +20,7 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.19.1_dev';
+my $bismark_version = '0.19.1';
 
 # Last modified 20 03 2018
 
@@ -56,7 +56,7 @@ sub process_commandline{
                              Bismark HTML Summary Report
 
                            bismark2summary version: $bismark_version
-                       Copyright 2010-17 Felix Krueger, Phil Ewels
+                       Copyright 2010-18 Felix Krueger, Phil Ewels
                                Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                      https://github.com/FelixKrueger/Bismark

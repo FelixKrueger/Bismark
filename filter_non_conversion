@@ -6,7 +6,7 @@ use Cwd;
 $|++;
 
 
-## This program is Copyright (C) 2010-17, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-18, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.19.0';
+my $filter_version = 'v0.19.1';
 my ($single,$paired);
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count) = process_commandline();
 
@@ -493,7 +493,7 @@ sub process_commandline{
                 	Bismark non-conversion filtering
 	    
                	    Bismark non-conversion version: $filter_version
-	    Copyright 2010-17 Felix Krueger, Babraham Bioinformatics
+	    Copyright 2010-18 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                     https://github.com/FelixKrueger/Bismark
 		

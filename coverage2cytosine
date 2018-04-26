@@ -22,7 +22,7 @@ use Carp;
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
 my %processed;   # keeping a record of which chromosomes have been processed
-my $coverage2cytosine_version = 'v0.19.1_dev';
+my $coverage2cytosine_version = 'v0.19.1';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco) = process_commandline();
 
@@ -1199,12 +1199,23 @@ sub read_genome_into_memory{
 
   my @chromosome_filenames =  <*.fa>;
 
-  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fasta
+  ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fa.gz
   unless (@chromosome_filenames){
-    @chromosome_filenames =  <*.fasta>;
+      warn "Couldn't find files ending in .fa, trying .fa.gz instead\n";
+      @chromosome_filenames =  <*.fa.gz>;
   }
+
+  ### if there aren't any genomic files with the extension .fa or .fq.gz we will look for files with the extension .fasta
   unless (@chromosome_filenames){
-    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa or .fasta file extensions)\n";
+      @chromosome_filenames =  <*.fasta>;
+  }
+  ### if there aren't any genomic files with the extension .fa or .fa.gz or .fasta we will look for files with the extension .fasta.gz
+  unless (@chromosome_filenames){
+      @chromosome_filenames =  <*.fasta.gz>;
+  }
+
+  unless (@chromosome_filenames){
+    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
   }
 
   foreach my $chromosome_filename (@chromosome_filenames){
@@ -1212,7 +1223,13 @@ sub read_genome_into_memory{
     # skipping the tophat entire mouse genome fasta file
     next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
 
-    open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    if( $chromosome_filename =~ /\.gz$/){
+	open (CHR_IN,"gunzip -c $chromosome_filename |") or die "Failed to read from sequence file $chromosome_filename $!\n";
+    }
+    else{
+	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
+    }
+    
     ### first line needs to be a fastA header
     my $first_line = <CHR_IN>;
     chomp $first_line;
@@ -1765,7 +1782,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 13 April 2018
+                              Script last modified: 26 April 2018
 
 EOF
     ;
