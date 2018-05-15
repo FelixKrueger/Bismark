@@ -30,3 +30,7 @@ There is also an overview of the alignment modes that are currently supported by
 
 ## Credits
 Bismark was written by Felix Krueger, part of the [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) group.
+
+## Licences
+
+Even though Bismark itself is a free software I would like to emphasize that the scripts `bismark2report` and `bismark2summary` produce HTML graphs using Highcharts. Highsoft software products (including Highcharts) are free to use for non-profit or academic use, but are are not free for commercial and Governmental use. For further information on Highsoft licensing please see here: www.highcharts.com.
