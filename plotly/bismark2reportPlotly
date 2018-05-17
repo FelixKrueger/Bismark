@@ -69,49 +69,52 @@ while (@alignment_reports){
   # DEDUPLICATION REPORT (optional)
   if ($dedup_report){
     warn "Using the following deduplication report:\t> $dedup_report <\n";
-    $doc =~ s/\{\{bm_deduplication\}\}/true/g;
+    $doc =~ s/\{\{deduplication_section\}\}//g; # deleting these tags and then go ahead and fill the table
     $doc = read_deduplication_report($dedup_report,$doc);
   }
   else{
     warn "No deduplication report file specified, skipping this step\n";
-    $doc =~ s/\{\{bm_deduplication\}\}/false/g;
+    # deleting the entire Deduplication Section from the template
+    $doc =~ s/\{\{deduplication_section\}\}.*\{\{deduplication_section\}\}//s; # treating the string as a single line
   }
 
   # SPLITTING REPORT (optional)
   if ($splitting_report){
     warn "Using the following splitting report:\t\t> $splitting_report <\n";
-    $doc =~ s/\{\{bm_splitting\}\}/true/g;
+    $doc =~ s/\{\{cytosine_methylation_post_deduplication_section\}\}//g; # deleting these tags and then go ahead and fill the table
     $doc = read_splitting_report($splitting_report,$doc);
   }
   else{
     warn "No splitting report file specified, skipping this step\n";
-    $doc =~ s/\{\{bm_splitting\}\}/false/g;
+    # deleting the entire Splitting Report C context section from the template
+    $doc =~ s/\{\{cytosine_methylation_post_deduplication_section\}\}.*\{\{cytosine_methylation_post_deduplication_section\}\}//s; # treating the string as a single line
   }
 
   # M-BIAS REPORT (optional)
   if ($mbias_report){
       warn "Using the following M-bias report:\t\t> $mbias_report <\n";
-      $doc =~ s/\{\{bm_mbias\}\}/true/g;
+      $doc =~ s/\{\{mbias_r1_section\}\}//g; # deleting these tags and then go ahead and fill the table
+      $doc =~ s/\{\{mbias_r2_section\}\}//g; # deleting these tags and then go ahead and fill the table
       (my $state, $doc) = read_mbias_report($mbias_report,$doc);
   }
   else{
       warn "No M-bias report file specified, skipping this step\n";
-      $doc =~ s/\{\{bm_mbias\}\}/false/g;
-      $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
+      $doc =~ s/\{\{mbias_r1_section\}\}.*\{\{mbias_r1_section\}\}//s; # treating the string as a single line
+      $doc =~ s/\{\{mbias_r2_section\}\}.*\{\{mbias_r2_section\}\}//s; # treating the string as a single line
   }
   
   # NUCLEOTIDE COVERAGE REPORT (optional)
   if ($nuc_report){
       warn "Using the following nucleotide coverage report:\t> $nuc_report <\n";
-      $doc =~ s/\{\{bm_nucleotide\}\}/true/g;
+      $doc =~ s/\{\{nucleotide_coverage_section\}\}//g; # deleting these tags and then go ahead and fill the table
       $doc = read_nucleotide_coverage_report($nuc_report,$doc);
   }
   else{
       warn "No nucleotide coverage report file specified, skipping this step\n";
       # deleting the entire Nucleotide Coverage section from the template
-      warn "Deleting the entire Nucleotide Coverage section!!!\n\n"; sleep(1);
+      # warn "Deleting the entire Nucleotide Coverage section!!!\n\n";
       # print $doc;
-      $doc =~ s/\{\{nucleotide_coverage\}\}.*\{\{nucleotide_coverage\}\}//s; # treating the string as a single line
+      $doc =~ s/\{\{nucleotide_coverage_section\}\}.*\{\{nucleotide_coverage_section\}\}//s; # treating the string as a single line
   }
   warn "="x110,"\n\n\n";
   $verbose and sleep(3);

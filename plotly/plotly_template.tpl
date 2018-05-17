@@ -304,7 +304,7 @@
 	
 	<hr>
 	
-	<!-- <div id="bm_deduplication" style="display:none;"> -->
+	{{deduplication_section}}
 	<h2>Deduplication</h2>
 	<table>
 		<tbody>
@@ -341,8 +341,9 @@
 	</table>
 		
 	<hr>
+	{{deduplication_section}}
 	
-	<!-- <div id="bm_splitting" style="display:none;"> -->
+	{{cytosine_methylation_post_deduplication_section}}
 	<h2>Cytosine Methylation after Extraction</h2>
 	<table>
 		<tbody>
@@ -408,11 +409,9 @@
 			</tr>
 		</tbody>
 	</table>	
-	
-		
-		
+
 	<hr>
-	
+	{{cytosine_methylation_post_deduplication_section}}
 	
 	<table>
 		<tbody>
@@ -427,10 +426,10 @@
 		</tbody>
 	</table>
 	
-	{{nucleotide_coverage}}
+	{{nucleotide_coverage_section}}
 	<!--<div id="bm_nucleotide" style="display:none;"> -->
 	<h2>Nucleotide Coverage</h2>
-		<table class="data" id="nucleotide_coverage_table">
+	<table class="data" id="nucleotide_coverage_table">
 			<thead>
 				<tr><th>Nucleotide Class</th> <th>Counts Sample</th> <th>Counts Genome</th><th>% in Sample</th> <th>% in Genome</th> <th>fold coverage</th></thead>
 			<tbody>
@@ -457,18 +456,25 @@
 				<tr><th>AT</th>	<td>{{nuc_AT_counts_obs}}</td> <td>{{nuc_AT_counts_exp}}</td> <td>{{nuc_AT_p_obs}}</td> <td>{{nuc_AT_p_exp}}</td> <td>{{nuc_AT_coverage}}</tr>
 				<tr><th>AA</th>	<td>{{nuc_AA_counts_obs}}</td> <td>{{nuc_AA_counts_exp}}</td> <td>{{nuc_AA_p_obs}}</td> <td>{{nuc_AA_p_exp}}</td> <td>{{nuc_AA_coverage}}</tr>
 			</tbody>
-		</table>
+	</table>
 		
 		<hr>
-		{{nucleotide_coverage}}
+	{{nucleotide_coverage_section}}
 	<!--</div> -->
 
-	<!-- <div id="bm_mbias" style="display:none;"> -->
-		<h2>M-Bias Plot</h2>
+	{{mbias_r1_section}}
+	<h2>M-Bias Plot - Read 1</h2>
+	
+	{{mbias_r1_section}}
 		<!-- <div id="m_bias_1" class="fullWidth_plot"></div> -->
-
+	
+	{{mbias_r2_section}}	
+	<h2>M-Bias Plot - Read 2</h2>	
 		<!-- <div id="m_bias_2" class="fullWidth_plot" style="display:none;"></div> -->
-		<hr>
+	{{mbias_r2_section}}
+
+	<hr>
+	
 	<!--</div> -->
 
 	<!-- Alignment Stats Plot -->	
