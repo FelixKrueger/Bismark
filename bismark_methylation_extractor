@@ -29,9 +29,8 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.19.1';
+my $version = 'v0.19.1_dev';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht) = process_commandline();
-
 
 ### only needed for bedGraph output
 my @sorting_files; # if files are to be written to bedGraph format, these are the methylation extractor output files
@@ -1046,14 +1045,34 @@ VERSION
   }
 
   ### OUTPUT DIR PATH
-  if ($output_dir){
-    unless ($output_dir =~ /\/$/){
-      $output_dir =~ s/$/\//;
-    }
+  if (defined $output_dir){
+      unless ($output_dir =~ /\/$/){
+	  $output_dir =~ s/$/\//;
+      }
+      
+      # CRATING THE OUTPUT DIRECTORY IF NECESSARY
+      if (chdir $output_dir){
+	  $output_dir = getcwd(); #  making the path absolute
+	  unless ($output_dir =~ /\/$/){
+	      $output_dir =~ s/$/\//;
+	  }
+      }
+      else{
+	  mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
+	  warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; sleep(1);
+	  chdir $output_dir or die "Failed to move to $output_dir\n";
+	  $output_dir = getcwd(); #  making the path absolute
+	  unless ($output_dir =~ /\/$/){
+	      $output_dir =~ s/$/\//;
+	  }
+      }
+      warn "Output will be written into the directory: $output_dir\n";
   }
   else{
-    $output_dir = '';
+      $output_dir = '';
   }
+  chdir $parent_dir or die "Failed to change back to the parent directory: $!";
+
 
   ### NO HEADER
   unless ($no_header){
@@ -6097,7 +6116,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 05 October 2017.
+This script was last modified on 02 July 2018.
 
 HOW_TO
 }
