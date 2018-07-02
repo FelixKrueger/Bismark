@@ -1,5 +1,11 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.19.1_dev
+
+### bismark_methylation_extractor
+
+The methylation extractor now creates output directories if they don't exist already.
+
 ## Changelog for Bismark v0.19.1
 
 ### Bismark
