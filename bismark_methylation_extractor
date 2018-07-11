@@ -341,8 +341,12 @@ foreach my $filename (@filenames){
       push @args, '--gazillion';
     }
     if ($ample_mem){
-      push @args, '--ample_memory';
+	push @args, '--ample_memory';
     }
+    else{
+	push @args, "--buffer_size $sort_size";
+    }
+
     if ($zero){
       push @args, "--zero";
     }
@@ -351,7 +355,6 @@ foreach my $filename (@filenames){
     #      push @args, "--counts";
     #   }
 
-    push @args, "--buffer_size $sort_size";
     push @args, "--cutoff $coverage_threshold";
     push @args, "--output $bedGraph_output";
     push @args, "--dir '$output_dir'";
@@ -1289,7 +1292,12 @@ VERSION
   }
 
  
-
+  if ($ample_mem){
+      if (defined $sort_size){
+	  die "The options '--ample_mem' and '--buffer_size' are mutually exclusive. Please pick just one and try again.\n\n";
+      }
+  }
+  
   if ($gazillion){
     if ($ample_mem){
       die "You can't currently select '--ample_mem' together with '--gazillion'. Make your pick!\n\n";
@@ -6116,7 +6124,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 02 July 2018.
+This script was last modified on 11 July 2018.
 
 HOW_TO
 }
