@@ -4,7 +4,9 @@
 
 ### bismark_methylation_extractor
 
-The methylation extractor now creates output directories if they don't exist already.
+- The methylation extractor now creates output directories if they don't exist already.
+
+- The options `--ample_mem` and `--buffer_size <string>` are now mutually exclusive.
 
 ## Changelog for Bismark v0.19.1
 
