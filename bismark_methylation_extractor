@@ -393,7 +393,7 @@ foreach my $filename (@filenames){
       push @args, "--output $cytosine_out";
       push @args, "--dir '$output_dir'";
       push @args, "--genome '$genome_folder'";
-      push @args, "--parent_dir '$parent_dir'";
+      push @args, "--parent_dir '$output_dir'"; # 21 July 2018: changing parent dir to $output_dir because this is the folder that will contain a coverage file 
 
       if ($zero){
 	push @args, "--zero";
