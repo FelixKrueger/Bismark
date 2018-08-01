@@ -48,16 +48,39 @@ while (@alignment_reports){
   # if -o output_file was specified we are going to use that name preferentially.
   # This may only happen if there is a single report in the folder, or if a single report has been specified manually
   if ($manual_output_file){
-    warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
-    $report_output = $manual_output_file;
+      warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
+      $report_output = $manual_output_file;
   }
-
+  
   $report_output = $output_dir.$report_output;
   warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
-
-  # Get the report template into a string
-  my $doc = read_report_template();
   
+  # Get the report template into a string
+  my $doc = read_report_template('plotly_template.tpl');
+  
+  # Get the plot.ly code into a string. This makes the template so much more managable and also allows for quick replacement of the plot.ly
+  # code itself should it get updated
+  my $plotly_code = read_report_template('plot.ly');
+  
+  # replacing the Plot.ly spaceholders with the actual plot.ly code
+  if ($doc =~ s/\{\{plotly_goes_here\}\}.*\{\{plotly_goes_here\}\}/$plotly_code/s){  # treating the string as a single line
+      warn "Plot.ly injection successful!\n" if $verbose;
+  }
+  else{
+      die "Plot.ly incjection not working, won't be able to construct any meaningful HTML reports in this case....\n\n";
+  }
+
+  my $bismark_logo = read_report_template('bismark.logo');
+  if ($doc =~ s/\{\{bismark_logo_goes_here\}\}.*\{\{bismark_logo_goes_here\}\}/$bismark_logo/s){  # treating the string as a single line
+      warn "bismark.logo injection successful!\n" if $verbose;
+  }
+  
+  my $bioinf_logo = read_report_template('bioinf.logo');
+  if ($doc =~ s/\{\{bioinf_logo_goes_here\}\}.*\{\{bioinf_logo_goes_here\}\}/$bioinf_logo/s){  # treating the string as a single line
+      warn "bioinf.logo injection successful!\n" if $verbose;
+  }
+
+
   # Creation timestamp
   $doc = getLoggingTime($doc);
   
@@ -96,6 +119,11 @@ while (@alignment_reports){
       $doc =~ s/\{\{mbias_r1_section\}\}//g; # deleting these tags and then go ahead and fill the table
       $doc =~ s/\{\{mbias_r2_section\}\}//g; # deleting these tags and then go ahead and fill the table
       (my $state, $doc) = read_mbias_report($mbias_report,$doc);
+  
+      warn "OK have read the report\n\n";
+      # eep(1);
+      warn ">$state<<<\n";
+      sleep(1);
   }
   else{
       warn "No M-bias report file specified, skipping this step\n";
@@ -906,9 +934,10 @@ sub read_mbias_report{
 
 
 sub read_report_template{
+    my $template = shift;
     my $doc;
-    warn "Attempting to open file from: $RealBin/bismark_sitrep/bismark_sitrep.tpl\n\n" if ($verbose);
-    open (DOC,"$RealBin/plotly_template.tpl") or die "Failed to find file plotly_template.tpl: $!";
+    warn "Attempting to open file from: $RealBin/$template\n\n" if ($verbose);
+    open (DOC,"$RealBin/$template") or die "Failed to find file $template: $!";
     while(<DOC>){
 	chomp;
 	$_ =~ s/\r//g;
