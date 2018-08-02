@@ -618,7 +618,12 @@ sub read_nucleotide_coverage_report{
     if ($looksOK){
 	warn "Got all necessary information, editing HTML report ...\n" if $verbose;
 	my $minmax = 0;
-	foreach my $key (sort {$a cmp $b} keys %nucs){
+	my @y_array;
+	my @x_genomic;
+	my @x_sample;
+
+#	foreach my $key (sort {$a cmp $b} keys %nucs){
+	foreach my $key ('A','T','C','G','AC','CA','TC','CT','CC','CG','GC','GG','AG','GA','TG','GT','TT','TA','AT','AA'){
 	    my $nuc_obs = $nucs{$key}->{obs}->{percent};
 	    my $nuc_exp = $nucs{$key}->{exp}->{percent};
 	    my $counts_obs = $nucs{$key}->{obs}->{counts};
@@ -632,13 +637,35 @@ sub read_nucleotide_coverage_report{
 	    # $minmax = abs($logratio);
 	    # }
 	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\n" if $verbose;
-
+	    
 	    $doc =~ s/\{\{nuc_${key}_p_obs\}\}/$nuc_obs/g;
 	    $doc =~ s/\{\{nuc_${key}_p_exp\}\}/$nuc_exp/g;
 	    $doc =~ s/\{\{nuc_${key}_counts_obs\}\}/$counts_obs/g;
 	    $doc =~ s/\{\{nuc_${key}_counts_exp\}\}/$counts_exp/g;
 	    $doc =~ s/\{\{nuc_${key}_coverage\}\}/$cov/g;
+
+	    # for the plot.ly bargraph
+	    push @y_array,   $key;
+	    push @x_genomic, $nuc_exp;
+	    push @x_sample,  $nuc_obs;
 	}
+
+	my $y_array   = join ("','",@y_array);
+	my $x_sample  = join (" , ",@x_sample);
+	my $x_genomic = join (" , ",@x_genomic);
+
+	$y_array = "'".$y_array."'";
+
+	if ($verbose){
+	    print "Y-array: $y_array\n";
+	    print "X genomic array: $x_genomic\n";
+	    print "X sample array: $x_sample\n";
+	}
+
+	$doc =~ s/\{\{nucleo_sample_x\}\}/$x_sample/g;
+	$doc =~ s/\{\{nucleo_genomic_x\}\}/$x_genomic/g;
+	$doc =~ s/\{\{nucleo_sample_y\}\}/$y_array/g;
+	$doc =~ s/\{\{nucleo_genomic_y\}\}/$y_array/g;
 	# warn "Minimum/maxium ratio was: $minmax\n" if $verbose;
 	# $doc =~ s/\{\{nuc_minmax\}\}/$minmax/g;
     }
@@ -851,33 +878,35 @@ sub read_mbias_report{
   my $state = 'single'; # setting this to 'single' if there is no read 2
 
   while (<MBIAS>){
-    chomp;
-    if ($_ =~ /^(C.{2}) context/){
-      $context = $1;
+      chomp;
+      if ($_ =~ /^(C.{2}) context/){
+        $context = $1;
 
-      if ($_ =~ /R2/){
-	$read_identity = 2;
-	$state = 'paired';
-      }
-      else{
-	$read_identity = 1;
-      }
+          if ($_ =~ /R2/){
+	           $read_identity = 2;
+	           $state = 'paired';
+          }
+          else{
+	         $read_identity = 1;
+          }
 
       # warn "new context is: $context\n";
       # warn "Read identity is: Read $read_identity\n";
-    }
-    if ($_ =~ /^\d/){
-      my ($pos,$meth,$unmeth,$perc,$coverage) = (split /\t/);
-      if ($read_identity == 1){
-	push @{$mbias_1{$context}->{coverage}}, "[$pos, $coverage]";
-	push @{$mbias_1{$context}->{perc}}, "[$pos, $perc]";
+      }
+      if ($_ =~ /^\d/){
+          my ($pos,$meth,$unmeth,$perc,$coverage) = (split /\t/);
+          if ($read_identity == 1){ 
+              push @{$mbias_1{$context}->{coverage_x}}, $pos;
+              push @{$mbias_1{$context}->{coverage_y}}, $coverage;
+              push @{$mbias_1{$context}->{perc_x}}, $pos; 
+              push @{$mbias_1{$context}->{perc_y}}, $perc;  
       }
       elsif ($read_identity == 2){
-	push @{$mbias_2{$context}->{coverage}}, "[$pos, $coverage]";
-	push @{$mbias_2{$context}->{perc}}, "[$pos, $perc]";
+        	push @{$mbias_2{$context}->{coverage}}, "[$pos, $coverage]";
+        	push @{$mbias_2{$context}->{perc}}, "[$pos, $perc]";
       }
       else{
-	warn "read identity was unknown : '$read_identity'\n\n";
+	       warn "read identity was unknown : '$read_identity'\n\n";
       }
 
       # print join (" ",$pos,$meth,$unmeth,$perc,$coverage)."\n";
@@ -885,22 +914,53 @@ sub read_mbias_report{
   }
 
   # Read 1 M-bias
-  my $r1_CpG_coverage = join (',',@{$mbias_1{'CpG'}->{coverage}});
-  my $r1_CpG_perc     = join (',',@{$mbias_1{'CpG'}->{perc}});
+  my $r1_CpG_coverage_x = join (',',@{$mbias_1{'CpG'}->{coverage_x}});
+  my $r1_CpG_coverage_y = join (',',@{$mbias_1{'CpG'}->{coverage_y}}); 
+  my $r1_CpG_perc_x     = join (',',@{$mbias_1{'CpG'}->{perc_x}});
+  my $r1_CpG_perc_y     = join (',',@{$mbias_1{'CpG'}->{perc_y}});
 
-  my $r1_CHG_coverage = join (',',@{$mbias_1{'CHG'}->{coverage}});
-  my $r1_CHG_perc     = join (',',@{$mbias_1{'CHG'}->{perc}});
+  my $r1_CHG_coverage_x = join (',',@{$mbias_1{'CHG'}->{coverage_x}});
+  my $r1_CHG_coverage_y = join (',',@{$mbias_1{'CHG'}->{coverage_y}}); 
+  my $r1_CHG_perc_x     = join (',',@{$mbias_1{'CHG'}->{perc_x}});
+  my $r1_CHG_perc_y     = join (',',@{$mbias_1{'CHG'}->{perc_y}});
 
-  my $r1_CHH_coverage = join (',',@{$mbias_1{'CHH'}->{coverage}});
-  my $r1_CHH_perc     = join (',',@{$mbias_1{'CHH'}->{perc}});
+  my $r1_CHH_coverage_x = join (',',@{$mbias_1{'CHH'}->{coverage_x}});
+  my $r1_CHH_coverage_y = join (',',@{$mbias_1{'CHH'}->{coverage_y}}); 
+  my $r1_CHH_perc_x     = join (',',@{$mbias_1{'CHH'}->{perc_x}});
+  my $r1_CHH_perc_y     = join (',',@{$mbias_1{'CHH'}->{perc_y}});
 
-  $doc =~ s/'\{\{CpG_total_calls_R1\}\}'/\[$r1_CpG_coverage\]/g;
-  $doc =~ s/'\{\{CHG_total_calls_R1\}\}'/\[$r1_CHG_coverage\]/g;
-  $doc =~ s/'\{\{CHH_total_calls_R1\}\}'/\[$r1_CHH_coverage\]/g;
+  warn "R1 CpG coverage:\n$r1_CpG_coverage_x\n$r1_CpG_coverage_y\nR1 CpG methylation:\n$r1_CpG_perc_x\n$r1_CpG_perc_y\n\n";
+  warn "R1 CHG coverage:\n$r1_CHG_coverage_x\n$r1_CHG_coverage_y\nR1 CHG methylation:\n$r1_CHG_perc_x\n$r1_CHG_perc_y\n\n";
+  warn "R1 CHH coverage:\n$r1_CHH_coverage_x\n$r1_CHH_coverage_y\nR1 CHH methylation:\n$r1_CHH_perc_x\n$r1_CHH_perc_y\n\n";
+  sleep(1);
 
-  $doc =~ s/'\{\{CpG_methylation_R1\}\}'/\[$r1_CpG_perc\]/g;
-  $doc =~ s/'\{\{CHG_methylation_R1\}\}'/\[$r1_CHG_perc\]/g;
-  $doc =~ s/'\{\{CHH_methylation_R1\}\}'/\[$r1_CHH_perc\]/g;
+  #my $r1_CHG_coverage = join (',',@{$mbias_1{'CHG'}->{coverage}});
+  #my $r1_CHG_perc     = join (',',@{$mbias_1{'CHG'}->{perc}});
+
+  #my $r1_CHH_coverage = join (',',@{$mbias_1{'CHH'}->{coverage}});
+  #my $r1_CHH_perc     = join (',',@{$mbias_1{'CHH'}->{perc}});
+  # CpG
+  $doc =~ s/\{\{mbias1_CpG_meth_x\}\}/$r1_CpG_perc_x/g;
+  $doc =~ s/\{\{mbias1_CpG_meth_y\}\}/$r1_CpG_perc_y/g; 
+  $doc =~ s/\{\{mbias1_CpG_coverage_x\}\}/$r1_CpG_coverage_x/g;
+  $doc =~ s/\{\{mbias1_CpG_coverage_y\}\}/$r1_CpG_coverage_y/g; 
+  # CHG 
+  $doc =~ s/\{\{mbias1_CHG_meth_x\}\}/$r1_CHG_perc_x/g;
+  $doc =~ s/\{\{mbias1_CHG_meth_y\}\}/$r1_CHG_perc_y/g; 
+  $doc =~ s/\{\{mbias1_CHG_coverage_x\}\}/$r1_CHG_coverage_x/g;
+  $doc =~ s/\{\{mbias1_CHG_coverage_y\}\}/$r1_CHG_coverage_y/g; 
+  # CHH
+  $doc =~ s/\{\{mbias1_CHH_meth_x\}\}/$r1_CHH_perc_x/g;
+  $doc =~ s/\{\{mbias1_CHH_meth_y\}\}/$r1_CHH_perc_y/g; 
+  $doc =~ s/\{\{mbias1_CHH_coverage_x\}\}/$r1_CHH_coverage_x/g;
+  $doc =~ s/\{\{mbias1_CHH_coverage_y\}\}/$r1_CHH_coverage_y/g; 
+
+  #$doc =~ s/'\{\{CHG_total_calls_R1\}\}'/\[$r1_CHG_coverage\]/g;
+  #$doc =~ s/'\{\{CHH_total_calls_R1\}\}'/\[$r1_CHH_coverage\]/g;
+
+  #$doc =~ s/'\{\{CpG_methylation_R1\}\}'/\[$r1_CpG_perc\]/g;
+  #$doc =~ s/'\{\{CHG_methylation_R1\}\}'/\[$r1_CHG_perc\]/g;
+  #$doc =~ s/'\{\{CHH_methylation_R1\}\}'/\[$r1_CHH_perc\]/g;
 
   # Read 2 M-bias
   if (%mbias_2){

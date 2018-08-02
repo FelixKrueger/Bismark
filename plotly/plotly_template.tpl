@@ -125,9 +125,7 @@
 
 	<!-- Plotly.js -->
 	{{plotly_goes_here}}
-  
- 	This will need to be replaced
-  
+ 	This will need to be replaced by the plot.ly library itself
  	{{plotly_goes_here}}
   
 	
@@ -446,7 +444,6 @@
 							<tr><th>GT</th>	<td>{{nuc_GT_counts_obs}}</td> <td>{{nuc_GT_counts_exp}}</td> <td>{{nuc_GT_p_obs}}</td> <td>{{nuc_GT_p_exp}}</td> <td>{{nuc_GT_coverage}}</tr>
 							<tr><th>TT</th>	<td>{{nuc_TT_counts_obs}}</td> <td>{{nuc_TT_counts_exp}}</td> <td>{{nuc_TT_p_obs}}</td> <td>{{nuc_TT_p_exp}}</td> <td>{{nuc_TT_coverage}}</tr>	
 							<tr><th>TA</th>	<td>{{nuc_TA_counts_obs}}</td> <td>{{nuc_TA_counts_exp}}</td> <td>{{nuc_TA_p_obs}}</td> <td>{{nuc_TA_p_exp}}</td> <td>{{nuc_TA_coverage}}</tr>
-							<tr><th>TA</th>	<td>{{nuc_TA_counts_obs}}</td> <td>{{nuc_TA_counts_exp}}</td> <td>{{nuc_TA_p_obs}}</td> <td>{{nuc_TA_p_exp}}</td> <td>{{nuc_TA_coverage}}</tr>
 							<tr><th>AT</th>	<td>{{nuc_AT_counts_obs}}</td> <td>{{nuc_AT_counts_exp}}</td> <td>{{nuc_AT_p_obs}}</td> <td>{{nuc_AT_p_exp}}</td> <td>{{nuc_AT_coverage}}</tr>
 							<tr><th>AA</th>	<td>{{nuc_AA_counts_obs}}</td> <td>{{nuc_AA_counts_exp}}</td> <td>{{nuc_AA_p_obs}}</td> <td>{{nuc_AA_p_exp}}</td> <td>{{nuc_AA_coverage}}</tr>
 						</tbody>
@@ -465,20 +462,31 @@
 	
 	<!-- This section is optional -->
 	{{mbias_r1_section}}
-	<h2>M-Bias Plot - Read 1</h2>
+	<h2>M-Bias Plot</h2>
 	
+	<table>
+		<tbody>
+			<tr>
+				<td>
+				 	<div id="mbias1_plot"> <!--Plotly chart will be drawn inside this DIV --> </div>	
+				</td>
+			</tr>
+		</tbody>
+	</table>
 	
-	{{mbias_r1_section}}
+
 	<hr>
+	{{mbias_r1_section}}
 	
 	<!-- This section is optional -->
 	{{mbias_r2_section}}	
-	<h2>M-Bias Plot - Read 2</h2>	
 	
 	
+
+	<hr>	
 	{{mbias_r2_section}}
 
-	<hr>
+
 	
 	<!-- ######################### PLOT.LY plotting code below ################################################################# -->
 
@@ -497,7 +505,7 @@
 
 		var layout = {
 			height: 600,
-			width: 700,
+			width:  700,
 		};
 
 		Plotly.newPlot('Bismark_Processing_Report', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
@@ -507,31 +515,29 @@
                     'hoverCompareCartesian',
                     'toggleSpikelines']}
 					);
-		
-		
 	</script>
 
 	<!-- Duplication Plot (Donut Plot)-->	
 	<script>
 		
-	var data = [{
-		<!-- values: [86, 14], hardcoded for testing purposes -->
-		values: [{{duplication_stats_plotly}}],
-		labels: ['Unique Alignments', 'Duplicate Alignments' ],
+		var data = [{
+			<!-- values: [86, 14], hardcoded for testing purposes -->
+			values: [{{duplication_stats_plotly}}],
+			labels: ['Unique Alignments', 'Duplicate Alignments' ],
 		
-		name: 'Degree of Duplication',
-		hoverinfo: 'label+value+percent+name',
-		hole: .3,	
-		type: 'pie',
+			name: 'Degree of Duplication',
+			hoverinfo: 'label+value+percent+name',
+			hole: .3,	
+			type: 'pie',
 	 	}];
 
 	
-	var layout = {
-	  height: 400,	  
-	  width: 600
-	};
+		var layout = {
+	  		height: 400,	  
+	  		width: 600
+		};
 
-	Plotly.newPlot('Duplication_Plot', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+		Plotly.newPlot('Duplication_Plot', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
 					'sendDataToCloud',
 					'resetScale2d',
 					'hoverClosestCartesian',
@@ -544,7 +550,6 @@
 		var data = [
 		  {
 			x: ['CpG context', 'CHG context', 'CHH context'],
-			<!-- y: [20, 14, 23], hardcoded for testing purposes -->
 			y: [{{cytosine_methylation_plotly}}],
 			type: 'bar'
 		  }
@@ -563,10 +568,9 @@
 
 		var data = [
 		  {
-			x: ['CpG context', 'CHH context', 'CHG context'],
-			<!-- y: [20, 14, 23], hardcoded for testing purposes -->
-			y: [{{cytosine_methylation_post_duplication_plotly}}],
-			type: 'bar'
+		x: ['CpG context', 'CHH context', 'CHG context'],
+		y: [{{cytosine_methylation_post_duplication_plotly}}],
+		type: 'bar'
 		  }
 		];
 
@@ -599,66 +603,155 @@
 
 	<!-- Nucleotide Stats Plot-->
 	<script>
-			var trace1 = {
-		  x: [1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012], 
-		  y: [219, 146, 112, 127, 124, 180, 236, 207, 236, 263, 350, 430, 474, 526, 488, 537, 500, 439], 
-		  name: 'Rest of world', 
-		  		  marker: {color: 'rgb(55, 83, 109)'}, 
-		  type: 'bar'
+	  	var trace1 = {
+	  		x: [{{nucleo_sample_x}}], 
+	  		y: [{{nucleo_sample_y}}],
+	  
+	  		name: 'Percent Sample', 
+			marker: {color: 'rgb(26, 118, 255)'}, 
+		  	type: 'bar',
+		  	orientation: 'h'
+	  	};
+	  
+		var trace2 = {
+	  		<!-- x: [20, 14, 23, 7], testing -->
+	  		<!-- y: ['A', 'T', 'C', 'G'], testing -->
+	 		x: [{{nucleo_genomic_x}}], 
+	  		y: [{{nucleo_genomic_y}}],
+
+	  		name: 'Percent Genomic', 
+	  		marker: {color: 'rgb(55, 83, 109)'}, 
+	  		type: 'bar',
+	  		orientation: 'h'
+	  	};
+	  
+	  	var data = [trace1, trace2];
+	  
+	  	var layout = {
+	  		height: 700,
+	  		width:  600,
+ 
+	  		xaxis: {tickfont: {
+	  			size: 14, 
+	  			color: 'rgb(107, 107, 107)'
+	  			}}, 
+	  		yaxis: {
+	  			autorange: 'reversed',
+	  			titlefont: {
+	  			size: 16, 
+	  			color: 'rgb(107, 107, 107)',
+	  		},
+	  		tdickfont: {
+	  			size: 14, 
+	  			color: "rgb(107, 107, 107)",
+	  			}
+	  		}, 
+	  		legend: {
+	  			"orientation": "h",
+	  			x: 0.15, 
+	  			y: -0.05, 
+	  			bgcolor: 'rgba(255, 255, 255, 0)',
+	  			bordercolor: 'rgba(255, 255, 255, 0)',
+	  		}, 
+	  
+	  		barmode: 'group', 
+	  		bargap: 0.15, 
+	  		bargroupgap: 0.1
+	  	};
+	  
+	  	Plotly.newPlot('nucleo_plot', data, layout);
+	
+	</script>
+
+	<!-- M-bias Plot 1 -->
+	<script>
+		var trace1 = {
+	  		<!-- x: [1, 2, 3,4,5,6,7,8,9,10], just for testing -->
+	  		<!-- y: [40, 50, 60,50,35,40,45,61,55,33], just for testing -->
+
+	  		x: [{{mbias1_CpG_meth_x}}],
+	  		y: [{{mbias1_CpG_meth_y}}],
+	  		name: 'CpG methylation',
+	  		type: 'scatter',
+	  		yaxis: 'y',
 		};
 
 		var trace2 = {
-		  x: [1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012], 
-		  y: [16, 13, 10, 11, 28, 37, 43, 55, 56, 88, 105, 156, 270, 299, 340, 403, 549, 499], 
-		  name: 'China', 
-		 		  marker: {color: 'rgb(26, 118, 255)'}, 
-		  type: 'bar'
+			x: [{{mbias1_CHG_meth_x}}],
+	  		y: [{{mbias1_CHG_meth_y}}],
+	  		name: 'CHG methylation',
+	  		yaxis: 'y',
+	  		type: 'scatter'
 		};
 
-		var data = 	[trace1, trace2];
+		var trace3 = {
+			x: [{{mbias1_CHH_meth_x}}],
+	  		y: [{{mbias1_CHH_meth_y}}],
+	  		name: 'CHH methylation',
+	  		yaxis: 'y',
+	  		type: 'scatter'
+		};
+
+		var trace4 = {
+	  		
+	  		x: [{{mbias1_CpG_coverage_x}}],
+	  		y: [{{mbias1_CpG_coverage_y}}],
+	  		name: 'CpG total calls',
+	  		type: 'scatter',
+	  		yaxis: 'y2',
+	  		opacity: 0.4,
+		};
+
+		var trace5 = {
+			x: [{{mbias1_CHG_coverage_x}}],
+	  		y: [{{mbias1_CHG_coverage_y}}],
+	  		name: 'CHG total calls',
+	  		yaxis: 'y2',
+	  		type: 'scatter',
+	  		opacity: 0.4,
+		};
+
+		var trace6 = {
+			x: [{{mbias1_CHH_coverage_x}}],
+	  		y: [{{mbias1_CHH_coverage_y}}],
+	  		name: 'CHH total calls',
+	  		yaxis: 'y2',
+	  		type: 'scatter',
+	  		opacity: 0.4,
+		};
+
+		var data = [trace1, trace2, trace3, trace4, trace5, trace6];
 
 		var layout = {
-		  title: 'US Export of Plastic Scrap',
-		  orientation: 'h',
-		  xaxis: {tickfont: {
-			  size: 14, 
-			  color: 'rgb(107, 107, 107)'
-			}}, 
-		  yaxis: {
-			title: 'USD (millions)',
-			titlefont: {
-			  size: 16, 
-			  color: 'rgb(107, 107, 107)'
-			}, 
-			tickfont: {
-			  size: 14, 
-			  color: "rgb(107, 107, 107)"
-			}
-		  }, 
-		  legend: {
-			x: 0, 
-			y: 1.0, 
-			bgcolor: 'rgba(255, 255, 255, 0)',
-			bordercolor: 'rgba(255, 255, 255, 0)'
-		  }, 
-		  barmode: 'group', 
-		  bargap: 0.15, 
-		  bargroupgap: 0.1
+	  		title: 'Read 1',
+	  		yaxis: {title: '% Methylation'},
+	  		width: 1200,
+	  		height: 600,
+	  		yaxis2: {
+	    		title: '# Methylation Calls',
+	    		titlefont: {color: 'rgb(148, 103, 189)'},
+	    		tickfont: {color: 'rgb(148, 103, 189)'},
+	    		overlaying: 'y',
+	    		side: 'right',
+	    		separatethousands: 'y',
+	  		},
+	  		xaxis: {title: 'Position [bp]'},
 		};
 
-		Plotly.newPlot('nucleo_plot', data, layout);
+		Plotly.newPlot('mbias1_plot', data, layout);
 	</script>
+
+	<!-- M-bias Plot 2-->
 
 	<footer>
 		<a style="float:right;" href="https://www.bioinformatics.babraham.ac.uk/">
 		  {{bioinf_logo_goes_here}}
-		  This will be replaced with an epic logo of Babraham Bioinf
+		  This will be replaced with the logo of Babraham Bioinf
 		  {{bioinf_logo_goes_here}}
-
-
 		</a>
+
 		<p>Analysis produced by <a href="https://github.com/FelixKrueger/Bismark"><strong>Bismark</strong></a> (version {{bismark_version}}) - a tool to map bisulfite converted sequence reads and determine cytosine methylation states</p>
-		<p>Report graphs rendered using <a href="https://plot.ly/">plot.ly</a>, design last changed 15 May 2018</p>
+		<p>Report graphs rendered using <a href="https://plot.ly/">plot.ly</a>, design last changed 02 Aug 2018</p>
 	</footer>
 
 	</div>
