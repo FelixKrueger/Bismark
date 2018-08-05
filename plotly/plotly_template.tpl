@@ -481,7 +481,15 @@
 	<!-- This section is optional -->
 	{{mbias_r2_section}}	
 	
-	
+	<table>
+		<tbody>
+			<tr>
+				<td>
+				 	<div id="mbias2_plot"> <!--Plotly chart will be drawn inside this DIV --> </div>	
+				</td>
+			</tr>
+		</tbody>
+	</table>
 
 	<hr>	
 	{{mbias_r2_section}}
@@ -493,7 +501,7 @@
 	<!-- Alignment Stats Plot -->	
 	<script>
 		<!-- JAVASCRIPT CODE GOES HERE -->
-
+		
 		var data = [{
 			<!-- values: [19, 26, 55, 2], hardcoded for testing -->
 			values: [{{alignment_stats_plotly}}],
@@ -501,11 +509,21 @@
 			type: 'pie',
 			name: 'Alignment Statistics',
 			hoverinfo: 'label+value+percent+name',
+			direction: 'clockwise',
+			pull: 0.02,
+			sort: false,
+			marker: {
+    			colors: ['#0d233a', '#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'],
+    			line:{
+					width: 1,
+					color:'black',
+				},
+  			},
 		}];
 
 		var layout = {
 			height: 600,
-			width:  700,
+			width:  600,
 		};
 
 		Plotly.newPlot('Bismark_Processing_Report', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
@@ -513,7 +531,11 @@
 					'resetScale2d',
 					'hoverClosestCartesian',
                     'hoverCompareCartesian',
-                    'toggleSpikelines']}
+                    'toggleSpikelines']},
+                     {colorway: [
+    					'red',
+    					'green',
+  						]}
 					);
 	</script>
 
@@ -529,11 +551,21 @@
 			hoverinfo: 'label+value+percent+name',
 			hole: .3,	
 			type: 'pie',
+			direction: 'clockwise',
+			pull: 0.02,
+			sort: false,
+			marker: {
+				line:{
+					width: 1,
+					color:'black',
+				},
+				colors: ['#0d233a', '#2f7ed8'],
+			}
 	 	}];
 
 	
 		var layout = {
-	  		height: 400,	  
+	  		height: 500,	  
 	  		width: 600
 		};
 
@@ -551,7 +583,10 @@
 		  {
 			x: ['CpG context', 'CHG context', 'CHH context'],
 			y: [{{cytosine_methylation_plotly}}],
-			type: 'bar'
+			type: 'bar',
+			marker: {
+				colors: ['#0d233a', '#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'],
+			}	
 		  }
 		];
 	
@@ -720,7 +755,8 @@
 	  		opacity: 0.4,
 		};
 
-		var data = [trace1, trace2, trace3, trace4, trace5, trace6];
+		var data = [trace1, trace2, trace3, trace4, trace5, trace6]
+		;
 
 		var layout = {
 	  		title: 'Read 1',
@@ -742,6 +778,94 @@
 	</script>
 
 	<!-- M-bias Plot 2-->
+<script>
+		var trace1 = {
+	  		<!-- x: [1, 2, 3,4,5,6,7,8,9,10], just for testing -->
+	  		<!-- y: [40, 50, 60,50,35,40,45,61,55,33], just for testing -->
+
+	  		x: [{{mbias2_CpG_meth_x}}],
+	  		y: [{{mbias2_CpG_meth_y}}],
+	  		name: 'CpG methylation',
+	  		type: 'scatter',
+	  		yaxis: 'y',
+	  		line: {
+	  			width: 5,
+	  			color: 'rgb(148, 103, 189)',
+	  		}
+		};
+
+		var trace2 = {
+			x: [{{mbias2_CHG_meth_x}}],
+	  		y: [{{mbias2_CHG_meth_y}}],
+	  		name: 'CHG methylation',
+	  		yaxis: 'y',
+	  		type: 'scatter',
+	  		line: {
+	  			width: 5,
+	  			color: 'rgb(148, 103, 189)',
+	  		}
+		};
+
+		var trace3 = {
+			x: [{{mbias2_CHH_meth_x}}],
+	  		y: [{{mbias2_CHH_meth_y}}],
+	  		name: 'CHH methylation',
+	  		yaxis: 'y',
+	  		type: 'scatter',
+	  		line: {
+	  			width: 5,
+	  			color: 'rgb(148, 103, 189)',
+	  		}
+		};
+
+		var trace4 = {
+	  		
+	  		x: [{{mbias2_CpG_coverage_x}}],
+	  		y: [{{mbias2_CpG_coverage_y}}],
+	  		name: 'CpG total calls',
+	  		type: 'scatter',
+	  		yaxis: 'y2',
+	  		opacity: 0.4,
+		};
+
+		var trace5 = {
+			x: [{{mbias2_CHG_coverage_x}}],
+	  		y: [{{mbias2_CHG_coverage_y}}],
+	  		name: 'CHG total calls',
+	  		yaxis: 'y2',
+	  		type: 'scatter',
+	  		opacity: 0.4,
+		};
+
+		var trace6 = {
+			x: [{{mbias2_CHH_coverage_x}}],
+	  		y: [{{mbias2_CHH_coverage_y}}],
+	  		name: 'CHH total calls',
+	  		yaxis: 'y2',
+	  		type: 'scatter',
+	  		opacity: 0.4,
+		};
+
+		var data = [trace1, trace2, trace3, trace4, trace5, trace6];
+
+		var layout = {
+	  		title: 'Read 2',
+	  		yaxis: {title: '% Methylation'},
+	  		width: 1200,
+	  		height: 600,
+	  		yaxis2: {
+	    		title: '# Methylation Calls',
+	    		titlefont: {color: 'rgb(148, 103, 189)'},
+	    		tickfont: {color: 'rgb(148, 103, 189)'},
+	    		overlaying: 'y',
+	    		side: 'right',
+	    		separatethousands: 'y',
+	  		},
+	  		xaxis: {title: 'Position [bp]'},
+		};
+
+		Plotly.newPlot('mbias2_plot', data, layout);
+	</script>
 
 	<footer>
 		<a style="float:right;" href="https://www.bioinformatics.babraham.ac.uk/">
