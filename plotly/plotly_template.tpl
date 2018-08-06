@@ -153,44 +153,44 @@
 	
 
 	<h2>Alignment Stats</h2>
-	<table>
-		<tbody>
-			<tr>
-				<td>
-					<table class="data">
-						<tbody>
-							<tr>
-								<th>{{sequences_analysed_in_total}}</th>
-								<td>{{total_sequences_alignments}}</td>
-							</tr>
-						</tbody>
-						<tbody>
-							<tr>
-								<th>{{unique_seqs_text}}</th>
-								<td>{{unique_seqs}}</td>
-							</tr>
-							<tr>
-								<th>{{no_alignments_text}}</th>
-								<td>{{no_alignments}}</td>
-							</tr>
-							<tr>
-								<th>{{multiple_alignments_text}}</th>
-								<td>{{multiple_alignments}}</td>
-							</tr>
-							<tr>
-								<th>Genomic sequence context not extractable (edges of chromosomes)</th>
-								<td>{{no_genomic}}</td>
-							</tr>
-						</tbody>
-					</table>
-				</td>
-				<td>
-					<div id="Bismark_Processing_Report"><!-- Plotly chart will be drawn inside this DIV </div> --></div>
-				</td>
-			</tr>
-		</tbody>
-	</table>
-
+		<table>
+			<tbody>
+				<tr>
+					<td style="vertical-align:top">
+						<table class="data">
+							<tbody>
+								<tr>
+									<th>{{sequences_analysed_in_total}}</th>
+									<td>{{total_sequences_alignments}}</td>
+								</tr>
+							</tbody>
+							<tbody>
+								<tr>
+									<th>{{unique_seqs_text}}</th>
+									<td>{{unique_seqs}}</td>
+								</tr>
+								<tr>
+									<th>{{no_alignments_text}}</th>
+									<td>{{no_alignments}}</td>
+								</tr>
+								<tr>
+									<th>{{multiple_alignments_text}}</th>
+									<td>{{multiple_alignments}}</td>
+								</tr>
+								<tr>
+									<th>Genomic sequence context not extractable (edges of chromosomes)</th>
+									<td>{{no_genomic}}</td>
+								</tr>
+							</tbody>
+						</table>
+					</td>
+					<td>
+						<div id="Bismark_Processing_Report"><!-- Plotly chart will be drawn inside this DIV --> </div>
+					</td>						
+				</tr>
+			</tbody>
+		</table>
+					
 	<hr>
 	
 	<h2>Cytosine Methylation</h2>
@@ -307,7 +307,7 @@
 	<table>
 		<tbody>
 			<tr>
-				<td>
+				<td style="vertical-align:top">
 					
 					<table class="data">
 						<tbody>
@@ -344,6 +344,7 @@
 	<!-- This section is optional -->
 	{{cytosine_methylation_post_deduplication_section}}
 	<h2>Cytosine Methylation after Extraction</h2>
+
 	<table>
 		<tbody>
 			<tr>
@@ -503,7 +504,6 @@
 		<!-- JAVASCRIPT CODE GOES HERE -->
 		
 		var data = [{
-			<!-- values: [19, 26, 55, 2], hardcoded for testing -->
 			values: [{{alignment_stats_plotly}}],
 			labels: ['Unique Alignments', 'No Alignment', 'Multiple Alignments', 'No Genomic Sequence'],
 			type: 'pie',
@@ -522,7 +522,16 @@
 		}];
 
 		var layout = {
-			height: 600,
+			margin: {
+			    l: 50,
+			    r: 0,
+			    b: 0,
+			    t: 0,
+			    pad: 0,
+			},
+			<!-- paper_bgcolor: '#7f7f7f', --> 
+  			<!-- plot_bgcolor: '#c7c7c7',  -->
+			height: 400,
 			width:  600,
 		};
 
@@ -543,10 +552,9 @@
 	<script>
 		
 		var data = [{
-			<!-- values: [86, 14], hardcoded for testing purposes -->
 			values: [{{duplication_stats_plotly}}],
 			labels: ['Unique Alignments', 'Duplicate Alignments' ],
-		
+			textinfo: ['Unique Alignments', 'Duplicate Alignments' ],
 			name: 'Degree of Duplication',
 			hoverinfo: 'label+value+percent+name',
 			hole: .3,	
@@ -563,10 +571,30 @@
 			}
 	 	}];
 
-	
 		var layout = {
-	  		height: 500,	  
-	  		width: 600
+			<!-- paper_bgcolor: '#7f7f7f', -->
+  			<!-- plot_bgcolor: '#c7c7c7',  -->
+  			font: {
+        		size: 16,
+        		color: 'white',
+      		},
+      		margin: {
+			    l: 0,
+			    r: 0,
+			    b: 0,
+			    t: 0,
+			    pad: 0,
+			},
+			showlegend: true,
+  			legend: {
+    			x: .25,
+    			y: -0.05,
+  				"orientation": "h",
+  				font: {
+        			size: 14,
+        			color: 'black',
+      			},	
+  			},
 		};
 
 		Plotly.newPlot('Duplication_Plot', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
@@ -585,12 +613,34 @@
 			y: [{{cytosine_methylation_plotly}}],
 			type: 'bar',
 			marker: {
-				colors: ['#0d233a', '#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'],
-			}	
+				color: ['#0d233a', '#2f7ed8','#2f7ed8'],
+	 			<!-- colors: ['#0d233a', '#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'], -->
+   				line: {
+     				color: 'black',
+      				width: 1
+    			},
+   			}	
 		  }
 		];
-	
-		Plotly.newPlot('Cytosine_Methylation', data, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+		
+		var layout = {
+			<!-- paper_bgcolor: '#7f7f7f', -->
+  			<!-- plot_bgcolor: '#c7c7c7',  -->
+  			width: 600,
+  			margin: {
+			    l: 100,
+			    r: 50,
+			    b: 50,
+			    t: 50,
+			    pad: 0,
+			},
+			yaxis: {
+				range: [0, 100],
+				title:' % Methylation',
+			}
+		};
+
+		Plotly.newPlot('Cytosine_Methylation', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
 					'sendDataToCloud',
 					'resetScale2d',
 					'hoverClosestCartesian',
@@ -602,14 +652,38 @@
 	<script>
 
 		var data = [
-		  {
-		x: ['CpG context', 'CHH context', 'CHG context'],
-		y: [{{cytosine_methylation_post_duplication_plotly}}],
-		type: 'bar'
-		  }
+		  	{
+				x: ['CpG context', 'CHH context', 'CHG context'],
+				y: [{{cytosine_methylation_post_duplication_plotly}}],
+				type: 'bar',
+				marker: {
+					color: ['#0d233a', '#2f7ed8','#2f7ed8'],
+	 				line: {
+     					color: 'black',
+      					width: 1
+    				},
+				}	
+		  	}
 		];
 
-		Plotly.newPlot('Cytosine_Methylation_postDuplication', data, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+		var layout = {
+			width: 600,
+			<!-- paper_bgcolor: '#7f7f7f', -->
+  			<!-- plot_bgcolor: '#c7c7c7',  -->
+  			margin: {
+			    l: 100,
+			    r: 50,
+			    b: 50,
+			    t: 50,
+			    pad: 0,
+			},
+			yaxis: {
+				range: [0, 100],
+				title:' % Methylation',
+			}
+		};
+
+		Plotly.newPlot('Cytosine_Methylation_postDuplication', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
 					'sendDataToCloud',
 					'resetScale2d',
 					'hoverClosestCartesian',
