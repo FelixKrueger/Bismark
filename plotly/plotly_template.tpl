@@ -266,7 +266,7 @@
 	<table>
 		<tbody>
 			<tr>
-				<td>
+				<td style="vertical-align:top">
 					<table class="data">
 						<tbody>
 							<tr>
@@ -508,9 +508,9 @@
 			labels: ['Unique Alignments', 'No Alignment', 'Multiple Alignments', 'No Genomic Sequence'],
 			type: 'pie',
 			name: 'Alignment Statistics',
-			hoverinfo: 'label+value+percent+name',
+			hoverinfo: 'label+value+percent',
 			direction: 'clockwise',
-			pull: 0.02,
+			pull: [0.05,0,0,0],
 			sort: false,
 			marker: {
     			colors: ['#0d233a', '#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'],
@@ -526,13 +526,25 @@
 			    l: 50,
 			    r: 0,
 			    b: 0,
-			    t: 0,
+			    t: 50,
 			    pad: 0,
 			},
+			font: {
+        		size: 16,
+      		},
 			<!-- paper_bgcolor: '#7f7f7f', --> 
   			<!-- plot_bgcolor: '#c7c7c7',  -->
-			height: 400,
+			height: 450,
 			width:  600,
+			showlegend: true,
+  			legend: {
+    			x: 0.9,
+    			y: -0.05,
+  				font: {
+        			size: 14,
+        			color: 'black',
+      			},	
+  			},
 		};
 
 		Plotly.newPlot('Bismark_Processing_Report', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
@@ -541,10 +553,6 @@
 					'hoverClosestCartesian',
                     'hoverCompareCartesian',
                     'toggleSpikelines']},
-                     {colorway: [
-    					'red',
-    					'green',
-  						]}
 					);
 	</script>
 
@@ -556,11 +564,11 @@
 			labels: ['Unique Alignments', 'Duplicate Alignments' ],
 			textinfo: ['Unique Alignments', 'Duplicate Alignments' ],
 			name: 'Degree of Duplication',
-			hoverinfo: 'label+value+percent+name',
+			hoverinfo: 'label+value+percent',
 			hole: .3,	
 			type: 'pie',
 			direction: 'clockwise',
-			pull: 0.02,
+			pull: [0.05,0],
 			sort: false,
 			marker: {
 				line:{
@@ -698,11 +706,36 @@
 			x: ['OT', 'CTOT', 'CTOB', 'OB'],
 			<!-- y: [49, 1, 2, 48], hardcoded for testing purposes -->
 			y: [{{strand_alignment_plotly}}],
-			type: 'bar'
+			type: 'bar',
+			marker: {
+				color: ['#0d233a', '#2f7ed8','#2f7ed8','#0d233a'],
+	 			line: {
+     				color: 'black',
+      				width: 1
+    			},
+   			}	
 		  }
 		];
 
-		Plotly.newPlot('Strand_Plot', data, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+		var layout = {
+			<!-- paper_bgcolor: '#7f7f7f',  -->
+  			<!-- plot_bgcolor: '#c7c7c7',   -->
+  			margin: {
+			    l: 100,
+			    r: 50,
+			    b: 50,
+			    t: 15,
+			    pad: 5,
+			},
+			yaxis: {
+				title: 'Number of Alignments',
+				zeroline:true, 
+				<!-- hoverformat: '.2r', -->
+			}
+		};
+
+
+		Plotly.newPlot('Strand_Plot', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
 					'sendDataToCloud',
 					'resetScale2d',
 					'hoverClosestCartesian',
@@ -717,11 +750,18 @@
 	  		y: [{{nucleo_sample_y}}],
 	  
 	  		name: 'Percent Sample', 
-			marker: {color: 'rgb(26, 118, 255)'}, 
+			marker: {
+				color: '#2f7ed8',
+				line:{
+					width: 1,
+					color:'black',
+				},
+			}, 
 		  	type: 'bar',
 		  	orientation: 'h'
 	  	};
 	  
+		 
 		var trace2 = {
 	  		<!-- x: [20, 14, 23, 7], testing -->
 	  		<!-- y: ['A', 'T', 'C', 'G'], testing -->
@@ -729,7 +769,13 @@
 	  		y: [{{nucleo_genomic_y}}],
 
 	  		name: 'Percent Genomic', 
-	  		marker: {color: 'rgb(55, 83, 109)'}, 
+	  		marker: {
+	  			color: '#0d233a',
+	  			line:{
+					width: 1,
+					color:'black',
+				},
+			}, 
 	  		type: 'bar',
 	  		orientation: 'h'
 	  	};
@@ -738,37 +784,47 @@
 	  
 	  	var layout = {
 	  		height: 700,
-	  		width:  600,
+	  		width:  700,
  
-	  		xaxis: {tickfont: {
-	  			size: 14, 
-	  			color: 'rgb(107, 107, 107)'
-	  			}}, 
-	  		yaxis: {
-	  			autorange: 'reversed',
-	  			titlefont: {
-	  			size: 16, 
-	  			color: 'rgb(107, 107, 107)',
-	  		},
-	  		tdickfont: {
-	  			size: 14, 
-	  			color: "rgb(107, 107, 107)",
+	  		xaxis: {
+	  			tickfont: {
+	  				size: 14, 
 	  			}
 	  		}, 
+	  		yaxis: {
+	  			title: '(Di-)Nucleotide',
+	  			autorange: 'reversed',
+	  			titlefont: {
+	  				size: 18, 
+	  			},
+	  			tickfont: {
+	  				<!-- family: 'Courier New, monospace', -->	
+	  				size: 14, 
+		  		}
+	  		}, 
+	  		showlegend: true,
 	  		legend: {
 	  			"orientation": "h",
 	  			x: 0.15, 
 	  			y: -0.05, 
-	  			bgcolor: 'rgba(255, 255, 255, 0)',
-	  			bordercolor: 'rgba(255, 255, 255, 0)',
-	  		}, 
+	  			font: {
+        			size: 16,
+        			color: 'black',
+      			},	
+			},
 	  
 	  		barmode: 'group', 
 	  		bargap: 0.15, 
 	  		bargroupgap: 0.1
 	  	};
 	  
-	  	Plotly.newPlot('nucleo_plot', data, layout);
+	  	Plotly.newPlot('nucleo_plot', data, layout, {displaylogo: false},{modeBarButtonsToRemove: ['toImage',
+					'sendDataToCloud',
+					'resetScale2d',
+					'hoverClosestCartesian',
+                    'hoverCompareCartesian',
+                    'zoom',
+                    'toggleSpikelines']});
 	
 	</script>
 
@@ -777,10 +833,15 @@
 		var trace1 = {
 	  		<!-- x: [1, 2, 3,4,5,6,7,8,9,10], just for testing -->
 	  		<!-- y: [40, 50, 60,50,35,40,45,61,55,33], just for testing -->
-
+	  		<!-- colors: ['#0d233a', '#2f7ed8','#8bbc21','#910000','#1aadce','#492970','#f28f43','#77a1e5','#c42525','#a6c96a'], -->
+	  		<!-- colors: [ '#CCF0E1','#EDD3A8','#69798A','#21BCA2','#F29D13','#0d233a','#f28f43','#77a1e5','#c42525','#a6c96a'], -->
 	  		x: [{{mbias1_CpG_meth_x}}],
 	  		y: [{{mbias1_CpG_meth_y}}],
 	  		name: 'CpG methylation',
+	  		line: {
+	  			width: 5,
+	  			color: '#0d233a',
+	  		},
 	  		type: 'scatter',
 	  		yaxis: 'y',
 		};
@@ -790,7 +851,11 @@
 	  		y: [{{mbias1_CHG_meth_y}}],
 	  		name: 'CHG methylation',
 	  		yaxis: 'y',
-	  		type: 'scatter'
+	  		type: 'scatter',
+	  		line: {
+	  			width: 5,
+	  			color: '#F29D13',
+	  		},
 		};
 
 		var trace3 = {
@@ -798,7 +863,11 @@
 	  		y: [{{mbias1_CHH_meth_y}}],
 	  		name: 'CHH methylation',
 	  		yaxis: 'y',
-	  		type: 'scatter'
+	  		type: 'scatter',
+	  		line: {
+	  			width: 5,
+	  			color: '#21BCA2',
+	  		},
 		};
 
 		var trace4 = {
@@ -809,6 +878,10 @@
 	  		type: 'scatter',
 	  		yaxis: 'y2',
 	  		opacity: 0.4,
+	  		line: {
+	  			width: 1.5,
+	  			color: '#0d233a',
+	  		},
 		};
 
 		var trace5 = {
@@ -818,6 +891,10 @@
 	  		yaxis: 'y2',
 	  		type: 'scatter',
 	  		opacity: 0.4,
+	  		line: {
+	  			width: 1.5,
+	  			color: '#F29D13',
+	  		},
 		};
 
 		var trace6 = {
@@ -827,32 +904,73 @@
 	  		yaxis: 'y2',
 	  		type: 'scatter',
 	  		opacity: 0.4,
+	  		line: {
+	  			width: 1.5,
+	  			color: '#21BCA2',
+	  		},
 		};
 
-		var data = [trace1, trace2, trace3, trace4, trace5, trace6]
-		;
+		var data = [trace1, trace2, trace3, trace4, trace5, trace6];
 
 		var layout = {
 	  		title: 'Read 1',
-	  		yaxis: {title: '% Methylation'},
+	  		titlefont: {
+			      	size: 24,
+			      	color: 'black'
+			},
+	  		yaxis: {
+	  			title: '% Methylation',
+	  			range: [0, 100],
+	  			visible: true,
+	  			titlefont: {
+			      	size: 18,
+			      	color: 'black'
+			    },
+			    showline: true,
+	  		},
 	  		width: 1200,
 	  		height: 600,
 	  		yaxis2: {
 	    		title: '# Methylation Calls',
-	    		titlefont: {color: 'rgb(148, 103, 189)'},
-	    		tickfont: {color: 'rgb(148, 103, 189)'},
+	    		tickfont: {color: 'black'},
 	    		overlaying: 'y',
 	    		side: 'right',
 	    		separatethousands: 'y',
+	    		zeroline: false,
+	    		visible: true,
+	    		showgrid: false,
+	    		showline: true,
+	    		titlefont: {
+			      	size: 18,
+			      	color: 'black'
+			    },
 	  		},
-	  		xaxis: {title: 'Position [bp]'},
+	  		xaxis: {
+	  			title: 'Position in Read [bp]',
+	  			titlefont: {
+			      	size: 18,
+			      	color: 'black'
+			    },
+			    showline: true,
+	  		},
+	  		showlegend: true,
+		  	legend: {
+		    	x: 0.85,
+		    	y: 1.2
+		  	},
 		};
 
-		Plotly.newPlot('mbias1_plot', data, layout);
+		Plotly.newPlot('mbias1_plot', data, layout,{displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+					'sendDataToCloud',
+					'resetScale2d',
+					'hoverClosestCartesian',
+                    'hoverCompareCartesian',
+                    'toggleZoom',
+                    'toggleSpikelines']});
 	</script>
 
 	<!-- M-bias Plot 2-->
-<script>
+	<script>
 		var trace1 = {
 	  		<!-- x: [1, 2, 3,4,5,6,7,8,9,10], just for testing -->
 	  		<!-- y: [40, 50, 60,50,35,40,45,61,55,33], just for testing -->
@@ -864,8 +982,8 @@
 	  		yaxis: 'y',
 	  		line: {
 	  			width: 5,
-	  			color: 'rgb(148, 103, 189)',
-	  		}
+	  			color: '#0d233a',
+	  		},
 		};
 
 		var trace2 = {
@@ -876,8 +994,8 @@
 	  		type: 'scatter',
 	  		line: {
 	  			width: 5,
-	  			color: 'rgb(148, 103, 189)',
-	  		}
+	  			color: '#F29D13',
+	  		},
 		};
 
 		var trace3 = {
@@ -888,18 +1006,21 @@
 	  		type: 'scatter',
 	  		line: {
 	  			width: 5,
-	  			color: 'rgb(148, 103, 189)',
-	  		}
+	  			color: '#21BCA2',
+	  		},
 		};
 
-		var trace4 = {
-	  		
+		var trace4 = {		
 	  		x: [{{mbias2_CpG_coverage_x}}],
 	  		y: [{{mbias2_CpG_coverage_y}}],
 	  		name: 'CpG total calls',
 	  		type: 'scatter',
 	  		yaxis: 'y2',
 	  		opacity: 0.4,
+	  		line: {
+	  			width: 1.5,
+	  			color: '#0d233a',
+	  		},
 		};
 
 		var trace5 = {
@@ -909,6 +1030,10 @@
 	  		yaxis: 'y2',
 	  		type: 'scatter',
 	  		opacity: 0.4,
+	  		line: {
+	  			width: 1.5,
+	  			color: '#F29D13',
+	  		},
 		};
 
 		var trace6 = {
@@ -918,27 +1043,67 @@
 	  		yaxis: 'y2',
 	  		type: 'scatter',
 	  		opacity: 0.4,
+	  		line: {
+	  			width: 1.5,
+	  			color: '#21BCA2',
+	  		},
 		};
 
 		var data = [trace1, trace2, trace3, trace4, trace5, trace6];
 
 		var layout = {
 	  		title: 'Read 2',
-	  		yaxis: {title: '% Methylation'},
+	  		titlefont: {
+			      	size: 24,
+			      	color: 'black'
+			},
+	  		yaxis: {
+	  			title: '% Methylation',
+	  			range: [0, 100],
+	  			titlefont: {
+			      	size: 18,
+			      	color: 'black'
+			    },
+			    showline: true,
+	  		},
 	  		width: 1200,
 	  		height: 600,
 	  		yaxis2: {
 	    		title: '# Methylation Calls',
-	    		titlefont: {color: 'rgb(148, 103, 189)'},
-	    		tickfont: {color: 'rgb(148, 103, 189)'},
 	    		overlaying: 'y',
 	    		side: 'right',
 	    		separatethousands: 'y',
+	    		zeroline: false,
+	    		showgrid: false,
+	    		showline: true,
+	    		titlefont: {
+			      	size: 18,
+			      	color: 'black'
+			    },
 	  		},
-	  		xaxis: {title: 'Position [bp]'},
+	  		xaxis: {
+	  			title: 'Position in read [bp]',
+	  			showline: true,	
+	  			titlefont: {
+			      size: 18,
+			      color: 'black'
+			    },
+	  		},
+	  		showlegend: true,
+		  	legend: {
+		    	x: 0.85,
+		    	y: 1.2,
+		  	},
 		};
 
-		Plotly.newPlot('mbias2_plot', data, layout);
+		Plotly.newPlot('mbias2_plot', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+					'sendDataToCloud',
+					'resetScale2d',
+					'hoverClosestCartesian',
+                    'hoverCompareCartesian',
+                    'toggleZoom',
+                    'toggleSpikelines']});
+
 	</script>
 
 	<footer>

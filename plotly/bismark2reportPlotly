@@ -120,10 +120,9 @@ while (@alignment_reports){
       $doc =~ s/\{\{mbias_r2_section\}\}//g; # deleting these tags and then go ahead and fill the table
       (my $state, $doc) = read_mbias_report($mbias_report,$doc);
   
-      warn "OK have read the report\n\n";
-      # eep(1);
-      warn ">$state<<<\n";
-      sleep(1);
+      # warn "OK have read the report\n\n";
+      # warn ">$state<<<\n";
+      # sleep(1);
   }
   else{
       warn "No M-bias report file specified, skipping this step\n";
@@ -931,9 +930,9 @@ sub read_mbias_report{
   my $r1_CHH_perc_x     = join (',',@{$mbias_1{'CHH'}->{perc_x}});
   my $r1_CHH_perc_y     = join (',',@{$mbias_1{'CHH'}->{perc_y}});
 
-  warn "R1 CpG coverage:\n$r1_CpG_coverage_x\n$r1_CpG_coverage_y\nR1 CpG methylation:\n$r1_CpG_perc_x\n$r1_CpG_perc_y\n\n";
-  warn "R1 CHG coverage:\n$r1_CHG_coverage_x\n$r1_CHG_coverage_y\nR1 CHG methylation:\n$r1_CHG_perc_x\n$r1_CHG_perc_y\n\n";
-  warn "R1 CHH coverage:\n$r1_CHH_coverage_x\n$r1_CHH_coverage_y\nR1 CHH methylation:\n$r1_CHH_perc_x\n$r1_CHH_perc_y\n\n";
+  # warn "R1 CpG coverage:\n$r1_CpG_coverage_x\n$r1_CpG_coverage_y\nR1 CpG methylation:\n$r1_CpG_perc_x\n$r1_CpG_perc_y\n\n";
+  # warn "R1 CHG coverage:\n$r1_CHG_coverage_x\n$r1_CHG_coverage_y\nR1 CHG methylation:\n$r1_CHG_perc_x\n$r1_CHG_perc_y\n\n";
+  # warn "R1 CHH coverage:\n$r1_CHH_coverage_x\n$r1_CHH_coverage_y\nR1 CHH methylation:\n$r1_CHH_perc_x\n$r1_CHH_perc_y\n\n";
   
   # CpG
   $doc =~ s/\{\{mbias1_CpG_meth_x\}\}/$r1_CpG_perc_x/g;
@@ -968,9 +967,9 @@ sub read_mbias_report{
     my $r2_CHH_perc_x     = join (',',@{$mbias_2{'CHH'}->{perc_x}});
     my $r2_CHH_perc_y     = join (',',@{$mbias_2{'CHH'}->{perc_y}});
 
-    warn "r2 CpG coverage:\n$r2_CpG_coverage_x\n$r2_CpG_coverage_y\nr2 CpG methylation:\n$r2_CpG_perc_x\n$r2_CpG_perc_y\n\n";
-    warn "r2 CHG coverage:\n$r2_CHG_coverage_x\n$r2_CHG_coverage_y\nr2 CHG methylation:\n$r2_CHG_perc_x\n$r2_CHG_perc_y\n\n";
-    warn "r2 CHH coverage:\n$r2_CHH_coverage_x\n$r2_CHH_coverage_y\nr2 CHH methylation:\n$r2_CHH_perc_x\n$r2_CHH_perc_y\n\n";
+    # warn "r2 CpG coverage:\n$r2_CpG_coverage_x\n$r2_CpG_coverage_y\nr2 CpG methylation:\n$r2_CpG_perc_x\n$r2_CpG_perc_y\n\n";
+    # warn "r2 CHG coverage:\n$r2_CHG_coverage_x\n$r2_CHG_coverage_y\nr2 CHG methylation:\n$r2_CHG_perc_x\n$r2_CHG_perc_y\n\n";
+    # warn "r2 CHH coverage:\n$r2_CHH_coverage_x\n$r2_CHH_coverage_y\nr2 CHH methylation:\n$r2_CHH_perc_x\n$r2_CHH_perc_y\n\n";
     
     # CpG
     $doc =~ s/\{\{mbias2_CpG_meth_x\}\}/$r2_CpG_perc_x/g;
@@ -1119,7 +1118,7 @@ VERSION
 
     ### DEDUPLICATION REPORT (optional)
     if ($dedup_report){
-	warn "User specifified dedup report: $dedup_report\n";sleep(3);
+	warn "User specifified dedup report: $dedup_report\n";sleep(1);
       if (lc$dedup_report eq 'none'){
 	push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
       }
