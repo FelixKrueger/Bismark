@@ -117,12 +117,19 @@ while (@alignment_reports){
   if ($mbias_report){
       warn "Using the following M-bias report:\t\t> $mbias_report <\n";
       $doc =~ s/\{\{mbias_r1_section\}\}//g; # deleting these tags and then go ahead and fill the table
-      $doc =~ s/\{\{mbias_r2_section\}\}//g; # deleting these tags and then go ahead and fill the table
       (my $state, $doc) = read_mbias_report($mbias_report,$doc);
   
       # warn "OK have read the report\n\n";
       # warn ">$state<<<\n";
       # sleep(1);
+      if ($state eq 'single'){
+	  warn "Read was $state: Deleting the M-bias2 section\n";
+	  $doc =~ s/(\{\{mbias_r2_section\}\}.*\{\{mbias_r2_section\}\})//s; # treating the string as a single line
+	  # warn "Deleting: $1\n\n";sleep(5);
+      }
+      else{ # paired-end
+	  $doc =~ s/\{\{mbias_r2_section\}\}//g; # deleting these tags and then go ahead and fill the table
+      }
   }
   else{
       warn "No M-bias report file specified, skipping this step\n";
@@ -899,16 +906,16 @@ sub read_mbias_report{
               push @{$mbias_1{$context}->{coverage_y}}, $coverage;
               push @{$mbias_1{$context}->{perc_x}}, $pos; 
               push @{$mbias_1{$context}->{perc_y}}, $perc;  
-      }
-      elsif ($read_identity == 2){
-        	push @{$mbias_2{$context}->{coverage_x}}, $pos;
-          push @{$mbias_2{$context}->{coverage_y}}, $coverage;
-        	push @{$mbias_2{$context}->{perc_x}}, $pos;
-          push @{$mbias_2{$context}->{perc_y}}, $perc;
-      }
-      else{
-	       warn "read identity was unknown : '$read_identity'\n\n";
-      }
+	  }
+	  elsif ($read_identity == 2){
+	      push @{$mbias_2{$context}->{coverage_x}}, $pos;
+	      push @{$mbias_2{$context}->{coverage_y}}, $coverage;
+	      push @{$mbias_2{$context}->{perc_x}}, $pos;
+	      push @{$mbias_2{$context}->{perc_y}}, $perc;
+	  }
+	  else{
+	      warn "read identity was unknown : '$read_identity'\n\n";
+	  }
 
       # print join (" ",$pos,$meth,$unmeth,$perc,$coverage)."\n";
     }
@@ -990,7 +997,7 @@ sub read_mbias_report{
 
   }
   else {
-    # $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
+      $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
   }
   warn "Complete\n\n";
 
@@ -1285,7 +1292,7 @@ sub print_helpfile{
                            '--nucleotide_coverage') in the current working directory. Including a nucleotide coverage statistics
                            report is optional, and using the FILE 'none' will skip this report entirely.
 
-                           Script last modified: 13 May 2016
+                           Script last modified: 07 August 2018
 
 EOF
     ;

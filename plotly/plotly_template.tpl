@@ -539,7 +539,7 @@
 			showlegend: true,
   			legend: {
     			x: 0.9,
-    			y: -0.05,
+    			y: 1.05,
   				font: {
         			size: 14,
         			color: 'black',
@@ -597,7 +597,7 @@
   			legend: {
     			x: .25,
     			y: -0.05,
-  				"orientation": "h",
+  			        "orientation": "h",
   				font: {
         			size: 14,
         			color: 'black',
@@ -1114,7 +1114,7 @@
 		</a>
 
 		<p>Analysis produced by <a href="https://github.com/FelixKrueger/Bismark"><strong>Bismark</strong></a> (version {{bismark_version}}) - a tool to map bisulfite converted sequence reads and determine cytosine methylation states</p>
-		<p>Report graphs rendered using <a href="https://plot.ly/">plot.ly</a>, design last changed 02 Aug 2018</p>
+		<p>Report graphs rendered using <a href="https://plot.ly/">plot.ly</a>, design last changed 07 Aug 2018</p>
 	</footer>
 
 	</div>
