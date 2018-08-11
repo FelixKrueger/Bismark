@@ -437,8 +437,8 @@ my $dup_alignments = join(",", @dup_alignments_arr);
 my $unique_alignments = join(",", @unique_alignments_arr);
 my $meth_cpg_string = join(",", @meth_cpg_string_arr);
 my $unmeth_cpg_string = join(",", @unmeth_cpg_string_arr);
-my $meth_cph_string = join(",", @meth_cph_string_arr);
-my $unmeth_cph_string = join(",", @unmeth_cph_string_arr);
+my $meth_chg_string = join(",", @meth_cph_string_arr);
+my $unmeth_chg_string = join(",", @unmeth_cph_string_arr);
 my $meth_chh_string = join(",", @meth_chh_string_arr);
 my $unmeth_chh_string = join(",", @unmeth_chh_string_arr);
 
@@ -574,6 +574,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			<button id="version1">Number of Reads</button>
 			<button id="version2">Percentages</button>
 		</div>
+        <div id="myData" style="width: 100%;"></div>
 	</h2>
 		
 	<!-- <div id="alignment" class="plot"></div> -->
@@ -582,10 +583,12 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 	<h2>
 		Cytosine Methylation
 	</h2>
-	<!-- <div id="methylation_context" class="plot"></div>  -->
+	   <div id="methylation_context" class="plot"></div> 
 	<hr>
 	
 	<!-- ### PLOT.LY CODE ##################################################################################################### -->
+
+    <!-- ### ALIGNMENT SECTION -->
 
 	<script>
 		var alignment_plot_colors = ['#f28f43', '#0d233a', '#492970', '#2f7ed8', '#8bbc21'];
@@ -597,7 +600,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 		var traces1 = [
 			
 			{x: [{{x_values_alignment}}], y: [{{aligned_seq}}],
-				fill: 'tonexty',
+				fill: 'tozeroy',
 				name:'Raw Aligned Reads',
 				fillcolor: '#01665e',
 				visible: true,
@@ -623,14 +626,39 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 				fillcolor: '#2f7ed8',
 			},
 			{x: [{{x_values_alignment}}], y: [{{unique_alignments}}],
-				name:'Deduplicated Unique Alignments',
+				name:'Raw Unique Alignments',
 				fill: 'tonexty', 
 				fillcolor: '#8bbc21',
 			},
 		];
+	
+
 		
-		
-		
+        var traces2 = [
+            
+            {x: [{{x_values_alignment}}], y: [{{p_aligned_replace}}],
+                fill: 'tozeroy',
+                name:'Raw Aligned Reads',
+                fillcolor: '#01665e',
+                visible: true,
+            },
+            {x: [{{x_values_alignment}}], y: [{{p_no_seq_replace}}],
+                fill: 'tonexty',
+                name:'No Genomic Sequence',
+                fillcolor: '#f28f43',
+            },
+            {x: [{{x_values_alignment}}], y: [{{p_unal_replace}}],
+                fill: 'tonexty',
+                name:'Did Not Align',
+                fillcolor: '#0d233a',
+            },
+            {x: [{{x_values_alignment}}], y: [{{p_ambig_replace}}],
+                name:'Aligned Ambiguously',
+                fill: 'tonexty',
+                fillcolor: '#492970',
+            },
+        ];
+
 		function stackedArea(traces) {
 			var i, j;
 			for(i=0; i<traces.length; i++) {
@@ -650,10 +678,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 		
 		var layout = {
 			xaxis: {
-				title: '<b>Sample [Hover to identify Sample and numbers]</b>',
+				title: '<b>Sample [Hover to identify Sample and Numbers]</b>',
 				titlefont: {
-					<!-- family: {'Lucida Grande', 'Lucida Sans Unicode', 'Verdana', 'Arial', 'Helvetica', 'sans-serif'}, -->
-					
 					size: 14,
 					color: '#4d759e',
 				}
@@ -671,21 +697,211 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 				x: 0.45,
 				y: 1.1,
 				orientation: 'h',
-			}
-						
+			}				
 		}
-		Plotly.newPlot(stacksDiv, stackedArea(traces1), layout,{displaylogo: false},
+        var layout2 = {
+            xaxis: {
+                title: '<b>Sample [Hover to identify Sample and Numbers]</b>',
+                titlefont: {
+                    size: 14,
+                    color: '#4d759e',
+                }
+                
+            },
+            yaxis: {
+                title: '<b>Percentage of all Reads</b>',
+                titlefont: {
+                    size: 14,
+                    color: '#4d759e',
+                }
+            },
+            height: 400,
+            legend:{
+                x: 0.45,
+                y: 1.1,
+                orientation: 'h',
+            }
+                        
+        }
+
+
+         Plotly.newPlot(stacksDiv, stackedArea(traces1), layout,
+                                        {displaylogo: false},
                                         {modeBarButtonsToRemove:
                                         ['toImage',
                                         'sendDataToCloud',
                                         'resetScale2d',
                                         'hoverClosestCartesian',
-										'hoverCompareCartesian',
-										'toggleSpikelines']
-                                        }
-		);
+                                        'hoverCompareCartesian',
+                                        'toggleSpikelines']
+                                        },
+            );
+        document.getElementById('version1').addEventListener('click', function() {
+            Plotly.purge(stacksDiv);
+            Plotly.newPlot(stacksDiv, stackedArea(traces1), layout,
+                                        {displaylogo: false},
+                                        {modeBarButtonsToRemove:
+                                        ['toImage',
+                                        'sendDataToCloud',
+                                        'resetScale2d',
+                                        'hoverClosestCartesian',
+                                        'hoverCompareCartesian',
+                                        'toggleSpikelines']
+                                        },
+            );
+            document.getElementById('myData').innerHTML = JSON.stringify(traces1);
+        })
+        document.getElementById('version2').addEventListener('click', function() {
+            Plotly.relayout(stacksDiv, stackedArea(traces2), layout2, 
+                                        {displaylogo: false},
+                                        {modeBarButtonsToRemove:
+                                        ['toImage',
+                                        'sendDataToCloud',
+                                        'resetScale2d',
+                                        'hoverClosestCartesian',
+                                        'hoverCompareCartesian',
+                                        'toggleSpikelines']
+                                        },
+            );
+            document.getElementById('myData').innerHTML = JSON.stringify(traces2);
+        })
+
+        
 			
 	</script>
+
+    <!-- ### METHYLATION CONTEXT -->
+
+    <script>
+        var alignment_plot_colors = ['#f28f43', '#0d233a', '#492970', '#2f7ed8', '#8bbc21'];
+        var alignment_plot_colors2 = ['#01665e','#f28f43', '#0d233a', '#492970', '#2f7ed8', '#8bbc21']; 
+        var meth_plot_colors = ['#0d233a', '#2f7ed8', '#8bbc21', '#1aadce', '#910000', '#492970'];
+        var methylationDiv = document.getElementById("methylation_context");
+        var num_samples = {{num_samples}};
+        
+        <!-- CpG methylation calls -->
+        var traces1 = [ 
+            {x: [{{x_values_methylation}}], y: [{{meth_cpg_string}}],
+                fill: 'tozeroy',
+                name:'Methylated CpG',
+                fillcolor: '#0d233a',
+                visible: true,
+            },
+            {x: [{{x_values_methylation}}], y: [{{unmeth_cpg_string}}],
+                fill: 'tonexty',
+                name:'Unmethylated CpG',
+                fillcolor: '#2f7ed8',
+            },
+        ];
+
+        <!-- CHG methylation calls -->
+        var traces2 = [ 
+            {x: [{{x_values_methylation}}], y: [{{meth_chg_string}}],
+                fill: 'tozeroy',
+                name:'Methylated CHG',
+                fillcolor: '#1aadce',
+                visible: true,
+            },
+            {x: [{{x_values_methylation}}], y: [{{unmeth_chg_string}}],
+                fill: 'tonexty',
+                name:'Unmethylated CHG',
+                fillcolor: '#8bbc21',
+            },
+        ];
+
+         <!-- CHH methylation calls -->
+        var traces3 = [ 
+            {x: [{{x_values_methylation}}], y: [{{meth_chh_string}}],
+                fill: 'tozeroy',
+                name:'Methylated CHH',
+                fillcolor: '#492970',
+                visible: true,
+            },
+            {x: [{{x_values_methylation}}], y: [{{unmeth_chh_string}}],
+                fill: 'tonexty',
+                name:'Unmethylated CHH',
+                fillcolor: '#910000',
+            },
+        ];
+
+        function stackedArea(traces) {
+            var i, j;
+            for(i=0; i<traces.length; i++) {
+                traces[i].text = [];
+                traces[i].hoverinfo = 'text+name';
+                for(j=0; j<(traces[i]['y'].length); j++) {
+                    traces[i].text.push(traces[i]['y'][j].toFixed(0));
+                }
+            }
+            for(i=1; i<traces.length; i++) {
+                for(j=0; j<(Math.min(traces[i]['y'].length, traces[i-1]['y'].length)); j++) {
+                    traces[i]['y'][j] += traces[i-1]['y'][j];
+                }
+            }
+            return traces;
+        }
+        
+        var layoutReads = {
+            xaxis: {
+                title: '<b>Sample [Hover to identify Sample and Numbers]</b>',
+                titlefont: {
+                    size: 14,
+                    color: '#4d759e',
+                }
+                
+            },
+            yaxis: {
+                title: '<b># Methylation Calls</b>',
+                titlefont: {
+                    size: 14,
+                    color: '#4d759e',
+                }
+            },
+            height: 400,
+            legend:{
+                x: 0.45,
+                y: 1.1,
+                orientation: 'h',
+            }               
+        }
+        var layoutPercentage = {
+            xaxis: {
+                title: '<b>Sample [Hover to identify Sample and Numbers]</b>',
+                titlefont: {
+                    size: 14,
+                    color: '#4d759e',
+                }
+                
+            },
+            yaxis: {
+                title: '<b>% Methylation Calls</b>',
+                titlefont: {
+                    size: 14,
+                    color: '#4d759e',
+                }
+            },
+            height: 400,
+            legend:{
+                x: 0.45,
+                y: 1.1,
+                orientation: 'h',
+            }               
+        }
+      
+         Plotly.newPlot(methylationDiv, stackedArea(traces2), layout,
+                                        {displaylogo: false},
+                                        {modeBarButtonsToRemove:
+                                        ['toImage',
+                                        'sendDataToCloud',
+                                        'resetScale2d',
+                                        'hoverClosestCartesian',
+                                        'hoverCompareCartesian',
+                                        'toggleSpikelines']
+                                        },
+            );
+        
+            
+    </script>
 	
 	<footer>
 		<a style="float:right;" href="https://www.bioinformatics.babraham.ac.uk/">
@@ -727,13 +943,17 @@ for (1..$num_samples){
 }
 my $x_values = join (",",@x_values);
 $html_report =~ s/\{\{x_values_alignment\}\}/$x_values/g;
+$html_report =~ s/\{\{x_values_methylation\}\}/$x_values/g;
 print "Number of samples: $num_samples\n" if $verbose;
 print "X-coords: $x_values\n" if $verbose;
 
 $html_report =~ s/\{\{categories\}\}/$categories/g;
 print "Categories: $categories\n" if $verbose;
+$html_report =~ s/\{\{bismark_version\}\}/$bismark_version/g;
 
-### Alignment section
+####################################################################################
+###  ALIGNMENT SECTION
+####################################################################################
 
 if ($aligned =~ /^,{1,}$/){
 	warn "$aligned contained only commas. Setting it to empty string\n" if $verbose;	
@@ -774,16 +994,94 @@ else{
 $html_report =~ s/\{\{unique_alignments\}\}/$unique_alignments/g;
 print "Unique Alignments: $unique_alignments\n" if $verbose;
 
+### Calculating percentages
+my @perc_aligned;
+if ($aligned){
+	warn "Found raw, undeduplicated unique aligments. Using those...\n" if $verbose;
+	@perc_aligned = split (/,/,$aligned);
+}
+if ($unique_alignments){
+	warn "Found deduplicated unique aligments. Using those...\n" if $verbose;
+	@perc_aligned = split (/,/,$unique_alignments);
+}	
+print "Aligned:\t",join ("~~",@perc_aligned),"\n";
 
 
-### Context methylation section
+my @perc_not_aligned = split (/,/,$not_aligned);
+print "Not Aligned:\t",join ("~~",@perc_not_aligned),"\n";
+
+my @perc_no_seq = split (/,/,$no_seq);
+print "No Sequence:\t",join ("~~",@perc_no_seq),"\n";
+
+my @perc_ambig_aligned = split (/,/,$ambig_aligned);
+print "Ambiguous:\t",join ("~~",@perc_ambig_aligned),"\n";
+
+
+my @p_aligned;
+my @p_not_aligned;
+my @p_no_seq;
+my @p_ambig_aligned;
+
+### Calculating percentages for the Alignment graph
+foreach my $index (0..$#perc_aligned){
+    my $total = $perc_aligned[$index] + $perc_no_seq[$index] + $perc_not_aligned[$index] +$perc_ambig_aligned[$index];
+    # warn "Aligned: $perc_aligned[$index]\nNo Seq: $perc_no_seq[$index]\nNot Aligned: $perc_not_aligned[$index]\nAmbig: $perc_ambig_aligned[$index]\nTotal: $total\n~~~~~~~~\n\n";
+    my $p_al = sprintf("%.2f",$perc_aligned[$index] / $total * 100);
+    my $p_no_seq = sprintf("%.2f",$perc_no_seq[$index] / $total * 100);
+    my $p_unal = sprintf("%.2f",$perc_not_aligned[$index] / $total * 100);
+    my $p_ambig = sprintf("%.2f",$perc_ambig_aligned[$index] / $total * 100);
+
+    if ($verbose){
+        print "Aligned: $perc_aligned[$index] ($p_al%)\n";
+        print "No Seq:  $perc_no_seq[$index] ($p_no_seq%)\n";
+        print "Not Aligned: $perc_not_aligned[$index] ($p_unal%)\n";
+        print "Ambiguous Aligned: $perc_ambig_aligned[$index] ($p_ambig%)\n";
+        print "Total: $total\n\n";
+    }  
+    push @p_aligned, $p_al;
+    push @p_not_aligned, $p_unal;
+    push @p_no_seq, $p_no_seq;
+    push @p_ambig_aligned, $p_ambig;
+}
+
+
+### Replacing in the HTML template
+print "Aligned:\t",       join ("\t", @p_aligned),"\n" if $verbose;
+print "Unaligned:\t",     join ("\t", @p_not_aligned),"\n" if $verbose;
+print "No Seq:\t\t",      join ("\t", @p_no_seq),"\n" if $verbose;
+print "Ambig Aligned:\t", join ("\t", @p_ambig_aligned),"\n" if $verbose;
+
+my $p_aligned_replace = join (",", @p_aligned);
+my $p_unal_replace    = join (",", @p_not_aligned);
+my $p_no_seq_replace  = join (",", @p_no_seq);
+my $p_ambig_replace   = join (",", @p_ambig_aligned);
+
+warn "$p_aligned_replace\n$p_unal_replace\n$p_no_seq_replace\n$p_ambig_replace\n\n";
+
+$html_report =~ s/\{\{p_aligned_replace\}\}/$p_aligned_replace/;
+$html_report =~ s/\{\{p_no_seq_replace\}\}/$p_no_seq_replace/;
+$html_report =~ s/\{\{p_unal_replace\}\}/$p_unal_replace/;
+$html_report =~ s/\{\{p_ambig_replace\}\}/$p_ambig_replace/;
+
+
+
+
+#################################################################
+### METHYLATION CONTEXT SECTION
+#################################################################
+
 $html_report =~ s/\{\{meth_cpg_string\}\}/$meth_cpg_string/g;
+print "  Meth CpG:\t$meth_cpg_string\n" if $verbose;
 $html_report =~ s/\{\{unmeth_cpg_string\}\}/$unmeth_cpg_string/g;
-$html_report =~ s/\{\{meth_cph_string\}\}/$meth_cph_string/g;
-$html_report =~ s/\{\{unmeth_cph_string\}\}/$unmeth_cph_string/g;
+print "Unmeth CpG:\t$unmeth_cpg_string\n" if $verbose;
+$html_report =~ s/\{\{meth_chg_string\}\}/$meth_chg_string/g;
+print "  Meth CHG:\t$meth_chg_string\n" if $verbose;
+$html_report =~ s/\{\{unmeth_chg_string\}\}/$unmeth_chg_string/g;
+print "Unmeth CHG:\t$unmeth_chg_string\n" if $verbose;
 $html_report =~ s/\{\{meth_chh_string\}\}/$meth_chh_string/g;
+print "  Meth CHH:\t$meth_chh_string\n" if $verbose;
 $html_report =~ s/\{\{unmeth_chh_string\}\}/$unmeth_chh_string/g;
-$html_report =~ s/\{\{bismark_version\}\}/$bismark_version/g;
+print "Unmeth CHH:\t$unmeth_chh_string\n" if $verbose;
 
 # Write the HTML report to disk
 my $html_fn = "${report_basename}.html";
