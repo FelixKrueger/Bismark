@@ -608,6 +608,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			
 			{x: [{{x_values_alignment}}], y: [{{no_seq}}],
 				fill: 'tonexty',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				name:'No Genomic Sequence',
 				fillcolor: '#f28f43',
                 line:{
@@ -627,6 +629,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{raw_aligned_reads_section}}
 			{x: [{{x_values_alignment}}], y: [{{aligned_seq}}],
 				fill: 'tozeroy',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				name:'Raw Aligned Reads',
 				fillcolor: '#01665e',
 				visible: true,
@@ -646,7 +650,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{raw_aligned_reads_section}}
 			{{deduplicated_unique_reads_section}}
 			{x: [{{x_values_alignment}}], y: [{{unique_alignments}}],
-				name:'De-duplicated Unique Alignments',
+				name:'Deduplicated Unique Alignments',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				fill: 'tonexty', 
 				fillcolor: '#8bbc21',
                 line:{
@@ -665,7 +671,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{deduplicated_unique_reads_section}}
 			{{duplicated_reads_section}}
 			{x: [{{x_values_alignment}}], y: [{{dup_alignments}}],
-				name:'Duplicate Alignments', 
+				name:'Duplicate Alignments',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				fill: 'tonexty', 
 				fillcolor: '#2f7ed8',
                 line:{
@@ -684,6 +692,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{duplicated_reads_section}}
 			{x: [{{x_values_alignment}}], y: [{{ambig_aligned}}],
 				name:'Aligned Ambiguously',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				fill: 'tonexty',
 				fillcolor: '#492970',
                 line:{
@@ -702,6 +712,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{x: [{{x_values_alignment}}], y: [{{not_aligned}}],
 				fill: 'tonexty',
 				name:'Did Not Align',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				fillcolor: '#0d233a',
                 line:{
                     color: '#0d233a',
@@ -721,10 +733,13 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 		<!-- Percentage Plots -->
         var traces2 = [
             
-           
+			
 			{x: [{{x_values_alignment}}], y: [{{p_no_seq_replace}}],
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 fill: 'tozeroy',
                 name:'No Genomic Sequence',
+				hoveron: 'points+fills',
                 fillcolor: '#f28f43',
                 line:{
                     color: '#f28f43',
@@ -739,11 +754,13 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
             },
-           <!-- Either deduplicated unique reads or Raw unique reads here (e.g. for RRBS) -->
-		  
+			<!-- Either deduplicated unique reads or Raw unique reads here (e.g. for RRBS) -->
 			{{deduplicated_unique_reads_percentage_section}}
 			{x: [{{x_values_alignment}}], y: [{{p_deduplicated_unique_alignments}}],
-				name:'De-duplicated Unique Alignments',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
+				hoveron: 'points+fills',
+				name:'Deduplicated Unique Alignments',
 				fill: 'tonexty', 
 				fillcolor: '#8bbc21',
                 line:{
@@ -762,7 +779,10 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{deduplicated_unique_reads_percentage_section}}
 			{{duplicated_reads_percentage_section}}
 			{x: [{{x_values_alignment}}], y: [{{p_duplicated_alignments}}],
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
 				name:'Duplicate Alignments', 
+				hoveron: 'points+fills',
 				fill: 'tonexty', 
 				fillcolor: '#2f7ed8',
                 line:{
@@ -781,6 +801,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{duplicated_reads_percentage_section}}
 			{{raw_unique_reads_percentage_section}}
 			{x: [{{x_values_alignment}}], y: [{{p_aligned_replace}}],
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
+				hoveron: 'points+fills',
                 fill: 'tonexty',
                 name:'Raw Aligned Reads',
                 fillcolor: '#01665e',
@@ -801,7 +824,10 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			{{raw_unique_reads_percentage_section}}
 			
 			{x: [{{x_values_alignment}}], y: [{{p_ambig_replace}}],
+				hovertext: [{{filenames_replace}}],
+				text: [{{filenames_replace}}],
                 name:'Aligned Ambiguously',
+				hoveron: 'points+fills',
                 fill: 'tonexty',
                 fillcolor: '#492970',
                 line:{
@@ -818,6 +844,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                 },
             },			
             {x: [{{x_values_alignment}}], y: [{{p_unal_replace}}],
+				hovertext: [{{filenames_replace}}],
+				text: [{{filenames_replace}}],
+				hoveron: 'points+fills',
                 fill: 'tonexty',
                 name:'Did Not Align',
                 fillcolor: '#0d233a',
@@ -841,9 +870,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			var i, j;
 			for(i=0; i<traces.length; i++) {
 				traces[i].text = [];
-				traces[i].hoverinfo = 'text+name';
+				traces[i].hoverinfo = 'all';
 				for(j=0; j<(traces[i]['y'].length); j++) {
-					traces[i].text.push(traces[i]['y'][j].toFixed(0));
+					traces[i].text.push(traces[i]['y'][j].toFixed(0)+" "+ traces[i].name);
 				}
 			}
 			for(i=1; i<traces.length; i++) {
@@ -855,15 +884,19 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 		}
 		
 		var layoutNumbers = {
+		
+			hoverlabel:{
+				namelength: -1,
+			},
 			xaxis: {
 				titlefont: {
 					size: 14,
 					color: '#4d759e',
 				},
-                showgrid: false,
+				showgrid: false,
                 title: '<b>Sample [Hover to identify Sample and Numbers]</b>',
 			},
-             margin: {
+			margin: {
                 l: 50,
                 r: 20,
                 b: 40,
@@ -884,6 +917,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			}				
 		}
         var layoutPercentage = {
+			hoverlabel:{
+				namelength: -1,
+			},
             xaxis: {
                 titlefont: {
                     size: 14,
@@ -903,7 +939,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                 titlefont: {
                     size: 14,
                     color: '#4d759e',
-                }
+                },
+				hoverformat: '.2f',
             },
             legend:{
                 x: 0.4,
@@ -987,6 +1024,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             {x: [{{x_values_methylation}}], y: [{{p_CpG_m_replace}}], 
                 fill: 'tozeroy',
                 name:'Methylated CpG',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 fillcolor: '#0d233a',
                 visible: true,
                 line:{
@@ -1006,6 +1045,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             {x: [{{x_values_methylation}}], y: [{{p_CpG_u_replace}}], 
                 fill: 'tonexty',
                 name:'Unmethylated CpG',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 fillcolor: '#2f7ed8',
                 line:{
                     color: '#2f7ed8',
@@ -1027,7 +1068,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             <!-- {x: [{{x_values_methylation}}], y: [{{meth_chg_string}}], -->
             {x: [{{x_values_methylation}}], y: [{{p_CHG_m_replace}}], 
                 fill: 'tozeroy',
-
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 name:'Methylated CHG',
                 fillcolor: '#1aadce',
                 visible: true,
@@ -1048,6 +1090,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             {x: [{{x_values_methylation}}], y: [{{p_CHG_u_replace}}], 
                 fill: 'tonexty',
                 name:'Unmethylated CHG',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 fillcolor: '#8bbc21',
                 line:{
                     color: '#8bbc21',
@@ -1069,6 +1113,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             <!-- {x: [{{x_values_methylation}}], y: [{{meth_chh_string}}],  -->
                 {x: [{{x_values_methylation}}], y: [{{p_CHH_m_replace}}], 
                 fill: 'tozeroy',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 line:{
                     color: '#492970',
                     width: 1,
@@ -1088,6 +1134,8 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             <!-- {x: [{{x_values_methylation}}], y: [{{unmeth_chh_string}}],  -->
                 {x: [{{x_values_methylation}}], y: [{{p_CHH_u_replace}}], 
                 fill: 'tonexty',
+				text: [{{filenames_replace}}],
+				hovertext: [{{filenames_replace}}],
                 line:{
                     color: '#910000',
                     width: 1,
@@ -1109,9 +1157,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             var i, j;
             for(i=0; i<traces.length; i++) {
                 traces[i].text = [];
-                traces[i].hoverinfo = 'text+name';
+                traces[i].hoverinfo = 'all';
                 for(j=0; j<(traces[i]['y'].length); j++) {
-                    traces[i].text.push(traces[i]['y'][j].toFixed(0));
+                    traces[i].text.push(traces[i]['y'][j].toFixed(0)+" "+traces[i].name);
                 }
             }
             for(i=1; i<traces.length; i++) {
@@ -1295,7 +1343,7 @@ $html_report =~ s/\{\{x_values_methylation\}\}/$x_values/g;
 print "Number of samples: $num_samples\n" if $verbose;
 print "X-coords: $x_values\n" if $verbose;
 
-$html_report =~ s/\{\{categories\}\}/$categories/g;
+$html_report =~ s/\{\{filenames_replace\}\}/$categories/g;
 print "Categories: $categories\n" if $verbose;
 $html_report =~ s/\{\{bismark_version\}\}/$bismark_version/g;
 
