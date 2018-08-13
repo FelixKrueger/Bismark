@@ -20,7 +20,7 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.19.1';
+my $bismark2report_version = 'v0.19.1_dev';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
@@ -48,16 +48,39 @@ while (@alignment_reports){
   # if -o output_file was specified we are going to use that name preferentially.
   # This may only happen if there is a single report in the folder, or if a single report has been specified manually
   if ($manual_output_file){
-    warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
-    $report_output = $manual_output_file;
+      warn "A specific output filename was specified: $manual_output_file. Using that one instead of deriving the filename\n"; sleep(1);
+      $report_output = $manual_output_file;
   }
-
+  
   $report_output = $output_dir.$report_output;
   warn "\nWriting Bismark HTML report to >> $report_output <<\n\n";
-
-  # Get the report template into a string
-  my $doc = read_report_template();
   
+  # Get the report template into a string
+  my $doc = read_report_template('plotly_template.tpl');
+  
+  # Get the plot.ly code into a string. This makes the template so much more managable and also allows for quick replacement of the plot.ly
+  # code itself should it get updated
+  my $plotly_code = read_report_template('plot.ly');
+  
+  # replacing the Plot.ly spaceholders with the actual plot.ly code
+  if ($doc =~ s/\{\{plotly_goes_here\}\}.*\{\{plotly_goes_here\}\}/$plotly_code/s){  # treating the string as a single line
+      warn "Plot.ly injection successful!\n" if $verbose;
+  }
+  else{
+      die "Plot.ly incjection not working, won't be able to construct any meaningful HTML reports in this case....\n\n";
+  }
+
+  my $bismark_logo = read_report_template('bismark.logo');
+  if ($doc =~ s/\{\{bismark_logo_goes_here\}\}.*\{\{bismark_logo_goes_here\}\}/$bismark_logo/s){  # treating the string as a single line
+      warn "bismark.logo injection successful!\n" if $verbose;
+  }
+  
+  my $bioinf_logo = read_report_template('bioinf.logo');
+  if ($doc =~ s/\{\{bioinf_logo_goes_here\}\}.*\{\{bioinf_logo_goes_here\}\}/$bioinf_logo/s){  # treating the string as a single line
+      warn "bioinf.logo injection successful!\n" if $verbose;
+  }
+
+
   # Creation timestamp
   $doc = getLoggingTime($doc);
   
@@ -69,46 +92,63 @@ while (@alignment_reports){
   # DEDUPLICATION REPORT (optional)
   if ($dedup_report){
     warn "Using the following deduplication report:\t> $dedup_report <\n";
-    $doc =~ s/\{\{bm_deduplication\}\}/true/g;
+    $doc =~ s/\{\{deduplication_section\}\}//g; # deleting these tags and then go ahead and fill the table
     $doc = read_deduplication_report($dedup_report,$doc);
   }
   else{
     warn "No deduplication report file specified, skipping this step\n";
-    $doc =~ s/\{\{bm_deduplication\}\}/false/g;
+    # deleting the entire Deduplication Section from the template
+    $doc =~ s/\{\{deduplication_section\}\}.*\{\{deduplication_section\}\}//s; # treating the string as a single line
   }
 
   # SPLITTING REPORT (optional)
   if ($splitting_report){
     warn "Using the following splitting report:\t\t> $splitting_report <\n";
-    $doc =~ s/\{\{bm_splitting\}\}/true/g;
+    $doc =~ s/\{\{cytosine_methylation_post_deduplication_section\}\}//g; # deleting these tags and then go ahead and fill the table
     $doc = read_splitting_report($splitting_report,$doc);
   }
   else{
     warn "No splitting report file specified, skipping this step\n";
-    $doc =~ s/\{\{bm_splitting\}\}/false/g;
+    # deleting the entire Splitting Report C context section from the template
+    $doc =~ s/\{\{cytosine_methylation_post_deduplication_section\}\}.*\{\{cytosine_methylation_post_deduplication_section\}\}//s; # treating the string as a single line
   }
 
   # M-BIAS REPORT (optional)
   if ($mbias_report){
       warn "Using the following M-bias report:\t\t> $mbias_report <\n";
-      $doc =~ s/\{\{bm_mbias\}\}/true/g;
+      $doc =~ s/\{\{mbias_r1_section\}\}//g; # deleting these tags and then go ahead and fill the table
       (my $state, $doc) = read_mbias_report($mbias_report,$doc);
+  
+      # warn "OK have read the report\n\n";
+      # warn ">$state<<<\n";
+      # sleep(1);
+      if ($state eq 'single'){
+	  warn "Read was $state: Deleting the M-bias2 section\n";
+	  $doc =~ s/(\{\{mbias_r2_section\}\}.*\{\{mbias_r2_section\}\})//s; # treating the string as a single line
+	  # warn "Deleting: $1\n\n";sleep(5);
+      }
+      else{ # paired-end
+	  $doc =~ s/\{\{mbias_r2_section\}\}//g; # deleting these tags and then go ahead and fill the table
+      }
   }
   else{
       warn "No M-bias report file specified, skipping this step\n";
-      $doc =~ s/\{\{bm_mbias\}\}/false/g;
-      $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
+      $doc =~ s/\{\{mbias_r1_section\}\}.*\{\{mbias_r1_section\}\}//s; # treating the string as a single line
+      $doc =~ s/\{\{mbias_r2_section\}\}.*\{\{mbias_r2_section\}\}//s; # treating the string as a single line
   }
   
   # NUCLEOTIDE COVERAGE REPORT (optional)
   if ($nuc_report){
       warn "Using the following nucleotide coverage report:\t> $nuc_report <\n";
-      $doc =~ s/\{\{bm_nucleotide\}\}/true/g;
+      $doc =~ s/\{\{nucleotide_coverage_section\}\}//g; # deleting these tags and then go ahead and fill the table
       $doc = read_nucleotide_coverage_report($nuc_report,$doc);
   }
   else{
       warn "No nucleotide coverage report file specified, skipping this step\n";
-      $doc =~ s/\{\{bm_nucleotide\}\}/false/g;
+      # deleting the entire Nucleotide Coverage section from the template
+      # warn "Deleting the entire Nucleotide Coverage section!!!\n\n";
+      # print $doc;
+      $doc =~ s/\{\{nucleotide_coverage_section\}\}.*\{\{nucleotide_coverage_section\}\}//s; # treating the string as a single line
   }
   warn "="x110,"\n\n\n";
   $verbose and sleep(3);
@@ -356,6 +396,9 @@ sub read_alignment_report{
     $doc =~ s/\{\{filename\}\}/$input_filename/g;
     $doc =~ s/\{\{bismark_version\}\}/$bismark_version/g;
 
+    ### Alignment stats Plot
+    $doc =~ s/\{\{alignment_stats_plotly\}\}/$unique,$no_aln,$multiple,$no_genomic/g;
+
     ### Strand Origin
     $doc =~ s/\{\{number_OT\}\}/$number_OT/g;
     $doc =~ s/\{\{number_CTOT\}\}/$number_CTOT/g;
@@ -364,6 +407,9 @@ sub read_alignment_report{
 
     ### Context Methylation
     $doc =~ s/\{\{total_C_count\}\}/$total_C_count/g;
+
+    ### Strand Alignment Plot
+    $doc =~ s/\{\{strand_alignment_plotly\}\}/$number_OT,$number_CTOT,$number_CTOB,$number_OB/g;
 
     unless (defined $perc_CpG){
       $perc_CpG = 'N/A';
@@ -405,7 +451,6 @@ sub read_alignment_report{
     $doc =~ s/\{\{meth_unknown\}\}/$meth_unknown_inject/g;
     $doc =~ s/\{\{unmeth_unknown\}\}/$unmeth_unknown_inject/g;
     $doc =~ s/\{\{perc_unknown\}\}/$perc_unknown_inject/g;
-
 
     $doc =~ s/\{\{meth_CpG\}\}/$meth_CpG/g;
     $doc =~ s/\{\{meth_CHG\}\}/$meth_CHG/g;
@@ -449,10 +494,9 @@ sub read_alignment_report{
       $perc_unknown_graph =  $perc_unknown;
     }
 
-    $doc =~ s/\{\{perc_CpG_graph\}\}/$perc_CpG_graph/g;
-    $doc =~ s/\{\{perc_CHG_graph\}\}/$perc_CHG_graph/g;
-    $doc =~ s/\{\{perc_CHH_graph\}\}/$perc_CHH_graph/g;
-
+    ### Context Methylation Plot
+    $doc =~ s/\{\{cytosine_methylation_plotly\}\}/$perc_CpG_graph,$perc_CHG_graph,$perc_CHH_graph/g;
+  
   }
   else{
     warn "Am I missing something?\n\n";
@@ -510,6 +554,9 @@ sub read_deduplication_report{
     $doc =~ s/\{\{unique_alignments_duplicates\}\}/$leftover/g;
     $doc =~ s/\{\{duplicate_alignments_duplicates\}\}/$dups/g;
     $doc =~ s/\{\{different_positions_duplicates\}\}/$diff_pos/g;
+    
+    ### Duplication Plot Plot.ly
+    $doc =~ s/\{\{duplication_stats_plotly\}\}/$leftover,$dups/g;
   }
   else{
     warn "Something went wrong... Use --verbose to get a clue...\n";
@@ -577,7 +624,12 @@ sub read_nucleotide_coverage_report{
     if ($looksOK){
 	warn "Got all necessary information, editing HTML report ...\n" if $verbose;
 	my $minmax = 0;
-	foreach my $key (sort {$a cmp $b} keys %nucs){
+	my @y_array;
+	my @x_genomic;
+	my @x_sample;
+
+#	foreach my $key (sort {$a cmp $b} keys %nucs){
+	foreach my $key ('A','T','C','G','AC','CA','TC','CT','CC','CG','GC','GG','AG','GA','TG','GT','TT','TA','AT','AA'){
 	    my $nuc_obs = $nucs{$key}->{obs}->{percent};
 	    my $nuc_exp = $nucs{$key}->{exp}->{percent};
 	    my $counts_obs = $nucs{$key}->{obs}->{counts};
@@ -591,13 +643,35 @@ sub read_nucleotide_coverage_report{
 	    # $minmax = abs($logratio);
 	    # }
 	    warn "$key\tnuc_${key}_obs\t$nuc_obs\tnuc_${key}_exp\t$nuc_exp\tratio: $ratio\n" if $verbose;
-
+	    
 	    $doc =~ s/\{\{nuc_${key}_p_obs\}\}/$nuc_obs/g;
 	    $doc =~ s/\{\{nuc_${key}_p_exp\}\}/$nuc_exp/g;
 	    $doc =~ s/\{\{nuc_${key}_counts_obs\}\}/$counts_obs/g;
 	    $doc =~ s/\{\{nuc_${key}_counts_exp\}\}/$counts_exp/g;
 	    $doc =~ s/\{\{nuc_${key}_coverage\}\}/$cov/g;
+
+	    # for the plot.ly bargraph
+	    push @y_array,   $key;
+	    push @x_genomic, $nuc_exp;
+	    push @x_sample,  $nuc_obs;
 	}
+
+	my $y_array   = join ("','",@y_array);
+	my $x_sample  = join (" , ",@x_sample);
+	my $x_genomic = join (" , ",@x_genomic);
+
+	$y_array = "'".$y_array."'";
+
+	if ($verbose){
+	    print "Y-array: $y_array\n";
+	    print "X genomic array: $x_genomic\n";
+	    print "X sample array: $x_sample\n";
+	}
+
+	$doc =~ s/\{\{nucleo_sample_x\}\}/$x_sample/g;
+	$doc =~ s/\{\{nucleo_genomic_x\}\}/$x_genomic/g;
+	$doc =~ s/\{\{nucleo_sample_y\}\}/$y_array/g;
+	$doc =~ s/\{\{nucleo_genomic_y\}\}/$y_array/g;
 	# warn "Minimum/maxium ratio was: $minmax\n" if $verbose;
 	# $doc =~ s/\{\{nuc_minmax\}\}/$minmax/g;
     }
@@ -777,10 +851,10 @@ sub read_splitting_report{
       $perc_unknown_graph =  $perc_unknown;
     }
 
-    $doc =~ s/\{\{perc_CpG_graph_splitting\}\}/$perc_CpG_graph/g;
-    $doc =~ s/\{\{perc_CHG_graph_splitting\}\}/$perc_CHG_graph/g;
-    $doc =~ s/\{\{perc_CHH_graph_splitting\}\}/$perc_CHH_graph/g;
+    # Context Methylation post Duplication Graph
+    $doc =~ s/\{\{cytosine_methylation_post_duplication_plotly\}\}/$perc_CpG_graph,$perc_CHG_graph,$perc_CHH_graph/g;
 
+    # Table
     $doc =~ s/\{\{perc_CpG_splitting\}\}/$perc_CpG/g;
     $doc =~ s/\{\{perc_CHG_splitting\}\}/$perc_CHG/g;
     $doc =~ s/\{\{perc_CHH_splitting\}\}/$perc_CHH/g;
@@ -810,80 +884,120 @@ sub read_mbias_report{
   my $state = 'single'; # setting this to 'single' if there is no read 2
 
   while (<MBIAS>){
-    chomp;
-    if ($_ =~ /^(C.{2}) context/){
-      $context = $1;
+      chomp;
+      if ($_ =~ /^(C.{2}) context/){
+        $context = $1;
 
-      if ($_ =~ /R2/){
-	$read_identity = 2;
-	$state = 'paired';
-      }
-      else{
-	$read_identity = 1;
-      }
+          if ($_ =~ /R2/){
+	           $read_identity = 2;
+	           $state = 'paired';
+          }
+          else{
+	         $read_identity = 1;
+          }
 
       # warn "new context is: $context\n";
       # warn "Read identity is: Read $read_identity\n";
-    }
-    if ($_ =~ /^\d/){
-      my ($pos,$meth,$unmeth,$perc,$coverage) = (split /\t/);
-      if ($read_identity == 1){
-	push @{$mbias_1{$context}->{coverage}}, "[$pos, $coverage]";
-	push @{$mbias_1{$context}->{perc}}, "[$pos, $perc]";
       }
-      elsif ($read_identity == 2){
-	push @{$mbias_2{$context}->{coverage}}, "[$pos, $coverage]";
-	push @{$mbias_2{$context}->{perc}}, "[$pos, $perc]";
-      }
-      else{
-	warn "read identity was unknown : '$read_identity'\n\n";
-      }
+      if ($_ =~ /^\d/){
+          my ($pos,$meth,$unmeth,$perc,$coverage) = (split /\t/);
+          if ($read_identity == 1){ 
+              push @{$mbias_1{$context}->{coverage_x}}, $pos;
+              push @{$mbias_1{$context}->{coverage_y}}, $coverage;
+              push @{$mbias_1{$context}->{perc_x}}, $pos; 
+              push @{$mbias_1{$context}->{perc_y}}, $perc;  
+	  }
+	  elsif ($read_identity == 2){
+	      push @{$mbias_2{$context}->{coverage_x}}, $pos;
+	      push @{$mbias_2{$context}->{coverage_y}}, $coverage;
+	      push @{$mbias_2{$context}->{perc_x}}, $pos;
+	      push @{$mbias_2{$context}->{perc_y}}, $perc;
+	  }
+	  else{
+	      warn "read identity was unknown : '$read_identity'\n\n";
+	  }
 
       # print join (" ",$pos,$meth,$unmeth,$perc,$coverage)."\n";
     }
   }
 
   # Read 1 M-bias
-  my $r1_CpG_coverage = join (',',@{$mbias_1{'CpG'}->{coverage}});
-  my $r1_CpG_perc     = join (',',@{$mbias_1{'CpG'}->{perc}});
+  my $r1_CpG_coverage_x = join (',',@{$mbias_1{'CpG'}->{coverage_x}});
+  my $r1_CpG_coverage_y = join (',',@{$mbias_1{'CpG'}->{coverage_y}}); 
+  my $r1_CpG_perc_x     = join (',',@{$mbias_1{'CpG'}->{perc_x}});
+  my $r1_CpG_perc_y     = join (',',@{$mbias_1{'CpG'}->{perc_y}});
 
-  my $r1_CHG_coverage = join (',',@{$mbias_1{'CHG'}->{coverage}});
-  my $r1_CHG_perc     = join (',',@{$mbias_1{'CHG'}->{perc}});
+  my $r1_CHG_coverage_x = join (',',@{$mbias_1{'CHG'}->{coverage_x}});
+  my $r1_CHG_coverage_y = join (',',@{$mbias_1{'CHG'}->{coverage_y}}); 
+  my $r1_CHG_perc_x     = join (',',@{$mbias_1{'CHG'}->{perc_x}});
+  my $r1_CHG_perc_y     = join (',',@{$mbias_1{'CHG'}->{perc_y}});
 
-  my $r1_CHH_coverage = join (',',@{$mbias_1{'CHH'}->{coverage}});
-  my $r1_CHH_perc     = join (',',@{$mbias_1{'CHH'}->{perc}});
+  my $r1_CHH_coverage_x = join (',',@{$mbias_1{'CHH'}->{coverage_x}});
+  my $r1_CHH_coverage_y = join (',',@{$mbias_1{'CHH'}->{coverage_y}}); 
+  my $r1_CHH_perc_x     = join (',',@{$mbias_1{'CHH'}->{perc_x}});
+  my $r1_CHH_perc_y     = join (',',@{$mbias_1{'CHH'}->{perc_y}});
 
-  $doc =~ s/'\{\{CpG_total_calls_R1\}\}'/\[$r1_CpG_coverage\]/g;
-  $doc =~ s/'\{\{CHG_total_calls_R1\}\}'/\[$r1_CHG_coverage\]/g;
-  $doc =~ s/'\{\{CHH_total_calls_R1\}\}'/\[$r1_CHH_coverage\]/g;
-
-  $doc =~ s/'\{\{CpG_methylation_R1\}\}'/\[$r1_CpG_perc\]/g;
-  $doc =~ s/'\{\{CHG_methylation_R1\}\}'/\[$r1_CHG_perc\]/g;
-  $doc =~ s/'\{\{CHH_methylation_R1\}\}'/\[$r1_CHH_perc\]/g;
+  # warn "R1 CpG coverage:\n$r1_CpG_coverage_x\n$r1_CpG_coverage_y\nR1 CpG methylation:\n$r1_CpG_perc_x\n$r1_CpG_perc_y\n\n";
+  # warn "R1 CHG coverage:\n$r1_CHG_coverage_x\n$r1_CHG_coverage_y\nR1 CHG methylation:\n$r1_CHG_perc_x\n$r1_CHG_perc_y\n\n";
+  # warn "R1 CHH coverage:\n$r1_CHH_coverage_x\n$r1_CHH_coverage_y\nR1 CHH methylation:\n$r1_CHH_perc_x\n$r1_CHH_perc_y\n\n";
+  
+  # CpG
+  $doc =~ s/\{\{mbias1_CpG_meth_x\}\}/$r1_CpG_perc_x/g;
+  $doc =~ s/\{\{mbias1_CpG_meth_y\}\}/$r1_CpG_perc_y/g; 
+  $doc =~ s/\{\{mbias1_CpG_coverage_x\}\}/$r1_CpG_coverage_x/g;
+  $doc =~ s/\{\{mbias1_CpG_coverage_y\}\}/$r1_CpG_coverage_y/g; 
+  # CHG 
+  $doc =~ s/\{\{mbias1_CHG_meth_x\}\}/$r1_CHG_perc_x/g;
+  $doc =~ s/\{\{mbias1_CHG_meth_y\}\}/$r1_CHG_perc_y/g; 
+  $doc =~ s/\{\{mbias1_CHG_coverage_x\}\}/$r1_CHG_coverage_x/g;
+  $doc =~ s/\{\{mbias1_CHG_coverage_y\}\}/$r1_CHG_coverage_y/g; 
+  # CHH
+  $doc =~ s/\{\{mbias1_CHH_meth_x\}\}/$r1_CHH_perc_x/g;
+  $doc =~ s/\{\{mbias1_CHH_meth_y\}\}/$r1_CHH_perc_y/g; 
+  $doc =~ s/\{\{mbias1_CHH_coverage_x\}\}/$r1_CHH_coverage_x/g;
+  $doc =~ s/\{\{mbias1_CHH_coverage_y\}\}/$r1_CHH_coverage_y/g; 
 
   # Read 2 M-bias
   if (%mbias_2){
-    $doc =~ s/\{\{bm_mbias_2\}\}/true/g;
+    my $r2_CpG_coverage_x = join (',',@{$mbias_2{'CpG'}->{coverage_x}});
+    my $r2_CpG_coverage_y = join (',',@{$mbias_2{'CpG'}->{coverage_y}}); 
+    my $r2_CpG_perc_x     = join (',',@{$mbias_2{'CpG'}->{perc_x}});
+    my $r2_CpG_perc_y     = join (',',@{$mbias_2{'CpG'}->{perc_y}});
+
+    my $r2_CHG_coverage_x = join (',',@{$mbias_2{'CHG'}->{coverage_x}});
+    my $r2_CHG_coverage_y = join (',',@{$mbias_2{'CHG'}->{coverage_y}}); 
+    my $r2_CHG_perc_x     = join (',',@{$mbias_2{'CHG'}->{perc_x}});
+    my $r2_CHG_perc_y     = join (',',@{$mbias_2{'CHG'}->{perc_y}});
+
+    my $r2_CHH_coverage_x = join (',',@{$mbias_2{'CHH'}->{coverage_x}});
+    my $r2_CHH_coverage_y = join (',',@{$mbias_2{'CHH'}->{coverage_y}}); 
+    my $r2_CHH_perc_x     = join (',',@{$mbias_2{'CHH'}->{perc_x}});
+    my $r2_CHH_perc_y     = join (',',@{$mbias_2{'CHH'}->{perc_y}});
+
+    # warn "r2 CpG coverage:\n$r2_CpG_coverage_x\n$r2_CpG_coverage_y\nr2 CpG methylation:\n$r2_CpG_perc_x\n$r2_CpG_perc_y\n\n";
+    # warn "r2 CHG coverage:\n$r2_CHG_coverage_x\n$r2_CHG_coverage_y\nr2 CHG methylation:\n$r2_CHG_perc_x\n$r2_CHG_perc_y\n\n";
+    # warn "r2 CHH coverage:\n$r2_CHH_coverage_x\n$r2_CHH_coverage_y\nr2 CHH methylation:\n$r2_CHH_perc_x\n$r2_CHH_perc_y\n\n";
     
-    my $r2_CpG_coverage = join (',',@{$mbias_2{'CpG'}->{coverage}});
-    my $r2_CpG_perc     = join (',',@{$mbias_2{'CpG'}->{perc}});
-    
-    my $r2_CHG_coverage = join (',',@{$mbias_2{'CHG'}->{coverage}});
-    my $r2_CHG_perc     = join (',',@{$mbias_2{'CHG'}->{perc}});
-    
-    my $r2_CHH_coverage = join (',',@{$mbias_2{'CHH'}->{coverage}});
-    my $r2_CHH_perc     = join (',',@{$mbias_2{'CHH'}->{perc}});
-    
-    $doc =~ s/'\{\{CpG_total_calls_R2\}\}'/\[$r2_CpG_coverage\]/g;
-    $doc =~ s/'\{\{CHG_total_calls_R2\}\}'/\[$r2_CHG_coverage\]/g;
-    $doc =~ s/'\{\{CHH_total_calls_R2\}\}'/\[$r2_CHH_coverage\]/g;
-    
-    $doc =~ s/'\{\{CpG_methylation_R2\}\}'/\[$r2_CpG_perc\]/g;
-    $doc =~ s/'\{\{CHG_methylation_R2\}\}'/\[$r2_CHG_perc\]/g;
-    $doc =~ s/'\{\{CHH_methylation_R2\}\}'/\[$r2_CHH_perc\]/g;
+    # CpG
+    $doc =~ s/\{\{mbias2_CpG_meth_x\}\}/$r2_CpG_perc_x/g;
+    $doc =~ s/\{\{mbias2_CpG_meth_y\}\}/$r2_CpG_perc_y/g; 
+    $doc =~ s/\{\{mbias2_CpG_coverage_x\}\}/$r2_CpG_coverage_x/g;
+    $doc =~ s/\{\{mbias2_CpG_coverage_y\}\}/$r2_CpG_coverage_y/g; 
+    # CHG 
+    $doc =~ s/\{\{mbias2_CHG_meth_x\}\}/$r2_CHG_perc_x/g;
+    $doc =~ s/\{\{mbias2_CHG_meth_y\}\}/$r2_CHG_perc_y/g; 
+    $doc =~ s/\{\{mbias2_CHG_coverage_x\}\}/$r2_CHG_coverage_x/g;
+    $doc =~ s/\{\{mbias2_CHG_coverage_y\}\}/$r2_CHG_coverage_y/g; 
+    # CHH
+    $doc =~ s/\{\{mbias2_CHH_meth_x\}\}/$r2_CHH_perc_x/g;
+    $doc =~ s/\{\{mbias2_CHH_meth_y\}\}/$r2_CHH_perc_y/g; 
+    $doc =~ s/\{\{mbias2_CHH_coverage_x\}\}/$r2_CHH_coverage_x/g;
+    $doc =~ s/\{\{mbias2_CHH_coverage_y\}\}/$r2_CHH_coverage_y/g; 
+
+
   }
   else {
-    $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
+      $doc =~ s/\{\{bm_mbias_2\}\}/false/g;
   }
   warn "Complete\n\n";
 
@@ -893,40 +1007,18 @@ sub read_mbias_report{
 
 
 sub read_report_template{
-  my $doc;
-  warn "Attempting to open file from: $RealBin/bismark_sitrep/bismark_sitrep.tpl\n\n" if ($verbose);
-  open (DOC,"$RealBin/bismark_sitrep/bismark_sitrep.tpl") or die $!;
-  while(<DOC>){
-    chomp;
-    $_ =~ s/\r//g;
-    $doc .= $_."\n";
-  }
-
-  close DOC or die $!;
-  
-  # Insert jQuery source
-  local $/=undef;
-  warn "Attempting to open file from: $RealBin/bismark_sitrep/jquery-3.1.1.min.js\n\n" if ($verbose);
-  open (JQUERY,"$RealBin/bismark_sitrep/jquery-3.1.1.min.js") or die $!;
-  my $jquery_js = <JQUERY>;
-  close JQUERY;
-  $doc =~ s/\{\{jquery_js\}\}/$jquery_js/g;
-  
-  # Insert the Highcharts JS source
-  warn "Attempting to open file from: $RealBin/bismark_sitrep/highcharts.js\n\n" if ($verbose);
-  open (HIGHCHARTS,"$RealBin/bismark_sitrep/highcharts.js") or die $!;
-  my $highchars_js = <HIGHCHARTS>;
-  close HIGHCHARTS;
-  $doc =~ s/\{\{highcharts_js\}\}/$highchars_js/g;
-  
-  # Insert the Bismark sitrep JS source
-  warn "Attempting to open file from: $RealBin/bismark_sitrep/bismark_sitrep.js\n\n" if ($verbose);
-  open (BMJS,"$RealBin/bismark_sitrep/bismark_sitrep.js") or die $!;
-  my $bismark_sitrep_js = <BMJS>;
-  close BMJS;
-  $doc =~ s/\{\{bismark_sitrep_js\}\}/$bismark_sitrep_js/g;
-  
-  return $doc;
+    my $template = shift;
+    my $doc;
+    warn "Attempting to open file from: $RealBin/$template\n\n" if ($verbose);
+    open (DOC,"$RealBin/plotly/$template") or die "Failed to find file $template: $!";
+    while(<DOC>){
+	chomp;
+	$_ =~ s/\r//g;
+	$doc .= $_."\n";
+    }
+    
+    close DOC or die $!;
+    return $doc;
 }
 
 
@@ -1033,7 +1125,7 @@ VERSION
 
     ### DEDUPLICATION REPORT (optional)
     if ($dedup_report){
-	warn "User specifified dedup report: $dedup_report\n";sleep(3);
+	warn "User specifified dedup report: $dedup_report\n";sleep(1);
       if (lc$dedup_report eq 'none'){
 	push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
       }
@@ -1200,7 +1292,7 @@ sub print_helpfile{
                            '--nucleotide_coverage') in the current working directory. Including a nucleotide coverage statistics
                            report is optional, and using the FILE 'none' will skip this report entirely.
 
-                           Script last modified: 13 May 2016
+                           Script last modified: 07 August 2018
 
 EOF
     ;

@@ -234,7 +234,6 @@ foreach my $filename (@filenames){
   %mbias_1 = ();
   %mbias_2 = ();
 
-
   unless ($vanilla){
       # Testing if the file appears to be truncated, in which case we bail with a big scary warning message
       if ($filename =~ /(\.bam$)/){
@@ -243,15 +242,16 @@ foreach my $filename (@filenames){
       
       ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
       if ($paired){
+
 	  test_positional_sorting($filename);
       }
   }
 
   my ($pid,$pids,$report_basename) = process_Bismark_results_file($filename);
-
+  
   if ($pid == 0){
-    warn "Finished processing child process. Exiting..\n";
-
+      warn "Finished processing child process. Exiting..\n";
+      
     #  ### Closing all filehandles of the child process so that the Bismark methylation extractor output doesn't get truncated due to buffering issues
     #     foreach my $fh (keys %fhs) {
     #       if ($fh =~ /^[1230]$/) {
@@ -1358,7 +1358,7 @@ sub test_positional_sorting{
 
   my $filename = shift;
 
-  print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
+  print "\nNow testing Bismark result file >$filename< for positional sorting (which would be bad...)\t";
   sleep(1);
   
   if ($filename =~ /\.gz$/) {

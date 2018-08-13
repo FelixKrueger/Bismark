@@ -691,12 +691,17 @@
 			}
 		};
 
-		Plotly.newPlot('Cytosine_Methylation_postDuplication', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
+		Plotly.newPlot('Cytosine_Methylation_postDuplication', data, layout, 
+					{displaylogo: false}, 
+					{modeBarButtonsToRemove: 
+					['toImage',
 					'sendDataToCloud',
 					'resetScale2d',
 					'hoverClosestCartesian',
                     'hoverCompareCartesian',
-                    'toggleSpikelines']});
+                    'toggleSpikelines']
+					}
+		);
 	</script>
 
 	<!-- Strand Alignment Plot-->

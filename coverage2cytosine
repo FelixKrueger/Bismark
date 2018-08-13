@@ -1578,7 +1578,8 @@ VERSION
   }
 
   my $coverage_infile = shift @ARGV;
-
+  
+  ### PARENT DIRECTORY
   unless ($parent_dir){
     $parent_dir = getcwd();
   }
