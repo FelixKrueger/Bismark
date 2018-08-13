@@ -576,7 +576,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 	</div>
 	<hr>
 	<h2>
-		Alignment
+		Alignment Statistics
 		<div class="switch_group">
 			<!-- <button id="version1">Number of Reads</button> <button id="version2">Percentages</button></div><div id="myData" style="width: 100%;"></div> -->
 	</h2>
@@ -606,6 +606,25 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 		
 		var traces1 = [
 			
+			{x: [{{x_values_alignment}}], y: [{{no_seq}}],
+				fill: 'tonexty',
+				name:'No Genomic Sequence',
+				fillcolor: '#f28f43',
+                line:{
+                    color: '#f28f43',
+                    width: 1,
+                },
+                marker:{
+                    symbol: 'circle-dot',
+                    size: 7,
+                    line:{
+                        color: 'black',
+                        width:1,
+                    },
+                },
+			},
+			<!-- Either deduplicated unique reads or Raw unique reads here (e.g. for RRBS) -->
+			{{raw_aligned_reads_section}}
 			{x: [{{x_values_alignment}}], y: [{{aligned_seq}}],
 				fill: 'tozeroy',
 				name:'Raw Aligned Reads',
@@ -624,12 +643,51 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
 			},
-			{x: [{{x_values_alignment}}], y: [{{no_seq}}],
-				fill: 'tonexty',
-				name:'No Genomic Sequence',
-				fillcolor: '#f28f43',
+			{{raw_aligned_reads_section}}
+			{{deduplicated_unique_reads_section}}
+			{x: [{{x_values_alignment}}], y: [{{unique_alignments}}],
+				name:'De-duplicated Unique Alignments',
+				fill: 'tonexty', 
+				fillcolor: '#8bbc21',
                 line:{
-                    color: '#f28f43',
+                    color: '#8bbc21',
+                    width: 1,
+                },
+                marker:{
+                    symbol: 'circle-dot',
+                    size: 7,
+                    line:{
+                        color: 'black',
+                        width:1,
+                    },
+                },
+			},
+			{{deduplicated_unique_reads_section}}
+			{{duplicated_reads_section}}
+			{x: [{{x_values_alignment}}], y: [{{dup_alignments}}],
+				name:'Duplicate Alignments', 
+				fill: 'tonexty', 
+				fillcolor: '#2f7ed8',
+                line:{
+                    color: '#2f7ed8',
+                    width: 1,
+                },
+                marker:{
+                    symbol: 'circle-dot',
+                    size: 7,
+                    line:{
+                        color: 'black',
+                        width:1,
+                    },
+                },
+			},
+			{{duplicated_reads_section}}
+			{x: [{{x_values_alignment}}], y: [{{ambig_aligned}}],
+				name:'Aligned Ambiguously',
+				fill: 'tonexty',
+				fillcolor: '#492970',
+                line:{
+                    color: '#492970',
                     width: 1,
                 },
                 marker:{
@@ -658,12 +716,38 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
 			},
-			{x: [{{x_values_alignment}}], y: [{{ambig_aligned}}],
-				name:'Aligned Ambiguously',
-				fill: 'tonexty',
-				fillcolor: '#492970',
+		];
+	
+		<!-- Percentage Plots -->
+        var traces2 = [
+            
+           
+			{x: [{{x_values_alignment}}], y: [{{p_no_seq_replace}}],
+                fill: 'tozeroy',
+                name:'No Genomic Sequence',
+                fillcolor: '#f28f43',
                 line:{
-                    color: '#492970',
+                    color: '#f28f43',
+                    width: 1,
+                },
+                marker:{
+                    symbol: 'circle-dot',
+                    size: 7,
+                    line:{
+                        color: 'black',
+                        width:1,
+                    },
+                },
+            },
+           <!-- Either deduplicated unique reads or Raw unique reads here (e.g. for RRBS) -->
+		  
+			{{deduplicated_unique_reads_percentage_section}}
+			{x: [{{x_values_alignment}}], y: [{{p_deduplicated_unique_alignments}}],
+				name:'De-duplicated Unique Alignments',
+				fill: 'tonexty', 
+				fillcolor: '#8bbc21',
+                line:{
+                    color: '#8bbc21',
                     width: 1,
                 },
                 marker:{
@@ -675,7 +759,9 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
 			},
-			{x: [{{x_values_alignment}}], y: [{{dup_alignments}}],
+			{{deduplicated_unique_reads_percentage_section}}
+			{{duplicated_reads_percentage_section}}
+			{x: [{{x_values_alignment}}], y: [{{p_duplicated_alignments}}],
 				name:'Duplicate Alignments', 
 				fill: 'tonexty', 
 				fillcolor: '#2f7ed8',
@@ -692,31 +778,10 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
 			},
-			{x: [{{x_values_alignment}}], y: [{{unique_alignments}}],
-				name:'Raw Unique Alignments',
-				fill: 'tonexty', 
-				fillcolor: '#8bbc21',
-                line:{
-                    color: '#8bbc21',
-                    width: 1,
-                },
-                marker:{
-                    symbol: 'circle-dot',
-                    size: 7,
-                    line:{
-                        color: 'black',
-                        width:1,
-                    },
-                },
-			},
-		];
-	
-
-		
-        var traces2 = [
-            
-            {x: [{{x_values_alignment}}], y: [{{p_aligned_replace}}],
-                fill: 'tozeroy',
+			{{duplicated_reads_percentage_section}}
+			{{raw_unique_reads_percentage_section}}
+			{x: [{{x_values_alignment}}], y: [{{p_aligned_replace}}],
+                fill: 'tonexty',
                 name:'Raw Aligned Reads',
                 fillcolor: '#01665e',
                 visible: true,
@@ -733,12 +798,14 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
             },
-            {x: [{{x_values_alignment}}], y: [{{p_no_seq_replace}}],
+			{{raw_unique_reads_percentage_section}}
+			
+			{x: [{{x_values_alignment}}], y: [{{p_ambig_replace}}],
+                name:'Aligned Ambiguously',
                 fill: 'tonexty',
-                name:'No Genomic Sequence',
-                fillcolor: '#f28f43',
+                fillcolor: '#492970',
                 line:{
-                    color: '#f28f43',
+                    color: '#492970',
                     width: 1,
                 },
                 marker:{
@@ -749,7 +816,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                         width:1,
                     },
                 },
-            },
+            },			
             {x: [{{x_values_alignment}}], y: [{{p_unal_replace}}],
                 fill: 'tonexty',
                 name:'Did Not Align',
@@ -767,23 +834,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
                     },
                 },
             },
-            {x: [{{x_values_alignment}}], y: [{{p_ambig_replace}}],
-                name:'Aligned Ambiguously',
-                fill: 'tonexty',
-                fillcolor: '#492970',
-                line:{
-                    color: '#492970',
-                    width: 1,
-                },
-                marker:{
-                    symbol: 'circle-dot',
-                    size: 7,
-                    line:{
-                        color: 'black',
-                        width:1,
-                    },
-                },
-            },
+
         ];
 
 		function stackedArea(traces) {
@@ -1252,13 +1303,13 @@ $html_report =~ s/\{\{bismark_version\}\}/$bismark_version/g;
 ###  ALIGNMENT SECTION
 ####################################################################################
 
-print "ALIGNMENT SECTION\n=================\n" if $verbose;
+print "\nALIGNMENT SECTION\n=================\n" if $verbose;
 if ($aligned =~ /^,{1,}$/){
-	warn "$aligned contained only commas. Setting it to empty string\n" if $verbose;	
-	$aligned = '';	
+	warn "Aligned $aligned contained only commas. Setting it to empty string\n" if $verbose;
+	$aligned = '';
 }
 else{
-	warn ">$aligned< contained other elements than  commas as well\n" if $verbose;	
+	warn "Aligned: >$aligned< contained other elements than commas as well\n" if $verbose;	
 }	
 $html_report =~ s/\{\{aligned_seq\}\}/$aligned/g;
 print "Aligned: $aligned\n" if $verbose;
@@ -1272,90 +1323,163 @@ print "Ambiguous Aligned: $ambig_aligned\n" if $verbose;
 
 ### DEDUPLICATED ALIGNMENTS
 if ($dup_alignments =~ /^,{1,}$/){
-	warn "$dup_alignments contained only commas. Setting it to empty string\n" if $verbose;	
-	$dup_alignments = '';	
+	warn "Duplicated Alignments: >$dup_alignments< contained only commas. Deleting the Deduplicated Unique alignment section from the template altogher\n" if $verbose;	
+	$html_report =~ s/\{\{deduplicated_unique_reads_section\}\}.*\{\{deduplicated_unique_reads_section\}\}//s; # treating as single line
+	$html_report =~ s/\{\{duplicated_reads_section\}\}.*\{\{duplicated_reads_section\}\}//s; # treating as single line
+	$html_report =~ s/\{\{raw_aligned_reads_section\}\}//g;
+	$dup_alignments = '';
 }
 else{
-	warn ">$dup_alignments< contained other elements than  commas as well\n" if $verbose;	
+	warn "Duplicated Alignments: >$dup_alignments< contained other elements than commas, deleting the Raw Alignment Section\n" if $verbose;
+	$html_report =~ s/\{\{raw_aligned_reads_section\}\}.*\{\{raw_aligned_reads_section\}\}//s; # treating as single line
+	$html_report =~ s/\{\{deduplicated_unique_reads_section\}\}//g;
+	$html_report =~ s/\{\{duplicated_reads_section\}\}//g;
 }	
 $html_report =~ s/\{\{dup_alignments\}\}/$dup_alignments/g;
 print "Duplicated alignments: $dup_alignments\n" if $verbose;
 
 ### UNIQUE DEDUPLICATED ALIGNMENTS
 if ($unique_alignments =~ /^,{1,}$/){
-	warn "$unique_alignments contained only commas. Setting it to empty string\n" if $verbose;	
+	warn "Unique alignments: >$unique_alignments< contained only commas. Setting it to empty string\n" if $verbose;	
 	$unique_alignments = '';	
 }
-else{
+else{#
 	warn ">$unique_alignments< contained other elements than  commas as well\n" if $verbose;	
 }	
 $html_report =~ s/\{\{unique_alignments\}\}/$unique_alignments/g;
 print "Unique Alignments: $unique_alignments\n" if $verbose;
 
+
 ### Calculating percentages
+	
 my @perc_aligned;
 if ($aligned){
 	warn "Found raw, undeduplicated unique aligments. Using those...\n" if $verbose;
-	@perc_aligned = split (/,/,$aligned);
+	print "Aligned:\t",join (" ~~ ",@aligned_arr),"\n" if $verbose;
+}
+else{
+	print "Unique Deduplicated Aligned:\t",join (" ~~ ",@unique_alignments_arr),"\n" if $verbose;
+	print "Duplicated Aligned:\t",join (" ~~ ",@dup_alignments_arr),"\n" if $verbose;
 }
 if ($unique_alignments){
 	warn "Found deduplicated unique aligments. Using those...\n" if $verbose;
-	@perc_aligned = split (/,/,$unique_alignments);
 }	
-print "Aligned:\t",join (" ~~ ",@perc_aligned),"\n" if $verbose;
-
-my @perc_not_aligned = split (/,/,$not_aligned);
-print "Not Aligned:\t",join (" ~~ ",@perc_not_aligned),"\n" if $verbose;
-
-my @perc_no_seq = split (/,/,$no_seq);
-print "No Sequence:\t",join (" ~~ ",@perc_no_seq),"\n" if $verbose;
-
-my @perc_ambig_aligned = split (/,/,$ambig_aligned);
-print "Ambiguous:\t",join (" ~~ ",@perc_ambig_aligned),"\n" if $verbose;
-
+print "Not Aligned:\t",join (" ~~ ",@not_aligned_arr),"\n" if $verbose;
+print "No Sequence:\t",join (" ~~ ",@no_seq_arr),"\n" if $verbose;
+print "Ambiguous:\t",  join (" ~~ ",@ambig_aligned_arr),"\n" if $verbose;
 
 my @p_aligned;
+my @p_deduplicated_unique_alignments;
+my @p_duplicated_alignments;
 my @p_not_aligned;
 my @p_no_seq;
 my @p_ambig_aligned;
 
 ### Calculating percentages for the Alignment graph
-foreach my $index (0..$#perc_aligned){
-    my $total = $perc_aligned[$index] + $perc_no_seq[$index] + $perc_not_aligned[$index] +$perc_ambig_aligned[$index];
-    # warn "Aligned: $perc_aligned[$index]\nNo Seq: $perc_no_seq[$index]\nNot Aligned: $perc_not_aligned[$index]\nAmbig: $perc_ambig_aligned[$index]\nTotal: $total\n~~~~~~~~\n\n";
-    my $p_al     = sprintf("%.2f", $perc_aligned[$index] / $total * 100);
-    my $p_no_seq = sprintf("%.2f", $perc_no_seq[$index] / $total * 100);
-    my $p_unal   = sprintf("%.2f", $perc_not_aligned[$index] / $total * 100);
-    my $p_ambig  = sprintf("%.2f", $perc_ambig_aligned[$index] / $total * 100);
+foreach my $index (0..$#aligned_arr){
+	my $total;
+	if ($aligned){ # raw alignments, e.g. RRBS
+		$total = $aligned_arr[$index] + $no_seq_arr[$index] + $not_aligned_arr[$index] +$ambig_aligned_arr[$index];
+	}
+	else{ # including de-duplicated reads, $aligned was set to '' in the section above
+		$total = $unique_alignments_arr[$index] + $dup_alignments_arr[$index] + $no_seq_arr[$index] + $not_aligned_arr[$index] +$ambig_aligned_arr[$index];
+	}	
+
+	# warn "Aligned: $perc_aligned[$index]\nNo Seq: $perc_no_seq[$index]\nNot Aligned: $perc_not_aligned[$index]\nAmbig: $perc_ambig_aligned[$index]\nTotal: $total\n~~~~~~~~\n\n";
+ 
+	my ($p_al,$p_dedup_uniq,$p_dup);
+	if ($aligned){
+		$p_al          = sprintf("%.2f", $aligned_arr[$index] / $total * 100);
+	}
+	else{
+		$p_dedup_uniq  = sprintf("%.2f", $unique_alignments_arr[$index] / $total * 100);
+		$p_dup         = sprintf("%.2f", $dup_alignments_arr[$index] / $total * 100);
+	}
+
+    my $p_no_seq      = sprintf("%.2f", $no_seq_arr[$index] / $total * 100);
+    my $p_unal        = sprintf("%.2f", $not_aligned_arr[$index] / $total * 100);
+    my $p_ambig       = sprintf("%.2f", $ambig_aligned_arr[$index] / $total * 100);
 
     if ($verbose){
-        print "Aligned: $perc_aligned[$index] ($p_al%)\n";
-        print "No Seq:  $perc_no_seq[$index] ($p_no_seq%)\n";
-        print "Not Aligned: $perc_not_aligned[$index] ($p_unal%)\n";
-        print "Ambiguous Aligned: $perc_ambig_aligned[$index] ($p_ambig%)\n";
+		if ($aligned){
+			print "Aligned: $perc_aligned[$index] ($p_al%)\n";
+		}
+		else{
+			print "Unique Aligned: $unique_alignments_arr[$index] ($p_dedup_uniq%)\n";
+			print "Aligned: $dup_alignments_arr[$index] ($p_dup%)\n";
+		}	
+        print "No Seq:  $no_seq_arr[$index] ($p_no_seq%)\n";
+        print "Not Aligned: $not_aligned_arr[$index] ($p_unal%)\n";
+        print "Ambiguous Aligned: $ambig_aligned_arr[$index] ($p_ambig%)\n";
         print "Total: $total\n\n";
     }  
-    push @p_aligned,       $p_al;
-    push @p_not_aligned,   $p_unal;
+
+    if ($aligned){
+		push @p_aligned,   $p_al;
+	}
+	else{
+		push @p_deduplicated_unique_alignments, $p_dedup_uniq;
+		push @p_duplicated_alignments,          $p_dup;
+	}
+	push @p_not_aligned,   $p_unal;
     push @p_no_seq,        $p_no_seq;
     push @p_ambig_aligned, $p_ambig;
 }
 
 
 ### Replacing in the HTML template
-print "Aligned:\t",       join ("\t", @p_aligned),"\n" if $verbose;
+print "Using the following values to replace percentage spaceholders:\n" if $verbose;
+if ($aligned){
+	print "Aligned:\t",       join ("\t", @p_aligned),"\n" if $verbose;
+}
+else{
+	print "Unique Aligned:\t",join ("\t", @p_deduplicated_unique_alignments),"\n" if $verbose;
+	print "Duplicated:\t",    join ("\t", @p_duplicated_alignments),"\n" if $verbose;
+}
 print "Unaligned:\t",     join ("\t", @p_not_aligned),"\n" if $verbose;
 print "No Seq:\t\t",      join ("\t", @p_no_seq),"\n" if $verbose;
 print "Ambig Aligned:\t", join ("\t", @p_ambig_aligned),"\n" if $verbose;
 
-my $p_aligned_replace = join (",", @p_aligned);
-my $p_unal_replace    = join (",", @p_not_aligned);
-my $p_no_seq_replace  = join (",", @p_no_seq);
-my $p_ambig_replace   = join (",", @p_ambig_aligned);
+my ($p_aligned_replace, $p_unique_dedup_replace, $p_dup_replace);
+if ($aligned){
+	$p_aligned_replace      = join (",", @p_aligned);
+}
+else{
+	$p_unique_dedup_replace = join (",", @p_deduplicated_unique_alignments);
+	$p_dup_replace          = join (",", @p_duplicated_alignments);
+}
+my $p_unal_replace          = join (",", @p_not_aligned);
+my $p_no_seq_replace        = join (",", @p_no_seq);
+my $p_ambig_replace         = join (",", @p_ambig_aligned);
 
-warn "$p_aligned_replace\n$p_unal_replace\n$p_no_seq_replace\n$p_ambig_replace\n\n";
+if ($aligned){
+	warn "$p_aligned_replace\n$p_unal_replace\n$p_no_seq_replace\n$p_ambig_replace\n\n" if $verbose;
+}
+else{
 
-$html_report =~ s/\{\{p_aligned_replace\}\}/$p_aligned_replace/;
+	warn "$p_unique_dedup_replace\n$p_dup_replace\n$p_unal_replace\n$p_no_seq_replace\n$p_ambig_replace\n\n" if $verbose;
+}
+
+if ($aligned){
+	warn "Only raw alignments. Deleting the Deduplicated Unique Alignment and duplicated sections (Percentage) from the template altogher\n" if $verbose;
+	$html_report =~ s/\{\{deduplicated_unique_reads_percentage_section\}\}.*\{\{deduplicated_unique_reads_percentage_section\}\}//s; # treating as single line
+	$html_report =~ s/\{\{duplicated_reads_percentage_section\}\}.*\{\{duplicated_reads_percentage_section\}\}//s; # treating as single line
+	$html_report =~ s/\{\{raw_unique_reads_percentage_section\}\}//g;
+}
+else{
+	warn "Deleting the Raw Alignment Section\n\n" if $verbose;
+	$html_report =~ s/\{\{raw_unique_reads_percentage_section\}\}.*\{\{raw_unique_reads_percentage_section\}\}//s; # treating as single line
+	$html_report =~ s/\{\{duplicated_reads_percentage_section\}\}//g;
+	$html_report =~ s/\{\{deduplicated_unique_reads_percentage_section\}\}//g;
+}
+
+if ($aligned){
+	$html_report =~ s/\{\{p_aligned_replace\}\}/$p_aligned_replace/;
+}
+else{
+	$html_report =~ s/\{\{p_deduplicated_unique_alignments\}\}/$p_unique_dedup_replace/;
+	$html_report =~ s/\{\{p_duplicated_alignments\}\}/$p_dup_replace/;
+}
 $html_report =~ s/\{\{p_no_seq_replace\}\}/$p_no_seq_replace/;
 $html_report =~ s/\{\{p_unal_replace\}\}/$p_unal_replace/;
 $html_report =~ s/\{\{p_ambig_replace\}\}/$p_ambig_replace/;
