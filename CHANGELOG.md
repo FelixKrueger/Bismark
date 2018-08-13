@@ -8,6 +8,18 @@
 
 - The options `--ample_mem` and `--buffer_size <string>` are now mutually exclusive.
 
+- Changed the directory being passed on when `--cytosine_report` is specified from parent directory' to 'output directory'.
+
+### bismark2report
+
+- Major rewrite of `bismark2report`: HTML file are now rendered using [Plotly.js](https://plot.ly/javascript/) which is completely open source and free to use. Highcharts and JQuery were dropped, as was raised here: https://github.com/FelixKrueger/Bismark/issues/177.
+The files `bioinfo.logo`, `bismark.logo`, `plot.ly` and `plotly_template.tpl` are read in dynamically from a new folder plotly. `bismark_sitrep` and all its contents no longer ship with Bismark. The Bismark HTML reports should be completely self-contained.
+
+### bismark2summary
+
+- Major rewrite of `bismark2summary`: HTML file are now rendered using [Plotly.js](https://plot.ly/javascript/) which is completely open source and free to use. Highcharts and JQuery were dropped, as was raised here: https://github.com/FelixKrueger/Bismark/issues/177. The files `bioinfo.logo`, `bismark.logo`, `plot.ly` and `plotly_template.tpl` are read in dynamically from a new folder plotly. `bismark_sitrep` and all its contents no longer ship with Bismark. The Bismark HTML Summary reports should be completely self-contained.
+
+
 ## Changelog for Bismark v0.19.1
 
 ### Bismark
