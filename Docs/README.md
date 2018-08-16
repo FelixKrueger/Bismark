@@ -2,8 +2,8 @@
 
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
-## User Guide - v0.18.0
-#### 15 May, 2017
+## User Guide - v0.20.0
+#### 16 August, 2018
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
