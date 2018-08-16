@@ -33,4 +33,4 @@ Bismark was written by Felix Krueger, part of the [Babraham Bioinformatics](http
 
 ## Licences
 
-Even though Bismark itself is a free software I would like to emphasize that the scripts `bismark2report` and `bismark2summary` produce HTML graphs using Highcharts. Highsoft software products (including Highcharts) are free to use for non-profit or academic use, but are are not free for commercial and Governmental use. For further information on Highsoft licensing please see here: www.highcharts.com.
+Bismark itself is free software, `bismark2report` and `bismark2summary` produce HTML graphs powered by [Plot.ly](https://plot.ly/javascript/) which are also free to use and look at!
