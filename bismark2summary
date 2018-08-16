@@ -5,8 +5,10 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-18, Felix Krueger <felix.krueger@babraham.ac.uk> and
-## Phil Ewels <phil.ewels@scilifelab.se> (who wrote a first version of this script in 2013 or so.)
+## This program is Copyright (C) 2010-18, Felix Krueger <felix.krueger@babraham.ac.uk>.
+## Thanks to Phil Ewels <phil.ewels@scilifelab.se> (who wrote a first version of this
+## script in 2013 or so when it was still legal to use Highcharts.js (or maybe it 
+## never was?....))
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -20,9 +22,9 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.19.1_dev';
+my $bismark_version = '0.20.0';
 
-# Last modified 13 08 2018
+# Last modified 15 08 2018
 
 my ($report_basename,$page_title,$verbose) = process_commandline();
 
@@ -49,12 +51,13 @@ sub process_commandline{
 	print_helpfile();
 	exit;
     }
-    
+ 
     if ($version){
 	print << "VERSION";
 	
 
                              Bismark HTML Summary Report
+                                 powered by Plot.ly
 
                            bismark2summary version: $bismark_version
                           Copyright 2010-18 Felix Krueger
@@ -113,7 +116,7 @@ sub print_helpfile{
   --help                      Displays this help message and exits.
 
 
-                                                Script last modified: 13 August 2018
+                                                Script last modified: 15 August 2018
 
 EOF
     ;
@@ -912,7 +915,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 			},
 			legend:{
 				x: 0.4,
-				y: 1.05,
+				y: 1.08,
 				orientation: 'h',
 			}				
 		}
@@ -944,64 +947,53 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             },
             legend:{
                 x: 0.4,
-                y: 1.05,
+                y: 1.08,
                 orientation: 'h',
             },
-        }
-
-
-         Plotly.newPlot(stacksDivPercentage, stackedArea(traces2), layoutPercentage,
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-            );
-        Plotly.newPlot(stacksDivNumbers, stackedArea(traces1), layoutNumbers,
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-            );
-        document.getElementById('version1').addEventListener('click', function() {
-            Plotly.newPlot(stacksDivNumbers, stackedArea(traces1), layout,
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-            );
-            <!-- document.getElementById('myData').innerHTML = JSON.stringify(traces1); -->
-        })
-        document.getElementById('version2').addEventListener('click', function() {
-            Plotly.newPlot(stacksDivPercentage, stackedArea(traces2), layout2, 
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-            );
-            <!-- document.getElementById('myData').innerHTML = JSON.stringify(traces2); -->
-        })
-
-        
+        };
+	
+		var optionsPercentage = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d', 
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'Bismark Alignment Stats Summary',
+				width: 1600,  <!-- width: stacksDivPercentage._fullLayout.width, height: stacksDivPercentage._fullLayout.height -->
+				height: 400,
+				format: 'png'
+			}
+		};
+		
+		var optionsNumbers = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d', 
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'Bismark Alignment Stats Numbers',
+				width: 1600,
+				height: 400,
+				format: 'png'
+			}
+		};
+       
+		Plotly.newPlot(stacksDivPercentage, stackedArea(traces2), layoutPercentage, optionsPercentage);
+		
+        Plotly.newPlot(stacksDivNumbers, stackedArea(traces1), layoutNumbers, optionsNumbers);
+		     
 			
 	</script>
 
@@ -1274,39 +1266,66 @@ my $html_report = <<'HTMLTEMPLATESTRING';
             }               
         }
       
-        Plotly.newPlot(methylationDiv_CpG, stackedArea(traces_m1), layoutCpG,
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-        );
-                Plotly.newPlot(methylationDiv_CHG, stackedArea(traces_m2), layoutCHG,
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-        );
-        Plotly.newPlot(methylationDiv_CHH, stackedArea(traces_m3), layoutCHH,
-                                        {displaylogo: false},
-                                        {modeBarButtonsToRemove:
-                                        ['toImage',
-                                        'sendDataToCloud',
-                                        'resetScale2d',
-                                        'hoverClosestCartesian',
-                                        'hoverCompareCartesian',
-                                        'toggleSpikelines']
-                                        },
-        );
+		var optionsCpG = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d', 
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'CpG methylation summary',
+				width: 1600,  <!-- width: stacksDivPercentage._fullLayout.width, height: stacksDivPercentage._fullLayout.height -->
+				height: 200,
+				format: 'png'
+			}
+		};
+		var optionsCHG = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d', 
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'CHG methylation summary',
+				width: 1600,  <!-- width: stacksDivPercentage._fullLayout.width, height: stacksDivPercentage._fullLayout.height -->
+				height: 200,
+				format: 'png'
+			}
+		};
+		var optionsCHH = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d', 
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'CHH methylation summary',
+				width: 1600,  <!-- width: stacksDivPercentage._fullLayout.width, height: stacksDivPercentage._fullLayout.height -->
+				height: 200,
+				format: 'png'
+			}
+		};
+	  
+        Plotly.newPlot(methylationDiv_CpG, stackedArea(traces_m1), layoutCpG, optionsCpG);
+		
+		Plotly.newPlot(methylationDiv_CHG, stackedArea(traces_m2), layoutCHG, optionsCHG);
+        
+		Plotly.newPlot(methylationDiv_CHH, stackedArea(traces_m3), layoutCHH, optionsCHH);
         
             
     </script>
@@ -1318,7 +1337,7 @@ my $html_report = <<'HTMLTEMPLATESTRING';
 
 		<p>Analysis produced by <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/"><strong>Bismark</strong></a> (version {{bismark_version}}) - a tool to map bisulfite converted sequence reads and determine cytosine methylation states</p>
 		
-		<p>Report graphs rendered using <a href="https://plot.ly/">plot.ly</a>, design last changed 08 Aug 2018. Summary script and page design by <a href="https://www.babraham.ac.uk/science-services/bioinformatics/simon-andrews/members/191/felix-krueger">Felix Krueger</a> and <a href="http://phil.ewels.co.uk/">Phil Ewels</a> </p>
+		<p>Report graphs rendered using <a href="https://plot.ly/">plot.ly</a>, design last changed 15 Aug 2018.</p>
 
 	</footer>
 </div>

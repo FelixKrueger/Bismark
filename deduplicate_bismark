@@ -40,7 +40,7 @@ use Cwd;
 ### start and end at the exact same position
 ### Deduplication in --representative mode is now no longer supported. It wasn't what people should have wanted anyway
 
-my $dedup_version = 'v0.19.1';
+my $dedup_version = 'v0.20.0';
 my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$vanilla,$samtools_path,$bam,$rrbs,$multiple,$output_dir) = process_commandline();
