@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.19.1_dev
+## Changelog for Bismark v0.20.0
 
 ### bismark_methylation_extractor
 
