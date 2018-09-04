@@ -965,13 +965,27 @@
 		  	},
 		};
 
-		Plotly.newPlot('mbias1_plot', data, layout,{displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
-					'sendDataToCloud',
-					'resetScale2d',
-					'hoverClosestCartesian',
-                    'hoverCompareCartesian',
-                    'toggleZoom',
-                    'toggleSpikelines']});
+		var options = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d',
+				'sendDataToCloud',				
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'Bismark M-bias Read 1',
+				width: 1600,
+				height: 600,
+				format: 'png'
+			}
+		};
+		
+		Plotly.newPlot('mbias1_plot', data, layout, options);
 	</script>
 
 	<!-- M-bias Plot 2-->
@@ -1087,7 +1101,7 @@
 			    },
 	  		},
 	  		xaxis: {
-	  			title: 'Position in read [bp]',
+	  			title: 'Position in Read [bp]',
 	  			showline: true,	
 	  			titlefont: {
 			      size: 18,
@@ -1101,13 +1115,28 @@
 		  	},
 		};
 
-		Plotly.newPlot('mbias2_plot', data, layout, {displaylogo: false}, {modeBarButtonsToRemove: ['toImage',
-					'sendDataToCloud',
-					'resetScale2d',
-					'hoverClosestCartesian',
-                    'hoverCompareCartesian',
-                    'toggleZoom',
-                    'toggleSpikelines']});
+		
+		var options2 = {
+			displaylogo: false,
+			modeBarButtonsToRemove:
+				['zoom2d',
+				'sendDataToCloud',				
+				'pan', 
+				'pan2d',
+				'resetScale2d',
+				'hoverClosestCartesian',
+				'hoverCompareCartesian',
+				'toggleSpikelines']
+			,
+			toImageButtonOptions: {
+				filename: 'Bismark M-bias Read 2',
+				width: 1600,
+				height: 600,
+				format: 'png'
+			}
+		};
+		
+		Plotly.newPlot('mbias2_plot', data, layout, options2);
 
 	</script>
 
