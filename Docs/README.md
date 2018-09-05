@@ -47,9 +47,14 @@ This will produce two output files:
 **NOTE:** In order to work properly the current working directory must contain the sequence files to be analysed.
 
 
+## (III) Running `deduplicate_bismark`
+```
+deduplicate_bismark --bam [options] <filenames>
+```
 
+This command will deduplicate the Bismark alignment BAM file and remove all reads but one which align to the the very same position and in the same orientation. This step is recommended for whole-genome bisfulfite samples, but should not be used for reduced representation libraries such as RRBS, amplicon or target enrichment libraries.
 
-## (III) Running `bismark_methylation_extractor`
+## (IV) Running `bismark_methylation_extractor`
 **USAGE:**
 ```
 bismark_methylation_extractor [options] <filenames>
@@ -62,11 +67,11 @@ bismark_methylation_extractor --gzip test_dataset.fastq_bismark.bam
 
 This will produce three output files:
     
-* `CpG_context_test_dataset_bismark.txt`
-* `CHG_context_test_dataset_bismark.txt`
-* `CHH_context_test_dataset_bismark.txt`
+* `CpG_context_test_dataset_bismark.txt.gz`
+* `CHG_context_test_dataset_bismark.txt.gz`
+* `CHH_context_test_dataset_bismark.txt.gz`
 
-## (IV) Running `bismark2report`
+## (V) Running `bismark2report`
 **USAGE:**
 ```
 bismark2report [options]
@@ -74,7 +79,7 @@ bismark2report [options]
 
 This command attempts to find Bismark alignment, deduplication and methylation extraction (splitting) reports as well as M-bias files to generate a graphical HTML report such as this [example Bismark paired-end report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html) for each sample in a directory.
 
-## (V) Running `bismark2summary`
+## (VI) Running `bismark2summary`
 **USAGE:**
 ```
 bismark2summary [options]
