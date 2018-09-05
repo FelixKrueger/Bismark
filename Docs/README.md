@@ -357,13 +357,15 @@ For **single-end** alignments, only the chromosome, start coordinate and strand 
 For **paired-end** alignments, the chromosome, the strand of a read pair, the start-coordinate of the first read as well as the start coordinate of the second read will be used for deduplication. This script expects the Bismark output to be in SAM/BAM format
 (Bismark v0.6.x or higher). To deduplicate the old custom Bismark output please specify `--vanilla` (this option might be removed in future versions).
 
-**Please note that for paired-end BAM files the deduplication script expects Read 1 and Read 2 to follow each other in consecutive lines! If the file has been sorted by position for whatever reason, please make sure that you resort it by read name first (e.g. using `samtools sort -n`) **
+**Please note that for paired-end BAM files the deduplication script expects Read 1 and Read 2 to follow each other in consecutive lines!** If the file has been sorted by position for whatever reason, please make sure that you resort it by read name first (e.g. using `samtools sort -n`)
 
 ### Deduplication using UMIs or barcodes
 
 In addition to chromosome, start (and end position for paired-end libraries) position and strand orientation the option `--barcode` will also take a potential barcodes or UMIs (unique molecular identifiers) into consideration while deduplicating. The barcode needs to be the last element of the read ID and has to beseparated by a `:`, e.g.: 
 
-MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0**:CTCCT**
+```
+MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
+```
 
 This option option is equivalent to using [UmiBam](https://github.com/FelixKrueger/Umi-Grinder) in the following mode:
 `UmiBam --umi input.bam`, however UmiBam has additional functionality such as a double UMI feature or the option to allow mismatches in the UMI(s).
