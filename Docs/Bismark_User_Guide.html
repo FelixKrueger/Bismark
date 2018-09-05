@@ -35,7 +35,7 @@
   <!--[if lt IE 9]><script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script><![endif]-->
 </head>
 <body>
-<nav id="TOC"><ul><li><a href="#bismark-bisulfite-mapper">Bismark Bisulfite Mapper</a><ul><li><a href="#user-guide-v">User Guide - v0.20.0</a></ul></li><li><a href="#quick-reference">1) Quick Reference</a><ul><li><a href="#i-running-bismark-genome-preparation">(I) Running <code>bismark_genome_preparation</code></a></li><li><a href="#ii-running-bismark">(II) Running <code>bismark</code></a></li><li><a href="#iii-running-bismark-methylation-extractor">(III) Running <code>bismark_methylation_extractor</code></a></li><li><a href="#iv-running-bismark-report">(IV) Running <code>bismark2report</code></a></li><li><a href="#v-running-bismark-summary">(V) Running <code>bismark2summary</code></a></ul></li><li><a href="#bismark-general-information">2) Bismark - General Information</a><ul><li><a href="#what-is-bismark">What is Bismark?</a></li><li><a href="#installation-notes">Installation notes</a></li><li><a href="#dependencies">Dependencies</a></li><li><a href="#hardware-requirements">Hardware requirements</a></li><li><a href="#bs-seq-test-data-set">BS-Seq test data set</a></li><li><a href="#which-kind-of-bs-seq-files-are-supported">Which kind of BS-Seq files are supported?</a></li><li><a href="#how-does-bismark-work">How does Bismark work?</a></li><li><a href="#bismark-alignment-and-methylation-call-report">Bismark alignment and methylation call report</a></ul></li><li><a href="#running-bismark">3) Running Bismark</a><ul><li><a href="#i-bismark-genome-preparation">(I) Bismark Genome Preparation</a></li><li><a href="#ii-bismark-alignment-step">(II) Bismark Alignment Step</a></li><li><a href="#iii-bismark-methylation-extractor">(III) Bismark methylation extractor</a></li><li><a href="#iv-the-bismark-html-processing-report">(IV) The Bismark HTML Processing Report</a></li><li><a href="#v-the-bismark-summary-report">(V) The Bismark Summary Report</a></li><li><a href="#vi-bismark-nucleotide-coverage-report-bam-nuc">(VI) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</a></li><li><a href="#vii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</a></li><li><a href="#viii-notes-about-different-library-types-and-commercial-kits">(VIII) Notes about different library types and commercial kits</a></ul></li><li><a href="#appendix-full-list-of-options">4) APPENDIX - Full list of options</a><ul><li><a href="#appendix-i-bismark-genome-preparation">Appendix (I): Bismark Genome Preparation</a></li><li><a href="#appendix-ii-bismark">Appendix (II): Bismark</a></li><li><a href="#appendix-iii-bismark-methylation-extractor">Appendix (III): Bismark Methylation Extractor</a></li><li><a href="#appendix-iv-bismark-reports-for-the-test-data-set">Appendix (IV): Bismark reports for the test data set</a></ul></li><li><a href="#credits">Credits</a></li></ul></nav>
+<nav id="TOC"><ul><li><a href="#bismark-bisulfite-mapper">Bismark Bisulfite Mapper</a><ul><li><a href="#user-guide-v">User Guide - v0.20.0</a></ul></li><li><a href="#quick-reference">1) Quick Reference</a><ul><li><a href="#i-running-bismark-genome-preparation">(I) Running <code>bismark_genome_preparation</code></a></li><li><a href="#ii-running-bismark">(II) Running <code>bismark</code></a></li><li><a href="#iii-running-deduplicate-bismark">(III) Running <code>deduplicate_bismark</code></a></li><li><a href="#iv-running-bismark-methylation-extractor">(IV) Running <code>bismark_methylation_extractor</code></a></li><li><a href="#v-running-bismark-report">(V) Running <code>bismark2report</code></a></li><li><a href="#vi-running-bismark-summary">(VI) Running <code>bismark2summary</code></a></ul></li><li><a href="#bismark-general-information">2) Bismark - General Information</a><ul><li><a href="#what-is-bismark">What is Bismark?</a></li><li><a href="#installation-notes">Installation notes</a></li><li><a href="#dependencies">Dependencies</a></li><li><a href="#hardware-requirements">Hardware requirements</a></li><li><a href="#bs-seq-test-data-set">BS-Seq test data set</a></li><li><a href="#which-kind-of-bs-seq-files-are-supported">Which kind of BS-Seq files are supported?</a></li><li><a href="#how-does-bismark-work">How does Bismark work?</a></li><li><a href="#bismark-alignment-and-methylation-call-report">Bismark alignment and methylation call report</a></ul></li><li><a href="#running-bismark">3) Running Bismark</a><ul><li><a href="#i-bismark-genome-preparation">(I) Bismark Genome Preparation</a></li><li><a href="#ii-bismark-alignment-step">(II) Bismark Alignment Step</a></li><li><a href="#iii-bismark-deduplication-step">(III) Bismark Deduplication Step</a></li><li><a href="#iv-bismark-methylation-extractor">(IV) Bismark methylation extractor</a></li><li><a href="#v-the-bismark-html-processing-report">(V) The Bismark HTML Processing Report</a></li><li><a href="#vi-the-bismark-summary-report">(VI) The Bismark Summary Report</a></li><li><a href="#vii-bismark-nucleotide-coverage-report-bam-nuc">(VII) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</a></li><li><a href="#viii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VIII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</a></li><li><a href="#ix-notes-about-different-library-types-and-commercial-kits">(IX) Notes about different library types and commercial kits</a></ul></li><li><a href="#appendix-full-list-of-options">4) APPENDIX - Full list of options</a><ul><li><a href="#appendix-i-bismark-genome-preparation">Appendix (I): Bismark Genome Preparation</a></li><li><a href="#appendix-ii-bismark">Appendix (II): Bismark</a></li><li><a href="#appendix-iii-bismark-methylation-extractor">Appendix (III): Bismark Methylation Extractor</a></li><li><a href="#appendix-iv-bismark-reports-for-the-test-data-set">Appendix (IV): Bismark reports for the test data set</a></ul></li><li><a href="#credits">Credits</a></li></ul></nav>
 <h1 id="bismark-bisulfite-mapper">Bismark Bisulfite Mapper</h1>
 
 <p><img title="Bismark" id="header_img" src="Images/bismark.png"></p>
@@ -86,7 +86,15 @@ bismark --bowtie1 -n 1 -l 50 /data/genomes/homo_sapiens/GRCh37/ test_dataset.fas
 
 <p><strong>NOTE:</strong> In order to work properly the current working directory must contain the sequence files to be analysed.</p>
 
-<h2 id="iii-running-bismark-methylation-extractor">(III) Running <code>bismark_methylation_extractor</code></h2>
+<h2 id="iii-running-deduplicate-bismark">(III) Running <code>deduplicate_bismark</code></h2>
+
+<p><code>
+deduplicate_bismark --bam [options] &lt;filenames&gt;
+</code></p>
+
+<p>This command will deduplicate the Bismark alignment BAM file and remove all reads but one which align to the the very same position and in the same orientation. This step is recommended for whole-genome bisfulfite samples, but should not be used for reduced representation libraries such as RRBS, amplicon or target enrichment libraries.</p>
+
+<h2 id="iv-running-bismark-methylation-extractor">(IV) Running <code>bismark_methylation_extractor</code></h2>
 
 <p><strong>USAGE:</strong>
 <code>
@@ -95,21 +103,23 @@ bismark_methylation_extractor [options] &lt;filenames&gt;
 
 <p>A typical command to extract context-dependent (CpG/CHG/CHH) methylation could look like this:
 <code>
-bismark_methylation_extractor --gzip test_dataset.fastq_bismark.bam
+bismark_methylation_extractor --gzip --bedGraph test_dataset.fastq_bismark.bam
 </code></p>
 
-<p>This will produce three output files:</p>
+<p>This will produce three methytlation output files:</p>
 
 <ul>
-<li><code>CpG_context_test_dataset_bismark.txt</code>
+<li><code>CpG_context_test_dataset_bismark.txt.gz</code>
 </li>
-<li><code>CHG_context_test_dataset_bismark.txt</code>
+<li><code>CHG_context_test_dataset_bismark.txt.gz</code>
 </li>
-<li><code>CHH_context_test_dataset_bismark.txt</code>
+<li><code>CHH_context_test_dataset_bismark.txt.gz</code>
 </li>
 </ul>
 
-<h2 id="iv-running-bismark-report">(IV) Running <code>bismark2report</code></h2>
+<p>as well as a bedGraph and a Bismark coverage file. For more on these files and their formats please see below.</p>
+
+<h2 id="v-running-bismark-report">(V) Running <code>bismark2report</code></h2>
 
 <p><strong>USAGE:</strong>
 <code>
@@ -118,7 +128,7 @@ bismark2report [options]
 
 <p>This command attempts to find Bismark alignment, deduplication and methylation extraction (splitting) reports as well as M-bias files to generate a graphical HTML report such as this <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html">example Bismark paired-end report</a> for each sample in a directory.</p>
 
-<h2 id="v-running-bismark-summary">(V) Running <code>bismark2summary</code></h2>
+<h2 id="vi-running-bismark-summary">(VI) Running <code>bismark2summary</code></h2>
 
 <p><strong>USAGE:</strong>
 <code>
@@ -512,7 +522,41 @@ bismark --genome /data/genomes/homo_sapiens/GRCh37/ sample.fastq.gz
 </li>
 </ul>
 
-<h2 id="iii-bismark-methylation-extractor">(III) Bismark methylation extractor</h2>
+<h2 id="iii-bismark-deduplication-step">(III) Bismark Deduplication Step</h2>
+
+<p><code>USAGE: ./deduplicate_bismark [options] filename(s)</code></p>
+
+<p>The script <code>deduplicate_bismark</code> is supposed to remove alignments to the same position in the genome from the Bismark mapping output (both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. Sequences which align to the same genomic position but on different strands are scored individually.</p>
+
+<p><strong>It is important to note that deduplication is not recommended for RRBS, amplicon or other target enrichment-type libraries!</strong></p>
+
+<p>In the default mode, the first alignment to a given position will be used irrespective of its methylation call. As the alignments are not ordered in any way this is near enough a random read for each position.</p>
+
+<p>For <strong>single-end</strong> alignments, only the chromosome, start coordinate and strand of a read will be used for deduplication.</p>
+
+<p>For <strong>paired-end</strong> alignments, the chromosome, the strand of a read pair, the start-coordinate of the first read as well as the start coordinate of the second read will be used for deduplication. This script expects the Bismark output to be in SAM/BAM format
+(Bismark v0.6.x or higher). To deduplicate the old custom Bismark output please specify <code>--vanilla</code> (this option might be removed in future versions).</p>
+
+<p><strong>Please note that for paired-end BAM files the deduplication script expects Read 1 and Read 2 to follow each other in consecutive lines!</strong> If the file has been sorted by position for whatever reason, please make sure that you resort it by read name first (e.g. using <code>samtools sort -n</code>)</p>
+
+<h3 id="deduplication-using-umis-or-bars">Deduplication using UMIs or barcodes</h3>
+
+<p>In addition to chromosome, start (and end position for paired-end libraries) position and strand orientation the option <code>--barcode</code> will also take a potential barcodes or UMIs (unique molecular identifiers) into consideration while deduplicating. The barcode needs to be the last element of the read ID and has to beseparated by a <code>:</code>, e.g.: </p>
+
+<p><code>
+MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
+</code></p>
+
+<p>This option option is equivalent to using <a href="https://github.com/FelixKrueger/Umi-Grinder">UmiBam</a> in the following mode:
+<code>UmiBam --umi input.bam</code>, however UmiBam has additional functionality such as a double UMI feature or the option to allow mismatches in the UMI(s).</p>
+
+<h3 id="deduplication-of-multiple-files-of-the-same-library">Deduplication of multiple files of the same library</h3>
+
+<p>When using the option <code>--multiple</code>, all specified input files are treated as a <strong>single</strong> sample and concatenated together for deduplication. This uses Unix <code>cat</code> for SAM files and <code>samtools cat</code> for BAM files. </p>
+
+<p>Additional notes for BAM files: Although this works on either BAM or CRAM, all input files must be the same format as each other. The sequence dictionary of each input file must be identical, although this command does not check this. By default the header is taken from the first file to be concatenated.</p>
+
+<h2 id="iv-bismark-methylation-extractor">(IV) Bismark methylation extractor</h2>
 
 <p>Bismark comes with a supplementary <code>bismark_methylation_extractor</code> script which operates on Bismark result files and extracts the methylation call for every single C analysed. The position of every single C will be written out to a new output file, depending on its context (CpG, CHG or CHH), whereby methylated Cs will be labelled as forward reads (+), non-methylated Cs as reverse reads (-). The resulting files can be imported into a genome viewer such as SeqMonk (using the generic text import filter) and the analysis of methylation data can commence. Alternatively, the output of the methylation extractor can be transformed into a <code>bedGraph</code> and <code>coverage</code> file using the option <code>--bedGraph</code> (see also <code>--counts</code>). This step can also be accomplished from the methylation extractor output using the stand-alone script <code>bismark2bedGraph</code> (also part of the Bismark package available for download at <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/">bioinformatics.babraham.ac.uk</a>). The <code>coverage</code> file can also be imported into SeqMonk directly using <code>Import Data &gt; Bismark (cov)</code>. Optionally, the bedGraph counts output can be used to generate a genome-wide cytosine report which reports the number on every single CpG (optionally every single cytosine) in the genome, irrespective of whether it was covered by any reads or not. As this type of report is informative for cytosines on both strands the output may be fairly large (~46mn CpG positions or >1.2bn total cytosine positions in the human genome...). The bedGraph to genome-wide cytosine report conversion can also be run individually using the stand- alone module <code>coverage2cytosine</code> (also part of the Bismark package available for download at <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/">bioinformatics.babraham.ac.uk</a>).</p>
 
@@ -649,7 +693,7 @@ bismark_methylation_extractor --gzip --bedGraph --buffer_size 10G sample_bismark
 bismark_methylation_extractor --gzip --bedGraph --buffer_size 10G --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
 </code></p>
 
-<h2 id="iv-the-bismark-html-processing-report">(IV) The Bismark HTML Processing Report</h2>
+<h2 id="v-the-bismark-html-processing-report">(V) The Bismark HTML Processing Report</h2>
 
 <p>The script <code>bismark2report</code> uses a Bismark alignment report, and optionally further reports of the Bismark suite such as deduplication, methylation extractor (splitting) or M-bias reports to generate a graphical HTML report page. If several Bismark reports are found in the same folder, a separate report will be generated for each of these, whereby the output filename is derived from the Bismark alignment report file. <code>bismark2report</code> attempts to find optional reports automatically based on the file basename. Here are an example <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/SE_report.html">single-end report</a> and <a href="http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html">paired-end report</a>.</p>
 
@@ -699,7 +743,7 @@ bismark2report [options]
 
 <p>If not specified explicitly, <code>bismark2report</code> attempts to find a single nucleotide coverage report file with the same basename as the Bismark mapping report (generated by Bismark with the option <code>--nucleotide_coverage</code>, or <code>bam2nuc</code> directly) in the current working directory. Including a nucleotide coverage statistics                            report is optional, and using the FILE <em>'none'</em> will skip this report entirely.</p>
 
-<h2 id="v-the-bismark-summary-report">(V) The Bismark Summary Report</h2>
+<h2 id="vi-the-bismark-summary-report">(VI) The Bismark Summary Report</h2>
 
 <p>This script uses Bismark report files of several (up to hundreds of!?) samples in a run folder to generate a graphical summary HTML report as well as a whopping big table (tab-delimited text) with all relevant alignment and methylation statistics which may be used for graphing purposes in R, Excel or the like. Unless certain BAM files are specified, <code>bismark2summary</code> first identifies Bismark BAM files in a folder (they need to use the Bismark naming conventions) and then automatically detects Bismark alignment, deduplication or methylation extractor (splitting) reports based on the input file basename. If splitting reports are found they overwrite the methylation statistics of the initial alignment report.</p>
 
@@ -748,7 +792,7 @@ bismark2summary [options]
 
 <p>Displays this help message and exits.</p>
 
-<h2 id="vi-bismark-nucleotide-coverage-report-bam-nuc">(VI) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</h2>
+<h2 id="vii-bismark-nucleotide-coverage-report-bam-nuc">(VII) Bismark Nucleotide Coverage report (<code>bam2nuc</code>)</h2>
 
 <p>The script <code>bam2nuc</code> reads BAM files and calculates the mono- and di-nucleotide coverage of the
 reads (using the genomic sequence rather than the observed sequence in the reads themselves)
@@ -832,7 +876,7 @@ TT      5055    10.96   1314144 10.80   0.004
 
 <p><img src="Images/nucleocoverage.png" alt="Nucleotide Coverage Plot" /></p>
 
-<h2 id="vii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</h2>
+<h2 id="viii-filtering-out-non-bisulfite-converted-reads-filter-non-conversion">(VIII) Filtering out non-bisulfite converted reads (<code>filter_non_conversion</code>)</h2>
 
 <p>Filtering incomplete bisulfite conversion from Bismark BAM files (optional). This script examines the methylation calls of reads, or read pairs for paired-end sequencing, and filters out reads that exceed a certain threshold of methylated calls in non-CG context (the default is 3). By default, <code>filter_non_conversion</code> looks for a certain number of methylated non-CG calls, but a percentage methylation cutoff may be specified alternatively.</p>
 
@@ -913,7 +957,7 @@ filter_non_conversion [options] [Bismark BAM files]
 
 <p>If you get stuck at any point or have any questions or comments please contact me via e-mail: <a href="felix.krueger@babraham.ac.uk">felix.krueger@babraham.ac.uk</a></p>
 
-<h2 id="viii-notes-about-different-library-types-and-commercial-kits">(VIII) Notes about different library types and commercial kits</h2>
+<h2 id="ix-notes-about-different-library-types-and-commercial-kits">(IX) Notes about different library types and commercial kits</h2>
 
 <p>Here is a table summarising general recommendations for different library types and/or different commercially available kits. Some more specific notes can be found below.</p>
 
