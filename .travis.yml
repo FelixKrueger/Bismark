@@ -7,5 +7,5 @@ perl:
 install: true
 
 script:
-  - "bismark --help"
-  - "bismark"
+  - "./bismark --help"
+  - "./bismark"
