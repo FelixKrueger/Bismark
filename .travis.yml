@@ -7,5 +7,6 @@ perl:
 install: true
 
 script:
-  - "./bismark --help"
-  - "./bismark"
+  - "./bismark_genome_preparation --verbose ."
+  - "./bismark_genome_preparation --verbose --bowtie1 ."
+  - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
