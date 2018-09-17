@@ -1,21 +1,12 @@
 language: perl
 perl:
   - "5.26"
-  - "5.24"
-  - "5.22"
-env:
-  - ZIP=bowtie2-2.2.9-linux-x86_64.zip
-  - URL=https://github.com/BenLangmead/bowtie2/releases/download/v2.2.9/
-  - FOLDER=bowtie2-2.2.9
-  - DST=/home/biodocker/bin
 
 install:
-  - wget $URL/$ZIP -O $DST/$ZIP
-  - gunzip $DST/$ZIP -d $DST
-  - rm $DST/$ZIP
-  - mv $DST/$FOLDER/* $DST
-  - rmdir $DST/$FOLDER
-
+  - wget https://github.com/BenLangmead/bowtie2/releases/download/v2.2.9/bowtie2-2.2.9-linux-x86_64.zip -O ~/bin/bowtie2-2.2.9-linux-x86_64.zip
+  - unzip ~/bin/bowtie2-2.2.9-linux-x86_64.zip -d ~/bin/
+  - mv ~/bin/bowtie2-2.2.9/* ~/bin/ 
+  
 script:
   - "./bismark_genome_preparation --verbose ."
   - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
