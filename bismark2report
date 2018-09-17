@@ -123,7 +123,7 @@ while (@alignment_reports){
       # warn ">$state<<<\n";
       # sleep(1);
       if ($state eq 'single'){
-	  warn "Read was $state: Deleting the M-bias2 section\n";
+	  # warn "Read was $state: Deleting the M-bias2 section\n";
 	  $doc =~ s/(\{\{mbias_r2_section\}\}.*\{\{mbias_r2_section\}\})//s; # treating the string as a single line
 	  # warn "Deleting: $1\n\n";sleep(5);
       }
