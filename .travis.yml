@@ -8,5 +8,5 @@ install:
   - mv ~/bin/bowtie2-2.2.9/* ~/bin/ 
   
 script:
-  - "./bismark_genome_preparation --verbose ."
+  - "./bismark_genome_preparation --verbose ./travis_files/"
   - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
