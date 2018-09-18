@@ -15,10 +15,10 @@ install:
   - wget https://github.com/samtools/samtools/releases/download/1.9/samtools-1.9.tar.bz2
   - tar xjvf samtools-1.9.tar.bz2
   - cd samtools-1.9
-  - ./configure --prefix=/home/travis/bin/
+  - ./configure --prefix=/home/travis/samtools/
   - make -j 10
   - make install
-  - cd ~/
+  - mv ~//home/travis/samtools/bin/* ~/bin/
    
 script:
   - "./samtools --version"
