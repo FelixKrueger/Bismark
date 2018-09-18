@@ -8,7 +8,7 @@ install:
   - mv ~/bin/bowtie2-2.2.9/* ~/bin/ 
   - wget https://sourceforge.net/projects/bowtie-bio/files/bowtie/1.2.2/bowtie-1.2.2-linux-x86_64.zip/download -O ~/bin/bowtie-1.2.2-linux-x86_64.zip
   - unzip ~/bin/bowtie-1.2.2-linux-x86_64.zip -d ~/bin/
-  - mv ~/bin/bowtie-1.2.2-linux-x86_64/* ~/bin/ 
+  - mv ~/bin/bowtie-1.2.2-linux-x86_64/bowtie* ~/bin/ 
   
 script:
   - "./bismark_genome_preparation --verbose ./travis_files/"
