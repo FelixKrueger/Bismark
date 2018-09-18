@@ -15,11 +15,13 @@ install:
   - ./configure --prefix=/home/travis/bin/
   - make -j 10
   - make install
+  - cd ~/
   
   
   
   
 script:
+  - "samtools --version"
   - "./bismark_genome_preparation --verbose ./travis_files/"
   - "./bismark_genome_preparation --bowtie1 --verbose ./travis_files/"
   - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
