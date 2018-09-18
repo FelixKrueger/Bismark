@@ -18,7 +18,9 @@ install:
   - ./configure --prefix=/home/travis/samtools/
   - make -j 10
   - make install
-  - mv ~//home/travis/samtools/bin/* ~/bin/
+  - cd ~/samtools/
+  - ls -l
+  - mv ~/samtools/bin/* ~/bin/
    
 script:
   - "./samtools --version"
