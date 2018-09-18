@@ -19,9 +19,10 @@ install:
   - make -j 10
   - make install
   - export PATH=/home/travis/samtools/bin:$PATH
-   
+  - samtools --version  
+  - cd 
+  
 script:
-  - "samtools --version"
   - "./bismark_genome_preparation --verbose ./travis_files/"
   - "./bismark_genome_preparation --bowtie1 --verbose ./travis_files/"
   - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
