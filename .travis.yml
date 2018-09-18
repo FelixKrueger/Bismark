@@ -18,12 +18,10 @@ install:
   - ./configure --prefix=/home/travis/samtools/
   - make -j 10
   - make install
-  - cd ~/samtools/
-  - ls -l
-  - mv ~/samtools/bin/* ~/bin/
+  - export PATH=/home/travis/samtools/bin:$PATH
    
 script:
-  - "./samtools --version"
+  - "samtools --version"
   - "./bismark_genome_preparation --verbose ./travis_files/"
   - "./bismark_genome_preparation --bowtie1 --verbose ./travis_files/"
   - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
