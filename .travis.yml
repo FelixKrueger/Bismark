@@ -53,3 +53,13 @@ script:
   # Additional scenarios
   - "./bismark --pbat --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+  
+  # bismark2bedGraph
+  - "./bismark2bedGraph -o test.beGraph --buffer 5G CpG_O*"
+  - "./bismark2bedGraph -o test.beGraph --CX --scaffolds C*"
+  - "./bismark2bedGraph -o test.beGraph --CX --ample_memory --zero_based C*"
+  
+  # Filter non conversion
+  - "./filter_non_conversion test_R1_bismark_bt2_pe.bam"
+  - "./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_bt2.bam"
+  - "./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_bt2_pe.bam"
