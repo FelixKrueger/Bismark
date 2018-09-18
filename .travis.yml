@@ -8,10 +8,12 @@ install:
   - mv ~/bin/bowtie2-2.2.9/* ~/bin/ 
   - wget https://sourceforge.net/projects/bowtie-bio/files/bowtie/1.2.2/bowtie-1.2.2-linux-x86_64.zip/download -O ~/bin/bowtie-1.2.2-linux-x86_64.zip
   - unzip ~/bin/bowtie-1.2.2-linux-x86_64.zip -d ~/bin/
-  - mv ~/bin/bowtie-1.2.2/* ~/bin/ 
+  - mv ~/bin/bowtie-1.2.2-linux-x86_64/* ~/bin/ 
   
 script:
   - "./bismark_genome_preparation --verbose ./travis_files/"
   - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
+  - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
+  - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   
