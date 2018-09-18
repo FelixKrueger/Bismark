@@ -25,14 +25,17 @@ install:
 script:
   # Using Bowtie 2
   - "./bismark_genome_preparation --verbose ./travis_files/"
-  - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
+  ## PE
   - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
-  - "./deduplicate_bismark --bam test_R1_bismark_bt2.bam"
   - "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
-  - "./bismark_methylation_extractor test_R1_bismark_bt2.bam    --gzip --CX --bed --genome ./travis_files/"
   - "./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./travis_files/"
   - "./bismark2report"
   - "./bismark2summary"
+  ## SE
+  - "./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz"
+  - "./deduplicate_bismark --bam test_R1_bismark_bt2.bam"
+  - "./bismark_methylation_extractor test_R1_bismark_bt2.bam    --gzip --CX --bed --genome ./travis_files/"
+ 
   # Using Bowtie 1 results
   - "./bismark_genome_preparation --bowtie1 --verbose ./travis_files/"
   - "./bismark --genome ./travis_files/ --bowtie1 ./travis_files/test_R1.fastq.gz"
@@ -45,4 +48,8 @@ script:
   - "./coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --NOMe-seq --genome ./travis_files/ -o test.output"
   # bam2nuc
   - "./bam2nuc --genome_folder ./travis_files/ --genomic_composition_only"
-  - "./bam2nuc --genome_folder ./travis_files/ --genomic_composition_onlytest_R1_bismark_bt2_pe.bam"
+  - "./bam2nuc --genome_folder ./travis_files/ test_R1_bismark_bt2_pe.bam"
+  
+  # Additional scenarios
+  - "./bismark --pbat --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+  - "./bismark --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
