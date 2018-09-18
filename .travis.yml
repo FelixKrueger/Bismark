@@ -3,7 +3,6 @@ perl:
   - "5.26"
 
 install:
-  - pwd
   # Installing Bowtie 2
   - wget https://github.com/BenLangmead/bowtie2/releases/download/v2.2.9/bowtie2-2.2.9-linux-x86_64.zip -O ~/bin/bowtie2-2.2.9-linux-x86_64.zip
   - unzip ~/bin/bowtie2-2.2.9-linux-x86_64.zip -d ~/bin/
@@ -21,7 +20,7 @@ install:
   - make install
   - export PATH=/home/travis/samtools/bin:$PATH
   - samtools --version  
-  - cd 
+  - cd /home/travis/build/FelixKrueger/Bismark/
   
 script:
   - "./bismark_genome_preparation --verbose ./travis_files/"
