@@ -26,6 +26,7 @@ my $help;
 my $version;
 my $man;
 my $path_to_bowtie;
+my $bowtie_threads;
 my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
@@ -43,6 +44,7 @@ GetOptions ('verbose' => \$verbose,
 	    'man' => \$man,
 	    'version' => \$version,
 	    'path_to_bowtie:s' => \$path_to_bowtie,
+        'bowtie_threads:i' => \$bowtie_threads,
 	    'single_fasta' => \$single_fasta,
 	    'bowtie2' => \$bowtie2,
 	    'bowtie1' => \$bowtie1,
@@ -172,10 +174,14 @@ sub launch_bowtie_indexer{
     $verbose and warn "Preparing indexing of CT converted genome in $CT_dir\n";
     my @fasta_files = <*.fa>;
     my $file_list = join (',',@fasta_files);
+    my $cmd = "$path_to_bowtie -f $file_list BS_CT";
+    if($bowtie_threads) {
+        $cmd = "$cmd --threads $bowtie_threads";
+    }
     $verbose and print "Parent process: Starting to index C->T converted genome with the following command:\n\n";
-    $verbose and print "$path_to_bowtie -f $file_list BS_CT\n\n";
-
-    system ("$path_to_bowtie","-f","$file_list","BS_CT")== 0 or die "Parent process: Failed to build index\n";
+    $verbose and print "$cmd\n\n";
+    
+    system ($cmd)== 0 or die "Parent process: Failed to build index\n";
     waitpid( $pid, 0 );
     $? == 0 or die "Parent process: Child process failed\n";
   }
@@ -187,10 +193,14 @@ sub launch_bowtie_indexer{
     $verbose and warn "Preparing indexing of GA converted genome in $GA_dir\n";
     my @fasta_files = <*.fa>;
     my $file_list = join (',',@fasta_files);
+    my $cmd = "$path_to_bowtie -f $file_list BS_GA";
+    if($bowtie_threads) {
+        $cmd = "$cmd --threads $bowtie_threads";
+    }
     $verbose and print "Child process: Starting to index G->A converted genome with the following command:\n\n";
-    $verbose and print "$path_to_bowtie -f $file_list BS_GA\n\n";
+    $verbose and print "$cmd\n\n";
 
-    exec ("$path_to_bowtie","-f","$file_list","BS_GA");
+    exec ($cmd);
   }
 
   # if the platform doesn't support the fork command we will run the indexing processes one after the other
@@ -205,7 +215,11 @@ sub launch_bowtie_indexer{
     my $file_list = join (',',@fasta_files);
     $verbose and print "$file_list\n\n";
     # sleep(2);
-    system ("$path_to_bowtie","-f","$file_list","BS_CT");
+    my $cmd = "$path_to_bowtie -f $file_list BS_CT";
+    if($bowtie_threads) {
+        $cmd = "$cmd --threads $bowtie_threads";
+    }
+    system ($cmd);
     @fasta_files=();
     $file_list= '';
 
@@ -216,7 +230,11 @@ sub launch_bowtie_indexer{
     $file_list = join (',',@fasta_files);
     $verbose and print "$file_list\n\n";
     # sleep(2);
-    exec ("$path_to_bowtie","-f","$file_list","BS_GA");
+    $cmd = "$path_to_bowtie -f $file_list BS_GA";
+    if($bowtie_threads) {
+        $cmd = "$cmd --threads $bowtie_threads";
+    }
+    exec ($cmd);
   }
 }
 
