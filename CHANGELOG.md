@@ -3,6 +3,8 @@
 ## Changelog for Bismark v0.20.0_dev
 
  - Added Travis CI testing for most Bismark modules and commands. This should help spotting problems a early, e.g. if I release a new version right before the Christmas holidays....
+ 
+ - add sample text
 
 ## Changelog for Bismark v0.20.0
 
