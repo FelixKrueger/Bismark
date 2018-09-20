@@ -44,7 +44,7 @@ GetOptions ('verbose' => \$verbose,
 	    'man' => \$man,
 	    'version' => \$version,
 	    'path_to_bowtie:s' => \$path_to_bowtie,
-        'bowtie_threads:i' => \$bowtie_threads,
+	    'bowtie_threads:i' => \$bowtie_threads,
 	    'single_fasta' => \$single_fasta,
 	    'bowtie2' => \$bowtie2,
 	    'bowtie1' => \$bowtie1,
@@ -88,6 +88,13 @@ if ($genome_folder){
 }
 else{
     die "Please specify a genome folder to be used for bisulfite conversion\n\n";
+}
+if (defined $bowtie_threads){
+    die "--bowtie_threads should have a value of 2 or more. Pelase respecify\n\n" unless ($bowtie_threads > 1);
+
+    if ($bowtie1){
+	die "The Bowtie1-based genome preparation does not support multi-threading. Please lose the option '--bowtie_threads $bowtie_threads', and try again\n\n";
+    }
 }
 
 
@@ -651,6 +658,8 @@ OPTIONS:
 
 --bowtie1                This will create bisulfite indexes for Bowtie 1. (Default: OFF).
 
+--bowtie_threads INT     Use several threads for the genome indexing process. Only works with Bowtie 2.
+
 --single_fasta           Instruct the Bismark Indexer to write the converted genomes into
                          single-entry FastA files instead of making one multi-FastA file (MFA)
                          per chromosome. This might be useful if individual bisulfite converted
@@ -674,6 +683,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 26 April 2018.
+This script was last modified on 20 September 2018.
 HOW_TO
 }
