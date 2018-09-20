@@ -4,7 +4,11 @@
 
  - Added Travis CI testing for most Bismark modules and commands. This should help spotting problems a early, e.g. if I release a new version right before the Christmas holidays....
  
- - add sample text
+# bismark_genome_preparation
+
+- Added multi-threading to the Bowtie2-based genome preparation (thanks to Rahul Karnik)
+
+
 
 ## Changelog for Bismark v0.20.0
 
