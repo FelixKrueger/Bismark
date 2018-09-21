@@ -26,7 +26,7 @@ my $help;
 my $version;
 my $man;
 my $path_to_bowtie;
-my $bowtie_threads;
+my $parallel;
 my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
@@ -37,14 +37,14 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.20.0';
+my $bismark_version = 'v0.20.0_dev';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
 	    'man' => \$man,
 	    'version' => \$version,
 	    'path_to_bowtie:s' => \$path_to_bowtie,
-	    'bowtie_threads:i' => \$bowtie_threads,
+	    'parallel:i' => \$parallel,
 	    'single_fasta' => \$single_fasta,
 	    'bowtie2' => \$bowtie2,
 	    'bowtie1' => \$bowtie1,
@@ -89,12 +89,13 @@ if ($genome_folder){
 else{
     die "Please specify a genome folder to be used for bisulfite conversion\n\n";
 }
-if (defined $bowtie_threads){
-    die "--bowtie_threads should have a value of 2 or more. Pelase respecify\n\n" unless ($bowtie_threads > 1);
+if (defined $parallel){
+    die "--parallel should have a value of 2 or more. Please respecify\n\n" unless ($parallel > 1);
 
     if ($bowtie1){
-	die "The Bowtie1-based genome preparation does not support multi-threading. Please lose the option '--bowtie_threads $bowtie_threads', and try again\n\n";
+	die "The Bowtie1-based genome preparation does not support multi-threading. Please lose the option '--parallel $parallel', and try again\n\n";
     }
+    warn "Using $parallel threads for the top and bottom strand indexing processes each, so using ",$parallel*2," cores in total\n"; sleep(1);
 }
 
 
@@ -182,8 +183,8 @@ sub launch_bowtie_indexer{
     my @fasta_files = <*.fa>;
     my $file_list = join (',',@fasta_files);
     my $cmd = "$path_to_bowtie -f $file_list BS_CT";
-    if($bowtie_threads) {
-        $cmd = "$cmd --threads $bowtie_threads";
+    if($parallel) {
+        $cmd = "$cmd --threads $parallel";
     }
     $verbose and print "Parent process: Starting to index C->T converted genome with the following command:\n\n";
     $verbose and print "$cmd\n\n";
@@ -201,8 +202,8 @@ sub launch_bowtie_indexer{
     my @fasta_files = <*.fa>;
     my $file_list = join (',',@fasta_files);
     my $cmd = "$path_to_bowtie -f $file_list BS_GA";
-    if($bowtie_threads) {
-        $cmd = "$cmd --threads $bowtie_threads";
+    if($parallel) {
+        $cmd = "$cmd --threads $parallel";
     }
     $verbose and print "Child process: Starting to index G->A converted genome with the following command:\n\n";
     $verbose and print "$cmd\n\n";
@@ -223,8 +224,8 @@ sub launch_bowtie_indexer{
     $verbose and print "$file_list\n\n";
     # sleep(2);
     my $cmd = "$path_to_bowtie -f $file_list BS_CT";
-    if($bowtie_threads) {
-        $cmd = "$cmd --threads $bowtie_threads";
+    if($parallel) {
+        $cmd = "$cmd --threads $parallel";
     }
     system ($cmd);
     @fasta_files=();
@@ -238,8 +239,8 @@ sub launch_bowtie_indexer{
     $verbose and print "$file_list\n\n";
     # sleep(2);
     $cmd = "$path_to_bowtie -f $file_list BS_GA";
-    if($bowtie_threads) {
-        $cmd = "$cmd --threads $bowtie_threads";
+    if($parallel) {
+        $cmd = "$cmd --threads $parallel";
     }
     exec ($cmd);
   }
@@ -658,7 +659,9 @@ OPTIONS:
 
 --bowtie1                This will create bisulfite indexes for Bowtie 1. (Default: OFF).
 
---bowtie_threads INT     Use several threads for the genome indexing process. Only works with Bowtie 2.
+--parallel INT           Use several threads for each indexing process to speed up the genome preparation step.
+                         Remember that the indexing is run twice in parallel already (for the top and bottom strand
+                         separately), so e.g. '--parallel 4' will use 8 threads in total. Only works with Bowtie 2.
 
 --single_fasta           Instruct the Bismark Indexer to write the converted genomes into
                          single-entry FastA files instead of making one multi-FastA file (MFA)
@@ -683,6 +686,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 20 September 2018.
+This script was last modified on 21 September 2018.
 HOW_TO
 }
