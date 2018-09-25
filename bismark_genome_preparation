@@ -93,7 +93,7 @@ if (defined $parallel){
     die "--parallel should have a value of 2 or more. Please respecify\n\n" unless ($parallel > 1);
 
     if ($bowtie1){
-	die "The Bowtie1-based genome preparation does not support multi-threading. Please lose the option '--parallel $parallel', and try again\n\n";
+	warn "PLEASE NOTICE: Parallel indexing with Bowtie1 requires a very recent version of Bowtie (v1.2.1 or newer)\n\n"; sleep(3);
     }
     warn "Using $parallel threads for the top and bottom strand indexing processes each, so using ",$parallel*2," cores in total\n"; sleep(1);
 }
@@ -492,7 +492,7 @@ sub create_bisulfite_genome_folders{
       die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
   }
 
-  warn "Bisulfite Genome Indexer version $bismark_version (last modified 26 April 2018)\n";
+  warn "Bisulfite Genome Indexer version $bismark_version (last modified 25 September 2018)\n";
   sleep (1);
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
@@ -686,6 +686,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 21 September 2018.
+This script was last modified on 25 September 2018.
 HOW_TO
 }
