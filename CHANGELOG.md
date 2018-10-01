@@ -9,6 +9,10 @@
 - Added multi-threading to the Bowtie2-based genome preparation (thanks to Rahul Karnik)
 
 
+### bismark2summary
+
+- Fixed division by zero errors when a C-context was not covered by *any* reads. This will now use values of `0/0` for the context plots, which looks a bit odd, but at least it still works.
+
 
 ## Changelog for Bismark v0.20.0
 
