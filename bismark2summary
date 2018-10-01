@@ -22,9 +22,9 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.20.0';
+my $bismark_version = '0.20.0_dev';
 
-# Last modified 15 08 2018
+# Last modified 01 10 2018
 
 my ($report_basename,$page_title,$verbose) = process_commandline();
 
@@ -116,7 +116,7 @@ sub print_helpfile{
   --help                      Displays this help message and exits.
 
 
-                                                Script last modified: 15 August 2018
+                                                Script last modified: 1 October 2018
 
 EOF
     ;
@@ -1597,13 +1597,42 @@ foreach my $index (0..$#meth_cpg_string_arr){
     my $total_CHG = $meth_chg_string_arr[$index] + $unmeth_chg_string_arr[$index];  
     my $total_CHH = $meth_chh_string_arr[$index] + $unmeth_chh_string_arr[$index];
 
-    my $p_CpG_meth   = sprintf("%.2f",$meth_cpg_string_arr[$index] / $total_CpG * 100);
-    my $p_CpG_unmeth = 100 - $p_CpG_meth;
-    my $p_CHG_meth   = sprintf("%.2f",$meth_chg_string_arr[$index] / $total_CHG * 100);
-    my $p_CHG_unmeth = 100 - $p_CHG_meth;
-    my $p_CHH_meth   = sprintf("%.2f",$meth_chh_string_arr[$index] / $total_CHH * 100);
-    my $p_CHH_unmeth = 100 - $p_CHH_meth;   
+    # warn "Trying to work with these numbers:\nCpG: $meth_cpg_string_arr[$index]\nCpG: $meth_chg_string_arr[$index]\nCHH: $meth_chh_string_arr[$index]\n";
+    # warn "Total: CpG: $total_CpG\nCHG: $total_CHG\nCHH: $total_CHH\n\n";
+    my $p_CpG_meth;
+	my $p_CpG_unmeth;
+	if ($total_CpG == 0){ # if this context was not covered at all we assign '0' as the value for percentages. This will get plotted in a funky way but does not break the code
+		$p_CpG_meth = 'NA';
+		$p_CpG_unmeth  = 'NA';
+	}
+	else{
+		$p_CpG_meth = sprintf("%.2f",$meth_cpg_string_arr[$index] / $total_CpG * 100);
+		$p_CpG_unmeth = 100 - $p_CpG_meth;
+	}
+	
+    my $p_CHG_meth;
+	my $p_CHG_unmeth;
+	if ($total_CHG == 0){ # if this context was not covered at all we assign '0' as the value for percentages. This will get plotted in a funky way but does not break the code
+		$p_CHG_meth = '0';
+		$p_CHG_unmeth  = '0';
+	}
+	else{
+		$p_CHG_meth = sprintf("%.2f",$meth_chg_string_arr[$index] / $total_CHG * 100);
+		$p_CHG_unmeth = 100 - $p_CHG_meth;
+	}
+ 
 
+	my $p_CHH_meth;
+	my $p_CHH_unmeth;
+	if ($total_CHG == 0){ # if this context was not covered at all we assign '0' as the value for percentages. This will get plotted in a funky way but does not break the code
+		$p_CHH_meth = '0';
+		$p_CHH_unmeth  = '0';
+	}
+	else{
+		$p_CHH_meth = sprintf("%.2f",$meth_chh_string_arr[$index] / $total_CHH * 100);
+		$p_CHH_unmeth = 100 - $p_CHH_meth;   
+	}
+	
     if ($verbose){
         print "Meth CpG:   $meth_cpg_string_arr[$index] ($p_CpG_meth%)\n";
         print "Unmeth CpG: $unmeth_cpg_string_arr[$index] ($p_CpG_unmeth%)\n";
