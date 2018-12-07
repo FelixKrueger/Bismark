@@ -13,6 +13,10 @@
 
 - Fixed division by zero errors when a C-context was not covered by *any* reads. This will now use values of `0/0` for the context plots, which looks a bit odd, but at least it still works.
 
+### bam2nuc
+
+- Changed `samtools` to `$samtools_path` during single-end/paired-end file testing.
+
 
 ## Changelog for Bismark v0.20.0
 
