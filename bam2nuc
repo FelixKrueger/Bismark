@@ -254,7 +254,7 @@ sub calc_single_end{
 
 sub test_file{
     my $in = shift;   
-    open (TEST,"samtools view -H $in |") or die $!;
+    open (TEST,"$samtools_path view -H $in |") or die $!;
     
     while (<TEST>){
 	chomp;
