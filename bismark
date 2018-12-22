@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.20.0';
+my $bismark_version = 'v0.20.0_dev';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -7875,7 +7875,7 @@ VERSION
   ### OUTPUT REQUESTED AS BAM FILE (default)
   if ($bam or $cram){
       if ($vanilla){
-	  die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
+	  	die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
       }
 
       ### PATH TO SAMTOOLS
@@ -8376,11 +8376,16 @@ VERSION
 	  die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
       }
       while (1){
-	  my $mate1 = shift @mates1;
-	  my $mate2 = shift @mates2;
-	  last unless ($mate1 and $mate2);
-	  push @filenames,"$mate1,$mate2";
+	  	my $mate1 = shift @mates1;
+	  	my $mate2 = shift @mates2;
+	  	last unless ($mate1 and $mate2);
+
+	  	if ($mate1 eq $mate2){
+	  		die "\n[FATAL ERROR]: Read 1 ($mate1) and Read 2 ($mate2) files were specified as the exact same file, which is almost certainly unintentional (and wrong). Please re-specify!\n\n";
+	  	}
+	 	push @filenames,"$mate1,$mate2";
       }
+
       if ($bowtie2){
 	  push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
 	  push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
