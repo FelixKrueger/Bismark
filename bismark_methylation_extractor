@@ -8,7 +8,7 @@ use Carp;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-18, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.20.0';
+my $version = 'v0.20.0_dev';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht) = process_commandline();
 
 ### only needed for bedGraph output
@@ -237,7 +237,7 @@ foreach my $filename (@filenames){
   unless ($vanilla){
       # Testing if the file appears to be truncated, in which case we bail with a big scary warning message
       if ($filename =~ /(\.bam$)/){
-	  bam_isTruncated($filename);
+	       bam_isTruncated($filename);
       }
       
       ### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
@@ -1143,6 +1143,10 @@ VERSION
 
 	warn "Trying to determine the type of mapping from the SAM header line of file $file\n"; sleep(1);
 	
+  unless (-e $file){
+      die "\n[FATAL ERROR]:\tFile >>$file<< did not exist. Please re-specify file names and try again...\n\n";
+  }
+
 	### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
 	if ($file =~ /\.gz$/){
 	    open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
@@ -5812,16 +5816,16 @@ sub isBam{
 
   if ($bam_in_disguise){
     if ($bam_in_disguise =~ /^BAM/){
-      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+      # close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
       return 1;
     }
     else{
-      close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+      # close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
      return 0;
     }
   }
   else{
-    close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
+    # close (DISGUISE) or warn "Had trouble closing filehandle BAM in disguise: $!\n";
     return 0;
   }
 }
