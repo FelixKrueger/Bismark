@@ -2,12 +2,19 @@
 
 ## Changelog for Bismark v0.20.0_dev
 
- - Added Travis CI testing for most Bismark modules and commands. This should help spotting problems a early, e.g. if I release a new version right before the Christmas holidays....
+### bismark
+
+- Added check to prevent users from inadvertently specifying the very same file as both R1 and R2
+
+- Added a check for file truncation, or more generally the same number of reads between R1 and R2 for paired-end FastQ files (directional, non-directional and PBAT mode.
+
+- Added Travis CI testing for most Bismark modules and commands. This should help spotting problems a early, e.g. if I release a new version right before the Christmas holidays ...
  
 ### bismark_genome_preparation
 
 - Added multi-threading to the Bowtie2-based genome preparation (thanks to Rahul Karnik)
 
+- Added test to see whether specified files exist, or die otherwise.
 
 ### bismark2summary
 
