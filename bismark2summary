@@ -5,9 +5,9 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-18, Felix Krueger <felix.krueger@babraham.ac.uk>.
+## This program is Copyright (C) 2010-19, Felix Krueger <felix.krueger@babraham.ac.uk>.
 ## Thanks to Phil Ewels <phil.ewels@scilifelab.se> (who wrote a first version of this
-## script in 2013 or so when it was still legal to use Highcharts.js (or maybe it 
+## script in 2013 or so when it was still 'legal' to use Highcharts.js (or maybe it 
 ## never was?....))
 
 ## This program is free software: you can redistribute it and/or modify
@@ -24,7 +24,7 @@ use lib "$RealBin/../lib";
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 my $bismark_version = '0.20.0_dev';
 
-# Last modified 01 10 2018
+# Last modified 03 01 2019
 
 my ($report_basename,$page_title,$verbose) = process_commandline();
 
@@ -60,7 +60,7 @@ sub process_commandline{
                                  powered by Plot.ly
 
                            bismark2summary version: $bismark_version
-                          Copyright 2010-18 Felix Krueger
+                          Copyright 2010-19 Felix Krueger
                                Babraham Bioinformatics
                  www.bioinformatics.babraham.ac.uk/projects/bismark/
                       https://github.com/FelixKrueger/Bismark
@@ -116,7 +116,7 @@ sub print_helpfile{
   --help                      Displays this help message and exits.
 
 
-                                                Script last modified: 1 October 2018
+                                                Script last modified: 3 January 2019
 
 EOF
     ;
@@ -1458,7 +1458,16 @@ my @p_ambig_aligned;
 foreach my $index (0..$#aligned_arr){
 	my $total;
 	if ($aligned){ # raw alignments, e.g. RRBS
+
+        if ($aligned_arr[$index] eq ''){
+            die "\n\nIt looks like there is a mix of samples, e.g. RRBS as well as WGBS, in this folder. Please consider running bismark2summary only on samples of the same data type,\nor specify the input files manually (--help for more information). Extiting...\n\n";
+        }
+
 		$total = $aligned_arr[$index] + $no_seq_arr[$index] + $not_aligned_arr[$index] +$ambig_aligned_arr[$index];
+        # warn "Aligned: >$aligned_arr[$index]<\n"; sleep(1);
+        # warn "No Seq: $no_seq_arr[$index]\n"; sleep(1);
+        # warn "Not Aligned: $not_aligned_arr[$index]\n"; sleep(1);
+        # warn "Ambig aligned: $ambig_aligned_arr[$index]\n"; sleep(1);
 	}
 	else{ # including de-duplicated reads, $aligned was set to '' in the section above
 		$total = $unique_alignments_arr[$index] + $dup_alignments_arr[$index] + $no_seq_arr[$index] + $not_aligned_arr[$index] +$ambig_aligned_arr[$index];
