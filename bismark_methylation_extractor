@@ -1247,16 +1247,7 @@ VERSION
     $coverage_threshold = 1;
   }
 
-  ### SORT buffer size
-  if (defined $sort_size){
-    unless ($sort_size =~ /^\d+\%$/ or $sort_size =~ /^\d+(K|M|G|T)$/){
-      die "Please select a buffer size as percentage (e.g. --buffer_size 20%) or a number to be multiplied with K, M, G, T etc. (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line\n";
-    }
-  }
-  else{
-    $sort_size = '2G';
-  }
-
+ 
   if ($zero){
     die "Option '--zero' is only available if  '--bedGraph' or '--cytosine_report' are specified as well. Please respecify\n" unless ($cytosine_report or $bedGraph);
   }
@@ -1301,7 +1292,17 @@ VERSION
 	  die "The options '--ample_mem' and '--buffer_size' are mutually exclusive. Please pick just one and try again.\n\n";
       }
   }
-  
+ 
+	### SORT buffer size
+  if (defined $sort_size){
+    unless ($sort_size =~ /^\d+\%$/ or $sort_size =~ /^\d+(K|M|G|T)$/){
+      die "Please select a buffer size as percentage (e.g. --buffer_size 20%) or a number to be multiplied with K, M, G, T etc. (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line\n";
+    }
+  }
+  else{
+    $sort_size = '2G';
+  }
+ 
   if ($gazillion){
     if ($ample_mem){
       die "You can't currently select '--ample_mem' together with '--gazillion'. Make your pick!\n\n";
@@ -6128,7 +6129,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 11 July 2018.
+This script was last modified on 23 January 2019.
 
 HOW_TO
 }
