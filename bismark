@@ -86,7 +86,7 @@ sub multi_process_handling{
 	}
       }
       else{
-	die "Forking unsuccessful. Proceeding using a single thread only\n";
+	  die "[FATAL ERROR:] Forking unsuccessful. This normally means that something is fundamentally not working with the fork command. Please run again without the --parallel option, or ask your system admin to look into this.\n";
       }
     }
 
