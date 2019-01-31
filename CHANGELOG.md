@@ -9,21 +9,29 @@
 - Added a check for file truncation, or more generally the same number of reads between R1 and R2 for paired-end FastQ files (directional, non-directional and PBAT mode.
 
 - Added Travis CI testing for most Bismark modules and commands. This should help spotting problems a early, e.g. if I release a new version right before the Christmas holidays ...
+
+- Changed error message for failed `fork` command in `--parallel` mode to `[FATAL ERROR:] ...` to alert users that something isn't working as intended.
  
 ### bismark_genome_preparation
 
 - Added multi-threading to the Bowtie2-based genome preparation (thanks to Rahul Karnik)
 
-- Added test to see whether specified files exist, or die otherwise.
+- Added test to see whether specified files exist, or die otherwise
+
 
 ### bismark2summary
 
 - Fixed division by zero errors when a C-context was not covered by *any* reads. This will now use values of `0/0` for the context plots, which looks a bit odd, but at least it still works.
 
+- Detects if (non-deduplicated) RRBS and WGBS samples are mixed together, and bails with a meaningful error message.
+
 ### bam2nuc
 
 - Changed `samtools` to `$samtools_path` during single-end/paired-end file testing.
 
+### bismark_methylation_extractor
+
+- Changed the order in which `--ample_mem` and `--buffer_size` are checked.
 
 ## Changelog for Bismark v0.20.0
 
