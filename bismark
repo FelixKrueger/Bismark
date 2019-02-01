@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.20.0_dev';
+my $bismark_version = 'v0.20.1';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -7809,7 +7809,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright 2010-18 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                 https://github.com/FelixKrueger/Bismark
 
@@ -7825,6 +7825,7 @@ VERSION
 
   if ($bowtie1){
     $bowtie2 = 0;
+    warn ">>> Please note that the use of Bowtie 1 is now deprecated. Bowtie 1 support will be removed from the Bismark suite in due course. <<<\n"; sleep(3);
   }
   else{ # Bowtie 2 is now the default mode (as of 27 July 2015)
     $bowtie2 = 1;
@@ -10207,7 +10208,8 @@ BOWTIE 2 SPECIFIC OPTIONS
 
 --bowtie1                Uses Bowtie 1 instead of Bowtie 2, which might be a good choice for faster and very short
                          alignments. Bismark assumes that raw sequence data is adapter and/or quality trimmed where
-                         appropriate. Default: off.
+                         appropriate. Default: off. PLEASE NOTE: that the use of Bowtie 1 is now deprecated. Bowtie 1
+                         support will be removed from the Bismark suite in due course.
 
 --bowtie2                Default: ON. Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
                          alignments, i.e. searches for alignments involving all read characters (also called

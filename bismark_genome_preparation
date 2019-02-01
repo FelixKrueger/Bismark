@@ -6,7 +6,7 @@ use Getopt::Long;
 $|++;
 
 
-## This program is Copyright (C) 2010-18, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.20.0_dev';
+my $bismark_version = 'v0.20.1';
 
 GetOptions ('verbose' => \$verbose,
 	    'help' => \$help,
@@ -62,8 +62,11 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-18 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
+               https://github.com/FelixKrueger/Bismark
+	      
+
 
 VERSION
   exit;
@@ -108,6 +111,8 @@ if ($bowtie1){
     }
     $bowtie2 = 0;
     $verbose and print "Aligner to be used: Bowtie (1)\n";
+
+    warn "Please note that the use of Bowtie 1 is now deprecated. Bowtie 1 support will be removed from the Bismark suite in due course.\n"; sleep(3);
 }
 else{ # Bowtie 2 is now the default mode (as of 27 July 2015)
     if ($bowtie2){
@@ -492,8 +497,7 @@ sub create_bisulfite_genome_folders{
       die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
   }
 
-  warn "Bisulfite Genome Indexer version $bismark_version (last modified 25 September 2018)\n";
-  sleep (1);
+  warn "Bisulfite Genome Indexer version $bismark_version (last modified 01 February 2019)\n";
 
   # creating a directory inside the genome folder to store the bisfulfite genomes unless it already exists
   my $bisulfite_dir = "${genome_folder}Bisulfite_Genome/";
@@ -634,6 +638,8 @@ two simultaneous instances of the Bowtie 1 or 2 indexer (bowtie-build or bowtie2
 that the indexing process can take up to several hours; this will mainly depend on genome size
 and system resources.
 
+>>> PLEASE NOTE THAT USING BOWTIE 1 IS NOW DEPRECATED, AND WILL BE REMOVED FROM BISMARK IN FUTURE VERSIONS <<<
+
 
 
 The following is a brief description of command line options and arguments to control the
@@ -657,7 +663,8 @@ OPTIONS:
 
 --bowtie2                This will create bisulfite indexes for Bowtie 2. (Default: ON).
 
---bowtie1                This will create bisulfite indexes for Bowtie 1. (Default: OFF).
+--bowtie1                This will create bisulfite indexes for Bowtie 1. (Default: OFF). PLEASE NOTE THAT USING
+                         BOWTIE 1 IS NOW DEPRECATED, AND WILL BE REMOVED FROM BISMARK IN FUTURE VERSIONS. 
 
 --parallel INT           Use several threads for each indexing process to speed up the genome preparation step.
                          Remember that the indexing is run twice in parallel already (for the top and bottom strand
@@ -686,6 +693,6 @@ ARGUMENTS:
                          (with the file extension: .fa or .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 25 September 2018.
+This script was last modified on 01 February 2019.
 HOW_TO
 }

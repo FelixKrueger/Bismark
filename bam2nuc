@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-18, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.20.0';
+my $bam2nuc_version = 'v0.20.1';
 
 my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
@@ -380,8 +380,10 @@ sub process_commandline{
                                      bam2nuc
 
                            Bismark Version: $bam2nuc_version
-              Copyright 2010-16 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
+                     https://github.com/FelixKrueger/Bismark
+	       
 
 
 VERSION
@@ -650,7 +652,7 @@ TT      5055    10.96   1314144 10.80   0.004
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 26 April 2018
+                              Script last modified: 07 Dec 2018
 
 EOF
     ;
