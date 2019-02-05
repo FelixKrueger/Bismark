@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -2324,7 +2324,7 @@ sub process_single_end_fastA_file_for_methylation_call{
       next unless ($count > $skip);
     }
     if ($upto){
-      last if ($count > $upto);
+		last if ($count > $upto);
     }
 
     $counting{sequences_count}++;
@@ -5173,27 +5173,27 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
 ##########################################
 
 sub print_bisulfite_mapping_result_single_end{
-  my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
+	my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
 
-  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
-  if ($phred64){
-    $quality_value = convert_phred64_quals_to_phred33($quality_value);
-  }
-  elsif ($solexa){
-    $quality_value = convert_solexa_quals_to_phred33($quality_value);
-  }
+	### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+	if ($phred64){
+		$quality_value = convert_phred64_quals_to_phred33($quality_value);
+	}
+	# elsif ($solexa){
+	#		$quality_value = convert_solexa_quals_to_phred33($quality_value);
+	# }
 
-  ### We will add +1 bp to the starting position of single-end reads, as Bowtie 1 reports the index and not the bp position.
-  $methylation_call_params->{$identifier}->{position} += 1;
+	### We will add +1 bp to the starting position of single-end reads, as Bowtie 1 reports the index and not the bp position.
+	$methylation_call_params->{$identifier}->{position} += 1;
 
-  ### writing every uniquely mapped read and its methylation call to the output file
-  if ($vanilla){
-    my $bowtie1_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
-    print OUT "$bowtie1_output\n";
-  }
-  else{ # SAM output, default since Bismark v1.0.0
-    single_end_SAM_output($identifier,$sequence,$methylation_call_params,$quality_value); # at the end of the script
-  }
+	### writing every uniquely mapped read and its methylation call to the output file
+	if ($vanilla){
+		my $bowtie1_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
+		print OUT "$bowtie1_output\n";
+	}	
+	else{ # SAM output, default since Bismark
+		single_end_SAM_output($identifier,$sequence,$methylation_call_params,$quality_value); # at the end of the script
+	}
 }
 
 ##########################################
@@ -5201,25 +5201,25 @@ sub print_bisulfite_mapping_result_single_end{
 ##########################################
 
 sub print_bisulfite_mapping_result_single_end_bowtie2{
-  my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
+	my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
 
-  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
-  if ($phred64){
-    $quality_value = convert_phred64_quals_to_phred33($quality_value);
-  }
-  elsif ($solexa){
-    $quality_value = convert_solexa_quals_to_phred33($quality_value);
-  }
+	### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+	if ($phred64){
+		$quality_value = convert_phred64_quals_to_phred33($quality_value);
+	}
+	#elsif ($solexa){
+	#	$quality_value = convert_solexa_quals_to_phred33($quality_value);
+	#}
 
-  ### writing every mapped read and its methylation call to the SAM output file (unmapped and ambiguous reads were already printed)
+	### writing every mapped read and its methylation call to the SAM output file (unmapped and ambiguous reads were already printed)
 	single_end_SAM_output($identifier,$sequence,$methylation_call_params,$quality_value); # at the end of the script
 }
 
 ##########################################
-### PRINT PAIRED END ESULTS: Bowtie 1  ###
+### PRINT PAIRED END ESULTS: HISAT2    ###
 ##########################################
 
-sub print_bisulfite_mapping_results_paired_ends{
+sub print_bisulfite_mapping_results_paired_ends_hisat2{
   my ($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2)= @_;
 
   ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
@@ -6608,14 +6608,14 @@ sub biTransformFastQFiles_paired_end_bowtie1_gzip {
   }
 
 
-  if ($skip){
-    warn "Skipping the first $skip reads from $file_1 and $file_2\n";
-    sleep (1);
-  }
-  if ($upto){
-    warn "Processing reads up to sequence no. $upto from $file_1 and $file_2\n";
-    sleep (1);
-  }
+	if ($skip){
+		warn "Skipping the first $skip reads from $file_1 and $file_2\n";
+		sleep (1);
+	}
+	if ($upto){
+		warn "Processing reads up to sequence no. $upto from $file_1 and $file_2\n";
+		sleep (1);
+	}
 
   my $CT_plus_GA_infile = my $GA_plus_CT_infile = $filename;
 
@@ -7694,7 +7694,6 @@ sub process_command_line{
   my $qupto;
   my $phred64;
   my $phred33;
-  my $solexa;
   my $mismatches;
   my $seed_length;
   my $best;
@@ -7754,8 +7753,7 @@ sub process_command_line{
 				 's|skip=i'                => \$skip,
 				 'u|upto=i'                => \$qupto,
 				 'phred33-quals'           => \$phred33,
-				 'phred64-quals|solexa1'   => \$phred64,
-				 'solexa-quals'            => \$solexa,
+				 'phred64-quals'           => \$phred64,
 				 'n|seedmms=i'             => \$mismatches,
 				 'l|seedlen=i'             => \$seed_length,
 				 'no_best'                 => \$best,
@@ -8161,62 +8159,52 @@ VERSION
 	### INPUT OPTIONS
 
 	### SEQUENCE FILE FORMAT
-	### exits if both fastA and FastQ were specified
+	### exits if both FastA and FastQ were specified
 	if ($fasta and $fastq){
 		die "Only one sequence filetype can be specified (fastA or fastQ)\n";
 	}
 
-	### unless fastA is specified explicitely, fastQ sequence format is expected by default
-  if ($fasta){
-    print "FastA format specified\n";
-    $sequence_format = 'FASTA';
-    push @aligner_options, '-f';
-  }
-  elsif ($fastq){
-    print "FastQ format specified\n";
-    $sequence_format = 'FASTQ';
-    push @aligner_options, '-q';
-  }
-  else{
-    $fastq = 1;
-    print "FastQ format assumed (by default)\n";
-    $sequence_format = 'FASTQ';
-    push @aligner_options, '-q';
-  }
+	### unless fastA is specified explicitely, FastQ sequence format is expected by default
+	if ($fasta){
+		warn "FastA format specified\n";
+		$sequence_format = 'FASTA';
+		push @aligner_options, '-f';
+	}
+	elsif ($fastq){
+		warn "FastQ format specified\n";
+		$sequence_format = 'FASTQ';
+		push @aligner_options, '-q';
+	}
+	else{
+		$fastq = 1;
+		warn "FastQ format assumed (by default)\n";
+		$sequence_format = 'FASTQ';
+		push @aligner_options, '-q';
+	}	
+	
+	### SKIP
+	if ($skip){
+		warn "Skipping the first $skip reads from the input file\n";
+		# push @aligner_options,"-s $skip";
+	}
 
-  ### SKIP
-  if ($skip){
-    warn "Skipping the first $skip reads from the input file\n";
-    # push @aligner_options,"-s $skip";
-  }
+	### UPTO
+	if ($qupto){
+		warn "Processing sequences up to read no. $qupto from the input file\n";
+	}	
 
-  ### UPTO
-  if ($qupto){
-    warn "Processing sequences up to read no. $qupto from the input file\n";
-    if ($bowtie2){
-      #      push @aligner_options,"--upto $qupto"; ## slightly changed for Bowtie 2
-    }
-    else{
-      #     push @aligner_options,"--qupto $qupto";
-    }
-  }
+	### QUALITY VALUES
+	if ($phred33 and $phred64){
+		die "You can only specify one type of quality value at a time! (--phred33 or --phred64)";
+	}
+	if ($phred33){ ## if nothing else is specified $phred33 will be used as default by both Bowtie 1 and 2.
+		# Phred quality values work only when -q is specified
+		unless ($fastq){
+			die "Phred quality values works only when -q (FASTQ) is specified\n";
+		}
+		push @aligner_options,"--phred33";
+	}
 
-  ### QUALITY VALUES
-  if (($phred33 and $phred64) or ($phred33 and $solexa) or ($phred64 and $solexa)){
-    die "You can only specify one type of quality value at a time! (--phred33-quals or --phred64-quals or --solexa-quals)";
-  }
-  if ($phred33){ ## if nothing else is specified $phred33 will be used as default by both Bowtie 1 and 2.
-    # Phred quality values work only when -q is specified
-    unless ($fastq){
-      die "Phred quality values works only when -q (FASTQ) is specified\n";
-    }
-    if ($bowtie2){
-      push @aligner_options,"--phred33";
-    }
-    else{
-      push @aligner_options,"--phred33-quals";
-    }
-  }
 	if ($phred64){
 		# Phred quality values work only when -q is specified
 		unless ($fastq){
@@ -8228,56 +8216,27 @@ VERSION
 		$phred64 = 0;
 	}
 
-  if ($solexa){
-    if ($bowtie2){
-      die "The option '--solexa-quals' is not compatible with Bowtie 2. Please respecify!\n";
-    }
-    # Solexa to Phred value conversion works only when -q is specified
-    unless ($fastq){
-      die "Conversion from Solexa to Phred quality values works only when -q (FASTQ) is specified\n";
-    }
-    push @aligner_options,"--solexa-quals";
-  }
-  else{
-    $solexa = 0;
-  }
+	### ALIGNMENT OPTIONS
 
-  ### ALIGNMENT OPTIONS
+	### MISMATCHES
+	if (defined $mismatches){
+		if ($mismatches == 0 or $mismatches == 1){
+			push @aligner_options,"-N $mismatches";
+		}
+		else{
+			die "Please set the number of multiseed mismatches with '-N <int>' (where <int> can be 0 or 1)\n";
+		}
+	}
 
-  ### MISMATCHES
-  if (defined $mismatches){
-    if ($bowtie2){
-      if ($mismatches == 0 or $mismatches == 1){
-	push @aligner_options,"-N $mismatches";
-      }
-      else{
-	die "Please set the number of multiseed mismatches for Bowtie 2 with '-N <int>' (where <int> can be 0 or 1)\n";
-      }
-    }
-    else{
-      if ($mismatches >= 0 and $mismatches <= 3){
-	push @aligner_options,"-n $mismatches";
-      }
-      else{
-	die "Please set the number of seed mismatches for Bowtie 1 with '-n <int>' (where <int> can be 0,1,2 or 3)\n";
-      }
-    }
-  }
-  else{
-    unless ($bowtie2){
-      push @aligner_options,"-n 1"; # setting -n to 1 by default (for use with Bowtie only) because it is much quicker than the default mode of -n 2
-    }
-  }
-
-  ### SEED LENGTH
-  if (defined $seed_length){
-    if ($bowtie2){
-      push @aligner_options,"-L $seed_length";
-    }
-    else{
-      push @aligner_options,"-l $seed_length";
-    }
-  }
+	### SEED LENGTH
+	if (defined $seed_length){
+		if ($bowtie2){
+			push @aligner_options,"-L $seed_length";
+		}
+		else{
+			push @aligner_options,"-l $seed_length";
+		}	
+	}
 
   ### MISMATCH CEILING
   if (defined $ceiling){
@@ -8699,7 +8658,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
 }
 
 
@@ -10012,22 +9971,15 @@ Input:
 
 -u/--upto <int>          Only aligns the first <int> reads or read pairs from the input. Default: no limit.
 
---phred33-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 33. Default: on.
+--phred33-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 33. Default: ON.
 
 --phred64-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 64. Default: off.
 
---solexa-quals           Convert FASTQ qualities from solexa-scaled (which can be negative) to phred-scaled
-                         (which can't). The formula for conversion is:
-                         phred-qual = 10 * log(1 + 10 ** (solexa-qual/10.0)) / log(10). Used with -q. This
-                         is usually the right option for use with (unconverted) reads emitted by the GA
-                         Pipeline versions prior to 1.3. Works only for Bowtie 1. Default: off.
+--path_to_bowtie2        The full path </../../> to the Bowtie 2 installation on your system. If not
+                         specified it is assumed that Bowtie 2 is in the PATH.
 
---solexa1.3-quals        Same as --phred64-quals. This is usually the right option for use with (unconverted)
-                         reads emitted by GA Pipeline version 1.3 or later. Default: off.
-
---path_to_bowtie         The full path </../../> to the Bowtie (1 or 2) installation on your system. If not
-                         specified it is assumed that Bowtie (1 or 2) is in the PATH.
-
+--path_to_hisat2         The full path </../../> to the HISAT2 installation on your system. If not
+                         specified it is assumed that HISAT2 is in the PATH.
 
 Alignment:
 
