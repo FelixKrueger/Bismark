@@ -7,11 +7,11 @@ install:
   - wget https://github.com/BenLangmead/bowtie2/releases/download/v2.2.9/bowtie2-2.2.9-linux-x86_64.zip -O ~/bin/bowtie2-2.2.9-linux-x86_64.zip
   - unzip ~/bin/bowtie2-2.2.9-linux-x86_64.zip -d ~/bin/
   - mv ~/bin/bowtie2-2.2.9/* ~/bin/ 
-  # Installing Bowtie 1
-  - wget https://sourceforge.net/projects/bowtie-bio/files/bowtie/1.2.2/bowtie-1.2.2-linux-x86_64.zip/download -O ~/bin/bowtie-1.2.2-linux-x86_64.zip
-  - unzip ~/bin/bowtie-1.2.2-linux-x86_64.zip -d ~/bin/
-  - mv ~/bin/bowtie-1.2.2-linux-x86_64/bowtie* ~/bin/ 
-   # installing Samtools
+  # Installing HISAT2
+  - wget http://ccb.jhu.edu/software/hisat2/dl/hisat2-2.1.0-Linux_x86_64.zip -O ~/bin/hisat2-2.1.0-Linux_x86_64.zip
+  - unzip ~/bin/hisat2-2.1.0-Linux_x86_64.zip
+  - mv ~/bin/hisat2-2.1.0/* ~/bin/ 
+  # installing Samtools
   - wget https://github.com/samtools/samtools/releases/download/1.9/samtools-1.9.tar.bz2
   - tar xjvf samtools-1.9.tar.bz2
   - cd samtools-1.9
@@ -25,6 +25,11 @@ install:
 script:
   # Using Bowtie 2
   - "./bismark_genome_preparation --verbose ./travis_files/"
+  - "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
+  - "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
+  - "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
+  - "./bismark_genome_preparation --verbose --slam ./travis_files/"
+  - "./bismark_genome_preparation --verbose --slam --parallel 4 ./travis_files/"
   ## PE
   - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
@@ -36,8 +41,11 @@ script:
   - "./deduplicate_bismark --bam test_R1_bismark_bt2.bam"
   - "./bismark_methylation_extractor test_R1_bismark_bt2.bam    --gzip --CX --bed --genome ./travis_files/"
  
-  # Using Bowtie 1 results
-  - "./bismark_genome_preparation --bowtie1 --verbose ./travis_files/"
+  # Using HISAT2 results
+  - "./bismark_genome_preparation --hisat2 --verbose ./travis_files/"
+  - "./bismark_genome_preparation --hisat2 --slam --verbose ./travis_files/"
+  - "./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/"
+  - "./bismark_genome_preparation --hisat2 --slame --verbose --parallel 4 ./travis_files/"
   - "./bismark --genome ./travis_files/ --bowtie1 ./travis_files/test_R1.fastq.gz"
   - "./bismark --genome ./travis_files/ --bowtie1 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   # Multicore
