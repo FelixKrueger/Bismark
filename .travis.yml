@@ -10,7 +10,7 @@ install:
   # Installing HISAT2
   - wget http://ccb.jhu.edu/software/hisat2/dl/hisat2-2.1.0-Linux_x86_64.zip -O ~/bin/hisat2-2.1.0-Linux_x86_64.zip
   - unzip ~/bin/hisat2-2.1.0-Linux_x86_64.zip
-  - mv ~/bin/hisat2-2.1.0/* ~/bin/ 
+  - mv ~/bin/hisat2-2.1.0/* ~/bin/ -d ~/bin/
   # installing Samtools
   - wget https://github.com/samtools/samtools/releases/download/1.9/samtools-1.9.tar.bz2
   - tar xjvf samtools-1.9.tar.bz2
