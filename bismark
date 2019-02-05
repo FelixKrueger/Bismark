@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.20.1';
+my $bismark_version = 'v0.20.1_dev';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$bowtie_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -915,37 +915,37 @@ sub merge_individual_mapping_reports{
     $report_file = ${basename};
   }
 
-  if ($single_end){
-    if ($bowtie2){
-      $report_file .= '_bismark_bt2_SE_report.txt';
-    }
-    else{
-      $report_file .= '_bismark_SE_report.txt';
-    }
-  }
-  else{
-    if ($bowtie2){
-      $report_file .= '_bismark_bt2_PE_report.txt';
-    }
-    else{
-      $report_file .= '_bismark_PE_report.txt';
-    }
-  }
-  warn "Writing report to ${output_dir}${report_file}\n";
-  open (REPORT,'>',"$output_dir$report_file") or die "Failed to write to ${output_dir}${report_file}: $!\n";
+	if ($single_end){
+		if ($bowtie2){
+			$report_file .= '_bismark_bt2_SE_report.txt';
+		}
+		else{
+			$report_file .= '_bismark_SE_report.txt';
+		}
+	}
+	else{
+		if ($bowtie2){
+			$report_file .= '_bismark_bt2_PE_report.txt';
+		}
+		else{
+			$report_file .= '_bismark_PE_report.txt';
+		}
+	}
+	warn "Writing report to ${output_dir}${report_file}\n";
+	open (REPORT,'>',"$output_dir$report_file") or die "Failed to write to ${output_dir}${report_file}: $!\n";
 
-  foreach my $temp(@$temp_reports){
-    $temp =~ s/.*\///; # removing path information
-  }
+	foreach my $temp(@$temp_reports){
+		$temp =~ s/.*\///; # removing path information
+	}
 
-  warn "Now merging temporary reports @$temp_reports into >>> ${output_dir}${report_file} <<<\n";
+	warn "Now merging temporary reports @$temp_reports into >>> ${output_dir}${report_file} <<<\n";
 
-  if ($single_end){
-    print REPORT "Bismark report for: $original_filename_1 (version: $bismark_version)\n";
-  }
-  else{ # paired-end
-    print REPORT "Bismark report for: $original_filename_1 and $original_filename_2 (version: $bismark_version)\n";
-  }
+	if ($single_end){
+		print REPORT "Bismark report for: $original_filename_1 (version: $bismark_version)\n";
+	}
+	else{ # paired-end
+		print REPORT "Bismark report for: $original_filename_1 and $original_filename_2 (version: $bismark_version)\n";
+	}
 
 
   my $first = 0;
@@ -1650,10 +1650,10 @@ sub start_methylation_call_procedure_single_ends {
   }
 
   if ($bowtie2){
-      print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+      print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-      print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+      print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
 
@@ -1778,10 +1778,10 @@ sub start_methylation_call_procedure_paired_ends {
   print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2 (version: $bismark_version)\n";
 
   if ($bowtie2){
-    print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n";
+    print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n";
   }
   else{
-    print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n";
+    print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n";
   }
 
 
@@ -6914,10 +6914,10 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
   ## data structure above
   if ($directional){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
@@ -6931,7 +6931,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA {
       }
     }
 
-    my $bt_options = $bowtie_options;
+    my $bt_options = $aligner_options;
     if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
       $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -6993,10 +6993,10 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
   ## data structure above
   if ($directional){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
@@ -7010,7 +7010,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
       }
     }
 
-    my $bt2_options = $bowtie_options;
+    my $bt2_options = $aligner_options;
     if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
       $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7086,10 +7086,10 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
 
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the data structure above
   if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
@@ -7103,7 +7103,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
       }
     }
 
-    my $bt_options = $bowtie_options;
+    my $bt_options = $aligner_options;
     if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
       $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7176,10 +7176,10 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   ## Now starting up 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
   ## data structure above
   if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
@@ -7193,7 +7193,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
       }
     }
 
-    my $bt2_options = $bowtie_options;
+    my $bt2_options = $aligner_options;
     if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
 	$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7268,15 +7268,15 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA {
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
   ## data structure above
   if ($directional){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
 
-    my $bt_options = $bowtie_options;
+    my $bt_options = $aligner_options;
     if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
       $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7323,15 +7323,15 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
   ## data structure above
   if ($directional){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
 
-    my $bt2_options = $bowtie_options;
+    my $bt2_options = $aligner_options;
     if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
       $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7388,14 +7388,14 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
   ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
   ## the data structure above
   if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
-    my $bt_options = $bowtie_options;
+    my $bt_options = $aligner_options;
     if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
       $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7407,10 +7407,10 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ {
     sleep (5);
 
     if ($gzip){
-      open ($fh->{fh},"gunzip -c $temp_dir$fh->{inputfile} | $path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
+      open ($fh->{fh},"gunzip -c $temp_dir$fh->{inputfile} | $path_to_bowtie $aligner_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
     }
     else{
-      open ($fh->{fh},"$path_to_bowtie $bowtie_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!"; # command for uncompressed data
+      open ($fh->{fh},"$path_to_bowtie $aligner_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!"; # command for uncompressed data
     }
 
     # if Bowtie produces an alignment we store the first line of the output
@@ -7448,14 +7448,14 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   ## Now starting up to 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
   ## the data structure above
   if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
   else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $bowtie_options\n\n";
+    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
   }
 
   foreach my $fh (@fhs) {
-    my $bt2_options = $bowtie_options;
+    my $bt2_options = $aligner_options;
     if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
       $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
     }
@@ -7497,26 +7497,35 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
   }
 }
 
-sub ensure_the_bowties_are_working{
 
-    my $path_info = shift;
+sub ensure_the_aligner_is_working{
 
-    # Before we start let's have quick look if the selected Bowtie seems to be working with the path information provided
-    # To change the path to Bowtie (1/2) use --path_to_bowtie /full/path/to/the/Bowtie/executable
+    my ($path_info,$aligner) = @_;
+    # Before we start let's have quick look if the selected aligner seems to be working with the path information provided
+    # To change the path to Bowtie 2 or HISAT2 use --path_to_bowtie2 or --path_to_hisat2 /full/path/to/the/executable
+	
+	# warn "Path given for aligner $aligner: $path_info\n"; sleep(3);
 
-    my $bowtie_version;
+    my $aligner_version;
     my $return = system "$path_info --version >/dev/null 2>&1";
-    if ($return ne 0){
-	die "Failed to execute Bowtie porperly (return code of '$path_info --version' was $return). Please install Bowtie (1/2) first and make sure it is in the PATH, or specify the path to the Bowtie (1/2) using --path_to_bowtie /path/to/bowtie\n\n";
+	
+	if ($return ne 0){
+		die "Failed to execute $aligner porperly (return code of '$path_info --version' was $return). Please install Bowtie 2 or HISAT2 first and make sure it is in the PATH, or specify the path to the Bowtie 2 with --path_to_bowtie2 /path/to/bowtie2, or --path_to_hisat2 /path/to/hisat2\n\n";
     }
     else{
-	$bowtie_version = `$path_info --version`;
-       	chomp $bowtie_version;
-	$bowtie_version =~ /bowtie.*\s+version\s+(\d+\.\d+\.\d+)/;
-	$bowtie_version = $1;
-	warn "Bowtie seems to be working fine (tested command '$path_info --version' [$bowtie_version])\n";
+		$aligner_version = `$path_info --version`;
+       	chomp $aligner_version;
+		if ($aligner eq 'Bowtie 2'){
+			$aligner_version =~ /bowtie.*\s+version\s+(\d+\.\d+\.\d+)/;
+			$aligner_version = $1;
+		}	
+		else{
+			$aligner_version =~ /hisat2.*\s+version\s+(\d+\.\d+\.\d+)/;
+			$aligner_version = $1;
+		}
+		warn "$aligner seems to be working fine (tested command '$path_info --version' [$aligner_version])\n";
     }
-    return $bowtie_version;
+    return $aligner_version;
 }
 
 ###########################################################################################################################################
@@ -7673,11 +7682,12 @@ sub reset_counters_and_fhs{
 
 
 sub process_command_line{
-  my @bowtie_options;
+  my @aligner_options;
   my $help;
   my $mates1;
   my $mates2;
-  my $path_to_bowtie;
+  my $path_to_bowtie2;
+  my $path_to_hisat2;
   my $fastq;
   my $fasta;
   my $skip;
@@ -7700,6 +7710,7 @@ sub process_command_line{
   my $multi_map;
   my $output_dir;
   my $bowtie2;
+  my $hisat2;
   my $vanilla;
   my $sam_no_hd;
   my $seed_extension_fails;
@@ -7720,7 +7731,6 @@ sub process_command_line{
   my $basename;
   my $sam;
   my $multicore;
-  my $bowtie1;
   my $rg_tag;
   my $rg_id;
   my $rg_sample;
@@ -7736,7 +7746,8 @@ sub process_command_line{
   my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
 				 '2=s'                     => \$mates2,
-				 'path_to_bowtie=s'        => \$path_to_bowtie,
+				 'path_to_bowtie2=s'       => \$path_to_bowtie2,
+				 'path_to_hisat2=s'        => \$path_to_hisat2,
 				 'genome_folder=s'         => \$genome_folder,
 				 'f|fasta'                 => \$fasta,
 				 'q|fastq'                 => \$fastq,
@@ -7759,7 +7770,7 @@ sub process_command_line{
 				 'ambiguous'               => \$multi_map,
 				 'o|output_dir=s'          => \$output_dir,
 				 'bowtie2'                 => \$bowtie2,
-				 'bowtie1'                 => \$bowtie1,
+				 'hisat2'                  => \$hisat2,
 				 'vanilla'                 => \$vanilla,
 				 'sam-no-hd'               => \$sam_no_hd,
 				 'D=i'                     => \$seed_extension_fails,
@@ -7793,17 +7804,17 @@ sub process_command_line{
 				);
 
 
-  ### EXIT ON ERROR if there were errors with any of the supplied options
-  unless ($command_line){
-    die "Please respecify command line options\n";
-  }
-  ### HELPFILE
-  if ($help){
-    print_helpfile();
-    exit;
-  }
-  if ($version){
-    print << "VERSION";
+	### EXIT ON ERROR if there were errors with any of the supplied options
+	unless ($command_line){
+		die "Please respecify command line options\n";
+	}
+	### HELPFILE
+	if ($help){
+		print_helpfile();
+		exit;
+	}
+	if ($version){
+		print << "VERSION";
 
 
           Bismark - Bisulfite Mapper and Methylation Caller.
@@ -7815,357 +7826,378 @@ sub process_command_line{
 
 
 VERSION
-    exit;
-  }
-
-
-  ##########################
-  ### PROCESSING OPTIONS ###
-  ##########################
-
-  if ($bowtie1){
-    $bowtie2 = 0;
-    warn ">>> Please note that the use of Bowtie 1 is now deprecated. Bowtie 1 support will be removed from the Bismark suite in due course. <<<\n"; sleep(3);
-  }
-  else{ # Bowtie 2 is now the default mode (as of 27 July 2015)
-    $bowtie2 = 1;
-  }
-
-  unless ($sam_no_hd){
-    $sam_no_hd =0;
-  }
-
-  ### PATH TO BOWTIE
-  ### if a special path to Bowtie 1/2 was specified we will use that one, otherwise it is assumed that Bowtie 1/2 is in the PATH
-  if ($path_to_bowtie){
-    unless ($path_to_bowtie =~ /\/$/){
-      $path_to_bowtie =~ s/$/\//;
-    }
-    if (-d $path_to_bowtie){
-      if ($bowtie2){
-	$path_to_bowtie = "${path_to_bowtie}bowtie2";
-      }
-      else{
-	$path_to_bowtie = "${path_to_bowtie}bowtie";
-      }
-    }
-    else{
-      die "The path to bowtie provided ($path_to_bowtie) is invalid (not a directory)!\n";
-    }
-  }
-  else{
-    if ($bowtie2){
-      $path_to_bowtie = 'bowtie2';
-      warn "Path to Bowtie 2 specified as: $path_to_bowtie\n";  }
-    else{
-      $path_to_bowtie = 'bowtie';
-      warn "Path to Bowtie specified as: $path_to_bowtie\n";
-    }
-  }
-
-  ### testing if the Bowtie's appear to be working
-  my $bowtie_version = ensure_the_bowties_are_working($path_to_bowtie);
-
-  if ($sam){
-      warn "Output format manually set as SAM\n";
-  }
-  elsif($cram){
-      warn "Output format set to CRAM\n";
-      if (defined $cram_ref){
-	  warn "CRAM reference given as: '$cram_ref'\n\n";
-	  unless (-e $cram_ref){
-	      die "There is a problem with the CRAM reference '$cram_ref': $!\n\n";
-	  }
-
-	  # determining full path information for the cram reference
-	  if ($cram_ref =~/\//){
-	      if (chdir $cram_ref){
-		  my $absolute_cram_ref_folder = getcwd; ## making the genome folder path absolute
-		  unless ($absolute_cram_ref_folder =~/\/$/){
-		      $absolute_cram_ref_folder =~ s/$/\//;
-		  }
-	      }
-	  }
-      }
-      else{
-	  warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
-      }
-  }
-  else{
-      $bam = 1;
-      warn "Output format is BAM (default)\n";
-  }
-
-  ### OUTPUT REQUESTED AS BAM FILE (default)
-  if ($bam or $cram){
-      if ($vanilla){
-	  	die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
-      }
-
-      ### PATH TO SAMTOOLS
-      if (defined $samtools_path){
-	  # if Samtools was specified as full command
-	  if ($samtools_path =~ /samtools$/){
-	      if (-e $samtools_path){
-		  # Samtools executable found
-	      }
-	      else{
-		  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-	      }
-	  }
-	  else{
-	      unless ($samtools_path =~ /\/$/){
-		  $samtools_path =~ s/$/\//;
-	      }
-	      $samtools_path .= 'samtools';
-	      if (-e $samtools_path){
-		  # Samtools executable found
-	      }
-	      else{
-		  die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
-	      }
-	  }
-
-	  warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
-	  $bam = 1;
-      }
-      # Check whether Samtools is in the PATH if no path was supplied by the user
-      else{
-	  if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
-	      $samtools_path = `which samtools`;
-	      chomp $samtools_path;
-	      warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n";
-	      $bam = 1;
-	  }
-      }
-
-      unless (defined $samtools_path){
-	  $bam = 2;
-	  warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
-      }
-      sleep (1);
-  }
-
-  ### OPTION AMBIGUOUS BAM
-  if ($ambig_bam){
-      unless ($bowtie2){
-	  die "The option --ambig_bam is only available for Bowtie2 alignments\n";
-      }
-  }
-
-
-  ####################################
-  ### PROCESSING ARGUMENTS
-
-  ### GENOME FOLDER
-  if (defined $genome_folder){ # 25 11 2015 The genome folder may now also be defined with the option --genome_folder
-    # warn "Genome folder specified with --genome_folder $genome_folder\n";
-  }
-  else{
-    $genome_folder = shift @ARGV; # mandatory
-  }
-
-  unless ($genome_folder){
-    warn "Genome folder was not specified!\n";
-    print_helpfile();
-    exit;
-  }
-
-  ### checking that the genome folder, all subfolders and the required bowtie index files exist
-  unless ($genome_folder =~/\/$/){
-    $genome_folder =~ s/$/\//;
-  }
-
-  if (chdir $genome_folder){
-    my $absolute_genome_folder = getcwd(); ## making the genome folder path absolute
-    unless ($absolute_genome_folder =~/\/$/){
-      $absolute_genome_folder =~ s/$/\//;
-    }
-    warn "Reference genome folder provided is $genome_folder\t(absolute path is '$absolute_genome_folder)'\n";
-    $genome_folder = $absolute_genome_folder;
-  }
-  else{
-    die "Failed to move to $genome_folder: $!\nUSAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
-  }
-
-  my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
-  my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
-
-  my $bt2_small_index_present = 1;
-  my $bt2_large_index_present = 1;
-
-  my $bt_small_index_present = 1;
-  my $bt_large_index_present = 1;
-
-  if ($bowtie2){ ### Bowtie 2
-
-    ### Checking for small indixes first (ending in .bt2)
-
-    # checking the integrity of $CT_dir
-    chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-
-    my @CT_bowtie_index = ('BS_CT.1.bt2','BS_CT.2.bt2','BS_CT.3.bt2','BS_CT.4.bt2','BS_CT.rev.1.bt2','BS_CT.rev.2.bt2');
-    foreach my $file(@CT_bowtie_index){
-      unless (-f $file){
-	warn "The Bowtie 2 index of the C->T converted genome seems to be faulty or non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
-	$bt2_small_index_present = 0;
-      }
-    }
-    # checking the integrity of $GA_dir
-    chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-    my @GA_bowtie_index = ('BS_GA.1.bt2','BS_GA.2.bt2','BS_GA.3.bt2','BS_GA.4.bt2','BS_GA.rev.1.bt2','BS_GA.rev.2.bt2');
-
-    foreach my $file(@GA_bowtie_index){
-      unless (-f $file){
-	warn "The Bowtie 2 index of the G->A converted genome seems to be faulty or non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
-	$bt2_small_index_present = 0;
-      }
-    }
-
-    ### Using the small index preferentially
-    if ($bt2_small_index_present){
-      $bt2_large_index_present = 0;
-    }
-    else{  # only checking for large indexes if the 'normal' one can't be found
-      warn "\nCouldn't find a traditional small Bowtie 2 index for the genome specified (ending in .bt2). Now searching for a large index instead (64-bit index ending in .bt2l)...\n";
-
-      ### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .bt2l)
-
-      # checking the integrity of $CT_dir
-      chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-
-      @CT_bowtie_index = ('BS_CT.1.bt2l','BS_CT.2.bt2l','BS_CT.3.bt2l','BS_CT.4.bt2l','BS_CT.rev.1.bt2l','BS_CT.rev.2.bt2l');
-      foreach my $file(@CT_bowtie_index){
-	unless (-f $file){
-	  die "The Bowtie 2 index of the C->T converted genome seems to be faulty or non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
-	  $bt2_large_index_present = 0;  }
-      }
-
-      ### checking the integrity of $GA_dir
-      chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-      @GA_bowtie_index = ('BS_GA.1.bt2l','BS_GA.2.bt2l','BS_GA.3.bt2l','BS_GA.4.bt2l','BS_GA.rev.1.bt2l','BS_GA.rev.2.bt2l');
-
-      foreach my $file(@GA_bowtie_index){
-	unless (-f $file){
-	  die "The Bowtie 2 index of the G->A converted genome seems to be faulty or non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
-	  $bt2_large_index_present = 0;
+		exit;
 	}
-      }
 
-      if ($bt2_large_index_present){
-	warn "64-bit large genome Bowtie 2 index found...\n";
-      }
-      else{
-	die "Failed to detect either a standard (.bt2) or 64-bit (.bt2l) Bowtie 2 index for the genome specified. Please run the bismark_genome_preparation before launching Bismark\n\n";
-      }
-    }
 
-  }
+	##########################
+	### PROCESSING OPTIONS ###
+	##########################
 
-  else{ ### Bowtie 1
-      ### Checking for small indixes first (ending in .ebwt)
-      ### checking the integrity of $CT_dir
-      chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-      my @CT_bowtie_index = ('BS_CT.1.ebwt','BS_CT.2.ebwt','BS_CT.3.ebwt','BS_CT.4.ebwt','BS_CT.rev.1.ebwt','BS_CT.rev.2.ebwt');
-      foreach my $file(@CT_bowtie_index){
-	  unless (-f $file){
-	      warn "The Bowtie index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
-	      $bt_small_index_present = 0;
-	  }
-      }
+	if ($hisat2){
+		if ($bowtie2){
+			die "You may not select both --hisat2 and --bowtie2. Make your pick! [default is Bowtie 2]\n";
+		}
+		$bowtie2 = 0;
+	}
+	else{ # Bowtie 2 is the default mode (as of 27 July 2015)
+		$bowtie2 = 1;
+		$hisat2 = 0;
+	}
 
-      ### checking the integrity of $GA_dir
-      chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-      my @GA_bowtie_index = ('BS_GA.1.ebwt','BS_GA.2.ebwt','BS_GA.3.ebwt','BS_GA.4.ebwt','BS_GA.rev.1.ebwt','BS_GA.rev.2.ebwt');
-      foreach my $file(@GA_bowtie_index){
-	  unless (-f $file){
-	      warn "The Bowtie index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
-	      $bt_small_index_present = 0;
-	  }
-      }
+	unless ($sam_no_hd){
+		$sam_no_hd =0;
+	}
 
-      ### Using the small index preferentially
-      if ($bt_small_index_present){
-	  $bt_large_index_present = 0;
-      }
-      else{  # only checking for large indexes if the 'normal' one can't be found
-	  warn "\nCouldn't find a traditional small Bowtie index for the genome specified (ending in .ebwt). Now searching for a large index instead (64-bit index ending in .ebwtl)...\n";
+	### PATH TO BOWTIE 2
+	### if a special path to Bowtie 2 was specified we will use that one, otherwise it is assumed that Bowtie 2 is in the PATH
+	if ($bowtie2){
+		if ($path_to_bowtie2){
+			unless ($path_to_bowtie2 =~ /\/$/){
+				$path_to_bowtie2 =~ s/$/\//;
+			}
+			if (-d $path_to_bowtie2){
+				$path_to_bowtie2 = "${path_to_bowtie}bowtie2";
+			}
+			else{
+				die "The path to Bowtie 2 provided ($path_to_bowtie2) is invalid (not a directory)!\n";
+			}
+		}
+		else{
+			$path_to_bowtie2 = 'bowtie2';
+			warn "Path to Bowtie 2 specified as: $path_to_bowtie2\n";
+		}
+	}
+	elsif($hisat2){
+		if ($path_to_hisat2){
+			unless ($path_to_hisat2 =~ /\/$/){
+				$path_to_hisat2 =~ s/$/\//;
+			}
+			if (-d $path_to_hisat2){
+				$path_to_hisat2 = "${path_to_hisat2}hisat2";
+			}
+			else{
+				die "The path to HISAT2 provided ($path_to_hisat2) is invalid (not a directory)!\n";
+			}
+		}
+		else{
+			$path_to_hisat2 = 'hisat2';
+			warn "Path to HISAT2 specified as: $path_to_hisat2\n";
+		}
+	}
+	else{
+		die "We require either Bowtie 2, or HISAT2 mode...";
+	}
+	
+	### testing if the aligners appear to be working
+	my $aligner_version;
+	if ($bowtie2){
+		$aligner_version = ensure_the_aligner_is_working($path_to_bowtie2,'Bowtie 2');
+	}	
+	else{
+		$aligner_version = ensure_the_aligner_is_working($path_to_hisat2,'HISAT2');
+	}
 
-	  ### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .ebwtl)
+	### SAM/CRAM/BAM format
+	if ($sam){
+		warn "Output format manually set as SAM\n";
+	}
+	elsif($cram){
+		warn "Output format set to CRAM\n";
+		if (defined $cram_ref){
+			warn "CRAM reference given as: '$cram_ref'\n\n";
+			unless (-e $cram_ref){
+				die "There is a problem with the CRAM reference '$cram_ref': $!\n\n";
+			}
 
-	  ### checking the integrity of $CT_dir
-	  chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
-	  my @CT_bowtie_index = ('BS_CT.1.ebwtl','BS_CT.2.ebwtl','BS_CT.3.ebwtl','BS_CT.4.ebwtl','BS_CT.rev.1.ebwtl','BS_CT.rev.2.ebwtl');
-	  foreach my $file(@CT_bowtie_index){
-	      unless (-f $file){
-		  warn "The Bowtie index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
-		  $bt_large_index_present = 0;
-	      }
-	  }
+			# determining full path information for the cram reference
+			if ($cram_ref =~/\//){
+				if (chdir $cram_ref){
+					my $absolute_cram_ref_folder = getcwd; ## making the genome folder path absolute
+					unless ($absolute_cram_ref_folder =~/\/$/){
+						$absolute_cram_ref_folder =~ s/$/\//;
+					}
+				}
+			}
+		}
+		else{
+		warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
+		}
+	}
+	else{
+		$bam = 1;
+		warn "Output format is BAM (default)\n";
+	}
 
-	  ### checking the integrity of $GA_dir
-	  chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
-	  my @GA_bowtie_index = ('BS_GA.1.ebwtl','BS_GA.2.ebwtl','BS_GA.3.ebwtl','BS_GA.4.ebwtl','BS_GA.rev.1.ebwtl','BS_GA.rev.2.ebwtl');
-	  foreach my $file(@GA_bowtie_index){
-	      unless (-f $file){
-		  warn "The Bowtie index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --bowtie1 before running Bismark.\n";
-		  $bt_large_index_present = 0;
-	      }
-	  }
+	### OUTPUT REQUESTED AS BAM FILE (default)
+	if ($bam or $cram){
+		if ($vanilla){
+			die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
+		}
 
-	  if ($bt_large_index_present){
-	      warn "64-bit large genome Bowtie index found...\n";
-	  }
-	  else{
-	      die "Failed to detect either a standard (.ebwt) or 64-bit (.ebwtl) Bowtie index for the genome specified. Please run the bismark_genome_preparation --bowtie1 before launching Bismark\n\n";
-	  }
-      }
+		### PATH TO SAMTOOLS
+		if (defined $samtools_path){
+			# if Samtools was specified as full command
+			if ($samtools_path =~ /samtools$/){
+				if (-e $samtools_path){
+					# Samtools executable found
+				}
+				else{
+					die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+				}	
+			}
+			else{
+				unless ($samtools_path =~ /\/$/){
+					$samtools_path =~ s/$/\//;
+				}
+				$samtools_path .= 'samtools';
+				if (-e $samtools_path){
+					# Samtools executable found
+				}
+				else{
+					die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+				}
+			}
 
-  }
+			warn "Alignments will be written out in BAM format. Samtools path provided as: '$samtools_path'\n";
+			$bam = 1;
+		}
+		# Check whether Samtools is in the PATH if no path was supplied by the user
+		else{
+			if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if samtools is in the PATH
+				$samtools_path = `which samtools`;
+				chomp $samtools_path;
+				warn "Alignments will be written out in BAM format. Samtools found here: '$samtools_path'\n";
+				$bam = 1;
+			}
+		}
 
-  my $CT_index_basename = "${CT_dir}BS_CT";
-  my $GA_index_basename = "${GA_dir}BS_GA";
+		unless (defined $samtools_path){
+			$bam = 2;
+			warn "Did not find Samtools on the system. Alignments will be compressed with GZIP instead (.sam.gz)\n";
+		}
+		sleep (1);
+	}
 
-  ### INPUT OPTIONS
+	### OPTION AMBIGUOUS BAM
+	if ($ambig_bam){
+		unless ($bowtie2){
+			die "The option --ambig_bam is only available for Bowtie2 alignments\n";
+		}
+	}
 
-  ### SEQUENCE FILE FORMAT
-  ### exits if both fastA and FastQ were specified
-  if ($fasta and $fastq){
-    die "Only one sequence filetype can be specified (fastA or fastQ)\n";
-  }
 
-  ### unless fastA is specified explicitely, fastQ sequence format is expected by default
+	####################################
+	### PROCESSING ARGUMENTS
+
+	### GENOME FOLDER
+	if (defined $genome_folder){ # 25 11 2015 The genome folder may now also be defined with the option --genome_folder
+		# warn "Genome folder specified with --genome_folder $genome_folder\n";
+	}
+	else{
+		$genome_folder = shift @ARGV; # mandatory
+	}
+
+	unless ($genome_folder){
+		warn "Genome folder was not specified!\n";
+		print_helpfile();
+		exit;
+	}
+
+	### checking that the genome folder, all subfolders and the required bowtie index files exist
+	unless ($genome_folder =~/\/$/){
+		$genome_folder =~ s/$/\//;
+	}
+
+	if (chdir $genome_folder){
+		my $absolute_genome_folder = getcwd(); ## making the genome folder path absolute
+		unless ($absolute_genome_folder =~/\/$/){
+			$absolute_genome_folder =~ s/$/\//;
+		}
+		warn "Reference genome folder provided is $genome_folder\t(absolute path is '$absolute_genome_folder)'\n";
+		$genome_folder = $absolute_genome_folder;
+	}
+	else{
+		die "Failed to move to $genome_folder: $!\nUSAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>} [<hits>]    (--help for more details)\n";
+	}
+	
+	my $CT_dir = "${genome_folder}Bisulfite_Genome/CT_conversion/";
+	my $GA_dir = "${genome_folder}Bisulfite_Genome/GA_conversion/";
+
+	my $bt2_small_index_present = 1;
+	my $bt2_large_index_present = 1;
+
+	my $hisat2_small_index_present = 1;
+	my $hisat2_large_index_present = 1;
+
+	if ($bowtie2){
+		### Checking for small indixes first (ending in .bt2)
+
+		# checking the integrity of $CT_dir
+		chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+
+		my @CT_bowtie2_index = ('BS_CT.1.bt2','BS_CT.2.bt2','BS_CT.3.bt2','BS_CT.4.bt2','BS_CT.rev.1.bt2','BS_CT.rev.2.bt2');
+		foreach my $file(@CT_bowtie2_index){
+			unless (-f $file){
+				warn "The Bowtie 2 index of the C->T converted genome seems to be faulty or non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
+				$bt2_small_index_present = 0;
+			}
+		}
+    
+		# checking the integrity of $GA_dir
+		chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+		my @GA_bowtie2_index = ('BS_GA.1.bt2','BS_GA.2.bt2','BS_GA.3.bt2','BS_GA.4.bt2','BS_GA.rev.1.bt2','BS_GA.rev.2.bt2');
+
+		foreach my $file(@GA_bowtie2_index){
+			unless (-f $file){
+				warn "The Bowtie 2 index of the G->A converted genome seems to be faulty or non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
+				$bt2_small_index_present = 0;
+			}
+		}
+
+		### Using the small index preferentially
+		if ($bt2_small_index_present){
+			$bt2_large_index_present = 0;
+		}
+		else{  # only checking for large indexes if the 'normal' one can't be found
+			warn "\nCouldn't find a traditional small Bowtie 2 index for the genome specified (ending in .bt2). Now searching for a large index instead (64-bit index ending in .bt2l)...\n";
+
+			### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .bt2l)
+			
+			# checking the integrity of $CT_dir
+			chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+
+			@CT_bowtie2_index = ('BS_CT.1.bt2l','BS_CT.2.bt2l','BS_CT.3.bt2l','BS_CT.4.bt2l','BS_CT.rev.1.bt2l','BS_CT.rev.2.bt2l');
+			foreach my $file(@CT_bowtie2_index){
+				unless (-f $file){
+					die "The Bowtie 2 index of the C->T converted genome seems to be faulty or non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
+					$bt2_large_index_present = 0;  
+				}
+			}
+
+			### checking the integrity of $GA_dir
+			chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+			@GA_bowtie2_index = ('BS_GA.1.bt2l','BS_GA.2.bt2l','BS_GA.3.bt2l','BS_GA.4.bt2l','BS_GA.rev.1.bt2l','BS_GA.rev.2.bt2l');
+
+			foreach my $file(@GA_bowtie2_index){
+				unless (-f $file){
+					die "The Bowtie 2 index of the G->A converted genome seems to be faulty or non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
+					$bt2_large_index_present = 0;
+				}
+			}
+
+			if ($bt2_large_index_present){
+				warn "64-bit large genome Bowtie 2 index found...\n";
+			}
+			else{
+				die "Failed to detect either a standard (.bt2) or 64-bit (.bt2l) Bowtie 2 index for the genome specified. Please run the bismark_genome_preparation before launching Bismark\n\n";
+			}
+		}
+	}
+	else{ ### HISAT2
+		### Checking for small indexes first (ending in .ht2)
+		### checking the integrity of $CT_dir
+		chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+		my @CT_hisat2_index = ('BS_CT.1.ht2','BS_CT.2.ht2','BS_CT.3.ht2','BS_CT.4.ht2','BS_CT.5.ht2','BS_CT.6.ht2','BS_CT.7.ht2','BS_CT.8.ht2');
+      
+		foreach my $file(@CT_hisat2_index){
+			unless (-f $file){
+				warn "The HISAT2 index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --hisat2 before running Bismark.\n";
+				$hisat2_small_index_present = 0;
+			}
+		}
+
+		### checking the integrity of $GA_dir
+		chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+		my @GA_hisat2_index = ('BS_GA.1.ht2','BS_GA.2.ht2','BS_GA.3.ht2','BS_GA.4.ht2','BS_GA.5.ht2','BS_GA.6.ht2','BS_GA.7.ht2','BS_GA.8.ht2');
+		foreach my $file(@GA_hisat2_index){
+			unless (-f $file){
+				warn "The HISAT2 index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --hisat2 before running Bismark.\n";
+				$hisat2_small_index_present = 0;
+			}
+		}
+
+		### Using the small index preferentially
+		if ($hisat2_small_index_present){
+			$hisat2_large_index_present = 0;
+		}
+		else{  # only checking for large indexes if the 'normal' one can't be found
+			warn "\nCouldn't find a traditional small HISAT2 index for the genome specified (ending in .ht2). Now searching for a large index instead (64-bit index ending in .ht2l)...\n";
+
+			### If no small small indexes were found we look for large indexes (64-bit indexes, ending in .ht2l)
+
+			### checking the integrity of $CT_dir
+			chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+			my @CT_hisat2_index = ('BS_CT.1.ht2l','BS_CT.2.ht2l','BS_CT.3.ht2l','BS_CT.4.ht2l','BS_CT.5.ht2l','BS_CT.6.ht2l','BS_CT.7.ht2l','BS_CT.8.ht2l');
+			foreach my $file(@CT_hisat2_index){
+				unless (-f $file){
+					warn "The HISAT2 index of the C->T converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --hisat2 before running Bismark.\n";
+					$hisat2_large_index_present = 0;
+				}
+			}
+
+			### checking the integrity of $GA_dir
+			chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+			my @GA_hisat2_index = ('BS_GA.1.ht2l','BS_GA.2.ht2l','BS_GA.3.ht2l','BS_GA.4.ht2l','BS_GA.5.ht2l','BS_GA.6.ht2l','BS_GA.7.ht2l','BS_GA.8.ht2l');
+			foreach my $file(@GA_hisat2_index){
+				unless (-f $file){
+					warn "The HISAT2 index of the G->A converted genome seems to be faulty ($file doesn't exist). Please run bismark_genome_preparation --hisat2 before running Bismark.\n";
+					$hisat2_large_index_present = 0;
+				}
+			}
+
+			if ($hisat2_large_index_present){
+				warn "64-bit large HISAT2 genome index found...\n";
+			}
+			else{
+				die "Failed to detect either a standard (.ht2) or 64-bit (.ht2l) HISAT2 index for the genome specified. Please run the bismark_genome_preparation --hisat2 before launching Bismark\n\n";
+			}
+		}
+	}
+
+	my $CT_index_basename = "${CT_dir}BS_CT";
+	my $GA_index_basename = "${GA_dir}BS_GA";
+
+	### INPUT OPTIONS
+
+	### SEQUENCE FILE FORMAT
+	### exits if both fastA and FastQ were specified
+	if ($fasta and $fastq){
+		die "Only one sequence filetype can be specified (fastA or fastQ)\n";
+	}
+
+	### unless fastA is specified explicitely, fastQ sequence format is expected by default
   if ($fasta){
     print "FastA format specified\n";
     $sequence_format = 'FASTA';
-    push @bowtie_options, '-f';
+    push @aligner_options, '-f';
   }
   elsif ($fastq){
     print "FastQ format specified\n";
     $sequence_format = 'FASTQ';
-    push @bowtie_options, '-q';
+    push @aligner_options, '-q';
   }
   else{
     $fastq = 1;
     print "FastQ format assumed (by default)\n";
     $sequence_format = 'FASTQ';
-    push @bowtie_options, '-q';
+    push @aligner_options, '-q';
   }
 
   ### SKIP
   if ($skip){
     warn "Skipping the first $skip reads from the input file\n";
-    # push @bowtie_options,"-s $skip";
+    # push @aligner_options,"-s $skip";
   }
 
   ### UPTO
   if ($qupto){
     warn "Processing sequences up to read no. $qupto from the input file\n";
     if ($bowtie2){
-      #      push @bowtie_options,"--upto $qupto"; ## slightly changed for Bowtie 2
+      #      push @aligner_options,"--upto $qupto"; ## slightly changed for Bowtie 2
     }
     else{
-      #     push @bowtie_options,"--qupto $qupto";
+      #     push @aligner_options,"--qupto $qupto";
     }
   }
 
@@ -8179,27 +8211,22 @@ VERSION
       die "Phred quality values works only when -q (FASTQ) is specified\n";
     }
     if ($bowtie2){
-      push @bowtie_options,"--phred33";
+      push @aligner_options,"--phred33";
     }
     else{
-      push @bowtie_options,"--phred33-quals";
+      push @aligner_options,"--phred33-quals";
     }
   }
-  if ($phred64){
-    # Phred quality values work only when -q is specified
-    unless ($fastq){
-      die "Phred quality values work only when -q (FASTQ) is specified\n";
-    }
-    if ($bowtie2){
-      push @bowtie_options,"--phred64";
-    }
-    else{
-      push @bowtie_options,"--phred64-quals";
-    }
-  }
-  else{
-    $phred64 = 0;
-  }
+	if ($phred64){
+		# Phred quality values work only when -q is specified
+		unless ($fastq){
+			die "Phred quality values work only when -q (FASTQ) is specified\n";
+		}
+		push @aligner_options,"--phred64";
+	}
+	else{
+		$phred64 = 0;
+	}
 
   if ($solexa){
     if ($bowtie2){
@@ -8209,7 +8236,7 @@ VERSION
     unless ($fastq){
       die "Conversion from Solexa to Phred quality values works only when -q (FASTQ) is specified\n";
     }
-    push @bowtie_options,"--solexa-quals";
+    push @aligner_options,"--solexa-quals";
   }
   else{
     $solexa = 0;
@@ -8221,7 +8248,7 @@ VERSION
   if (defined $mismatches){
     if ($bowtie2){
       if ($mismatches == 0 or $mismatches == 1){
-	push @bowtie_options,"-N $mismatches";
+	push @aligner_options,"-N $mismatches";
       }
       else{
 	die "Please set the number of multiseed mismatches for Bowtie 2 with '-N <int>' (where <int> can be 0 or 1)\n";
@@ -8229,7 +8256,7 @@ VERSION
     }
     else{
       if ($mismatches >= 0 and $mismatches <= 3){
-	push @bowtie_options,"-n $mismatches";
+	push @aligner_options,"-n $mismatches";
       }
       else{
 	die "Please set the number of seed mismatches for Bowtie 1 with '-n <int>' (where <int> can be 0,1,2 or 3)\n";
@@ -8238,24 +8265,24 @@ VERSION
   }
   else{
     unless ($bowtie2){
-      push @bowtie_options,"-n 1"; # setting -n to 1 by default (for use with Bowtie only) because it is much quicker than the default mode of -n 2
+      push @aligner_options,"-n 1"; # setting -n to 1 by default (for use with Bowtie only) because it is much quicker than the default mode of -n 2
     }
   }
 
   ### SEED LENGTH
   if (defined $seed_length){
     if ($bowtie2){
-      push @bowtie_options,"-L $seed_length";
+      push @aligner_options,"-L $seed_length";
     }
     else{
-      push @bowtie_options,"-l $seed_length";
+      push @aligner_options,"-l $seed_length";
     }
   }
 
   ### MISMATCH CEILING
   if (defined $ceiling){
     die "The option '-e' is not compatible with Bowtie 2. Please respecify options\n" if ($bowtie2);
-    push @bowtie_options,"-e $ceiling";
+    push @aligner_options,"-e $ceiling";
   }
 
 
@@ -8264,13 +8291,13 @@ VERSION
   ### CONSECUTIVE SEED EXTENSION FAILS
   if (defined $seed_extension_fails){
     die "The option '-D <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    push @bowtie_options,"-D $seed_extension_fails";
+    push @aligner_options,"-D $seed_extension_fails";
   }
 
   ### RE-SEEDING REPETITIVE SEEDS
   if (defined $reseed_repetitive_seeds){
     die "The option '-R <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    push @bowtie_options,"-R $reseed_repetitive_seeds";
+    push @aligner_options,"-R $reseed_repetitive_seeds";
   }
 
 
@@ -8285,12 +8312,12 @@ VERSION
       die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
     ($score_min_intercept, $score_min_slope) = ($1, $2);
-    push @bowtie_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
+    push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
   }
   else{
     if ($bowtie2){
       ($score_min_intercept, $score_min_slope) = (0, -0.2);
-      push @bowtie_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
+      push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
     }
   }
 
@@ -8306,7 +8333,7 @@ VERSION
     else{
       die "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
-    push @bowtie_options,"--rdg $rdg";
+    push @aligner_options,"--rdg $rdg";
   }
   else{
     $deletion_open = 5;
@@ -8323,7 +8350,7 @@ VERSION
     else{
       die "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
     }
-    push @bowtie_options,"--rfg $rfg";
+    push @aligner_options,"--rfg $rfg";
   }
   else{
     $insertion_open = 5;
@@ -8341,8 +8368,8 @@ VERSION
       if ($parallel > 4){
 	warn "Attention: using more than 4 cores per alignment thread has been reported to have diminishing returns. If possible try to limit -p to a value of 4\n"; sleep(2);
       }
-      push @bowtie_options,"-p $parallel";
-      push @bowtie_options,'--reorder'; ## re-orders the bowtie 2 output so that it does match the input files. This is abolutely required for parallelization to work.
+      push @aligner_options,"-p $parallel";
+      push @aligner_options,'--reorder'; ## re-orders the bowtie 2 output so that it does match the input files. This is abolutely required for parallelization to work.
       print "Each Bowtie 2 instance is going to be run with $parallel threads. Please monitor performance closely and tune down if needed!\n";
       sleep (2);
     }
@@ -8351,7 +8378,7 @@ VERSION
   ### REPORTING OPTIONS
 
   if ($bowtie2){
-    push @bowtie_options,'--ignore-quals'; ## All mismatches will receive penalty for mismatches as if they were of high quality, which is 6 by default
+    push @aligner_options,'--ignore-quals'; ## All mismatches will receive penalty for mismatches as if they were of high quality, which is 6 by default
 
     ### Option -M is deprecated since Bowtie 2 version 2.0.0 beta7. I'll leave this option commented out for a while
     if(defined $most_valid_alignments){
@@ -8360,7 +8387,7 @@ VERSION
     }
   }
   else{ # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments) for Bowtie 1
-    push @bowtie_options,'-k 2';
+    push @aligner_options,'-k 2';
   }
 
   ### --BEST
@@ -8372,7 +8399,7 @@ VERSION
   else{
     # --best is the default option for Bowtie 1, specifying --no-best can turn it off (e.g. to speed up alignment process)
     unless ($best){
-      push @bowtie_options,'--best';
+      push @aligner_options,'--best';
     }
   }
 
@@ -8411,8 +8438,8 @@ VERSION
       }
 
       if ($bowtie2){
-	  push @bowtie_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
-	  push @bowtie_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
+	  push @aligner_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
+	  push @aligner_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
 
 	  unless ($no_dovetail){
 	      $dovetail = 1; # setting the option $dovetail automatically so that 5' trimmed sequences align better
@@ -8422,7 +8449,7 @@ VERSION
 	      if ($old_flag){
 		  die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
 	      }
-	      push @bowtie_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
+	      push @aligner_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
 	  }
       }
 
@@ -8493,38 +8520,38 @@ VERSION
   ### MININUM INSERT SIZE (PAIRED-END ONLY)
   if (defined $minins){
     die "-I/--minins can only be used for paired-end mapping!\n\n" if ($singles);
-    push @bowtie_options,"--minins $minins";
+    push @aligner_options,"--minins $minins";
   }
 
   ### MAXIMUM INSERT SIZE (PAIRED-END ONLY)
   if (defined $maxins){
     die "-X/--maxins can only be used for paired-end mapping!\n\n" if ($singles);
-    push @bowtie_options,"--maxins $maxins";
+    push @aligner_options,"--maxins $maxins";
   }
   else{
     unless ($singles){
-      push @bowtie_options,'--maxins 500';
+      push @aligner_options,'--maxins 500';
     }
   }
 
   ### QUIET prints nothing  besides alignments (suppresses warnings)
   if ($quiet){
-    push @bowtie_options,'--quiet';
+    push @aligner_options,'--quiet';
   }
 
   ### CHUNKMBS needed to be increased to avoid memory exhaustion warnings for Bowtie 1, particularly for --best (and paired-end) alignments
   unless ($bowtie2){ # Bowtie 2 does not have a chunkmbs option
     if (defined $chunk){
-      push @bowtie_options,"--chunkmbs $chunk";
+      push @aligner_options,"--chunkmbs $chunk";
     }
     else{
-      push @bowtie_options,'--chunkmbs 512'; ## setting the default to 512MB (up from 64 default)
+      push @aligner_options,'--chunkmbs 512'; ## setting the default to 512MB (up from 64 default)
     }
   }
 
 
   ### SUMMARY OF ALL BOWTIE OPTIONS
-  my $bowtie_options = join (' ',@bowtie_options);
+  my $aligner_options = join (' ',@aligner_options);
 
 
   ### STRAND-SPECIFIC LIBRARIES
@@ -8672,7 +8699,7 @@ VERSION
     }
   }
 
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_format,$bowtie_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$bowtie_version);
+  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$solexa,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
 }
 
 
