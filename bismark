@@ -5227,10 +5227,10 @@ sub print_bisulfite_mapping_results_paired_ends_hisat2{
     $quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
     $quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
   }
-  elsif ($solexa){
-    $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
-    $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
-  }
+  #elsif ($solexa){
+   # $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
+   # $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
+  #}
 
   ### We will add +1 bp to the start position of paired-end reads, as Bowtie 1 reports the index and not the bp position. (End position is already 1-based)
   $methylation_call_params->{$identifier}->{start_seq_1} += 1;
@@ -5258,10 +5258,10 @@ sub print_bisulfite_mapping_results_paired_ends_bowtie2{
     $quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
     $quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
   }
-  elsif ($solexa){
-    $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
-    $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
-  }
+  #elsif ($solexa){
+  #  $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
+  #  $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
+  #}
 
   ### writing every single aligned read and its methylation call to the output file  (unmapped and ambiguous reads were already printed)
   paired_end_SAM_output($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2); # at the end of the script
@@ -8230,109 +8230,92 @@ VERSION
 
 	### SEED LENGTH
 	if (defined $seed_length){
-		if ($bowtie2){
-			push @aligner_options,"-L $seed_length";
-		}
-		else{
-			push @aligner_options,"-l $seed_length";
-		}	
+		push @aligner_options,"-L $seed_length";
 	}
 
-  ### MISMATCH CEILING
-  if (defined $ceiling){
-    die "The option '-e' is not compatible with Bowtie 2. Please respecify options\n" if ($bowtie2);
-    push @aligner_options,"-e $ceiling";
-  }
+	
+	### BOWTIE 2 EFFORT OPTIONS
+
+	### CONSECUTIVE SEED EXTENSION FAILS
+	if (defined $seed_extension_fails){
+		die "The option '-D <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+		push @aligner_options,"-D $seed_extension_fails";
+	}
+
+	### RE-SEEDING REPETITIVE SEEDS
+	if (defined $reseed_repetitive_seeds){
+		die "The option '-R <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
+		push @aligner_options,"-R $reseed_repetitive_seeds";
+	}
+
+	### BOWTIE 2/HISAT2 SCORING OPTIONS
+	my ($score_min_intercept, $score_min_slope);
+	if ($score_min){
+			unless ($score_min =~ /^L,(.+),(.+)$/){
+			die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+		}
+		($score_min_intercept, $score_min_slope) = ($1, $2);
+		push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
+	}
+	else{
+		if ($bowtie2){
+			($score_min_intercept, $score_min_slope) = (0, -0.2);
+			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
+		}
+	}
+
+	### BOWTIE 2/HISAT2 READ GAP OPTIONS
+	my ($insertion_open,$insertion_extend,$deletion_open,$deletion_extend);
+
+	if ($rdg){
+		if ($rdg =~ /^(\d+),(\d+)$/){
+			$deletion_open = $1;
+			$deletion_extend = $2;
+		}
+		else{
+			die "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+		}
+		push @aligner_options,"--rdg $rdg";
+	}
+	else{
+		$deletion_open = 5;
+		$deletion_extend = 3;
+	}
+
+	### BOWTIE 2/HISAT2 REFERENCE GAP OPTIONS
+	if ($rfg){
+		if ($rfg =~ /^(\d+),(\d+)$/){
+			$insertion_open = $1;
+			$insertion_extend = $2;
+		}
+		else{
+			die "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+		}
+		push @aligner_options,"--rfg $rfg";
+	}
+	else{
+		$insertion_open = 5;
+		$insertion_extend = 3;
+	}
 
 
-  ### BOWTIE 2 EFFORT OPTIONS
-
-  ### CONSECUTIVE SEED EXTENSION FAILS
-  if (defined $seed_extension_fails){
-    die "The option '-D <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    push @aligner_options,"-D $seed_extension_fails";
-  }
-
-  ### RE-SEEDING REPETITIVE SEEDS
-  if (defined $reseed_repetitive_seeds){
-    die "The option '-R <int>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    push @aligner_options,"-R $reseed_repetitive_seeds";
-  }
-
-
-  ### BOWTIE 2 SCORING OPTIONS
-
-  my ($score_min_intercept, $score_min_slope);
-
-  if ($score_min){
-    die "The option '--score_min <func>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-
-    unless ($score_min =~ /^L,(.+),(.+)$/){
-      die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+	### BOWTIE 2/HISAT2 PARALLELIZATION OPTIONS
+	if ($parallel){
+		die "Please select a value for -p of 2 or more!\n" unless ($parallel > 1);
+		if ($parallel > 4){
+			warn "Attention: using more than 4 cores per alignment thread has been reported to have diminishing returns. If possible try to limit -p to a value of 4\n"; sleep(2);
+		}
+		push @aligner_options,"-p $parallel";
+		push @aligner_options,'--reorder'; ## re-orders the Bowtie 2 or HISAT2 output so that it does match the input files. This is abolutely required for parallelization to work.
+		if ($bowtie2){
+			warn "Each Bowtie 2 instance is going to be run with $parallel threads. Please monitor performance closely and tune down if necessary!\n";
+		}
+		else{
+			warn "Each HISAT2 instance is going to be run with $parallel threads. Please monitor performance closely and tune down if necessary!\n";
+		}		
+		sleep (2);
     }
-    ($score_min_intercept, $score_min_slope) = ($1, $2);
-    push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
-  }
-  else{
-    if ($bowtie2){
-      ($score_min_intercept, $score_min_slope) = (0, -0.2);
-      push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
-    }
-  }
-
-  ### BOWTIE 2 READ GAP OPTIONS
-  my ($insertion_open,$insertion_extend,$deletion_open,$deletion_extend);
-
-  if ($rdg){
-    die "The option '--rdg <int1>,<int2>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    if ($rdg =~ /^(\d+),(\d+)$/){
-      $deletion_open = $1;
-      $deletion_extend = $2;
-    }
-    else{
-      die "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
-    }
-    push @aligner_options,"--rdg $rdg";
-  }
-  else{
-    $deletion_open = 5;
-    $deletion_extend = 3;
-  }
-
-  ### BOWTIE 2 REFERENCE GAP OPTIONS
-  if ($rfg){
-    die "The option '--rfg <int1>,<int2>' is only available when using Bowtie 2\n\n" unless ($bowtie2);
-    if ($rfg =~ /^(\d+),(\d+)$/){
-      $insertion_open = $1;
-      $insertion_extend = $2;
-    }
-    else{
-      die "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
-    }
-    push @aligner_options,"--rfg $rfg";
-  }
-  else{
-    $insertion_open = 5;
-    $insertion_extend = 3;
-  }
-
-
-  ### BOWTIE 2 PARALLELIZATION OPTIONS
-  if (defined $parallel){
-    die "The parallelization switch '-p' only works for Bowtie 2. Please respecify!" unless ($bowtie2);
-  }
-  if ($bowtie2){
-    if ($parallel){
-      die "Please select a value for -p of 2 or more!\n" unless ($parallel > 1);
-      if ($parallel > 4){
-	warn "Attention: using more than 4 cores per alignment thread has been reported to have diminishing returns. If possible try to limit -p to a value of 4\n"; sleep(2);
-      }
-      push @aligner_options,"-p $parallel";
-      push @aligner_options,'--reorder'; ## re-orders the bowtie 2 output so that it does match the input files. This is abolutely required for parallelization to work.
-      print "Each Bowtie 2 instance is going to be run with $parallel threads. Please monitor performance closely and tune down if needed!\n";
-      sleep (2);
-    }
-  }
+  
 
   ### REPORTING OPTIONS
 
