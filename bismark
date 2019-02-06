@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -1497,8 +1497,8 @@ sub start_methylation_call_procedure_single_ends {
   if ($bowtie2){ # SAM format is the default for Bowtie 2
     $outfile =~ s/$/_bismark_bt2.sam/;
   }
-  elsif ($vanilla){ # vanilla custom Bismark output single-end output (like Bismark versions 0.5.X)
-    $outfile =~ s/$/_bismark.txt/;
+  elsif ($hisat2){ # SAM output is the default for HISAT2
+    $outfile =~ s/$/_bismark_hisat2.sam/;
   }
   else{ # SAM is the default output
     $outfile =~ s/$/_bismark.sam/;
@@ -1546,10 +1546,6 @@ sub start_methylation_call_procedure_single_ends {
 
 
   sleep(1);
-
-  if ($vanilla){
-    print OUT "Bismark version: $bismark_version\n";
-  }
 
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $filename;
@@ -1657,7 +1653,7 @@ sub start_methylation_call_procedure_single_ends {
   }
 
 
-  unless ($vanilla or $sam_no_hd){
+  unless ($sam_no_hd){
       generate_SAM_header();
   }
 
@@ -1703,11 +1699,8 @@ sub start_methylation_call_procedure_paired_ends {
   if ($bowtie2){ # SAM format is the default Bowtie 2 output
     $outfile =~ s/$/_bismark_bt2_pe.sam/;
   }
-  elsif ($vanilla){ # vanilla custom Bismark paired-end output (like Bismark versions 0.5.X)
-    $outfile =~ s/$/_bismark_pe.txt/;
-  }
-  else{ # SAM format is the default Bowtie 1 output
-    $outfile =~ s/$/_bismark_pe.sam/;
+  else{ # SAM format is the default for HISAT2
+    $outfile =~ s/$/_bismark_hisat2_pe.sam/;
   }
 
 
@@ -1751,10 +1744,7 @@ sub start_methylation_call_procedure_paired_ends {
   warn "\n>>> Writing bisulfite mapping results to $outfile <<<\n\n";
   sleep(1);
 
-  if ($vanilla){
-    print OUT "Bismark version: $bismark_version\n";
-  }
-
+  
   ### printing alignment and methylation call summary to a report file
   my $reportfile = $filename_1;
   $reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
@@ -1884,9 +1874,9 @@ sub start_methylation_call_procedure_paired_ends {
 
 
 
-  unless ($vanilla or $sam_no_hd){
-    generate_SAM_header();
-  }
+	unless ($sam_no_hd){
+		generate_SAM_header();
+	}
 
   ### Input files are in FastA format
   if ($sequence_file_format eq 'FASTA'){
@@ -5168,33 +5158,6 @@ sub extract_corresponding_genomic_sequence_paired_ends_bowtie2{
   $methylation_call_params->{$sequence_identifier}->{indels_2} = $indels_2;
 }
 
-##########################################
-### PRINT SINGLE END RESULTS: Bowtie 1 ###
-##########################################
-
-sub print_bisulfite_mapping_result_single_end{
-	my ($identifier,$sequence,$methylation_call_params,$quality_value)= @_;
-
-	### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
-	if ($phred64){
-		$quality_value = convert_phred64_quals_to_phred33($quality_value);
-	}
-	# elsif ($solexa){
-	#		$quality_value = convert_solexa_quals_to_phred33($quality_value);
-	# }
-
-	### We will add +1 bp to the starting position of single-end reads, as Bowtie 1 reports the index and not the bp position.
-	$methylation_call_params->{$identifier}->{position} += 1;
-
-	### writing every uniquely mapped read and its methylation call to the output file
-	if ($vanilla){
-		my $bowtie1_output = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_strand},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{position},$methylation_call_params->{$identifier}->{end_position},$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{methylation_call},$methylation_call_params->{$identifier}->{read_conversion},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value);
-		print OUT "$bowtie1_output\n";
-	}	
-	else{ # SAM output, default since Bismark
-		single_end_SAM_output($identifier,$sequence,$methylation_call_params,$quality_value); # at the end of the script
-	}
-}
 
 ##########################################
 ### PRINT SINGLE END RESULTS: Bowtie 2 ###
@@ -5220,30 +5183,16 @@ sub print_bisulfite_mapping_result_single_end_bowtie2{
 ##########################################
 
 sub print_bisulfite_mapping_results_paired_ends_hisat2{
-  my ($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2)= @_;
+	my ($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2)= @_;
 
-  ### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
-  if ($phred64){
-    $quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
-    $quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
-  }
-  #elsif ($solexa){
-   # $quality_value_1 = convert_solexa_quals_to_phred33($quality_value_1);
-   # $quality_value_2 = convert_solexa_quals_to_phred33($quality_value_2);
-  #}
-
-  ### We will add +1 bp to the start position of paired-end reads, as Bowtie 1 reports the index and not the bp position. (End position is already 1-based)
-  $methylation_call_params->{$identifier}->{start_seq_1} += 1;
-
-  ### writing every single aligned read and its methylation call to the output file
-  if ($vanilla){
-    my $bowtie1_output_paired_end = join("\t",$identifier,$methylation_call_params->{$identifier}->{alignment_read_1},$methylation_call_params->{$identifier}->{chromosome},$methylation_call_params->{$identifier}->{start_seq_1},$methylation_call_params->{$identifier}->{alignment_end},$sequence_1,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_1},$methylation_call_params->{$identifier}->{methylation_call_1},$sequence_2,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence_2},$methylation_call_params->{$identifier}->{methylation_call_2},$methylation_call_params->{$identifier}->{read_conversion_1},$methylation_call_params->{$identifier}->{genome_conversion},$quality_value_1,$quality_value_2);
-    print OUT "$bowtie1_output_paired_end\n";
-  }
-  else{ # SAM output, default since Bismark v1.0.0
-    paired_end_SAM_output($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2); # at the end of the script
-  }
-
+	### we will output the FastQ quality in Sanger encoding (Phred 33 scale)
+	if ($phred64){
+		$quality_value_1 = convert_phred64_quals_to_phred33($quality_value_1);
+		$quality_value_2 = convert_phred64_quals_to_phred33($quality_value_2);
+	}
+  
+	### writing every single aligned read and its methylation call to the output file
+	paired_end_SAM_output($identifier,$sequence_1,$sequence_2,$methylation_call_params,$quality_value_1,$quality_value_2); # at the end of the script
 }
 
 ##########################################
@@ -7710,7 +7659,6 @@ sub process_command_line{
   my $output_dir;
   my $bowtie2;
   my $hisat2;
-  my $vanilla;
   my $sam_no_hd;
   my $seed_extension_fails;
   my $reseed_repetitive_seeds;
@@ -7769,7 +7717,6 @@ sub process_command_line{
 				 'o|output_dir=s'          => \$output_dir,
 				 'bowtie2'                 => \$bowtie2,
 				 'hisat2'                  => \$hisat2,
-				 'vanilla'                 => \$vanilla,
 				 'sam-no-hd'               => \$sam_no_hd,
 				 'D=i'                     => \$seed_extension_fails,
 				 'R=i'                     => \$reseed_repetitive_seeds,
@@ -7929,10 +7876,7 @@ VERSION
 
 	### OUTPUT REQUESTED AS BAM FILE (default)
 	if ($bam or $cram){
-		if ($vanilla){
-			die "Specifying BAM output is not compatible with \"--vanilla\" format. Please respecify\n\n";
-		}
-
+	
 		### PATH TO SAMTOOLS
 		if (defined $samtools_path){
 			# if Samtools was specified as full command
@@ -8301,7 +8245,7 @@ VERSION
 
 	### BOWTIE 2/HISAT2 PARALLELIZATION OPTIONS
 	if ($parallel){
-		die "Please select a value for -p of 2 or more!\n" unless ($parallel > 1);
+		die "Please select a value for -p of 2 or more (ideally not higher than 4 though...)!\n" unless ($parallel > 1);
 		if ($parallel > 4){
 			warn "Attention: using more than 4 cores per alignment thread has been reported to have diminishing returns. If possible try to limit -p to a value of 4\n"; sleep(2);
 		}
@@ -8317,331 +8261,280 @@ VERSION
     }
   
 
-  ### REPORTING OPTIONS
+	### REPORTING OPTIONS
 
-  if ($bowtie2){
-    push @aligner_options,'--ignore-quals'; ## All mismatches will receive penalty for mismatches as if they were of high quality, which is 6 by default
+	push @aligner_options,'--ignore-quals'; ## All mismatches will receive penalty for mismatches as if they were of high quality, which is 6 by default
 
-    ### Option -M is deprecated since Bowtie 2 version 2.0.0 beta7. I'll leave this option commented out for a while
-    if(defined $most_valid_alignments){
+	### Option -M is deprecated since Bowtie 2 version 2.0.0 beta7. I'll leave this option commented out for a while
+	if(defined $most_valid_alignments){
+		warn "\nThe option -M is now deprecated (as of Bowtie 2 version 2.0.0 beta7). What used to be called -M mode is still the default mode. Use the -D and -R options to adjust the effort expended to find valid alignments.\n\n";
+	}
 
-      warn "\nThe option -M is now deprecated (as of Bowtie 2 version 2.0.0 beta7). What used to be called -M mode is still the default mode. Use the -D and -R options to adjust the effort expended to find valid alignments.\n\n";
-    }
-  }
-  else{ # Because of the way Bismark works we will always use the reporting option -k 2 (report up to 2 valid alignments) for Bowtie 1
-    push @aligner_options,'-k 2';
-  }
+	### PAIRED-END MAPPING
+	if ($mates1){
 
-  ### --BEST
-  if ($bowtie2){
-    if ($best){    # Bowtie 2 does away with the concept of --best, so one can also not select --no-best when Bowtie 2 is to be used
-      die "The option '--no-best' is not compatible with Bowtie 2. Please respecify options\n";
-    }
-  }
-  else{
-    # --best is the default option for Bowtie 1, specifying --no-best can turn it off (e.g. to speed up alignment process)
-    unless ($best){
-      push @aligner_options,'--best';
-    }
-  }
+		if (defined $singles){ # if --single_end has been set explicitely
+			die "You cannot set --single_end and supply files in paired-end format (-1 <mates1> -2 <mates2>). Please respecify!\n";
+		}
 
-  ### VANILLA BISMARK (BOWTIE 1) OUTPUT
-  if ($vanilla){
-    if ($bowtie2){
-      die "The options --bowtie2 and the --vanilla are not compatible. Please respecify!\n\n";
-    }
-  }
-  else{
-    $vanilla = 0;
-  }
+		my @mates1 = (split (/,/,$mates1));
+		die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
+		my @mates2 = (split(/,/,$mates2));
+		unless (scalar @mates1 == scalar @mates2){
+			die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
+		}
+		while (1){
+			my $mate1 = shift @mates1;
+			my $mate2 = shift @mates2;
+			last unless ($mate1 and $mate2);
 
-  ### PAIRED-END MAPPING
-  if ($mates1){
+			if ($mate1 eq $mate2){
+				die "\n[FATAL ERROR]: Read 1 ($mate1) and Read 2 ($mate2) files were specified as the exact same file, which is almost certainly unintentional (and wrong). Please re-specify!\n\n";
+			}
+			push @filenames,"$mate1,$mate2";
+		}
 
-      if (defined $singles){ # if --single_end has been set explicitely
-	  die "You cannot set --single_end and supply files in paired-end format (-1 <mates1> -2 <mates2>). Please respecify!\n";
-      }
+		#if ($bowtie2){
+		push @aligner_options,'--no-mixed';     ## By default Bowtie 2/HISAT2 is not looking for single-end alignments if it can't find concordant or discordant alignments
+		push @aligner_options,'--no-discordant';## By default Bowtie 2/HISAT2 is not looking for discordant alignments if it can't find concordant ones
 
-      my @mates1 = (split (/,/,$mates1));
-      die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n" unless ($mates2);
-      my @mates2 = (split(/,/,$mates2));
-      unless (scalar @mates1 == scalar @mates2){
-	  die "Paired-end mapping requires the same amounnt of mate1 and mate2 files, please respecify! (format: -1 <mates1> -2 <mates2>)\n";
-      }
-      while (1){
-	  	my $mate1 = shift @mates1;
-	  	my $mate2 = shift @mates2;
-	  	last unless ($mate1 and $mate2);
+		unless ($no_dovetail){
+			$dovetail = 1; # setting the option $dovetail automatically so that 5' trimmed sequences align better
+		}
 
-	  	if ($mate1 eq $mate2){
-	  		die "\n[FATAL ERROR]: Read 1 ($mate1) and Read 2 ($mate2) files were specified as the exact same file, which is almost certainly unintentional (and wrong). Please re-specify!\n\n";
-	  	}
-	 	push @filenames,"$mate1,$mate2";
-      }
+		if ($dovetail){
+			if ($old_flag){
+				die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
+			}
+			push @aligner_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
+		}
+		#}#
 
-      if ($bowtie2){
-	  push @aligner_options,'--no-mixed';     ## By default Bowtie 2 is not looking for single-end alignments if it can't find concordant or discordant alignments
-	  push @aligner_options,'--no-discordant';## By default Bowtie 2 is not looking for discordant alignments if it can't find concordant ones
+		if ($old_flag){
+			warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n";
+			sleep(3);
+		}
+	}
+	elsif ($mates2){
+		die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
+	}
 
-	  unless ($no_dovetail){
-	      $dovetail = 1; # setting the option $dovetail automatically so that 5' trimmed sequences align better
-	  }
+	chdir $parent_dir or die "Failed to move back to parent directory: $!\n\n";
+	my $current = getcwd();
 
-	  if ($dovetail){
-	      if ($old_flag){
-		  die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
-	      }
-	      push @aligner_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
-	  }
-      }
+	### SINGLE-END MAPPING
+	# Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
 
-      if ($old_flag){
-	  warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n" unless($vanilla);
-	  sleep(3);
-      }
-  }
-  elsif ($mates2){
-      die "Paired-end mapping requires the format: -1 <mates1> -2 <mates2>, please respecify!\n";
-  }
+	unless ($mates1 and $mates2){
+		if (defined $singles){ # if --single_end has been set explicitely
+			warn "Mapping set to single-end mode (user defined). File names need to be separated by commas [,] or colons [:]! Supplied file names are: $singles\n";
+			$singles =~ s/:/,/g; # replacing colons (:) with commas
+		}
+		else{
+			$singles = join (',',@ARGV);
+			unless ($singles){
+				die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
+			}
+			$singles =~ s/\s/,/g; # replacing spaces with commas
+		}
+		@filenames = (split(/,/,$singles));
+	}
 
-  chdir $parent_dir or die "Failed to move back to parent directory: $!\n\n";
-  my $current = getcwd();
+	warn "\nInput files to be analysed (in current folder '$current'):\n";
+	# checking if files exist and bail if they don't
+	foreach my $f (@filenames){
+		if ($mates1 and $mates2){
+			my ($f1,$f2) = (split (/,/,$f));
+			# mate 1
+			if (-e $f1){
+				warn "$f1\n";
+			}
+			else{
+				die "Supplied filename '$f1' does not exist, please respecify!\n\n";
+			}
+			# mate 2
+			if (-e $f2){
+				warn "$f2\n";
+			}
+			else{
+				die "Supplied filename '$f2' does not exist, please respecify!\n\n";
+			}
+		}
+		else{
+			if (-e $f){
+				warn "$f\n";
+			}
+			else{
+				die "Supplied filename '$f' does not exist, please respecify!\n\n";
+			}
+		}	
+	}
+	
+	### MININUM INSERT SIZE (PAIRED-END ONLY)
+	if (defined $minins){
+		die "-I/--minins can only be used for paired-end mapping!\n\n" if ($singles);
+		push @aligner_options,"--minins $minins";
+	}
 
-  ### SINGLE-END MAPPING
-  # Single-end mapping will be performed if no mate pairs for paired-end mapping have been specified
+	### MAXIMUM INSERT SIZE (PAIRED-END ONLY)
+	if (defined $maxins){
+		die "-X/--maxins can only be used for paired-end mapping!\n\n" if ($singles);
+		push @aligner_options,"--maxins $maxins";
+	}
+	else{
+		unless ($singles){
+			push @aligner_options,'--maxins 500';
+		}
+	}
 
-  unless ($mates1 and $mates2){
-      if (defined $singles){ # if --single_end has been set explicitely
-	  warn "Mapping set to single-end mode (user defined). File names need to be separated by commas [,] or colons [:]! Supplied file names are: $singles\n";
-	  $singles =~ s/:/,/g; # replacing colons (:) with commas
-      }
-      else{
-	  $singles = join (',',@ARGV);
-	  unless ($singles){
-	      die "\nNo filename supplied! Please specify one or more files for single-end Bismark mapping!\n";
-	  }
-	  $singles =~ s/\s/,/g; # replacing spaces with commas
-      }
+	### QUIET prints nothing  besides alignments (suppresses warnings)
+	if ($quiet){
+		push @aligner_options,'--quiet';
+	}
 
-      @filenames = (split(/,/,$singles));
-  }
+	### SUMMARY OF ALL BOWTIE OPTIONS
+	my $aligner_options = join (' ',@aligner_options);
+	# 	warn "Summary of all aligner options:\t$aligner_options\n"; sleep(10);
 
-  warn "\nInput files to be analysed (in current folder '$current'):\n";
-  # checking if files exist and bail if they don't
-  foreach my $f (@filenames){
-      if ($mates1 and $mates2){
-	  my ($f1,$f2) = (split (/,/,$f));
-	  # mate 1
-	  if (-e $f1){
-	      warn "$f1\n";
-	  }
-	  else{
-	      die "Supplied filename '$f1' does not exist, please respecify!\n\n";
-	  }
-	  # mate 2
-	  if (-e $f2){
-	      warn "$f2\n";
-	  }
-	  else{
-	      die "Supplied filename '$f2' does not exist, please respecify!\n\n";
-	  }
+	### STRAND-SPECIFIC LIBRARIES
+	my $directional;
+	if ($non_directional){
+		die "A library can only be specified to be either non-directional or a PBAT-Seq library. Please respecify!\n\n" if ($pbat);
+		warn "Library was specified to be not strand-specific (non-directional), therefore alignments to all four possible bisulfite strands (OT, CTOT, OB and CTOB) will be reported\n";
+		sleep (1);
+		$directional = 0;
+	}
+	elsif($pbat){
+		die "The option --pbat is currently not compatible with --gzip. Please run alignments with uncompressed temporary files, i.e. lose the option --gzip\n" if ($gzip);
+		die "The option --pbat is currently only working with FastQ files. Please respecify (i.e. lose the option -f)!\n" if ($fasta);
 
-      }
-      else{
-	  if (-e $f){
-	      warn "$f\n";
-	  }
-	  else{
-	      die "Supplied filename '$f' does not exist, please respecify!\n\n";
-	  }
-      }
-  }
-  sleep(1);
+		warn "Library was specified as PBAT-Seq (Post-Bisulfite Adapter Tagging), only performing alignments to the complementary strands (CTOT and CTOB)\n";
+		sleep (1);
+		$directional = 0;
+	}
+	else{
+		warn "Library is assumed to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored (i.e. not performed!)\n";
+		sleep (1);
+		$directional = 1; # default behaviour
+	}
 
+	### UNMAPPEDSEQUENCE OUTPUT
+	$unmapped = 0 unless ($unmapped);
 
-  ### MININUM INSERT SIZE (PAIRED-END ONLY)
-  if (defined $minins){
-    die "-I/--minins can only be used for paired-end mapping!\n\n" if ($singles);
-    push @aligner_options,"--minins $minins";
-  }
+	### AMBIGUOUS ALIGNMENT SEQUENCE OUTPUT
+	$multi_map = 0 unless ($multi_map);
+	
 
-  ### MAXIMUM INSERT SIZE (PAIRED-END ONLY)
-  if (defined $maxins){
-    die "-X/--maxins can only be used for paired-end mapping!\n\n" if ($singles);
-    push @aligner_options,"--maxins $maxins";
-  }
-  else{
-    unless ($singles){
-      push @aligner_options,'--maxins 500';
-    }
-  }
+	### OUTPUT DIRECTORY
+	
+	chdir $parent_dir or die "Failed to move back to current working directory\n";
+	if ($output_dir){
+		unless ($output_dir =~ /\/$/){
+			$output_dir =~ s/$/\//;
+		}
 
-  ### QUIET prints nothing  besides alignments (suppresses warnings)
-  if ($quiet){
-    push @aligner_options,'--quiet';
-  }
+		if (chdir $output_dir){
+			$output_dir = getcwd; #  making the path absolute
+			unless ($output_dir =~ /\/$/){
+				$output_dir =~ s/$/\//;
+			}
+		}
+		else{
+			mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
+			warn "Created output directory $output_dir!\n\n";
+			chdir $output_dir or die "Failed to move to $output_dir\n";
+			$output_dir = getcwd; #  making the path absolute
+			unless ($output_dir =~ /\/$/){
+				$output_dir =~ s/$/\//;
+			}
+		}
+		warn "Output will be written into the directory: $output_dir\n";
+	}
+	else{
+		$output_dir = '';
+	}
 
-  ### CHUNKMBS needed to be increased to avoid memory exhaustion warnings for Bowtie 1, particularly for --best (and paired-end) alignments
-  unless ($bowtie2){ # Bowtie 2 does not have a chunkmbs option
-    if (defined $chunk){
-      push @aligner_options,"--chunkmbs $chunk";
-    }
-    else{
-      push @aligner_options,'--chunkmbs 512'; ## setting the default to 512MB (up from 64 default)
-    }
-  }
+	### TEMPORARY DIRECTORY for C->T and G->A transcribed files
 
+	chdir $parent_dir or die "Failed to move back to current working directory\n";
+	if ($temp_dir){
+		warn "\nUsing temp directory: $temp_dir\n";
+		unless ($temp_dir =~ /\/$/){
+			$temp_dir =~ s/$/\//;
+		}
 
-  ### SUMMARY OF ALL BOWTIE OPTIONS
-  my $aligner_options = join (' ',@aligner_options);
+		if (chdir $temp_dir){
+			$temp_dir = getcwd; #  making the path absolute
+			unless ($temp_dir =~ /\/$/){
+				$temp_dir =~ s/$/\//;
+			}
+		}
+		else{
+			mkdir $temp_dir or die "Unable to create directory $temp_dir $!\n";
+			warn "Created temporary directory $temp_dir!\n\n";
+			chdir $temp_dir or die "Failed to move to $temp_dir\n";
+			$temp_dir = getcwd; #  making the path absolute
+			unless ($temp_dir =~ /\/$/){
+				$temp_dir =~ s/$/\//;
+			}
+		}
+		warn "Temporary files will be written into the directory: $temp_dir\n";
+	}
+	else{
+		$temp_dir = '';
+	}
 
+	### PREFIX FOR OUTPUT FILES
+	if ($prefix){
+		# removing trailing dots
 
-  ### STRAND-SPECIFIC LIBRARIES
-  my $directional;
-  if ($non_directional){
-    die "A library can only be specified to be either non-directional or a PBAT-Seq library. Please respecify!\n\n" if ($pbat);
-    warn "Library was specified to be not strand-specific (non-directional), therefore alignments to all four possible bisulfite strands (OT, CTOT, OB and CTOB) will be reported\n";
-    sleep (1);
-    $directional = 0;
-  }
-  elsif($pbat){
-    die "The option --pbat is currently not compatible with --gzip. Please run alignments with uncompressed temporary files, i.e. lose the option --gzip\n" if ($gzip);
-    die "The option --pbat is currently only working with FastQ files. Please respecify (i.e. lose the option -f)!\n" if ($fasta);
+		$prefix =~ s/\.+$//;
 
-    warn "Library was specified as PBAT-Seq (Post-Bisulfite Adapter Tagging), only performing alignments to the complementary strands (CTOT and CTOB)\n";
-    sleep (1);
-    $directional = 0;
-  }
-  else{
-    warn "Library is assumed to be strand-specific (directional), alignments to strands complementary to the original top or bottom strands will be ignored (i.e. not performed!)\n";
-    sleep (1);
-    $directional = 1; # default behaviour
-  }
+		warn "Using the following prefix for output files: $prefix\n\n";
+		sleep(1);
+	}
 
-  ### UNMAPPEDSEQUENCE OUTPUT
-  $unmapped = 0 unless ($unmapped);
+	if (defined $multicore){
+		unless ($multicore > 0){
+			die "Core usage needs to be set to 1 or more (currently selected $multicore). Please respecify!\n";
+		}
+		if ($multicore > 20){
+			warn "Core usage currently set to more than 20 threads. This might fail horribly but let's see how it goes... (set value: $multicore)\n\n";
+		}
+		if ($sam){
+			die "The multicore function currently requires the output to be in BAM format, so please lose either option --sam or --multi\n";
+		}
+	}
+	else{
+		$multicore = 1; # default. Single-thread mode
+		warn "Setting parallelization to single-threaded (default)\n\n";
+	}	
 
-  ### AMBIGUOUS ALIGNMENT SEQUENCE OUTPUT
-  $multi_map = 0 unless ($multi_map);
+	if ($basename and $multicore > 1){
+		die "Specifying --basename in conjuction with --multicore is currently not supported (but we are aiming to fix this soon). Please lose either --basename or --multicore to proceed\n\n";
+	}
 
+	# Read Group Tags for the @RG header
+	if (defined $rg_sample){
+		if (defined $rg_id){
+			warn "--rg_id set to '$rg_id', setting --rg_tag to TRUE\n";
+			$rg_tag++; # implicitely setting $rg_tag as well
+		}
+		else{
+			die "--rg_sample cannot be specified without without setting --rg_id. Please set both or none (which would result in the default name 'SAMPLE' for both)\n";
+		}
+	}
 
-  ### OUTPUT DIRECTORY
+	if ($rg_tag){ # either true because of --rg_tag, or because --rg_id/--rg_sample were defined as well
+		unless (defined $rg_id){
+			$rg_id = 'SAMPLE';
+		}
+		unless (defined $rg_sample){
+			$rg_sample = 'SAMPLE';
+		}
+	}
 
-  chdir $parent_dir or die "Failed to move back to current working directory\n";
-  if ($output_dir){
-    unless ($output_dir =~ /\/$/){
-      $output_dir =~ s/$/\//;
-    }
-
-    if (chdir $output_dir){
-      $output_dir = getcwd; #  making the path absolute
-      unless ($output_dir =~ /\/$/){
-	$output_dir =~ s/$/\//;
-      }
-    }
-    else{
-      mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
-      warn "Created output directory $output_dir!\n\n";
-      chdir $output_dir or die "Failed to move to $output_dir\n";
-      $output_dir = getcwd; #  making the path absolute
-      unless ($output_dir =~ /\/$/){
-	$output_dir =~ s/$/\//;
-      }
-    }
-    warn "Output will be written into the directory: $output_dir\n";
-  }
-  else{
-    $output_dir = '';
-  }
-
-  ### TEMPORARY DIRECTORY for C->T and G->A transcribed files
-
-  chdir $parent_dir or die "Failed to move back to current working directory\n";
-  if ($temp_dir){
-    warn "\nUsing temp directory: $temp_dir\n";
-    unless ($temp_dir =~ /\/$/){
-      $temp_dir =~ s/$/\//;
-    }
-
-    if (chdir $temp_dir){
-      $temp_dir = getcwd; #  making the path absolute
-      unless ($temp_dir =~ /\/$/){
-	$temp_dir =~ s/$/\//;
-      }
-    }
-    else{
-      mkdir $temp_dir or die "Unable to create directory $temp_dir $!\n";
-      warn "Created temporary directory $temp_dir!\n\n";
-      chdir $temp_dir or die "Failed to move to $temp_dir\n";
-      $temp_dir = getcwd; #  making the path absolute
-      unless ($temp_dir =~ /\/$/){
-	$temp_dir =~ s/$/\//;
-      }
-    }
-    warn "Temporary files will be written into the directory: $temp_dir\n";
-  }
-  else{
-    $temp_dir = '';
-  }
-
-  ### OPTIONAL NON-BS MISMATCH OUTPUT AS EXTRA COLUMN IN SAM FILE
-  if ($non_bs_mm){
-    if ($vanilla){
-      die "Option '--non_bs_mm' may only be specified for output in SAM format. Please respecify!\n";
-    }
-  }
-
-  ### PREFIX FOR OUTPUT FILES
-  if ($prefix){
-    # removing trailing dots
-
-    $prefix =~ s/\.+$//;
-
-    warn "Using the following prefix for output files: $prefix\n\n";
-    sleep(1);
-  }
-
-  if (defined $multicore){
-    unless ($multicore > 0){
-      die "Core usage needs to be set to 1 or more (currently selected $multicore). Please respecify!\n";
-    }
-    if ($multicore > 20){
-      warn "Core usage currently set to more than 20 threads. This might fail horribly but let's see how it goes... (set value: $multicore)\n\n";
-    }
-    if ($sam){
-      die "The multicore function currently requires the output to be in BAM format, so please lose either option --sam or --multi\n";
-    }
-  }
-  else{
-    $multicore = 1; # default. Single-thread mode
-    warn "Setting parallelization to single-threaded (default)\n\n";
-  }
-
-  if ($basename and $multicore > 1){
-    die "Specifying --basename in conjuction with --multicore is currently not supported (but we are aiming to fix this soon). Please lose either --basename or --multicore to proceed\n\n";
-  }
-
-  # Read Group Tags for the @RG header
-  if (defined $rg_sample){
-    if (defined $rg_id){
-      warn "--rg_id set to '$rg_id', setting --rg_tag to TRUE\n";
-      $rg_tag++; # implicitely setting $rg_tag as well
-    }
-    else{
-      die "--rg_sample cannot be specified without without setting --rg_id. Please set both or none (which would result in the default name 'SAMPLE' for both)\n";
-    }
-  }
-
-  if ($rg_tag){ # either true because of --rg_tag, or because --rg_id/--rg_sample were defined as well
-    unless (defined $rg_id){
-      $rg_id = 'SAMPLE';
-    }
-    unless (defined $rg_sample){
-      $rg_sample = 'SAMPLE';
-    }
-  }
-
-  return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$vanilla,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
 }
 
 
@@ -9897,9 +9790,7 @@ sequence from the genome and determine if there were any protected C's present o
 As of version 0.7.0 Bismark will only run 2 alignment threads for OT and OB in parallel, the 4 strand mode can be
 re-enabled by using --non_directional.
 
-The final output of Bismark is in SAM format by default. For Bowtie 1 one can alos choose to report the old
-'vanilla' output format, which is a single tab delimited file with all sequences that have a unique best
-alignment to any of the 4 possible strands of a bisulfite PCR product. Both formats are described in more detail below.
+The final output of Bismark is in BAM/SAM format by default, described in more detail below.
 
 
 USAGE: bismark [options] <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
@@ -10285,42 +10176,7 @@ Bowtie 2 Reporting options:
                          always used and its default value is set to 10.
 
 
-'VANILLA' Bismark  OUTPUT:
-
-Single-end output format (tab-separated):
-
- (1) <seq-ID>
- (2) <read alignment strand>
- (3) <chromosome>
- (4) <start position>
- (5) <end position>
- (6) <observed bisulfite sequence>
- (7) <equivalent genomic sequence>
- (8) <methylation call>
- (9) <read conversion
-(10) <genome conversion>
-(11) <read quality score (Phred33)>
-
-
-Paired-end output format (tab-separated):
- (1) <seq-ID>
- (2) <read 1 alignment strand>
- (3) <chromosome>
- (4) <start position>
- (5) <end position>
- (6) <observed bisulfite sequence 1>
- (7) <equivalent genomic sequence 1>
- (8) <methylation call 1>
- (9) <observed bisulfite sequence 2>
-(10) <equivalent genomic sequence 2>
-(11) <methylation call 2>
-(12) <read 1 conversion
-(13) <genome conversion>
-(14) <read 1 quality score (Phred33)>
-(15) <read 2 quality score (Phred33)>
-
-
-Bismark SAM OUTPUT (default):
+Bismark BAM/SAM OUTPUT (default):
 
  (1) QNAME  (seq-ID)
  (2) FLAG   (this flag tries to take the strand a bisulfite read originated from into account (this is different from ordinary DNA alignment flags!))
@@ -10343,6 +10199,6 @@ Bismark SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 25 Dec 2018
+Last modified on 06 February 2019
 HOW_TO
 }
