@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -337,10 +337,9 @@ foreach my $filename (@filenames){
 				paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
 			else{ # HISAT2
-				### paired_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+				paired_end_align_fragments_to_bisulfite_genome_fastA_hisat2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
 		}
-
 		### FastQ format
 		else{
 			my $read1_count;
@@ -402,7 +401,7 @@ foreach my $filename (@filenames){
 				paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
 			else{ #
-				die "HISAT2. Needs to be handled yet.\n";
+				paired_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
 		}
 		start_methylation_call_procedure_paired_ends($filename_1,$filename_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
@@ -477,15 +476,14 @@ foreach my $filename (@filenames){
 					single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 (undef,$G_to_A_infile);
 				}
 				else{ # HISAT2
-					die "HISAT2 single-end PBAT FastQ alignments. Need to be handled." #single_end_align_fragments_to_bisulfite_genome_fastQ (undef,$G_to_A_infile);
+					single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 (undef,$G_to_A_infile);
 				}
 			}
 			elsif ($bowtie2){
 				single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
 			}
 			else{ # HISAT2
-				die "HISAT2 single-end FastQ alignments. Need to be handled." #single_end_align_fragments_to_bisulfite_genome_fastQ (undef,$G_to_A_infile);
-				# single_end_align_fragments_to_bisulfite_genome_fastQ ($C_to_T_infile,$G_to_A_infile);
+				single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 ($C_to_T_infile,$G_to_A_infile);
 			}
 		}
 
@@ -4740,6 +4738,7 @@ sub reverse_complement{
   return $sequence;
 }
 
+
 sub biTransformFastAFiles {
 	my $file = shift;
 	my ($dir,$filename);
@@ -5028,33 +5027,33 @@ sub biTransformFastAFiles_paired_end {
 		if ($read_number == 1){
 			warn "\nCreated C -> T converted version of the FastA file $filename ($count sequences in total)\n\n";
 			close CTOT or die "Failed to close filehandle $!\n";
-			return ($C_to_T_infile);
+			return ($C_to_T_infile,$count);
 		}
 		else{
 			warn "\nCreated G -> A converted version of the FastA file $filename ($count sequences in total)\n\n";
 			close GTOA or die "Failed to close filehandle $!\n";
-			return ($G_to_A_infile);
+			return ($G_to_A_infile,$count);
 		}
 	}
 	elsif($pbat){
 		if ($read_number == 1){
 			warn "\nCreated G -> A converted version of the FastA file $filename ($count sequences in total)\n\n";
-
-			return ($G_to_A_infile);
+			close GTOA or die "Failed to close filehandle $!\n";
+			return ($G_to_A_infile,$count);
 		}
 		else{
 			warn "\nCreated C -> T converted version of the FastA file $filename ($count sequences in total)\n\n";
 			close CTOT or die "Failed to close filehandle $!\n";
+			return ($C_to_T_infile,$count);
 		}
 	}
 	else{
 		warn "\nCreated C -> T as well as G -> A converted versions of the FastA file $filename ($count sequences in total)\n\n";
 		close CTOT or die "Failed to close filehandle $!\n";
 		close GTOA or die "Failed to close filehandle $!\n";
-		return ($C_to_T_infile,$G_to_A_infile);
+		return ($C_to_T_infile,$G_to_A_infile,$count);
 	}
 }
-
 
 sub biTransformFastQFiles {
 	my $file = shift;
@@ -5423,775 +5422,631 @@ sub fix_IDs{
   return $id;
 }
 
-sub ensure_sensical_alignment_orientation_single_end{
-  my $index = shift; # index number if the sequence produced an alignment
-  my $strand = shift;
-  ###  setting $orientation to 1 if it is in the correct orientation, and leave it 0 if it is the nonsensical wrong one
-  my $orientation = 0;
-  ##############################################################################################################
-  ## FORWARD converted read against FORWARD converted genome (read: C->T.....C->T..      genome:C->T.......C->T)
-  ## here we only want reads in the forward (+) orientation
-  if ($fhs[$index]->{name} eq 'CTreadCTgenome') {
-    ### if the alignment is (+) we count it, and return 1 for a correct orientation
-    if ($strand eq '+') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the orientation equals (-) the alignment is nonsensical
-    elsif ($strand eq '-') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-  }
-  ###############################################################################################################
-  ## FORWARD converted read against reverse converted genome (read: C->T.....C->T..      genome: G->A.......G->A)
-  ## here we only want reads in the forward (-) orientation
-  elsif ($fhs[$index]->{name} eq 'CTreadGAgenome') {
-    ### if the alignment is (-) we count it and return 1 for a correct orientation
-    if ($strand eq '-') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the orientation equals (+) the alignment is nonsensical
-    elsif ($strand eq '+') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-  }
-  ###############################################################################################################
-  ## Reverse converted read against FORWARD converted genome (read: G->A.....G->A..      genome: C->T.......C->T)
-  ## here we only want reads in the forward (-) orientation
-  elsif ($fhs[$index]->{name} eq 'GAreadCTgenome') {
-    ### if the alignment is (-) we count it and return 1 for a correct orientation
-    if ($strand eq '-') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the orientation equals (+) the alignment is nonsensical
-    elsif ($strand eq '+') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-  }
-  ###############################################################################################################
-  ## Reverse converted read against reverse converted genome (read: G->A.....G->A..      genome: G->A.......G->A)
-  ## here we only want reads in the forward (+) orientation
-  elsif ($fhs[$index]->{name} eq 'GAreadGAgenome') {
-    ### if the alignment is (+) we count it and return 1 for a correct orientation
-    if ($strand eq '+') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the orientation equals (-) the alignment is nonsensical
-    elsif ($strand eq '-') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-  } else{
-    die "One of the above conditions must be true\n";
-  }
-}
-
-sub ensure_sensical_alignment_orientation_paired_ends{
-  my ($index,$id_1,$strand_1,$id_2,$strand_2) = @_; # index number if the sequence produced an alignment
-  ###  setting $orientation to 1 if it is in the correct orientation, and leave it 0 if it is the nonsensical wrong one
-  my $orientation = 0;
-  ##############################################################################################################
-  ## [Index 0, sequence originated from (converted) forward strand]
-  ## CT converted read 1
-  ## GA converted read 2
-  ## CT converted genome
-  ## here we only want read 1 in (+) orientation and read 2 in (-) orientation
-  if ($fhs[$index]->{name} eq 'CTread1GAread2CTgenome') {
-    ### if the paired-end alignment is read1 (+) and read2 (-) we count it, and return 1 for a correct orientation
-    if ($id_1 =~ /1$/ and $strand_1 eq '+' and $id_2 =~ /2$/ and $strand_2 eq '-') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the read 2 is in (+) orientation and read 1 in (-) the alignment is nonsensical
-    elsif ($id_1 =~ /2$/ and $strand_1 eq '+' and $id_2 =~ /1$/ and $strand_2 eq '-') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-    else{
-      die "id1: $id_1\tid2: $id_2\tThis should be impossible\n";
-    }
-  }
-  ###############################################################################################################
-  ## [Index 1, sequence originated from (converted) reverse strand]
-  ## GA converted read 1
-  ## CT converted read 2
-  ## GA converted genome
-  ## here we only want read 1 in (+) orientation and read 2 in (-) orientation
-  elsif ($fhs[$index]->{name} eq 'GAread1CTread2GAgenome') {
-    ### if the paired-end alignment is read1 (+) and read2 (-) we count it, and return 1 for a correct orientation
-    if ($id_1 =~ /1$/ and $strand_1 eq '+' and $id_2 =~ /2$/ and $strand_2 eq '-') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the read 2 is in (+) orientation and read 1 in (-) the alignment is nonsensical
-    elsif ($id_1 =~ /2$/ and $strand_1 eq '+' and $id_2 =~ /1$/ and $strand_2 eq '-') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-    else{
-      die "id1: $id_1\tid2: $id_2\tThis should be impossible\n";
-    }
-  }
-  ###############################################################################################################
-  ## [Index 2, sequence originated from complementary to (converted) forward strand]
-  ## GA converted read 1
-  ## CT converted read 2
-  ## CT converted genome
-  ## here we only want read 1 in (-) orientation and read 2 in (+) orientation
-  elsif ($fhs[$index]->{name} eq 'GAread1CTread2CTgenome') {
-    ### if the paired-end alignment is read1 (-) and read2 (+) we count it, and return 1 for a correct orientation
-    if ($id_1 =~ /2$/ and $strand_1 eq '+' and $id_2 =~ /1$/ and $strand_2 eq '-') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the read 2 is in (+) orientation and read 1 in (-) the alignment is nonsensical
-    elsif ($id_1 =~ /1$/ and $strand_1 eq '+' and $id_2 =~ /2$/ and $strand_2 eq '-') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-    else{
-      die "id1: $id_1\tid2: $id_2\tThis should be impossible\n";
-    }
-  }
-  ###############################################################################################################
-  ## [Index 3, sequence originated from complementary to (converted) reverse strand]
-  ## CT converted read 1
-  ## GA converted read 2
-  ## GA converted genome
-  ## here we only want read 1 in (+) orientation and read 2 in (-) orientation
-  elsif ($fhs[$index]->{name} eq 'CTread1GAread2GAgenome') {
-    ### if the paired-end alignment is read1 (-) and read2 (+) we count it, and return 1 for a correct orientation
-    if ($id_1 =~ /2$/ and $strand_1 eq '+' and $id_2 =~ /1$/ and $strand_2 eq '-') {
-      $fhs[$index]->{seen}++;
-      $orientation = 1;
-      return $orientation;
-    }
-    ### if the read 2 is in (+) orientation and read 1 in (-) the alignment is nonsensical
-    elsif ($id_1 =~ /1$/ and $strand_1 eq '+' and $id_2 =~ /2$/ and $strand_2 eq '-') {
-      $fhs[$index]->{wrong_strand}++;
-      return $orientation;
-    }
-    else{
-      die "id1: $id_1\tid2: $id_2\tThis should be impossible\n";
-    }
-  }
-  else{
-    die "One of the above conditions must be true\n";
-  }
-}
 
 #####################################################################################################################################################
 
-### Bowtie 1 (default) | PAIRED-END | FASTA
-
-sub paired_end_align_fragments_to_bisulfite_genome_fastA {
-
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-
-  if ($directional){
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastA)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
-  }
-
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
-  ## data structure above
-  if ($directional){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-
-  foreach my $fh (@fhs) {
-
-    if ($directional){
-      unless ($fh->{inputfile_1}){
-	$fh->{last_seq_id} = undef;
-	$fh->{last_line_1} = undef;
-	$fh->{last_line_2} = undef;
-	next;
-      }
-    }
-
-    my $bt_options = $aligner_options;
-    if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
-      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt_options .= ' --nofw';
-    }
-
-    warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
-
-    my $line_1 = $fh->{fh}->getline();
-    my $line_2 = $fh->{fh}->getline();
-
-    # if Bowtie produces an alignment we store the first line of the output
-    if ($line_1 and $line_2) {
-      chomp $line_1;
-      chomp $line_2;
-      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-
-      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
-      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
-
-      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
-	$fh->{last_seq_id} = $id_1;
-      }
-      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
-	$fh->{last_seq_id} = $id_2;
-      }
-      else{
-	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
-      }
-
-      $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
-      $fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
-      warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
-    }
-    # otherwise we just initialise last_seq_id and last_lines as undefined
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line_1} = undef;
-      $fh->{last_line_2} = undef;
-    }
-  }
-}
 
 ### Bowtie 2 | PAIRED-END | FASTA
-
 sub paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-  if ($directional){
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastA)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
-  }
+	my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+	if ($directional){
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastA)\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
+	}
 
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
-  ## data structure above
-  if ($directional){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
+	## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
+	## data structure above
+	if ($directional){
+		warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 
-  foreach my $fh (@fhs) {
+	foreach my $fh (@fhs) {
 
-    if ($directional){
-      unless ($fh->{inputfile_1}){
-	$fh->{last_seq_id} = undef;
-	$fh->{last_line_1} = undef;
-	$fh->{last_line_2} = undef;
-	next;
-      }
-    }
+		if ($directional){
+			unless ($fh->{inputfile_1}){
+				$fh->{last_seq_id} = undef;
+				$fh->{last_line_1} = undef;
+				$fh->{last_line_2} = undef;
+				next;
+			}
+		}
 
-    my $bt2_options = $aligner_options;
-    if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
-      $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt2_options .= ' --nofw';
-    }
+		my $bt2_options = $aligner_options;
+		if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
+			$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$bt2_options .= ' --nofw';
+		}
 
-    warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+		warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
+		open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
 
-    ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
-    while (1){
-      $_ = $fh->{fh}->getline();
-      if ($_) {
-	last unless ($_ =~ /^\@/); # SAM headers start with @
-      }
-      else{
-	last; # no alignment output
-      }
-    }
+		### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else{
+				last; # no alignment output
+			}
+		}
 
-    my $line_1 = $_;
-    my $line_2 = $fh->{fh}->getline();
+		my $line_1 = $_;
+		my $line_2 = $fh->{fh}->getline();
 
-    # if Bowtie produces an alignment we store the first line of the output
-    if ($line_1 and $line_2) {
-      chomp $line_1;
-      chomp $line_2;
-      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
+		# if Bowtie produces an alignment we store the first line of the output
+		if ($line_1 and $line_2) {
+			chomp $line_1;
+			chomp $line_2;
+			my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
+			my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
 
-      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
-      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+			### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+			### We will thus identify which sequence was read 1 and store this ID as last_seq_id
 
-      if ($id_1 =~ s/\/1$//){ # removing the read 1 /1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
-	$fh->{last_seq_id} = $id_1;
-      }
-      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 /2 tag if present
-	$fh->{last_seq_id} = $id_2;
-      }
-      else{
-	warn "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
-      }
+			if ($id_1 =~ s/\/1$//){ # removing the read 1 /1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
+				$fh->{last_seq_id} = $id_1;
+			}
+			elsif ($id_2 =~ s/\/1$//){ # removing the read 1 /2 tag if present
+				$fh->{last_seq_id} = $id_2;
+			}
+			else{
+				warn "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+			}
 
-      $fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
-      $fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
-      warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
-    }
-    # otherwise we just initialise last_seq_id and last_lines as undefined
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line_1} = undef;
-      $fh->{last_line_2} = undef;
-    }
-  }
+			$fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
+			$fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
+			warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
+		}
+		# otherwise we just initialise last_seq_id and last_lines as undefined
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line_1} = undef;
+			$fh->{last_line_2} = undef;
+		}
+	}
 }
 
-### Bowtie 1 | PAIRED-END | FASTQ
+### HISAT2 | PAIRED-END | FASTA
+sub paired_end_align_fragments_to_bisulfite_genome_fastA_hisat2 {
+	my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+	if ($directional){
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastA)\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastA)\n";
+	}
 
-sub paired_end_align_fragments_to_bisulfite_genome_fastQ {
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+	## Now starting up to 4 instances of HISAT2 feeding in the converted sequence files and reading in the first line of the output, and storing it in the
+	## data structure above
+	if ($directional){
+		warn "Now running 2 instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 
-  if ($directional){
-    warn "Input file is $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
-  }
-  elsif($pbat){
-    warn "Input file is $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ; PBAT-Seq)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 and $G_to_A_infile_1 and $C_to_T_infile_2 (non-directional; FastQ)\n";
-  }
+	foreach my $fh (@fhs) {
 
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the data structure above
-  if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
+		if ($directional){
+			unless ($fh->{inputfile_1}){
+				$fh->{last_seq_id} = undef;
+				$fh->{last_line_1} = undef;
+				$fh->{last_line_2} = undef;
+				next;
+			}
+		}
 
-  foreach my $fh (@fhs) {
+		my $hisat2_options = $aligner_options;
+		if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
+			$hisat2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$hisat2_options .= ' --nofw';
+		}
 
-    if ($directional or $pbat){
-      unless ($fh->{inputfile_1}){
-	$fh->{last_seq_id} = undef;
-	$fh->{last_line_1} = undef;
-	$fh->{last_line_2} = undef;
-	next; # skipping unwanted filehandles
-      }
-    }
+		warn "Now starting a HISAT2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $hisat2_options))\n";
+		open ($fh->{fh},"$path_to_hisat2 $hisat2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to HISAT2: $!";
 
-    my $bt_options = $aligner_options;
-    if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
-      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt_options .= ' --nofw';
-    }
+		### HISAT2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else{
+				last; # no alignment output
+			}
+		}
 
-    if ($gzip){
-      warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1}, with the options: $bt_options)\n";
-      open ($fh->{fh},"gunzip -c ${temp_dir}$fh->{inputfile_1} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} --12 - |") or die "Can't open pipe to bowtie: $!";
-    }
-    else{
-	warn "Now starting a Bowtie paired-end alignment for $fh->{name} (reading in sequences from ${temp_dir}$fh->{inputfile_1} and ${temp_dir}$fh->{inputfile_2}, with the options: $bt_options))\n";
-	open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
-    }
+		my $line_1 = $_;
+		my $line_2 = $fh->{fh}->getline();
 
-    my $line_1 = $fh->{fh}->getline();
-    my $line_2 = $fh->{fh}->getline();
+		# if HISAT2 produces an alignment we store the first line of the output
+		if ($line_1 and $line_2) {
+			chomp $line_1;
+			chomp $line_2;
+			my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first HISAT2 output line (= the sequence identifier)
+			my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second HSIAT2 output line
 
-    # if Bowtie produces an alignment we store the first line of the output
-    if ($line_1 and $line_2) {
-      chomp $line_1;
-      chomp $line_2;
-      ### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
-      ### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+			### HISAT2 always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+			### We will thus identify which sequence was read 1 and store this ID as last_seq_id
 
-      my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-      my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
+			if ($id_1 =~ s/\/1$//){ # removing the read 1 /1 tag if present (remember that HISAT2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
+				$fh->{last_seq_id} = $id_1;
+			}
+			elsif ($id_2 =~ s/\/1$//){ # removing the read 1 /2 tag if present
+				$fh->{last_seq_id} = $id_2;
+			}
+			else{
+				warn "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+			}
 
-      if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present
-	$fh->{last_seq_id} = $id_1;
-      }
-      elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
-	$fh->{last_seq_id} = $id_2;
-      }
-      else{
-	die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
-      }
-
-      $fh->{last_line_1} = $line_1; # this contains read 1 or read 2
-      $fh->{last_line_2} = $line_2; # this contains read 1 or read 2
-      warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
-    }
-
-    # otherwise we just initialise last_seq_id and last_lines as undefined
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line_1} = undef;
-      $fh->{last_line_2} = undef;
-    }
-  }
+			$fh->{last_line_1} = $line_1; # this contains either read 1 or read 2
+			$fh->{last_line_2} = $line_2; # this contains either read 1 or read 2
+			warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
+		}
+		# otherwise we just initialise last_seq_id and last_lines as undefined
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line_1} = undef;
+			$fh->{last_line_2} = undef;
+		}
+	}
 }
 
-### Bowtie 2 (default) | PAIRED-END | FASTQ
 
+### Bowtie 2 | PAIRED-END | FASTQ
 sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
-  my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
-  if ($directional){
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
-  }
-  elsif ($pbat){
-    warn "Input files are $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
-  }
-
-  ## Now starting up 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
-  ## data structure above
-  if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-
-  foreach my $fh (@fhs) {
-
-    if ($directional or $pbat){ # skipping unwanted filehandles
-      unless ($fh->{inputfile_1}){
-	$fh->{last_seq_id} = undef;
-	$fh->{last_line_1} = undef;
-	$fh->{last_line_2} = undef;
-	next;
-      }
-    }
-
-    my $bt2_options = $aligner_options;
-    if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
-	$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-	$bt2_options .= ' --nofw';
-    }
-
-    warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
-
-    ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
-    while (1){
-	$_ = $fh->{fh}->getline();
-	if ($_) {
-	    last unless ($_ =~ /^\@/); # SAM headers start with @
+	my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+	if ($directional){
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
+	}
+	elsif ($pbat){
+		warn "Input files are $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ)\n";
 	}
 	else{
-	    last; # no alignment output
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
 	}
-    }
+
+	## Now starting up 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in the
+	## data structure above
+	if ($directional or $pbat){
+		warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+
+	foreach my $fh (@fhs) {
+
+		if ($directional or $pbat){ # skipping unwanted filehandles
+			unless ($fh->{inputfile_1}){
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line_1} = undef;
+			$fh->{last_line_2} = undef;
+			next;
+		}
+	}
+
+	my $bt2_options = $aligner_options;
+	if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
+		$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+	}
+	else {
+		$bt2_options .= ' --nofw';
+	}
+
+	warn "Now starting a Bowtie 2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $bt2_options))\n";
+	open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to bowtie: $!";
+
+	### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
+	while (1){
+		$_ = $fh->{fh}->getline();
+		if ($_) {
+			last unless ($_ =~ /^\@/); # SAM headers start with @
+		}
+		else{
+			last; # no alignment output
+		}
+	}
 
     my $line_1 = $_;
     my $line_2 = $fh->{fh}->getline();
 
-    # if Bowtie produces an alignment we store the first line of the output
+    # if Bowtie2 produces an alignment we store the first line of the output
     if ($line_1 and $line_2) {
-	chomp $line_1;
-	chomp $line_2;
-	### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
-	### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+		chomp $line_1;
+		chomp $line_2;
+		### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+		### We will thus identify which sequence was read 1 and store this ID as last_seq_id
 
-	my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
-	my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-	
-	if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
-	    $fh->{last_seq_id} = $id_1;
+		my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
+		my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
+		
+		if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
+			$fh->{last_seq_id} = $id_1;
+		}
+		elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+			$fh->{last_seq_id} = $id_2;
+		}
+		else{
+			die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+		}
+		
+		$fh->{last_line_1} = $line_1; # this contains read 1 or read 2
+		$fh->{last_line_2} = $line_2; # this contains read 1 or read 2
+		# warn "Set last_seq_id as: $fh->{last_seq_id}\n";
+		warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
 	}
-	elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
-	    $fh->{last_seq_id} = $id_2;
+	# otherwise we just initialise last_seq_id and last_lines as undefined
+	else {
+		warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line_1} = undef;
+			$fh->{last_line_2} = undef;
+		}
+	}
+}
+
+### HISAT2   | PAIRED-END | FASTQ
+sub paired_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 {
+
+	my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+	if ($directional){
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
+	}
+	elsif ($pbat){
+		warn "Input files are $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ)\n";
 	}
 	else{
-	    die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
 	}
-	
-	$fh->{last_line_1} = $line_1; # this contains read 1 or read 2
-	$fh->{last_line_2} = $line_2; # this contains read 1 or read 2
-	# warn "Set last_seq_id as: $fh->{last_seq_id}\n";
-	warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
-    }
-    # otherwise we just initialise last_seq_id and last_lines as undefined
-    else {
-	warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
-	$fh->{last_seq_id} = undef;
-	$fh->{last_line_1} = undef;
-	$fh->{last_line_2} = undef;
-    }
-  }
+
+	## Now starting up 4 instances of HISAT2 feeding in the converted sequence files and reading in the first line of the output, and storing it in the
+	## data structure above
+	if ($directional or $pbat){
+		warn "Now running 2 instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+
+	foreach my $fh (@fhs) {
+
+		if ($directional or $pbat){ # skipping unwanted filehandles
+			unless ($fh->{inputfile_1}){
+				$fh->{last_seq_id} = undef;
+				$fh->{last_line_1} = undef;
+				$fh->{last_line_2} = undef;
+				next;
+			}
+		}
+
+		my $hisat2_options = $aligner_options;
+		if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
+			$hisat2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$hisat2_options .= ' --nofw';
+		}
+
+		warn "Now starting a HISAT2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $hisat2_options))\n";
+		open ($fh->{fh},"$path_to_hisat2 $hisat2_options -x $fh->{bisulfiteIndex} -1 $temp_dir$fh->{inputfile_1} -2 $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to HISAT2: $!";
+
+		### HISAT2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else{
+				last; # no alignment output
+			}
+		}
+
+		my $line_1 = $_;
+		my $line_2 = $fh->{fh}->getline();
+
+		# if HISAT2 produces an alignment we store the first line of the output
+		if ($line_1 and $line_2) {
+			chomp $line_1;
+			chomp $line_2;
+			
+			# Need to make sure HISAT2 does the same
+			### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+			### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+			my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first HISAT2 output line (= the sequence identifier)
+			my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second HISAT2 output line
+			
+			if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that HISAT2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
+				$fh->{last_seq_id} = $id_1;
+			}
+			elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+				$fh->{last_seq_id} = $id_2;
+			}
+			else{
+				die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+			}
+			
+			$fh->{last_line_1} = $line_1; # this contains read 1 or read 2
+			$fh->{last_line_2} = $line_2; # this contains read 1 or read 2
+			# warn "Set last_seq_id as: $fh->{last_seq_id}\n";
+			warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
+		}
+		# otherwise we just initialise last_seq_id and last_lines as undefined
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line_1} = undef;
+			$fh->{last_line_2} = undef;
+		}
+	}
 }
 
 #####################################################################################################################################################
-
-### Bowtie 1 (default) | SINGLE-END | FASTA
-sub single_end_align_fragments_to_bisulfite_genome_fastA {
-  my ($C_to_T_infile,$G_to_A_infile) = @_;
-  if ($directional){
-    warn "Input file is $C_to_T_infile (FastA)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile and $G_to_A_infile (FastA)\n";
-  }
-
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## data structure above
-  if ($directional){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-
-  foreach my $fh (@fhs) {
-
-    my $bt_options = $aligner_options;
-    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
-      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt_options .= ' --nofw';
-    }
-
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt_options)\n";
-    if ($gzip){
-      open ($fh->{fh},"gunzip -c $temp_dir$fh->{inputfile} | $path_to_bowtie $bt_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
-    }
-    else{
-      open ($fh->{fh},"$path_to_bowtie $bt_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!"; # command for uncompressed data
-    }
-
-    # if Bowtie produces an alignment we store the first line of the output
-    $_ = $fh->{fh}->getline();
-    if ($_) {
-      chomp;
-      my $id = (split(/\t/))[0]; # this is the first element of the bowtie output (= the sequence identifier)
-      $fh->{last_seq_id} = $id;
-      $fh->{last_line} = $_;
-      warn "Found first alignment:\t$fh->{last_line}\n";
-    }
-    # otherwise we just initialise last_seq_id and last_line as undefined
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line} = undef;
-    }
-  }
-}
 
 ### Bowtie 2 | SINGLE-END | FASTA
 sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
-  my ($C_to_T_infile,$G_to_A_infile) = @_;
-  if ($directional){
-    warn "Input file is $C_to_T_infile (FastA)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile and $G_to_A_infile (FastA)\n";
-  }
+	my ($C_to_T_infile,$G_to_A_infile) = @_;
+	if ($directional){
+		warn "Input file is $C_to_T_infile (FastA)\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile and $G_to_A_infile (FastA)\n";
+	}
 
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## data structure above
-  if ($directional){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
+	## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+	## data structure above
+	if ($directional){
+		warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 
-  foreach my $fh (@fhs) {
+	foreach my $fh (@fhs) {
 
-    my $bt2_options = $aligner_options;
-    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
-      $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt2_options .= ' --nofw';
-    }
+		my $bt2_options = $aligner_options;
+		if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+			$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$bt2_options .= ' --nofw';
+		}
 
-    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt2_options)\n";
-    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie 2: $!";
+		warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt2_options)\n";
+		open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie 2: $!";
 
-    ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
-    while (1){
-      $_ = $fh->{fh}->getline();
-      if ($_) {
-	last unless ($_ =~ /^\@/); # SAM headers start with @
-      }
-      else{
-	last; # no alignment output
-      }
-    }
+		### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else{
+				last; # no alignment output
+			}
+		}
 
-    # Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
-    if ($_) {
-      chomp;
-      my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
-      $fh->{last_seq_id} = $id;
-      $fh->{last_line} = $_;
-      warn "Found first alignment:\t$fh->{last_line}\n";
-    }
-    # otherwise we just initialise last_seq_id and last_line as undefinded. This should only happen at the end of a file for Bowtie 2 output
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line} = undef;
-    }
-  }
+		# Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+		if ($_) {
+			chomp;
+			my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
+			$fh->{last_seq_id} = $id;
+			$fh->{last_line} = $_;
+			warn "Found first alignment:\t$fh->{last_line}\n";
+		}
+		# otherwise we just initialise last_seq_id and last_line as undefinded. This should only happen at the end of a file for Bowtie 2 output
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line} = undef;
+		}
+	}
 }
 
+### HISAT2   | SINGLE-END | FASTA
+sub single_end_align_fragments_to_bisulfite_genome_fastA_hisat2 {
+	my ($C_to_T_infile,$G_to_A_infile) = @_;
+	if ($directional){
+		warn "Input file is $C_to_T_infile (FastA)\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile and $G_to_A_infile (FastA)\n";
+	}
 
-### Bowtie 1 (default) | SINGLE-END | FASTQ
-sub single_end_align_fragments_to_bisulfite_genome_fastQ {
-  my ($C_to_T_infile,$G_to_A_infile) = @_;
-  if ($directional){
-    warn "Input file is $C_to_T_infile (FastQ)\n";
-  }
-  elsif($pbat){
-    warn "Input file is $G_to_A_infile (FastQ)\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n";
-  }
+	## Now starting up to 4 instances of HISAT2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+	## data structure above
+	if ($directional){
+		warn "Now running 2 instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 
+	foreach my $fh (@fhs) {
 
-  ## Now starting up to 4 instances of Bowtie feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## the data structure above
-  if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
+		my $hisat2_options = $aligner_options;
+		if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+			$hisat2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$hisat2_options .= ' --nofw';
+		}
 
-  foreach my $fh (@fhs) {
-    my $bt_options = $aligner_options;
-    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
-      $bt_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt_options .= ' --nofw';
-    }
+		warn "Now starting the HISAT2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $hisat2_options)\n";
+		open ($fh->{fh},"$path_to_hisat2 $hisat2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to HISAT2: $!";
 
-    warn "Now starting the Bowtie aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options: $bt_options)\n";
-    sleep (5);
+		### HISAT2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else{
+				last; # no alignment output
+			}
+		}
 
-    if ($gzip){
-      open ($fh->{fh},"gunzip -c $temp_dir$fh->{inputfile} | $path_to_bowtie $aligner_options $fh->{bisulfiteIndex} - |") or die "Can't open pipe to bowtie: $!";
-    }
-    else{
-      open ($fh->{fh},"$path_to_bowtie $aligner_options $fh->{bisulfiteIndex} $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!"; # command for uncompressed data
-    }
-
-    # if Bowtie produces an alignment we store the first line of the output
-    $_ = $fh->{fh}->getline();
-    if ($_) {
-      chomp;
-      my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
-      $fh->{last_seq_id} = $id;
-      $fh->{last_line} = $_;
-      warn "Found first alignment:\t$fh->{last_line}\n";
-    }
-    # otherwise we just initialise last_seq_id and last_line as undefined
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line} = undef;
-    }
-  }
+		# HISAT2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+		if ($_) {
+			chomp;
+			my $id = (split(/\t/))[0]; # this is the first element of the HISAT2 output (= the sequence identifier)
+			$fh->{last_seq_id} = $id;
+			$fh->{last_line} = $_;
+			warn "Found first alignment:\t$fh->{last_line}\n";
+		}
+		# otherwise we just initialise last_seq_id and last_line as undefinded. This should only happen at the end of a file for Bowtie 2 output
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line} = undef;
+		}
+	}
 }
 
 ### Bowtie 2 | SINGLE-END | FASTQ
 sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
-  my ($C_to_T_infile,$G_to_A_infile) = @_;
-  if ($directional){
-    warn "Input file is $C_to_T_infile (FastQ)\n\n";
-  }
-  elsif ($pbat){
-    warn "Input file is $G_to_A_infile (FastQ)\n\n";
-  }
-  else{
-    warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
-  }
+	my ($C_to_T_infile,$G_to_A_infile) = @_;
+	if ($directional){
+		warn "Input file is $C_to_T_infile (FastQ)\n\n";
+	}
+	elsif ($pbat){
+		warn "Input file is $G_to_A_infile (FastQ)\n\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
+	}
 
-  ## Now starting up to 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
-  ## the data structure above
-  if ($directional or $pbat){
-    warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-    warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
+	## Now starting up to 4 instances of Bowtie 2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+	## the data structure above
+	if ($directional or $pbat){
+		warn "Now running 2 instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 
-  foreach my $fh (@fhs) {
-    my $bt2_options = $aligner_options;
-    if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
-      $bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
-    }
-    else {
-      $bt2_options .= ' --nofw';
-    }
-    warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $bt2_options)\n";
-    warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
+	foreach my $fh (@fhs) {
+		my $bt2_options = $aligner_options;
+		if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+			$bt2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$bt2_options .= ' --nofw';
+		}
+		warn "Now starting the Bowtie 2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $bt2_options)\n";
+		warn "Using Bowtie 2 index: $fh->{bisulfiteIndex}\n\n";
 
-    open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
-    ### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
-    while (1){
-      $_ = $fh->{fh}->getline();
-      # warn "$_\n";
-      # sleep(1);
-      if ($_) {
-	last unless ($_ =~ /^\@/); # SAM headers start with @
-      }
-      else {
-	last;
-      }
-    }
+		open ($fh->{fh},"$path_to_bowtie $bt2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to bowtie: $!";
+		### Bowtie 2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			# warn "$_\n";
+			# sleep(1);
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else {
+				last;
+			}
+		}
 
-    # Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
-    if ($_) {
-      chomp;
-      my $id = (split(/\t/))[0]; # this is the first element of the Bowtie 2 output (= the sequence identifier)
-      $fh->{last_seq_id} = $id;
-      $fh->{last_line} = $_;
-      warn "Found first alignment:\t$fh->{last_line}\n";
-      # warn "storing $id and\n$_\n";
-    }
-    # otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
-    else {
-      warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
-      $fh->{last_seq_id} = undef;
-      $fh->{last_line} = undef;
-    }
-  }
+		# Bowtie 2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+		if ($_) {
+			chomp;
+			my $id = (split(/\t/))[0]; # this is the first element of the Bowtie 2 output (= the sequence identifier)
+			$fh->{last_seq_id} = $id;
+			$fh->{last_line} = $_;
+			warn "Found first alignment:\t$fh->{last_line}\n";
+			# warn "storing $id and\n$_\n";
+		}
+		# otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line} = undef;
+		}
+	}
+}
+
+### HISAT2   | SINGLE-END | FASTQ
+sub single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 {
+
+	my ($C_to_T_infile,$G_to_A_infile) = @_;
+	if ($directional){
+		warn "Input file is $C_to_T_infile (FastQ)\n\n";
+	}
+	elsif ($pbat){
+		warn "Input file is $G_to_A_infile (FastQ)\n\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
+	}
+
+	## Now starting up to 4 instances of HISAT2 feeding in the converted sequence files and reading in the first line of the bowtie output, and storing it in
+	## the data structure above
+	if ($directional or $pbat){
+		warn "Now running 2 instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+
+	foreach my $fh (@fhs) {
+		my $hisat2_options = $aligner_options;
+		if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+			$hisat2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		}
+		else {
+			$hisat2_options .= ' --nofw';
+		}
+		warn "Now starting the HISAT2 aligner for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $hisat2_options)\n";
+		warn "Using HISAT2 index: $fh->{bisulfiteIndex}\n\n";
+		warn "HISAT2 command line:$path_to_hisat2 $hisat2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |\n";
+		open ($fh->{fh},"$path_to_hisat2 $hisat2_options -x $fh->{bisulfiteIndex} -U $temp_dir$fh->{inputfile} |") or die "Can't open pipe to HISAT2: $!";
+		### HISAT2 outputs out SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			# warn "$_\n";
+			# sleep(1);
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else {
+				last;
+			}
+		}
+
+		# HISAT2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+		if ($_) {
+			chomp;
+			my $id = (split(/\t/))[0]; # this is the first element of the HISAT2 output (= the sequence identifier)
+			$fh->{last_seq_id} = $id;
+			$fh->{last_line} = $_;
+			warn "Found first alignment:\t$fh->{last_line}\n";
+			warn "storing $id and\n$_\n";
+		}
+		# otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line} = undef;
+		}
+	}
 }
 
 
@@ -7050,13 +6905,16 @@ VERSION
 			$dovetail = 1; # setting the option $dovetail automatically so that 5' trimmed sequences align better
 		}
 
-		if ($dovetail){
-			if ($old_flag){
-				die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
+		if ($bowtie2){
+			if ($dovetail){
+				if ($old_flag){
+					die "The option '--dovetail' may only be specified with the current SAM FLAG values. Please respecify...\n";
+				}
+				push @aligner_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
 			}
-			push @aligner_options,'--dovetail';     ## 07 03 2016 Adding the option --dovetail, mainly for PBAT and other 5' trimmed alignments
-		}
-		#}#
+			# HISAT2 doesn't have the concept of --dovetail
+		}	
+		
 
 		if ($old_flag){
 			warn "\nUsing FLAG values for paired-end SAM output used up to Bismark v0.8.2. In addition, paired-end sequences will have /1 and /2 appended to their read IDs\n\n";
@@ -7282,7 +7140,7 @@ VERSION
 		}
 	}
 
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
 }
 
 
