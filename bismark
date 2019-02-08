@@ -59,169 +59,170 @@ if ($multicore > 1){
 
 sub multi_process_handling{
 
-  my $offset = 1;
-  my $process_id;
-  if ($multicore > 1){
+	my $offset = 1;
+	my $process_id;
+	if ($multicore > 1){
 
-    until ($offset == $multicore){
-      # warn "multicore: $multicore\noffset: $offset\n";
-      my $fork = fork;
+		until ($offset == $multicore){
+		# warn "multicore: $multicore\noffset: $offset\n";
+			my $fork = fork;
 
-      if (defined $fork){
-	if ($fork != 0){
-	  $process_id = $fork;
-	  push @pids, $process_id;
-	  if ($offset < $multicore){
-	    ++$offset;
-	    # warn "I am the parent process, child pid: $fork\nIncrementing offset counter to: $offset\n\n";
-	  }
-	  else{
-	    # warn "Reached the number of maximum multicores. Proceeeding to processing...\n";
-	  }
+			if (defined $fork){
+				if ($fork != 0){
+					$process_id = $fork;
+					push @pids, $process_id;
+					if ($offset < $multicore){
+						++$offset;
+					# warn "I am the parent process, child pid: $fork\nIncrementing offset counter to: $offset\n\n";
+					}
+					else{
+						# warn "Reached the number of maximum multicores. Proceeeding to processing...\n";
+					}
+				}
+				elsif ($fork == 0){
+					# warn "I am a child process, pid: $fork\nOffset counter is: $offset\nProceeding to processing...\n";
+					$process_id = $fork;
+					last;
+				}
+			}
+			else{
+				die "[FATAL ERROR]: Forking unsuccessful. This normally means that something is fundamentally not working with the fork command. Please run again without the --parallel option, or ask your system admin to look into this.\n";
+			}	
+		}
+
+		# warn "\nThe Thread Identity\n===================\n";
+		if ($process_id){
+			# print "I am the parent process. My children are called:\n";
+			# print join ("\t",@pids),"\n";
+			# print "I am going to process the following line count: $offset\n\n";
+		}
+		elsif($process_id == 0){
+			# warn "I am a child process: Process ID: $process_id\n";
+			# warn "I am going to process the following line count: $offset\n\n";
+		}
+		else{
+			die "Process ID was: '$process_id'\n";
+		}
 	}
-	elsif ($fork == 0){
-	  # warn "I am a child process, pid: $fork\nOffset counter is: $offset\nProceeding to processing...\n";
-	  $process_id = $fork;
-	  last;
+	else{
+		warn "Single-core mode: setting pid to 1\n";
+		$process_id = 1;
 	}
-      }
-      else{
-	  die "[FATAL ERROR:] Forking unsuccessful. This normally means that something is fundamentally not working with the fork command. Please run again without the --parallel option, or ask your system admin to look into this.\n";
-      }
-    }
 
-    # warn "\nThe Thread Identity\n===================\n";
-    if ($process_id){
-      # print "I am the parent process. My children are called:\n";
-      # print join ("\t",@pids),"\n";
-      # print "I am going to process the following line count: $offset\n\n";
-    }
-    elsif($process_id == 0){
-      # warn "I am a child process: Process ID: $process_id\n";
-      # warn "I am going to process the following line count: $offset\n\n";
-    }
-    else{
-      die "Process ID was: '$process_id'\n";
-    }
-  }
-  else{
-    warn "Single-core mode: setting pid to 1\n";
-    $process_id = 1;
-  }
-
-  return ($process_id,$offset);
+	return ($process_id,$offset);
+	
 }
 
 
 sub subset_input_file_FastQ{
 
-  my ($filename,$process_id,$offset) = @_;
+	my ($filename,$process_id,$offset) = @_;
 
-  if ($filename =~ /gz$/){
-    open (OFFSET,"gunzip -c $filename |") or die "Couldn't read from file '$filename': $!\n";
-  }
-  else{
-    open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
-  }
+	if ($filename =~ /gz$/){
+		open (OFFSET,"gunzip -c $filename |") or die "Couldn't read from file '$filename': $!\n";
+	}
+	else{
+		open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
+	}
 
-  # warn "offset is $offset\n";
-  my $temp = $filename;
-  $temp .= ".temp.$offset";
-  $temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
+	# warn "offset is $offset\n";
+	my $temp = $filename;
+	$temp .= ".temp.$offset";
+	$temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
 
-  if ($gzip){
-    $temp .= '.gz';
-    open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
-  }
-  else{
-    open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
-  }
+	if ($gzip){
+		$temp .= '.gz';
+		open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+	}
+	else{
+		open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+	}
 
-  my $line_count = 0;
+	my $line_count = 0;
 
-  while (1){
-    my $l1 = <OFFSET>;
-    my $l2 = <OFFSET>;
-    my $l3 = <OFFSET>;
-    my $l4 = <OFFSET>;
+	while (1){
+		my $l1 = <OFFSET>;
+		my $l2 = <OFFSET>;
+		my $l3 = <OFFSET>;
+		my $l4 = <OFFSET>;
 
-    last unless ($l4);
-    ++$line_count;
+		last unless ($l4);
+		++$line_count;
+	
+		if ( ($line_count - $offset)%$multicore == 0){
+			# warn "line count: $line_count\noffset: $offset\n";
+			# warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+			# warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+			print TEMPFQ "$l1$l2$l3$l4";
+		}
+		else{
+			# warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+			next;
+		}
+	}
 
-    if ( ($line_count - $offset)%$multicore == 0){
-      # warn "line count: $line_count\noffset: $offset\n";
-      # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
-      # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
-      print TEMPFQ "$l1$l2$l3$l4";
-    }
-    else{
-      # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
-      next;
-    }
-  }
+	close OFFSET or warn $!;
+	close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
 
-  close OFFSET or warn $!;
-  close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
+	warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
 
-  warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
-
-  return ($temp); # returning the subset filename
+	return ($temp); # returning the subset filename
 
 }
 
 sub subset_input_file_FastA{
 
-  my ($filename,$process_id,$offset) = @_;
+	my ($filename,$process_id,$offset) = @_;
 
-  if ($filename =~ /gz$/){
-    open (OFFSET,"gunzip -c $filename |") or die "Couldn't read from file '$filename': $!\n";
-  }
-  else{
-    open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
-  }
+	if ($filename =~ /gz$/){
+		open (OFFSET,"gunzip -c $filename |") or die "Couldn't read from file '$filename': $!\n";
+	}
+	else{
+		open (OFFSET,$filename) or die "Couldn't read from file '$filename': $!\n";
+	}
 
-  # warn "offset is $offset\n";
-  my $temp = $filename;
-  $temp .= ".temp.$offset";
-  $temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
+	# warn "offset is $offset\n";
+	my $temp = $filename;
+	$temp .= ".temp.$offset";
+	$temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
 
-  if ($gzip){
-    $temp .= '.gz';
-    open (TEMPFA,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
-  }
-  else{
-    open (TEMPFA,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
-  }
+	if ($gzip){
+		$temp .= '.gz';
+		open (TEMPFA,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+	}
+	else{
+		open (TEMPFA,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+	}
 
-  warn "Writing temporary infile to $temp\n";
+	warn "Writing temporary infile to $temp\n";
 
-  my $line_count = 0;
+	my $line_count = 0;
 
-  while (1){
-    my $l1 = <OFFSET>;
-    my $l2 = <OFFSET>;
+	while (1){
+		my $l1 = <OFFSET>;
+		my $l2 = <OFFSET>;
 
-    last unless ($l2);
-    ++$line_count;
+		last unless ($l2);
+		++$line_count;
 
-    if ( ($line_count - $offset)%$multicore == 0){
-      # warn "line count: $line_count\noffset: $offset\n";
-      # warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
-      # warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
-      print TEMPFA "$l1$l2";
-    }
-    else{
-      # warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
-      next;
-    }
-  }
+		if ( ($line_count - $offset)%$multicore == 0){
+			# warn "line count: $line_count\noffset: $offset\n";
+			# warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
+			# warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
+			print TEMPFA "$l1$l2";
+		}
+		else{
+			# warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
+			next;
+		}
+	}
 
-  close OFFSET or warn $!;
-  close TEMPFA or warn "Failed to close file handle TEMPFQ: $!\n";
+	close OFFSET or warn $!;
+	close TEMPFA or warn "Failed to close file handle TEMPFQ: $!\n";
 
-  warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
+	warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
 
-  return ($temp); # returning the subset filename
+	return ($temp); # returning the subset filename
 
 }
 
@@ -254,8 +255,8 @@ foreach my $filename (@filenames){
 
 	# get general settings (also for single-threaded use)
 	my ($pid,$offset) = multi_process_handling ();
-
 	my ($single_end,$paired_end);
+
 	### PAIRED-END ALIGNMENTS
 	if ($filename =~ ','){
 
@@ -302,13 +303,16 @@ foreach my $filename (@filenames){
 		### additional variables only for paired-end alignments
 		my ($C_to_T_infile_2,$G_to_A_infile_2); # to be made from mate2 file
 
+		my $read1_count; # to see if R1 and R2 have the same length
+		my $read2_count;
+		
 		### FastA format
 		if ($sequence_file_format eq 'FASTA'){
 			warn "Input files are in FastA format\n";
 
 			if ($directional){
-				($C_to_T_infile_1) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
-				($G_to_A_infile_2) = biTransformFastAFiles_paired_end ($filename_2,2);
+				($C_to_T_infile_1,$read1_count) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
+				($G_to_A_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
 
 				$fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 				$fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -319,9 +323,22 @@ foreach my $filename (@filenames){
 				$fhs[3]->{inputfile_1} = $C_to_T_infile_1;
 				$fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 			}
+			elsif($pbat){ # PBAT-Seq
+				($G_to_A_infile_1,$read1_count) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
+				($C_to_T_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
+
+				$fhs[0]->{inputfile_1} = undef;
+				$fhs[0]->{inputfile_2} = undef;
+				$fhs[1]->{inputfile_1} = $G_to_A_infile_1;
+				$fhs[1]->{inputfile_2} = $C_to_T_infile_2;
+				$fhs[2]->{inputfile_1} = $G_to_A_infile_1;
+				$fhs[2]->{inputfile_2} = $C_to_T_infile_2;
+				$fhs[3]->{inputfile_1} = undef;
+				$fhs[3]->{inputfile_2} = undef;
+			}
 			else{
-				($C_to_T_infile_1,$G_to_A_infile_1) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
-				($C_to_T_infile_2,$G_to_A_infile_2) = biTransformFastAFiles_paired_end ($filename_2,2);
+				($C_to_T_infile_1,$G_to_A_infile_1,$read1_count) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
+				($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
 
 				$fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 				$fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -333,6 +350,10 @@ foreach my $filename (@filenames){
 				$fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 			}
 
+			unless ($read1_count eq $read2_count){
+				die "[FATAL ERROR]:\tNumber of bisulfite transformed reads are not equal between Read 1 (\#$read1_count) and Read 2 (\#$read2_count).\nPossible causes: file truncation, or as a result of specifying read pairs that do not belong to each other?! Please re-specify file names! Exiting...\n\n";
+			}
+
 			if ($bowtie2){
 				paired_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
@@ -342,17 +363,10 @@ foreach my $filename (@filenames){
 		}
 		### FastQ format
 		else{
-			my $read1_count;
-			my $read2_count;
 			warn "Input files are in FastQ format\n";
 			if ($directional){
-				
 				($C_to_T_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 				($G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
-
-				unless ($read1_count eq $read2_count){
-					die "[FATAL ERROR]:\tNumber of bisulfite transformed reads are not equal between Read 1 (\#$read1_count) and Read 2 (\#$read2_count).\nPossible causes: file truncation, or as a result of specifying read pairs that do not belong to each other?! Please re-specify file names! Exiting...\n\n";
-				} 
 
 				$fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 				$fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -368,10 +382,6 @@ foreach my $filename (@filenames){
 				($G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 				($C_to_T_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
 
-				unless ($read1_count eq $read2_count){
-					die "[FATAL ERROR]:\tNumber of bisulfite transformed reads are not equal between Read 1 (\#$read1_count) and Read 2 (\#$read2_count).\nPossible causes: file truncation, or as a result of specifying read pairs that do not belong to each other?! Please re-specify file names! Exiting...\n\n";
-				}
-
 				$fhs[0]->{inputfile_1} = undef;
 				$fhs[0]->{inputfile_2} = undef;
 				$fhs[1]->{inputfile_1} = $G_to_A_infile_1;
@@ -385,9 +395,6 @@ foreach my $filename (@filenames){
 				($C_to_T_infile_1,$G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
 				($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
 
-				unless ($read1_count eq $read2_count){
-					die "[FATAL ERROR]:\tNumber of bisulfite transformed reads are not equal between Read 1 (\#$read1_count) and Read 2 (\#$read2_count).\nPossible causes: file truncation, or as a result of specifying read pairs that do not belong to each other?! Please re-specify file names! Exiting...\n\n";
-				}
 				$fhs[0]->{inputfile_1} = $C_to_T_infile_1;
 				$fhs[0]->{inputfile_2} = $G_to_A_infile_2;
 				$fhs[1]->{inputfile_1} = $G_to_A_infile_1;
@@ -397,6 +404,11 @@ foreach my $filename (@filenames){
 				$fhs[3]->{inputfile_1} = $C_to_T_infile_1;
 				$fhs[3]->{inputfile_2} = $G_to_A_infile_2;
 			}
+			
+			unless ($read1_count eq $read2_count){
+					die "[FATAL ERROR]:\tNumber of bisulfite transformed reads are not equal between Read 1 (\#$read1_count) and Read 2 (\#$read2_count).\nPossible causes: file truncation, or as a result of specifying read pairs that do not belong to each other?! Please re-specify file names! Exiting...\n\n";
+			}
+						
 			if ($bowtie2){
 				paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
@@ -449,8 +461,7 @@ foreach my $filename (@filenames){
 				single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 ($C_to_T_infile,$G_to_A_infile);
 			}
 			else{
-				die "HISAT2 single-end FastA mode. Needs to be handled yet";
-				# single_end_align_fragments_to_bisulfite_genome_fastA ($C_to_T_infile,$G_to_A_infile);
+				single_end_align_fragments_to_bisulfite_genome_fastA_hisat2 ($C_to_T_infile,$G_to_A_infile);
 			}
 		}
 		## FastQ format
@@ -487,9 +498,9 @@ foreach my $filename (@filenames){
 			}
 		}
 
-    start_methylation_call_procedure_single_ends($filename,$C_to_T_infile,$G_to_A_infile,$pid);
+		start_methylation_call_procedure_single_ends($filename,$C_to_T_infile,$G_to_A_infile,$pid);
 
-  }
+	}
 
   ### MERGING AND DELETING TEMP FILES // TIDYING UP AFTER A MULTICORE PROCESS
 
@@ -1180,7 +1191,6 @@ sub merge_individual_ambiguous_files{
   close AMBIGUOUS or warn "Failed to close output filehandle AMBIGUOUS\n\n";
 }
 
-
 sub merge_individual_unmapped_files{
 
   my ($temp_unmapped,$original_filename,$single_end,$paired_information) = @_;
@@ -1255,7 +1265,6 @@ sub merge_individual_unmapped_files{
 
   close UNMAPPED or warn "Failed to close output filehandle UNMAPPED\n\n";
 }
-
 
 sub merge_individual_BAM_files{
 
@@ -1423,600 +1432,577 @@ sub start_methylation_call_procedure_single_ends {
 	$outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
 	# warn "Outfile: $outfile\n";sleep(5);
 
-  if ($prefix){
-    $outfile = "$prefix.$outfile";
-  }
-  if ($bowtie2){ # SAM format is the default for Bowtie 2
-    $outfile =~ s/$/_bismark_bt2.sam/;
-  }
-  elsif ($hisat2){ # SAM output is the default for HISAT2
-    $outfile =~ s/$/_bismark_hisat2.sam/;
-  }
-  else{ # SAM is the default output
-    $outfile =~ s/$/_bismark.sam/;
-  }
+	if ($prefix){
+		$outfile = "$prefix.$outfile";
+	}
+	if ($bowtie2){ # SAM format is the default for Bowtie 2
+		$outfile =~ s/$/_bismark_bt2.sam/;
+	}
+	else{ # SAM output is the default for HISAT2
+		$outfile =~ s/$/_bismark_hisat2.sam/;
+	}
+		
+	if ($basename){ # Output file basename is set using the -B argument
+		$outfile = "${basename}.sam";
+	}
 
-  if ($basename){ # Output file basename is set using the -B argument
-    $outfile = "${basename}.sam";
-  }
+	$bam = 0 unless (defined $bam);
 
-  $bam = 0 unless (defined $bam);
+	if ($ambig_bam){
+		my $ambig_bam_out = $outfile;
+		$ambig_bam_out =~ s/sam$/ambig.bam/;
+		warn "Ambiguous BAM output: $ambig_bam_out\n";
+		open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
+	}
 
-  if ($ambig_bam){
-      my $ambig_bam_out = $outfile;
-      $ambig_bam_out =~ s/sam$/ambig.bam/;
-      warn "Ambiguous BAM output: $ambig_bam_out\n";
-      open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
-  }
+	if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
+		### for multicore processing we write out BAM files by default and merge them together as a single CRAM file in the merging step later on.
+		### This avoids having to change all the the file endings on the way
+		if($multicore > 1){
+			$outfile =~ s/sam$/bam/;
+			open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+		}
+		else{ # single-core mode
+			$outfile =~ s/sam$/cram/;
+			$final_output_filename = "${output_dir}${outfile}";
+			open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+		}
+	}
+	elsif($bam == 1){ ### Samtools is installed, writing out BAM directly
+		$outfile =~ s/sam$/bam/;
+		$final_output_filename = "${output_dir}${outfile}";
+		open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+	}
+	elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
+		$outfile .= '.gz';
+		open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+	}
+	else{ # uncompressed ouput, default
+		open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+	}
+	warn "\n>>> Writing bisulfite mapping results to $output_dir$outfile <<<\n\n";
 
-  if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
-      ### for multicore processing we write out BAM files by default and merge them together as a single CRAM file in the merging step later on.
-      ### This avoids having to change all the the file endings on the way
-      if($multicore > 1){
-	  $outfile =~ s/sam$/bam/;
-	  open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-      }
-      else{ # single-core mode
-	  $outfile =~ s/sam$/cram/;
-	  $final_output_filename = "${output_dir}${outfile}";
-	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
-      }
-  }
-  elsif($bam == 1){ ### Samtools is installed, writing out BAM directly
-      $outfile =~ s/sam$/bam/;
-      $final_output_filename = "${output_dir}${outfile}";
-      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  }
-  elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-      $outfile .= '.gz';
-      open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  }
-  else{ # uncompressed ouput, default
-      open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  }
-  warn "\n>>> Writing bisulfite mapping results to $output_dir$outfile <<<\n\n";
+	sleep(1);
 
+	### printing alignment and methylation call summary to a report file
+	my $reportfile = $filename;
+	$reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
 
-  sleep(1);
+	if ($prefix){
+		$reportfile = "$prefix.$reportfile";
+	}
+	if ($bowtie2){
+		$reportfile =~ s/$/_bismark_bt2_SE_report.txt/;
+	}
+	else{
+		$reportfile =~ s/$/_bismark_hisat2_SE_report.txt/;
+	}
 
-  ### printing alignment and methylation call summary to a report file
-  my $reportfile = $filename;
-  $reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+	if ($basename){ # Output file basename is set using the -B argument
+		$reportfile = "${basename}_SE_report.txt";
+	}
 
-  if ($prefix){
-    $reportfile = "$prefix.$reportfile";
-  }
-  if ($bowtie2){
-    $reportfile =~ s/$/_bismark_bt2_SE_report.txt/;
-  }
-  else{
-    $reportfile =~ s/$/_bismark_SE_report.txt/;
-  }
+	open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
+	print REPORT "Bismark report for: $sequence_file (version: $bismark_version)\n";
 
-  if ($basename){ # Output file basename is set using the -B argument
-    $reportfile = "${basename}_SE_report.txt";
-  }
+	if ($unmapped){
+		my $unmapped_file = $filename;
+		if ($prefix){
+			$unmapped_file = "$prefix.$unmapped_file";
+		}
 
-  open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file (version: $bismark_version)\n";
+		if ($basename){ # Output file basename is set using the -B argument
+			if ($sequence_file_format eq 'FASTQ'){
+				$unmapped_file = "${basename}_unmapped_reads.fq";
+			}
+			else{
+				$unmapped_file = "${basename}_unmapped_reads.fa";
+			}
+		}
+		else{
+			if ($sequence_file_format eq 'FASTQ'){
+				$unmapped_file =~ s/$/_unmapped_reads.fq/;
+			}
+			else{
+				$unmapped_file =~ s/$/_unmapped_reads.fa/;
+			}
+		}
 
-  if ($unmapped){
-    my $unmapped_file = $filename;
-    if ($prefix){
-      $unmapped_file = "$prefix.$unmapped_file";
-    }
+		if ($multicore > 1){ # multicore runs already output gzipped unmapped files
+			open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+		}
+		else{
+			$unmapped_file .= '.gz';
+			open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+		}
+		warn "Unmapped sequences will be written to $output_dir$unmapped_file\n";
+	}
 
-    if ($basename){ # Output file basename is set using the -B argument
-      if ($sequence_file_format eq 'FASTQ'){
-	$unmapped_file = "${basename}_unmapped_reads.fq";
-      }
-      else{
-	$unmapped_file = "${basename}_unmapped_reads.fa";
-      }
-    }
-    else{
-      if ($sequence_file_format eq 'FASTQ'){
-	$unmapped_file =~ s/$/_unmapped_reads.fq/;
-      }
-      else{
-	$unmapped_file =~ s/$/_unmapped_reads.fa/;
-      }
-    }
+	if ($ambiguous){
+		my $ambiguous_file = $filename;
 
-    if ($multicore > 1){ # multicore runs already output gzipped unmapped files
-      open (UNMAPPED,'>',"$output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
-    }
-    else{
-      $unmapped_file .= '.gz';
-      open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
-    }
-    warn "Unmapped sequences will be written to $output_dir$unmapped_file\n";
-  }
+		if ($prefix){
+			$ambiguous_file = "$prefix.$ambiguous_file";
+		}
 
-  if ($ambiguous){
-    my $ambiguous_file = $filename;
+		if ($basename){ # Output file basename is set using the -B argument
+			if ($sequence_file_format eq 'FASTQ'){
+				$ambiguous_file =  "${basename}_ambiguous_reads.fq";
+			}
+			else{
+				$ambiguous_file =  "${basename}_ambiguous_reads.fa";
+			}
+		}
+		else{
+			if ($sequence_file_format eq 'FASTQ'){
+				$ambiguous_file =~ s/$/_ambiguous_reads.fq/;
+			}
+			else{
+				$ambiguous_file =~ s/$/_ambiguous_reads.fa/;
+			}
+		}
 
-    if ($prefix){
-      $ambiguous_file = "$prefix.$ambiguous_file";
-    }
+		if ($multicore > 1){ # multicore runs already output gzipped amobiguous files
+			open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+		}
+		else{
+			$ambiguous_file .= '.gz';
+			open (AMBIG,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+		}
+		warn "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
+	}
 
-    if ($basename){ # Output file basename is set using the -B argument
-      if ($sequence_file_format eq 'FASTQ'){
-	$ambiguous_file =  "${basename}_ambiguous_reads.fq";
-      }
-      else{
-	$ambiguous_file =  "${basename}_ambiguous_reads.fa";
-      }
-    }
-    else{
-      if ($sequence_file_format eq 'FASTQ'){
-	$ambiguous_file =~ s/$/_ambiguous_reads.fq/;
-      }
-      else{
-	$ambiguous_file =~ s/$/_ambiguous_reads.fa/;
-      }
-    }
+	if ($directional){
+		print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n";
+	}
+	elsif ($pbat){
+		print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)\n";
+	}	
+	else{
+		print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n";
+	}
 
-    if ($multicore > 1){ # multicore runs already output gzipped amobiguous files
-      open (AMBIG,'>',"$output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
-    }
-    else{
-      $ambiguous_file .= '.gz';
-      open (AMBIG,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
-    }
-    warn "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
-  }
-
-  if ($directional){
-      print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n";
-  }
-  elsif ($pbat){
-      print REPORT "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)\n";
-  }
-  else{
-      print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n";
-  }
-
-  if ($bowtie2){
-      print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-  else{
-      print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
-  }
-
-
-  unless ($sam_no_hd){
-      generate_SAM_header();
-  }
-
-  ### Input file is in FastA format
-  if ($sequence_file_format eq 'FASTA'){
-    process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
-  }
-  ### Input file is in FastQ format
-  else{
-    process_single_end_fastQ_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
-  }
-}
-
-sub start_methylation_call_procedure_paired_ends {
-  my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
-  my ($dir_1,$filename_1);
-
-  if ($sequence_file_1 =~ /\//){
-      ($dir_1,$filename_1) = $sequence_file_1 =~ m/(.*\/)(.*)$/;
-  }
-  else{
-      $filename_1 = $sequence_file_1;
-  }
-
-  my ($dir_2,$filename_2);
-
-  if  ($sequence_file_2 =~ /\//){
-    ($dir_2,$filename_2) = $sequence_file_2 =~ m/(.*\/)(.*)$/;
-  }
-  else{
-    $filename_2 = $sequence_file_2;
-  }
-
-  ### printing all alignments to a results file
-  my $outfile = $filename_1;
-  # warn "Outfile: $outfile\n";
-  $outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
-  # warn "Outfile: $outfile\n";sleep(5);
-
-  if ($prefix){
-    $outfile = "$prefix.$outfile";
-  }
-  if ($bowtie2){ # SAM format is the default Bowtie 2 output
-    $outfile =~ s/$/_bismark_bt2_pe.sam/;
-  }
-  else{ # SAM format is the default for HISAT2
-    $outfile =~ s/$/_bismark_hisat2_pe.sam/;
-  }
-
-
-  if ($basename){ # Output file basename is set using the -B argument
-    $outfile = "${basename}_pe.sam";
-  }
-
-  if ($ambig_bam){
-      my $ambig_bam_out = $outfile;
-      $ambig_bam_out =~ s/sam$/ambig.bam/;
-      warn "Ambiguous BAM output: $ambig_bam_out\n";
-      open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
-  }
-
-  $bam = 0 unless (defined $bam);
-
-  if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
-      if ($multicore > 1){
-	  $outfile =~ s/sam$/bam/;
-	  open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-      }
-      else{ # single-core mode
-	  $outfile =~ s/sam$/cram/;
-	  $final_output_filename = "${output_dir}${outfile}";
-	  open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
-      }
-  }
-  elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
-      $outfile =~ s/sam$/bam/;
-      $final_output_filename = "${output_dir}${outfile}";
-      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  }
-  elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-      $outfile .= '.gz';
-      open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  }
-  else{ # uncompressed ouput, default
-      open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
-  }
-
-  warn "\n>>> Writing bisulfite mapping results to $outfile <<<\n\n";
-  sleep(1);
-
-  
-  ### printing alignment and methylation call summary to a report file
-  my $reportfile = $filename_1;
-  $reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
-
-  if ($prefix){
-    $reportfile = "$prefix.$reportfile";
-  }
-
-  if ($bowtie2){
-    $reportfile =~ s/$/_bismark_bt2_PE_report.txt/;
-  }
-  else{
-    $reportfile =~ s/$/_bismark_PE_report.txt/;
-  }
-
-  if ($basename){ # Output file basename is set using the -B argument
-    $reportfile = "${basename}_PE_report.txt";
-  }
-
-  open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
-  print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2 (version: $bismark_version)\n";
-
-  if ($bowtie2){
-    print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n";
-  }
-  else{
-    print REPORT "Bismark was run with Bowtie against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n";
-  }
-
-
-  ### Unmapped read output
-  if ($unmapped){
-    my $unmapped_1 = $filename_1;
-    my $unmapped_2 = $filename_2;
-
-    if ($prefix){
-      $unmapped_1 = "$prefix.$unmapped_1";
-      $unmapped_2 = "$prefix.$unmapped_2";
-    }
-
-    if ($basename){ # Output file basename is set using the -B argument
-      if ($sequence_file_format eq 'FASTQ'){
-	$unmapped_1 = "${basename}_unmapped_reads_1.fq";
-	$unmapped_2 = "${basename}_unmapped_reads_2.fq";
-      }
-      else{
-	$unmapped_1 = "${basename}_unmapped_reads_1.fa";
-	$unmapped_2 = "${basename}_unmapped_reads_2.fa";
-      }
-    }
-    else{
-      if ($sequence_file_format eq 'FASTQ'){
-	$unmapped_1 =~ s/$/_unmapped_reads_1.fq/;
-	$unmapped_2 =~ s/$/_unmapped_reads_2.fq/;
-      }
-      else{
-	$unmapped_1 =~ s/$/_unmapped_reads_1.fa/;
-	$unmapped_2 =~ s/$/_unmapped_reads_2.fa/;
-      }
-    }
-
-    if ($multicore > 1){ # unmapped files are merged into .gz files in multicore runs anyway
-      open (UNMAPPED_1,'>',"$output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
-      open (UNMAPPED_2,'>',"$output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
-    }
-    else{
-      $unmapped_1 .= '.gz';
-      $unmapped_2 .= '.gz';
-      open (UNMAPPED_1,"| gzip -c - > $output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
-      open (UNMAPPED_2,"| gzip -c - > $output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
-    }
-    warn "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
-  }
-
-  if ($ambiguous){
-    my $amb_1 = $filename_1;
-    my $amb_2 = $filename_2;
-
-    if ($prefix){
-      $amb_1 = "$prefix.$amb_1";
-      $amb_2 = "$prefix.$amb_2";
-    }
-
-    if ($basename){ # Output file basename is set using the -B argument
-      if ($sequence_file_format eq 'FASTQ'){
-	$amb_1 = "${basename}_ambiguous_reads_1.fq";
-	$amb_2 = "${basename}_ambiguous_reads_2.fq";
-      }
-      else{
-	$amb_1 = "${basename}_ambiguous_reads_1.fa";
-	$amb_2 = "${basename}_ambiguous_reads_2.fa";
-      }
-    }
-    else{
-      if ($sequence_file_format eq 'FASTQ'){
-	$amb_1 =~ s/$/_ambiguous_reads_1.fq/;
-	$amb_2 =~ s/$/_ambiguous_reads_2.fq/;
-      }
-      else{
-	$amb_1 =~ s/$/_ambiguous_reads_1.fa/;
-	$amb_2 =~ s/$/_ambiguous_reads_2.fa/;
-      }
-    }
-
-    if ($multicore > 1){ # ambiguous files are merged into .gz files in multicore runs anyway
-      open (AMBIG_1,'>',"$output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
-      open (AMBIG_2,'>',"$output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
-    }
-    else{
-      $amb_1 .= '.gz';
-      $amb_2 .= '.gz';
-      open (AMBIG_1,"| gzip -c - > $output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
-      open (AMBIG_2,"| gzip -c - > $output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
-    }
-    warn "Ambiguously mapping sequences will be written to $amb_1 and $amb_2\n";
-  }
-
-  if ($directional){
-    print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n";
-  }
-  elsif ($pbat){
-    print REPORT "Option '--pbat' specified: alignments to original strands (OT, OB) were ignored (i.e. not performed)\n\n";
-  }
-  else{
-    print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n\n";
-  }
-
+	if ($bowtie2){
+		print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		print REPORT "Bismark was run with HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 
 
 	unless ($sam_no_hd){
 		generate_SAM_header();
 	}
 
-  ### Input files are in FastA format
-  if ($sequence_file_format eq 'FASTA'){
-    process_fastA_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
-  }
-  ### Input files are in FastQ format
-  else{
-    process_fastQ_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
-  }
+	### Input file is in FastA format
+	if ($sequence_file_format eq 'FASTA'){
+		process_single_end_fastA_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
+	}
+	### Input file is in FastQ format
+	else{
+		process_single_end_fastQ_file_for_methylation_call($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid);
+	}
+}
+
+sub start_methylation_call_procedure_paired_ends {
+	my ($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid) = @_;
+	my ($dir_1,$filename_1);
+
+	if ($sequence_file_1 =~ /\//){
+		($dir_1,$filename_1) = $sequence_file_1 =~ m/(.*\/)(.*)$/;
+	}
+	else{
+		$filename_1 = $sequence_file_1;
+	}
+
+	my ($dir_2,$filename_2);
+
+	if  ($sequence_file_2 =~ /\//){
+		($dir_2,$filename_2) = $sequence_file_2 =~ m/(.*\/)(.*)$/;
+	}
+	else{
+		$filename_2 = $sequence_file_2;
+	}
+
+	### printing all alignments to a results file
+	my $outfile = $filename_1;
+	# warn "Outfile: $outfile\n";
+	$outfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+	# warn "Outfile: $outfile\n";sleep(5);
+
+	if ($prefix){
+		$outfile = "$prefix.$outfile";
+	}
+	if ($bowtie2){ # SAM format is the default Bowtie 2 output
+		$outfile =~ s/$/_bismark_bt2_pe.sam/;
+	}
+	else{ # SAM format is the default for HISAT2
+		$outfile =~ s/$/_bismark_hisat2_pe.sam/;
+	}
+
+	if ($basename){ # Output file basename is set using the -B argument
+		$outfile = "${basename}_pe.sam";
+	}
+
+	if ($ambig_bam){
+		my $ambig_bam_out = $outfile;
+		$ambig_bam_out =~ s/sam$/ambig.bam/;
+		warn "Ambiguous BAM output: $ambig_bam_out\n";
+		open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
+	}
+
+	$bam = 0 unless (defined $bam);
+
+	if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
+		if ($multicore > 1){
+			$outfile =~ s/sam$/bam/;
+			open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+		}
+		else{ # single-core mode
+			$outfile =~ s/sam$/cram/;
+			$final_output_filename = "${output_dir}${outfile}";
+			open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+		}
+	}
+	elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
+		$outfile =~ s/sam$/bam/;
+		$final_output_filename = "${output_dir}${outfile}";
+		open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+	}
+	elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
+		$outfile .= '.gz';
+		open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+	}
+	else{ # uncompressed ouput, default
+		open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+	}
+
+	warn "\n>>> Writing bisulfite mapping results to $outfile <<<\n\n";
+	sleep(1);
+
+  
+	### printing alignment and methylation call summary to a report file
+	my $reportfile = $filename_1;
+	$reportfile =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
+
+	if ($prefix){
+		$reportfile = "$prefix.$reportfile";
+	}
+
+	if ($bowtie2){
+		$reportfile =~ s/$/_bismark_bt2_PE_report.txt/;
+	}
+	else{
+		$reportfile =~ s/$/_bismark_hisat2_PE_report.txt/;
+	}
+
+	if ($basename){ # Output file basename is set using the -B argument
+		$reportfile = "${basename}_PE_report.txt";
+	}
+
+	open (REPORT,'>',"$output_dir$reportfile") or die "Failed to write to $reportfile: $!\n";
+	print REPORT "Bismark report for: $sequence_file_1 and $sequence_file_2 (version: $bismark_version)\n";
+
+	if ($bowtie2){
+		print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n";
+	}
+	else{
+		print REPORT "Bismark was run with HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n";
+	}
+
+
+	### Unmapped read output
+	if ($unmapped){
+		my $unmapped_1 = $filename_1;
+		my $unmapped_2 = $filename_2;
+
+		if ($prefix){
+			$unmapped_1 = "$prefix.$unmapped_1";
+			$unmapped_2 = "$prefix.$unmapped_2";
+		}
+
+		if ($basename){ # Output file basename is set using the -B argument
+			if ($sequence_file_format eq 'FASTQ'){
+				$unmapped_1 = "${basename}_unmapped_reads_1.fq";
+				$unmapped_2 = "${basename}_unmapped_reads_2.fq";
+			}
+			else{
+				$unmapped_1 = "${basename}_unmapped_reads_1.fa";
+				$unmapped_2 = "${basename}_unmapped_reads_2.fa";
+			}
+		}
+		else{
+			if ($sequence_file_format eq 'FASTQ'){
+				$unmapped_1 =~ s/$/_unmapped_reads_1.fq/;
+				$unmapped_2 =~ s/$/_unmapped_reads_2.fq/;
+			}
+			else{
+				$unmapped_1 =~ s/$/_unmapped_reads_1.fa/;
+				$unmapped_2 =~ s/$/_unmapped_reads_2.fa/;
+			}
+		}
+
+		if ($multicore > 1){ # unmapped files are merged into .gz files in multicore runs anyway
+			open (UNMAPPED_1,'>',"$output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
+			open (UNMAPPED_2,'>',"$output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
+		}	
+		else{
+			$unmapped_1 .= '.gz';
+			$unmapped_2 .= '.gz';
+			open (UNMAPPED_1,"| gzip -c - > $output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
+			open (UNMAPPED_2,"| gzip -c - > $output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
+		}
+		warn "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
+	}
+
+	if ($ambiguous){
+		my $amb_1 = $filename_1;
+		my $amb_2 = $filename_2;
+
+		if ($prefix){
+			$amb_1 = "$prefix.$amb_1";
+			$amb_2 = "$prefix.$amb_2";
+		}
+
+		if ($basename){ # Output file basename is set using the -B argument
+			if ($sequence_file_format eq 'FASTQ'){
+				$amb_1 = "${basename}_ambiguous_reads_1.fq";
+				$amb_2 = "${basename}_ambiguous_reads_2.fq";
+			}
+			else{
+				$amb_1 = "${basename}_ambiguous_reads_1.fa";
+				$amb_2 = "${basename}_ambiguous_reads_2.fa";
+			}
+		}
+		else{
+			if ($sequence_file_format eq 'FASTQ'){
+				$amb_1 =~ s/$/_ambiguous_reads_1.fq/;
+				$amb_2 =~ s/$/_ambiguous_reads_2.fq/;
+			}
+			else{
+				$amb_1 =~ s/$/_ambiguous_reads_1.fa/;
+				$amb_2 =~ s/$/_ambiguous_reads_2.fa/;
+			}
+		}
+
+		if ($multicore > 1){ # ambiguous files are merged into .gz files in multicore runs anyway
+			open (AMBIG_1,'>',"$output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
+			open (AMBIG_2,'>',"$output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
+		}
+			else{
+			$amb_1 .= '.gz';
+			$amb_2 .= '.gz';
+			open (AMBIG_1,"| gzip -c - > $output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
+			open (AMBIG_2,"| gzip -c - > $output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
+		}
+		warn "Ambiguously mapping sequences will be written to $amb_1 and $amb_2\n";
+	}
+
+	if ($directional){
+		print REPORT "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n";
+	}
+	elsif ($pbat){
+		print REPORT "Option '--pbat' specified: alignments to original strands (OT, OB) were ignored (i.e. not performed)\n\n";
+	}
+	else{
+		print REPORT "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n\n";
+	}
+
+	unless ($sam_no_hd){
+		generate_SAM_header();
+	}
+
+	### Input files are in FastA format
+	if ($sequence_file_format eq 'FASTA'){
+		process_fastA_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
+	}
+	### Input files are in FastQ format
+	else{
+		process_fastQ_files_for_paired_end_methylation_calls($sequence_file_1,$sequence_file_2,$C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
+	}
 }
 
 sub print_final_analysis_report_single_end{
-  my ($C_to_T_infile,$G_to_A_infile,$pid,$merge_multi) = @_;
+	my ($C_to_T_infile,$G_to_A_infile,$pid,$merge_multi) = @_;
 
-  if ($merge_multi){
-    warn "Printing a final merged alignment report for all individual sub-reports\n\n";
-  }
-  else{
-    ### All sequences from the original sequence file have been analysed now
-    ### deleting temporary C->T or G->A infiles
+	if ($merge_multi){
+		warn "Printing a final merged alignment report for all individual sub-reports\n\n";
+	}
+	else{
+		### All sequences from the original sequence file have been analysed now
+		### deleting temporary C->T or G->A infiles
 
-    if ($directional){
-      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile";
-      if ($deletion_successful == 1){
-	warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile\n\n";
-      }
-      else{
-	warn "Could not delete temporary file $C_to_T_infile properly $!\n";
-      }
-    }
-    elsif ($pbat){
-      my $deletion_successful =  unlink "$temp_dir$G_to_A_infile";
-      if ($deletion_successful == 1){
-	warn "\nSuccessfully deleted the temporary file $temp_dir$G_to_A_infile\n\n";
-      }
-      else{
-	warn "Could not delete temporary file $G_to_A_infile properly $!\n";
-      }
-    }
-    else{
-      my $deletion_successful =  unlink "$temp_dir$C_to_T_infile","$temp_dir$G_to_A_infile";
-      if ($deletion_successful == 2){
-	warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile and $temp_dir$G_to_A_infile\n\n";
-      }
-      else{
-	warn "Could not delete temporary files properly $!\n";
-      }
-    }
-  }
+		if ($directional){
+			my $deletion_successful =  unlink "$temp_dir$C_to_T_infile";
+			if ($deletion_successful == 1){
+				warn "\nSuccessfully deleted the temporary file $temp_dir$C_to_T_infile\n\n";
+			}
+			else{
+				warn "Could not delete temporary file $C_to_T_infile properly $!\n";
+			}
+		}
+		elsif ($pbat){
+			my $deletion_successful =  unlink "$temp_dir$G_to_A_infile";
+			if ($deletion_successful == 1){
+				warn "\nSuccessfully deleted the temporary file $temp_dir$G_to_A_infile\n\n";
+			}
+			else{
+				warn "Could not delete temporary file $G_to_A_infile properly $!\n";
+			}
+		}
+		else{
+			my $deletion_successful =  unlink "$temp_dir$C_to_T_infile","$temp_dir$G_to_A_infile";
+			if ($deletion_successful == 2){
+				warn "\nSuccessfully deleted the temporary files $temp_dir$C_to_T_infile and $temp_dir$G_to_A_infile\n\n";
+			}
+			else{
+				warn "Could not delete temporary files properly $!\n";
+			}
+		}
+	}
 
-  ### printing a final report for the alignment procedure
-  print REPORT "Final Alignment report\n",'='x22,"\n";
-  warn "Final Alignment report\n",'='x22,"\n";
-  #  foreach my $index (0..$#fhs){
-  #    print "$fhs[$index]->{name}\n";
-  #    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
-  #    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
-  #  }
+	### printing a final report for the alignment procedure
+	print REPORT "Final Alignment report\n",'='x22,"\n";
+	warn "Final Alignment report\n",'='x22,"\n";
+	#  foreach my $index (0..$#fhs){
+	#    print "$fhs[$index]->{name}\n";
+	#    print "$fhs[$index]->{seen}\talignments on the correct strand in total\n";
+	#    print "$fhs[$index]->{wrong_strand}\talignments were discarded (nonsensical alignments)\n\n";
+	#  }
 
-  ### printing a final report for the methylation call procedure
-  warn "Sequences analysed in total:\t$counting{sequences_count}\n";
-  print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
-  my $percent_alignable_sequences;
+	### printing a final report for the methylation call procedure
+	warn "Sequences analysed in total:\t$counting{sequences_count}\n";
+	print REPORT "Sequences analysed in total:\t$counting{sequences_count}\n";
+	my $percent_alignable_sequences;
 
-  if ($counting{sequences_count} == 0){
-    $percent_alignable_sequences = 0;
-  }
-  else{
-    $percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
-  }
+	if ($counting{sequences_count} == 0){
+		$percent_alignable_sequences = 0;
+	}
+	else{
+		$percent_alignable_sequences = sprintf ("%.1f",$counting{unique_best_alignment_count}*100/$counting{sequences_count});
+	}
 
-  warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n\n";
-  print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n";
+	warn "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n\n";
+	print REPORT "Number of alignments with a unique best hit from the different alignments:\t$counting{unique_best_alignment_count}\nMapping efficiency:\t${percent_alignable_sequences}%\n";
 
-  ### percentage of low complexity reads overruled because of low complexity (thereby creating a bias for highly methylated reads),
-  ### only calculating the percentage if there were any overruled alignments
-  if ($counting{low_complexity_alignments_overruled_count}){
-    my $percent_overruled_low_complexity_alignments = sprintf ("%.1f",$counting{low_complexity_alignments_overruled_count}*100/$counting{sequences_count});
-    #   print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
-  }
+	### percentage of low complexity reads overruled because of low complexity (thereby creating a bias for highly methylated reads),
+	### only calculating the percentage if there were any overruled alignments
+	if ($counting{low_complexity_alignments_overruled_count}){
+		my $percent_overruled_low_complexity_alignments = sprintf ("%.1f",$counting{low_complexity_alignments_overruled_count}*100/$counting{sequences_count});
+		#   print REPORT "Number of low complexity alignments which were overruled to have a unique best hit rather than discarding them:\t$counting{low_complexity_alignments_overruled_count}\t(${percent_overruled_low_complexity_alignments}%)\n";
+	}
 
-  print "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
-  print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n";
-  print "Sequences which were discarded because genomic sequence could not be extracted:\t$counting{genomic_sequence_could_not_be_extracted_count}\n\n";
-  print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+	print "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
+	print "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n";
+	print "Sequences which were discarded because genomic sequence could not be extracted:\t$counting{genomic_sequence_could_not_be_extracted_count}\n\n";
+	print "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
+	print join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
 
-  print REPORT "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
-  print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n";
-  print REPORT "Sequences which were discarded because genomic sequence could not be extracted:\t$counting{genomic_sequence_could_not_be_extracted_count}\n\n";
-  print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
-  print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
+	print REPORT "Sequences with no alignments under any condition:\t$counting{no_single_alignment_found}\n";
+	print REPORT "Sequences did not map uniquely:\t$counting{unsuitable_sequence_count}\n";
+	print REPORT "Sequences which were discarded because genomic sequence could not be extracted:\t$counting{genomic_sequence_could_not_be_extracted_count}\n\n";
+	print REPORT "Number of sequences with unique best (first) alignment came from the bowtie output:\n";
+	print REPORT join ("\n","CT/CT:\t$counting{CT_CT_count}\t((converted) top strand)","CT/GA:\t$counting{CT_GA_count}\t((converted) bottom strand)","GA/CT:\t$counting{GA_CT_count}\t(complementary to (converted) top strand)","GA/GA:\t$counting{GA_GA_count}\t(complementary to (converted) bottom strand)"),"\n\n";
 
-  if ($directional){
-    print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
-    print REPORT "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
-  }
+	if ($directional){
+		print "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
+		print REPORT "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t$counting{alignments_rejected_count}\n\n";
+	}
 
-  ### detailed information about Cs analysed
-  warn "Final Cytosine Methylation Report\n",'='x33,"\n";
-  my $total_number_of_C = $counting{total_meCHH_count}+$counting{total_meCHG_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CpG_count};
-  warn "Total number of C's analysed:\t$total_number_of_C\n\n";
-  warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
-  warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
-  if ($bowtie2){
-    warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n";
-  }
-  warn "\n";
+	### detailed information about Cs analysed
+	warn "Final Cytosine Methylation Report\n",'='x33,"\n";
+	my	 $total_number_of_C = $counting{total_meCHH_count}+$counting{total_meCHG_count}+$counting{total_meCpG_count}+$counting{total_unmethylated_CHH_count}+$counting{total_unmethylated_CHG_count}+$counting{total_unmethylated_CpG_count};
+	warn "Total number of C's analysed:\t$total_number_of_C\n\n";
+	warn "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
+	warn "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
+	warn "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
+	warn "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
 
-  warn "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  warn "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  warn "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
-  if ($bowtie2){
-    warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n";
-  }
-  warn "\n";
+	warn "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+	warn "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+	warn "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
+	warn "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
+  
+	print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
+	print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
 
-  print REPORT "Final Cytosine Methylation Report\n",'='x33,"\n";
-  print REPORT "Total number of C's analysed:\t$total_number_of_C\n\n";
+	print REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
+	print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
+	print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
+	print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n\n";
+  
+	print REPORT "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
+	print REPORT "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
+	print REPORT "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
+    print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n\n";
 
-  print REPORT "Total methylated C's in CpG context:\t$counting{total_meCpG_count}\n";
-  print REPORT "Total methylated C's in CHG context:\t$counting{total_meCHG_count}\n";
-  print REPORT "Total methylated C's in CHH context:\t$counting{total_meCHH_count}\n";
-  if ($bowtie2){
-    print REPORT "Total methylated C's in Unknown context:\t$counting{total_meC_unknown_count}\n";
-  }
-  print REPORT "\n";
+	my $percent_meCHG;
+	if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
+		$percent_meCHG = sprintf("%.1f",100*$counting{total_meCHG_count}/($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}));
+	}
 
-  print REPORT "Total unmethylated C's in CpG context:\t$counting{total_unmethylated_CpG_count}\n";
-  print REPORT "Total unmethylated C's in CHG context:\t$counting{total_unmethylated_CHG_count}\n";
-  print REPORT "Total unmethylated C's in CHH context:\t$counting{total_unmethylated_CHH_count}\n";
-  if ($bowtie2){
-    print REPORT "Total unmethylated C's in Unknown context:\t$counting{total_unmethylated_C_unknown_count}\n";
-  }
-  print REPORT "\n";
+	my $percent_meCHH;
+	if (($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}) > 0){
+		$percent_meCHH = sprintf("%.1f",100*$counting{total_meCHH_count}/($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}));
+	}
 
-  my $percent_meCHG;
-  if (($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}) > 0){
-    $percent_meCHG = sprintf("%.1f",100*$counting{total_meCHG_count}/($counting{total_meCHG_count}+$counting{total_unmethylated_CHG_count}));
-  }
+	my $percent_meCpG;
+	if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
+		$percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
+	}
 
-  my $percent_meCHH;
-  if (($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}) > 0){
-    $percent_meCHH = sprintf("%.1f",100*$counting{total_meCHH_count}/($counting{total_meCHH_count}+$counting{total_unmethylated_CHH_count}));
-  }
+	my $percent_meC_unknown;
+	if (($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}) > 0){
+		$percent_meC_unknown = sprintf("%.1f",100*$counting{total_meC_unknown_count}/($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}));
+	}
 
-  my $percent_meCpG;
-  if (($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}) > 0){
-    $percent_meCpG = sprintf("%.1f",100*$counting{total_meCpG_count}/($counting{total_meCpG_count}+$counting{total_unmethylated_CpG_count}));
-  }
+	### printing methylated CpG percentage if applicable
+	if ($percent_meCpG){
+		warn "C methylated in CpG context:\t${percent_meCpG}%\n";
+		print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
+	}
+	else{
+		warn "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
+		print REPORT "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
+	}
 
-  my $percent_meC_unknown;
-  if (($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}) > 0){
-    $percent_meC_unknown = sprintf("%.1f",100*$counting{total_meC_unknown_count}/($counting{total_meC_unknown_count}+$counting{total_unmethylated_C_unknown_count}));
-  }
+	### printing methylated C percentage (CHG context) if applicable
+	if ($percent_meCHG){
+		warn "C methylated in CHG context:\t${percent_meCHG}%\n";
+		print REPORT "C methylated in CHG context:\t${percent_meCHG}%\n";
+	}
+	else{
+		warn "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
+		print REPORT "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
+	}
 
+	### printing methylated C percentage (CHH context) if applicable
+	if ($percent_meCHH){
+		warn "C methylated in CHH context:\t${percent_meCHH}%\n";
+		print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n";
+	}
+	else{
+		warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
+		print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
+	}
 
-  ### printing methylated CpG percentage if applicable
-  if ($percent_meCpG){
-    warn "C methylated in CpG context:\t${percent_meCpG}%\n";
-    print REPORT "C methylated in CpG context:\t${percent_meCpG}%\n";
-  }
-  else{
-    warn "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
-    print REPORT "Can't determine percentage of methylated Cs in CpG context if value was 0\n";
-  }
+	### printing methylated C percentage (Unknown C context) if applicable
+	if ($percent_meC_unknown){
+		warn "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+		print REPORT "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+	}
+	else{
+		warn "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
+		print REPORT "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
+	}
+	print REPORT "\n\n";
+	warn "\n\n";
 
-  ### printing methylated C percentage (CHG context) if applicable
-  if ($percent_meCHG){
-    warn "C methylated in CHG context:\t${percent_meCHG}%\n";
-    print REPORT "C methylated in CHG context:\t${percent_meCHG}%\n";
-  }
-  else{
-    warn "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
-    print REPORT "Can't determine percentage of methylated Cs in CHG context if value was 0\n";
-  }
-
-  ### printing methylated C percentage (CHH context) if applicable
-  if ($percent_meCHH){
-    warn "C methylated in CHH context:\t${percent_meCHH}%\n";
-    print REPORT "C methylated in CHH context:\t${percent_meCHH}%\n";
-  }
-  else{
-    warn "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
-    print REPORT "Can't determine percentage of methylated Cs in CHH context if value was 0\n";
-  }
-
-  ### printing methylated C percentage (Unknown C context) if applicable
-  if ($bowtie2){
-    if ($percent_meC_unknown){
-      warn "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
-      print REPORT "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
-    }
-    else{
-      warn "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
-      print REPORT "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
-    }
-  }
-  print REPORT "\n\n";
-  warn "\n\n";
-
-  if ($seqID_contains_tabs){
-    warn "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
-    print REPORT "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
-  }
+	if ($seqID_contains_tabs){
+		warn "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
+		print REPORT "The sequence IDs in the provided file contain tab-stops which might prevent sequence alignments. If this happened, please replace all tab characters within the seqID field with spaces before running Bismark.\n\n";
+	}
 }
-
 
 sub print_final_analysis_report_paired_ends{
 	my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid,$merge_multi) = @_;
@@ -2190,164 +2176,165 @@ sub print_final_analysis_report_paired_ends{
 }
 
 sub process_single_end_fastA_file_for_methylation_call{
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
-  ### this is a FastA sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
-  ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
-  ### the C->T or G->A version
+	my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
+	### this is a FastA sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
+	### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
+	### the C->T or G->A version
 
-  ### gzipped version of the infile
-  if ($sequence_file =~ /\.gz$/){
-    open (IN,"gunzip -c $sequence_file |") or die $!;
-  }
-  else{
-    open (IN,$sequence_file) or die $!;
-  }
-
-  my $count = 0;
-
-  warn "\nReading in the sequence file $sequence_file\n";
-  while (1) {
-    # last if ($counting{sequences_count} > 100);
-    my $identifier = <IN>;
-    my $sequence = <IN>;
-    last unless ($identifier and $sequence);
-
-    $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
-    ++$count;
-
-    if ($skip){
-      next unless ($count > $skip);
-    }
-    if ($upto){
-		last if ($count > $upto);
-    }
-
-    $counting{sequences_count}++;
-    if ($counting{sequences_count}%1000000==0) {
-      warn "Processed $counting{sequences_count} sequences so far\n";
-    }
-    chomp $sequence;
-    chomp $identifier;
-
-    $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
-
-    my $return;
-    if ($bowtie2){
-      $return = check_bowtie_results_single_end_bowtie2 (uc$sequence,$identifier);
-    }
-    else{
-		# TODO: Add HISAT2 mode
+	### gzipped version of the infile
+	if ($sequence_file =~ /\.gz$/){
+		open (IN,"gunzip -c $sequence_file |") or die $!;
+	}
+	else{
+		open (IN,$sequence_file) or die $!;
 	}
 
-    unless ($return){
-      $return = 0;
-    }
+	my $count = 0;
 
-    # print the sequence to ambiguous.out if --ambiguous was specified
-    if ($ambiguous and $return == 2){
-      print AMBIG ">$identifier\n";
-      print AMBIG "$sequence\n";
-    }
+	warn "\nReading in the sequence file $sequence_file\n";
+	while (1) {
+		# last if ($counting{sequences_count} > 100);
+		my $identifier = <IN>;
+		my $sequence = <IN>;
+		last unless ($identifier and $sequence);
 
-    # print the sequence to <unmapped.out> file if --un was specified
-    elsif ($unmapped and $return == 1){
-      print UNMAPPED ">$identifier\n";
-      print UNMAPPED "$sequence\n";
-    }
-  }
-  print "Processed $counting{sequences_count} sequences in total\n\n";
+		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
 
-  close OUT or warn "Failed to close filehandle OUT: $!\n";
+		++$count;
 
-  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
+		if ($skip){
+			next unless ($count > $skip);
+		}
+		if ($upto){
+			last if ($count > $upto);
+		}
+
+		$counting{sequences_count}++;
+		if ($counting{sequences_count}%1000000==0) {
+			warn "Processed $counting{sequences_count} sequences so far\n";
+		}
+		chomp $sequence;
+		chomp $identifier;
+
+		$identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
+
+		my $return;
+		if ($bowtie2){
+			$return = check_bowtie2_results_single_end (uc$sequence,$identifier);
+		}
+		else{
+			$return = check_hisat2_results_single_end (uc$sequence,$identifier);
+		}
+
+		unless ($return){
+			$return = 0;
+		}
+
+		# print the sequence to ambiguous.out if --ambiguous was specified
+		if ($ambiguous and $return == 2){
+			print AMBIG ">$identifier\n";
+			print AMBIG "$sequence\n";
+		}
+
+		# print the sequence to <unmapped.out> file if --un was specified
+		elsif ($unmapped and $return == 1){
+			print UNMAPPED ">$identifier\n";
+			print UNMAPPED "$sequence\n";
+		}
+	}
+	print "Processed $counting{sequences_count} sequences in total\n\n";
+
+	close OUT or warn "Failed to close filehandle OUT: $!\n";
+
+	print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 
 }
 
 sub process_single_end_fastQ_file_for_methylation_call{
 
-  my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
+	my ($sequence_file,$C_to_T_infile,$G_to_A_infile,$pid) = @_;
 
-  ### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
-  ### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
-  ### the C->T or G->A version
+	### this is the Illumina sequence file; we need the actual sequence to compare it against the genomic sequence in order to make a methylation call.
+	### Now reading in the sequence file sequence by sequence and see if the current sequence was mapped to one (or both) of the converted genomes in either
+	### the C->T or G->A version
 
-  ### gzipped version of the infile
-  if ($sequence_file =~ /\.gz$/){
-    open (IN,"gunzip -c $sequence_file |") or die $!;
-  }
-  else{
-    open (IN,$sequence_file) or die $!;
-  }
-
-  my $count = 0;
-
-  warn "\nReading in the sequence file $sequence_file\n";
-  while (1) {
-    my $identifier = <IN>;
-    my $sequence = <IN>;
-    my $identifier_2 = <IN>;
-    my $quality_value = <IN>;
-    last unless ($identifier and $sequence and $identifier_2 and $quality_value);
-
-    $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
-    ++$count;
-
-    if ($skip){
-      next unless ($count > $skip);
-    }
-    if ($upto){
-      last if ($count > $upto);
-    }
-
-    $counting{sequences_count}++;
-
-    if ($counting{sequences_count}%1000000==0) {
-      warn "Processed $counting{sequences_count} sequences so far\n";
-    }
-    chomp $sequence;
-    chomp $identifier;
-    chomp $quality_value;
-
-    $identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
-
-    my $return;
-    if ($bowtie2){
-      $return = check_bowtie_results_single_end_bowtie2 (uc$sequence,$identifier,$quality_value);
-    }
-    else{
-		### TODO: Add HISAT2 mode
+	### gzipped version of the infile
+	if ($sequence_file =~ /\.gz$/){
+		open (IN,"gunzip -c $sequence_file |") or die $!;
+	}
+	else{
+		open (IN,$sequence_file) or die $!;
 	}
 
-    unless ($return){
-      $return = 0;
-    }
+	my $count = 0;
 
-    # print the sequence to ambiguous.out if --ambiguous was specified
-    if ($ambiguous and $return == 2){
-      print AMBIG "\@$identifier\n";
-      print AMBIG "$sequence\n";
-      print AMBIG $identifier_2;
-      print AMBIG "$quality_value\n";
-    }
+	warn "\nReading in the sequence file $sequence_file\n";
+	while (1) {
+		my $identifier = <IN>;
+		my $sequence = <IN>;
+		my $identifier_2 = <IN>;
+		my $quality_value = <IN>;
+		last unless ($identifier and $sequence and $identifier_2 and $quality_value);
 
-    # print the sequence to <unmapped.out> file if --un was specified
-    elsif ($unmapped and $return == 1){
-      print UNMAPPED "\@$identifier\n";
-      print UNMAPPED "$sequence\n";
-      print UNMAPPED $identifier_2;
-      print UNMAPPED "$quality_value\n";
-    }
-  }
-  print "Processed $counting{sequences_count} sequences in total\n\n";
+		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
 
-  close OUT or warn "Failed to close filehandle OUT: $!\n";
+		++$count;
 
-  print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
-  if ($ambig_bam){
-      close AMBIBAM or warn "Had trouble closing filehandle AMBIBAM: $!\n";
-  }
+		if ($skip){
+			next unless ($count > $skip);
+		}
+		if ($upto){
+			last if ($count > $upto);
+		}
+
+		$counting{sequences_count}++;
+
+		if ($counting{sequences_count}%1000000==0) {
+			warn "Processed $counting{sequences_count} sequences so far\n";
+		}
+		chomp $sequence;
+		chomp $identifier;
+		chomp $quality_value;
+
+		$identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
+
+		my $return;
+		if ($bowtie2){
+			$return = check_bowtie2_results_single_end (uc$sequence,$identifier,$quality_value);
+		}
+		else{
+			$return = check_hisat2_results_single_end (uc$sequence,$identifier,$quality_value);
+		}	
+
+		unless ($return){
+			$return = 0;
+		}
+
+		# print the sequence to ambiguous.out if --ambiguous was specified
+		if ($ambiguous and $return == 2){
+			print AMBIG "\@$identifier\n";
+			print AMBIG "$sequence\n";
+			print AMBIG $identifier_2;
+			print AMBIG "$quality_value\n";
+		}
+
+		# print the sequence to <unmapped.out> file if --un was specified
+		elsif ($unmapped and $return == 1){
+			print UNMAPPED "\@$identifier\n";
+			print UNMAPPED "$sequence\n";
+			print UNMAPPED $identifier_2;
+			print UNMAPPED "$quality_value\n";
+		}
+	}
+	print "Processed $counting{sequences_count} sequences in total\n\n";
+
+	close OUT or warn "Failed to close filehandle OUT: $!\n";
+
+	print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
+	if ($ambig_bam){
+		close AMBIBAM or warn "Had trouble closing filehandle AMBIBAM: $!\n";
+	}
+	
 }
 
 sub process_fastA_files_for_paired_end_methylation_calls{
@@ -2409,10 +2396,10 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
     my $return;
     if ($bowtie2){
-		$return = check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1);
+		$return = check_bowtie2_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
     }
     else{
-		###	TODO: Add HISAT2 mode
+		$return = check_hisat2_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
 	}
 
     unless ($return){
@@ -2508,11 +2495,11 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
     my $return;
     if ($bowtie2){
-      $return = check_bowtie_results_paired_ends_bowtie2 (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+		$return = check_bowtie2_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
     }
     else{
-		### TODO: Add HISAT2 mode
-	}
+		$return = check_hisat2_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+   	}
 
     unless ($return){
       $return = 0;
@@ -2559,7 +2546,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 }
 
 
-sub check_bowtie_results_single_end_bowtie2{
+sub check_bowtie2_results_single_end{
   my ($sequence,$identifier,$quality_value) = @_;
 
   unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
@@ -3016,6 +3003,434 @@ sub check_bowtie_results_single_end_bowtie2{
   return 0; ## if a sequence got this far we do not want to print it to unmapped or ambiguous.out
 }
 
+sub check_hisat2_results_single_end{
+	my ($sequence,$identifier,$quality_value) = @_;
+	warn "\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\nCurrent sequence: $sequence\t$identifier\t$quality_value\n";
+	
+	unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
+		$quality_value = 'I'x(length$sequence);
+	}	
+	# as of version Bowtie 2 2.0.0 beta7, when input reads are unpaired, Bowtie 2 no longer removes the trailing /1 or /2 from the read name.
+	# $identifier =~ s/\/[1234567890]+$//; # some sequencers don't just have /1 or /2 at the end of read IDs
+	# print "sequence $sequence\nid $identifier\nquality: '$quality_value'\n";
+
+	my $alignment_ambiguous = 0;
+	my $first_ambig_alignment; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified
+	my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
+	my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
+
+	my %alignments = ();
+  
+	### reading from the Bowtie 2 output filehandles
+	foreach my $index (0..$#fhs){
+		# print "Index: $index\n";
+		# print "$fhs[$index]->{last_line}\n";
+		# print "$fhs[$index]->{last_seq_id}\n";
+		# sleep (1);
+		### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
+		next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
+
+		### if the sequence we are currently looking at produced an alignment we are doing various things with it
+		print "last seq id: $fhs[$index]->{last_seq_id} and identifier: $identifier\n";
+
+		if ($fhs[$index]->{last_seq_id} eq $identifier) {
+		
+			my ($id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,5,9,10];
+			## If a sequence has no reported alignments there will be a single output line with a bit-wise flag value of 4. We can store the next alignment and move on to the next Bowtie 2 instance
+			if ($flag == 4){
+				## reading in the next alignment, which must be the next sequence
+				my $newline = $fhs[$index]->{fh}-> getline();
+				if ($newline){
+					chomp $newline;
+					my ($seq_id) = split (/\t/,$newline);
+					$fhs[$index]->{last_seq_id} = $seq_id;
+					$fhs[$index]->{last_line} = $newline;
+					if ($seq_id eq $identifier){
+						die "Sequence with ID $identifier did not produce any alignment, but next seq-ID was also $fhs[$index]->{last_seq_id}!\n";
+					}
+					next; # next instance
+				}
+				else{
+					# assigning undef to last_seq_id and last_line and jumping to the next index (end of Bowtie 2 output)
+					$fhs[$index]->{last_seq_id} = undef;
+					$fhs[$index]->{last_line} = undef;
+					next;
+				}
+			}
+
+			# if there are one or more proper alignments we can extract the chromosome number
+			my $chromosome;
+			# warn "FLAG: $flag\nCHR: $mapped_chromosome\n";sleep(1);
+			if ($mapped_chromosome =~ s/_(CT|GA)_converted$//){
+				# warn "FLAG: $flag\nCHR: $mapped_chromosome\n";sleep(1);
+				$chromosome = $mapped_chromosome;
+			}
+			else{
+				die "Chromosome number extraction failed for $mapped_chromosome\n";
+			}
+
+			### We will use the optional field to determine the best alignment. Later on we extract the number of mismatches and/or indels from the CIGAR string
+			my ($alignment_score,$second_best,$MD_tag);
+			my @fields = split (/\t/,$fhs[$index]->{last_line});
+
+			foreach (11..$#fields){
+				if ($fields[$_] =~ /AS:i:(.*)/){
+					$alignment_score = $1;
+				}
+				elsif ($fields[$_] =~ /ZS:i:(.*)/){
+					$second_best = $1;
+				}
+				elsif ($fields[$_] =~ /MD:Z:(.*)/){
+					$MD_tag = $1;
+				}
+			}
+
+			my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
+			# the read will be assigned to the wrong strand which may result in incorrect methylation calls.
+			# this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
+
+			if (!defined $best_AS_so_far){
+				$best_AS_so_far = $alignment_score;
+				$overwrite++;
+				# warn "First alignment score, setting \$best_AS_so_far to $best_AS_so_far\n";
+				if ($ambig_bam){ # also setting the first_ambig_alignment
+					$first_ambig_alignment = $fhs[$index]->{last_line};
+					$first_ambig_alignment =~ s/_(CT|GA)_converted//;
+					# warn "$first_ambig_alignment\n"; sleep(1);
+				}
+			}
+			else{
+				if ($alignment_score >= $best_AS_so_far){ # AS are generally negative with a maximum of 0;
+					# 19 07 2016: changed this to >= so that equally good alignments are also added. Ambiguous alignments from different threads will be identified later on
+					$overwrite++;
+			  
+					# 22 07 2016: resetting the ambiguous score within same thread only if the current alignment is really better than the previous one
+					if ($alignment_score > $best_AS_so_far){
+						# warn "Resetting amb within thread value to 0\n";
+						$amb_same_thread = 0;
+			  
+						if ($ambig_bam){ # also setting a new first_ambig_alignment
+							$first_ambig_alignment = $fhs[$index]->{last_line};
+							$first_ambig_alignment =~ s/_(CT|GA)_converted//;
+							# warn "$first_ambig_alignment\n"; sleep(1);
+						}
+					}
+					$best_AS_so_far = $alignment_score; # 26 06 2017: moved this down so that the $amb_same_thread gets a chance to reset
+					# warn "Found better or equal alignment score ($alignment_score), setting \$best_AS_so_far to $best_AS_so_far\n";
+				}
+				else{
+					# warn "Current alignment (AS $alignment_score) isn't better than the best so far ($best_AS_so_far). Not changing anything\n";
+				}
+			}	
+
+			# warn "First  best alignment_score is: '$alignment_score'\n";
+			# warn "MD tag is: '$MD_tag'\n";
+			die "Failed to extract alignment score ($alignment_score) and MD tag ($MD_tag) from line $fhs[$index]->{last_line}!\n" unless (defined $alignment_score and defined $MD_tag);
+			
+			if (defined $second_best){
+				# warn "second best alignment_score is: '$second_best'\n\n";  sleep(1);
+
+				# If the first alignment score is the same as the alignment score of the second best hit we keep a memory of this
+				if ($alignment_score == $second_best){
+	      
+					# checking to see if this read produced the best alignment
+					if ($alignment_score == $best_AS_so_far){  # yes this read is the best one so far, however it is ambiguous
+						# warn "Read is ambiguous within the same thread, or otherwise as good as the best one so far. Setting \$amb_same_thread to 1 for currently best AS: $best_AS_so_far\n";
+						$amb_same_thread = 1;
+					}
+					else{
+						# warn "This read has a worse alignments score than the best alignment so far and will be ignored even though it is ambiguous in itself\n";
+					}
+
+					### if there is a better alignment later on -> fine. If not, the read will get booted altogether
+
+					## need to read and discard all additional ambiguous reads until we reach the next sequence
+					until ($fhs[$index]->{last_seq_id} ne $identifier){
+						my $newline = $fhs[$index]->{fh}-> getline();
+						if ($newline){
+							chomp $newline;
+							my ($seq_id) = split (/\t/,$newline);
+							$fhs[$index]->{last_seq_id} = $seq_id;
+							$fhs[$index]->{last_line} = $newline;
+						}
+						else{
+							# assigning undef to last_seq_id and last_line and jumping to the next index (end of HISAT2 output)
+							$fhs[$index]->{last_seq_id} = undef;
+							$fhs[$index]->{last_line} = undef;
+							last; # break free in case we have reached the end of the alignment output
+						}
+					}
+					#  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
+				}
+				else{ # the next best alignment has a lower alignment score than the current read, so we can safely store the current alignment
+
+					my $alignment_location = join (":",$chromosome,$position);
+
+					### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+					### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
+					### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
+					### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB
+
+					if ($overwrite){
+						$alignments{$alignment_location}->{seq_id} = $id;
+						$alignments{$alignment_location}->{alignment_score} = $alignment_score;
+						$alignments{$alignment_location}->{alignment_score_second_best} = $second_best;
+						$alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
+						$alignments{$alignment_location}->{index} = $index;
+						$alignments{$alignment_location}->{chromosome} = $chromosome;
+						$alignments{$alignment_location}->{position} = $position;
+						$alignments{$alignment_location}->{CIGAR} = $cigar;
+						$alignments{$alignment_location}->{MD_tag} = $MD_tag;
+					}	
+
+					### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
+					until ($fhs[$index]->{last_seq_id} ne $identifier){
+						my $newline = $fhs[$index]->{fh}-> getline();
+						if ($newline){
+							chomp $newline;
+							my ($seq_id) = split (/\t/,$newline);
+							$fhs[$index]->{last_seq_id} = $seq_id;
+							$fhs[$index]->{last_line} = $newline;
+						}
+						else{
+							# assigning undef to last_seq_id and last_line and jumping to the next index (end of HISAT2 output)
+							$fhs[$index]->{last_seq_id} = undef;
+							$fhs[$index]->{last_line} = undef;
+							last; # break free in case we have reached the end of the alignment output
+						}
+					}
+					#  warn "Index: $index\tThe current Seq-ID is $identifier, skipped all ambiguous sequences until the next ID which is: $fhs[$index]->{last_seq_id}\n";
+				}
+			}
+			else{ # there is no second best hit, so we can just store this one and read in the next sequence
+	
+				my $alignment_location = join (":",$chromosome,$position);
+				# warn "There is no second best hit. Overwrite status: $overwrite\n";
+				### If a sequence aligns to exactly the same location with a perfect match twice the sequence does either not contain any C or G, or all the Cs (or Gs on the reverse
+				### strand) were methylated and therefore protected. Alternatively it will align better in one condition than in the other. In any case, it is not needed to overwrite
+				### the same positional entry with a second entry for the same location, as the genomic sequence extraction and methylation call would not be affected by this. The only
+				### thing which would change is the index number for the found alignment). We will continue to assign these alignments to the first indexes 0 and 1, i.e. OT and OB
+
+				if ($overwrite){
+					$alignments{$alignment_location}->{seq_id} = $id;
+					$alignments{$alignment_location}->{alignment_score} = $alignment_score;
+					$alignments{$alignment_location}->{alignment_score_second_best} = undef;
+					$alignments{$alignment_location}->{bowtie_sequence} = $bowtie_sequence;
+					$alignments{$alignment_location}->{index} = $index;
+					$alignments{$alignment_location}->{chromosome} = $chromosome;
+					$alignments{$alignment_location}->{position} = $position;
+					$alignments{$alignment_location}->{MD_tag} = $MD_tag;
+					$alignments{$alignment_location}->{CIGAR} = $cigar;
+				}
+				### now reading and discarding all (inferior) alignments of this sequencing read until we hit the next sequence
+				until ($fhs[$index]->{last_seq_id} ne $identifier){
+					my $newline = $fhs[$index]->{fh}-> getline();
+					if ($newline){
+						# warn "$newline\n";
+						chomp $newline;
+						
+						my ($seq_id) = split (/\t/,$newline);
+						$fhs[$index]->{last_seq_id} = $seq_id;
+						$fhs[$index]->{last_line} = $newline;
+					}
+					else{
+						# assigning undef to last_seq_id and last_line and jumping to the next index (end of HISAT2 output)
+						$fhs[$index]->{last_seq_id} = undef;
+						$fhs[$index]->{last_line}   = undef;
+						last; # break free in case we have reached the end of the alignment output
+					}
+				}
+			}
+		}
+	}
+
+	### If there were several equally good alignments for the best alignment score we will boot the read
+	if ($amb_same_thread){
+		$alignment_ambiguous = 1;
+		# warn "\$alignment_ambiguous now: $alignment_ambiguous\n";
+	}
+	else{
+		# warn "alignment won't be considered ambiguous. This time....\n";
+	}
+
+
+	### if the read produced several ambiguous alignments already now can returning already now. If --ambiguous or --unmapped was specified the read sequence will be printed out.
+	if ($alignment_ambiguous == 1){
+		$counting{unsuitable_sequence_count}++;
+		### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
+		# my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
+		# print "$ambiguous_read_output\n";
+	
+		if ($ambig_bam){
+			# warn "Sequence is ambiguous, printing out BAM file:\n";
+			print AMBIBAM "$first_ambig_alignment\n";
+		}
+
+		if ($ambiguous){
+			return 2; # => exits to next sequence, and prints it out to _ambiguous_reads.fq.gz if '--ambiguous' was specified
+		}
+		elsif ($unmapped){
+			return 1; # => exits to next sequence, and prints it out to _unmapped_reads.fq.gz if '--unmapped' but not '--ambiguous' was specified
+		}
+		else{
+			return 0;
+		}
+	}
+
+	### if there was no alignment found for a certain sequence at all we continue with the next sequence in the sequence file
+	unless(%alignments){
+		$counting{no_single_alignment_found}++;
+		# my $unmapped_read_output = join("\t",$identifier,'4','*','0','0','*','*','0','0',$sequence,$quality_value);
+		# print  "$unmapped_read_output\n";
+		if ($unmapped){
+			return 1; # => exits to next sequence, and prints it out to _unmapped_reads.txt if '--unmapped' was specified
+		}
+		else{
+			return 0; # default
+		}
+	}
+
+	#######################################################################################################################################################
+	
+	### If the sequence was not rejected so far we are now looking if there is a unique best alignment among all alignment instances. If there is only one
+	### single best position we are going to store the alignment information in the $meth_call variable. If there are multiple hits with the same (highest)
+	### alignment score we are discarding the sequence altogether.
+	### For end-to-end alignments the maximum alignment score can be 0, each mismatch can receive penalties up to 6, and each gap receives penalties for
+	### opening (5) and extending (3 per bp) the gap.
+
+	#######################################################################################################################################################
+
+	my $methylation_call_params; # hash reference which will store all information we need for the methylation call
+	my $sequence_fails = 0; # Going to use $sequence_fails as a 'memory' if a sequence could not be aligned uniquely (set to 1 then)
+
+	### print contents of %alignments for debugging
+	# if (scalar keys %alignments > 1){
+	#     print "\n******\n";
+	#     foreach my $alignment_location (sort {$a cmp $b} keys %alignments){
+	#       print "Loc:  $alignment_location\n";
+	#       print "ID:   $alignments{$alignment_location}->{seq_id}\n";
+	#       print "AS:   $alignments{$alignment_location}->{alignment_score}\n";
+	#       print "Seq:  $alignments{$alignment_location}->{bowtie_sequence}\n";
+	#       print "Index $alignments{$alignment_location}->{index}\n";
+	#       print "Chr:  $alignments{$alignment_location}->{chromosome}\n";
+	#       print "pos:  $alignments{$alignment_location}->{position}\n";
+	# 	      print "MD:   $alignments{$alignment_location}->{MD_tag}\n\n";
+	#     }
+	#     print "\n******\n";
+	# 	  }
+
+	### if there is only 1 entry in the hash with we accept it as the best alignment
+	if (scalar keys %alignments == 1){
+		for my $unique_best_alignment (keys %alignments){
+		$methylation_call_params->{$identifier}->{bowtie_sequence} = $alignments{$unique_best_alignment}->{bowtie_sequence};
+		$methylation_call_params->{$identifier}->{chromosome}      = $alignments{$unique_best_alignment}->{chromosome};
+		$methylation_call_params->{$identifier}->{position}        = $alignments{$unique_best_alignment}->{position};
+		$methylation_call_params->{$identifier}->{index}           = $alignments{$unique_best_alignment}->{index};
+		$methylation_call_params->{$identifier}->{alignment_score} = $alignments{$unique_best_alignment}->{alignment_score};
+		$methylation_call_params->{$identifier}->{alignment_score_second_best} = $alignments{$unique_best_alignment}->{alignment_score_second_best};
+		$methylation_call_params->{$identifier}->{MD_tag}          = $alignments{$unique_best_alignment}->{MD_tag};
+		$methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$unique_best_alignment}->{CIGAR};
+		}
+	}
+
+  ### otherwise we are going to find out if there is a best match among the multiple alignments, or whether there are 2 or more equally good alignments (in which case
+  ### we boot the sequence altogether
+  elsif (scalar keys %alignments >= 2  and scalar keys %alignments <= 4){
+    my $best_alignment_score;
+    my $best_alignment_location;
+    foreach my $alignment_location (sort {$alignments{$b}->{alignment_score} <=> $alignments{$a}->{alignment_score}} keys %alignments){
+      # print "$alignments{$alignment_location}->{alignment_score}\n";
+      unless (defined $best_alignment_score){
+	$best_alignment_score = $alignments{$alignment_location}->{alignment_score};
+	$best_alignment_location = $alignment_location;
+	# print "setting best alignment score: $best_alignment_score\n";
+      }
+      else{
+	### if the second best alignment has the same alignment score as the first one, the sequence will get booted
+	if ($alignments{$alignment_location}->{alignment_score} == $best_alignment_score){
+	  # warn "Same alignment score, the sequence will get booted!\n";
+	  $sequence_fails = 1;
+	  last; # exiting after the second alignment since we know that the sequence has ambiguous alignments
+	}
+	### else we are going to store the best alignment for further processing
+	else{
+	  $methylation_call_params->{$identifier}->{bowtie_sequence} = $alignments{$best_alignment_location}->{bowtie_sequence};
+	  $methylation_call_params->{$identifier}->{chromosome}      = $alignments{$best_alignment_location}->{chromosome};
+	  $methylation_call_params->{$identifier}->{position}        = $alignments{$best_alignment_location}->{position};
+	  $methylation_call_params->{$identifier}->{index}           = $alignments{$best_alignment_location}->{index};
+	  $methylation_call_params->{$identifier}->{alignment_score} = $alignments{$best_alignment_location}->{alignment_score};
+	  $methylation_call_params->{$identifier}->{MD_tag}          = $alignments{$best_alignment_location}->{MD_tag};
+	  $methylation_call_params->{$identifier}->{CIGAR}           = $alignments{$best_alignment_location}->{CIGAR};
+	  if (defined $alignments{$best_alignment_location}->{alignment_score_second_best} and $alignments{$best_alignment_location}-> {alignment_score_second_best} > $alignments{$alignment_location}->{alignment_score}) {
+	    $methylation_call_params->{$identifier}->{alignment_score_second_best} = $alignments{$best_alignment_location}->{alignment_score_second_best};
+	  }
+	  else {
+	    $methylation_call_params->{$identifier}->{alignment_score_second_best} = $alignments{$alignment_location}->{alignment_score};
+	  }
+	  last; # exiting after processing the second alignment since the sequence produced a unique best alignment
+	}
+      }
+    }
+  }
+  else{
+    die "There are too many potential hits for this sequence (1-4 expected, but found: ",scalar keys %alignments,")\n";;
+  }
+
+  ### skipping the sequence completely if there were multiple alignments with the same best alignment score at different positions
+  if ($sequence_fails == 1){
+    $counting{unsuitable_sequence_count}++;
+
+    ### report that the sequence has multiple hits with bitwise flag 256. We can print the sequence to the result file straight away and skip everything else
+    # my $ambiguous_read_output = join("\t",$identifier,'256','*','0','0','*','*','0','0',$sequence,$quality_value);
+    # print OUT "$ambiguous_read_output\n";
+
+    if ($ambiguous){
+      return 2; # => exits to next sequence, and prints it out (in FastQ format) to _ambiguous_reads.txt if '--ambiguous' was specified
+    }
+    elsif ($unmapped){
+      return 1; # => exits to next sequence, and prints it out (in FastQ format) to _unmapped_reads.txt if '--unmapped' but not '--ambiguous' was specified
+    }
+    else{
+      return 0; # => exits to next sequence (default)
+    }
+  }
+
+  ### --DIRECTIONAL
+  ### If the option --directional has been specified the user wants to consider only alignments to the original top strand or the original bottom strand. We will therefore
+  ### discard all alignments to strands complementary to the original strands, as they should not exist in reality due to the library preparation protocol
+  if ($directional){
+    if ( ($methylation_call_params->{$identifier}->{index} == 2) or ($methylation_call_params->{$identifier}->{index} == 3) ){
+      # warn "Alignment rejected! (index was: $methylation_call_params->{$identifier}->{index})\n";
+      $counting{alignments_rejected_count}++;
+      return 0;
+    }
+  }
+
+  ### If the sequence has not been rejected so far it has a unique best alignment
+  $counting{unique_best_alignment_count}++;
+
+  ### Now we need to extract a genomic sequence that exactly corresponds to the reported alignment. This potentially means that we need to deal with insertions or deletions as well
+  extract_corresponding_genomic_sequence_single_end_bowtie2 ($identifier,$methylation_call_params);
+
+  ### check test to see if the genomic sequence we extracted has the same length as the observed sequence+2, and only then we perform the methylation call
+  if (length($methylation_call_params->{$identifier}->{unmodified_genomic_sequence}) != length($sequence)+2){
+    warn "Chromosomal sequence could not be extracted for\t$identifier\t$methylation_call_params->{$identifier}->{chromosome}\t$methylation_call_params->{$identifier}->{position}\n";
+    $counting{genomic_sequence_could_not_be_extracted_count}++;
+    return 0;
+  }
+
+  # Compute MAPQ value
+  $methylation_call_params->{$identifier}->{mapq} = calc_mapq (length($sequence), undef,
+							       $methylation_call_params->{$identifier}->{alignment_score},
+							       $methylation_call_params->{$identifier}->{alignment_score_second_best});
+
+
+
+  ### otherwise we are set to perform the actual methylation call
+  $methylation_call_params->{$identifier}->{methylation_call} = methylation_call($identifier,$sequence,$methylation_call_params->{$identifier}->{unmodified_genomic_sequence},$methylation_call_params->{$identifier}->{read_conversion});
+  print_bisulfite_mapping_result_single_end_bowtie2 ($identifier,$sequence,$methylation_call_params,$quality_value);
+  return 0; ## if a sequence got this far we do not want to print it to unmapped or ambiguous.out
+}
 
 sub determine_number_of_transliterations_performed{
   my ($sequence,$read_conversion) = @_;
@@ -3037,7 +3452,7 @@ sub determine_number_of_transliterations_performed{
 ### BOWTIE 2 | PAIRED-END
 #########################
 
-sub check_bowtie_results_paired_ends_bowtie2{
+sub check_bowtie2_results_paired_end{
 
     my ($sequence_1,$sequence_2,$identifier,$quality_value_1,$quality_value_2) = @_;
     
@@ -3690,13 +4105,13 @@ sub check_bowtie_results_paired_ends_bowtie2{
 # assuming end-to-end alignment with the default calculation of the minimum alignment score
 
 sub calc_mapq {
-  my ($read1Len, $read2Len, $AS_best, $AS_secBest) = @_;
+	my ($read1Len, $read2Len, $AS_best, $AS_secBest) = @_;
 
-  my $scMin = $score_min_intercept + $score_min_slope * $read1Len;
-  ### read2Len is only defined for paired-end reads, so for single-end mode we can just a score min value for read 1
-  if (defined $read2Len){
-    $scMin   += $score_min_intercept + $score_min_slope * $read2Len;
-  }
+	my $scMin = $score_min_intercept + $score_min_slope * $read1Len;
+	### read2Len is only defined for paired-end reads, so for single-end mode we can just a score min value for read 1
+	if (defined $read2Len){
+		$scMin   += $score_min_intercept + $score_min_slope * $read2Len;
+	}
 
   my $diff = abs$scMin; # scores can vary by up to this much (since max AS is 0 for end-to-end alignment)
   my $bestOver = $AS_best - $scMin;
@@ -4197,16 +4612,16 @@ sub convert_solexa_pre1_3_quality_string_into_phred_score{
 
 
 sub extract_corresponding_genomic_sequence_single_end_bowtie2{
-  my ($sequence_identifier,$methylation_call_params) = @_;
+	my ($sequence_identifier,$methylation_call_params) = @_;
 
-  my $MD_tag = $methylation_call_params->{$sequence_identifier}->{MD_tag};
-  my $cigar  = $methylation_call_params->{$sequence_identifier}->{CIGAR};
+	my $MD_tag = $methylation_call_params->{$sequence_identifier}->{MD_tag};
+	my $cigar  = $methylation_call_params->{$sequence_identifier}->{CIGAR};
 
-  my $contains_deletion = 0;
-  if ($cigar =~ /D/){
-    $contains_deletion = 1;
-    # warn "$cigar\n$MD_tag\n";
-  }
+	my $contains_deletion = 0;
+	if ($cigar =~ /D/){
+		$contains_deletion = 1;
+		# warn "$cigar\n$MD_tag\n";
+	}
   ### A bisulfite sequence for 1 location in the genome can theoretically be any of the 4 possible converted strands. We are also giving the
   ### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
 
@@ -6526,9 +6941,7 @@ VERSION
 
 	### OPTION AMBIGUOUS BAM
 	if ($ambig_bam){
-		unless ($bowtie2){
-			die "The option --ambig_bam is only available for Bowtie2 alignments\n";
-		}
+		# this option simply outputs the current alignment to a file]
 	}
 
 
@@ -6805,10 +7218,10 @@ VERSION
 		push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
 	}
 	else{
-		if ($bowtie2){
+		#if ($bowtie2){
 			($score_min_intercept, $score_min_slope) = (0, -0.2);
 			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
-		}
+		#}
 	}
 
 	### BOWTIE 2/HISAT2 READ GAP OPTIONS
@@ -6998,10 +7411,7 @@ VERSION
 		push @aligner_options,'--quiet';
 	}
 
-	### SUMMARY OF ALL BOWTIE OPTIONS
-	my $aligner_options = join (' ',@aligner_options);
-	# 	warn "Summary of all aligner options:\t$aligner_options\n"; sleep(10);
-
+	
 	### STRAND-SPECIFIC LIBRARIES
 	my $directional;
 	if ($non_directional){
@@ -7139,7 +7549,18 @@ VERSION
 			$rg_sample = 'SAMPLE';
 		}
 	}
-
+	
+	### ADDITIONAL ALIGNMENT OPTIONS WE NEED FOR HISAT2
+	if ($hisat2){
+		
+		###	NO SOFTCLIPPING - this is not negotiable
+		push @aligner_options,'--no-softclip --omit-sec-seq';
+	}
+	
+	### SUMMARY OF ALL ALIGNER OPTIONS
+	my $aligner_options = join (' ',@aligner_options);
+	warn "Summary of all aligner options:\t$aligner_options\n"; sleep(2);
+	
 	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version);
 }
 
@@ -7195,12 +7616,7 @@ sub single_end_SAM_output{
   my $genome_conversion = $methylation_call_params->{$id}->{genome_conversion};
   my $number_of_mismatches;
 
-  if ($bowtie2){
-      $number_of_mismatches= $methylation_call_params->{$id}->{alignment_score};
-  }
-  else{
-      $number_of_mismatches= $methylation_call_params->{$id}->{number_of_mismatches};
-  }
+  $number_of_mismatches= $methylation_call_params->{$id}->{alignment_score};
 
 #  my $lri_filtering = 10;
 #  if (defined $lri_filtering){
@@ -7413,27 +7829,29 @@ sub single_end_SAM_output{
     $read_group = "RG:Z:$rg_id";
   }
 
-  ####
+	####
 
-  # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
-  ### optionally print number of non-bisulfite mismatches
-  if ($non_bs_mm){
-    if ($rg_tag){
-      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag,$read_group)),"\n";
-    }
-    else{
-      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
-    }
-  }
-  else{ # default
-    # SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
-    if ($rg_tag){
-      print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$read_group)),"\n";
-    }
-    else{
-	print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
-   }
-  }
+	# SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
+	### optionally print number of non-bisulfite mismatches
+	if ($non_bs_mm){
+		if ($rg_tag){
+			print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag,$read_group)),"\n";
+		}
+		else{
+			print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$XA_tag)),"\n";
+		}
+	}
+	else{ # default
+		# SAM format: QNAME, FLAG, RNAME, 1-based POS, MAPQ, CIGAR, RNEXT, PNEXT, TLEN, SEQ, QUAL, optional fields
+		if ($rg_tag){
+			print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag,$read_group)),"\n";
+		}
+		else{
+			print OUT join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+			warn "FINAL OUTPUT:\n";	
+			warn join("\t",($id,$flag,$chr,$start,$mapq,$cigar,$rnext,$pnext,$tlen,$actual_seq,$qual,$NM_tag,$MD_tag,$XM_tag,$XR_tag,$XG_tag)),"\n";
+		}
+	}
 }
 
 sub paired_end_SAM_output{
