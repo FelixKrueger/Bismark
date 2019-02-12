@@ -2494,14 +2494,8 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
 		$identifier_1 =~ s/^\@//;  # deletes the @ at the beginning of the FastQ ID
 
-		my $return;
-		if ($bowtie2){
-			$return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
-		}
-		else{
-			$return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
-		}
-
+		my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+		
 		unless ($return){
 			$return = 0;
 		}
@@ -2533,6 +2527,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 			print UNMAPPED_2 $ident_2;
 			print UNMAPPED_2 "$quality_value_2\n";
 		}
+	
 	}
 
 	warn "Processed $counting{sequences_count} sequences in total\n\n";
@@ -7235,7 +7230,7 @@ sub single_end_SAM_output{
 	if ($strand eq '-'){
 		$actual_seq = revcomp($actual_seq);                               # Sequence represented on the forward genomic strand
 		$ref_seq = revcomp($ref_seq);                                     # Required for comparison with actual sequence
-		if ($cigar =~ /[DN]/){
+		if ($cigar =~ /[D]/){
 			$methylation_call_params->{$id}->{genomic_seq_for_MD_tag} = revcomp( $methylation_call_params->{$id}->{genomic_seq_for_MD_tag} );
 		}
 		$qual = reverse $qual;                                            # if the sequence was reverse-complemented the quality string needs to be reversed as well
@@ -7650,7 +7645,7 @@ sub paired_end_SAM_output{
 	if ($strand_1 eq '-'){
 		$actual_seq_1 = revcomp($actual_seq_1);                            # Sequence represented on the forward genomic strand
 		$ref_seq_1 = revcomp($ref_seq_1);                                  # Required for comparison with actual sequence
-		if ($cigar_1 =~ /[DN]/){ # deletion or spliced read
+		if ($cigar_1 =~ /[D]/){ # deletion or spliced read
 			$methylation_call_params->{$id}->{genomic_seq_for_MD_tag_1} = revcomp( $methylation_call_params->{$id}->{genomic_seq_for_MD_tag_1} );
 		}
 		$qual_1 = reverse $qual_1;                                         # we need to reverse the quality string as well
@@ -7658,7 +7653,7 @@ sub paired_end_SAM_output{
 	if ($strand_2 eq '-'){
 		$actual_seq_2 = revcomp($actual_seq_2);                            # Mate sequence represented on the forward genomic strand
 		$ref_seq_2 = revcomp($ref_seq_2);                                  # Required for comparison with actual sequence
-		if ($cigar_2 =~ /[DN]/){ # deletion or spliced read
+		if ($cigar_2 =~ /[D]/){ # deletion or spliced read
 			$methylation_call_params->{$id}->{genomic_seq_for_MD_tag_2} = revcomp( $methylation_call_params->{$id}->{genomic_seq_for_MD_tag_2} );
 		}
 		$qual_2 = reverse $qual_2;                                         # If the sequence gets reverse complemented we reverse the quality string as well
