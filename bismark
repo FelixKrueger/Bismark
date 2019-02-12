@@ -502,344 +502,334 @@ foreach my $filename (@filenames){
 
 	}
 
-  ### MERGING AND DELETING TEMP FILES // TIDYING UP AFTER A MULTICORE PROCESS
+	### MERGING AND DELETING TEMP FILES // TIDYING UP AFTER A MULTICORE PROCESS
 
-  if ($pid){ # only performing this for the parent process
+	if ($pid){ # only performing this for the parent process
 
-    if ($multicore > 1){
+		if ($multicore > 1){
 
-      warn "Now waiting for all child processes to complete\n";
+			warn "Now waiting for all child processes to complete\n";
 
-      ### we need to ensure that we wait for all child processes to be finished before continuing
-      # warn "here are the child IDs: @pids\n";
-      # warn "Looping through the child process IDs:\n";
+			### we need to ensure that we wait for all child processes to be finished before continuing
+			# warn "here are the child IDs: @pids\n";
+			# warn "Looping through the child process IDs:\n";
 
-      foreach my $id (@pids){
-	# print "$id\t";
-	my $kid = waitpid ($id,0);
-	# print "Returned: $kid\nExit status: $?\n";
-	unless ($? == 0){
-	  warn "\nChild process terminated with exit signal: '$?'\n\n";
+			foreach my $id (@pids){
+				# print "$id\t";
+				my $kid = waitpid ($id,0);
+				# print "Returned: $kid\nExit status: $?\n";
+				unless ($? == 0){
+					warn "\nChild process terminated with exit signal: '$?'\n\n";
+				}
+			}
+
+			# regenerating names for temporary files
+			my @temp_input;
+			my @temp_output;
+			my @temp_reports;
+			my @temp_unmapped_1;  # will store single end reads or R1 of paired-end
+			my @temp_unmapped_2;
+			my @temp_ambiguous_1; # will store single end reads or R1 of paired-end
+			my @temp_ambiguous_2;
+			my @temp_ambig_bam;
+
+			for (1..$offset){
+
+				# Temp Input Files
+				if ($single_end){
+					if ($gzip){
+						push @temp_input, "${original_filename}.temp.${_}.gz";
+					}
+					else{
+						push @temp_input, "${original_filename}.temp.${_}";
+					}
+				}
+				elsif($paired_end){
+					if ($gzip){
+						push @temp_input, "${original_filename_1}.temp.${_}.gz";
+						push @temp_input, "${original_filename_2}.temp.${_}.gz";
+					}
+					else{
+						push @temp_input, "${original_filename_1}.temp.${_}";
+						push @temp_input, "${original_filename_2}.temp.${_}";
+					}
+				}
+
+				# if files had a prefix we need to specify it
+				my $add_prefix;
+				if (defined $prefix){
+					$add_prefix = "${prefix}.";
+				}
+				else{
+					$add_prefix = '';
+				}
+
+				if ($single_end){
+			 
+					# Temp Output Files
+					my $pathless_filename = ${original_filename}; # 10 Jan 2017
+					$pathless_filename =~ s/.*\///; # deleting path information    
+				
+					if ($bowtie2){
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2_SE_report.txt";
+							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.ambig.bam";   # only for Bowtie 2
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
+						}	
+					}
+					else{ # HISAT2
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2_SE_report.txt";
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_hisat2.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_hisat2_SE_report.txt";
+						}
+					}
+
+					if ($unmapped){
+						if ($gzip){
+							push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_unmapped_reads.fq";
+						}
+						else{
+							push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_unmapped_reads.fq";
+						}
+					}
+				
+					if ($ambiguous){
+						if ($gzip){
+							push @temp_ambiguous_1,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_ambiguous_reads.fq";
+						}
+						else{
+							push @temp_ambiguous_1,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_ambiguous_reads.fq";
+						}
+					}
+				}
+				elsif($paired_end){
+				
+					# Temp Output Files
+					my $pathless_filename_1 = ${original_filename_1}; # 10 Jan 2017
+					my $pathless_filename_2 = ${original_filename_2};
+					$pathless_filename_1 =~ s/.*\///; # deleting path information 
+					$pathless_filename_2 =~ s/.*\///; # deleting path information 
+					
+					if ($bowtie2){
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_bt2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_bt2_PE_report.txt";
+							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_bt2_pe.ambig.bam";      # only for Bowtie 2
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
+							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.ambig.bam";         # only for Bowtie 2
+						}
+					}
+					else{
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_hisat2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_hisat2_PE_report.txt";
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_hisat2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_hisat2_PE_report.txt";
+						}
+					}
+
+					if ($unmapped){
+						if ($gzip){
+							push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_unmapped_reads_1.fq";
+							push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_unmapped_reads_2.fq";
+						}
+						else{
+							push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_unmapped_reads_1.fq";
+							push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_unmapped_reads_2.fq";
+						}
+					}
+			  
+					if ($ambiguous){
+						if ($gzip){
+							push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_ambiguous_reads_1.fq";
+							push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_ambiguous_reads_2.fq";
+						}
+						else{
+							push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+							push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+						}
+					}
+				}
+			}
+
+			warn "\n\nRight, cleaning up now...\n\n";
+
+			# deleting temp files;
+			warn "Deleting temporary sequence files...\n";
+			foreach my $temp (@temp_input){
+				#print "$temp\t";
+				$temp =~ s/.*\///; # deleting path information
+				print "${temp_dir}${temp}\t";
+				unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp: $!\n";
+			}
+			print "\n\n";
+
+			# merging temp BAM files
+			if ($single_end){
+				merge_individual_BAM_files(\@temp_output,$original_filename,$single_end);
+			}
+			else{
+				merge_individual_BAM_files(\@temp_output,$original_filename_1,$single_end);
+			}
+
+			# deleting temp BAM files
+			warn "Deleting temporary BAM files...\n";
+			foreach my $temp (@temp_output){
+				# print "$temp\t";
+				$temp =~ s/.*\///; # deleting path information
+				print "${output_dir}${temp}\t";
+				unlink "${output_dir}${temp}" or warn "Failed to delete temporary BAM file ${output_dir}${temp}: $!\n";
+			}
+			print "\n\n";
+
+			### AMBIGUOUS BAM files
+			if ($ambig_bam){
+
+				# merging temp AMBIG BAM files
+				if ($single_end){
+					merge_individual_ambig_BAM_files(\@temp_ambig_bam,$original_filename,$single_end);
+				}
+				else{
+					merge_individual_ambig_BAM_files(\@temp_ambig_bam,$original_filename_1,$single_end);
+				}
+
+				# deleting temp BAM files
+				warn "Deleting temporary ambiguous BAM files...\n";
+				foreach my $temp (@temp_ambig_bam){
+					# print "$temp\t";
+					$temp =~ s/.*\///; # deleting path information
+					print "${output_dir}${temp}\t";
+					unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous BAM file ${output_dir}${temp}: $!\n";
+				}
+				print "\n\n";
+			}
+
+			if ($unmapped){
+				if ($single_end){
+					merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename,$single_end);
+				}
+				else{
+					merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename_1,$single_end,'_1');
+					merge_individual_unmapped_files(\@temp_unmapped_2,$original_filename_2,$single_end,'_2');
+				}
+
+				# deleting temp unmapped files
+				warn "Deleting temporary unmapped files...\n";
+				foreach my $temp (@temp_unmapped_1){
+					print "temp\t";
+					unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp: $!\n";
+				}
+				if ($paired_end){
+					foreach my $temp (@temp_unmapped_2){
+						print "$temp\t";
+						unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp: $!\n";
+					}
+				}
+				print "\n\n";
+			}
+
+			if ($ambiguous){
+				if ($single_end){
+					merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename,$single_end);
+				}
+				else{
+					merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename_1,$single_end,'_1');
+					merge_individual_ambiguous_files(\@temp_ambiguous_2,$original_filename_2,$single_end,'_2');
+				}
+
+				# deleting temp ambiguous files
+				warn "Deleting temporary ambiguous files...\n";
+				foreach my $temp (@temp_ambiguous_1){
+					print "$temp\t";
+					unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp: $!\n";
+				}
+
+				if ($paired_end){
+					foreach my $temp (@temp_ambiguous_2){
+						print "$temp\t";
+						unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp: $!\n";
+					}
+				}
+				print "\n\n";
+			}
+
+			# resetting the counters once more so we can add all data from all temporary reports
+			reset_counters_and_fhs($original_filename);
+
+			### Merging the Bismark mapping report files
+			if ($single_end){
+				merge_individual_mapping_reports(\@temp_reports,$original_filename,$single_end);
+				print_final_analysis_report_single_end('mock_file1','mock_file_2','mock_pid','mergeThis');
+			}
+			else{
+				merge_individual_mapping_reports(\@temp_reports,$original_filename_1,$single_end,$original_filename_2);
+				print_final_analysis_report_paired_ends('mock_file1','mock_file_2','mock_file3','mock_file_4','mock_pid','mergeThis');
+			}
+
+			# deleting temp report files
+			warn "Deleting temporary report files...\n";
+			foreach my $temp (@temp_reports){
+				print "$temp\t";
+				unlink "${output_dir}${temp}" or warn "Failed to delete temporary report file $output_dir$temp: $!\n";
+			}
+			print "\n\n";
+		}
 	}
-      }
 
-      # regenerating names for temporary files
-      my @temp_input;
-      my @temp_output;
-      my @temp_reports;
-      my @temp_unmapped_1;  # will store single end reads or R1 of paired-end
-      my @temp_unmapped_2;
-      my @temp_ambiguous_1; # will store single end reads or R1 of paired-end
-      my @temp_ambiguous_2;
-      my @temp_ambig_bam;
-
-      for (1..$offset){
-
-	# Temp Input Files
-	if ($single_end){
-	  if ($gzip){
-	    push @temp_input, "${original_filename}.temp.${_}.gz";
-	  }
-	  else{
-	    push @temp_input, "${original_filename}.temp.${_}";
-	  }
-
-	}
-	elsif($paired_end){
-	  if ($gzip){
-	    push @temp_input, "${original_filename_1}.temp.${_}.gz";
-	    push @temp_input, "${original_filename_2}.temp.${_}.gz";
-	  }
-	  else{
-	    push @temp_input, "${original_filename_1}.temp.${_}";
-	    push @temp_input, "${original_filename_2}.temp.${_}";
-	  }
-	}
-
-	# if files had a prefix we need to specify it
-	my $add_prefix;
-	if (defined $prefix){
-	  $add_prefix = "${prefix}.";
-	}
-	else{
-	  $add_prefix = '';
-	}
-
-
+	if ($pid){ # only for the Parent
 	
-	if ($single_end){
-	 
-	    # Temp Output Files
-	    my $pathless_filename = ${original_filename}; # 10 Jan 2017
-	    $pathless_filename =~ s/.*\///; # deleting path information    
-	    
-	    if ($bowtie2){
-		if ($gzip){
-		    push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.bam";
-		    push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2_SE_report.txt";
-		    push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.ambig.bam";   # only for Bowtie 2
+		### Produce Run Time
+		my $end_run = time();
+		my $run_time = $end_run - $start_run;
+		my $days  = int($run_time/(24*60*60));
+		my $hours = ($run_time/(60*60))%24;
+		my $mins  = ($run_time/60)%60;
+		my $secs  = $run_time%60;
+
+		warn "Bismark completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+		print REPORT "Bismark completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
+	
+		warn "\n====================\nBismark run complete\n====================\n\n";
+
+		if ($nucleotide_coverage){
+			warn "Now calculating observed and expected nucleotide coverage statistics... \n\n";
+			if ($final_output_filename =~ /(bam|cram)|/){
+				my @args;
+				push @args, "--genome $genome_folder";
+				push @args, "--dir '$output_dir'";
+				push @args, "--samtools_path $samtools_path";
+				push @args, $final_output_filename;
+				print "@args","\n"; sleep(3);
+	
+				system ("$RealBin/bam2nuc @args");
+				warn "Finished bam2nuc calculation ...\n\n";
+			}
+			else{
+				warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
+			}
 		}
-		else{
-		    push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.bam";
-		    push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2_SE_report.txt";
-		    push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
-		}
-	    }
-	    else{
-		if ($gzip){
-		    push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark.bam";
-		    push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_SE_report.txt";
-		}
-		else{
-		    push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark.bam";
-		    push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_SE_report.txt";
-	    }
-	  }
-
-	    if ($unmapped){
-		if ($gzip){
-		    push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_unmapped_reads.fq";
-		}
-		else{
-		    push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_unmapped_reads.fq";
-		}
-	    }
-	    
-	    if ($ambiguous){
-		if ($gzip){
-		    push @temp_ambiguous_1,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_ambiguous_reads.fq";
-		}
-		else{
-		    push @temp_ambiguous_1,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_ambiguous_reads.fq";
-		}
-	    }
-
-	}
-	elsif($paired_end){
-	    
-	    # Temp Output Files
-	    my $pathless_filename_1 = ${original_filename_1}; # 10 Jan 2017
-	    my $pathless_filename_2 = ${original_filename_2};
-	    $pathless_filename_1 =~ s/.*\///; # deleting path information 
-	    $pathless_filename_2 =~ s/.*\///; # deleting path information 
-	    
-	    if ($bowtie2){
-		if ($gzip){
-		    push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_bt2_pe.bam";
-		    push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_bt2_PE_report.txt";
-		    push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_bt2_pe.ambig.bam";      # only for Bowtie 2
-		}
-		else{
-		    push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.bam";
-		    push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
-		    push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.ambig.bam";         # only for Bowtie 2
-		}
-	    }
-	  else{
-	    if ($gzip){
-	      push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_pe.bam";
-	      push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_PE_report.txt";
-	    }
-	    else{
-	      push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_pe.bam";
-	      push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_PE_report.txt";
-	    }
-	  }
-
-	  if ($unmapped){
-	      if ($gzip){
-		  push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_unmapped_reads_1.fq";
-		  push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_unmapped_reads_2.fq";
-	      }
-	      else{
-		  push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_unmapped_reads_1.fq";
-		  push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_unmapped_reads_2.fq";
-	    }
-	  }
-	  
-	  if ($ambiguous){
-	      if ($gzip){
-		  push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_ambiguous_reads_1.fq";
-		  push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_ambiguous_reads_2.fq";
-	      }
-	      else{
-		  push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_ambiguous_reads_1.fq";
-		  push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_ambiguous_reads_2.fq";
-	      }
-	  }
-
-	}
-      }
-
-      warn "\n\nRight, cleaning up now...\n\n";
-
-      # deleting temp files;
-      warn "Deleting temporary sequence files...\n";
-      foreach my $temp (@temp_input){
-	#print "$temp\t";
-	$temp =~ s/.*\///; # deleting path information
-	print "${temp_dir}${temp}\t";
-	unlink "${temp_dir}${temp}" or warn "Failed to delete temporary FastQ file ${temp_dir}$temp: $!\n";
-      }
-      print "\n\n";
-
-      # merging temp BAM files
-      if ($single_end){
-	merge_individual_BAM_files(\@temp_output,$original_filename,$single_end);
-      }
-      else{
-	merge_individual_BAM_files(\@temp_output,$original_filename_1,$single_end);
-      }
-
-      # deleting temp BAM files
-      warn "Deleting temporary BAM files...\n";
-      foreach my $temp (@temp_output){
-	  # print "$temp\t";
-	  $temp =~ s/.*\///; # deleting path information
-	  print "${output_dir}${temp}\t";
-	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary BAM file ${output_dir}${temp}: $!\n";
-      }
-      print "\n\n";
-
-      ### AMBIGUOUS BAM files
-      if ($ambig_bam){
-
-	  # merging temp AMBIG BAM files
-	  if ($single_end){
-	      merge_individual_ambig_BAM_files(\@temp_ambig_bam,$original_filename,$single_end);
-	  }
-	  else{
-	      merge_individual_ambig_BAM_files(\@temp_ambig_bam,$original_filename_1,$single_end);
-	  }
-
-	  # deleting temp BAM files
-	  warn "Deleting temporary ambiguous BAM files...\n";
-	  foreach my $temp (@temp_ambig_bam){
-	      # print "$temp\t";
-	      $temp =~ s/.*\///; # deleting path information
-	      print "${output_dir}${temp}\t";
-	      unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous BAM file ${output_dir}${temp}: $!\n";
-	  }
-	  print "\n\n";
-      }
-
-      if ($unmapped){
-	if ($single_end){
-	  merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename,$single_end);
 	}
 	else{
-	  merge_individual_unmapped_files(\@temp_unmapped_1,$original_filename_1,$single_end,'_1');
-	  merge_individual_unmapped_files(\@temp_unmapped_2,$original_filename_2,$single_end,'_2');
+		# If multiple files were supplied as the command line, like so:
+		# -1 R1.fastq,simulated_1.fastq,ZZZ_R1.fastq -2 R2.fastq,simulated_2.fastq,ZZZ_R2.fastq --multicore 4
+		# we need to exit from the child processes if we don't want a steady increase of new Bismark instances! Fixed 30 10 2017
+		# warn "Terminating Child process\n\n"; 
+		exit;
 	}
-
-	# deleting temp unmapped files
-	warn "Deleting temporary unmapped files...\n";
-	foreach my $temp (@temp_unmapped_1){
-	  print "$temp\t";
-	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp: $!\n";
-	}
-	if ($paired_end){
-	  foreach my $temp (@temp_unmapped_2){
-	    print "$temp\t";
-	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary unmapped FastQ file ${output_dir}$temp: $!\n";
-	  }
-	}
-	print "\n\n";
-
-      }
-
-      if ($ambiguous){
-	if ($single_end){
-	  merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename,$single_end);
-	}
-	else{
-	  merge_individual_ambiguous_files(\@temp_ambiguous_1,$original_filename_1,$single_end,'_1');
-	  merge_individual_ambiguous_files(\@temp_ambiguous_2,$original_filename_2,$single_end,'_2');
-	}
-
-	# deleting temp ambiguous files
-	warn "Deleting temporary ambiguous files...\n";
-	foreach my $temp (@temp_ambiguous_1){
-	  print "$temp\t";
-	  unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp: $!\n";
-	}
-
-	if ($paired_end){
-	  foreach my $temp (@temp_ambiguous_2){
-	    print "$temp\t";
-	    unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous FastQ file ${output_dir}$temp: $!\n";
-	  }
-	}
-	print "\n\n";
-      }
-
-      # resetting the counters once more so we can add all data from all temporary reports
-      reset_counters_and_fhs($original_filename);
-
-      ### Merging the Bismark mapping report files
-      if ($single_end){
-	merge_individual_mapping_reports(\@temp_reports,$original_filename,$single_end);
-	print_final_analysis_report_single_end('mock_file1','mock_file_2','mock_pid','mergeThis');
-      }
-      else{
-	merge_individual_mapping_reports(\@temp_reports,$original_filename_1,$single_end,$original_filename_2);
-	print_final_analysis_report_paired_ends('mock_file1','mock_file_2','mock_file3','mock_file_4','mock_pid','mergeThis');
-      }
-
-      # deleting temp report files
-      warn "Deleting temporary report files...\n";
-      foreach my $temp (@temp_reports){
-	print "$temp\t";
-	unlink "${output_dir}${temp}" or warn "Failed to delete temporary report file $output_dir$temp: $!\n";
-      }
-      print "\n\n";
-
-    }
-
-  }
-
-  if ($pid){ # only for the Parent
-  
-   ### Produce Run Time
-   my $end_run = time();
-   my $run_time = $end_run - $start_run;
-   my $days  = int($run_time/(24*60*60));
-   my $hours = ($run_time/(60*60))%24;
-   my $mins  = ($run_time/60)%60;
-   my $secs  = $run_time%60;
-
-    warn "Bismark completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
-    print REPORT "Bismark completed in ${days}d ${hours}h ${mins}m ${secs}s\n";
-
-    warn "\n====================\nBismark run complete\n====================\n\n";
-
-    if ($nucleotide_coverage){
-	warn "Now calculating observed and expected nucleotide coverage statistics... \n\n";
-	if ($final_output_filename =~ /(bam|cram)|/){
-	    my @args;
-	    push @args, "--genome $genome_folder";
-	    push @args, "--dir '$output_dir'";
-	    push @args, "--samtools_path $samtools_path";
-	    push @args, $final_output_filename;
-	    print "@args","\n"; sleep(3);
-
-	    system ("$RealBin/bam2nuc @args");
-	    warn "Finished bam2nuc calculation ...\n\n";
-
-	}
-	else{
-	    warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
-	}
-    }
-
-  }
-  else{
-      # If multiple files were supplied as the command line, like so:
-      # -1 R1.fastq,simulated_1.fastq,ZZZ_R1.fastq -2 R2.fastq,simulated_2.fastq,ZZZ_R2.fastq --multicore 4
-      # we need to exit from the child processes if we don't want a steady increase of new Bismark instances! Fiexed 30 10 2017
-      # warn "Terminating Child process\n\n"; 
-      exit;
-  }
 
 }
 
