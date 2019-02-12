@@ -28,8 +28,6 @@ script:
   - "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
   - "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
   - "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
-  - "./bismark_genome_preparation --verbose --slam ./travis_files/"
-  - "./bismark_genome_preparation --verbose --slam --parallel 4 ./travis_files/"
   ## PE
   - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
@@ -43,9 +41,7 @@ script:
  
   # Using HISAT2 results
   - "./bismark_genome_preparation --hisat2 --verbose ./travis_files/"
-  - "./bismark_genome_preparation --hisat2 --slam --verbose ./travis_files/"
   - "./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/"
-  - "./bismark_genome_preparation --hisat2 --slam --verbose --parallel 4 ./travis_files/"
   - "./bismark --genome ./travis_files/ --hisat2 ./travis_files/test_R1.fastq.gz"
   - "./bismark --genome ./travis_files/ --hisat2 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   # Multicore
