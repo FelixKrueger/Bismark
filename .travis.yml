@@ -46,8 +46,8 @@ script:
   - "./bismark_genome_preparation --hisat2 --slam --verbose ./travis_files/"
   - "./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/"
   - "./bismark_genome_preparation --hisat2 --slame --verbose --parallel 4 ./travis_files/"
-  - "./bismark --genome ./travis_files/ --bowtie1 ./travis_files/test_R1.fastq.gz"
-  - "./bismark --genome ./travis_files/ --bowtie1 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+  - "./bismark --genome ./travis_files/ --hisat2 ./travis_files/test_R1.fastq.gz"
+  - "./bismark --genome ./travis_files/ --hisat2 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   # Multicore
   - "./bismark --genome ./travis_files/ --parallel 4 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --parallel 8 --genome ./travis_files/"
@@ -61,6 +61,7 @@ script:
   # Additional scenarios
   - "./bismark --pbat --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+  - "./bismark --non_directional --hisat2 --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   
   # bismark2bedGraph
   - "./bismark2bedGraph -o test.bedGraph --buffer 5G CpG_*"
