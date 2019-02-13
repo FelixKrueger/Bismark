@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.20.1';
+my $version = 'v0.20.1_dev';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$vanilla,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht) = process_commandline();
 
 ### only needed for bedGraph output
@@ -4359,95 +4359,104 @@ sub print_individual_C_methylation_states_paired_end_files{
 }
 
 sub check_cigar_string {
-  my ($index,$cigar_offset,$pos_offset,$strand,$comp_cigar) = @_;
-  # print "$index\t$cigar_offset\t$pos_offset\t$strand\t";
-  my ($new_cigar_offset,$new_pos_offset) = (0,0);
+	
+	my ($index,$cigar_offset,$pos_offset,$strand,$comp_cigar) = @_;
+	# print "$index\t$cigar_offset\t$pos_offset\t$strand\t"; sleep(1);
+	my ($new_cigar_offset,$new_pos_offset) = (0,0);
 
-  if ($strand eq '+') {
-    #  print "### $strand strand @$comp_cigar[$index + $cigar_offset]\t";
+	if ($strand eq '+') {
+		#  print "### $strand strand @$comp_cigar[$index + $cigar_offset]\t";
 
-    if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
-      #  warn "position needs no adjustment\n";
-    }
+		if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
+			#  warn "position needs no adjustment\n";
+		}
+		elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){ # insertion in the read sequence
+			$new_pos_offset -= 1; # we need to subtract the length of inserted bases from the genomic position
+			# warn "adjusted genomic position by -1 bp (insertion)\n";
+		}
+		elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D' or @$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'N'){ 
+			# deletion or skipped region in the read sequence 
+			$new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
+			$new_pos_offset += 1; # we need to add the length of deleted bases to get the genomic position
+			# warn "adjusted genomic position by +1 bp (deletion). Now looping through the CIGAR string until we hit another M or I\n";
 
-    elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){ # insertion in the read sequence
-      $new_pos_offset -= 1; # we need to subtract the length of inserted bases from the genomic position
-      # warn "adjusted genomic position by -1 bp (insertion)\n";
-    }
-
-    elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D'){ # deletion in the read sequence
-      $new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
-      $new_pos_offset += 1; # we need to add the length of deleted bases to get the genomic position
-      # warn "adjusted genomic position by +1 bp (deletion). Now looping through the CIGAR string until we hit another M or I\n";
-
-      while ( ($index + $cigar_offset + $new_cigar_offset)  < (scalar @$comp_cigar) ){	
-	if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
-	  #  warn "position needs no adjustment\n";
-	  last;
+			while ( ($index + $cigar_offset + $new_cigar_offset)  < (scalar @$comp_cigar) ){	
+				if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
+					#  warn "position needs no adjustment\n";
+					last;
+				}
+				elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){
+					$new_pos_offset -= 1; # we need to subtract the length of inserted bases from the genomic position
+					# warn "adjusted genomic position by another -1 bp (insertion)\n";
+					last;
+				}
+				elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D'){ # deletion in the read sequence
+					$new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
+					$new_pos_offset += 1; # we need to add the length of deleted bases to get the genomic position
+					# warn "adjusted genomic position by another +1 bp (deletion)\n";
+				}
+				elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'N'){ # skipped region in the read sequence (splicing)
+					$new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
+					$new_pos_offset += 1; # we need to add the length of skipped bases to get the genomic position
+					# warn "adjusted genomic position by another +1 bp (skipped base (N))\n";
+				}
+				else{
+					die "The CIGAR string contained undefined operations in addition to 'M', 'I', 'D' or 'N': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
+				}
+			}
+		}
+		else{
+			die "The CIGAR string contained undefined operations in addition to 'M', 'I' and 'D': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
+		}
 	}
-	elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){
-	  $new_pos_offset -= 1; # we need to subtract the length of inserted bases from the genomic position
-	  # warn "adjusted genomic position by another -1 bp (insertion)\n";
-	  last;
-	}
-	elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D'){ # deletion in the read sequence
-	  $new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
-	  $new_pos_offset += 1; # we need to add the length of deleted bases to get the genomic position
-	  # warn "adjusted genomic position by another +1 bp (deletion)\n";
-	}
-	else{
-	  die "The CIGAR string contained undefined operations in addition to 'M', 'I' and 'D': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
-	}
-      }
-    }
-    else{
-      die "The CIGAR string contained undefined operations in addition to 'M', 'I' and 'D': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
-    }
-  }
+	elsif ($strand eq '-') {
+		# print "### $strand strand @$comp_cigar[$index + $cigar_offset]\t";
 
-  elsif ($strand eq '-') {
-    # print "### $strand strand @$comp_cigar[$index + $cigar_offset]\t";
+		if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
+			# warn "position needs no adjustment\n";
+		}
 
-    if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
-     # warn "position needs no adjustment\n";
-    }
+		elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){ # insertion in the read sequence
+			$new_pos_offset += 1; # we need to add the length of inserted bases to the genomic position
+			# warn "adjusted genomic position by +1 bp (insertion)\n";
+		}
+		elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D' or @$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'N'){ 
+			# deletion or skipped region in the read sequence
+			$new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
+			$new_pos_offset -= 1; # we need to subtract the length of deleted bases to get the genomic position
+			# warn "adjusted genomic position by -1 bp (deletion). Now looping through the CIGAR string until we hit another M or I\n";
 
-    elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){ # insertion in the read sequence
-      $new_pos_offset += 1; # we need to add the length of inserted bases to the genomic position
-      # warn "adjusted genomic position by +1 bp (insertion)\n";
-    }
-
-    elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D'){ # deletion in the read sequence
-      $new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
-      $new_pos_offset -= 1; # we need to subtract the length of deleted bases to get the genomic position
-      # warn "adjusted genomic position by -1 bp (deletion). Now looping through the CIGAR string until we hit another M or I\n";
-
-      while ( ($index + $cigar_offset + $new_cigar_offset)  < (scalar @$comp_cigar) ){	
-	if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
-	  # warn "Found new 'M' operation; position needs no adjustment\n";
-	  last;
+			while ( ($index + $cigar_offset + $new_cigar_offset)  < (scalar @$comp_cigar) ){	
+				if (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'M'){ # sequence position matches the genomic position
+					# warn "Found new 'M' operation; position needs no adjustment\n";
+					last;	
+				}
+				elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){
+					$new_pos_offset += 1; # we need to subtract the length of inserted bases from the genomic position
+					# warn "Found new 'I' operation; adjusted genomic position by another +1 bp (insertion)\n";
+					last;
+				}
+				elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D'){ # deletion in the read sequence
+					$new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
+					$new_pos_offset -= 1; # we need to subtract the length of deleted bases to get the genomic position
+					# warn "adjusted genomic position by another -1 bp (deletion)\n";
+				}
+				elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'N'){ # skipped region in the read sequence
+					$new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
+					$new_pos_offset -= 1; # we need to subtract the length of deleted bases to get the genomic position
+					# warn "adjusted genomic position by another -1 bp (skipped base N)\n";
+				}
+				else{
+					die "The CIGAR string contained undefined operations in addition to 'M', 'I', 'D' or 'N': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
+				}
+			}
+		}
+		else{
+			die "The CIGAR string contained undefined operations in addition to 'M', 'I', 'D' or 'N': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
+		}
 	}
-	elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'I'){
-	  $new_pos_offset += 1; # we need to subtract the length of inserted bases from the genomic position
-	  # warn "Found new 'I' operation; adjusted genomic position by another +1 bp (insertion)\n";
-	  last;
-	}
-	elsif (@$comp_cigar[$index + $cigar_offset + $new_cigar_offset] eq 'D'){ # deletion in the read sequence
-	  $new_cigar_offset += 1; # the composite cigar string does no longer match the methylation call index
-	  $new_pos_offset -= 1; # we need to subtract the length of deleted bases to get the genomic position
-	  # warn "adjusted genomic position by another -1 bp (deletion)\n";
-	}
-	else{
-	  die "The CIGAR string contained undefined operations in addition to 'M', 'I' and 'D': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
-	}
-      }
-    }
-    else{
-      die "The CIGAR string contained undefined operations in addition to 'M', 'I' and 'D': '@$comp_cigar[$index + $cigar_offset + $new_cigar_offset]'\n";
-    }
-  }
-  # print "new cigar offset: $new_cigar_offset\tnew pos offset: $new_pos_offset\n";
-  return ($new_cigar_offset,$new_pos_offset);
+	# print "new cigar offset: $new_cigar_offset\tnew pos offset: $new_pos_offset\n";
+	return ($new_cigar_offset,$new_pos_offset);
 }
 
 sub print_individual_C_methylation_states_single_end{
@@ -4478,33 +4487,33 @@ sub print_individual_C_methylation_states_single_end{
 
   my @comp_cigar;
 
-  if ($cigar){ # parsing CIGAR string
+	if ($cigar){ # parsing CIGAR string
 
-    ### Checking whether the CIGAR string is a linear genomic match or whether it requires indel processing
-      if ($cigar =~ /^(\d+)M$/){
-	  # warn "See!? I told you so! $cigar\n";
-	  # sleep(1);
-	  if ($yacht and $strand eq '+') { # adding to $end only for forward reads
-	      $end += $1 - 1;
-	  }
-      }
-      else{
+		### Checking whether the CIGAR string is a linear genomic match or whether it requires indel processing
+		if ($cigar =~ /^(\d+)M$/){
+			# warn "See!? I told you so! $cigar\n";
+			# sleep(1);
+			if ($yacht and $strand eq '+') { # adding to $end only for forward reads
+				$end += $1 - 1;
+			}
+		}
+		else{
 	  
-	  my @len;
-	  my @ops;
+			my @len;
+			my @ops;
+		  
+			@len = split (/\D+/,$cigar); # storing the length per operation
+			@ops = split (/\d+/,$cigar); # storing the operation
+			shift @ops; # remove the empty first element
+			# die "CIGAR string contained a non-matching number of lengths and operations: id: $id\nmeth call: $meth_call\nCIGAR: $cigar\n".join(" ",@len)."\n".join(" ",@ops)."\n" unless (scalar @len == scalar @ops);
+			die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 	  
-	  @len = split (/\D+/,$cigar); # storing the length per operation
-	  @ops = split (/\d+/,$cigar); # storing the operation
-	  shift @ops; # remove the empty first element
-	  # die "CIGAR string contained a non-matching number of lengths and operations: id: $id\nmeth call: $meth_call\nCIGAR: $cigar\n".join(" ",@len)."\n".join(" ",@ops)."\n" unless (scalar @len == scalar @ops);
-	  die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
-	  
-	  foreach my $index (0..$#len){
-	      foreach (1..$len[$index]){
-		  # print  "$ops[$index]";
-		  push @comp_cigar, $ops[$index];
-	      }
-	  }
+			foreach my $index (0..$#len){
+				foreach (1..$len[$index]){
+				# print  "$ops[$index]";
+					push @comp_cigar, $ops[$index];
+				}
+			}
 	  
 	  #  Determining end of the read for optional fragment length output
 	  if ($yacht and $strand eq '+'){ # adding to $end only for forward reads
@@ -4529,8 +4538,8 @@ sub print_individual_C_methylation_states_single_end{
   if ($strand eq '-') {
 
       if (@comp_cigar){ # only needed for SAM reads with InDels
-	  @comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
-	  # print @comp_cigar,"\n";
+		@comp_cigar  = reverse@comp_cigar; # the CIGAR string needs to be reversed for all reads aligning to the reverse strand, too
+		# print @comp_cigar,"\n";
       }
 
       unless ($ignore){  ### if --ignore was specified the start position has already been corrected
@@ -4562,10 +4571,10 @@ sub print_individual_C_methylation_states_single_end{
 	  for my $index (0..$#methylation_calls) {
 	      
 	      if ($cigar and @comp_cigar){ # only needed for SAM alignments with InDels
-		  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
-		  # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
-		  $cigar_offset += $cigar_mod;
-		  $pos_offset += $pos_mod;
+			  my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
+			  # print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
+			  $cigar_offset += $cigar_mod;
+			  $pos_offset += $pos_mod;
 	      }
 	      
 	      my $line;
@@ -4573,57 +4582,57 @@ sub print_individual_C_methylation_states_single_end{
 	      ### methylated Cs (any context) will receive a forward (+) orientation
 	      ### not methylated Cs (any context) will receive a reverse (-) orientation
 	      if ($methylation_calls[$index] eq 'X') {
-		  $counting{total_meCHG_count}++;
-		  if ($yacht){
-		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-		      print {$fhs{any_context}} $line;
-		  }
-		  else{
-		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-		      print {$fhs{other_context}} $line unless($mbias_only);
-		  }
-		  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-		  $mbias_1{CHG}->{$index+1}->{meth}++;
+			  $counting{total_meCHG_count}++;
+			  if ($yacht){
+				  $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+				  print {$fhs{any_context}} $line;
+			  }
+			  else{
+				  $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+				  print {$fhs{other_context}} $line unless($mbias_only);
+			  }
+			  # print {$fhs{other_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+			  $mbias_1{CHG}->{$index+1}->{meth}++;
 	      }
 	      elsif ($methylation_calls[$index] eq 'x') {
-		  $counting{total_unmethylated_CHG_count}++;
-		  if ($yacht){
-		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-		      print {$fhs{any_context}} $line;
-		  }
-		  else{
-		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-		      print {$fhs{other_context}} $line unless($mbias_only);
-		  }
-		  #  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-		  $mbias_1{CHG}->{$index+1}->{un}++;
+			  $counting{total_unmethylated_CHG_count}++;
+			  if ($yacht){
+				  $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+				  print {$fhs{any_context}} $line;
+			  }
+			  else{
+				  $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+				  print {$fhs{other_context}} $line unless($mbias_only);
+			  }
+			  #  print {$fhs{other_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+			  $mbias_1{CHG}->{$index+1}->{un}++;
 	      }
 	      elsif ($methylation_calls[$index] eq 'Z') {
-		  $counting{total_meCpG_count}++;
-		  if ($yacht){
-		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-		      print {$fhs{any_context}} $line;
-		  }
-		  else{
-		      $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-		      print {$fhs{CpG_context}} $line unless($mbias_only);
-		  }
-		  # print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-		  $mbias_1{CpG}->{$index+1}->{meth}++;
+			  $counting{total_meCpG_count}++;
+			  if ($yacht){
+				  $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+				  print {$fhs{any_context}} $line;
+			  }
+			  else{
+				  $line = join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+				  print {$fhs{CpG_context}} $line unless($mbias_only);
+			  }
+			  # print {$fhs{CpG_context}} join ("\t",$id,'+',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+			  $mbias_1{CpG}->{$index+1}->{meth}++;
 	      }
 	      elsif ($methylation_calls[$index] eq 'z') {
-		  $counting{total_unmethylated_CpG_count}++;
-		  if ($yacht){
-		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
-		      print {$fhs{any_context}} $line;
-		  }
-		  else{
-		      $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
-		      print {$fhs{CpG_context}} $line unless($mbias_only);
-		  }
-		  # print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
-		  $mbias_1{CpG}->{$index+1}->{un}++;
-	      }
+			  $counting{total_unmethylated_CpG_count}++;
+			  if ($yacht){
+				  $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index],$start,$end,$strand)."\n";
+				  print {$fhs{any_context}} $line;
+			  }
+			  else{
+				  $line = join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n";
+				  print {$fhs{CpG_context}} $line unless($mbias_only);
+			  }
+			  # print {$fhs{CpG_context}} join ("\t",$id,'-',$chrom,$start+$index+$pos_offset,$methylation_calls[$index])."\n" unless($mbias_only);
+			  $mbias_1{CpG}->{$index+1}->{un}++;
+			  }
 	      elsif ($methylation_calls[$index] eq 'H') {
 		  $counting{total_meCHH_count}++;
 		  if ($yacht){
