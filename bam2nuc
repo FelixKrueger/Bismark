@@ -31,7 +31,7 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.20.1';
+my $bam2nuc_version = 'v0.20.1_dev';
 
 my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
@@ -94,13 +94,13 @@ sub generate_nucleotide_report {
     # warn "returned $single and $paired\n";
     
     if ($single){
-	warn "Determined the file to be single-end\n";
+		warn "Determined the file to be single-end\n";
     }
     elsif ($paired){
-	warn "Determined the file to be paired-end\n";
+		warn "Determined the file to be paired-end\n";
     }
     else{
-	die "Failed to figure out SE or PE...\n";
+		die "Failed to figure out SE or PE...\n";
     }
     sleep(1);
     
@@ -123,8 +123,8 @@ sub generate_nucleotide_report {
 	# warn "chr after replacing: $chr\n";
 	
 	### checking CIGAR string for insertions or deletions, and chucking the sequence if they are no linear matches
-	if ($cigar =~ /[ID]/){
-	    # warn "ignoring sequence:\n $_\n"; sleep(1);
+	if ($cigar =~ /[IDN]/){
+		# warn "ignoring sequence:\n $_\n"; sleep(1);
 	    ++$skipped;
 	    next;
 	}
@@ -652,7 +652,7 @@ TT      5055    10.96   1314144 10.80   0.004
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 07 Dec 2018
+                              Script last modified: 14 Feb 2019
 
 EOF
     ;
