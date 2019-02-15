@@ -20,7 +20,7 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.20.1';
+my $bismark2report_version = 'v0.20.1_dev';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
@@ -1024,19 +1024,19 @@ sub read_report_template{
 
 
 sub process_commandline{
-  my $help;
-  my $output_dir;
-  my $manual_output_file;
-  my $alignment_report;
-  my $dedup_report;
-  my $splitting_report;
-  my $mbias_report;
-  my $nucleotide_coverage_report;  # stores nucleotide coverage statistics
-  my $verbose;
+	my $help;
+	my $output_dir;
+	my $manual_output_file;
+	my $alignment_report;
+	my $dedup_report;
+	my $splitting_report;
+	my $mbias_report;
+	my $nucleotide_coverage_report;  # stores nucleotide coverage statistics
+	my $verbose;
 
-  my $version;
-
-  my $command_line = GetOptions ('help|man'              => \$help,
+	my $version;
+	
+	my $command_line = GetOptions ('help|man'              => \$help,
 				 'dir=s'                 => \$output_dir,
 				 'o|output=s'            => \$manual_output_file,
 				 'alignment_report=s'    => \$alignment_report,
@@ -1048,19 +1048,19 @@ sub process_commandline{
 				 'verbose'               => \$verbose,
 				);
 
-  ### EXIT ON ERROR if there were errors with any of the supplied options
-  unless ($command_line){
-    die "Please respecify command line options\n";
-  }
+	### EXIT ON ERROR if there were errors with any of the supplied options
+	unless ($command_line){
+		die "Please respecify command line options\n";
+	}
 
-  ### HELPFILE
-  if ($help){
-    print_helpfile();
-    exit;
-  }
+	### HELPFILE
+	if ($help){
+		print_helpfile();
+		exit;
+	}
 
-  if ($version){
-    print << "VERSION";
+	if ($version){
+		print << "VERSION";
 
 
                               Bismark HTML Report Module
@@ -1069,179 +1069,179 @@ sub process_commandline{
                      Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
                        www.bioinformatics.babraham.ac.uk/projects/bismark/
                             https://github.com/FelixKrueger/Bismark
-
-VERSION
-    exit;
-  }
-
-  ### OUTPUT DIR PATH
-  if (defined $output_dir){
-    unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
-      unless ($output_dir =~ /\/$/){
-	$output_dir =~ s/$/\//;
-      }
-    }
-  }
-  else{
-    $output_dir = '';
-  }
-
-
-  ## First we are looking for alignment reports, and then look whether there are any optional plots with the same base name
-
-  if ($alignment_report){
-    ### we only process the one alignment report (and possibly the other ones as well) that was specified
-    push @alignment_reports, $alignment_report;
-  }
-  else{ ### no alignment report specified, looking in the current directory for files ending in *E_report.txt (SE or PE)
-
-    ### looking in the current directory for report files. Less than 1 report file is not allowed
-    @alignment_reports = <*E_report.txt>;
-
-    if (scalar @alignment_reports == 0){
-      warn "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
-      print_helpfile();
-      exit;
-    }
-    else{
-      # there are Bismark alignment report(s) in the directory
-      warn "Found ",scalar @alignment_reports," alignment reports in current directory. Now trying to figure out whether there are corresponding optional reports\n";
-    }
-  }
-
-  ### Ensuring that there isn't more than 1 file in @alignment_reports if someone manually specified an output file.
-  if (scalar @alignment_reports > 1){
-    if (defined $manual_output_file){
-      die "You cannot run bismark2report on more than 1 file while specifying a single output file. Either lose the option -o to derive the output filenames automatically, or specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
-    }
-  }
-
-  foreach my $aln (@alignment_reports){
-
-    # warn "Figuring things out for:\n$aln\n";
-    $aln =~ /^(.+)_(P|S)E_report.txt$/;
-    my $basename = $1;
-    # warn "using this basename:\n$basename\n\n";
-
-    ### DEDUPLICATION REPORT (optional)
-    if ($dedup_report){
-	warn "User specifified dedup report: $dedup_report\n";sleep(1);
-      if (lc$dedup_report eq 'none'){
-	push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
-      }
-      else{
-	push @dedup_reports, $dedup_report;
-      }
-    }
-    else{
-      ### looking in the current directory for a report file with the same base name
-      my @dedup_report_files = <$basename*deduplication_report.txt>;
-      # warn "Number of deduplication reports found in current directory for basename $1: ", scalar @dedup_report_files , "\n";
-
-      if (scalar @dedup_report_files > 1){
-	die "Found ", scalar @dedup_report_files ," potential deduplication reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--dedup_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
-      }
-      elsif (scalar @dedup_report_files == 0){
-	push @dedup_reports, ''; # no corresponding deduplication report found
-      }
-      else{
-	# there is only a single deduplication report in the current directory, using this one
-	$dedup_report = shift @dedup_report_files;
-	push @dedup_reports, $dedup_report;
-	# warn "Going to use this dedup report: $dedup_report\n\n";
-      }
-    }
-
-    ### NUCLEOTIDE COVERAGE REPORT (optional)
-    if (defined $nucleotide_coverage_report){
-	# warn "User specified nucleotide coverage report: $nucleotide_coverage_report\n";sleep(1);
-	if (lc$nucleotide_coverage_report eq 'none'){
-	    push @nuc_reports, ''; # user may wish to skip this step by specifying 'none'
-	}
-	else{
-	    push @nuc_reports, $nucleotide_coverage_report;
-	}
-    }
-    else{
-	### looking in the current directory for a report file with the same base name
-	my @nucleotide_coverage_report_files = <$basename*nucleotide_stats.txt>;
-	# warn "Number of nucleotide coverage statistic reports found in current directory for basename $1: ", scalar @nucleotide_coverage_report_files , "\n";
 	
-	if (scalar @nucleotide_coverage_report_files > 1){
-	    die "Found ", scalar @nucleotide_coverage_report_files ," potential nucleotide coverage reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--nucleotide_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+VERSION
+		exit;
 	}
-	elsif (scalar @nucleotide_coverage_report_files == 0){
-	    # warn "Found no corresponding nucleotide coverage file\n";
-	    push @nuc_reports, ''; # no corresponding nucleotide coverge file report found
+
+	### OUTPUT DIR PATH
+	if (defined $output_dir){
+		unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
+			unless ($output_dir =~ /\/$/){
+				$output_dir =~ s/$/\//;
+			}
+		}
 	}
 	else{
-	    # there is only a single nucleotide coverage report in the current directory, using this one
-	    $nucleotide_coverage_report = shift @nucleotide_coverage_report_files;
-	    push @nuc_reports, $nucleotide_coverage_report;
-	    # warn "Going to use this nucleotide coverage report: $nucleotide_coverage_report\n\n"; sleep(3);
+		$output_dir = '';
+	}	
+
+
+	## First we are looking for alignment reports, and then look whether there are any optional plots with the same base name
+
+	if ($alignment_report){
+		### we only process the one alignment report (and possibly the other ones as well) that was specified
+		push @alignment_reports, $alignment_report;
 	}
-    }
+	else{ ### no alignment report specified, looking in the current directory for files ending in *E_report.txt (SE or PE)
+
+		### looking in the current directory for report files. Less than 1 report file is not allowed
+		@alignment_reports = <*E_report.txt>;
+
+		if (scalar @alignment_reports == 0){
+			warn "Found no potential alignment reports in the current directory. Please specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
+			print_helpfile();
+			exit;
+		}
+		else{
+			# there are Bismark alignment report(s) in the directory
+			warn "Found ",scalar @alignment_reports," alignment reports in current directory. Now trying to figure out whether there are corresponding optional reports\n";
+		}
+	}
+
+	### Ensuring that there isn't more than 1 file in @alignment_reports if someone manually specified an output file.
+	if (scalar @alignment_reports > 1){
+		if (defined $manual_output_file){
+			die "You cannot run bismark2report on more than 1 file while specifying a single output file. Either lose the option -o to derive the output filenames automatically, or specify a single Bismark alignment report file using the option '--alignment_report FILE'\n\n";
+		}
+	}
+
+	foreach my $aln (@alignment_reports){
+
+		# warn "Figuring things out for:\n$aln\n";
+		$aln =~ /^(.+)_(P|S)E_report.txt$/;
+		my $basename = $1;
+		# warn "using this basename:\n$basename\n\n";
+
+		### DEDUPLICATION REPORT (optional)
+		if ($dedup_report){
+			warn "User specifified dedup report: $dedup_report\n";sleep(1);
+			if (lc$dedup_report eq 'none'){
+				push @dedup_reports, ''; # user may wish to skip this step by specifying 'none'
+			}
+			else{
+				push @dedup_reports, $dedup_report;
+			}
+		}
+		else{
+			### looking in the current directory for a report file with the same base name
+			my @dedup_report_files = <$basename*deduplication_report.txt>;
+			# warn "Number of deduplication reports found in current directory for basename $1: ", scalar @dedup_report_files , "\n";
+
+			if (scalar @dedup_report_files > 1){
+				die "Found ", scalar @dedup_report_files ," potential deduplication reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--dedup_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+			}
+			elsif (scalar @dedup_report_files == 0){
+				push @dedup_reports, ''; # no corresponding deduplication report found
+			}
+			else{
+				# there is only a single deduplication report in the current directory, using this one
+				$dedup_report = shift @dedup_report_files;
+				push @dedup_reports, $dedup_report;
+				# warn "Going to use this dedup report: $dedup_report\n\n";
+			}
+		}
+
+		### NUCLEOTIDE COVERAGE REPORT (optional)
+		if (defined $nucleotide_coverage_report){
+			# warn "User specified nucleotide coverage report: $nucleotide_coverage_report\n";sleep(1);
+			if (lc$nucleotide_coverage_report eq 'none'){
+				push @nuc_reports, ''; # user may wish to skip this step by specifying 'none'
+			}
+			else{
+				push @nuc_reports, $nucleotide_coverage_report;
+			}	
+		}
+		else{
+			### looking in the current directory for a report file with the same base name
+			my @nucleotide_coverage_report_files = <$basename*nucleotide_stats.txt>;
+			# warn "Number of nucleotide coverage statistic reports found in current directory for basename $1: ", scalar @nucleotide_coverage_report_files , "\n";
+	
+			if (scalar @nucleotide_coverage_report_files > 1){
+				die "Found ", scalar @nucleotide_coverage_report_files ," potential nucleotide coverage reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--nucleotide_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+			}
+			elsif (scalar @nucleotide_coverage_report_files == 0){
+				# warn "Found no corresponding nucleotide coverage file\n";
+				push @nuc_reports, ''; # no corresponding nucleotide coverge file report found
+			}
+			else{
+				# there is only a single nucleotide coverage report in the current directory, using this one
+				$nucleotide_coverage_report = shift @nucleotide_coverage_report_files;
+				push @nuc_reports, $nucleotide_coverage_report;
+				# warn "Going to use this nucleotide coverage report: $nucleotide_coverage_report\n\n"; sleep(3);
+			}
+		}
 
     
-    ### METHYLATION EXTRACTOR SPLITTING REPORT
-    if ($splitting_report){
-      if (lc$splitting_report eq 'none'){
-	push @splitting_reports, ''; # user may wish to skip this step by specifying 'none'
-      }
-      else{
-	push @splitting_reports, $splitting_report;
-      }
-    }
-    else{
-      ### looking in the current directory for a report file with the same basename
-      my @splitting_report_files = <$basename*splitting_report.txt>;
-      # warn "Number of splitting reports found in current directory: ", scalar @splitting_report_files , "\n";
+		### METHYLATION EXTRACTOR SPLITTING REPORT
+		if ($splitting_report){
+			if (lc$splitting_report eq 'none'){
+				push @splitting_reports, ''; # user may wish to skip this step by specifying 'none'
+			}
+			else{
+				push @splitting_reports, $splitting_report;
+			}
+		}
+		else{
+			### looking in the current directory for a report file with the same basename
+			my @splitting_report_files = <$basename*splitting_report.txt>;
+			# warn "Number of splitting reports found in current directory: ", scalar @splitting_report_files , "\n";
 
-      if (scalar @splitting_report_files > 1){
-	die "Found ", scalar @splitting_report_files ," potential methylation extractor splitting reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--splitting_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
-      }
-      elsif (scalar @splitting_report_files == 0){
-	push @splitting_reports, ''; # no corresponding methylation extractor report found
-      }
-      else{
-	# there is only a single splitting report in the current directory, using this one
-	$splitting_report = shift @splitting_report_files;
-	push  @splitting_reports, $splitting_report;
-      }
-    }
+			if (scalar @splitting_report_files > 1){
+				die "Found ", scalar @splitting_report_files ," potential methylation extractor splitting reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--splitting_report FILE' or otherwise provide filenames that are easier to figure out...\n\n";
+			}
+			elsif (scalar @splitting_report_files == 0){
+				push @splitting_reports, ''; # no corresponding methylation extractor report found
+			}
+			else{
+				# there is only a single splitting report in the current directory, using this one
+				$splitting_report = shift @splitting_report_files;
+				push  @splitting_reports, $splitting_report;
+			}
+		}
 
-    ### M-BIAS REPORT
-    if ($mbias_report){
-      if (lc$mbias_report eq 'none'){
-	$mbias_report = ''; # user may wish to skip this step by specifying 'none'
-   	push @mbias_reports, $mbias_report;
-      }
-      else{
-	push @mbias_reports, $mbias_report;
-      }
-    }
-    else{
-      ### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
-      my @mbias_report_files = <$basename*M-bias.txt>;
+		### M-BIAS REPORT
+		if ($mbias_report){
+			if (lc$mbias_report eq 'none'){
+				$mbias_report = ''; # user may wish to skip this step by specifying 'none'
+				push @mbias_reports, $mbias_report;
+			}
+			else{
+				push @mbias_reports, $mbias_report;
+			}
+		}
+		else{
+			### looking in the current directory for a single report file. More (or less) than 1 report file is not allowed
+			my @mbias_report_files = <$basename*M-bias.txt>;
+	
+			# warn "Number of M-bias reports found in current directory: ", scalar @mbias_report_files , "\n";
+	
+			if (scalar @mbias_report_files > 1){
+				die "Found ", scalar @mbias_report_files ," potential M-bias reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--mbias_report FILE'or otherwise provide filenames that are easier to figure out automatically ...\n\n";
+			}
+			elsif (scalar @mbias_report_files == 0){
+				push @mbias_reports, '';
+			}
+			else{
+				# there is only a single M-bias report in the current directory, using this one
+				$mbias_report = shift @mbias_report_files;
+				push @mbias_reports, $mbias_report;
+			}
+		}
+		$dedup_report = $splitting_report = $mbias_report = $nucleotide_coverage_report = undef;
+	}
 
-      # warn "Number of M-bias reports found in current directory: ", scalar @mbias_report_files , "\n";
-
-      if (scalar @mbias_report_files > 1){
-	die "Found ", scalar @mbias_report_files ," potential M-bias reports with the same basename ($basename) in the current directory. Please specify a single report using the option '--mbias_report FILE'or otherwise provide filenames that are easier to figure out automatically ...\n\n";
-      }
-      elsif (scalar @mbias_report_files == 0){
-	push @mbias_reports, '';
-      }
-      else{
-	# there is only a single M-bias report in the current directory, using this one
-	$mbias_report = shift @mbias_report_files;
-	push @mbias_reports, $mbias_report;
-      }
-    }
-    $dedup_report = $splitting_report = $mbias_report = $nucleotide_coverage_report = undef;
-  }
-
-  return ($output_dir,$verbose,$manual_output_file);
+	return ($output_dir,$verbose,$manual_output_file);
 
 }
 
@@ -1253,7 +1253,7 @@ sub print_helpfile{
   This script uses a Bismark alignment report to generate a graphical HTML report page. Optionally, further reports of
   the Bismark suite such as deduplication, methylation extractor splitting or M-bias reports can be specified as well. If several
   Bismark reports are found in the same folder, a separate report will be generated for each of these, whereby the output filename
-  will be derived from the Bismark alignment report file. Bismark2report attempts to find optional reports automatically based
+  will be derived from the Bismark alignment report file. bismark2report attempts to find optional reports automatically based
   on the file basename.
 
 
