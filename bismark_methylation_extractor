@@ -63,142 +63,132 @@ elsif ($paired){
 warn "Number of cores to be used: $multicore\n";
 
 if ($single){
-  if ($ignore){
-    warn "First $ignore bp will be disregarded when processing the methylation call string\n";
-  }
-  if ($ignore_3prime){
-    warn "Last $ignore_3prime bp will be disregarded when processing the methylation call string\n";
-  }
-
+	if ($ignore){
+		warn "First $ignore bp will be disregarded when processing the methylation call string\n";
+	}
+	if ($ignore_3prime){
+		warn "Last $ignore_3prime bp will be disregarded when processing the methylation call string\n";
+	}
 }
 else{ ## paired-end
-  if ($ignore){
-    warn "First $ignore bp will be disregarded when processing the methylation call string of Read 1\n";
-  }
-  if ($ignore_r2){
-    warn "First $ignore_r2 bp will be disregarded when processing the methylation call string of Read 2\n";
-  }
+	if ($ignore){
+		warn "First $ignore bp will be disregarded when processing the methylation call string of Read 1\n";
+	}
+	if ($ignore_r2){
+		warn "First $ignore_r2 bp will be disregarded when processing the methylation call string of Read 2\n";
+	}
 
-  if ($ignore_3prime){
-    warn "Last $ignore_3prime bp will be disregarded when processing the methylation call string of Read 1\n";
-  }
-  if ($ignore_3prime_r2){
-    warn "Last $ignore_3prime_r2 bp will be disregarded when processing the methylation call string of Read 2\n";
-  }
-
-
+	if ($ignore_3prime){
+		warn "Last $ignore_3prime bp will be disregarded when processing the methylation call string of Read 1\n";
+	}
+	if ($ignore_3prime_r2){
+		warn "Last $ignore_3prime_r2 bp will be disregarded when processing the methylation call string of Read 2\n";
+	}
 }
 
 
 if ($full){
-  warn "Strand-specific outputs will be skipped. Separate output files for cytosines in CpG, CHG and CHH context will be generated\n";
+	warn "Strand-specific outputs will be skipped. Separate output files for cytosines in CpG, CHG and CHH context will be generated\n";
 }
 if ($merge_non_CpG){
-  warn "Merge CHG and CHH context to non-CpG context specified\n";
+	warn "Merge CHG and CHH context to non-CpG context specified\n";
 }
 ### output directory
 if ($output_dir eq ''){
-  warn "Output will be written to the current directory ('$parent_dir')\n";
+	warn "Output will be written to the current directory ('$parent_dir')\n";
 }
 else{
-  warn "Output path specified as: $output_dir\n";
+	warn "Output path specified as: $output_dir\n";
 }
 
 
-sleep (1);
 
 ### BEDGRAPH
 
 if ($bedGraph){
-  warn "\n\nSummarising bedGraph parameters:\n";
-  warn '='x63,"\n";
+	warn "\n\nSummarising bedGraph parameters:\n";
+	warn '='x63,"\n";
 
-  if ($counts){
-    warn "Generating additional output in bedGraph and coverage format\nbedGraph format:\t<Chromosome> <Start Position> <End Position> <Methylation Percentage>\ncoverage format:\t<Chromosome> <Start Position> <End Position> <Methylation Percentage> <count methylated> <count non-methylated>\n\n";
-  }
-  else{
-    warn "Generating additional sorted output in bedGraph format (output format: <Chromosome> <Start Position> <End Position> <Methylation Percentage>)\n";
-  }
+	if ($counts){
+		warn "Generating additional output in bedGraph and coverage format\nbedGraph format:\t<Chromosome> <Start Position> <End Position> <Methylation Percentage>\ncoverage format:\t<Chromosome> <Start Position> <End Position> <Methylation Percentage> <count methylated> <count non-methylated>\n\n";
+	}
+	else{
+		warn "Generating additional sorted output in bedGraph format (output format: <Chromosome> <Start Position> <End Position> <Methylation Percentage>)\n";
+	}
 
-  ### Zero-based coordinates
-  if ($zero){
-    warn "Writing out an additional coverage file (ending in zero.cov) with 0-based start and 1-based end genomic coordinates (zero-based, half-open; user-defined)\n";
-  }
+	### Zero-based coordinates
+	if ($zero){
+		warn "Writing out an additional coverage file (ending in zero.cov) with 0-based start and 1-based end genomic coordinates (zero-based, half-open; user-defined)\n";
+	}
 
-  warn "Using a cutoff of $coverage_threshold read(s) to report cytosine positions\n";
+	warn "Using a cutoff of $coverage_threshold read(s) to report cytosine positions\n";
 
-  if ($CX_context){
-    warn "Reporting and sorting methylation information for all cytosine context (sorting may take a long time, you have been warned ...)\n";
-  }
-  else{ # default
-    $CpG_only = 1;
-    warn "Reporting and sorting cytosine methylation information in CpG context only (default)\n";
-  }
+	if ($CX_context){
+		warn "Reporting and sorting methylation information for all cytosine context (sorting may take a long time, you have been warned ...)\n";
+	}
+	else{ # default
+		$CpG_only = 1;
+		warn "Reporting and sorting cytosine methylation information in CpG context only (default)\n";
+	}
 
-  if ($remove){
-    warn "White spaces in read ID names will be removed prior to sorting\n";
-  }
+	if ($remove){
+		warn "White spaces in read ID names will be removed prior to sorting\n";
+	}
 
-  if ($ample_mem){
-    warn "Sorting chromosomal postions for the bedGraph step using arrays instead of using UNIX sort\n";
-  }
-  elsif (defined $sort_size){
-    warn "The bedGraph UNIX sort command will use the following memory setting:\t'$sort_size'. Temporary directory used for sorting is the output directory\n";
-  }
-  else{
-    warn "Setting a default memory usage for the bedGraph UNIX sort command to 2GB\n";
-  }
+	if ($ample_mem){
+		warn "Sorting chromosomal postions for the bedGraph step using arrays instead of using UNIX sort\n";
+	}
+	elsif (defined $sort_size){
+		warn "The bedGraph UNIX sort command will use the following memory setting:\t'$sort_size'. Temporary directory used for sorting is the output directory\n";
+	}
+	else{
+		warn "Setting a default memory usage for the bedGraph UNIX sort command to 2GB\n";
+	}
 
+	if ($cytosine_report){
+		warn "\n\nSummarising genome-wide cytosine methylation report parameters:\n";
+		warn '='x63,"\n";
+		warn "Generating comprehensive genome-wide cytosine report\n(output format: <Chromosome> <Position> <Strand> <count methylated> <count non-methylated>  <C-context>  <trinucleotide context> )\n";
 
+		if ($CX_context){
+			warn "Reporting methylation for all cytosine contexts. Be aware that this will generate enormous files\n";
+		}
+		else{ # default
+			$CpG_only = 1;
+			warn "Reporting cytosine methylation in CpG context only (default)\n";
+		}
 
-  sleep (1);
+		if ($split_by_chromosome){
+			warn "Splitting the cytosine report output up into individual files for each chromosome\n";
+		}
 
-  if ($cytosine_report){
-    warn "\n\nSummarising genome-wide cytosine methylation report parameters:\n";
-    warn '='x63,"\n";
-    warn "Generating comprehensive genome-wide cytosine report\n(output format: <Chromosome> <Position> <Strand> <count methylated> <count non-methylated>  <C-context>  <trinucleotide context> )\n";
+		### Zero-based coordinates
+		if ($zero){
+			warn "Using zero-based start and 1-based end genomic coordinates (zero-based, half-open; user-defined)\n";
+		}
+		else{ # default, 1-based coords
+			warn "Using 1-based genomic coordinates (default)\n";
+		}
 
-
-    if ($CX_context){
-      warn "Reporting methylation for all cytosine contexts. Be aware that this will generate enormous files\n";
-    }
-    else{ # default
-      $CpG_only = 1;
-      warn "Reporting cytosine methylation in CpG context only (default)\n";
-    }
-
-    if ($split_by_chromosome){
-      warn "Splitting the cytosine report output up into individual files for each chromosome\n";
-    }
-
-    ### Zero-based coordinates
-    if ($zero){
-      warn "Using zero-based start and 1-based end genomic coordinates (zero-based, half-open; user-defined)\n";
-    }
-    else{ # default, 1-based coords
-      warn "Using 1-based genomic coordinates (default)\n";
-    }
-
-    ### GENOME folder
-    if ($genome_folder){
-      unless ($genome_folder =~/\/$/){
-	$genome_folder =~ s/$/\//;
-      }
-      unless (-d $genome_folder){
-	  die "The specified genome folder does not appear to be a directory. Please respecify and try again!\n\n";
-      }
-      warn "Genome folder was specified as $genome_folder\n";
-    }
-    else{
-      $genome_folder  = '/data/public/Genomes/Mouse/NCBIM37/';
-      warn "Using the default genome folder /data/public/Genomes/Mouse/NCBIM37/\n";
-    }
-    sleep (1);
-  }
+		### GENOME folder
+		if ($genome_folder){
+			unless ($genome_folder =~/\/$/){
+				$genome_folder =~ s/$/\//;
+			}
+			unless (-d $genome_folder){
+				die "The specified genome folder does not appear to be a directory. Please respecify and try again!\n\n";
+			}
+			warn "Genome folder was specified as $genome_folder\n";
+		}
+		else{
+			$genome_folder  = '/data/public/Genomes/Mouse/NCBIM37/';
+			warn "Using the default genome folder /data/public/Genomes/Mouse/NCBIM37/\n";
+		}
+		sleep (1);
+	}
 }
 
 warn "\n";
-sleep (1);
 
 ######################################################
 ### PROCESSING FILES
@@ -5773,9 +5763,6 @@ OPTIONS:
                           - CpG context
                           - non-CpG context
 
---report                 Prints out a short methylation summary as well as the paramaters used to run
-                         this script. Default: ON.
-
 --no_header              Suppresses the Bismark version header line in all output files for more convenient
                          batch processing.
 
@@ -5853,7 +5840,7 @@ bedGraph specific options:
 
 --buffer_size <string>   This allows you to specify the main memory sort buffer when sorting the methylation information.
                          Either specify a percentage of physical memory by appending % (e.g. --buffer_size 50%) or
-			 a multiple of 1024 bytes, e.g. 'K' multiplies by 1024, 'M' by 1048576 and so on for 'T' etc. 
+                         a multiple of 1024 bytes, e.g. 'K' multiplies by 1024, 'M' by 1048576 and so on for 'T' etc. 
                          (e.g. --buffer_size 20G). For more information on sort type 'info sort' on a command line.
                          Defaults to 2G.
 
@@ -5947,7 +5934,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 14 February 2019.
+This script was last modified on 15 February 2019.
 
 HOW_TO
 }
