@@ -11,6 +11,7 @@ install:
   - wget http://ccb.jhu.edu/software/hisat2/dl/hisat2-2.1.0-Linux_x86_64.zip -O ~/bin/hisat2-2.1.0-Linux_x86_64.zip
   - unzip ~/bin/hisat2-2.1.0-Linux_x86_64.zip -d ~/bin/
   - cp -rv ~/bin/hisat2-2.1.0/* ~/bin/ 
+
   # installing Samtools
   - wget https://github.com/samtools/samtools/releases/download/1.9/samtools-1.9.tar.bz2
   - tar xjvf samtools-1.9.tar.bz2
@@ -28,6 +29,7 @@ script:
   - "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
   - "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
   - "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
+
   ## PE
   - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
@@ -39,6 +41,7 @@ script:
   - "./deduplicate_bismark --bam test_R1_bismark_bt2.bam"
   - "./bismark_methylation_extractor test_R1_bismark_bt2.bam    --gzip --CX --bed --genome ./travis_files/"
  
+
   # Using HISAT2
   - "./bismark_genome_preparation --hisat2 --verbose ./travis_files/"
   - "./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/"
@@ -48,6 +51,7 @@ script:
   - "./bismark_methylation_extractor test_R1_bismark_hisat2.bam  --gzip --CX --bed --genome ./travis_files/"
   - "./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam  --gzip --CX --bed --genome ./travis_files/"
   
+
   # Multicore
   - "./bismark --genome ./travis_files/ --parallel 4 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark --genome ./travis_files/ --hisat2 --parallel 4 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
@@ -68,6 +72,7 @@ script:
   - "./bismark --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark --hisat2 --pbat --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
   - "./bismark --hisat2 --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+
   
    
   # bismark2bedGraph
