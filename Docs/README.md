@@ -2,21 +2,21 @@
 
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
-## User Guide - v0.20.0
-#### 16 August, 2018
+## User Guide - v0.21.0
+#### 26 February, 2019
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
 # 1) Quick Reference
 
 
-Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie](http://bowtie-bio.sourceforge.net/index.shtml) or [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
+Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
 
-As of version 0.14.0 or higher, Bismark may be run using parallelisation for both the alignment and the methylation extraction step. Search for `--multicore` for more details below.
+As of version 0.14.0 or higher, Bismark may be run using parallelisation for both the alignment and the methylation extraction step. Search for `--parallel/--multicore` for more details below.
 
 First you need to download a reference genome and place it in a genome folder. Genomes can be obtained e.g. from the [Ensembl](http://www.ensembl.org/info/data/ftp/index.html/) or [NCBI](ftp://ftp.ncbi.nih.gov/genomes/) websites. For the example below you would need to download the _Homo sapiens_ genome. Bismark supports reference genome sequence files in `FastA` format, allowed file extensions are either either `.fa` or `.fasta`. Both single-entry and multiple-entry `FastA` files are supported.
 
-The following examples will use the file `test_dataset.fastq` which is available for download from the Bismark project or Github pages (it contains 10,000 reads in FastQ format, Phred33 qualities, 50 bp long reads, from a human directional BS-Seq library). An example report for use with Bowtie 1 and Bowtie can be found in Appendix IV.
+The following examples will use the file `test_dataset.fastq` which is available for download from the Bismark project or Github pages (it contains 10,000 reads in FastQ format, Phred33 qualities, 50 bp long reads, from a human directional BS-Seq library). An example report can be found in Appendix IV.
 
 ## (I) Running `bismark_genome_preparation`
 **USAGE:**
@@ -26,7 +26,7 @@ bismark_genome_preparation [options] <path_to_genome_folder>
 
 A typical genome indexing could look like this:
 ```
-/bismark/bismark_genome_preparation --path_to_bowtie /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
+/bismark/bismark_genome_preparation --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
 ```
 
 ## (II) Running `bismark`
@@ -35,13 +35,13 @@ A typical genome indexing could look like this:
 bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 ```
 
-Typical alignment example (tolerating one non-bisulfite mismatch per read):
+Typical alignment example:
 ```
-bismark --bowtie1 -n 1 -l 50 /data/genomes/homo_sapiens/GRCh37/ test_dataset.fastq
+bismark --genome /data/genomes/homo_sapiens/GRCh37/ test_dataset.fastq
 ```
 
 This will produce two output files:
-1. `test_dataset_bismark.bam` (contains all alignments plus methylation call strings)
+1. `test_dataset_bismark_bt2.bam` (contains all alignments plus methylation call strings)
 2. `test_dataset_bismark_SE_report.txt` (contains alignment and methylation summary)
 
 **NOTE:** In order to work properly the current working directory must contain the sequence files to be analysed.
@@ -52,7 +52,7 @@ This will produce two output files:
 deduplicate_bismark --bam [options] <filenames>
 ```
 
-This command will deduplicate the Bismark alignment BAM file and remove all reads but one which align to the the very same position and in the same orientation. This step is recommended for whole-genome bisfulfite samples, but should not be used for reduced representation libraries such as RRBS, amplicon or target enrichment libraries.
+This command will deduplicate the Bismark alignment BAM file and remove all reads but one which align to the the very same position and in the same orientation. This step is recommended for whole-genome bisulfite samples, but should not be used for reduced representation libraries such as RRBS, amplicon or target enrichment libraries.
 
 ## (IV) Running `bismark_methylation_extractor`
 **USAGE:**
@@ -62,14 +62,14 @@ bismark_methylation_extractor [options] <filenames>
 
 A typical command to extract context-dependent (CpG/CHG/CHH) methylation could look like this:
 ```
-bismark_methylation_extractor --gzip --bedGraph test_dataset.fastq_bismark.bam
+bismark_methylation_extractor --gzip --bedGraph test_dataset_bismark_bt2.bam
 ```
 
 This will produce three methytlation output files:
     
-* `CpG_context_test_dataset_bismark.txt.gz`
-* `CHG_context_test_dataset_bismark.txt.gz`
-* `CHH_context_test_dataset_bismark.txt.gz`
+* `CpG_context_test_dataset_bismark_bt2.txt.gz`
+* `CHG_context_test_dataset_bismark_bt2.txt.gz`
+* `CHH_context_test_dataset_bismark_bt2.txt.gz`
 
 as well as a bedGraph and a Bismark coverage file. For more on these files and their formats please see below.
 
@@ -95,7 +95,7 @@ This command scans the current working directory for different Bismark alignment
 # 2) Bismark - General Information
 
 ## What is Bismark?
-Bismark is a set of tools for the time-efficient analysis of Bisulfite-Seq (BS-Seq) data. Bismark performs alignments of bisulfite-treated reads to a reference genome and cytosine methylation calls at the same time. Bismark is written in Perl and is run from the command line. Bisulfite-treated reads are mapped using the short read aligner Bowtie 1 (Langmead B, Trapnell C, Pop M, Salzberg SL. Ultrafast and memory-efficient alignment of short DNA sequences to the human genome. Genome Biol 10:R25), or alternatively Bowtie 2, and therefore it is a requirement that Bowtie 1 (or Bowtie 2) are also installed on your machine (see Dependencies).
+Bismark is a set of tools for the time-efficient analysis of Bisulfite-Seq (BS-Seq) data. Bismark performs alignments of bisulfite-treated reads to a reference genome and cytosine methylation calls at the same time. Bismark is written in Perl and is run from the command line. Bisulfite-treated reads are mapped using the short read aligner Bowtie 2, or alternatively HISAT2. Therefore, it is a requirement that Bowtie 2 (or HISAT2) are also installed on your machine (see Dependencies).
 
 All files associated with Bismark as well as a test BS-Seq data set can be downloaded from [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) or [Github](https://github.com/FelixKrueger/Bismark).
 
@@ -109,15 +109,16 @@ tar xzf bismark_v0.X.Y.tar.gz
 ```
 
 ## Dependencies
-Bismark requires a working of Perl and [Bowtie 1](http://bowtie-bio.sourceforge.net/index.shtml) / [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) to be installed on your machine. Bismark will assume that the Bowtie 1 / Bowtie 2 executable is in your path unless the path to Bowtie is specified manually with:
+Bismark requires a working of Perl and [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)) to be installed on your machine. Bismark will assume that the Bowtie 2/ HISAT2 executable is in your path unless the path to Bowtie/ HISAT2 is specified manually with:
 ```
---path_to_bowtie </../../bowtie(1/2)>
+--path_to_bowtie2 </../../bowtie2> or 
+--path_to_hisat2 </../../hisat2>
 ```
 
 ## Hardware requirements
-Bismark holds the reference genome in memory and in addition to that runs up to four parallel instances of Bowtie. The memory usage is dependent on the size of the reference genome. For a large eukaryotic genome (human or mouse) we experienced a typical memory usage of around 12GB. We thus recommend running Bismark on a machine with 5 CPU cores and at least 12 GB of RAM. The memory requirements of Bowtie 2 are somewhat larger (possibly to allow gapped alignments). When running Bismark using Bowtie 2 we therefore recommend a system with at least 5 cores and > 16GB of RAM.
+Bismark holds the reference genome in memory, and in addition to that runs up to four parallel instances of Bowtie 2. The memory usage is dependent on the size of the reference genome. For a large eukaryotic genome (human or mouse) we experienced a typical memory usage of around 12GB. We thus recommend running Bismark on a machine with 5 CPU cores and at least 12 GB of RAM. The memory requirements of Bowtie 2 are somewhat larger (possibly to allow gapped alignments). When running Bismark using Bowtie 2 we therefore recommend a system with at least 5 cores and > 16GB of RAM.
 
-Alignment speed depends largely on the read length and alignment parameters used. Allowing many mismatches and using a short seed length (which is the default option for Bowtie 1, see below) tends to be fairly slow, whereas looking for near perfect matches can align around 5-25 million sequences per hour (using Bowtie 1). Since we haven’t tested Bowtie 2 very much yet we can’t give recommendations about alignment parameters and speed of Bowtie 2 at the current time.
+Alignment speed depends largely on the read length and alignment parameters used. Allowing many mismatches and using a short seed length tends to be fairly slow.
 
 ## BS-Seq test data set
 A test BS-Seq data set is available for download from the Bismark project or Github pages. It contains 10,000 single- end shotgun BS reads from human ES cells in FastQ format (from SRR020138, Lister et al., 2009; trimmed to 50 bp; base call qualities are Sanger encoded Phred values (Phred33)).
@@ -133,7 +134,7 @@ Bismark supports the alignment of bisulfite-treated reads (whole genome shotgun 
 
 A full list of alignments modes can be found in [`Bismark_alignment_modes.pdf`](http://www.bioinformatics.babraham.ac.uk/projects/bismark/Bismark_alignment_modes.pdf).
 
-In addition, Bismark retains much of the flexibility of Bowtie 1 / Bowtie 2 (adjustable seed length, number of mismatches, insert size ...). For a full list of options please run:
+In addition, Bismark retains much of the flexibility of Bowtie 2 / HISAT2 (adjustable seed length, number of mismatches, insert size ...). For a full list of options please run:
  
 ```
 bismark --help
@@ -141,10 +142,10 @@ bismark --help
 
 or see the Appendix at the end of this User Guide.
 
-**NOTE:** It should be mentioned that Bismark supports only reads in base-space, such as from the Illumina platform. There are currently no plans to extend its functionality to colour-space reads.
+**NOTE:** It should be mentioned that Bismark supports only reads in base-space, such as from the Illumina platform. There are currently no plans to extend its functionality to colour-space reads from the SOLiD platform. 
 
 ## How does Bismark work?
-Sequence reads are first transformed into fully bisulfite-converted forward (C->T) and reverse read (G->A conversion of the forward strand) versions, before they are aligned to similarly converted versions of the genome (also C->T and G->A converted). Sequence reads that produce a unique best alignment from the four alignment processes against the bisulfite genomes (which are running in parallel) are then compared to the normal genomic sequence and the methylation state of all cytosine positions in the read is inferred. For use with Bowtie 1, a read is considered to align uniquely if one alignment exists that has with fewer mismatches to the genome than any other alignment (or if there is no other alignment). For Bowtie 2, a read is considered to align uniquely if an alignment has a unique best alignment score (as reported by the Bowtie 2 `AS:i` field). If a read produces several alignments with the same number of mismatches or with the same alignment score (`AS:i` field), a read (or a read-pair) is discarded altogether.
+Sequence reads are first transformed into fully bisulfite-converted forward (C->T) and reverse read (G->A conversion of the forward strand) versions, before they are aligned to similarly converted versions of the genome (also C->T and G->A converted). Sequence reads that produce a unique best alignment from the four alignment processes against the bisulfite genomes (which are running in parallel) are then compared to the normal genomic sequence and the methylation state of all cytosine positions in the read is inferred. A read is considered to align uniquely if an alignment has a unique best alignment score (as reported by the `AS:i` field). If a read produces several alignments with the same number of mismatches or with the same alignment score (`AS:i` field), a read (or a read-pair) is discarded altogether.
 
 ## Bismark alignment and methylation call report
 Upon completion, Bismark produces a run report containing information about the following:
@@ -163,7 +164,7 @@ It should be stressed that the percent methylation value (context) is just a ver
 # 3) Running Bismark
 Running Bismark is split up into three main steps:
 
-1. First, the genome of interest needs to be bisulfite converted and indexed to allow Bowtie alignments. This step needs to be carried out only once for each genome. Note that Bowtie 1 and Bowtie 2 require distinct indexing steps since their indexes are not compatible.
+1. First, the genome of interest needs to be bisulfite converted and indexed to allow Bowtie alignments. This step needs to be carried out only once for each genome. Note that Bowtie 2 and HISAT2 require distinct indexing steps since their indexes are not compatible.
 2. Bismark read alignment step. Simply specify a file to be analysed, a reference genome and alignment parameters. Bismark will produce a combined alignment/methylation call output (default is BAM format) as well as a run statistics report.
 3. Bismark methylation extractor. This step is optional and will extract the methylation information from the Bismark alignment output. Running this additional step allows splitting the methylation information up into the different contexts, getting strand-specific methylation information and offers some filtering options. You can also choose to sort the methylation information into `bedGraph`/`coverage` files, or even process them further to genome-wide cytosine methylation reports.
 
@@ -171,9 +172,9 @@ Each of these steps will be described in more detail (with examples) in the foll
 
 ## (I) Bismark Genome Preparation
 
-This script needs to be run only once to prepare the genome of interest for bisulfite alignments. You need to specify a directory containing the genome you want to align your reads against (please be aware that the `bismark_genome_preparation` script currently expects `FastA` files in this folder (with either `.fa` or `.fasta` extension, single or multiple sequence entries per file). Bismark will create two individual folders within this directory, one for a C->T converted genome and the other one for the G->A converted genome. After creating C->T and G->A versions of the genome they will be indexed in parallel using the indexer `bowtie-build` (or `bowtie2-build`). Once both C->T and G->A genome indices have been created you do not need to use the genome preparation script again (unless you want to align against a different genome...).
+This script needs to be run only once to prepare the genome of interest for bisulfite alignments. You need to specify a directory containing the genome you want to align your reads against (please be aware that the `bismark_genome_preparation` script expects `FastA` files in this folder (with either `.fa` or `.fasta` extension, single or multiple sequence entries per file). Bismark will create two individual folders within this directory, one for a C->T converted genome and the other one for the G->A converted genome. After creating C->T and G->A versions of the genome they will be indexed in parallel using the indexer `bowtie2-build` (or `hisat2-build`). Once both C->T and G->A genome indices have been created you do not need to use the genome preparation script again (unless you want to align against a different genome...).
 
-Please note that Bowtie 1 and 2 indexes are not compatible. To create a genome index for use with Bowtie 1 the option `--bowtie1` needs to be included as well.
+Again, **please note** that Bowtie 2 and HISAT2 indexes are not compatible! To create a genome index for use with HISAT2 the option `--hisat2` needs to be included as well.
 
 ### Running `bismark_genome_preparation`
 **USAGE:** `bismark_genome_preparation [options] <path_to_genome_folder>`
@@ -181,7 +182,7 @@ Please note that Bowtie 1 and 2 indexes are not compatible. To create a genome i
 A typical command could look like this:
 
 ```
-bismark_genome_preparation --path_to_bowtie /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
+bismark_genome_preparation --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh38/
 ```
 
 ## (II) Bismark Alignment Step
@@ -200,11 +201,6 @@ For each sequence file or each set of paired-end sequence files, Bismark produce
 Before running Bismark we recommend spending some time on quality control of the raw sequence files using [FastQC](http://www.bioinformatics.babraham.ac.uk/projects/fastqc/). FastQC might be able to spot irregularities associated with your BS-Seq file, such as high base calling error rates or contaminating sequences such as PCR primers or Illumina adapters. Many sources of error impact detrimentally the alignment efficiencies and/or alignment positions, and thus possibly also affect the methylation calls and conclusions drawn from the experiment.
 
 If no additional options are specified Bismark will use a set of default values, some of which are:
-
-### Using Bowtie 1:
-- If no specific path to Bowtie is specified it is assumed that the `bowtie` executable is in the `PATH`
-- Bowtie 1 is run `--best` mode (it is possible but not recommended to turn this off)
-- Standard alignments allow up to 1 mismatch in the seed region (which is defined as the first 28 bp by default). These parameters can be modified using the options `-n` and `-l`, respectively.
 
 ### Using Bowtie 2:
 - Using Bowtie 2 is the default mode
@@ -232,20 +228,20 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 A typical single-end analysis could look like this:
 
 ```
-bismark --genome /data/genomes/homo_sapiens/GRCh37/ sample.fastq.gz
+bismark --genome /data/genomes/homo_sapiens/GRCh38/ sample.fastq.gz
 ```
 
 ### What does the Bismark output look like?
-Since version 0.6.x the default output of Bismark is in BAM/SAM format when using either Bowtie 1 or Bowtie 2. The former custom Bismark output for Bowtie 1, which used to be the standard output up to versions 0.5.x, is still available by specifying the option `--vanilla` (see below) but is likely going to be dropped entirely in a future release. The Bismark output using Bowtie 2 is invariably in BAM/SAM format (which is required to encode gapped alignments).
+Since version 0.6.x the default output of Bismark is in BAM/SAM format (which is required to encode gapped alignments).
 
 ### Bismark BAM/SAM output (default)
-By default, Bismark generates SAM output for all alignment modes. Please note that reported quality values are encoded in Sanger format (Phred 33 scale), even if the input was in Phred64 or the old Solexa format.
+By default, Bismark generates SAM output for all alignment modes. Please note that reported quality values are encoded in Sanger format (Phred 33 scale), even if the input was in Phred64.
 
 1. `QNAME` (seq-ID)
 2. `FLAG` (this flag tries to take the strand a bisulfite read originated from into account (this is different from ordinary DNA alignment flags!))
 3. `RNAME` (chromosome)
 4. `POS` (start position)
-5. `MAPQ` (only calculated for Bowtie 2, always 255 for Bowtie)
+5. `MAPQ` (calculated for Bowtie 2 and HISAT2)
 6. `CIGAR`
 7. `RNEXT`
 8. `PNEXT`
@@ -258,69 +254,6 @@ By default, Bismark generates SAM output for all alignment modes. Please note th
 
 The mate read of paired-end alignments is written out as an additional separate line in the same format.
 
-### Custom (‘vanilla’) Bismark output (Bowtie 1 only)
-Bismark can generate a comprehensive alignment and methylation call output file for each input file or set of paired-end input files. The sequence basecall qualities of the input FastQ files are written out into the Bismark output file as well to allow filtering on quality thresholds. Please note that the quality values are encoded in Sanger format (Phred 33 scale), even if the input was in Phred64 or the old Solexa format.
-
-### The single-end output contains the following information (1 line per sequence, tab delimited):
-
-1. seq-ID
-2. alignment strand
-3. chromosome
-4. start
-5. end
-6. original bisulfite read sequence
-7. equivalent genomic sequence (+2 extra bp) (8) methylation call string
-9. read conversion
-10. genome conversion
-11. read quality score (Phred33 scale)
-
-### Single-end alignment example:
-
-1. `HWUSI-EAS611_0001:3:1:1186:18334#0/1`
-2. `+`
-3. `4`
-4. `122893213`
-5. `122893242`
-6. `TGGGTTTTTAAGATTTTGTGTAGTTGGGGTTTGGAGATGG`
-7. `CGGGCCCTCAAGACCCTGCGCAGCTGGGGCCTGGAGACGGAG`
-8. `z...hhh.h....hhx..z.x..x.....hx......z..`
-9. `CT`
-10. `CT`
-11. `IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII`
-
-### The paired-end output looks like this (1 line per sequence pair, tab separated):
-
-1. seq-ID
-2. alignment strand
-3. chromosome
-4. start
-5. end
-6. original bisulfite read sequence 1
-7. equivalent genomic sequence 1 (+2 extra bp) (8) methylation call string 1
-9. original bisulfite read sequence 2
-10. equivalent genomic sequence 2 (+2 extra bp) (11) methylation call string 2
-12. read 1 conversion
-13. genome conversion
-14. read 1 quality score (Phred33 scale)
-15. read 2 quality score (Phred33 scale)
-
-### Paired-end alignment example
-
-1. `HWUSI-EAS611_100205:2:1:13:1732#0`
-2. `+`
-3. `14`
-4. `62880539`
-5. `62880652`
-6. `CGGGATTTCGCGGAGTACGGGTGATCGTGTGGAATATAGA`
-7. `CGGGACTCCGCGGAGCACGGGTGACCGTGTGGAATACAGAGT`
-8. `Z....h.xZ.Z....h.Z......xZ..........x...`
-9. `CAACTATCTAAAACTAAAAATAACGCCGCCCAAAAACTCT`
-10. `TCCGGCTGTCTGGAGCTGAAGATGGCGCCGCCCAGAAGCTCT`
-11. `.zx..x...xh.h..x..h..hh.Z..Z....x..h....`
-12. `CT`
-13. `CT`
-14. `IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII`
-15. `IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII`
 
 ### Data visualisation
 
@@ -354,8 +287,7 @@ In the default mode, the first alignment to a given position will be used irresp
 
 For **single-end** alignments, only the chromosome, start coordinate and strand of a read will be used for deduplication.
 
-For **paired-end** alignments, the chromosome, the strand of a read pair, the start-coordinate of the first read as well as the start coordinate of the second read will be used for deduplication. This script expects the Bismark output to be in SAM/BAM format
-(Bismark v0.6.x or higher). To deduplicate the old custom Bismark output please specify `--vanilla` (this option might be removed in future versions).
+For **paired-end** alignments, the chromosome, the strand of a read pair, the start-coordinate of the first read as well as the start coordinate of the second read will be used for deduplication. This script expects the Bismark output to be in SAM/BAM format.
 
 **Please note that for paired-end BAM files the deduplication script expects Read 1 and Read 2 to follow each other in consecutive lines!** If the file has been sorted by position for whatever reason, please make sure that you resort it by read name first (e.g. using `samtools sort -n`)
 
@@ -382,7 +314,7 @@ Additional notes for BAM files: Although this works on either BAM or CRAM, all i
 
 Bismark comes with a supplementary `bismark_methylation_extractor` script which operates on Bismark result files and extracts the methylation call for every single C analysed. The position of every single C will be written out to a new output file, depending on its context (CpG, CHG or CHH), whereby methylated Cs will be labelled as forward reads (+), non-methylated Cs as reverse reads (-). The resulting files can be imported into a genome viewer such as SeqMonk (using the generic text import filter) and the analysis of methylation data can commence. Alternatively, the output of the methylation extractor can be transformed into a `bedGraph` and `coverage` file using the option `--bedGraph` (see also `--counts`). This step can also be accomplished from the methylation extractor output using the stand-alone script `bismark2bedGraph` (also part of the Bismark package available for download at [bioinformatics.babraham.ac.uk](http://www.bioinformatics.babraham.ac.uk/projects/bismark/)). The `coverage` file can also be imported into SeqMonk directly using `Import Data > Bismark (cov)`. Optionally, the bedGraph counts output can be used to generate a genome-wide cytosine report which reports the number on every single CpG (optionally every single cytosine) in the genome, irrespective of whether it was covered by any reads or not. As this type of report is informative for cytosines on both strands the output may be fairly large (~46mn CpG positions or >1.2bn total cytosine positions in the human genome...). The bedGraph to genome-wide cytosine report conversion can also be run individually using the stand- alone module `coverage2cytosine` (also part of the Bismark package available for download at [bioinformatics.babraham.ac.uk](http://www.bioinformatics.babraham.ac.uk/projects/bismark/)).
 
-As of Bismark version 0.6 or higher the default input format for the `bismark_methylation_extractor` is BAM/SAM (or potentially CRAM if you’ve got Samtools 1.2+ installed). The former custom Bismark format can still be used by specifying `--vanilla` (for the time being).
+As of Bismark version 0.6 or higher the default input format for the `bismark_methylation_extractor` is BAM/SAM (or potentially CRAM if you’ve got Samtools 1.2+ installed).
 
 ### The methylation extractor output looks like this (tab separated):
 
@@ -486,13 +418,13 @@ The M-bias plot should enable researchers to make an informed decision whether o
 A typical command for a single-end file could look like this: 
 
 ```
-bismark_methylation_extractor -s --gzip sample_bismark_bt2.bam
+bismark_methylation_extractor --gzip sample_bismark_bt2.bam
 ```
 
 A typical command for a paired-end file could look like this:
 
 ```
-bismark_methylation_extractor -p --gzip sample_bismark_bt2_pe.bam
+bismark_methylation_extractor --gzip sample_bismark_bt2_pe.bam
 ```
 
 The methylation extractor can also auto-detect the alignment mode and will set the options above automatically. A typical command including the optional `bedGraph` output could look like this:
