@@ -4,9 +4,10 @@
 
 - Added option for HISAT2 mode:
 * `--no-spliced-aligments`: Disable spliced alignment
+
 * `--known-splicesite-infile <path>`:   Provide a list of known splice sites.
 
-fcd92c702d24eacee19b9475df665264ee749978
+* Added documentation for NOMe-seq or scNMT-seq processing.
 
 
 ## Changelog for Bismark v0.20.0

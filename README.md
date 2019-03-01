@@ -6,15 +6,15 @@ Bismark is a program to map bisulfite treated sequencing reads to a genome of in
 
 * Bisulfite mapping and methylation calling in one single step
 * Supports single-end and paired-end read alignments
-* Supports ungapped and gapped alignments
+* Supports ungapped, gapped or spliced alignments
 * Alignment seed length, number of mismatches etc. are adjustable
-* Output discriminates between cytosine methylation in `CpG`, `CHG` and `CHH` `*` context
+* Output discriminates between cytosine methylation in `CpG`, `CHG` and `CHH` context
 
 ## Installation
 Bismark is written in Perl and is executed from the command line. To install Bismark simply download the latest release of the code from the [Releases page](https://github.com/FelixKrueger/Bismark/releases) and extract the files into a Bismark installation folder.
 
 Bismark needs the following tools to be installed and available in the `PATH`:
-* [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [Bowtie1](http://bowtie-bio.sourceforge.net/)
+* [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)
 * [Samtools](http://www.htslib.org/)
 
 ## Documentation
