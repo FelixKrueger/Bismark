@@ -9033,35 +9033,17 @@ OTHER:
 -v/--version             Displays version information.
 
 
-HISAT2 SPECIFIC OPTIONS:
-
---no-spliced-alignment   Disable spliced alignment
-
---known-splicesite-infile <path>   Provide a list of known splice sites.
-
 
 
 BOWTIE 2 SPECIFIC OPTIONS:
 
---bowtie2                Default: ON. Uses Bowtie 2 instead of Bowtie 1. Bismark limits Bowtie 2 to only perform end-to-end
+--bowtie2                Default: ON. Uses Bowtie 2 as default aligner. Bismark limits Bowtie 2 to only perform end-to-end
                          alignments, i.e. searches for alignments involving all read characters (also called
                          untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter
                          and/or quality trimmed where appropriate. Both small (.bt2) and large (.bt2l) Bowtie 2
                          indexes are supported. To use HISAT2 instead of Bowtie 2 please see option --hisat2.
-
-
-
-Bowtie 2 paired-end options:
-
---no-mixed               This option disables Bowtie 2's behavior to try to find alignments for the individual mates if
-                         it cannot find a concordant or discordant alignment for a pair. This option is invariable and
-                         and on by default.
-
---no-discordant          Normally, Bowtie 2 looks for discordant alignments if it cannot find any concordant alignments.
-                         A discordant alignment is an alignment where both mates align uniquely, but that does not
-                         satisfy the paired-end constraints (--fr/--rf/--ff, -I, -X). This option disables that behavior
-                         and it is on by default.
-
+						 
+						 
 --no_dovetail            It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending
                          "past" each other as in this example:
 
@@ -9077,6 +9059,32 @@ Bowtie 2 paired-end options:
                          Specify --no_dovetail to turn off this behaviour for paired-end libraries. Default: OFF.
 
 
+HISAT2 SPECIFIC OPTIONS:
+
+
+--hisat2                 Default: OFF. Uses HISAT2 instead of Bowtie 2. Bismark limits HISAT2 to end-to-end
+                         alignments, i.e. searches for alignments involving all read characters (also called
+                         untrimmed or unclipped alignments) using the option '--no-softclipping'. Bismark assumes that raw
+                         sequence data is adapter and/or quality trimmed where appropriate. Both small (.ht2) and large (.ht2l)
+                         HISAT2 indexes are supported.
+
+--no-spliced-alignment   Disable spliced alignment
+
+--known-splicesite-infile <path>   Provide a list of known splice sites.
+
+
+Paired-end options:
+
+--no-mixed               This option disables the behavior to try to find alignments for the individual mates if
+                         it cannot find a concordant or discordant alignment for a pair. This option is invariably on by default.
+
+--no-discordant          Normally, Bowtie 2 or HISAT2 look for discordant alignments if it cannot find any concordant alignments.
+                         A discordant alignment is an alignment where both mates align uniquely, but that does not
+                         satisfy the paired-end constraints (--fr/--rf/--ff, -I, -X). This option disables that behavior
+                         and it is on by default.
+
+
+
 Bowtie 2 effort options:
 
 -D <int>                 Up to <int> consecutive seed extension attempts can "fail" before Bowtie 2 moves on, using
@@ -9089,7 +9097,7 @@ Bowtie 2 effort options:
                          to have repetitive seeds if the total number of seed hits divided by the number of seeds
                          that aligned at least once is greater than 300. Default: 2.
 
-Bowtie 2 parallelization options:
+Bowtie 2/ HISAT2 parallelization options:
 
 
 -p NTHREADS              Launch NTHREADS parallel search threads (default: 1). Threads will run on separate processors/cores
@@ -9105,7 +9113,7 @@ Bowtie 2 parallelization options:
                          if --reorder were not specified. Has no effect if -p is set to 1, since output order will naturally
                          correspond to input order in that case.
 
-Bowtie 2 Scoring options:
+Scoring options:
 
 --score_min <func>       Sets a function governing the minimum alignment score needed for an alignment to be considered
                          "valid" (i.e. good enough to report). This is a function of read length. For instance, specifying
@@ -9144,6 +9152,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 25 February 2019
+Last modified on 1 March 2019
 HOW_TO
 }
