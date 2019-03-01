@@ -389,6 +389,19 @@ Starting from the `coverage` output, the Bismark methylation extractor can optio
 
 The main difference to the `bedGraph` or `coverage` output is that **every** cytosine on both the top and bottom strands will be considered irrespective of whether they were actually covered by any reads in the experiment or not. For this to work one has to also specify the genome that was used for the `Bismark` alignments using the option `--genome_folder <path>`. As for the `bedGraph` mode, this will only consider cytosines in CpG context by default but can be extended to cytosines in any sequence context by using the option `--CX` (cf. Appendix (III)). Be aware though that this might mean an output with individual lines for more than 1.1 billion cytosines for any large mammalian genome...
 
+### (optional): NOMe-seq or scNMT-seq
+
+The `coverage2cytosine` module can be instructed that a sample is a NOMe-seq (**N**ucleosome **O**ccupancy and **Me**thylome sequencing; https://genome.cshlp.org/content/22/12/2497.long) or scNMT-seq (**s**ingle-**c**ell **N**ucleosome, **M**ethylation and **T**ranscription sequencing (https://www.nature.com/articles/s41467-018-03149-4)) sample, where accessible DNA gets methylated in a GpC context (sets option `--gc` as well). The option `--nome-seq`:
+
+```
+ (i) filters the genome-wide CpG-report to only output cytosines in ACG and TCG context
+(ii) filters the GC context output to only report cytosines in GCA, GCC and GCT context
+```
+   
+Both of these measures aim to reduce unwanted biases, i.e. the influence of `G-CG` (intended) and `C-CG` (off-target) on endogenous CpG methylation, and the influence of CpG methylation on (the NOMe-seq specific) `GC` context methylation. **PLEASE NOTE** that NOMe-seq data requires a `.cov.gz` file as input which has been generated in non-CG mode!! (`--CX`), else the `GpC` output file will be empty...
+
+
+
 ### M-bias plot
 Starting with Bismark v0.8.0, the Bismark methylation extractor also produces a methylation bias plot which shows the methylation proportion across each possible position in the read (described in further detail in: [Hansen et al., Genome Biology, 2012, 13:R83](https://genomebiology.biomedcentral.com/articles/10.1186/gb-2012-13-10-r83)). The data for the M-bias plot is also written into a coverage text file (ending in `.cov` or `.cov.gz`) and is in the following format:
 
@@ -411,6 +424,8 @@ Or it can reveal a 3’-end-repair bias at the first couple of positions in read
 For more on this topic please also see [this post on QCFail.com](https://sequencing.qcfail.com/articles/library-end-repair-reaction-introduces-methylation-biases-in-paired-end-pe-bisulfite-seq-applications/).
 
 The M-bias plot should enable researchers to make an informed decision whether or not to leave the bias in the final data or to remove it (e.g. using the methylation extractor option `--ignore`).
+
+
 
 ### (III) Running `bismark_methylation_extractor`
 **USAGE:** `bismark_methylation_extractor [options] <filenames>`
