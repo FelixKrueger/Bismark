@@ -13,7 +13,7 @@ Bismark is a program to map bisulfite treated sequencing reads to a genome of in
 ## Installation
 Bismark is written in Perl and is executed from the command line. To install Bismark simply download the latest release of the code from the [Releases page](https://github.com/FelixKrueger/Bismark/releases) and extract the files into a Bismark installation folder.
 
-Bismark needs the following tools to be installed and available in the `PATH`:
+Bismark needs the following tools to be installed and ideally available in the `PATH` environment:
 * [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)
 * [Samtools](http://www.htslib.org/)
 
