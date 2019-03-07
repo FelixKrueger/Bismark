@@ -47,7 +47,7 @@ use Cwd;
 my $dedup_version = 'v0.20.1_dev';
 my @filenames;
 
-my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir) = process_commandline();
+my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile) = process_commandline();
 
 ###########################
 ### START OF PROCESSING ###
@@ -186,7 +186,13 @@ foreach my $file (@filenames){
 			}
 		}
 	
-		my $outfile = $file;
+		if (defined $outfile){ # user-defined output filename
+			# using that name
+		}
+		else{ # deriving the name from the input file automatically (default)
+			$outfile = $file;
+		}
+		
 		# now would be a good time to get rid of the path information
 		$outfile =~ s/.*\///; # removing path information
 
@@ -205,7 +211,6 @@ foreach my $file (@filenames){
 			$outfile =~ s/$/.deduplicated.sam/;
 	    }
 	
-
 		if ($multiple){
 			$outfile =~ s/deduplicated/multiple.deduplicated/;
 		}
@@ -522,8 +527,15 @@ sub deduplicate_barcoded_rrbs{
 		open (IN,$file) or die "Unable to read from $file: $!\n";
     }
 
-    my $outfile = $file;
-    $outfile =~ s/\.gz$//;
+    if (defined $outfile){
+		# using a user-specified name
+	}
+	else{
+		$outfile = $file; # deriving the output filename from the input file. Default
+	}
+	$outfile =~ s/.*\///; # removing path information
+
+	$outfile =~ s/\.gz$//;
     $outfile =~ s/\.sam$//;
     $outfile =~ s/\.bam$//;
     $outfile =~ s/\.txt$//;
@@ -537,6 +549,11 @@ sub deduplicate_barcoded_rrbs{
 	else{
 	    $outfile =~ s/$/.deduplicated.sam/;
 	}
+
+	if ($multiple){
+		$outfile =~ s/deduplicated/multiple.deduplicated/;
+	}
+
    
     if ($bam == 1){
 		open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
@@ -879,30 +896,32 @@ sub bam_isTruncated{
 
 
 sub print_helpfile{
-  print "\n",'='x111,"\n";
-  print "\nThis script is supposed to remove alignments to the same position in the genome from the Bismark mapping output\n(both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. If sequences align\nto the same genomic position but on different strands they will be scored individually.\n\nNote that deduplication is not recommended for RRBS-type experiments!\n\nIn the default mode, the first alignment to a given position will be used irrespective of its methylation call\n(as the alignments are not ordered in any way this is also near enough random).\n\n";
-  print "For single-end alignments only the chromosome, start coordinate and strand of a read will be used for deduplication.\n\n";
-  print "For paired-end alignments the chromosome, strand alignments, and start as well as end coordinate of the entire fragment\nwill be used for deduplication. ";
-  print ">This script expects the Bismark output to be in SAM format<.\n\n";
-  print "*** Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to\nfollow each other in consecutive lines! If the file has been sorted by position make sure that you resort it\nby read name first (e.g. using samtools sort -n)  ***\n\n";
+	print "\n",'='x111,"\n";
+	print "\nThis script is supposed to remove alignments to the same position in the genome from the Bismark mapping output\n(both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. If sequences align\nto the same genomic position but on different strands they will be scored individually.\n\nNote that deduplication is not recommended for RRBS-type experiments!\n\nIn the default mode, the first alignment to a given position will be used irrespective of its methylation call\n(as the alignments are not ordered in any way this is also near enough random).\n\n";
+	print "For single-end alignments only the chromosome, start coordinate and strand of a read will be used for deduplication.\n\n";
+	print "For paired-end alignments the chromosome, strand alignments, and start as well as end coordinate of the entire fragment\nwill be used for deduplication. ";
+	print ">This script expects the Bismark output to be in SAM format<.\n\n";
+	print "*** Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to\nfollow each other in consecutive lines! If the file has been sorted by position make sure that you resort it\nby read name first (e.g. using samtools sort -n)  ***\n\n";
+	
+	print '='x111,"\n\n";
+	print ">>> USAGE: ./deduplicate_bismark [options] filename(s) <<<\n\n";
 
-  print '='x111,"\n\n";
-  print ">>> USAGE: ./deduplicate_bismark [options] filename(s) <<<\n\n";
+	print "-s/--single\t\tdeduplicate single-end BAM/SAM Bismark files\n";
+	print "-p/--paired\t\tdeduplicate paired-end BAM/SAM Bismark files\n\n";
+	print "-o/--outfile\t\tThe basename of a desired output file. This basename is modified to end in '.deduplicated.bam',\n\t\t\tor '.multiple.deduplicated.bam' in '--multiple' mode, for consistency reasons.\n\n";
+	print "--output_dir [path]\tOutput directory, either relative or absolute. Output is written to the current directory if not\n\t\t\tspecified explicitly.\n\n";
+	
+	print "--barcode\t\tIn addition to chromosome, start position and orientation this will also take a potential barcode into\n\t\t\tconsideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
+	print "--bam\t\t\tThe output will be written out in BAM format. This script will attempt to use the path to Samtools\n\t\t\tthat was specified with '--samtools_path', or, if it hasn't been specified, attempt to find Samtools\n\t\t\tin the PATH. If no installation of Samtools can be found, a GZIP compressed output is written out\n\t\t\tinstead (yielding a .sam.gz output file). Default: ON.\n\n";
+	print "--sam\t\t\tThe output will be written out in SAM format. Default: OFF.\n\n";
+	
+	print "--multiple\t\tAll specified input files are treated as one sample and concatenated together for deduplication.\n\t\t\tThis uses Unix 'cat' for SAM files and 'samtools cat' for BAM files. Additional notes for BAM files:\n\t\t\tAlthough this works on either BAM or CRAM, all input files must be the same format as each other.\n\t\t\tThe sequence dictionary of each input file must be identical, although this command does not check this.\n\t\t\tBy default the header is taken from the first file to be concatenated.\n\n";
+	print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
+	print "--version\t\tPrint version information and exit\n";
+	
+	print '='x111,"\n\n";
 
-  print "-s/--single\t\tdeduplicate single-end BAM/SAM Bismark files\n";
-  print "-p/--paired\t\tdeduplicate paired-end BAM/SAM Bismark files\n\n";
-  print "--output_dir [path]\tOutput directory, either relative or absolute. Output is written to the current directory if not\n\t\t\tspecified explicitly.\n\n";
-  
-  print "--barcode\t\tIn addition to chromosome, start position and orientation this will also take a potential barcode into\n                        consideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
-  print "--bam\t\t\tThe output will be written out in BAM format instead of the default SAM format. This script will\n\t\t\tattempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't\n\t\t\tbeen specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,\n\t\t\tthe SAM output will be compressed with GZIP instead (yielding a .sam.gz output file)\n\n";
-
-  print "--multiple\t\tAll specified input files are treated as one sample and concatenated together for deduplication.\n\t\t\tThis uses Unix 'cat' for SAM files and 'samtools cat' for BAM files. Additional notes for BAM files:\n\t\t\tAlthough this works on either BAM or CRAM, all input files must be the same format as each other.\n\t\t\tThe sequence dictionary of each input file must be identical, although this command does not check this.\n\t\t\tBy default the header is taken from the first file to be concatenated.\n\n";
-  print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
-  print "--version\t\tPrint version information and exit\n";
-
-  print '='x111,"\n\n";
-
-  print "This script was last modified on 13 Feb 2019\n\n";
+	print "This script was last modified on 07 Mar 2019\n\n";
 }
 
 
@@ -1009,21 +1028,25 @@ sub process_commandline{
     my $global_paired;
     my $samtools_path;
     my $bam;
+	my $sam;
     my $rrbs;
     my $version;
     my $multiple; # for multiple input files for the same sample
     my $output_dir;
-
+	my $outfile;
+	
     my $command_line = GetOptions ('help'                => \$help,
 				   'representative'      => \$representative,
 				   's|single'            => \$global_single,
 				   'p|paired'            => \$global_paired,
 				   'samtools_path=s'     => \$samtools_path,
 				   'bam'                 => \$bam,
+				   'sam'                 => \$sam,
 				   'barcode'             => \$rrbs,
 				   'version'             => \$version,
 				   'multiple'            => \$multiple, 
 				   'output_dir=s'        => \$output_dir,
+				   'o|outfile=s'         => \$outfile,
 	);
 
     die "Please respecify command line options\n\n" unless ($command_line);
@@ -1096,6 +1119,23 @@ VERSION
 		exit;
     }
 
+	### Ensuring that there is only a single input file if --outfile
+	if (defined $outfile){
+		
+		if ($multiple){
+			# potentially fine (see below). Several output files will get written to a single, pre-specified output file
+		}
+		else{		
+			if (scalar @filenames == 1){
+				# fine
+			}
+			else{
+				die "\nYou can only specify an output filename if a single input file was given (you supplied ",scalar @filenames," input files. Please re-specify!\n\n";
+			}
+		}
+		warn "Output filename was given as: $outfile\n";
+	}	
+
     ### representative mode is no longer available
     if($representative){
 		die "Deduplication in '--representative' mode is no longer supported. Please stop wanting that.\n";
@@ -1152,7 +1192,6 @@ VERSION
 			}
 		}
     }
- 
     # Check whether Samtools is in the PATH if no path was supplied by the user
     else{
 		if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
@@ -1160,7 +1199,15 @@ VERSION
 			chomp $samtools_path;
 		}
     }
-
+	
+	### Making --bam mode the default (07 03 2019)
+	if ($sam){
+		$bam = 0;
+	}
+	else{
+		$bam = 1;
+	}
+	
     if ($bam){
 		if (defined $samtools_path){
 			$bam = 1;
@@ -1170,11 +1217,8 @@ VERSION
 			$bam = 2;
 		}
     }
-    else{
-		$bam = 0;
-    }
-
-    return ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir);
+    
+    return ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile);
 }
 
 
