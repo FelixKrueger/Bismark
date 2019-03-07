@@ -908,7 +908,7 @@ sub print_helpfile{
 
 	print "-s/--single\t\tdeduplicate single-end BAM/SAM Bismark files\n";
 	print "-p/--paired\t\tdeduplicate paired-end BAM/SAM Bismark files\n\n";
-	print "-o/--outfile\t\tThe basename of a desired output file. This basename is modified to end in '.deduplicated.bam',\n\t\t\tor '.multiple.deduplicated.bam' in '--multiple' mode, for consistency reasons.\n\n";
+	print "-o/--outfile [filename]\tThe basename of a desired output file. This basename is modified to end in '.deduplicated.bam',\n\t\t\tor '.multiple.deduplicated.bam' in '--multiple' mode, for consistency reasons.\n\n";
 	print "--output_dir [path]\tOutput directory, either relative or absolute. Output is written to the current directory if not\n\t\t\tspecified explicitly.\n\n";
 	
 	print "--barcode\t\tIn addition to chromosome, start position and orientation this will also take a potential barcode into\n\t\t\tconsideration while deduplicating. The barcode needs to be the last element of the read ID and separated\n                        by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT\n\n";
@@ -916,7 +916,7 @@ sub print_helpfile{
 	print "--sam\t\t\tThe output will be written out in SAM format. Default: OFF.\n\n";
 	
 	print "--multiple\t\tAll specified input files are treated as one sample and concatenated together for deduplication.\n\t\t\tThis uses Unix 'cat' for SAM files and 'samtools cat' for BAM files. Additional notes for BAM files:\n\t\t\tAlthough this works on either BAM or CRAM, all input files must be the same format as each other.\n\t\t\tThe sequence dictionary of each input file must be identical, although this command does not check this.\n\t\t\tBy default the header is taken from the first file to be concatenated.\n\n";
-	print "--samtools_path\t\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
+	print "--samtools_path [path]\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
 	print "--version\t\tPrint version information and exit\n";
 	
 	print '='x111,"\n\n";
