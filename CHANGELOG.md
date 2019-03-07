@@ -2,12 +2,22 @@
 
 ## Changelog for Bismark v0.20.1_dev
 
+* Added documentation for NOMe-seq or scNMT-seq processing.
+
+### bismark
 - Added option for HISAT2 mode:
 * `--no-spliced-aligments`: Disable spliced alignment
 
 * `--known-splicesite-infile <path>`:   Provide a list of known splice sites.
 
-* Added documentation for NOMe-seq or scNMT-seq processing.
+### deduplicate_bismark
+
+* removed all traces of the option `--vanilla`
+
+### bismark_methylation_extractor
+
+
+
 
 
 ## Changelog for Bismark v0.20.0
