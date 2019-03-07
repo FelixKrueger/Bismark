@@ -14,6 +14,11 @@
 
 * removed all traces of the option `--vanilla`
 
+* `--bam` mode is now the default. Uncompressed SAM output may still be obtained using the new option `--sam`
+
+* Added new option `-o/--outfile <basename>`. This basename is then modified to remove file endings such as `.bam`, `.sam`, `.txt` or `.gz`, and `.deduplicated.bam`, or `.multiple.deduplicated.bam` in `--multiple` mode, is then appended for consistency reasons.
+
+
 ### bismark_methylation_extractor
 
 
