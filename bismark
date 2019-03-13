@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -2222,6 +2222,9 @@ sub process_single_end_fastA_file_for_methylation_call{
 		my $sequence = <IN>;
 		last unless ($identifier and $sequence);
 
+		chomp $sequence;
+		chomp $identifier;
+		
 		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
 
 		++$count;
@@ -2237,19 +2240,11 @@ sub process_single_end_fastA_file_for_methylation_call{
 		if ($counting{sequences_count}%1000000==0) {
 			warn "Processed $counting{sequences_count} sequences so far\n";
 		}
-		chomp $sequence;
-		chomp $identifier;
-
+	
 		$identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-		my $return;
-		if ($bowtie2){
-			$return = check_results_single_end (uc$sequence,$identifier);
-		}
-		else{
-			$return = check_results_single_end (uc$sequence,$identifier);
-		}
-
+		my $return = check_results_single_end (uc$sequence,$identifier);
+	
 		unless ($return){
 			$return = 0;
 		}
@@ -2299,9 +2294,11 @@ sub process_single_end_fastQ_file_for_methylation_call{
 		my $identifier_2 = <IN>;
 		my $quality_value = <IN>;
 		last unless ($identifier and $sequence and $identifier_2 and $quality_value);
-
+		
+		chomp $identifier;
 		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$identifier .= "\n";
+		
 		++$count;
 
 		if ($skip){
@@ -2392,6 +2389,11 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 		my $sequence_2 = <IN2>;
 		last unless ($identifier_1 and $sequence_1 and $identifier_2 and $sequence_2);
 
+		chomp $sequence_1;
+		chomp $identifier_1;
+		chomp $sequence_2;
+		chomp $identifier_2;
+		
 		$identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
 		$identifier_2 = fix_IDs($identifier_2);
 
@@ -2410,11 +2412,6 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 		}
 		my $orig_identifier_1 = $identifier_1;
 		my $orig_identifier_2 = $identifier_2;
-
-		chomp $sequence_1;
-		chomp $identifier_1;
-		chomp $sequence_2;
-		chomp $identifier_2;
 
 		$identifier_1 =~ s/^>//; # deletes the > at the beginning of FastA headers
 
@@ -2489,6 +2486,13 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 		my $quality_value_2 = <IN2>; # not needed
 		last unless ($identifier_1 and $sequence_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $quality_value_2);
 	
+		chomp $sequence_1;
+		chomp $identifier_1;
+		chomp $sequence_2;
+		chomp $identifier_2;
+		chomp $quality_value_1;
+		chomp $quality_value_2;
+	
 		$identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
 		$identifier_2 = fix_IDs($identifier_2);
 
@@ -2508,13 +2512,6 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
 		my $orig_identifier_1 = $identifier_1;
 		my $orig_identifier_2 = $identifier_2;
-
-		chomp $sequence_1;
-		chomp $identifier_1;
-		chomp $sequence_2;
-		chomp $identifier_2;
-		chomp $quality_value_1;
-		chomp $quality_value_2;
 
 		$identifier_1 =~ s/^\@//;  # deletes the @ at the beginning of the FastQ ID
 
@@ -4925,9 +4922,11 @@ sub biTransformFastAFiles {
 		my $header = <IN>;
 		my $sequence= <IN>;
 		last unless ($header and $sequence);
-
+		
+		chomp $header;
 		$header = fix_IDs($header); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$header .= "\n";
+		
 		++$count;
 
 		if ($skip){
@@ -5066,9 +5065,11 @@ sub biTransformFastAFiles_paired_end {
 		my $header = <IN>;
 		my $sequence= <IN>;
 		last unless ($header and $sequence);
-
+		
+		chomp $header;
 		$header = fix_IDs($header); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$header .= "\n";
+		
 		++$count;
 
 		if ($skip){
@@ -5255,9 +5256,11 @@ sub biTransformFastQFiles {
 		my $identifier2 = <IN>;
 		my $quality_score = <IN>;
 		last unless ($identifier and $sequence and $identifier2 and $quality_score);
-
+		
+		chomp $identifier;
 		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$identifier .= "\n";
+		
 		++$count;
 
 		if ($skip){
@@ -5410,9 +5413,11 @@ sub biTransformFastQFiles_slam{
 		my $identifier2 = <IN>;
 		my $quality_score = <IN>;
 		last unless ($identifier and $sequence and $identifier2 and $quality_score);
-
+		
+		chomp $identifier;
 		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$identifier .= "\n";
+		
 		++$count;
 
 		if ($skip){
@@ -5585,8 +5590,10 @@ sub biTransformFastQFiles_paired_end {
 		last unless ($identifier and $sequence and $identifier2 and $quality_score);
 		++$count;
 
+		chomp $identifier;
 		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$identifier .= "\n";
+		
 		if ($skip){
 			next unless ($count > $skip);
 		}
@@ -5789,9 +5796,11 @@ sub biTransformFastQFiles_paired_end_slam {
 		my $quality_score = <IN>;
 		last unless ($identifier and $sequence and $identifier2 and $quality_score);
 		++$count;
-
+		
+		chomp $identifier;
 		$identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-
+		$identifier .= "\n";
+		
 		if ($skip){
 			next unless ($count > $skip);
 		}
@@ -5884,7 +5893,14 @@ sub biTransformFastQFiles_paired_end_slam {
 
 sub fix_IDs{
 	my $id = shift;
-	$id =~ s/[ \t]+/_/g; # replace spaces or tabs with underscores
+	# warn "Got $id\n";
+	if ($icpc){ # added 13 03 2019; see https://github.com/FelixKrueger/Bismark/issues/236
+		$id =~ s/[ \t].*$//g; # truncating read ID at the first space or tab
+	}
+	else{
+		$id =~ s/[ \t]+/_/g; # replace spaces or tabs with underscores
+	}
+	# warn "returning $id\n"; sleep(1);
 	return $id;
 }
 
@@ -6758,6 +6774,7 @@ sub process_command_line{
 	my $slam;
 	my $nosplice;
 	my $known_splices;
+	my $icpc;
 
 	my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -6815,6 +6832,7 @@ sub process_command_line{
 				 'slam'                    => \$slam,
 				 'known-splicesite-infile=s' => \$known_splices,
 				 'no-spliced-alignment'    => \$nosplice,
+				 'icpc'                 => \$icpc,
 				);
 
 
@@ -7647,7 +7665,11 @@ VERSION
 		die "The (experimental) SLAM-seq mode currently only works with FastQ files. Please re-specify\n\n" unless ($fastq);
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam);
+	if ($icpc){
+		warn "In this mode (--icpc), FastQ read IDs are truncated at the first space to ignore comments\n";
+	}
+	
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc);
 }
 
 
@@ -9024,6 +9046,13 @@ Output:
                          be re-used the next time round instead of calculating it once again. If a file 'nucleotide_stats.txt' is
                          found with the Bismark reports it will be automatically detected and used for the Bismark HTML report.
                          This option works only for BAM or CRAM files.
+						 
+--icpc                   This option will truncate read IDs at the first space or tab it encounters, which are sometimes used to add
+                         comments to a FastQ entry (instead of replacing them with underscores (_) as is the default behaviour). The
+                         opion is deliberately somewhat cryptic ("I couldn't possibly comment"), as it only becomes relevant when R1 and R2
+                         of read pairs are mapped separately in single-end mode, and then re-paired afterwards (the SAM format dictates
+                         that R1 and R2 have the same read ID). Paired-end mapping already creates BAM files with identical read IDs.
+                         For more information please see here: https://github.com/FelixKrueger/Bismark/issues/236. Default: OFF.
 
 
 OTHER:
@@ -9152,6 +9181,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 1 March 2019
+Last modified on 13 March 2019
 HOW_TO
 }
