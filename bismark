@@ -9007,6 +9007,8 @@ Output:
                          both the appended read IDs and custom FLAG values may cause problems with some downstream tools
                          such as Picard, new defaults were implemented as of version 0.8.3.
 
+--ignore-read-id-descriptions 	In either single-end or paired-end mode. When this optional flag is used, read id descriptions are
+ 								ignored rather than concatenated to the read id with an underscore.
 
                                              default                         old_flag
                                        ===================              ===================
