@@ -32,6 +32,8 @@ script:
 
   ## PE
   - "./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+  - "./bismark --bowtie2 --icpc ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
+  - "./bismark --bowtie2 --icpc ./travis_files/ ./travis_files/test_R1.fastq.gz"
   - "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
   - "./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./travis_files/"
   - "./bismark2report"
