@@ -6,10 +6,10 @@ For the upcoming version Bismark has undergone some substantial changes, which s
 
 #### Bowtie 1 support
 - `Bowtie (1)` support, and all of its options, has been completely dropped from `bismark_genome_preparation` and `bismark`. This decision was not made lightly, but it seems no one is using the original Bowtie short read aligner anymore, even short reads have moved on...
-- consequently, the option `--vanilla` and its handling has been removed from a number of modules (`bismark_genome_preparation`, `bismark`, `bismark_methylation_extractor` and `deduplicate_bismark`). Too bad, I readlly liked that name...
+- Consequently, the option `--vanilla` and its handling has been removed from a number of modules (`bismark_genome_preparation`, `bismark`, `bismark_methylation_extractor` and `deduplicate_bismark`). Too bad, I liked that name...
 
 #### HISAT2 support
-- instead, the DNA and RNA aligner [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) has been added as a new choice of aligner. The reason for this is not necessarily that RNA methylation is now a thing, but certain alignment modes (see below) do require splice-aware mapping if we don't want to miss out on a whole class of (spliced) alignments. Bowtie 2 is the default mode, HISAT2 alignments can be enabled with the option `--hisat2`
+- Instead, the DNA and RNA aligner [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) has been added as a new choice of aligner. The reason for this is not necessarily that RNA methylation is now a thing, but certain alignment modes (see below) do require splice-aware mapping if we don't want to miss out on a whole class of (spliced) alignments. Bowtie 2 is the default mode, HISAT2 alignments can be enabled with the option `--hisat2`
 
 - Similar to the Bowtie2 mode, alignments with HISAT2 are restricted to global (end-to-end) alignments, i.e. soft-clipping is disabled. Furthermore, in paired-end mode, the options `--no-mixed` and `--no-discordant` are permanently enabled, meaning that only properly aligned read pairs are put out. 
 
@@ -20,11 +20,11 @@ At the time of writing this, the `--hisat2` mode appears to be working as expect
 
 #### SLAM-seq mode
 
-We also added a new, experimental and completely different type of alignment for SLAM-seq type data (option `--slam`). This fairly recent method to interrogate newly synthesized messenger RNA is akin to bisulfite conversion, in that newly synthesized RNA may contain T to C conversions following an alkylation reaction ([original publication](http://science.sciencemag.org/content/360/6390/800)). The new Bismark alignment mode `--slam` performs T>C conversions of both the genome (in the genome preparation step) and the subsequent alignment steps (Bismark alignment step). Currently, the rest of the processing SLAM-seq data hijacks the standard methylation pipeline: and T>C conversions are written out as 'methylation events` in CpG context, while normal T-T matches are scored as unmethylated event in CpG context. No other context is being used. 
+We also added a new, experimental and completely different type of alignment for SLAM-seq type data (option `--slam`). This fairly recent method to interrogate newly synthesized messenger RNA is akin to bisulfite conversion, in that newly synthesized RNA may contain T to C conversions following an alkylation reaction ([original publication](http://science.sciencemag.org/content/360/6390/800) and https://www.nature.com/articles/nmeth.4435). The new Bismark alignment mode `--slam` performs T>C conversions of both the genome (in the genome preparation step) and the subsequent alignment steps (Bismark alignment step). Currently, the rest of the processing of SLAM-seq data hijacks the standard methylation pipeline:
 
-It should be mentioned that this is currently an experimental workflow. One might argue that T/C conversion aware (or T/C mis-mapping agnostic) mapping is currently not necessary for SLAM-seq, NASC-Seq, or scSLAM-seq data as the labeling reaction is so inefficient (1 in only 50 to 200 newly incorporated Ts is a 4sU, which may get alkylated). This might be true - for now. If the reaction gets imprioved over time, maybe there is a need again for C/T agnostic mapping, similar to bisulfite-Seq data.
+    T>C conversions are written out as `methylation events` in CpG context, while T-T matches are scored as `unmethylated events` in CpG context. Other cytosine contexts are not being used. So in a nut-shell: methylation calls in `--slam` mode are either Ts (unmethylated calls = matches at T positions), or T to C mismatches (methylated calls = C mismatches at T positions). 
 
-
+It should be noted that this is currently an **experimental workflow**. One might argue that T/C conversion aware (or T/C mis-mapping agnostic) mapping is currently not necessary for [SLAM-seq](https://www.nature.com/articles/nmeth.4435), [NASC-Seq](https://www.biorxiv.org/content/10.1101/498667v1.article-info), or [scSLAM-seq](https://www.biorxiv.org/content/10.1101/486852v1) data as the labeling reaction is very inefficient (1 in only 50 to 200 newly incorporated Ts is a 4sU, which may get alkylated). This might be true - for now. If and when the conversion reaction improves over time, C/T agnostic mapping, similar to bisulfite-Seq data, might very well become necessary.
 
 
 * Added documentation for NOMe-seq or scNMT-seq processing.
