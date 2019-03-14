@@ -44,7 +44,7 @@ use Cwd;
 ### Adapting deduplicate_bismark to also work with gapped reads (CIGAR operation N)
 ### Also removing all traces of --vanilla
 
-my $dedup_version = 'v0.20.1_dev';
+my $dedup_version = 'v0.21.0';
 my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile) = process_commandline();
