@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.21.0_dev
+## Changelog for Bismark v0.21.0
 
 For the upcoming version Bismark has undergone some substantial changes, which sometimes affect more than one module within the Bismark suite. Here is a short description of the major changes: 
 
@@ -81,7 +81,7 @@ It should be noted that this is currently an **experimental workflow**. One migh
 - Reads containing spliced reads are now also skipped when determining the genomic base composition (as are reads with InDels).
 
 
-## Changelog for Bismark v0.20.0
+## Changelog for Bismark v0.20.1
 
 ### bismark
 
