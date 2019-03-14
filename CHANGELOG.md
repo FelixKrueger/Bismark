@@ -21,8 +21,8 @@ At the time of writing this, the `--hisat2` mode appears to be working as expect
 #### SLAM-seq mode
 
 We also added a new, experimental and completely different type of alignment for SLAM-seq type data (option `--slam`). This fairly recent method to interrogate newly synthesized messenger RNA is akin to bisulfite conversion, in that newly synthesized RNA may contain T to C conversions following an alkylation reaction ([original publication](http://science.sciencemag.org/content/360/6390/800) and https://www.nature.com/articles/nmeth.4435). The new Bismark alignment mode `--slam` performs T>C conversions of both the genome (in the genome preparation step) and the subsequent alignment steps (Bismark alignment step). Currently, the rest of the processing of SLAM-seq data hijacks the standard methylation pipeline:
-
-    T>C conversions are written out as `methylation events` in CpG context, while T-T matches are scored as `unmethylated events` in CpG context. Other cytosine contexts are not being used. So in a nut-shell: methylation calls in `--slam` mode are either Ts (unmethylated calls = matches at T positions), or T to C mismatches (methylated calls = C mismatches at T positions). 
+    
+- T>C conversions are written out as `methylation events` in CpG context, while T-T matches are scored as `unmethylated events` in CpG context. Other cytosine contexts are not being used. So in a nut-shell: methylation calls in `--slam` mode are either Ts (unmethylated calls = matches at T positions), or T to C mismatches (methylated calls = C mismatches at T positions). 
 
 It should be noted that this is currently an **experimental workflow**. One might argue that T/C conversion aware (or T/C mis-mapping agnostic) mapping is currently not necessary for [SLAM-seq](https://www.nature.com/articles/nmeth.4435), [NASC-Seq](https://www.biorxiv.org/content/10.1101/498667v1.article-info), or [scSLAM-seq](https://www.biorxiv.org/content/10.1101/486852v1) data as the labeling reaction is very inefficient (1 in only 50 to 200 newly incorporated Ts is a 4sU, which may get alkylated). This might be true - for now. If and when the conversion reaction improves over time, C/T agnostic mapping, similar to bisulfite-Seq data, might very well become necessary.
 
@@ -30,22 +30,30 @@ It should be noted that this is currently an **experimental workflow**. One migh
 * Added documentation for NOMe-seq or scNMT-seq processing.
 
 ### bismark
-- Added option for HISAT2 mode:
-* `--no-spliced-aligments`: Disable spliced alignment
 
-* `--known-splicesite-infile <path>`:   Provide a list of known splice sites.
+- Dropped support for Bowtie
 
-Added option `--slam`.
+- Removed all traces of `--vanilla`
+
+- Added support for HISAT2 with option `--hisat2`.
+
+- Added HISAT2 option `--no-spliced-aligments` to disable spliced alignments altogether
+
+- Added HISAT2 option `--known-splicesite-infile <path>` to provide a list of known splice sites.
+
+- Added option `--slam` to allow T/C mismatch agnostic mapping (3-letter alignment). More [here](https://github.com/FelixKrueger/Bismark/blob/master/CHANGELOG.md#slam-seq-mode).
+
+- Added a new option `--icpc` to truncate read IDs at the first space (or tab) it encounters in the (FastQ) read ID, which are sometimes used to add comments to a FastQ entry (instead of replacing them with underscores which is the default behaviour).
 
 ### bismark_genome_preparation
 
 - Added option `--hisat2`. Instead of performing an in-silico bisulfite conversion, this mode transforms T to C (forward strand), or A to G (reverse strand). The folder structure and rest of the indexing process is currently exactly the same as for bisulfite sequences, but this might change at some point. This means that a genome prepared in `--slam` mode is currently indistinguishable from a true Bisulfite Genome (until the alignments are in) so please make sure you name the genome folder appropriately to avoid confusion.
 
-- Added support for new CIGAR operation `N`
+- Removed all traces of `--vanilla`
 
 ### deduplicate_bismark
 
-* removed all traces of the option `--vanilla`
+* Removed all traces of `--vanilla`
 
 * `--bam` mode is now the default. Uncompressed SAM output may still be obtained using the new option `--sam`
 
@@ -55,7 +63,11 @@ Added option `--slam`.
 
 ### bismark_methylation_extractor
 
-- Added support for new CIGAR operation `N`
+- Added support for new CIGAR operation `N` for all extraction modes
+
+### bismark2summary/bismark2report
+
+- Adapted to work with Bismark HISAT2 reports instead of Bowtie 1 reports.
 
 
 ## Changelog for Bismark v0.20.0
