@@ -76,6 +76,10 @@ It should be noted that this is currently an **experimental workflow**. One migh
 
 - Adapted to work with Bismark HISAT2 reports instead of Bowtie 1 reports.
 
+### bam2nuc
+
+- Reads containing spliced reads are now also skipped when determining the genomic base composition (as are reads with InDels).
+
 
 ## Changelog for Bismark v0.20.0
 
