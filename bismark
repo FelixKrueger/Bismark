@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.21.0';
+my $bismark_version = 'v0.21.0_dev';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -2319,14 +2319,8 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
 		$identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
 
-		my $return;
-		if ($bowtie2){
-			$return = check_results_single_end (uc$sequence,$identifier,$quality_value);
-		}
-		else{
-			$return = check_results_single_end (uc$sequence,$identifier,$quality_value);
-		}	
-
+		my $return = check_results_single_end (uc$sequence,$identifier,$quality_value);
+		
 		unless ($return){
 			$return = 0;
 		}
@@ -2415,14 +2409,8 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
 		$identifier_1 =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-		my $return;
-		if ($bowtie2){
-			$return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
-		}
-		else{
-			$return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
-		}
-
+		my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
+		
 		unless ($return){
 		  $return = 0;
 		}
@@ -2587,10 +2575,12 @@ sub check_results_single_end{
   
 	### reading from the Bowtie 2 output filehandles
 	foreach my $index (0..$#fhs){
-		# print "Index: $index\n";
-		# print "$fhs[$index]->{last_line}\n";
-		# print "$fhs[$index]->{last_seq_id}\n";
-		# sleep (1);
+	#	if ($fhs[$index]->{last_line} =~ /\d+S/){
+			#print "Index: $index\n";
+			#print "$fhs[$index]->{last_line}\n";
+			#print "$fhs[$index]->{last_seq_id}\n";
+			#sleep (1);
+	#	}
 		### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
 		next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -4065,6 +4055,19 @@ sub extract_corresponding_genomic_sequence_single_end{
 			### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail the base by base comparison in hemming_dist()
 			# $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
 		}
+		elsif ($ops[$_] eq 'S'){ # soft-clipped read sequence
+			# we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls 
+			# and we can later ignore it better during the generation of the MD:Z-tag
+			$non_bisulfite_sequence .= 'X' x $len[$_];
+			if ($contains_deletion){
+				$genomic_seq_for_MD_tag .= 'X' x $len[$_];
+			}
+			# warn "soft-clipped sequence! $sequence_identifier\n";
+			# warn "$non_bisulfite_sequence\n";
+			# position doesn't need adjusting,
+			# we don't need to add anything to the hemming distance for soft-clipped bases since we use padding Xs which will
+			# fail the base by base comparison in hemming_dist()
+		}
 		elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
 			# we do not add any genomic sequence but only adjust the position
 
@@ -4082,11 +4085,11 @@ sub extract_corresponding_genomic_sequence_single_end{
 			# I don't think that skipped regions add to the hemming distance
 			# $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
 		}
-		elsif($cigar =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist, we die
-			die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+		elsif($cigar =~ tr/[HPX=]//){ # if these (for standard mapping) illegal characters exist, we die
+			die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' or 'N': $cigar";
 		}
 		else{
-			die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+			die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D', 'S' or 'N': $cigar";
 		}
 	}	
 
@@ -4158,6 +4161,9 @@ sub extract_corresponding_genomic_sequence_single_end{
 	$methylation_call_params->{$sequence_identifier}->{genome_conversion} = $genome_conversion;
 	$methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
 	$methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag} = $genomic_seq_for_MD_tag;
+
+	# warn "Found sequence:               $methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n";
+	# warn "final non-bisulfite sequence: $non_bisulfite_sequence\n"; sleep(1);
 
 	# if ($contains_deletion){
 	#   warn "non-bis: $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence}\n";
@@ -4284,10 +4290,10 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			# $indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
 		elsif($cigar_1 =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-			die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1\n";
+			die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1";
 		}
 		else{
-			die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1\n";
+			die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1";
 		}	
 	}
 
@@ -4356,10 +4362,10 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			$pos_2 += $len_2[$_];
 		}
 		elsif($cigar_2 =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-			die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2\n";
+			die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
 		}
 		else{
-			die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2\n";
+			die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
 		}
 	}
 
@@ -6775,6 +6781,7 @@ sub process_command_line{
 	my $nosplice;
 	my $known_splices;
 	my $icpc;
+	my $local;
 
 	my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -6832,7 +6839,8 @@ sub process_command_line{
 				 'slam'                    => \$slam,
 				 'known-splicesite-infile=s' => \$known_splices,
 				 'no-spliced-alignment'    => \$nosplice,
-				 'icpc'                 => \$icpc,
+				 'icpc'                    => \$icpc,
+				 'local'                   => \$local,
 				);
 
 
@@ -7288,10 +7296,15 @@ VERSION
 		push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
 	}
 	else{
-		#if ($bowtie2){
+		if ($local){
+			warn "[EXPERIMENTAL]: local alignments\n\n|||||||||||||||||||||||||||||||||||||||||||||\n\n";
+			push @aligner_options,'--local'; # not currently setting --score_min
+			($score_min_intercept, $score_min_slope) = (0, -0.2);
+		}
+		else{
 			($score_min_intercept, $score_min_slope) = (0, -0.2);
 			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
-		#}
+		}
 	}
 
 	### BOWTIE 2/HISAT2 READ GAP OPTIONS
@@ -7481,6 +7494,7 @@ VERSION
 		push @aligner_options,'--quiet';
 	}
 
+
 	
 	### STRAND-SPECIFIC LIBRARIES
 	my $directional;
@@ -7669,7 +7683,8 @@ VERSION
 		warn "In this mode (--icpc), FastQ read IDs are truncated at the first space to ignore comments\n";
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc);
+	
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local);
 }
 
 
@@ -7876,10 +7891,10 @@ sub single_end_SAM_output{
 					next; # irrelevant
 				}
 				elsif ($cigar =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar";
 				}
 			}
 			# warn "Alignment score $number_of_mismatches\n";
@@ -8320,10 +8335,10 @@ sub paired_end_SAM_output{
 					next;		# irrelevant
 				}
 				elsif ($cigar_1 =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1\n";
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1\n";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1";
 				}
 			}
 
@@ -8361,10 +8376,10 @@ sub paired_end_SAM_output{
 					next; #irrelevant
 				}
 				elsif ($cigar_2 =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_2\n";
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_2";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2\n";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
 				}
 			}
 
@@ -8458,7 +8473,19 @@ sub make_mismatch_string{
 	if ($cigar =~ /N/){
 		# warn "This is a splice junction containing read:\nactual_seq:\n$actual_seq\nreference seq:\n$ref_seq\nCIGAR:\n$cigar\nMD seq:\n$md_sequence\n\n~~~~~~~~~~\n";
 		# warn "Length of MD sequence: ",length($md_sequence),"\n"; $verbose = 1;
-	}	
+	}
+
+	if ($cigar =~ /S/){
+		if (length($md_sequence) > 0){
+			warn "This is a soft-clipped read:\nactual_seq:\n$actual_seq\nreference seq:\n$ref_seq\nCIGAR:\n$cigar\nMD seq:\n$md_sequence\n\n~~~~~~~~~~\n";
+			warn "Length of MD sequence: ",length($md_sequence),"\n"; 
+			$verbose = 1;
+		}
+		else{
+			$verbose = 0;
+		}
+	}
+	
 	my $MD_tag = "MD:Z:";
 	my $prev_matching = 0;
 	my $last_char;
@@ -8476,22 +8503,23 @@ sub make_mismatch_string{
 			++$prev_matching;
 		}
 		else{
-			# If the mismatch is due to an insertion we simply move on, else we print the previously matching bases as well as the mismatching genomic base
+			# If the mismatch is due to an insertion or soft-clipping we simply move on, else we print the previously matching bases
+			# as well as the mismatching genomic base
 			if ($ref_base eq 'X'){
-				#if ($verbose){ warn "The genome base was an artificially padded '$ref_base' due to an insertion in the read at this position. Just ignoring it for the MD tag\n"; sleep(1);}
+				if ($verbose){ warn "The genome base was an artificially padded '$ref_base' due to an insertion or soft-clipping in the read at this position. Just ignoring it for the MD tag\n";}
 			}
 			else{
-				#if ($verbose){ warn "previous matching bases: $prev_matching\n";}
+				if ($verbose){ warn "previous matching bases: $prev_matching\n";}
 
 				### There is a mismatch between the sequence and the genome. First we need to write out how may bases matched until now
 				if ($prev_matching == 0){
-					# if ($verbose){ warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";}
-					# if ($verbose){ warn "${prev_matching}$ref_base\n";}
+					if ($verbose){ warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";}
+					if ($verbose){ warn "${prev_matching}$ref_base\n";}
 					$MD_tag .= $prev_matching;
 					$MD_tag .= $ref_base;
 				}
 				else{
-					# if ($verbose){ warn "${prev_matching}$ref_base\n";}
+					if ($verbose){ warn "${prev_matching}$ref_base\n";}
 					$MD_tag .= $prev_matching;
 					$MD_tag .= $ref_base;
 				}
@@ -8502,43 +8530,42 @@ sub make_mismatch_string{
 	}
 	### appending the number of matches one last time
 	$MD_tag .= $prev_matching;
-	if ($verbose){warn "MD tag at this point in time: $MD_tag\n"; sleep(1);}
+	if ($verbose){warn "MD tag at this point in time: $MD_tag\n";}
 
 	### If the read contains deletion(s) we need to take care of these in the MD-tag as well
-	### 12 02 2019: For skipped regions (CIGAR operation: 'N') we do not need to add the sequence to the MD:z_ string
+	### 12 02 2019: For skipped regions (CIGAR operation: 'N') we do not need to add the sequence to the MD:Z string
 	### (which would admittedly get stupidly long otherwise...)
 	if ($cigar =~ /D/){
 		my $deletions_total = 0;
-			while ($cigar =~ /D/g){
-				++$deletions_total;
-			}
-			if ($verbose){ warn "Read contains $deletions_total deletions in total\n\n";}
+		while ($cigar =~ /D/g){
+			++$deletions_total;
+		}
+		if ($verbose){ warn "Read contains $deletions_total deletions in total\n\n";} sleep(3);
 
-			if ($verbose){ warn "There was a deletion in the read!\n";}
-			if ($verbose){ warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";}
+		if ($verbose){ warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";}
 
-			# parsing CIGAR string
-			my @len = split (/\D+/,$cigar); # storing the length per operation
-			my @ops = split (/\d+/,$cigar); # storing the operation
-			shift @ops; # remove the empty first element
-			die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+		# parsing CIGAR string
+		my @len = split (/\D+/,$cigar); # storing the length per operation
+		my @ops = split (/\d+/,$cigar); # storing the operation
+		shift @ops; # remove the empty first element
+		die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 
-			my $MD_pos_so_far = 0;
-			my $deletions_processed = 0;
-			my $del_pos = 0;
-			my $deleted_bases = '';
-			my $new_MD = $1 if ($MD_tag =~ /MD:Z:(.*)/);
-			my $md_index_already_processed;
+		my $MD_pos_so_far = 0;
+		my $deletions_processed = 0;
+		my $del_pos = 0;
+		my $deleted_bases = '';
+		my $new_MD = $1 if ($MD_tag =~ /MD:Z:(.*)/);
+		my $md_index_already_processed;
 
-			my @md = split //,$new_MD;
-		
-			if ($verbose){ warn "New MD-tag:  $new_MD\n\n";}
-			$MD_tag = "MD:Z:"; ### reconstituting a new MD-tag
-			$new_MD = ''; # using this to build up a new string that will replace the old \@md
+		my @md = split //,$new_MD;
+	
+		if ($verbose){ warn "New MD-tag:  $new_MD\n\n";}
+		$MD_tag = "MD:Z:"; ### reconstituting a new MD-tag
+		$new_MD = ''; # using this to build up a new string that will replace the old \@md
 
-			if ($verbose){ warn "CIGAR string; $cigar\n";}
-			### determining end position of a read
-			foreach my $index(0..$#len){
+		if ($verbose){ warn "CIGAR string; $cigar\n";}
+		### determining end position of a read
+		foreach my $index(0..$#len){
 
 				if ($ops[$index] eq 'M'){  # matching bases
 					$del_pos += $len[$index];
@@ -8657,10 +8684,7 @@ sub make_mismatch_string{
 										if ($verbose){ warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";}
 
 
-									### This migh need looking at!!
-
-			
-									$current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
+										$current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
 										if ($verbose){  warn "Current index = $current_md_index\n";}
 
 										if ($verbose){ warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";}
@@ -8762,12 +8786,12 @@ sub make_mismatch_string{
 				if ($verbose){ warn "MD-tag so far: $MD_tag ~~\nnew_MD so far: $new_MD\n\n";}
 			}
 			else{
-				die "Found CIGAR operations other than M, I, D or N: '$ops[$index]'. Not allowed at the moment\n";
+				die "Found CIGAR operations other than M, I, D, S or N: '$ops[$index]'. Not allowed at the moment";
 			}
 		}
 
 	}	
-	if ($verbose){  warn "Returning MD-tag: $MD_tag\n"; sleep(3);}
+	if ($verbose){  warn "Returning MD-tag: $MD_tag\n"; sleep(1);}
 	return $MD_tag;
 
 }
