@@ -4181,7 +4181,7 @@ sub extract_corresponding_genomic_sequence_paired_end{
 	my ($sequence_identifier,$methylation_call_params) = @_;
 	### A bisulfite sequence pair for 1 location in the genome can theoretically be on any of the 4 possible converted strands. We are also giving the
 	### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
-
+	# $verbose = 1;
 	my $cigar_1 = $methylation_call_params->{$sequence_identifier}->{CIGAR_1};
 	my $cigar_2 = $methylation_call_params->{$sequence_identifier}->{CIGAR_2};
 	my $flag_1 =  $methylation_call_params->{$sequence_identifier}->{flag_1};
@@ -4272,6 +4272,20 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
 			# indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
+		elsif ($ops_1[$_] eq 'S'){ # soft-clipped read sequence
+			# we simply add padding Xs instead of finding genomic sequence. These will not be used to infer methylation calls,
+			# and we can later ignore them better during the generation of the MD:Z: tag
+			$non_bisulfite_sequence_1 .= 'X' x $len_1[$_];
+			if ($contains_deletion_1){
+				$genomic_seq_for_MD_tag_1 .= 'X' x $len_1[$_];
+			}
+			# warn "Soft-clipped Read 1 sequence! $sequence_identifier\n";
+			# warn "$non_bisulfite_sequence_1\n";
+			# position doesn't need adjusting
+
+			### We don't need to add anything to the hemming distance for soft-clipped bases 
+			# since we use padding Xs which will fail a base by base comparison in hemming_dist()
+		}
 		elsif ($ops_1[$_] eq 'D'){ # deletion in the read sequence
 			# we do not add any genomic sequence but only adjust the position
 			# we do however need to add the genomic sequence to $genomic_seq_for_MD-tag so we can create a proper MD tag later
@@ -4289,11 +4303,11 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			# not altering the variable needed for the hemming distance
 			# $indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
-		elsif($cigar_1 =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-			die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1";
+		elsif($cigar_1 =~ tr/[HPX=]//){ # if these (for standard mapping) illegal characters exist we die
+			die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_1";
 		}
 		else{
-			die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1";
+			die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_1";
 		}	
 	}
 
@@ -4346,6 +4360,19 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
 			# $indels_2 += $len_2[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
+		elsif ($ops_2[$_] eq 'S'){ # soft-clipped read sequence
+			# we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls
+			# and we can ignore this later during the generation of the MD:Z: tag
+			$non_bisulfite_sequence_2 .= 'X' x $len_2[$_];
+			if ($contains_deletion_2){
+				$genomic_seq_for_MD_tag_2 .= 'X' x $len_2[$_];
+			}
+			# warn "Soft-clipped Read 2sequence! ID: $sequence_identifier\n";
+			# warn "$non_bisulfite_sequence_2\n";
+			# position doesn't need adjusting
+
+			# We don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
+		}
 		elsif ($ops_2[$_] eq 'D'){ # deletion in the read sequence
 			# we do not add any genomic sequence but only adjust the position
 			# we do however need to add the genomic sequence to $genomic_seq_for_MD-tag so we can create a proper MD tag later
@@ -4362,10 +4389,10 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			$pos_2 += $len_2[$_];
 		}
 		elsif($cigar_2 =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-			die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
+			die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_2";
 		}
 		else{
-			die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
+			die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_2";
 		}
 	}
 
@@ -8812,34 +8839,6 @@ sub make_mismatch_string{
 	return $MD_tag;
 
 }
-
-
-
-
-### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
-### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
-# sub make_mismatch_string{
-#   my $actual_seq = shift or die "Missing actual sequence\n";
-#   my $ref_seq = shift or die "Missing reference sequence\n";
-#   my $XX_tag = "XX:Z:";
-
-#   my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
-
-#   warn "'$tmp'\n"; sleep(1);
-#   my $prev_mm_pos = 0;
-
-#   while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
-#     my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-#     my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
-#     $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
-#     $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
-#     $prev_mm_pos = pos($tmp);                            # Position of last mismatch
-#   }
-#   my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
-#   $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
-#   return $XX_tag;
-# }
-
 
 
 sub print_helpfile{
