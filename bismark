@@ -6885,12 +6885,13 @@ VERSION
 	### PATH TO BOWTIE 2
 	### if a special path to Bowtie 2 was specified we will use that one, otherwise it is assumed that Bowtie 2 is in the PATH
 	if ($bowtie2){
-		if ($path_to_bowtie2){
+		if (defined $path_to_bowtie2){
 			unless ($path_to_bowtie2 =~ /\/$/){
 				$path_to_bowtie2 =~ s/$/\//;
 			}
 			if (-d $path_to_bowtie2){
-				$path_to_bowtie2 = "${path_to_bowtie}bowtie2";
+				$path_to_bowtie2 = "${path_to_bowtie2}bowtie2";
+				# warn "Setting path to Bowtie2 to: >>$path_to_bowtie2<<\n";
 			}
 			else{
 				die "The path to Bowtie 2 provided ($path_to_bowtie2) is invalid (not a directory)!\n";
@@ -6898,7 +6899,7 @@ VERSION
 		}
 		else{
 			$path_to_bowtie2 = 'bowtie2';
-			warn "Path to Bowtie 2 specified as: $path_to_bowtie2\n";
+			# warn "Path to Bowtie 2 specified as: $path_to_bowtie2 (assuming it is in the path)\n";
 		}
 	}
 	elsif($hisat2){
