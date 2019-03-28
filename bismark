@@ -7632,7 +7632,7 @@ VERSION
 			}
 		
 			warn "Running HISAT2 without detecting spliced alignments\n"; 
-			push @aligner_options,'--no-spliced-alignments';
+			push @aligner_options,'--no-spliced-alignment';
 		}
 		
 		if ($known_splices){
