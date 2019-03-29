@@ -1593,14 +1593,14 @@ sub process_Bismark_results_file{
 							push @comp_cigar, $ops[$index];
 						}
 					}
-					# print "original CIGAR: $cigar\n";
-					# print "original CIGAR: @comp_cigar\n"; sleep(1);
+					#print "original CIGAR: $cigar\n";
+					#print "original CIGAR: @comp_cigar\n"; sleep(1);
 
 					### If we are clipping off some bases at the start we need to adjust the start position of the alignments accordingly!
 					if ($strand eq '+') {
 						 
 						my $D_count = 0; # counting all deletions that affect the ignored genomic position, i.e. Deletions, insertions and skipped regions
-						my $N_count = 0;
+						my $N_count = 0; # matches and soft-clips do not count
 						my $I_count = 0;
 
 						for (1..$ignore) {
@@ -1639,7 +1639,7 @@ sub process_Bismark_results_file{
 						### For reverse strand alignments we need to determine the number of matching bases (M),
 						### deletions (D) or skipped regions (N) in the read from the CIGAR
 						### string to be able to work out the starting position of the read which is on the 3' end of the sequence
-						my $MDN_count = 0;	# counting all operations that affect the genomic position, i.e. M and D. Insertions do not affect the start position
+						my $MDN_count = 0;	# counting all operations that affect the genomic position, i.e. M, N and D. Insertions or soft-clips do not affect the start position
 						foreach (@comp_cigar) {
 							++$MDN_count if ($_ eq 'M' or $_ eq 'D' or $_ eq 'N');
 						}
@@ -1668,7 +1668,7 @@ sub process_Bismark_results_file{
 					}
 					$new_cigar .= "$count$last_op"; # appending the last operation and count
 					$cigar = $new_cigar;
-					# print "ignore adjusted scalar: $cigar\n";
+					# print "ignore adjusted scalar: $cigar\n"; sleep(1);
 				}
 	
 				#######################
