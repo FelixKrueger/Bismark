@@ -31,7 +31,7 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.21.0';
+my $bam2nuc_version = 'v0.21.0_dev';
 
 my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
@@ -107,38 +107,38 @@ sub generate_nucleotide_report {
     my $count = 0;
     my $skipped = 0;
     while (<IN>){
-	chomp;
-	if (/^\@/) {
-	    #  warn "$_\n";
-	    next;
-	}
-	++$count;
-	if ($count%500000 == 0){
-	    warn "Processed $count lines\n";
-	}
-	my ($flag,$chr,$start,$cigar,$sequence) = (split(/\t/))[1,2,3,5,9];
-	#warn "$flag\t$chr\t$start\t$cigar\t$sequence\n"; sleep(1);
-	
-	# $chr =~ s/^.*\|//; # just a temporary measure for the Bonasio et al dataset
-	# warn "chr after replacing: $chr\n";
-	
-	### checking CIGAR string for insertions or deletions, and chucking the sequence if they are no linear matches
-	if ($cigar =~ /[IDN]/){
-		# warn "ignoring sequence:\n $_\n"; sleep(1);
-	    ++$skipped;
-	    next;
-	}
-	
-	### extracting the genomic sequence instead
- 	my $extracted_sequence = substr($chromosomes{$chr},$start - 1,length$sequence);
-	# warn "Old sequence: $sequence\nExt sequence: $extracted_sequence\n"; sleep(1);
-	
-	if ($single){
-	    calc_single_end($extracted_sequence,$flag);
-	}
-	else{
-	    calc_paired_end($extracted_sequence,$flag);
-	}
+		chomp;
+		if (/^\@/) {
+			#  warn "$_\n";
+			next;
+		}
+		++$count;
+		if ($count%500000 == 0){
+			warn "Processed $count lines\n";
+		}
+		my ($flag,$chr,$start,$cigar,$sequence) = (split(/\t/))[1,2,3,5,9];
+		#warn "$flag\t$chr\t$start\t$cigar\t$sequence\n"; sleep(1);
+		
+		# $chr =~ s/^.*\|//; # just a temporary measure for the Bonasio et al dataset
+		# warn "chr after replacing: $chr\n";
+		
+		### checking CIGAR string for insertions or deletions, and chucking the sequence if they are no linear matches
+		if ($cigar =~ /[IDSN]/){
+			# warn "ignoring sequence (CIGAR $cigar):\n$_\n"; sleep(1);
+			++$skipped;
+			next;
+		}
+		
+		### extracting the genomic sequence instead
+		my $extracted_sequence = substr($chromosomes{$chr},$start - 1,length$sequence);
+		# warn "Old sequence: $sequence\nExt sequence: $extracted_sequence\n"; sleep(1);
+		
+		if ($single){
+			calc_single_end($extracted_sequence,$flag);
+		}
+		else{
+			calc_paired_end($extracted_sequence,$flag);
+		}
     }
     warn "\n\n";
 
@@ -584,8 +584,9 @@ sub print_helpfile{
       
   This script bam2nuc reads BAM files and calculates the mono- and di-nucleotide coverage of the
   reads (using the genomic sequence rather than the observed sequence in the reads themselves)
-  and compares it to the average genomic sequence composition. Reads harbouring InDels are not
-  taken into consideration. Mono- or Dinucleotides containing Ns are ignored as well.
+  and compares it to the average genomic sequence composition. Reads harbouring InDels, skipped or
+  soft-clipped reagions (CIGAR operations N or S) are not taken into consideration. Mono- or dinucleotides
+  containing Ns are ignored as well.
 
   bam2nuc handles both Bismark single-end and paired-end files (determined automatically). Both 
   BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is
@@ -652,7 +653,7 @@ TT      5055    10.96   1314144 10.80   0.004
 
 This file is picked up and plotted by bismark2report automatically if found in the folder.
 
-                              Script last modified: 14 Feb 2019
+                              Script last modified: 25 March 2019
 
 EOF
     ;

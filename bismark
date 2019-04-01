@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.21.0';
+my $bismark_version = 'v0.21.0_dev';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -2319,14 +2319,8 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
 		$identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
 
-		my $return;
-		if ($bowtie2){
-			$return = check_results_single_end (uc$sequence,$identifier,$quality_value);
-		}
-		else{
-			$return = check_results_single_end (uc$sequence,$identifier,$quality_value);
-		}	
-
+		my $return = check_results_single_end (uc$sequence,$identifier,$quality_value);
+		
 		unless ($return){
 			$return = 0;
 		}
@@ -2415,14 +2409,8 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
 		$identifier_1 =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-		my $return;
-		if ($bowtie2){
-			$return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
-		}
-		else{
-			$return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
-		}
-
+		my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
+		
 		unless ($return){
 		  $return = 0;
 		}
@@ -2587,10 +2575,12 @@ sub check_results_single_end{
   
 	### reading from the Bowtie 2 output filehandles
 	foreach my $index (0..$#fhs){
-		# print "Index: $index\n";
-		# print "$fhs[$index]->{last_line}\n";
-		# print "$fhs[$index]->{last_seq_id}\n";
-		# sleep (1);
+	#	if ($fhs[$index]->{last_line} =~ /\d+S/){
+			#print "Index: $index\n";
+			#print "$fhs[$index]->{last_line}\n";
+			#print "$fhs[$index]->{last_seq_id}\n";
+			#sleep (1);
+	#	}
 		### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
 		next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -3120,7 +3110,7 @@ sub methylation_call_slam{
 	$counting{total_unmethylated_CpG_count} += $unmethylated_CpG_count;
 	$counting{total_unmethylated_C_unknown_count} += $unmethylated_C_unknown_count;	
 
-	# print "\n$sequence_actually_observed\n$genomic_sequence\n",@match,"\n$read_conversion\n\n"; sleep(1);
+	# print "\n$sequence_actually_observed\n$genomic_sequence\n",@match,"\n$read_conversion\n\n";
 
 	return $methylation_call;
 }
@@ -4065,6 +4055,19 @@ sub extract_corresponding_genomic_sequence_single_end{
 			### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail the base by base comparison in hemming_dist()
 			# $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
 		}
+		elsif ($ops[$_] eq 'S'){ # soft-clipped read sequence
+			# we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls 
+			# and we can later ignore it better during the generation of the MD:Z-tag
+			$non_bisulfite_sequence .= 'X' x $len[$_];
+			if ($contains_deletion){
+				$genomic_seq_for_MD_tag .= 'X' x $len[$_];
+			}
+			# warn "soft-clipped sequence! $sequence_identifier\n";
+			# warn "$non_bisulfite_sequence\n";
+			# position doesn't need adjusting,
+			# we don't need to add anything to the hemming distance for soft-clipped bases since we use padding Xs which will
+			# fail the base by base comparison in hemming_dist()
+		}
 		elsif ($ops[$_] eq 'D'){ # deletion in the read sequence
 			# we do not add any genomic sequence but only adjust the position
 
@@ -4082,11 +4085,11 @@ sub extract_corresponding_genomic_sequence_single_end{
 			# I don't think that skipped regions add to the hemming distance
 			# $indels += $len[$_]; # adding this to $indels so we can determine the hemming distance for the SAM output (= single-base substitutions (mismatches, insertions, deletions)
 		}
-		elsif($cigar =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist, we die
-			die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+		elsif($cigar =~ tr/[HPX=]//){ # if these (for standard mapping) illegal characters exist, we die
+			die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' or 'N': $cigar";
 		}
 		else{
-			die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+			die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D', 'S' or 'N': $cigar";
 		}
 	}	
 
@@ -4159,6 +4162,9 @@ sub extract_corresponding_genomic_sequence_single_end{
 	$methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence} = $non_bisulfite_sequence;
 	$methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag} = $genomic_seq_for_MD_tag;
 
+	# warn "Found sequence:               $methylation_call_params->{$sequence_identifier}->{bowtie_sequence}\n";
+	# warn "final non-bisulfite sequence: $non_bisulfite_sequence\n"; sleep(1);
+
 	# if ($contains_deletion){
 	#   warn "non-bis: $methylation_call_params->{$sequence_identifier}->{unmodified_genomic_sequence}\n";
 	#   warn "MD-seq:  $methylation_call_params->{$sequence_identifier}->{genomic_seq_for_MD_tag}\n";
@@ -4175,7 +4181,7 @@ sub extract_corresponding_genomic_sequence_paired_end{
 	my ($sequence_identifier,$methylation_call_params) = @_;
 	### A bisulfite sequence pair for 1 location in the genome can theoretically be on any of the 4 possible converted strands. We are also giving the
 	### sequence a 'memory' of the conversion we are expecting which we will need later for the methylation call
-
+	# $verbose = 1;
 	my $cigar_1 = $methylation_call_params->{$sequence_identifier}->{CIGAR_1};
 	my $cigar_2 = $methylation_call_params->{$sequence_identifier}->{CIGAR_2};
 	my $flag_1 =  $methylation_call_params->{$sequence_identifier}->{flag_1};
@@ -4266,6 +4272,20 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
 			# indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
+		elsif ($ops_1[$_] eq 'S'){ # soft-clipped read sequence
+			# we simply add padding Xs instead of finding genomic sequence. These will not be used to infer methylation calls,
+			# and we can later ignore them better during the generation of the MD:Z: tag
+			$non_bisulfite_sequence_1 .= 'X' x $len_1[$_];
+			if ($contains_deletion_1){
+				$genomic_seq_for_MD_tag_1 .= 'X' x $len_1[$_];
+			}
+			# warn "Soft-clipped Read 1 sequence! $sequence_identifier\n";
+			# warn "$non_bisulfite_sequence_1\n";
+			# position doesn't need adjusting
+
+			### We don't need to add anything to the hemming distance for soft-clipped bases 
+			# since we use padding Xs which will fail a base by base comparison in hemming_dist()
+		}
 		elsif ($ops_1[$_] eq 'D'){ # deletion in the read sequence
 			# we do not add any genomic sequence but only adjust the position
 			# we do however need to add the genomic sequence to $genomic_seq_for_MD-tag so we can create a proper MD tag later
@@ -4283,11 +4303,11 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			# not altering the variable needed for the hemming distance
 			# $indels_1 += $len_1[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
-		elsif($cigar_1 =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-			die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1\n";
+		elsif($cigar_1 =~ tr/[HPX=]//){ # if these (for standard mapping) illegal characters exist we die
+			die "The CIGAR 1 string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_1";
 		}
 		else{
-			die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1\n";
+			die "The CIGAR 1 string contained undefined CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_1";
 		}	
 	}
 
@@ -4340,6 +4360,19 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			### 03 06 2014: In fact we don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
 			# $indels_2 += $len_2[$_]; # adding to $indels_1 to determine the hemming distance (= single base mismatches, insertions or deletions) for the SAM output
 		}
+		elsif ($ops_2[$_] eq 'S'){ # soft-clipped read sequence
+			# we simply add padding Xs instead of finding genomic sequence. This will not be used to infer methylation calls
+			# and we can ignore this later during the generation of the MD:Z: tag
+			$non_bisulfite_sequence_2 .= 'X' x $len_2[$_];
+			if ($contains_deletion_2){
+				$genomic_seq_for_MD_tag_2 .= 'X' x $len_2[$_];
+			}
+			# warn "Soft-clipped Read 2sequence! ID: $sequence_identifier\n";
+			# warn "$non_bisulfite_sequence_2\n";
+			# position doesn't need adjusting
+
+			# We don't need to add anything to the hemming distance for insertions since we use padding Xs which will fail a base by base comparison in hemming_dist()
+		}
 		elsif ($ops_2[$_] eq 'D'){ # deletion in the read sequence
 			# we do not add any genomic sequence but only adjust the position
 			# we do however need to add the genomic sequence to $genomic_seq_for_MD-tag so we can create a proper MD tag later
@@ -4356,10 +4389,10 @@ sub extract_corresponding_genomic_sequence_paired_end{
 			$pos_2 += $len_2[$_];
 		}
 		elsif($cigar_2 =~ tr/[SHPX=]//){ # if these (for standard mapping) illegal characters exist we die
-			die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2\n";
+			die "The CIGAR 2 string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_2";
 		}
 		else{
-			die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2\n";
+			die "The CIGAR 2 string contained undefined CIGAR operations in addition to 'M', 'I', 'D', 'S' and 'N': $cigar_2";
 		}
 	}
 
@@ -6775,6 +6808,7 @@ sub process_command_line{
 	my $nosplice;
 	my $known_splices;
 	my $icpc;
+	my $local;
 
 	my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -6832,7 +6866,8 @@ sub process_command_line{
 				 'slam'                    => \$slam,
 				 'known-splicesite-infile=s' => \$known_splices,
 				 'no-spliced-alignment'    => \$nosplice,
-				 'icpc'                 => \$icpc,
+				 'icpc'                    => \$icpc,
+				 'local'                   => \$local,
 				);
 
 
@@ -7289,10 +7324,15 @@ VERSION
 		push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
 	}
 	else{
-		#if ($bowtie2){
+		if ($local){
+			warn "[EXPERIMENTAL]: local alignments\n\n|||||||||||||||||||||||||||||||||||||||||||||\n\n";
+			push @aligner_options,'--local'; # not currently setting --score_min
+			($score_min_intercept, $score_min_slope) = (0, -0.2);
+		}
+		else{
 			($score_min_intercept, $score_min_slope) = (0, -0.2);
 			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
-		#}
+		}
 	}
 
 	### BOWTIE 2/HISAT2 READ GAP OPTIONS
@@ -7482,6 +7522,7 @@ VERSION
 		push @aligner_options,'--quiet';
 	}
 
+
 	
 	### STRAND-SPECIFIC LIBRARIES
 	my $directional;
@@ -7670,7 +7711,8 @@ VERSION
 		warn "In this mode (--icpc), FastQ read IDs are truncated at the first space to ignore comments\n";
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc);
+	
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local);
 }
 
 
@@ -7818,7 +7860,7 @@ sub single_end_SAM_output{
 	my $NM_tag = "NM:i:$hemming_dist";                                  # Optional tag NM: edit distance based on nucleotide differences
 
 	#####
-
+	# warn "Determining MD for read ID: $id\n";
 	my $MD_tag = make_mismatch_string($actual_seq, $ref_seq,$cigar,$methylation_call_params->{$id}->{genomic_seq_for_MD_tag});    # Optional tag MD: string providing mismatched reference bases in the alignment (this does include indel information)
 	#  my $XX_tag = make_mismatch_string($actual_seq, $ref_seq);        # Optional tag XX: string providing mismatched reference bases in the alignment (NO indel information!)
 
@@ -7877,10 +7919,10 @@ sub single_end_SAM_output{
 					next; # irrelevant
 				}
 				elsif ($cigar =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar\n";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar";
 				}
 			}
 			# warn "Alignment score $number_of_mismatches\n";
@@ -8321,10 +8363,10 @@ sub paired_end_SAM_output{
 					next;		# irrelevant
 				}
 				elsif ($cigar_1 =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1\n";
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1\n";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1";
 				}
 			}
 
@@ -8362,10 +8404,10 @@ sub paired_end_SAM_output{
 					next; #irrelevant
 				}
 				elsif ($cigar_2 =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_2\n";
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_2";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2\n";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
 				}
 			}
 
@@ -8455,11 +8497,29 @@ sub hemming_dist{
 
 	
 sub make_mismatch_string{
+		
 	my ($actual_seq,$ref_seq,$cigar,$md_sequence) = @_;
+	
+	# warn "About to process the MD:Z: mismatch string\n";
+	# warn "This is a soft-clipped read:\nactual_seq:\n$actual_seq\nreference seq:\n$ref_seq\nCIGAR:\n$cigar\nMD seq:\n$md_sequence\n\n~~~~~~~~~~\n";
+	# warn "Length of MD sequence: ",length($md_sequence),"\n"; 
+	
 	if ($cigar =~ /N/){
-		# warn "This is a splice junction containing read:\nactual_seq:\n$actual_seq\nreference seq:\n$ref_seq\nCIGAR:\n$cigar\nMD seq:\n$md_sequence\n\n~~~~~~~~~~\n";
-		# warn "Length of MD sequence: ",length($md_sequence),"\n"; $verbose = 1;
-	}	
+		#warn "This is a splice junction containing read:\nactual_seq:\n$actual_seq\nreference seq:\n$ref_seq\nCIGAR:\n$cigar\nMD seq:\n$md_sequence\n\n~~~~~~~~~~\n";
+		#warn "Length of MD sequence: ",length($md_sequence),"\n"; $verbose = 1;
+	}
+	
+	if ($cigar =~ /S/){
+		if (length($md_sequence) > 0){
+			# warn "This is a soft-clipped read:\nactual_seq:\n$actual_seq\nreference seq:\n$ref_seq\nCIGAR:\n$cigar\nMD seq:\n$md_sequence\n\n~~~~~~~~~~\n";
+			# warn "Length of MD sequence: ",length($md_sequence),"\n"; 
+			# $verbose = 1;
+		}
+		else{
+			# $verbose = 0;
+		}
+	}
+	
 	my $MD_tag = "MD:Z:";
 	my $prev_matching = 0;
 	my $last_char;
@@ -8477,22 +8537,23 @@ sub make_mismatch_string{
 			++$prev_matching;
 		}
 		else{
-			# If the mismatch is due to an insertion we simply move on, else we print the previously matching bases as well as the mismatching genomic base
+			# If the mismatch is due to an insertion or soft-clipping we simply move on, else we print the previously matching bases
+			# as well as the mismatching genomic base
 			if ($ref_base eq 'X'){
-				#if ($verbose){ warn "The genome base was an artificially padded '$ref_base' due to an insertion in the read at this position. Just ignoring it for the MD tag\n"; sleep(1);}
+				if ($verbose){ warn "The genome base was an artificially padded '$ref_base' due to an insertion or soft-clipping in the read at this position. Just ignoring it for the MD tag\n";}
 			}
 			else{
-				#if ($verbose){ warn "previous matching bases: $prev_matching\n";}
+				if ($verbose){ warn "previous matching bases: $prev_matching\n";}
 
 				### There is a mismatch between the sequence and the genome. First we need to write out how may bases matched until now
 				if ($prev_matching == 0){
-					# if ($verbose){ warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";}
-					# if ($verbose){ warn "${prev_matching}$ref_base\n";}
+					if ($verbose){ warn "Got a mismatch either at the very start or next to another mismatch. Need to add a padding 0 as well as the mismatch\n";}
+					if ($verbose){ warn "${prev_matching}$ref_base\n";}
 					$MD_tag .= $prev_matching;
 					$MD_tag .= $ref_base;
 				}
 				else{
-					# if ($verbose){ warn "${prev_matching}$ref_base\n";}
+					if ($verbose){ warn "${prev_matching}$ref_base\n";}
 					$MD_tag .= $prev_matching;
 					$MD_tag .= $ref_base;
 				}
@@ -8503,203 +8564,210 @@ sub make_mismatch_string{
 	}
 	### appending the number of matches one last time
 	$MD_tag .= $prev_matching;
-	if ($verbose){warn "MD tag at this point in time: $MD_tag\n"; sleep(1);}
+	if ($verbose){warn "MD tag at this point in time: $MD_tag\n";}
 
 	### If the read contains deletion(s) we need to take care of these in the MD-tag as well
-	### 12 02 2019: For skipped regions (CIGAR operation: 'N') we do not need to add the sequence to the MD:z_ string
+	### 12 02 2019: For skipped regions (CIGAR operation: 'N') we do not need to add the sequence to the MD:Z string
 	### (which would admittedly get stupidly long otherwise...)
 	if ($cigar =~ /D/){
+		# $verbose = 1;
 		my $deletions_total = 0;
-			while ($cigar =~ /D/g){
-				++$deletions_total;
-			}
-			if ($verbose){ warn "Read contains $deletions_total deletions in total\n\n";}
+		while ($cigar =~ /D/g){
+			++$deletions_total;
+		}
+		if ($verbose){ warn "Read contains $deletions_total deletions in total\n\n";} 
 
-			if ($verbose){ warn "There was a deletion in the read!\n";}
-			if ($verbose){ warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";}
+		if ($verbose){ warn "actual:\t$actual_seq\nref:\t$ref_seq\nMD-seq:\t$md_sequence\nMD-tag: $MD_tag\n";}
 
-			# parsing CIGAR string
-			my @len = split (/\D+/,$cigar); # storing the length per operation
-			my @ops = split (/\d+/,$cigar); # storing the operation
-			shift @ops; # remove the empty first element
-			die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
+		# parsing CIGAR string
+		my @len = split (/\D+/,$cigar); # storing the length per operation
+		my @ops = split (/\d+/,$cigar); # storing the operation
+		shift @ops; # remove the empty first element
+		die "CIGAR string contained a non-matching number of lengths and operations\n" unless (scalar @len == scalar @ops);
 
-			my $MD_pos_so_far = 0;
-			my $deletions_processed = 0;
-			my $del_pos = 0;
-			my $deleted_bases = '';
-			my $new_MD = $1 if ($MD_tag =~ /MD:Z:(.*)/);
-			my $md_index_already_processed;
+		my $MD_pos_so_far = 0;
+		my $deletions_processed = 0;
+		my $del_pos = 0;
+		my $deleted_bases = '';
+		my $new_MD = $1 if ($MD_tag =~ /MD:Z:(.*)/);
+		my $md_index_already_processed;
 
-			my @md = split //,$new_MD;
-		
-			if ($verbose){ warn "New MD-tag:  $new_MD\n\n";}
-			$MD_tag = "MD:Z:"; ### reconstituting a new MD-tag
-			$new_MD = ''; # using this to build up a new string that will replace the old \@md
-
-			if ($verbose){ warn "CIGAR string; $cigar\n";}
-			### determining end position of a read
-			foreach my $index(0..$#len){
-
-				if ($ops[$index] eq 'M'){  # matching bases
-					$del_pos += $len[$index];
-					if ($verbose){ warn "Operation is 'M', adding $len[$index] bp\n";}
-				}
-				elsif($ops[$index] eq 'N'){  # skipped regions, splice junctions
-					if ($verbose){ warn "Operation is 'N', simply ignoring\n";}
-				}
-				elsif($ops[$index] eq 'I'){ # insertion
-					$del_pos += $len[$index];
-					### need to add insertions in the read to MD pos so far!
-					$MD_pos_so_far += $len[$index];
-					if ($verbose){ warn "Operation is 'I',  adding $len[$index] bp\n";}
-				}
-				elsif($ops[$index] eq 'D'){ # deletion
-					if ($verbose){ warn "Operation is 'D', extracting $len[$index] bp\n";}
-					$deleted_bases = substr($md_sequence,$del_pos,$len[$index]);
-					if ($verbose){ warn "Deleted bases: $deleted_bases\n\n";}
-
-					### Now we need to process the MD-tag so far and write out everything up until this point, inlcuding the deletion
-					if ($verbose){ warn "Now processing the MD-tag\n";}
-					my $op;
-
-					my $this_deletion_processed;
-					my $md_processed_so_far;
-					my $current_md_index;
+		my @md = split //,$new_MD;
 	
-					foreach my $el (@md){
+		# if ($verbose){ warn "New MD-tag:  $new_MD\n\n";}
+		$MD_tag = "MD:Z:"; ### reconstituting a new MD-tag
+		$new_MD = ''; # using this to build up a new string that will replace the old \@md
 
-						unless (defined $current_md_index){
-							$current_md_index = 0; # first element = index 0
+		if ($verbose){ warn "CIGAR string; $cigar\n";}
+		### determining end position of a read
+		foreach my $index(0..$#len){
+
+			if ($ops[$index] eq 'M'){  # matching bases
+				$del_pos += $len[$index];
+				if ($verbose){ warn "Operation is 'M', adding $len[$index] bp\n";}
+			}
+			elsif($ops[$index] eq 'N'){  # skipped regions, splice junctions
+				if ($verbose){ warn "Operation is 'N', simply ignoring\n";}
+			}
+			elsif($ops[$index] eq 'I'){ # insertion
+				$del_pos += $len[$index];
+				### need to add insertions in the read to MD pos so far!
+				$MD_pos_so_far += $len[$index];
+				if ($verbose){ warn "Operation is 'I', adding $len[$index] bp\n";}
+			}
+			elsif($ops[$index] eq 'S'){ # soft-clip. As we addded X as reference base, it kind of resembles a genomic match (M)
+				$del_pos += $len[$index];
+				if ($verbose){ warn "Operation is 'S', adding $len[$index] bp\n";}
+				# TODO: Does this have to be treated like an insertion?
+				$MD_pos_so_far += $len[$index];
+			}
+			elsif($ops[$index] eq 'D'){ # deletion
+				if ($verbose){ warn "Operation is 'D', extracting $len[$index] bp\n";}
+				$deleted_bases = substr($md_sequence,$del_pos,$len[$index]);
+				if ($verbose){ warn "Deleted base(s): $deleted_bases\n\n";}
+
+				### Now we need to process the MD-tag so far and write out everything up until this point, inlcuding the deletion
+				if ($verbose){ warn "Now processing the MD-tag\n";}
+				
+				my $op;
+
+				my $this_deletion_processed;
+				my $md_processed_so_far;
+				my $current_md_index;
+				
+				# print join (" ",@md),"\n";
+				
+				foreach my $el (@md){
+
+					unless (defined $current_md_index){
+						$current_md_index = 0; # first element = index 0
+					}
+					else{
+						++$current_md_index;
+					}
+
+					if ($md_index_already_processed and ($current_md_index <= $md_index_already_processed)){
+						if ($verbose){ warn "This has to be another deletion within the same read. Currently processing index $current_md_index, but have already processed $md_index_already_processed indexes previously\n";}
+						$new_MD .= $el;
+						next;
+					}
+
+					if ($verbose){ warn "Current element: $el\n";}
+					unless (defined $op){ # initialize
+						$op = $el;
+						if ($verbose){ warn "Initializing \$op as $op\n";}
+						next;
+					}
+
+					if ($deletions_processed == $deletions_total){
+						if ($verbose){ warn "Processed $deletions_processed in the read so far, out of $deletions_total total. Just appending elements until the end of the string: here $el\n";}
+						$MD_tag .= $el;
+						$new_MD .= $el;
+						next;
+					}
+					# this only occurs when there are more deletions in the read but we want to regenerate a new MD tag
+					if ($this_deletion_processed){
+						$new_MD .= $el;
+						next;
+					}
+
+					if ($op =~ /^\d+$/){
+						if ($verbose){ warn "Operation so far was a digit: $op\n";}
+						if ($el =~ /\d/){
+							$op .= $el;
+							if ($verbose){ warn "Appending current operation $el. New operation is: $op\n";}
+							next;
 						}
 						else{
-							++$current_md_index;
-						}
+							if ($verbose){ warn "current element is a word character: $el\n";}
 
-						if ($md_index_already_processed and ($current_md_index <= $md_index_already_processed)){
-							if ($verbose){ warn "This has to be another deletion within the same read. Currently processing index $current_md_index, but have already processed $md_index_already_processed indexes previously\n";}
-							$new_MD .= $el;
-							next;
-						}
-
-						if ($verbose){ warn "Current element: $el\n";}
-						unless (defined $op){ # initialize
-							$op = $el;
-							if ($verbose){ warn "Initializing \$op as $op\n";}
-							next;
-						}
-
-						if ($deletions_processed == $deletions_total){
-							if ($verbose){ warn "Processed $deletions_processed in the read so far, out of $deletions_total total. Just appending elements until the end of the string: here $el\n";}
-							$MD_tag .= $el;
-							$new_MD .= $el;
-							next;
-						}
-						# this only occurs when there are more deletions in the read but we want to regenerate a new MD tag
-						if ($this_deletion_processed){
-							$new_MD .= $el;
-							next;
-						}
-
-						if ($op =~ /^\d+$/){
-							if ($verbose){ warn "Operation so far was a digit: $op\n";}
-							if ($el =~ /\d/){
-								$op .= $el;
-								if ($verbose){ warn "Appending current operation $el. New operation is: $op\n";}
-								next;
-							}
-							else{
-								if ($verbose){ warn "current element is a word character: $el\n";}
-
-								### Need to determine if the matching operation length includes the deletion position
-								if ($verbose){ warn "Processing operation $op and adding it to MD pos which is so far: $MD_pos_so_far; deletion pos is $del_pos.\n";}
-								$MD_pos_so_far += $op;
-								if ($verbose){ warn "MD pos so far: $MD_pos_so_far\n";}
-								if ($MD_pos_so_far < $del_pos){
-									if ($verbose){ warn "Doesn't cover the deletion yet. Writing back out.\n";}
-									$MD_tag .= $op;
-									$new_MD .= $op;
-									if ($verbose){ warn "Setting new operation to: $el\n";}
-									$op = $el; # setting new $op
-								}
-								else{
-									if ($verbose){ warn "Here we go, this operation covers the deletion position!!\n";}
-										### splitting up the number of matching bases in number before and after the deletion
-
-									my $pos_after_deletion = $MD_pos_so_far - $del_pos;
-									my $pos_before_deletion = $op - $pos_after_deletion;
-									if ($verbose){ warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}
-									$MD_tag .= "${pos_before_deletion}^${deleted_bases}";
-									$new_MD .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
-									if ($verbose){ warn "\$newMD after adjusting for the current deletion: $new_MD\n";}
-
-									#adjusting the MD_position by the number of bases after the deletion
-									$MD_pos_so_far -= $pos_after_deletion;
-									if ($verbose){ warn "MD after adjusting for deletion: $MD_pos_so_far\n";	}
-									### also appending the current element because we are writing out the rest of the MD-string unchanged to $new_MD
-									$new_MD .= $el;
-
-									$deletions_processed += 1;
-									$this_deletion_processed = 1;
-
-									if ($deletions_processed == $deletions_total){ # this was the last deletion of the read
-										if ($verbose){ warn "This was the last deletion in the read ($deletions_processed out of $deletions_total total). Continuing to append \$pos_after_deletion (${pos_after_deletion})..\n";}
-										$MD_tag .= "${pos_after_deletion}";
-
-										### also appending the current element because we are writing out the rest of the MD-string unchanged
-										if ($verbose){ warn "also appending the current element $el\n";}
-										$MD_tag .= $el;
-										### Finally also adding the length of the deletion to $del_pos
-										$del_pos += $len[$index];
-										if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
-									}
-									else{
-										if ($verbose){ warn "This wasn't the last deletion in the read. Substituting the last operation with the current deletion and reconstituting \@md\n";}
-										if ($verbose){ warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";}
-
-
-									### This migh need looking at!!
-
-			
-									$current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
-										if ($verbose){  warn "Current index = $current_md_index\n";}
-
-										if ($verbose){ warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";}
-										$md_index_already_processed = $current_md_index - 1;
-
-										if ($verbose){ warn "Exiting now and waiting for the next deletion\n";}
-
-										### Finally also adding the length of the deletion to $del_pos
-										$del_pos += $len[$index];
-										$MD_pos_so_far += $len[$index];
-										if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
-										if ($verbose){ warn "MD-tag so far: $MD_tag ~~\n";}
-										#setting $op to en empty string so it is not being processed as the last element
-										$op = '';
-										# last; # exiting the loop and processing the CIGAR string further until we hit the next deletion
-									}
-								}
-							}
-							if ($verbose){  warn "MD-tag so far: $MD_tag ~~\n";}
-						}
-						else{
-							if ($verbose){  warn "Operation so far was a word character: $op\n";}
-							if ($el =~ /\d+/){
-								# processing the previous mismatch position
+							### Need to determine if the matching operation length includes the deletion position
+							if ($verbose){ warn "Processing operation $op and adding it to MD pos which is so far: $MD_pos_so_far; deletion pos is $del_pos.\n";}
+							$MD_pos_so_far += $op;
+							if ($verbose){ warn "MD pos so far: $MD_pos_so_far\n";}
+							if ($MD_pos_so_far < $del_pos){
+								if ($verbose){ warn "Doesn't cover the deletion yet. Writing back out.\n";}
 								$MD_tag .= $op;
 								$new_MD .= $op;
-								$MD_pos_so_far += length($op);
-								if ($verbose){  warn "Writing out mismatching base $op and adding length ",length($op),"\n";}
+								if ($verbose){ warn "Setting new operation to: $el\n\n";}
+								$op = $el; # setting new $op
 							}
 							else{
-								# this should never occur since mismatches are followed by a 0 or another digit
-								die "current element is a another word character: $el. This should never happen!\n";
+								if ($verbose){ warn "Here we go, this operation covers the deletion position!!\n";}
+									### splitting up the number of matching bases in number before and after the deletion
+
+								my $pos_after_deletion = $MD_pos_so_far - $del_pos;
+								my $pos_before_deletion = $op - $pos_after_deletion;
+								if ($verbose){ warn "Splitting up previous operation '$op' into pos before deletion: ${pos_before_deletion} and pos_after_deletion: $pos_after_deletion\n";}
+								$MD_tag .= "${pos_before_deletion}^${deleted_bases}";
+								$new_MD .= "${pos_before_deletion}^${deleted_bases}${pos_after_deletion}";
+								if ($verbose){ warn "\$newMD after adjusting for the current deletion: $new_MD\n";}
+
+								#adjusting the MD_position by the number of bases after the deletion
+								$MD_pos_so_far -= $pos_after_deletion;
+								if ($verbose){ warn "MD after adjusting for deletion: $MD_pos_so_far\n";	}
+								### also appending the current element because we are writing out the rest of the MD-string unchanged to $new_MD
+								$new_MD .= $el;
+
+								$deletions_processed += 1;
+								$this_deletion_processed = 1;
+							
+
+								if ($deletions_processed == $deletions_total){ # this was the last deletion of the read
+									if ($verbose){ warn "This was the last deletion in the read ($deletions_processed out of $deletions_total total). Continuing to append \$pos_after_deletion (${pos_after_deletion})..\n";}
+									$MD_tag .= "${pos_after_deletion}";
+
+									### also appending the current element because we are writing out the rest of the MD-string unchanged
+									if ($verbose){ warn "also appending the current element $el\n";} sleep(1);
+									$MD_tag .= $el;
+									### Finally also adding the length of the deletion to $del_pos
+									$del_pos += $len[$index];
+									if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
+								}
+								else{
+									if ($verbose){ warn "This wasn't the last deletion in the read. Substituting the last operation with the current deletion and reconstituting \@md\n";}
+									if ($verbose){ warn "Adding length of deletion string '${pos_before_deletion}^${deleted_bases}' (",length("${pos_before_deletion}^${deleted_bases}")," - length of current operation (",length$op,") to current_md_index\n";}
+
+
+									$current_md_index = $current_md_index + length("${pos_before_deletion}^${deleted_bases}") - length$op;
+									if ($verbose){  warn "Current index = $current_md_index\n";}
+
+									if ($verbose){ warn "Setting \$md_index_already_processed to ",$current_md_index-1,"\n";}
+									$md_index_already_processed = $current_md_index - 1;
+
+									if ($verbose){ warn "Exiting now and waiting for the next deletion\n";}
+
+									### Finally also adding the length of the deletion to $del_pos
+									$del_pos += $len[$index];
+									$MD_pos_so_far += $len[$index];
+									if ($verbose){ warn "Adding length of the deletion itself (",$len[$index],") to \$del_pos: currently at $del_pos\n";}
+									if ($verbose){ warn "MD-tag so far: $MD_tag ~~\n";}
+									#setting $op to en empty string so it is not being processed as the last element
+									$op = '';
+									# last; # exiting the loop and processing the CIGAR string further until we hit the next deletion
+								}
 							}
-							if ($verbose){ warn "Setting new operation to: $el\n";}
-							$op = $el; # setting new $op
-							if ($verbose){  warn "MD-tag so far: $MD_tag ~~\n";}
 						}
+						if ($verbose){  warn "MD-tag so far: $MD_tag ~~\n";}
 					}
+					else{
+						if ($verbose){  warn "Operation so far was a word character: $op\n";}
+						if ($el =~ /\d+/){
+							# processing the previous mismatch position
+							$MD_tag .= $op;
+							$new_MD .= $op;
+							$MD_pos_so_far += length($op);
+							if ($verbose){  warn "Writing out mismatching base $op and adding length ",length($op),"\n";}
+						}
+						else{
+							# this should never occur since mismatches are followed by a 0 or another digit
+							die "current element is a another word character: $el. This should never happen!\n";
+						}
+						if ($verbose){ warn "Setting new operation to: $el\n";}
+						$op = $el; # setting new $op
+						if ($verbose){  warn "MD-tag so far: $MD_tag ~~\n";}
+					}
+				}
 
 				### need to consider last element if it was a digit or number and we are expecting the deletion in the last element of the MD-tag
 				if ($op =~ /\d+/ and $deletions_processed < $deletions_total){
@@ -8763,43 +8831,15 @@ sub make_mismatch_string{
 				if ($verbose){ warn "MD-tag so far: $MD_tag ~~\nnew_MD so far: $new_MD\n\n";}
 			}
 			else{
-				die "Found CIGAR operations other than M, I, D or N: '$ops[$index]'. Not allowed at the moment\n";
+				die "Found CIGAR operations other than M, I, D, S or N: '$ops[$index]'. Not allowed at the moment";
 			}
 		}
 
 	}	
-	if ($verbose){  warn "Returning MD-tag: $MD_tag\n"; sleep(3);}
+	if ($verbose){  warn "Returning MD-tag: $MD_tag\n"; sleep(1);}
 	return $MD_tag;
 
 }
-
-
-
-
-### Getting rid of the bitwise comparison because even though the initial comparison is nice and quick, the regex loop looking for non-null bytes characters isn't. We might
-### as well do a substring loop to start with, which enables us to generate proper MD:Z: flags that also take proper care of InDels
-# sub make_mismatch_string{
-#   my $actual_seq = shift or die "Missing actual sequence\n";
-#   my $ref_seq = shift or die "Missing reference sequence\n";
-#   my $XX_tag = "XX:Z:";
-
-#   my $tmp = ($actual_seq ^ $ref_seq);                    # Bitwise comparison
-
-#   warn "'$tmp'\n"; sleep(1);
-#   my $prev_mm_pos = 0;
-
-#   while($tmp =~ /[^\0]/g){                               # Where bitwise comparison showed a difference
-#     my $nuc_match = pos($tmp) - $prev_mm_pos - 1;        # Generate number of nucleotide that matches since last mismatch
-#     my $nuc_mm = substr($ref_seq, pos($tmp) - 1, 1) if pos($tmp) <= length($ref_seq);  # Obtain reference nucleotide that was different from the actual read
-#     $XX_tag .= "$nuc_match" if $nuc_match > 0;           # Ignore if mismatches are adjacent to each other
-#     $XX_tag .= "$nuc_mm" if defined $nuc_mm;             # Ignore if there is no mismatch (prevents uninitialized string concatenation)
-#     $prev_mm_pos = pos($tmp);                            # Position of last mismatch
-#   }
-#   my $end_matches = length($ref_seq) - $prev_mm_pos;     # Provides number of matches from last mismatch till end of sequence
-#   $XX_tag .= "$end_matches" if $end_matches > 0;         # Ignore if mismatch is at the end of sequence
-#   return $XX_tag;
-# }
-
 
 
 sub print_helpfile{
