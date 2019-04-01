@@ -7324,11 +7324,25 @@ VERSION
 		push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
 	}
 	else{
-		if ($local){
+		if ($local and $bowtie2){
 			warn "[EXPERIMENTAL]: local alignments\n\n|||||||||||||||||||||||||||||||||||||||||||||\n\n";
 			push @aligner_options,'--local'; # not currently setting --score_min
-			($score_min_intercept, $score_min_slope) = (0, -0.2);
+			
+			## the default for score_min in --local mode is G,20,8
+			
+			# Some Bowtie 2 options specify a function rather than an individual number or setting. In these cases the user specifies
+			# three parameters: (a) a function type F, (b) a constant term B, and (c) a coefficient A. The available function types 
+			# are constant (C), linear (L), square-root (S), and natural log (G). The parameters are specified as F,B,A - that is, 
+			# the function type, the constant term, and the coefficient are separated by commas with no whitespace. The constant term
+			# and coefficient may be negative and/or floating-point numbers.
+		
+			# If the function specification is G,1,5.4, then the function defined is:
+			# f(x) = 1.0 + 5.4 * ln(x)
+			
+			($score_min_intercept, $score_min_slope) = (20,16); ### We need to look up sensible defaults for this
+			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
 		}
+		
 		else{
 			($score_min_intercept, $score_min_slope) = (0, -0.2);
 			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
@@ -7686,8 +7700,15 @@ VERSION
 				die "Known splice site infile >$known_splices< did not exist. Please check file name and try again!\n\n";
 			}
 		}
-		###	NO SOFTCLIPPING - this is not negotiable
-		push @aligner_options,'--no-softclip --omit-sec-seq';
+		###	NO SOFTCLIPPING - this is now negotiable
+		if ($local){
+			warn "[EXPERIMENTAL]: local alignments with HISAT2\n\n|||||||||||||||||||\n\n";
+			push @aligner_options,'--omit-sec-seq'; 
+		}
+		else{
+			push @aligner_options,'--no-softclip --omit-sec-seq'; ## endToEnd alignments - default
+		}
+		
 	}
 	else{
 		if ($nosplice){
