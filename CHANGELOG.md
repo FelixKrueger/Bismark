@@ -1,5 +1,31 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.21.0_dev (last update 01 04 2019)
+
+Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](
+https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/), a recent publication by [Wu et al.](https://www.ncbi.nlm.nih.gov/pubmed/30859188) described in further detail that intra-fragment chimeras can hinder the efficient alignment of single-cell BS-seq libraries. In there, the authors described a pipeline that uses paired-end alignments first, followed by a second, single-end alignment step that uses local alignments in a bid to improve the mapping of intra-molecular chimeras. To allow this type of improvement for single-cell or PBAT libraries, we have been experimenting with allowing local alignments.
+
+### Bismark
+
+- Added support for local alignments by introducing the new option `--local`. This means that the CIGAR operation `S` (soft-clipping) is now supported (at the time of writing only working for Bowtie 2 mode)
+
+- fixed typo in option `--path_to_bowtie2` (a single missing `2` was preventing the specified path to be accepted)
+
+- fixed type in option `--no-spliced-alignment` in HISAT2 mode
+
+### bismark_methylation_extractor
+
+- Now supporting reads containing soft-clipped bases (CIGAR operation S) 
+
+### bam2nuc
+
+- Now supporting reads containing soft-clipped bases (CIGAR operation S)
+
+### deduplicate_bismark
+
+- Now supporting reads containing soft-clipped bases (CIGAR operation S)
+
+
 ## Changelog for Bismark v0.21.0
 
 For the upcoming version Bismark has undergone some substantial changes, which sometimes affect more than one module within the Bismark suite. Here is a short description of the major changes: 
