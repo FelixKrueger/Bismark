@@ -7317,17 +7317,26 @@ VERSION
 	### BOWTIE 2/HISAT2 SCORING OPTIONS
 	my ($score_min_intercept, $score_min_slope);
 	if ($score_min){
-			unless ($score_min =~ /^L,(.+),(.+)$/){
-			die "The option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+		if ($local){
+			unless ($score_min =~ /^G,(.+),(.+)$/){
+				die "In --local mode, the option '--score_min <func>' needs to be in the format <G,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+			}
+			
+			($score_min_intercept, $score_min_slope) = ($1, $2);
+			push @aligner_options,'--local';
+			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope";
 		}
-		($score_min_intercept, $score_min_slope) = ($1, $2);
-		push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
+		else{ # global, end-to-end alignments. Default
+			unless ($score_min =~ /^L,(.+),(.+)$/){
+				die "In end-to-end mode (default) the option '--score_min <func>' needs to be in the format <L,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+			}
+				
+			($score_min_intercept, $score_min_slope) = ($1, $2);
+			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope";
+		}
 	}
 	else{
-		if ($local and $bowtie2){
-			warn "[EXPERIMENTAL]: local alignments\n\n|||||||||||||||||||||||||||||||||||||||||||||\n\n";
-			push @aligner_options,'--local'; # not currently setting --score_min
-			
+		if ($local){
 			## the default for score_min in --local mode is G,20,8
 			
 			# Some Bowtie 2 options specify a function rather than an individual number or setting. In these cases the user specifies
@@ -7339,7 +7348,8 @@ VERSION
 			# If the function specification is G,1,5.4, then the function defined is:
 			# f(x) = 1.0 + 5.4 * ln(x)
 			
-			($score_min_intercept, $score_min_slope) = (20,16); ### We need to look up sensible defaults for this
+			($score_min_intercept, $score_min_slope) = (20,8); ### We need to look up sensible defaults for this
+			push @aligner_options,'--local'; 
 			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
 		}
 		
@@ -8988,7 +8998,11 @@ Alignment:
                          e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~40GB or RAM, but at the same time
                          reduce the alignment time to ~25-30%. You have been warned.
 
-
+--local                  In this mode, it is not required that the entire read aligns from one end to the other. Rather, some
+                         characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible
+                         alignment score. The match bonus --ma (default: 2) is used in this mode, and the best possible alignment
+                         score is equal to the match bonus (--ma) times the length of the read. This is mutually exclusive with
+                         end-to-end alignments. DEFAULT: OFF.
 
 
 Output:
@@ -9207,10 +9221,17 @@ Bowtie 2/ HISAT2 parallelization options:
 Scoring options:
 
 --score_min <func>       Sets a function governing the minimum alignment score needed for an alignment to be considered
-                         "valid" (i.e. good enough to report). This is a function of read length. For instance, specifying
-                         L,0,-0.2 sets the minimum-score function f to f(x) = 0 + -0.2 * x, where x is the read length.
-                         See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2. The default is
-                         L,0,-0.2.
+                         "valid" (i.e. good enough to report). This is a function of read length. 
+
+                         In end-to-end mode (default), --score_min is set as a linear function and is set as <L,value,value>.
+                         For instance, specifying L,0,-0.2 sets the minimum-score function f to f(x) = 0 + (-0.2) * x, where x
+                         is the read length. The default for end-to-end (global) alignments is: L,0,-0.2.
+                         
+                         In --local mode, the function is logarithmic and is set as <G,value,value>. For instance, specifying
+                         G,20,8 sets the minimum-score function f to f(x) = 20 + 8 * ln(x), where x is the read length.
+                         The default is for local alignments is: G,20,8.
+						 
+                         See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2.
 
 --rdg <int1>,<int2>      Sets the read gap open (<int1>) and extend (<int2>) penalties. A read gap of length N gets a penalty
                          of <int1> + N * <int2>. Default: 5, 3.
@@ -9243,6 +9264,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 13 March 2019
+Last modified on 02 April 2019
 HOW_TO
 }
