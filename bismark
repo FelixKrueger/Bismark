@@ -7319,11 +7319,13 @@ VERSION
 	if ($score_min){
 		if ($local){
 			unless ($score_min =~ /^G,(.+),(.+)$/){
-				die "In --local mode, the option '--score_min <func>' needs to be in the format <G,value,value> . Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+				die "In --local mode, the option '--score_min <func>' needs to be in the format <G,value,value>. Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
 			}
 			
 			($score_min_intercept, $score_min_slope) = ($1, $2);
-			push @aligner_options,'--local';
+			if ($bowtie2){
+				push @aligner_options,'--local'; # this option does not work with HISAT2
+			}
 			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope";
 		}
 		else{ # global, end-to-end alignments. Default
@@ -7349,7 +7351,9 @@ VERSION
 			# f(x) = 1.0 + 5.4 * ln(x)
 			
 			($score_min_intercept, $score_min_slope) = (20,8); ### We need to look up sensible defaults for this
-			push @aligner_options,'--local'; 
+			if ($bowtie2){
+				push @aligner_options,'--local'; # this option does not work with HISAT2
+			}
 			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
 		}
 		
