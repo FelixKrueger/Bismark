@@ -13,6 +13,9 @@ https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-rea
 
 - fixed type in option `--no-spliced-alignment` in HISAT2 mode
 
+- fixed missing end-of-line character for unmapped or ambiguous FastQ sequences in paired-end FastQ mode
+
+
 ### bismark_methylation_extractor
 
 - Now supporting reads containing soft-clipped bases (CIGAR operation S) 
