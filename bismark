@@ -2324,7 +2324,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 		unless ($return){
 			$return = 0;
 		}
-
+	
 		# print the sequence to ambiguous.out if --ambiguous was specified
 		if ($ambiguous and $return == 2){
 			print AMBIG "\@$identifier\n";
@@ -2334,6 +2334,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 		}
 
 		# print the sequence to <unmapped.out> file if --un was specified
+	
 		elsif ($unmapped and $return == 1){
 			print UNMAPPED "\@$identifier\n";
 			print UNMAPPED "$sequence\n";
@@ -2417,17 +2418,17 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
 		# print the sequences to ambiguous_1 and _2 if --ambiguous was specified
 		if ($ambiguous and $return == 2){
-			print AMBIG_1 $orig_identifier_1;
+			print AMBIG_1 "$orig_identifier_1\n";
 			print AMBIG_1 "$sequence_1\n";
-			print AMBIG_2 $orig_identifier_2;
+			print AMBIG_2 "$orig_identifier_2\n";
 			print AMBIG_2 "$sequence_2\n";
 		}
 
 		# print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
 		elsif ($unmapped and $return == 1){
-			print UNMAPPED_1 $orig_identifier_1;
+			print UNMAPPED_1 "$orig_identifier_1\n";
 			print UNMAPPED_1 "$sequence_1\n";
-			print UNMAPPED_2 $orig_identifier_2;
+			print UNMAPPED_2 "$orig_identifier_2\n";
 			print UNMAPPED_2 "$sequence_2\n";
 		}
 	}
@@ -2512,12 +2513,12 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 		# print the sequences to ambiguous_1 and _2 if --ambiguous was specified
 		if ($ambiguous and $return == 2){
 			# seq_1
-			print AMBIG_1 $orig_identifier_1;
+			print AMBIG_1 "$orig_identifier_1\n";
 			print AMBIG_1 "$sequence_1\n";
 			print AMBIG_1 $ident_1;
 			print AMBIG_1 "$quality_value_1\n";
 			# seq_2
-			print AMBIG_2 $orig_identifier_2;
+			print AMBIG_2 "$orig_identifier_2\n";
 			print AMBIG_2 "$sequence_2\n";
 			print AMBIG_2 $ident_2;
 			print AMBIG_2 "$quality_value_2\n";
@@ -2526,12 +2527,12 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 		# print the sequences to unmapped_1.out and unmapped_2.out if --un was specified
 		elsif ($unmapped and $return == 1){
 			# seq_1
-			print UNMAPPED_1 $orig_identifier_1;
+			print UNMAPPED_1 "$orig_identifier_1\n";
 			print UNMAPPED_1 "$sequence_1\n";
 			print UNMAPPED_1 $ident_1;
 			print UNMAPPED_1 "$quality_value_1\n";
 			# seq_2
-			print UNMAPPED_2 $orig_identifier_2;
+			print UNMAPPED_2 "$orig_identifier_2\n";
 			print UNMAPPED_2 "$sequence_2\n";
 			print UNMAPPED_2 $ident_2;
 			print UNMAPPED_2 "$quality_value_2\n";
