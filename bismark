@@ -1314,7 +1314,7 @@ sub merge_individual_BAM_files{
       $merged_name .= '_bismark_bt2.bam';
     }
     else{          # BAM is the default output
-      $merged_name .= '_bismark.bam';
+      $merged_name .= '_bismark_hisat2.bam';
     }
 
     if ($basename){ # Output file basename is set using the -B argument
@@ -1326,7 +1326,7 @@ sub merge_individual_BAM_files{
       $merged_name .= '_bismark_bt2_pe.bam';
     }
     else{          # BAM is the default output
-      $merged_name .= '_bismark_pe.bam';
+      $merged_name .= '_bismark_hisat2_pe.bam';
     }
 
     if ($basename){ # Output file basename is set using the -B argument
