@@ -15,6 +15,7 @@ https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-rea
 
 - fixed missing end-of-line character for unmapped or ambiguous FastQ sequences in paired-end FastQ mode
 
+- fixed output file naming in `--hisat2` and `--parallel` mode (\_hisat2 was missing in `--parallel` mode). Thanks to @phue for spotting this.
 
 ### bismark_methylation_extractor
 
