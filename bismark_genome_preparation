@@ -32,6 +32,7 @@ my $single_fasta;
 my $bowtie2;
 my $hisat2;
 my $slam;
+my $large_index;
 
 my $parent_dir = getcwd();
 
@@ -39,8 +40,8 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.21.0';
-my $last_modified = "05 Feb 2019";
+my $bismark_version = 'v0.21.0_dev';
+my $last_modified = "14 April 2019";
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
 			'help'                => \$help,
@@ -53,6 +54,7 @@ my $command_line = GetOptions ('verbose'         => \$verbose,
 			'bowtie2'             => \$bowtie2,
 			'hisat2'              => \$hisat2,
 			'genomic_composition' => \$genomic_composition,
+			'large-index'         => \$large_index,
 	);
  
 die "Please respecify command line options\n\n" unless ($command_line);
@@ -142,6 +144,14 @@ if ($slam){
 	warn "Genome will be generated and indexed in with in-silico T->C transitions, and NOT in BISULFITE MODE\n"; sleep(3);
 }
 
+if($large_index){
+	warn "Large-index specified. Forcing generated index to be 'large', even if reference has fewer than 4 billion nucleotides.\n\n"; sleep(1);
+	$large_index = '--large-index';
+}
+else{	
+	$large_index = '';
+}
+
 my @filenames = create_bisulfite_genome_folders();
 
 if ($genomic_composition){
@@ -149,6 +159,8 @@ if ($genomic_composition){
     warn "Finished processing genomic nucleotide frequencies\n\n";
     %chromosomes = (); # resetting
 }
+
+
 
 process_sequence_files ();
 
@@ -195,7 +207,7 @@ sub launch_indexer{
 		$verbose and warn "Preparing indexing of CT converted genome in $CT_dir\n";
 		my @fasta_files = <*.fa>;
 		my $file_list = join (',',@fasta_files);
-		my $cmd = "$path_to_aligner -f $file_list BS_CT";
+		my $cmd = "$path_to_aligner $large_index -f $file_list BS_CT";
 		if($parallel) {
 			$cmd = "$cmd --threads $parallel";
 		}
@@ -214,7 +226,7 @@ sub launch_indexer{
 		$verbose and warn "Preparing indexing of GA converted genome in $GA_dir\n";
 		my @fasta_files = <*.fa>;
 		my $file_list = join (',',@fasta_files);
-		my $cmd = "$path_to_aligner -f $file_list BS_GA";
+		my $cmd = "$path_to_aligner $large_index -f $file_list BS_GA";
 		if($parallel) {
 			$cmd = "$cmd --threads $parallel";
 		}
@@ -235,7 +247,7 @@ sub launch_indexer{
 		my $file_list = join (',',@fasta_files);
 		$verbose and print "$file_list\n\n";
 		
-		my $cmd = "$path_to_aligner -f $file_list BS_CT";
+		my $cmd = "$path_to_aligner $large_index -f $file_list BS_CT";
 		if($parallel) {
 			$cmd = "$cmd --threads $parallel";
 		}
@@ -250,7 +262,7 @@ sub launch_indexer{
 		$file_list = join (',',@fasta_files);
 		$verbose and print "$file_list\n\n";
 		# sleep(2);
-		$cmd = "$path_to_aligner -f $file_list BS_GA";
+		$cmd = "$path_to_aligner $large_index -f $file_list BS_GA";
 		if($parallel) {
 			$cmd = "$cmd --threads $parallel";
 		}
@@ -703,7 +715,8 @@ OPTIONS:
 
 --parallel INT           Use several threads for each indexing process to speed up the genome preparation step.
                          Remember that the indexing is run twice in parallel already (for the top and bottom strand
-                         separately), so e.g. '--parallel 4' will use 8 threads in total.
+                         separately), so e.g. '--parallel 4' will use 8 threads in total. Please also see --large-index
+                         for parallel processing of VERY LARGE genomes (e.g. the axolotl)
 
 --single_fasta           Instruct the Bismark Indexer to write the converted genomes into
                          single-entry FastA files instead of making one multi-FastA file (MFA)
@@ -727,6 +740,8 @@ OPTIONS:
                          that a genome prepared in --slam mode is currently indistinguishable from a true Bisulfite Genome,
                          so please make sure you name the genome folder appropriately to avoid confusion.
 
+--large-index            Force generated index to be 'large', even if reference has fewer than 4 billion nucleotides. At the time
+                         of writing this is required for parallel processing of VERY LARGE genomes (e.g. the axolotl)
 
 ARGUMENTS:
 
@@ -735,7 +750,7 @@ ARGUMENTS:
                          .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 05 Feb 2019.
+This script was last modified on 14 April 2019.
 
 HOW_TO
 }
