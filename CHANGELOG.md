@@ -7,7 +7,7 @@ https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-rea
 
 ### Bismark
 
-- Added support for local alignments by introducing the new option `--local`. This means that the CIGAR operation `S` (soft-clipping) is now supported (at the time of writing only working for Bowtie 2 mode)
+- Added support for local alignments by introducing the new option `--local`. This means that the CIGAR operation `S` (soft-clipping) is now supported
 
 - fixed typo in option `--path_to_bowtie2` (a single missing `2` was preventing the specified path to be accepted)
 
@@ -16,6 +16,10 @@ https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-rea
 - fixed missing end-of-line character for unmapped or ambiguous FastQ sequences in paired-end FastQ mode
 
 - fixed output file naming in `--hisat2` and `--parallel` mode (\_hisat2 was missing in `--parallel` mode). Thanks to @phue for spotting this.
+
+### bismark_genome_preparation
+
+- Added option `--large-index` to force the generation of LARGE genome indexes. This may be required for indexing extremely large genomes (e.g. the Axolotl (32 GigaBases)) in `--parallel` mode. More information on why the indexing was failing previously see [here](https://github.com/FelixKrueger/Bismark/issues/251)
 
 ### bismark_methylation_extractor
 
