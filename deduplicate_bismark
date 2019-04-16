@@ -47,7 +47,7 @@ use Cwd;
 ### 26 03 2019
 ### Adapting to also work with softclipped reads (CIGAR operation S)
 
-my $dedup_version = 'v0.21.0_dev';
+my $dedup_version = 'v0.22.0';
 my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile) = process_commandline();

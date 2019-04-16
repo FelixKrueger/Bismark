@@ -40,7 +40,7 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.21.0_dev';
+my $bismark_version = 'v0.22.0';
 my $last_modified = "14 April 2019";
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
