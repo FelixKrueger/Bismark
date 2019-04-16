@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.21.0_dev (last update 01 04 2019)
+## Changelog for Bismark v0.22.0 (release on 16 04 2019)
 
 Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](
 https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/), a recent publication by [Wu et al.](https://www.ncbi.nlm.nih.gov/pubmed/30859188) described in further detail that intra-fragment chimeras can hinder the efficient alignment of single-cell BS-seq libraries. In there, the authors described a pipeline that uses paired-end alignments first, followed by a second, single-end alignment step that uses local alignments in a bid to improve the mapping of intra-molecular chimeras. To allow this type of improvement for single-cell or PBAT libraries, we have been experimenting with allowing local alignments.
@@ -19,7 +19,7 @@ https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-rea
 
 ### bismark_genome_preparation
 
-- Added option `--large-index` to force the generation of LARGE genome indexes. This may be required for indexing extremely large genomes (e.g. the Axolotl (32 GigaBases)) in `--parallel` mode. More information on why the indexing was failing previously see [here](https://github.com/FelixKrueger/Bismark/issues/251)
+- Added option `--large-index` to force the generation of LARGE genome indexes. This may be required for indexing extremely large genomes (e.g. the Axolotl (32 GigaBases)) in `--parallel` mode. For more information on why the indexing was failing previously see [here](https://github.com/FelixKrueger/Bismark/issues/251)
 
 ### bismark_methylation_extractor
 
