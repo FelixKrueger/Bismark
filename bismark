@@ -887,7 +887,7 @@ sub merge_individual_mapping_reports{
 			$report_file .= '_bismark_bt2_SE_report.txt';
 		}
 		else{
-			$report_file .= '_bismark_SE_report.txt';
+			$report_file .= '_bismark_hisat2_SE_report.txt';
 		}
 	}
 	else{
@@ -895,7 +895,7 @@ sub merge_individual_mapping_reports{
 			$report_file .= '_bismark_bt2_PE_report.txt';
 		}
 		else{
-			$report_file .= '_bismark_PE_report.txt';
+			$report_file .= '_bismark_hisat2_PE_report.txt';
 		}
 	}
 	warn "Writing report to ${output_dir}${report_file}\n";
