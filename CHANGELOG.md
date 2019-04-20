@@ -1,5 +1,13 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.22.0_dev
+
+### Bismark
+
+- Hotfixed (as in: removed) the cause of delay during the MD:Z: field computation for reads containing a deletion (which was roughly one second per read). Apologies, I did it again...
+
+
+
 ## Changelog for Bismark v0.22.0 (release on 16 04 2019)
 
 Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](
