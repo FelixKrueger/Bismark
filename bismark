@@ -2576,12 +2576,11 @@ sub check_results_single_end{
   
 	### reading from the Bowtie 2 output filehandles
 	foreach my $index (0..$#fhs){
-	#	if ($fhs[$index]->{last_line} =~ /\d+S/){
+		#	if ($fhs[$index]->{last_line} =~ /\d+S/){
 			#print "Index: $index\n";
 			#print "$fhs[$index]->{last_line}\n";
 			#print "$fhs[$index]->{last_seq_id}\n";
-			#sleep (1);
-	#	}
+		#	}
 		### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
 		next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -8754,7 +8753,7 @@ sub make_mismatch_string{
 									$MD_tag .= "${pos_after_deletion}";
 
 									### also appending the current element because we are writing out the rest of the MD-string unchanged
-									if ($verbose){ warn "also appending the current element $el\n";} sleep(1);
+									if ($verbose){ warn "also appending the current element $el\n"; }
 									$MD_tag .= $el;
 									### Finally also adding the length of the deletion to $del_pos
 									$del_pos += $len[$index];
