@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.22.0';
+my $bismark_version = 'v0.22.1';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -7318,15 +7318,24 @@ VERSION
 	my ($score_min_intercept, $score_min_slope);
 	if ($score_min){
 		if ($local){
-			unless ($score_min =~ /^G,(.+),(.+)$/){
-				die "In --local mode, the option '--score_min <func>' needs to be in the format <G,value,value>. Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
-			}
+			if ($bowtie2){ 
+				# Bowtie2 uses a different function for local mode, see below
+				unless ($score_min =~ /^G,(.+),(.+)$/){
+					die "In Bowtie 2 --local mode, the option '--score_min <func>' needs to be in the format <G,value,value>. Please consult \"setting up functions\" in the Bowtie 2 manual for further information\n\n";
+				}
 			
-			($score_min_intercept, $score_min_slope) = ($1, $2);
-			if ($bowtie2){
+				($score_min_intercept, $score_min_slope) = ($1, $2);
 				push @aligner_options,'--local'; # this option does not work with HISAT2
+				push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope";
 			}
-			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope";
+			else{ # HISAT2
+				unless ($score_min =~ /^L,(.+),(.+)$/){
+					die "In HISAT2 --local mode, the option '--score_min <func>' needs to be in the format <L,value,value>\n\n";
+				}
+				
+				($score_min_intercept, $score_min_slope) = ($1, $2); ### even in local mode, HISAT2 appears to use a similar scoring scheme
+				push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
+			}
 		}
 		else{ # global, end-to-end alignments. Default
 			unless ($score_min =~ /^L,(.+),(.+)$/){
@@ -7338,27 +7347,33 @@ VERSION
 		}
 	}
 	else{
-		if ($local){
-			## the default for score_min in --local mode is G,20,8
-			
-			# Some Bowtie 2 options specify a function rather than an individual number or setting. In these cases the user specifies
-			# three parameters: (a) a function type F, (b) a constant term B, and (c) a coefficient A. The available function types 
-			# are constant (C), linear (L), square-root (S), and natural log (G). The parameters are specified as F,B,A - that is, 
-			# the function type, the constant term, and the coefficient are separated by commas with no whitespace. The constant term
-			# and coefficient may be negative and/or floating-point numbers.
-		
-			# If the function specification is G,1,5.4, then the function defined is:
-			# f(x) = 1.0 + 5.4 * ln(x)
-			
-			($score_min_intercept, $score_min_slope) = (20,8); ### We need to look up sensible defaults for this
+		if ($local){		
+			### The score-min is different for Bowtie2 where it appears to range from 0 to positive, and 
+			### HISAT2, where it appears to be the same as for end-to-end mode, i.e. from negative to 0
+
 			if ($bowtie2){
-				push @aligner_options,'--local'; # this option does not work with HISAT2
-			}
-			push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
-		}
+				## the default for score_min in --local mode is G,20,8
+			
+				# Some Bowtie 2 options specify a function rather than an individual number or setting. In these cases the user specifies
+				# three parameters: (a) a function type F, (b) a constant term B, and (c) a coefficient A. The available function types 
+				# are constant (C), linear (L), square-root (S), and natural log (G). The parameters are specified as F,B,A - that is, 
+				# the function type, the constant term, and the coefficient are separated by commas with no whitespace. The constant term
+				# and coefficient may be negative and/or floating-point numbers.
 		
-		else{
-			($score_min_intercept, $score_min_slope) = (0, -0.2);
+				# If the function specification is G,1,5.4, then the function defined is:
+				# f(x) = 1.0 + 5.4 * ln(x)
+			
+				($score_min_intercept, $score_min_slope) = (20,8); ### We need to look up sensible defaults for this
+				push @aligner_options,'--local'; # this option does not work with HISAT2
+				push @aligner_options,"--score-min G,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
+			}
+			else{ # HISAT2
+				($score_min_intercept, $score_min_slope) = (0,-0.2); ### even in local mode, HISAT2 appears to use a similar scoring scheme
+				push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
+			}
+		}
+		else{ # currently the same for Bowtie2 and HISAT2
+			($score_min_intercept, $score_min_slope) = (0,-0.2);
 			push @aligner_options,"--score-min L,$score_min_intercept,$score_min_slope"; # default setting, more stringent than normal Bowtie2
 		}
 	}
@@ -7716,7 +7731,7 @@ VERSION
 		}
 		###	NO SOFTCLIPPING - this is now negotiable
 		if ($local){
-			warn "[EXPERIMENTAL]: local alignments with HISAT2\n\n|||||||||||||||||||\n\n";
+			# warn "[EXPERIMENTAL]: local alignments with HISAT2\n\n|||||||||||||||||||\n\n";
 			push @aligner_options,'--omit-sec-seq'; 
 		}
 		else{
@@ -9004,9 +9019,10 @@ Alignment:
 
 --local                  In this mode, it is not required that the entire read aligns from one end to the other. Rather, some
                          characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible
-                         alignment score. The match bonus --ma (default: 2) is used in this mode, and the best possible alignment
-                         score is equal to the match bonus (--ma) times the length of the read. This is mutually exclusive with
-                         end-to-end alignments. DEFAULT: OFF.
+                         alignment score. For Bowtie 2, the match bonus --ma (default: 2) is used in this mode, and the best possible
+                         alignment score is equal to the match bonus (--ma) times the length of the read. This is mutually exclusive with
+                         end-to-end alignments. For HISAT2, it is currently not exactly known how the best alignment is calculated.
+                         DEFAULT: OFF.
 
 
 Output:
@@ -9171,13 +9187,13 @@ BOWTIE 2 SPECIFIC OPTIONS:
 HISAT2 SPECIFIC OPTIONS:
 
 
---hisat2                 Default: OFF. Uses HISAT2 instead of Bowtie 2. Bismark limits HISAT2 to end-to-end
-                         alignments, i.e. searches for alignments involving all read characters (also called
-                         untrimmed or unclipped alignments) using the option '--no-softclipping'. Bismark assumes that raw
-                         sequence data is adapter and/or quality trimmed where appropriate. Both small (.ht2) and large (.ht2l)
-                         HISAT2 indexes are supported.
+--hisat2                 Uses HISAT2 instead of Bowtie 2. Bismark uses HISAT2 in end-to-end mode by default,
+                         i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments)
+                         using the option '--no-softclipping'. Bismark assumes that raw sequence data is adapter and/or quality
+                         trimmed where appropriate. From v0.22.0 onwards, Bismark also supports the local alignment mode of
+                         HISAT2 (please see --local). Both small (.ht2) and large (.ht2l) HISAT2 indexes are supported. Default: OFF. 
 
---no-spliced-alignment   Disable spliced alignment
+--no-spliced-alignment   Disable spliced alignment. Default: spliced-alignments are performed.
 
 --known-splicesite-infile <path>   Provide a list of known splice sites.
 
@@ -9227,13 +9243,14 @@ Scoring options:
 --score_min <func>       Sets a function governing the minimum alignment score needed for an alignment to be considered
                          "valid" (i.e. good enough to report). This is a function of read length. 
 
-                         In end-to-end mode (default), --score_min is set as a linear function and is set as <L,value,value>.
+                         In end-to-end mode (default), and --local mode for HISAT2 only, --score_min is set as a linear function
+                         and is set as <L,value,value>.
                          For instance, specifying L,0,-0.2 sets the minimum-score function f to f(x) = 0 + (-0.2) * x, where x
                          is the read length. The default for end-to-end (global) alignments is: L,0,-0.2.
                          
-                         In --local mode, the function is logarithmic and is set as <G,value,value>. For instance, specifying
+                         In --local mode for Bowtie 2, the function is logarithmic and is set as <G,value,value>. For instance, specifying
                          G,20,8 sets the minimum-score function f to f(x) = 20 + 8 * ln(x), where x is the read length.
-                         The default is for local alignments is: G,20,8.
+                         The default is for local alignments in Bowtie 2 mode is: G,20,8.
 						 
                          See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2.
 
@@ -9268,6 +9285,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 02 April 2019
+Last modified on 21 April 2019
 HOW_TO
 }
