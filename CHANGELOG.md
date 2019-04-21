@@ -6,7 +6,7 @@
 
 - Hotfixed (as in: removed) the cause of delay during the MD:Z: field computation for reads containing a deletion (which was roughly one second per read). Apologies, I did it again...
 
-- Changed the see default `--score_min` function for HISAT2 back to a linear model (instead of using the logarithmic model that is employed by Bowtie 2). The default is not `--score_min L,0,-0.2` for both end-to-end (default) and `--local` mode. It should be mentioned that we currently don't understand how exactly the scoring mode in HISAT2 works, so this might change somewhat in the future. See [here for more info](https://github.com/DaehwanKimLab/hisat2/issues/202).
+- Changed the see default `--score_min` function for HISAT2 back to a linear model (instead of using the logarithmic model that is employed by Bowtie 2). The default is now `--score_min L,0,-0.2` for both end-to-end (default) and `--local` mode. It should be mentioned that we currently don't understand how exactly the scoring mode in HISAT2 works, so this might change somewhat in the future. See [here for more info](https://github.com/DaehwanKimLab/hisat2/issues/202).
 
 
 ## Changelog for Bismark v0.22.0 (release on 16 04 2019)
