@@ -20,7 +20,7 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.22.1';
+my $bismark2report_version = 'v0.22.1_dev';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
@@ -167,7 +167,7 @@ sub getLoggingTime {
   my $doc = shift;
   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
 
-  my $time = sprintf ("%02d:%02d", $hour,$min,$sec);
+  my $time = sprintf ("%02d:%02d:%02d", $hour,$min,$sec);
   my $date = sprintf ("%04d-%02d-%02d", $year+1900,$mon+1,$mday);
   warn "Using Time: $time, and date: $date\n\n" if ($verbose);
 
@@ -1292,7 +1292,7 @@ sub print_helpfile{
                            '--nucleotide_coverage') in the current working directory. Including a nucleotide coverage statistics
                            report is optional, and using the FILE 'none' will skip this report entirely.
 
-                           Script last modified: 07 August 2018
+                           Script last modified: 03 May 2019
 
 EOF
     ;
