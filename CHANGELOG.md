@@ -1,6 +1,10 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.22.1 (release on 21 04 2019)
+## Changelog for Bismark v0.22.1_dev
+
+### bismark2report
+
+- added seconds to the report statement (which caused a warning on certain platforms)
 
 ### Bismark
 
