@@ -1627,6 +1627,7 @@ VERSION
     $CpG_only = 1;
   }
   
+  chdir $parent_dir or die "Failed to move back to current working directory\n";
   ### GENOME folder
   if (defined $genome_folder){
       
