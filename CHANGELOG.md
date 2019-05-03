@@ -6,6 +6,8 @@
 
 - added seconds to the report statement (which caused a warning on certain platforms)
 
+# Changelog for Bismark v0.22.1 (release on 21 04 2019)
+
 ### Bismark
 
 - Hotfixed (as in: removed) the cause of delay during the MD:Z: field computation for reads containing a deletion (which was roughly one second per read). Apologies, I did it again...
