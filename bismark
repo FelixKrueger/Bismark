@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.22.1';
+my $bismark_version = 'v0.22.1_dev';
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
@@ -53,7 +53,7 @@ my $seqID_contains_tabs;
 my $verbose = 0;
 
 if ($multicore > 1){
-  warn "Running Bismark Parallel version. Number of parallel instances to be spawned: $multicore\n\n";
+	warn "Running Bismark Parallel version. Number of parallel instances to be spawned: $multicore\n\n";
 }
 
 
@@ -3783,110 +3783,249 @@ sub calc_mapq {
 		$scMin   += $score_min_intercept + $score_min_slope * $read2Len;
 	}
 
-  my $diff = abs$scMin; # scores can vary by up to this much (since max AS is 0 for end-to-end alignment)
-  my $bestOver = $AS_best - $scMin;
-
-  if (!defined $AS_secBest) {
-    if    ($bestOver >= $diff * 0.8) { return 42; }
-    elsif ($bestOver >= $diff * 0.7) { return 40; }
-    elsif ($bestOver >= $diff * 0.6) { return 24; }
-    elsif ($bestOver >= $diff * 0.5) { return 23; }
-    elsif ($bestOver >= $diff * 0.4) { return  8; }
-    elsif ($bestOver >= $diff * 0.3) { return  3; }
-    else                             { return  0; }
-  } else {
-    my $bestDiff = abs(abs($AS_best) - abs($AS_secBest));
-    if ($bestDiff >= $diff * 0.9) {
-      if ($bestOver == $diff) {
-	return 39;
-      } else {
-	return 33;
-      }
-    } elsif ($bestDiff >= $diff * 0.8) {
-      if ($bestOver == $diff) {
-	return 38;
-      } else {
-	return 27;
-      }
-    } elsif ($bestDiff >= $diff * 0.7) {
-      if ($bestOver == $diff) {
-	return 37;
-      } else {
-	return 26;
-      }
-    } elsif ($bestDiff >= $diff * 0.6) {
-      if ($bestOver == $diff) {
-	return 36;
-      } else {
-	return 22;
-      }
-    } elsif ($bestDiff >= $diff * 0.5) {
-      if ($bestOver == $diff) {
-	return 35;
-      } elsif ($bestOver >= $diff * 0.84) {
-	return 25;
-      } elsif ($bestOver >= $diff * 0.68) {
-	return 16;
-      } else {
-	return 5;
-      }
-    } elsif ($bestDiff >= $diff * 0.4) {
-      if ($bestOver == $diff) {
-	return 34;
-      } elsif ($bestOver >= $diff * 0.84) {
-	return 21;
-      } elsif ($bestOver >= $diff * 0.68) {
-	return 14;
-      } else {
-	return 4;
-      }
-    } elsif ($bestDiff >= $diff * 0.3) {
-      if ($bestOver == $diff) {
-	return 32;
-      } elsif ($bestOver >= $diff * 0.88) {
-	return 18;
-      } elsif ($bestOver >= $diff * 0.67) {
-	return 15;
-      } else {
-	return 3;
-      }
-    } elsif ($bestDiff >= $diff * 0.2) {
-      if ($bestOver == $diff) {
-	return 31;
-      } elsif ($bestOver >= $diff * 0.88) {
-	return 17;
-      } elsif ($bestOver >= $diff * 0.67) {
-	return 11;
-      } else {
-	return 0;
-      }
-    } elsif ($bestDiff >= $diff * 0.1) {
-      if ($bestOver == $diff) {
-	return 30;
-      } elsif ($bestOver >= $diff * 0.88) {
-	return 12;
-      } elsif ($bestOver >= $diff * 0.67) {
-	return 7;
-      } else {
-	return 0;
-      }
-    } elsif ($bestDiff > 0) {
-      if ($bestOver >= $diff * 0.67) {
-	return 6;
-      } else {
-	return 2;
-      }
-    } else {
-      if ($bestOver >= $diff * 0.67) {
-	return 1;
-      } else {
-	return 0;
-      }
-    }
-  }
+	my $diff = abs$scMin; # scores can vary by up to this much (since max AS is 0 for end-to-end alignment)
+	my $bestOver = $AS_best - $scMin;
+	#warn "AS_best: $AS_best\n";
+	#warn "scMin: $scMin\n";
+	#warn "diff: $diff\n";
+	#warn "bestOver (AS_best - scMin): $bestOver\n~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+	
+	if (!$local){
+		# warn "End-to-End alignment\n";
+		if (!defined $AS_secBest) {
+			if    ($bestOver >= $diff * 0.8) { return 42; }
+			elsif ($bestOver >= $diff * 0.7) { return 40; }
+			elsif ($bestOver >= $diff * 0.6) { return 24; }
+			elsif ($bestOver >= $diff * 0.5) { return 23; }
+			elsif ($bestOver >= $diff * 0.4) { return  8; }
+			elsif ($bestOver >= $diff * 0.3) { return  3; }
+			else                             { return  0; }
+		}
+		else{
+			my $bestDiff = abs(abs($AS_best) - abs($AS_secBest));
+			if ($bestDiff >= $diff * 0.9) {
+				if ($bestOver == $diff) {
+					return 39;
+				} 
+				else {
+					return 33;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.8) {
+				if ($bestOver == $diff) {
+					return 38;
+				} 
+				else {
+					return 27;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.7) {
+				if ($bestOver == $diff) {
+					return 37;
+				}
+				else {
+					return 26;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.6) {
+				if ($bestOver == $diff) {
+					return 36;
+				} 
+				else {
+					return 22;
+				}
+			}
+			elsif ($bestDiff >= $diff * 0.5) {
+				if ($bestOver == $diff) {
+					return 35;
+				} 
+				elsif ($bestOver >= $diff * 0.84) {
+					return 25;
+				}
+				elsif ($bestOver >= $diff * 0.68) {
+					return 16;
+				}
+				else {
+					return 5;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.4) {
+				if ($bestOver == $diff) {
+					return 34;
+				} 
+				elsif ($bestOver >= $diff * 0.84) {
+					return 21;
+				} 
+				elsif ($bestOver >= $diff * 0.68) {
+					return 14;
+				} 
+				else {
+					return 4;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.3) {
+				if ($bestOver == $diff) {
+					return 32;
+				} 
+				elsif ($bestOver >= $diff * 0.88) {
+					return 18;
+				} 
+				elsif ($bestOver >= $diff * 0.67) {
+					return 15;
+				} 
+				else {
+					return 3;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.2) {
+				if ($bestOver == $diff) {
+					return 31;
+				} 
+				elsif ($bestOver >= $diff * 0.88) {
+					return 17;
+				} 
+				elsif ($bestOver >= $diff * 0.67) {
+					return 11;
+				} 
+				else {
+					return 0;
+				}
+			} 
+			elsif ($bestDiff >= $diff * 0.1) {
+				if ($bestOver == $diff) {
+					return 30;
+				} 
+				elsif ($bestOver >= $diff * 0.88) {
+					return 12;
+				}
+				elsif ($bestOver >= $diff * 0.67) {
+					return 7;
+				} 
+				else {
+					return 0;
+				}
+			} 
+			elsif ($bestDiff > 0) {
+				if ($bestOver >= $diff * 0.67) {
+					return 6;
+				} 
+				else {
+					return 2;
+				}
+			}
+			else {
+				if ($bestOver >= $diff * 0.67) {
+					return 1;
+				}
+				else {
+					return 0;
+				}
+			}
+		}
+	}
+	else{
+		## Local alignment 
+		## For more information see here: https://github.com/FelixKrueger/Bismark/issues/260
+		if(!defined $AS_secBest) {
+				if   ($bestOver >= $diff * 0.8)   { return 44; }
+				elsif($bestOver >= $diff * 0.7)   { return 42; }
+				elsif($bestOver >= $diff * 0.6)   { return 41; }
+				elsif($bestOver >= $diff * 0.5)   { return 36; }
+				elsif($bestOver >= $diff * 0.4)   { return 28; }
+				elsif($bestOver >= $diff * 0.3)   { return 24; }
+				else                              { return 22; }
+		}
+		else {
+			# FK: Not sure what to do about this to be honest secbest = s.paired() ?
+			# FK: Not sure what to do about this to be honest s.bestUnchosenCScore().score() : s.bestUnchosenScore(mate1).score();
+			my $bestDiff = abs(abs($AS_best) - abs($AS_secBest));
+			# warn "bestDiff is: $bestDiff\n";
+			if   ($bestDiff >= $diff * 0.9){
+				return 40;
+			}	
+			elsif($bestDiff >= $diff * 0.8){
+				return 39;
+			}
+			elsif($bestDiff >= $diff * 0.7){
+				return 38;
+			}
+			elsif($bestDiff >= $diff * 0.6){
+				return 37;
+			}
+			elsif($bestDiff >= $diff * 0.5){
+				if ($bestOver == $diff){
+					return 35;
+				}
+				elsif($bestOver >= $diff * 0.50){
+					return 25;
+				}
+				else{
+					return 20;
+				}
+			} 
+			elsif($bestDiff >= $diff * 0.4){
+				if ($bestOver == $diff){
+					return 34;
+				}
+				elsif($bestOver >= $diff * 0.50){
+					return 21;
+				}
+				else{
+					return 19;
+				}
+			}
+			elsif($bestDiff >= $diff * 0.3){
+				if ($bestOver == $diff){
+					return 33;
+				}
+				elsif($bestOver >= $diff * 0.5){
+					return 18;
+				}
+				else{
+					return 16;
+				}
+			}	
+			elsif($bestDiff >= $diff * 0.2){
+				if ($bestOver == $diff){
+					return 32;
+				}
+				elsif($bestOver >= $diff * 0.5){
+					return 17;
+				}
+				else{
+					return 12;
+				}
+			}
+			elsif($bestDiff >= $diff * 0.1){
+				if ($bestOver == $diff){ 
+					return 31;
+				}
+				elsif($bestOver >= $diff * 0.5){ 
+					return 14; 
+				}
+				else{ 
+					return 9;
+				}
+			}
+			elsif($bestDiff > 0){
+				if($bestOver >= $diff * 0.5){
+					return 11;
+				}
+				else{
+					return 2;
+				}
+			} 
+			else {
+				if($bestOver >= $diff * 0.5){
+					return 1;
+				}
+				else{
+					return 0;
+				}
+			}
+		}	
+	}
 }
-
-
 
 
 ##########################################
@@ -9285,6 +9424,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 21 April 2019
+Last modified on 14 May 2019
 HOW_TO
 }
