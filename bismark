@@ -27,7 +27,6 @@ use lib "$RealBin/../lib";
 my $parent_dir = getcwd();
 my $bismark_version = 'v0.22.1_dev';
 my $start_run = time();
-# warn "Run started at: $start_run\n";
 my $command_line = join (" ",@ARGV);
 
 
@@ -7899,7 +7898,11 @@ VERSION
 	if ($icpc){
 		warn "In this mode (--icpc), FastQ read IDs are truncated at the first space to ignore comments\n";
 	}
-	
+	if ($non_bs_mm){
+		if ($local){
+			die "The option --non_bs_mm is only available for end-to-end alignments\n\n";
+		}
+	}
 	
 	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local);
 }
@@ -8078,12 +8081,15 @@ sub single_end_SAM_output{
 	if ($non_bs_mm) {
 
 		$number_of_mismatches =~ s/-//; # removing the minus sign
-
-		### if Bowtie 2 was used we need to analyse the CIGAR string whether the read contained any indels to determine the number of mismatches
+		
+		### We need to analyse the CIGAR string whether the read contained any indels to determine the number of mismatches
+		### skipped regions (N) do not affect the Alignment Score (AS)
+		
 		if ($cigar =~ /(D|I)/) {
-			# warn "$cigar\n";
+			# warn "CIGAR: $cigar\n~~~~~\n\n";
+			
 
-		# parsing CIGAR string
+			# parsing CIGAR string
 			my @len = split (/\D+/,$cigar); # storing the length per operation
 			my @ops = split (/\d+/,$cigar); # storing the operation
 			shift @ops;		# remove the empty first element
@@ -8107,7 +8113,7 @@ sub single_end_SAM_output{
 				elsif ($ops[$_] eq 'N') {	# skipped region in the read sequence, splice-junction
 					next; # irrelevant
 				}
-				elsif ($cigar =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
+				elsif ($cigar =~ tr/[HPXS=]//) {	# if these (for standard mapping) illegal characters exist we die
 					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' or 'N': $cigar";
 				}
 				else {
@@ -8119,8 +8125,8 @@ sub single_end_SAM_output{
 		}
 		### Now we have InDel corrected alignment scores
 
-		### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, but normal mismatches receive -6. This might still break if the
-		### sequence contained more than 5 Ns, but this should occur close to never
+		### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, but normal mismatches receive -6.
+		### This might still break if the sequence contained more than 5 Ns, but this should occur close to never
 
 		my $seq_N_count = $number_of_mismatches % 6; # modulo 6 will return the integer rest after the division
 		# warn "N count: $seq_N_count\n";
@@ -8520,7 +8526,7 @@ sub paired_end_SAM_output{
 		$number_of_mismatches_1 =~ s/-//; # removing the minus sign
 		$number_of_mismatches_2 =~ s/-//;
 
-		### if Bowtie 2 was used we need to analyse the CIGAR strings whether the reads contained any indels to determine the number of mismatches
+		### We need to analyse the CIGAR strings whether the reads contained any indels to determine the number of mismatches
 
 		### CIGAR 1
 		if ($cigar_1 =~ /(D|I)/) {
@@ -8551,11 +8557,11 @@ sub paired_end_SAM_output{
 					# warn "skipping\n";
 					next;		# irrelevant
 				}
-				elsif ($cigar_1 =~ tr/[SHPX=]//) {	# if these (for standard mapping) illegal characters exist we die
-					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1";
+				elsif ($cigar_1 =~ tr/[HPSX=]//) {	# if these (for standard mapping) illegal characters exist we die
+					die "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1";
 				}
 				else {
-					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I','D' and 'N': $cigar_1";
+					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_1";
 				}
 			}
 
@@ -8602,8 +8608,8 @@ sub paired_end_SAM_output{
 
 			### Now we have InDel corrected Alignment scores
 
-			### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, but normal mismatches receive -6. This might still break if the
-			### sequence contained more than 5 Ns, but this should occur close to never
+			### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, 
+			### but normal mismatches receive -6. This might still break if the sequence contained more than 5 Ns, but this should occur close to never
 
 			my $seq_1_N_count = $number_of_mismatches_1 % 6; # modulo 6 will return the integer rest after the division
 			my $seq_2_N_count = $number_of_mismatches_2 % 6;
@@ -9217,9 +9223,9 @@ Output:
                          the specified folder does not exist, Bismark will attempt to create it first. The path to the
                          temporary folder can be either relative or absolute.
 
---non_bs_mm              Optionally outputs an extra column specifying the number of non-bisulfite mismatches a read during the
-                         alignment step. This option is only available for SAM format. In Bowtie 2 context, this value is
-                         just the number of actual non-bisulfite mismatches and ignores potential insertions or deletions.
+--non_bs_mm              Optionally, outputs an extra column specifying the number of non-bisulfite mismatches a read has.
+                         This option is only available in end-to-end mode. The value is just the number of actual non-bisulfite
+                         mismatches and ignores potential insertions or deletions.
                          The format for single-end reads and read 1 of paired-end reads is 'XA:Z:number of mismatches'
                          and 'XB:Z:number of mismatches' for read 2 of paired-end reads.
 
