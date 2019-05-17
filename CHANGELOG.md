@@ -2,9 +2,13 @@
 
 ## Changelog for Bismark v0.22.1_dev
 
+### Bismark
+
+- the option `--non_bs_mm` is now only allowed in end-to-end mode
+
 ### bismark2report
 
-- added seconds to the report statement (which caused a warning on certain platforms)
+- added seconds to the timestamp report statement (which caused a warning on certain, but not all, platforms)
 
 # Changelog for Bismark v0.22.1 (release on 21 04 2019)
 
