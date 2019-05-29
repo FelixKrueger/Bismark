@@ -8570,7 +8570,7 @@ sub paired_end_SAM_output{
 		}
 
 		### CIGAR 2
-			if ($cigar_2 =~ /(D|I)/) {
+		if ($cigar_2 =~ /(D|I)/) {
 			# warn "$cigar_2\n";
 
 			# parsing CIGAR string
@@ -8605,23 +8605,25 @@ sub paired_end_SAM_output{
 					die "The CIGAR string contained undefined CIGAR operations in addition to 'M', 'I', 'D' and 'N': $cigar_2";
 				}
 			}
-
-			### Now we have InDel corrected Alignment scores
-
-			### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, 
-			### but normal mismatches receive -6. This might still break if the sequence contained more than 5 Ns, but this should occur close to never
-
-			my $seq_1_N_count = $number_of_mismatches_1 % 6; # modulo 6 will return the integer rest after the division
-			my $seq_2_N_count = $number_of_mismatches_2 % 6;
-			#   warn "N count 1: $seq_1_N_count\n";
-			#   warn "N count 2: $seq_2_N_count\n";
-
-			$number_of_mismatches_1 = int ($number_of_mismatches_1 / 6) + $seq_1_N_count;
-			$number_of_mismatches_2 = int ($number_of_mismatches_2 / 6) + $seq_2_N_count;
-
-			# warn "MM1    $number_of_mismatches_1 \n";
-			# warn "MM2    $number_of_mismatches_2 \n";
 		}
+
+
+		### Now we have InDel corrected Alignment scores
+
+		### if the actual sequence contained Ns we need to adjust the number of mismatches. Ns receive a penalty of -1, 
+		### but normal mismatches receive -6. This might still break if the sequence contained more than 5 Ns, but this should occur close to never
+
+		my $seq_1_N_count = $number_of_mismatches_1 % 6; # modulo 6 will return the integer rest after the division
+		my $seq_2_N_count = $number_of_mismatches_2 % 6;
+		#   warn "N count 1: $seq_1_N_count\n";
+		#   warn "N count 2: $seq_2_N_count\n";
+
+		$number_of_mismatches_1 = int ($number_of_mismatches_1 / 6) + $seq_1_N_count;
+		$number_of_mismatches_2 = int ($number_of_mismatches_2 / 6) + $seq_2_N_count;
+
+		# warn "MM1    $number_of_mismatches_1 \n";
+		# warn "MM2    $number_of_mismatches_2 \n";
+		
 	}
 
 	####
@@ -9430,6 +9432,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 14 May 2019
+Last modified on 29 May 2019
 HOW_TO
 }
