@@ -5,6 +5,7 @@
 ### Bismark
 
 - the option `--non_bs_mm` is now only allowed in end-to-end mode
+- Fixed the calculation of non bisulfite mismatches for paired-end data which happened correctly only when R2 had an InDel (see [here](https://github.com/FelixKrueger/Bismark/issues/262))
 
 ### bismark2report
 
