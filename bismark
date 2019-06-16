@@ -138,6 +138,10 @@ sub subset_input_file_FastQ{
 	}
 
 	my $line_count = 0;
+	my $seqs_processed = 0;
+	if (defined $upto){
+		# warn "Before we begin: -u was set to: -u $upto\n";
+	}
 
 	while (1){
 		my $l1 = <OFFSET>;
@@ -147,12 +151,20 @@ sub subset_input_file_FastQ{
 
 		last unless ($l4);
 		++$line_count;
-	
+		
+		# If user only want to process a subset of the input file
+		if (defined $upto){
+			if ($seqs_processed == $upto){
+				last;
+			}
+		}
+
 		if ( ($line_count - $offset)%$multicore == 0){
 			# warn "line count: $line_count\noffset: $offset\n";
 			# warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
 			# warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
 			print TEMPFQ "$l1$l2$l3$l4";
+			$seqs_processed++;
 		}
 		else{
 			# warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
@@ -160,10 +172,10 @@ sub subset_input_file_FastQ{
 		}
 	}
 
-	close OFFSET or warn $!;
+	close OFFSET; # or warn $!;
 	close TEMPFQ or warn "Failed to close file handle TEMPFQ: $!\n";
 
-	warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
+	warn "Finished subdividing $filename for PID: $process_id and offset $offset (sequences written out: $seqs_processed)\n\n";
 
 	return ($temp); # returning the subset filename
 
@@ -196,6 +208,7 @@ sub subset_input_file_FastA{
 	warn "Writing temporary infile to $temp\n";
 
 	my $line_count = 0;
+	my $seqs_processed = 0;
 
 	while (1){
 		my $l1 = <OFFSET>;
@@ -204,11 +217,19 @@ sub subset_input_file_FastA{
 		last unless ($l2);
 		++$line_count;
 
+		# If user only want to process a subset of the input file
+		if (defined $upto){
+			if ($seqs_processed == $upto){
+				last;
+			}
+		}
+
 		if ( ($line_count - $offset)%$multicore == 0){
 			# warn "line count: $line_count\noffset: $offset\n";
 			# warn "Modulus: ",($line_count - $offset)%$multicore,"\n";
 			# warn "processing this line $line_count (processID: $process_id with \$offset $offset)\n";
 			print TEMPFA "$l1$l2";
+			$seqs_processed++;
 		}
 		else{
 			# warn "skipping line $line_count for processID: $process_id with \$offset $offset)\n";
@@ -219,7 +240,7 @@ sub subset_input_file_FastA{
 	close OFFSET or warn $!;
 	close TEMPFA or warn "Failed to close file handle TEMPFQ: $!\n";
 
-	warn "Finished subdividing $filename for PID: $process_id and offset $offset\n\n";
+	warn "Finished subdividing $filename for PID: $process_id and offset $offset (sequences processed: $seqs_processed)\n\n";
 
 	return ($temp); # returning the subset filename
 
