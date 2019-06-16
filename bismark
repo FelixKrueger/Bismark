@@ -9097,7 +9097,7 @@ ARGUMENTS:
                          and one report file per paired-end input file pair.
 
 -2 <mates2>              Comma-separated list of files containing the #2 mates (filename usually includes
-                         "_2"), e.g. flyA_1.fq,flyB_1.fq). Sequences specified with this option must
+                         "_2"), e.g. flyA_2.fq,flyB_2.fq). Sequences specified with this option must
                          correspond file-for-file and read-for-read with those specified in <mates1>.
                          Reads may be a mix of different lengths.
 
