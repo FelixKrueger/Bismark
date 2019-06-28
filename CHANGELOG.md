@@ -5,7 +5,13 @@
 ### Bismark
 
 - the option `--non_bs_mm` is now only allowed in end-to-end mode
+
 - Fixed the calculation of non bisulfite mismatches for paired-end data which happened correctly only when R2 had an InDel (see [here](https://github.com/FelixKrueger/Bismark/issues/262))
+
+- When the option `-u` was used in conjunction with `--parallel`, only `-u` sequences will be written to the temporary subset files for each spawn of Bismark (previously, the entire file was split for `--parallel`, but then only a small subset of those files was used for `-u`, which resulted in very long runs even for a small number of analysed sequences)
+
+### coverage2cytosine
+- Added new option `--coverage_threshold INT`. Positions have to be covered by at least INT calls (irrespective of their methylation state) before they get reported. For NOMe-seq, the minimum threshold is automatically set to 1 unless specified explicitly. Setting a coverage threshold does not work in conjunction with `--merge_CpGs` (as all genomix CpGs are required for this). Default: 0 (i.e. all genomic positions get reported)
 
 ### bismark2report
 
