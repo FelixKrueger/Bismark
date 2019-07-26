@@ -7832,7 +7832,7 @@ VERSION
 			warn "Core usage currently set to more than 20 threads. This might fail horribly but let's see how it goes... (set value: $multicore)\n\n";
 		}
 		if ($sam){
-			die "The multicore function currently requires the output to be in BAM format, so please lose either option --sam or --multi\n";
+			die "The multicore function currently requires the output to be in BAM format, so please lose either option --sam or --parallel/--multi\n";
 		}
 	}
 	else{
@@ -9257,10 +9257,12 @@ Output:
                          files. This option might be somewhat slower than writing out uncompressed files, but this awaits
                          further testing.
 
---sam                    The output will be written out in SAM format instead of the default BAM format. Bismark will
-                         attempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't
+--sam                    The output will be written out in SAM format instead of the default BAM format. Be warned that this
+                         requires ~10 times more disk space. --sam is not compatible with the option --parallel.
+
+--bam                    Bismark will attempt to use the path to Samtools that was specified with '--samtools_path', or, if it hasn't
                          been specified, attempt to find Samtools in the PATH. If no installation of Samtools can be found,
-                         the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file).
+                         the SAM output will be compressed with GZIP instead (yielding a .sam.gz output file). Default: ON.
 
 --cram                   Writes the output to a CRAM file instead of BAM. This requires the use of Samtools 1.2 or higher.
 
@@ -9453,6 +9455,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 29 May 2019
+Last modified on 26 July 2019
 HOW_TO
 }
