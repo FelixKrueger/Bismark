@@ -20,6 +20,11 @@
 
 - added seconds to the timestamp report statement (which caused a warning on certain, but not all, platforms)
 
+### bismark2summary
+
+- Now reads splitting reports even for non-deduplicated files (such as RRBS).
+
+
 # Changelog for Bismark v0.22.1 (release on 21 04 2019)
 
 ### Bismark
