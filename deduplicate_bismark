@@ -52,6 +52,11 @@ my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile) = process_commandline();
 
+my $user_defined_outfile = 0;
+if (defined $outfile){
+	++$user_defined_outfile;
+}
+
 ###########################
 ### START OF PROCESSING ###
 ###########################
@@ -63,16 +68,16 @@ if($rrbs){
 else{ # default; random (=first) alignment
     # multiple input files are treated as one single big BAM file when merging the data is required
     if ($multiple){
-	warn "Multiple Input files for the same sample selected - All input files are treated as one big single file. The files to be used are:\n";
-	warn join ("\n",@filenames),"\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n"; sleep(1);
+		warn "Multiple Input files for the same sample selected - All input files are treated as one big single file. The files to be used are:\n";
+		warn join ("\n",@filenames),"\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n"; # sleep(1);
     }
     
     warn "\nIf there are several alignments to a single position in the genome the first alignment will be chosen. Since the input files are not in any way sorted this is a near-enough random selection of reads.\n\n";
-    sleep (1);
+    # sleep (1);
 }
 
 foreach my $file (@filenames){
-
+	
     if ($global_single){
 		$paired = 0;
 		$single = 1;
@@ -89,7 +94,7 @@ foreach my $file (@filenames){
     
     unless($global_single or $global_paired){
 	
-		warn "Trying to determine the type of mapping from the SAM header line\n"; sleep(1);
+		warn "Trying to determine the type of mapping from the SAM header line\n"; # sleep(1);
 	
 		### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
 		if ($file =~ /\.gz$/){
@@ -108,12 +113,12 @@ foreach my $file (@filenames){
 				# warn "$_";
 				
 				if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
-					warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
+					warn "Treating file as paired-end data (extracted from \@PG line)\n"; # sleep(1);
 					$paired = 1;
 					$single = 0;
 				}
 				else{
-					warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
+					warn "Treating file as single-end data (extracted from \@PG line)\n"; # sleep(1);
 					$paired = 0;
 					$single = 1;
 				}
@@ -189,7 +194,7 @@ foreach my $file (@filenames){
 			}
 		}
 	
-		if (defined $outfile){ # user-defined output filename
+		if ($user_defined_outfile){ # user-defined output filename
 			# using that name
 		}
 		else{ # deriving the name from the input file automatically (default)
@@ -953,7 +958,7 @@ sub test_positional_sorting{
 	my $filename = shift;
 
 	print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
-	sleep(1);
+	# sleep(1);
 
 	if ($filename =~ /\.gz$/) {
 		open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
@@ -1115,7 +1120,7 @@ VERSION
 			}
 			else{
 				mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
-				warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; sleep(1);
+				warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; # sleep(1);
 				chdir $output_dir or die "Failed to move to $output_dir\n";
 				$output_dir = getcwd(); #  making the path absolute
 				unless ($output_dir =~ /\/$/){
