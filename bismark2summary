@@ -22,9 +22,9 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.22.1';
+my $bismark_version = '0.22.1_dev';
 
-# Last modified 14 02 2019
+# Last modified 31 07 2019
 
 my ($report_basename,$page_title,$verbose) = process_commandline();
 
@@ -116,7 +116,7 @@ sub print_helpfile{
 	  --help                      Displays this help message and exits.
 
 
-													Script last modified: 14 February 2019
+													Script last modified: 31 July 2019
 
 EOF
 		;
@@ -328,32 +328,42 @@ for my $bam (@bam_files){
 		while(<DEDUP>){
 			chomp;
 			if(/^Total number of alignments analysed in .+:\s+(\d+)$/){
-			$aligned_reads = $1;
-			# warn "Setting aligned reads to $aligned_reads\n";
+                $aligned_reads = $1;
+                # warn "Setting aligned reads to $aligned_reads\n";
 			}
 			if(/^Total number duplicated alignments removed:\s+(\d+)/){
-			$dup_reads = $1;
-			# warn "Setting deduplicated reads to $dup_reads\n";
+                $dup_reads = $1;
+                # warn "Setting deduplicated reads to $dup_reads\n";
 			}
 			if(/^Total count of deduplicated leftover sequences:\s+(\d+)/){
-			$unique_reads = $1;
-			# warn "Setting unique reads to $unique_reads\n";
+                $unique_reads = $1;
+                # warn "Setting unique reads to $unique_reads\n";
 			}
 
 		}
 		close(DEDUP);
     }
     else{
-	warn "No deduplication report present, skipping...\n";
+	    warn "No deduplication report present, skipping...\n";
     }
     
     ### Methylation Extraction report (optional)
     my $meth_extract;
     if ($paired_end){
-        $meth_extract= $base."_pe.deduplicated_splitting_report.txt";
+         if(-e $dedup){ # deduplication report is present
+            $meth_extract = $base."_pe.deduplicated_splitting_report.txt";
+         }
+         else{ #  no deduplication present, e.g. RRBS
+            $meth_extract = $base."_pe_splitting_report.txt";
+         }
     }
     else{
-        $meth_extract= $base.".deduplicated_splitting_report.txt";
+        if(-e $dedup){ # deduplication report is present
+            $meth_extract = $base.".deduplicated_splitting_report.txt";
+        }
+        else{ #  no deduplication present, e.g. RRBS
+            $meth_extract = $base."_splitting_report.txt";
+        }
     }
     
     if(-e $meth_extract){
