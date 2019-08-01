@@ -1,4 +1,5 @@
 [![Build Status](https://travis-ci.org/FelixKrueger/Bismark.svg?branch=master)](https://travis-ci.org/FelixKrueger/Bismark)
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/bismark/README.html)
 
 # Bismark
 
