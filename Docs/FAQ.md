@@ -4,17 +4,17 @@ This will be a collection of fairly common issues that arise fairly regularly. S
 
 ## Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
 
-Bisulfite sequencing based on post-bisulfite adapter tagging (PBAT), including [scBS-seq](https://www.nature.com/articles/nmeth.3035) (single-cell Bisulfite-Seq) or [scNMT-seq](https://www.nature.com/articles/s41467-018-03149-4) (single-cell nucleosome, methylation and transcription sequencing) typically suffer from a number of 'issues' that one should keep in mind when processing the data:
+Bisulfite sequencing based on post-bisulfite adapter tagging (PBAT), including [scBS-seq](https://www.nature.com/articles/nmeth.3035) (single-cell Bisulfite-Seq) or [scNMT-seq](https://www.nature.com/articles/s41467-018-03149-4) (single-cell nucleosome, methylation and transcription sequencing) often suffers from a number of 'issues' that one should keep in mind when processing the data:
 
-- PBAT libraries pull down strands that are complementary to the usual DNA strands (OT and OB), and therefore normally require mapping in `--pbat` mode to the complementary strands (CTOT and CTOB). Single-cell techniques on the other hand typically undergo several rounds of DNA amplification after the bisulfite conversion, which means they have to be aligned in `--non_directional` mode.
+- **Special alignment mode**
+PBAT libraries pull down strands that are complementary to the usual DNA strands (OT and OB), and therefore normally require mapping in `--pbat` mode to the complementary strands (CTOT and CTOB). Single-cell techniques on the other hand undergo several rounds of DNA amplification after the bisulfite conversion, which means they have to be aligned in `--non_directional` mode.
 
-- PBAT/single-cell libraries typically have a very biased sequence composition at the 5' end of reads which reflects the non-randomness of the priming/ pull-down process. 
-[priming issues](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/)
+- **mis-priming**
+PBAT/single-cell libraries typically have a very biased sequence composition at the 5' end of reads which reflects the non-randomness of the priming/ pull-down process. The symptoms and possible mitigation has already been discussed in more detail here: [QCFail mis-priming issues](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/). In conclusion, reads should be hard-trimmed from their 5'-ends before doing the alignments to prevent lower mapping effiency and mis-mapping/mis-calling methylation states.
 
-#### Chimeric reads
+- **Chimeric reads**
+This has also been described in more detail over at [QCFail](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/).
 
-Has been described at [QCFail](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/)
-A word about hybrid reads in PBAT libraries
 
 While the measures described above should be pretty effective in combating errors introduced by the PBAT protocol it should be noted that we have seen a tendency of hybrid reads in PBAT libraries. Hybrid reads in this context are reads that would be considered discordant, i.e. where R1 and R2 align to completely different places in the genome. These reads will not be reported by Bismark as valid alignments, but we have seen paired-end libraries with in excess of 30% of all fragments aligning as to different places in the genome similar to a bisulfite Hi-C experiment (should there be one…). It is debatable whether a read pair starting at say chromosome 3 and continuing into chromosome 17 contains credible methylation information, but clearly a fairly large portion of hybrid reads seems to contribute to the generally low-ish mapping efficiency observed for some PE PBAT libraries.
 
@@ -27,7 +27,7 @@ A recent article in Bioinformatics (https://www.ncbi.nlm.nih.gov/pubmed/30859188
 
 Such chimeric “Hi-C like bisulfite reads” deliberately do not produce valid (i.e. concordant) paired-end alignments with Bismark. To rescue as much data from a paired-end PBAT library with low mapping efficiency as possible we sometimes perform the following method (affectionately termed “Dirty Harry” because it is not the most straight forward or cleanest approach):
 
-Paired-end alignments (--pbat) to start while writing out the unmapped R1 and R2 reads using the option --unmapped. Properly aligned PE reads should be methylation extracted while counting overlapping reads only once (which is the default). Also mind 5′ trimming mentioned in this post.
+Paired-end alignments (`--pbat`) to start while writing out the unmapped R1 and R2 reads using the option --unmapped. Properly aligned PE reads should be methylation extracted while counting overlapping reads only once (which is the default). Also mind 5′ trimming mentioned in this post.
 unmapped R1 is then mapped in single-end mode (--pbat)
 unmapped R2 is then mapped in single-end mode (in default = directional mode).
 Single-end aligned R1 and R2 can then be methylation extracted normally as they should in theory map to different places in the genome anyway so don’t require attention to overlapping reads. Finally, the methylation calls from the PE and SE alignments can merged together before proceeding to the bismark2bedGraph or further downstream steps.
