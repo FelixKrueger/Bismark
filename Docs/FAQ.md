@@ -2,7 +2,7 @@
 
 This will be a collection of fairly common issues that arise fairly regularly. Started on 03 Sept 2019
 
-# I) Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
+## Issue 1) Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
 
 Bisulfite sequencing based on post-bisulfite adapter tagging (PBAT), including [scBS-seq](https://www.nature.com/articles/nmeth.3035) (single-cell Bisulfite-Seq) or [scNMT-seq](https://www.nature.com/articles/s41467-018-03149-4) (single-cell nucleosome, methylation and transcription sequencing) often suffers from a number of 'issues' that one should keep in mind when processing the data:
 
@@ -47,9 +47,11 @@ If you are feeling adventurous you could also attempt using local alignments (op
 Because of the issues described above we have traditionally aligned single-cell data in single-end mode from the start (after hard-clipping biased positions, and adapter/quality trimming). With the more recent versions of Bismark one would in theory also have the option of using local alignments (`--local`), either on its own or in combination with the methods described above (Dirty Harry/ Wu et al.).
 
  
+ ===
+ 
+ 
 
-
-# II) Low mapping effiency of paired-end bisulfite-seq sample
+## Issue 2) Low mapping effiency of paired-end bisulfite-seq sample
 
 This is a question that pops up every so often, and might have been discussed in numerous issues on Github or at seqanswers.com. 
 
@@ -68,7 +70,12 @@ This is a question that pops up every so often, and might have been discussed in
 If you still have any questions, feel free to send me an email with your issues. You might want to attach ~200K raw FastQ reads (compressed withy `gzip`) and mention the genome of interest in your email.
 
 
-# III) Context change/discrepancy between Bismark coverage and genome-wide cytosine reports
+
+===
+
+
+
+## Issue 3) Context change/discrepancy between Bismark coverage and genome-wide cytosine reports
 
 A question that comes up every so often is: "Why do some positions have a different cytosine context between the coverage 
 and genome-wide cytosine reports produced by `coverage2cytosine`? In rare(r) cases, the same position can even be present 
