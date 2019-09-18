@@ -2,9 +2,13 @@
 
 This will be a collection of fairly common issues that arise fairly regularly. Started on 03 Sept 2019
 
-## Thoughts and considerations regarding single-cell (scBS-seq), scNMT and PBAT libraries (September 18, 2019).
+## Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
 
+Bisulfite sequencing based on post-bisulfite adapter tagging (PBAT), including [scBS-seq](https://www.nature.com/articles/nmeth.3035) (single-cell Bisulfite-Seq) or [scNMT-seq](https://www.nature.com/articles/s41467-018-03149-4) (single-cell nucleosome, methylation and transcription sequencing) typically suffer from a number of 'issues' that one should keep in mind when processing the data:
 
+- PBAT libraries pull down strands that are complementary to the usual DNA strands (OT and OB), and therefore normally require mapping in `--pbat` mode to the complementary strands (CTOT and CTOB). Single-cell techniques on the other hand typically undergo several rounds of DNA amplification after the bisulfite conversion, which means they have to be aligned in `--non_directional` mode.
+
+- PBAT/single-cell libraries typically have a very biased sequence composition at the 5' end of reads which reflects the non-randomness of the priming/ pull-down process. 
 [priming issues](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/)
 
 #### Chimeric reads
