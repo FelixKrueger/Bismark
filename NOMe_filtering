@@ -23,7 +23,7 @@ use Carp;
 
 my %chromosomes; # storing sequence information of all chromosomes/scaffolds
 my %processed;   # keeping a record of which chromosomes have been processed
-my $nome_version = 'v0.22.1';
+my $nome_version = 'v0.22.2';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$nome) = process_commandline();
 
