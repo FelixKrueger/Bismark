@@ -2,6 +2,8 @@
 
 ## Changelog for Bismark v0.22.2 (release on 16 10 2019)
 
+Added [FAQ](Docs/FAQ.md) document for questions that keep coming up.
+
 ### Bismark
 
 - the option `--non_bs_mm` is now only allowed in end-to-end mode
