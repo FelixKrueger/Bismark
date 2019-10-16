@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.22.1_dev
+## Changelog for Bismark v0.22.2 (release on 16 10 2019)
 
 ### Bismark
 
@@ -25,7 +25,7 @@
 - Now reads splitting reports even for non-deduplicated files (such as RRBS).
 
 
-# Changelog for Bismark v0.22.1 (release on 21 04 2019)
+## Changelog for Bismark v0.22.1 (release on 21 04 2019)
 
 ### Bismark
 
