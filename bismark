@@ -3797,10 +3797,16 @@ sub determine_number_of_transliterations_performed{
 sub calc_mapq {
 	my ($read1Len, $read2Len, $AS_best, $AS_secBest) = @_;
 
-	my $scMin = $score_min_intercept + $score_min_slope * $read1Len;
+	# Calculate the minimum alignment score either with linear or logarithmic function
+	# Bismark hardcodes the expectation that end-to-end alignments will receive a linear score_min function (L,Intercept,Coefficient) while local alignment will receive logarithmic score_min function(G,Intercept,Coefficient)
+	# This matches the defaults function forms in bowtie2: http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#bowtie2-options-score-min
+	# For details on scoring functions: http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#setting-function-options
+	# If this expectation is lifted, the following code will need to account for the user-requested function too.
+	# For the moment, we can do:
+	my $scMin = $score_min_intercept + $score_min_slope * ($local ? log $read1Len : $read1Len);
 	### read2Len is only defined for paired-end reads, so for single-end mode we can just a score min value for read 1
 	if (defined $read2Len){
-		$scMin   += $score_min_intercept + $score_min_slope * $read2Len;
+		$scMin += $score_min_intercept + $score_min_slope * ($local ? log $read2Len : $read2Len);
 	}
 
 	my $diff = abs$scMin; # scores can vary by up to this much (since max AS is 0 for end-to-end alignment)
@@ -7474,6 +7480,8 @@ VERSION
 	}
 
 	### BOWTIE 2/HISAT2 SCORING OPTIONS
+	# note: calc_map relies on enforcing score_min=G,intercept,slope for local
+	# and score_min=L,intercept,slope for end-to-end alignment for the scMin calculation
 	my ($score_min_intercept, $score_min_slope);
 	if ($score_min){
 		if ($local){
