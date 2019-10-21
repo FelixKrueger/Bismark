@@ -1,5 +1,14 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.22.2_dev 
+
+### Bismark
+
+- Accepted pull request to fix the MAPQ score calculation in `local` mode.
+
+
+
+
 ## Changelog for Bismark v0.22.2 (release on 16 10 2019)
 
 Added [FAQ](Docs/FAQ.md) document for questions that keep coming up.
