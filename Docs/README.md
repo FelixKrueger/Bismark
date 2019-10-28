@@ -2,8 +2,8 @@
 
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
-## User Guide - v0.21.0
-#### 26 February, 2019
+## User Guide - v0.22.2
+#### 28 October, 2019
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
@@ -87,7 +87,7 @@ This command attempts to find Bismark alignment, deduplication and methylation e
 bismark2summary [options]
 ```
 
-This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample [Bismark Summary Report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_WGBS.html).
+This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample [Bismark Summary Report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_WGBS.html). The Bismark summary report is meant to give you a quick visual overview of the alignment statistics for a large number of samples (tens, hundreds or thousands of samples); if you only want to look at a single report please check out the `bismark2report`.
 
 
 
@@ -507,7 +507,7 @@ This script uses Bismark report files of several (up to hundreds of!?) samples i
 bismark2summary [options]
 ```
 
-This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample [Bismark Summary Report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.html).
+This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample [Bismark Summary Report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_report.html). The Bismark summary report is meant to give you a quick visual overview of the alignment statistics for a large number of samples (tens, hundreds or thousands of samples); if you only want to look at a single report please check out the `bismark2report`.
 
 #### ARGUMENTS:
 
