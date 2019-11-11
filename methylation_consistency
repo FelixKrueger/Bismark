@@ -1,0 +1,512 @@
+#!/usr/bin/env perl
+use warnings;
+use strict;
+use Getopt::Long;
+
+my $VERSION = "0.22.2_dev";
+my ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path) = process_commandline();
+
+
+sub process_commandline{
+
+	my $help;
+	my $version;
+	my $min_count = 5;
+	my $global_paired = '';
+	my $global_single = '';
+	my $lower_threshold;
+	my $upper_threshold;
+	my $samtools_path;
+
+
+	GetOptions ("help"          => \$help,
+			"version"           => \$version,
+			"p|paired_end"      => \$global_paired,
+			"s|single_end"      => \$global_single,
+			"lower_threshold=i" => \$lower_threshold,
+			"upper_threshold=i" => \$upper_threshold,
+			'samtools_path=s'   => \$samtools_path,
+			"min-count=i"       => \$min_count) or die "Can't understand options\n";
+
+
+	if ($help) {
+		print while (<DATA>);
+		exit;
+	}
+
+	    if ($version){
+                print << "VERSION";
+
+             Bismark Read Methylation Constistency
+		         v$VERSION
+       Copyright 2019 Felix Krueger, Babraham Bioinformatics
+        www.bioinformatics.babraham.ac.uk/projects/bismark/
+              https://github.com/FelixKrueger/Bismark
+
+VERSION
+          exit;
+    }
+
+	unless ($min_count =~ /^\d+$/) {
+		die "Min count must be a positive integer, not '$min_count'\n";
+	}
+
+	if ($global_single){
+		if ($global_paired){
+			die "You cannot select both single-end (SE) as well as paired-end (PE). Please settle for just one type...\n";
+		}
+		warn "Single-end (SE) mode selected manually\n";
+		$global_paired = 0;
+	}
+	elsif($global_paired){
+		warn "Paired-end (PE) mode selected manually - methylation information from both reads are simply added together\n";
+	}
+	else{
+		# If neither -s nor -p was selected, we try to auto-detect the mapping type	
+	}
+
+	### Ensuring thresholds are sensible - they have to be integers already
+	# Upper threshold
+	if (defined $upper_threshold){
+		die "The upper methylation threshold needs to be a number between 51 and 100% [default is 90%]. Please select something more sensible and try again...\n\n" 
+			unless ($upper_threshold >= 51 and $upper_threshold <= 100);
+	}
+	else{
+		$upper_threshold = 90; # default
+	}
+
+	# Lower threshold
+	if (defined $lower_threshold){
+		die "The lower methylation threshold needs to be a number between 0 and 49% [default is 10%]. Please select something more sensible and try again...\n\n" 
+			unless ($lower_threshold >= 0 and $lower_threshold <= 49);
+	}
+	else{
+		$lower_threshold = 10; # default
+	}
+	warn "Upper and lower methylation thresholds given as:\nUpper: $upper_threshold\nLower: $lower_threshold\n\n";
+
+	### PATH TO SAMTOOLS
+    if (defined $samtools_path){
+		# if Samtools was specified as full command
+		if ($samtools_path =~ /samtools$/){
+			if (-e $samtools_path){
+					# Samtools executable found
+			}
+			else{
+					die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+			}
+		}
+		else{
+			unless ($samtools_path =~ /\/$/){
+				$samtools_path =~ s/$/\//;
+			}
+			$samtools_path .= 'samtools';
+			if (-e $samtools_path){
+				# Samtools executable found
+			}
+			else{
+				die "Could not find an installation of Samtools at the location $samtools_path. Please respecify\n";
+			}
+		}
+    }
+    # Check whether Samtools is in the PATH if no path was supplied by the user
+    else{
+		if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+			$samtools_path = `which samtools`;
+			chomp $samtools_path;
+		}
+    }
+
+
+	return ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path);
+}
+
+my @files = @ARGV;
+unless (@files) {
+    die "No input file(s) supplied. USAGE is:\n\n\tsplit_bismark_by_consistency [--min-count=5] [bam file]\n\n";
+}
+
+foreach my $file (@files) {
+    process_file($file);
+}
+
+sub process_file {
+    my ($file) = @_;
+	warn "Now processing file: $file\n     ~~~~~\n";
+	if ($file =~ /\.bam$/){
+        my $return = bam_isEmpty($file);
+		warn "Return was: $return\n";
+		if ($return == 1){
+			warn "Skipping this file altogether\n";
+			return;
+		}
+		else{
+			#fine
+		}
+	}
+ 	
+	# Testing if the file appears to be truncated, in which case we bail with a big scary warning message
+    if ($file =~ /\.bam$/){
+        bam_isTruncated($file);
+    }
+	my ($single,$paired); # deciding on a per-file basis
+	
+	if ($global_single){
+		$paired = 0;
+		$single = 1;	
+	}
+	elsif($global_paired){
+		$paired = 1;
+		$single = 0;
+    }
+	
+	# determine SE or PE automatically
+	unless ($global_single or $global_paired){
+		($single,$paired) = determine_mapping_type($file);
+		if ($single){
+			warn "Single-end (SE) mode selected (auto-detected)\n";
+		}
+		elsif ($paired){
+			warn "Paired-end (PE) mode selected (auto-detected) - methylation information from both reads are simply added together\n";
+		}
+	}
+
+	###
+	if ($paired){
+		test_positional_sorting($file);
+	}
+
+
+    my $file_root = $file;
+    $file_root =~ s/\.bam$//;
+
+    my $all_meth_count = 0;
+    my $all_unmeth_count = 0;
+    my $mixed_meth_count = 0;
+    my $discarded_count = 0;
+
+    open (METH,"| samtools view -b -S - > \"${file_root}_all_meth.bam\"") or die "Can't write to all meth file: $!";
+	open (UNMETH,"| samtools view -b -S - > \"${file_root}_all_unmeth.bam\"") or die "Can't write to all unmeth file: $!";
+	open (MIXED,"| samtools view -b -S - > \"${file_root}_mixed_meth.bam\"") or die "Can't write to mixed meth file: $!";
+	open (REPORT,'>',"${file_root}_consistency_report.txt") or die "Can't write to consistency report file: $!";
+
+    open (IN,"samtools view \"$file\" |") or die "Can't read $file : $!";
+
+    while (<IN>) {
+    	my $meth_count = 0;
+    	my $unmeth_count = 0;
+    	my $read1 = $_;
+    	my $id1;
+
+		if (/XM:Z:(\S+)/){
+		    my $calls = $1;
+		    ($id1) = (split /\t/,$_)[0]; 
+		    # warn "This is R1, ID is: $id1\n";
+
+		    $meth_count   += ($calls =~ tr/Z//);
+		    $unmeth_count += ($calls =~ tr/z//);
+		}
+		else {
+	 		warn "No methylation call data found - doesn't look like a bismark file\n";
+	  		last;	
+		}
+		# warn "METHYLATED: $meth_count\nUNMETH COUNT: $unmeth_count\n";
+
+		if ($paired){ # only required for paired-end processing
+			$_ = <IN>; # reading in R2
+			
+			if (/XM:Z:(\S+)/) {
+				my $calls = $1;
+				my ($id2) = (split /\t/,$_)[0]; 
+				# warn "This is R2, ID is: $id2\n"; 
+
+				unless ($id1 eq $id2){
+					die "READ IDs of R1 ($id1) and R2 ($id2) did not match. This doesn't look like paired-end data. Please correct settings and try again.\n\n";
+				}
+				$meth_count   += ($calls =~ tr/Z//);
+				$unmeth_count += ($calls =~ tr/z//);
+			}
+			else {
+				warn "No methylation call data found - doesn't look like a bismark file\n";
+				last;	
+			}
+		}
+
+		# warn "METHYLATED: $meth_count\nUNMETH COUNT: $unmeth_count\n";
+		# warn "~~~~~~~~~~~~~~~~~~\n"; sleep(1);
+		
+		if ($meth_count + $unmeth_count < $min_count) {
+			++$discarded_count;
+			next;
+	    }
+	    
+	    my $percent_methylated;
+		if ( ($meth_count + $unmeth_count) > 0 ) {
+			$percent_methylated  = sprintf("%.1f",$meth_count / ($meth_count + $unmeth_count) *100);
+		}
+		else{
+			next;
+		}
+
+	    if ($percent_methylated <= $lower_threshold) {
+			if ($all_unmeth_count == 0) { # adding SAM header
+			    print UNMETH `samtools view -H \"$file\"`;
+			}
+			++$all_unmeth_count;
+			print UNMETH $read1;
+			if ($paired){
+				print UNMETH; # this is R2
+			}
+	    }
+	    elsif ($percent_methylated >= $upper_threshold) {
+			if ($all_meth_count == 0) { # adding SAM header
+			    print METH `samtools view -H \"$file\"`;
+			}
+			++$all_meth_count;
+			print METH $read1;
+			if ($paired){
+				print METH;
+			}
+	    }
+	    else {
+			if ($mixed_meth_count == 0) { # adding SAM header
+			    print MIXED `samtools view -H \"$file\"`;
+			}
+			++$mixed_meth_count;
+			print MIXED $read1;
+			if ($paired){
+				print MIXED;
+			}
+	    }
+	}
+	
+    
+
+    my $perc_meth;
+	my $perc_unmeth;
+	my $perc_mixed;
+	my $perc_discarded;
+	if ( ($all_meth_count + $all_unmeth_count + $mixed_meth_count + $discarded_count) > 0){
+		$perc_meth         = sprintf("%.2f",$all_meth_count   /($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count)*100);
+    	$perc_unmeth       = sprintf("%.2f",$all_unmeth_count /($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count)*100);
+    	$perc_mixed        = sprintf("%.2f",$mixed_meth_count /($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count)*100);
+    	$perc_discarded    = sprintf("%.2f",$discarded_count  /($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count)*100);
+	}
+	else{
+		$perc_meth = $perc_unmeth = $perc_discarded = $perc_mixed = 'N/A';
+	}
+    warn "Summary for $file:\n\n";
+
+	my $type = $paired ? "paired-end" : "single-end";
+
+    warn "Total $type records     -\t",($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count),"\n";
+    warn "-------------------------------------------------\n";
+	warn "All methylated    [ >= $upper_threshold% ] -\t$all_meth_count ($perc_meth%)\n";
+    warn "All unmethylated  [ <= $lower_threshold% ] -\t$all_unmeth_count ($perc_unmeth%)\n";
+    warn "Mixed methylation [ ${lower_threshold}-${upper_threshold}% ] -\t$mixed_meth_count ($perc_mixed%)\n";
+    warn "Too few CpGs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";	
+
+	print REPORT "Total $type records     -\t",($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count),"\n";
+    print REPORT "-------------------------------------------------\n";
+	print REPORT "All methylated    [ >= $upper_threshold% ] -\t$all_meth_count ($perc_meth%)\n";
+    print REPORT "All unmethylated  [ <= $lower_threshold% ] -\t$all_unmeth_count ($perc_unmeth%)\n";
+    print REPORT "Mixed methylation [ ${lower_threshold}-${upper_threshold}% ] -\t$mixed_meth_count ($perc_mixed%)\n";
+    print REPORT "Too few CpGs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";
+
+    close METH   or warn "Can't close meth file: $!";
+    close UNMETH or warn "Can't close unmeth file: $!";
+    close MIXED  or warn "Can't close mixed file: $!";
+	close REPORT or warn "Can't close consistency report file: $!";
+    close IN;
+
+}
+
+sub determine_mapping_type{
+	my $file = shift;
+	my ($single,$paired);
+  	warn "Trying to determine the type of mapping from the SAM header line\n"; # sleep(1);
+
+	### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the SAM/BAM file
+	if ($file =~ /\.bam$/){
+		open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+	}
+	
+	while (<DETERMINE>){
+		last unless (/^\@/);
+		if ($_ =~ /^\@PG/){
+			# warn "found the \@PG line:\n";
+			# warn "$_";
+
+			if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
+					warn "Treating file as paired-end data (extracted from \@PG line)\n"; # sleep(1);
+					$paired = 1;
+					$single = 0;
+			}
+			else{
+					warn "Treating file as single-end data (extracted from \@PG line)\n"; # sleep(1);
+					$paired = 0;
+					$single = 1;
+			}
+		}
+	}
+	close DETERMINE or warn "$!\n";
+	return ($single,$paired);
+
+}
+
+sub bam_isEmpty{
+
+    my $file = shift;
+	warn "Checking file >>$file<< is empty...\n";
+    if ($file =~ /\.bam$/){
+    	open (EMPTY,"$samtools_path view $file |") or die "Unable to read from BAM file $file: $!\n";
+    }
+    else{
+        open (EMPTY,$file) or die "Unable to read from $file: $!\n";
+    }
+    my $count = 0;
+    while (<EMPTY>){
+		if ($_){
+			$count++;  # file contains data, fine.
+		}
+		last; # one line is enough
+    }
+	close EMPTY;
+
+    if ($count == 0){
+        return 1;
+    }
+	else{
+		return 0;
+	}
+}
+
+sub bam_isTruncated{
+
+    my $file = shift;
+    warn "Checking file >>$file<< for signs of file truncation...\n";
+
+    open (TRUNC,"$samtools_path view 2>&1 $file |") or die "Unable to read from BAM file $file: $!\n"; # 2>&1 redirects stderr to stdout, so we should be able to capture problems
+
+    my $count = 0;
+    while (<TRUNC>){
+		chomp;
+		++$count;
+		# errors tend to start with a [], I have seen e.g.:
+		# [W::bam_hdr_read] EOF marker is absent. The input is probably truncated.
+		if ($_ =~ /^\[/){
+			if ($_ =~ /[EOF|truncated]/){
+					die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
+			}
+		}
+		last if ($count == 10);         # this should be enough
+    }
+    close TRUNC or warn "$!\n";
+}
+
+sub test_positional_sorting{
+
+	my $filename = shift;
+
+	print "\nNow testing Bismark result file $filename for positional sorting (which would be bad...)\t";
+	# sleep(1);
+
+	if ($filename =~ /\.gz$/) {
+			open (TEST,"gunzip -c $filename |") or die "Can't open gzipped file $filename: $!\n";
+	}
+	elsif ($filename =~ /bam$/ ||  isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
+			if ($samtools_path){
+					open (TEST,"$samtools_path view -h $filename |") or die "Can't open BAM file $filename: $!\n";
+			}
+			else{
+					die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
+			}
+	}
+	else {
+			open (TEST,$filename) or die "Can't open file $filename: $!\n";
+	}
+
+	my $count = 0;
+
+	while (<TEST>) {
+			if (/^\@/) {         # testing header lines if they contain the @SO flag (for being sorted)
+					if (/^\@SO/) {
+							die "SAM/BAM header line '$_' indicates that the Bismark aligment file has been sorted by chromosomal positions which is is incompatible with correct methylation extraction. Please use an unsorted file ins
+tead (e.g. use samtools sort -n)\n\n";
+					}
+					next;
+			}
+			$count++;
+
+			last if ($count > 100000); # else we test the first 100000 sequences if they start with the same read ID
+
+			my ($id_1) = (split (/\t/));
+
+			### reading the next line which should be read 2
+			$_ = <TEST>;
+			my ($id_2) = (split (/\t/));
+			last unless ($id_2);
+			++$count;
+
+			if ($id_1 eq $id_2){
+					### ids are the same
+					next;
+			}
+			else{ ### in previous versions of Bismark we appended /1 and /2 to the read IDs for easier eyeballing which read is which. These tags need to be removed first
+					my $id_1_trunc = $id_1;
+					$id_1_trunc =~ s/\/1$//;
+					my $id_2_trunc = $id_2;
+					$id_2_trunc =~ s/\/2$//;
+
+					unless ($id_1_trunc eq $id_2_trunc){
+							die "\nThe IDs of Read 1 ($id_1) and Read 2 ($id_2) are not the same. This might be a result of sorting the paired-end SAM/BAM files by chromosomal position which is not compatible with correct methylation
+extraction. Please use an unsorted file instead (e.g. use samtools sort -n)\n\n";
+					}
+			}
+	}
+	#  close TEST or die $!; somehow fails on our cluster...
+	### If it hasen't died so far then it seems the file is in the correct Bismark format (read 1 and read 2 of a pair directly following each other)
+	warn "...passed!\n";
+
+}
+
+__DATA__
+
+Bismark Methylation Consistency Module
+======================================
+
+SYNOPSIS
+
+This program takes in a BAM file generated by Bismark and splits it into three smaller BAM files
+based on the consistency of the methylation calls within the file. The reads are split into those
+which show consistent methylation, consistent unmethylation and mixed methylation. Only methylation
+in CpG context is considered. In its default condition, reads are considered as: 
+
+unmethylated  0 -  10% methylated (inclusive)
+mixed:       10 -  90% methylated
+methylated:  90 - 100% methylated (inclusive)
+
+
+USAGE:
+
+methylation_consistency [OPTIONS] [BAM file(s)] 
+
+OPTIONS:
+
+--min-count -m          Set the minumum number of CpGs which need to be present for a read to be considered at all
+                        [Default: 5]. Reads with fewer CpGs than this will be discarded.
+
+-s/--single_end         Input files will be treated as single-end Bismark BAM files. Default: [AUTO-DETECT]
+
+-p/--paired_end         Input files will be treated as paired-end Bismark BAM files. Default: [AUTO-DETECT]
+
+--samtools_path [path]  The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to
+                        be specified explicitly if Samtools is in the PATH already
+
+--version               Print version information and exit
+
+--help                  Print this help information and exit
+
+
+This script was last modified on 11 11 2019
+
