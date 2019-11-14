@@ -503,10 +503,14 @@ OPTIONS:
 --samtools_path [path]  The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to
                         be specified explicitly if Samtools is in the PATH already
 
+--lower_threshold [INT] Percentage value up to which a read is considered (fully) un-methylated. [Default: 10].
+
+--upper_threshold [INT] Percentage value above which a read is considered (fully) methylated. [Default: 90].
+
 --version               Print version information and exit
 
 --help                  Print this help information and exit
 
 
-This script was last modified on 11 11 2019
+This script was last modified on 14 11 2019
 
