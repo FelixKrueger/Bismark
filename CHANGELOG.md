@@ -6,9 +6,9 @@
 
 - Accepted pull request to fix the MAPQ score calculation in `local` mode.
 
-### methylation_constency
+### methylation_consistency
 
-- Added a new script to assess the concordance of methylation calls. See more here https://github.com/FelixKrueger/Bismark/tree/master/Docs#x-concordance-of-methylation-calls-across-bisulfite-reads
+- Added a new script to assess the concordance of methylation calls. See more here: https://github.com/FelixKrueger/Bismark/tree/master/Docs#x-concordance-of-methylation-calls-across-bisulfite-reads
 
 
 ## Changelog for Bismark v0.22.2 (release on 16 10 2019)
