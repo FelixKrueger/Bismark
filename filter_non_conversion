@@ -22,7 +22,7 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.22.2';
+my $filter_version = 'v0.22.3';
 my ($single,$paired);
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count) = process_commandline();
 
