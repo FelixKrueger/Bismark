@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.22.2_dev 
+## Changelog for Bismark v0.22.3 (release on 19 Nov 2019)
 
 ### Bismark
 
