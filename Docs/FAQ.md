@@ -63,6 +63,10 @@ This is a question that pops up every so often, and might have been discussed in
 
 - Align the data in single-end mode. R1 typically needs to be aliged in default (=directional) mode, and R2 required `--pbat` to align. This will give you an indication if either R1 or R2 on its own aligns well, and if it is the paired-end nature of the data that is impairing high mapping efficiencies.
 
+- Relaxing the alignment stringency. The easiest way to accomolish this is to change the `--score_min` function, e.g from `--score_min L,0,-0.2` (the default) to `--score_min L,0,-0.6`. This might be useful for alignments against genomes which are not as polished as the human or mouse genomes, and might give you an indication whether the number of mismatches and/or indels has a detrimental impact on the alignment efficiency. Keep in mind though that laxer mapping parameters may take a longer time to align, and potentially return more ambiguous (and at some point incorrect alignments).
+
+- As a last resort to relaxing the mapping stringency, try to use `--local` mode. This comes with a number of caveats, but it might assist in determining whether or not there is usable sequence present in the library.
+
 - Did you use a special library preparation technique, or an exotic commercial kit? Please see our [trimming and alignment recommendations here](https://github.com/FelixKrueger/Bismark/tree/master/Docs#ix-notes-about-different-library-types-and-commercial-kits)
 
 - Look at sequence composition plots in FastQC. Is there anything unusual/unexpected that might prevent alignments?
