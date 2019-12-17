@@ -1,5 +1,12 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.22.3_dev
+
+### deduplicate_bismark
+- the command `deduplicate_bismark --barcode *bam` now works again. Previously the output file names were accidentally all derived from the first supplied file in `--barcode` (= UMI) mode (it had been fixed for normal files in 0.22.2).
+
+
+
 ## Changelog for Bismark v0.22.3 (release on 19 Nov 2019)
 
 ### Bismark
