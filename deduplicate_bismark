@@ -7,47 +7,7 @@ use Cwd;
 ### This script is supposed to remove alignments to the same position in the genome which can arise by e.g. PCR amplification
 ### Paired-end alignments are considered a duplicate if both partner reads start and end at the exact same position
 
-### May 13, 2013
-### Changed the single-end trimming behavior so that only the start coordinate will be used. This avoids duplicate reads that have been trimmed to a varying extent
-### Changed the way of determining the end of reads in SAM format to using the CIGAR string if the read contains InDels
-
-### 16 July 2013
-### Adding a new deduplication mode for barcoded RRBS-Seq
-
-### 27 Sept 2013
-### Added close statement for all output filehandles (which should probably have been there from the start...)
-
-### 8 Jan 2015
-### to detect paired-end command from the @PG line we are no requiring spaces before and after the -1 or -2
-
-### 09 Mar 2015
-### Removing newline characters also from the read conversion flag in case the tags had been reordered and are now present in the very last column
-
-### 19 08 2015
-### Hiding the option --representative from view to discourage people from using it (it was nearly always not what they wanted to do anyway). It should still work 
-### for alignments that do not contain any indels
-### Just for reference, here is the the text:
-### print "--representative\twill browse through all sequences and print out the sequence with the most representative (as in most frequent) methylation call for any given position. Note that this is very likely the most highly amplified PCR product for a given sequence\n\n";
-
-### 16 09 2016
-### to detect paired-end command from the @PG line we now allow -1 and -2 or --1 and --2 (or a combination thereof)
-
-### 10 07 2017
-### adding the option to supply 2 (or more) filenames that are both used for deduplication. This is supposed to be an alternative to merging and mapping straight at the FastQ stage
-
-### 10 03 2018
-### Changing the strand identity from a single + and - to OT, OB, CTOT and CTOB. This may help discriminating between rare cases when OT and CTOB alignments (which are technically both + alignments)
-### start and end at the exact same position
-### Deduplication in --representative mode is now no longer supported. It wasn't what people should have wanted anyway
-
-### 13 02 2019
-### Adapting deduplicate_bismark to also work with gapped reads (CIGAR operation N)
-### Also removing all traces of --vanilla
-
-### 26 03 2019
-### Adapting to also work with softclipped reads (CIGAR operation S)
-
-my $dedup_version = 'v0.22.3';
+my $dedup_version = 'v0.22.3_dev';
 my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile) = process_commandline();
@@ -130,8 +90,8 @@ foreach my $file (@filenames){
     if ($file =~ /(\.bam$|\.sam$)/){
 		bam_isEmpty($file);
     }
-    
-    ### OPTIONS
+	
+	### OPTIONS
     unless ($single or $paired){
 		die "Please specify either -s (single-end) or -p (paired-end) for deduplication, or provide a SAM/BAM file that contains the \@PG header line\n\n";
     }
@@ -195,7 +155,7 @@ foreach my $file (@filenames){
 		}
 	
 		if ($user_defined_outfile){ # user-defined output filename
-			# using that name
+			# using that name. $outfile is already given
 		}
 		else{ # deriving the name from the input file automatically (default)
 			$outfile = $file;
@@ -544,11 +504,13 @@ sub deduplicate_barcoded_rrbs{
 		open (IN,$file) or die "Unable to read from $file: $!\n";
     }
 
-    if (defined $outfile){
+	# warn "User defined outfile name is: $user_defined_outfile\n";
+    if ($user_defined_outfile){
 		# using a user-specified name
 	}
 	else{
 		$outfile = $file; # deriving the output filename from the input file. Default
+		# warn "Else: $outfile = \$file";
 	}
 	$outfile =~ s/.*\///; # removing path information
 
@@ -947,7 +909,7 @@ sub print_helpfile{
 	
 	print '='x111,"\n\n";
 
-	print "This script was last modified on 26 Mar 2019\n\n";
+	print "This script was last modified on 17 December 2019\n\n";
 }
 
 
