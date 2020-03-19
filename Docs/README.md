@@ -702,7 +702,7 @@ Here is a table summarising general recommendations for different library types 
             <td align="center"><code>--rrbs</code> (R1 only)</td>
             <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
             <td align="center"><g-emoji alias="x" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/274c.png" ios-version="6.0">❌</g-emoji></td>
-            <td align="center">(<code>--ignore_r2 2</code>)</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
         </tr>
         <tr>
             <td align="left">RRBS (NuGEN Ovation)</td>
