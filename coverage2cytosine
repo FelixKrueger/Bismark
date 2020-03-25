@@ -228,6 +228,7 @@ sub generate_genome_wide_cytosine_report {
 			my $upstream_context; # for NOMe-Seq
 			
 			$processed{$last_chr} = 1;
+			
 			while ( $chromosomes{$last_chr} =~ /([CG])/g){ # C or G
 		
 				$tri_nt = '';
@@ -1584,8 +1585,10 @@ sub context_reporting{
 	my $ubase = substr($upstream_context,0,1);
 	# warn "Context: $context\tTRI-cont: $tri_nt\tU-base: $ubase\tUpstream: $upstream_context\t$meth\t$nonmeth\n"; sleep(1);
 	# Ok let's try and add this
-	$context_summary{$tri_nt}->{$ubase}->{m} += $meth;
-	$context_summary{$tri_nt}->{$ubase}->{u} += $nonmeth;
+	unless ($tri_nt =~ /N/ or $ubase eq 'N'){
+		$context_summary{$tri_nt}->{$ubase}->{m} += $meth;
+		$context_summary{$tri_nt}->{$ubase}->{u} += $nonmeth;
+	}
 }
 
 sub process_commandline{
