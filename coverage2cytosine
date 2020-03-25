@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -20,12 +20,19 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my %chromosomes; # storing sequence information of all chromosomes/scaffolds
-my %processed;   # keeping a record of which chromosomes have been processed
-my $coverage2cytosine_version = 'v0.22.3';
+my %chromosomes;       # storing sequence information of all chromosomes/scaffolds
+my %processed;         # keeping a record of which chromosomes have been processed
+my %context_summary;   # storing methylation values for all contexts for NOMe-seq or scNMT-experiments
+my $coverage2cytosine_version = 'v0.22.3dev';
 
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold) = process_commandline();
+
+### 35 March 2020 (COVID19 lockdown)
+# Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
+if ($nome){
+	warn "Adding context-specific methyaltion summaries for NOMe-seq data\n\n";
+}
 
 on_screen_summary();
 
@@ -46,6 +53,22 @@ if ($merge_CpGs) {
     combine_CpGs_to_single_CG_entity($global_cyt_report);
 }
 
+if ($nome){
+	warn "C-context\tupstream\tcount methylated\tcount unmethylated\tpercent methylation\n";
+	foreach my $context (sort keys %context_summary){
+		foreach my $ubase (sort keys %{$context_summary{$context}}){
+			my $perc;
+			if ( ($context_summary{$context}->{$ubase}->{u} + $context_summary{$context}->{$ubase}->{m}) > 0){
+				$perc = sprintf("%.2f", $context_summary{$context}->{$ubase}->{m} / ($context_summary{$context}->{$ubase}->{u} + $context_summary{$context}->{$ubase}->{m}) * 100);	
+			}
+			else{
+				$perc =  "N/A";
+			}
+			warn "$context\t$ubase\t$context_summary{$context}->{$ubase}->{u}\t$context_summary{$context}->{$ubase}->{m}\t$perc\n";
+		}
+	}
+
+}
 ### 18 August 2015. Update 12 Jan 2017: Additional restrictions for NOMe-Seq
 # The following section reprocessed the genome to generate cytosine methylation output in GC context (e.g. when a GpC methylase had been deployed
 if ($gc_context){
@@ -59,7 +82,7 @@ sub handle_filehandles{
 
     my $my_chr = shift;
     if (defined $my_chr){
-	# warn "Working with chromosome in '--split_by_chromosome' mode\n";
+		# warn "Working with chromosome in '--split_by_chromosome' mode\n";
     }
     
     my $cytosine_coverage_file = $cytosine_out;
@@ -309,7 +332,8 @@ sub generate_genome_wide_cytosine_report {
 					warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
 					next;
 				}
-			
+				warn "Context: $context\tTRI-cont: $tri_nt\tUpstream: $upstream_context\n"; sleep(1);
+
 				if ($CpG_only){
 					
 					if ($tri_nt =~ /^CG/){ # CpG context is the default
@@ -527,7 +551,14 @@ sub generate_genome_wide_cytosine_report {
 			warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
 			next;
 		}
-		
+		# this is merely for reporting # Added 25 March 2020
+		if ($nome){
+			my $ubase = substr($upstream_context,0,1);
+			# warn "Context: $context\tTRI-cont: $tri_nt\tU-base: $ubase\tUpstream: $upstream_context\t$meth\t$nonmeth\n"; sleep(1);
+			# Ok let's try and add this
+			$context_summary{$tri_nt}->{$ubase}->{m} += $meth;
+			$context_summary{$tri_nt}->{$ubase}->{u} += $nonmeth;
+		}
 		if ($CpG_only){
 			if ($tri_nt =~ /^CG/){ # CpG context is the default
 				if ($nome){ 
