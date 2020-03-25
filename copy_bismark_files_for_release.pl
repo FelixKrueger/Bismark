@@ -17,7 +17,7 @@ unless (-d $dir){
 
 my ($volume, $dist_dir, $this_script) = File::Spec->splitpath(__FILE__);
 #my  = abs_path($0);
-my @files = ('CHANGELOG.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','Bismark_alignment_modes.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion','NOMe_filtering');
+my @files = ('CHANGELOG.md','bismark','bismark_genome_preparation','bismark_methylation_extractor','bismark2bedGraph','bismark2report','coverage2cytosine','license.txt','Bismark_alignment_modes.pdf','deduplicate_bismark','bam2nuc','bismark2summary','filter_non_conversion','NOMe_filtering','methylation_consistency');
 
 my @reporting = ('bioinf.logo','bismark.logo','plot.ly','plotly_template.tpl');
 

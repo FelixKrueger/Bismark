@@ -3,7 +3,7 @@ use warnings;
 use strict;
 use Getopt::Long;
 
-my $VERSION = "0.22.3";
+my $VERSION = "0.22.3dev";
 my ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path) = process_commandline();
 
 
@@ -39,7 +39,7 @@ sub process_commandline{
 
              Bismark Read Methylation Constistency
 		         v$VERSION
-       Copyright 2019 Felix Krueger, Babraham Bioinformatics
+       Copyright 2019-20 Felix Krueger, Babraham Bioinformatics
         www.bioinformatics.babraham.ac.uk/projects/bismark/
               https://github.com/FelixKrueger/Bismark
 
