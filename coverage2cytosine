@@ -345,7 +345,7 @@ sub generate_genome_wide_cytosine_report {
 					warn "The sequence context could not be determined (found: '$tri_nt'). Skipping.\n";
 					next;
 				}
-				warn "Context: $context\tTRI-cont: $tri_nt\tUpstream: $upstream_context\n"; sleep(1);
+				# warn "Context: $context\tTRI-cont: $tri_nt\tUpstream: $upstream_context\n"; sleep(1);
 
 				# this is merely for reporting # Added 25 March 2020
 				if ($nome){
