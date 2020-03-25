@@ -28,18 +28,18 @@ my $coverage2cytosine_version = 'v0.22.3dev';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold) = process_commandline();
 
-### 35 March 2020 (COVID19 lockdown)
-# Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
-if ($nome){
-	warn "Adding context-specific methyaltion summaries for NOMe-seq data\n\n";
-}
-
 on_screen_summary();
 
 read_genome_into_memory();
 warn "Stored sequence information of ",scalar keys %chromosomes," chromosomes/scaffolds in total\n\n";
 my $global_cyt_report;
 generate_genome_wide_cytosine_report($coverage_infile);
+
+### 25 March 2020 (COVID19 lockdown)
+# Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
+if ($nome){
+	print_context_summary();
+}
 
 ### 11 December 2014
 
@@ -53,8 +53,9 @@ if ($merge_CpGs) {
     combine_CpGs_to_single_CG_entity($global_cyt_report);
 }
 
-if ($nome){
-	warn "C-context\tupstream\tcount methylated\tcount unmethylated\tpercent methylation\n";
+sub print_context_summary{
+	
+	print CONTEXTSUMMARY "upstream\tC-context\tfull context\tcount methylated\tcount unmethylated\tpercent methylation\n";
 	foreach my $context (sort keys %context_summary){
 		foreach my $ubase (sort keys %{$context_summary{$context}}){
 			my $perc;
@@ -64,10 +65,9 @@ if ($nome){
 			else{
 				$perc =  "N/A";
 			}
-			warn "$context\t$ubase\t$context_summary{$context}->{$ubase}->{u}\t$context_summary{$context}->{$ubase}->{m}\t$perc\n";
+			print CONTEXTSUMMARY "$ubase\t$context\t$ubase$context\t$context_summary{$context}->{$ubase}->{u}\t$context_summary{$context}->{$ubase}->{m}\t$perc\n";
 		}
 	}
-
 }
 ### 18 August 2015. Update 12 Jan 2017: Additional restrictions for NOMe-Seq
 # The following section reprocessed the genome to generate cytosine methylation output in GC context (e.g. when a GpC methylase had been deployed
@@ -87,40 +87,45 @@ sub handle_filehandles{
     
     my $cytosine_coverage_file = $cytosine_out;
     my $cytosine_report_file;
-    
+
     if (defined $my_chr and $split_by_chromosome) {
-	## writing output to 1 file per chromosome
-	$cytosine_coverage_file =~ s/$/.chr${my_chr}/;
+		## writing output to 1 file per chromosome
+		$cytosine_coverage_file =~ s/$/.chr${my_chr}/;
     }
     
     $cytosine_report_file = $cytosine_coverage_file; # required in any case
 
     # if the data came from the methylation extractor it will already end in .CX_report.txt or .CpG_report.txt
     if ($CX_context){
-	$cytosine_report_file =~ s/\.CX_report.txt$//;  # removing to avoid duplication
+		$cytosine_report_file =~ s/\.CX_report.txt$//;  # removing to avoid duplication
     }
     else{
-	$cytosine_report_file =~ s/\.CpG_report.txt$//; # removing to avoid duplication
+		$cytosine_report_file =~ s/\.CpG_report.txt$//; # removing to avoid duplication
     }
     
-    
+    my $context_summary_file = $cytosine_report_file;
+	
+
     if ($nome) {
-	$cytosine_report_file   .= '.NOMe.CpG_report.txt';
-	$cytosine_coverage_file .= '.NOMe.CpG.cov';
-	if ($gzip) {
-	    $cytosine_coverage_file .= '.gz';
-	    $cytosine_report_file   .= '.gz';
-	}
+		$context_summary_file .= '.cytosine_context_summary.txt';
+		open (CONTEXTSUMMARY,'>',"${output_dir}$context_summary_file") or die "Failed to write to file ${output_dir}$context_summary_file: $!\n";
+
+		$cytosine_report_file   .= '.NOMe.CpG_report.txt';
+		$cytosine_coverage_file .= '.NOMe.CpG.cov';
+		if ($gzip) {
+			$cytosine_coverage_file .= '.gz';
+			$cytosine_report_file   .= '.gz';
+		}
     }
     else {
-	if ($CX_context){
-	    $cytosine_report_file   .= $gzip ? '.CX_report.txt.gz' : '.CX_report.txt';
-	    $cytosine_coverage_file .= $gzip ? '.CX.cov.gz' : '.CX.cov';
-	}
-	else{
-	    $cytosine_report_file   .= $gzip ? '.CpG_report.txt.gz' : '.CpG_report.txt';
-	    $cytosine_coverage_file .= $gzip ? '.CpG.cov.gz' : '.CpG.cov';
-	}
+		if ($CX_context){
+			$cytosine_report_file   .= $gzip ? '.CX_report.txt.gz' : '.CX_report.txt';
+			$cytosine_coverage_file .= $gzip ? '.CX.cov.gz' : '.CX.cov';
+		}
+		else{
+			$cytosine_report_file   .= $gzip ? '.CpG_report.txt.gz' : '.CpG_report.txt';
+			$cytosine_coverage_file .= $gzip ? '.CpG.cov.gz' : '.CpG.cov';
+		}
     }
 	
     if ($gzip) {
@@ -130,20 +135,21 @@ sub handle_filehandles{
 	}
     }
     else {
-	open (CYT,'>',"${output_dir}$cytosine_report_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_report_file: $!\n";
-	if ($nome) {
-	    open (CYTCOV,'>',"${output_dir}$cytosine_coverage_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_coverage_file: $!\n";
-	}
+		open (CYT,'>',"${output_dir}$cytosine_report_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_report_file: $!\n";
+		if ($nome) {
+			open (CYTCOV,'>',"${output_dir}$cytosine_coverage_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_coverage_file: $!\n";
+		}
     }
 
     $global_cyt_report = $cytosine_report_file; # needed for --merge_CpG option later on
 
     if ($nome){
-	warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n";
-	warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage_file <<<\n\n";
+		warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n";
+		warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage_file <<<\n\n";
+		warn ">>> Writing all cytosine context summary file to: $context_summary_file <<<\n\n";
     }
     else{
-	warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n\n";
+		warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n\n";
     }
     
     return(defined $my_chr ? $my_chr : ''); # returning chromosome in --split_by_chromosome mode
@@ -175,6 +181,13 @@ sub generate_genome_wide_cytosine_report {
     else{
 		open (IN,"$in") or die "Failed to read from file $in: $!\n";
     }
+
+	### 25 March 2020 (COVID19 lockdown)
+	# Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
+	if ($nome){
+		warn "Adding context-specific methylation summaries for NOMe-seq data\n\n";
+		reset_context_summary();	
+	}
 
     # opening global output files unless --split_by_chromosome was specified
     handle_filehandles() unless ($split_by_chromosome); ### writing all output to a single file (default)
@@ -333,6 +346,11 @@ sub generate_genome_wide_cytosine_report {
 					next;
 				}
 				warn "Context: $context\tTRI-cont: $tri_nt\tUpstream: $upstream_context\n"; sleep(1);
+
+				# this is merely for reporting # Added 25 March 2020
+				if ($nome){
+					context_reporting($tri_nt, $upstream_context, $meth, $nonmeth);
+				}
 
 				if ($CpG_only){
 					
@@ -551,14 +569,12 @@ sub generate_genome_wide_cytosine_report {
 			warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
 			next;
 		}
+
 		# this is merely for reporting # Added 25 March 2020
 		if ($nome){
-			my $ubase = substr($upstream_context,0,1);
-			# warn "Context: $context\tTRI-cont: $tri_nt\tU-base: $ubase\tUpstream: $upstream_context\t$meth\t$nonmeth\n"; sleep(1);
-			# Ok let's try and add this
-			$context_summary{$tri_nt}->{$ubase}->{m} += $meth;
-			$context_summary{$tri_nt}->{$ubase}->{u} += $nonmeth;
+			context_reporting($tri_nt, $upstream_context, $meth, $nonmeth);
 		}
+
 		if ($CpG_only){
 			if ($tri_nt =~ /^CG/){ # CpG context is the default
 				if ($nome){ 
@@ -995,7 +1011,9 @@ sub generate_GC_context_report {
     # closing last filehandles
     close GC or warn $!;
     close GCCOV or warn $!;
-
+	if ($nome){
+		close CONTEXTSUMMARY or warn $!;
+	}
 }
 
 ####
@@ -1543,6 +1561,32 @@ sub combine_CpGs_to_single_CG_entity{
 
 }
 
+
+sub reset_context_summary{
+	
+	%context_summary = (); # resetting
+	
+	foreach my $base ('A','C','G','T'){
+		foreach my $base2 ('A','C','G','T'){
+			foreach my $baseup ('A','C','G','T'){
+				# print "C${base}$base2\t$baseup\n";
+				$context_summary{"C${base}$base2"}->{$baseup}->{u} = 0;
+				$context_summary{"C${base}$base2"}->{$baseup}->{m} = 0;
+			}
+		}
+	} 
+	# print_context_summary(); # test initialisation
+}
+
+sub context_reporting{
+	my ($tri_nt, $upstream_context, $meth, $nonmeth) = @_;
+
+	my $ubase = substr($upstream_context,0,1);
+	# warn "Context: $context\tTRI-cont: $tri_nt\tU-base: $ubase\tUpstream: $upstream_context\t$meth\t$nonmeth\n"; sleep(1);
+	# Ok let's try and add this
+	$context_summary{$tri_nt}->{$ubase}->{m} += $meth;
+	$context_summary{$tri_nt}->{$ubase}->{u} += $nonmeth;
+}
 
 sub process_commandline{
 	my $help;
