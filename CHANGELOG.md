@@ -3,8 +3,12 @@
 ## Changelog for Bismark v0.22.3_dev
 
 ### deduplicate_bismark
+
 - the command `deduplicate_bismark --barcode *bam` now works again. Previously the output file names were accidentally all derived from the first supplied file in `--barcode` (= UMI) mode (it had been fixed for normal files in 0.22.2).
 
+### coverage2cytosine
+
+- Added a new output file for all cytosine context methylation totals when `coverage2cytosine` is run in `--nome-seq` mode. More information here: https://github.com/FelixKrueger/Bismark/issues/321
 
 
 ## Changelog for Bismark v0.22.3 (release on 19 Nov 2019)
