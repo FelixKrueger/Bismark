@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.22.3';
+my $bismark2bedGraph_version = 'v0.22.3dev';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -312,7 +312,7 @@ if ($gazillion){
     }
 }
 
-foreach my $in (@temp_files) {
+foreach my $in (sort @temp_files) {
 
     if ($sort_size){
 	warn "Sorting input file $in by positions (using -S of $sort_size)\n" unless ($ample_mem);
