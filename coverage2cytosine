@@ -37,9 +37,9 @@ generate_genome_wide_cytosine_report($coverage_infile);
 
 ### 25 March 2020 (COVID19 lockdown)
 # Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
-if ($nome){
-	print_context_summary();
-}
+#if ($nome){
+print_context_summary();
+#}
 
 ### 11 December 2014
 
@@ -49,18 +49,18 @@ if ($nome){
 # Merge CpGs does not work in conjuction with --nome-seq (since some positions are filtered out).
 
 if ($merge_CpGs) {
-    # we only allow this operation if the report is limited to CpG context, and for a single report for the entire genome for the time being
-    combine_CpGs_to_single_CG_entity($global_cyt_report);
+	# we only allow this operation if the report is limited to CpG context, and for a single report for the entire genome for the time being
+	combine_CpGs_to_single_CG_entity($global_cyt_report);
 }
 
 sub print_context_summary{
-	
+
 	print CONTEXTSUMMARY "upstream\tC-context\tfull context\tcount methylated\tcount unmethylated\tpercent methylation\n";
 	foreach my $context (sort keys %context_summary){
 		foreach my $ubase (sort keys %{$context_summary{$context}}){
 			my $perc;
 			if ( ($context_summary{$context}->{$ubase}->{u} + $context_summary{$context}->{$ubase}->{m}) > 0){
-				$perc = sprintf("%.2f", $context_summary{$context}->{$ubase}->{m} / ($context_summary{$context}->{$ubase}->{u} + $context_summary{$context}->{$ubase}->{m}) * 100);	
+				$perc = sprintf("%.2f", $context_summary{$context}->{$ubase}->{m} / ($context_summary{$context}->{$ubase}->{u} + $context_summary{$context}->{$ubase}->{m}) * 100);
 			}
 			else{
 				$perc =  "N/A";
@@ -72,7 +72,7 @@ sub print_context_summary{
 ### 18 August 2015. Update 12 Jan 2017: Additional restrictions for NOMe-Seq
 # The following section reprocessed the genome to generate cytosine methylation output in GC context (e.g. when a GpC methylase had been deployed
 if ($gc_context){
-    generate_GC_context_report($coverage_infile);
+	generate_GC_context_report($coverage_infile);
 }
 
 # function to handle file names and options.  Assume $cytosine_out has been cleaned from unwanted suffixes
@@ -80,35 +80,35 @@ if ($gc_context){
 
 sub handle_filehandles{
 
-    my $my_chr = shift;
-    if (defined $my_chr){
+	my $my_chr = shift;
+	if (defined $my_chr){
 		# warn "Working with chromosome in '--split_by_chromosome' mode\n";
-    }
-    
-    my $cytosine_coverage_file = $cytosine_out;
-    my $cytosine_report_file;
+	}
 
-    if (defined $my_chr and $split_by_chromosome) {
+	my $cytosine_coverage_file = $cytosine_out;
+	my $cytosine_report_file;
+
+	if (defined $my_chr and $split_by_chromosome) {
 		## writing output to 1 file per chromosome
 		$cytosine_coverage_file =~ s/$/.chr${my_chr}/;
-    }
-    
-    $cytosine_report_file = $cytosine_coverage_file; # required in any case
+	}
 
-    # if the data came from the methylation extractor it will already end in .CX_report.txt or .CpG_report.txt
-    if ($CX_context){
+	$cytosine_report_file = $cytosine_coverage_file; # required in any case
+
+	# if the data came from the methylation extractor it will already end in .CX_report.txt or .CpG_report.txt
+	if ($CX_context){
 		$cytosine_report_file =~ s/\.CX_report.txt$//;  # removing to avoid duplication
-    }
-    else{
+	}
+	else{
 		$cytosine_report_file =~ s/\.CpG_report.txt$//; # removing to avoid duplication
-    }
-    
-    my $context_summary_file = $cytosine_report_file;
-	
+	}
 
-    if ($nome) {
-		$context_summary_file .= '.cytosine_context_summary.txt';
-		open (CONTEXTSUMMARY,'>',"${output_dir}$context_summary_file") or die "Failed to write to file ${output_dir}$context_summary_file: $!\n";
+	# 28 April 2020 - context summary will now always be printed
+	my $context_summary_file = $cytosine_report_file;
+	$context_summary_file .= '.cytosine_context_summary.txt';
+	open (CONTEXTSUMMARY,'>',"${output_dir}$context_summary_file") or die "Failed to write to file ${output_dir}$context_summary_file: $!\n";
+
+	if ($nome) {
 
 		$cytosine_report_file   .= '.NOMe.CpG_report.txt';
 		$cytosine_coverage_file .= '.NOMe.CpG.cov';
@@ -116,8 +116,8 @@ sub handle_filehandles{
 			$cytosine_coverage_file .= '.gz';
 			$cytosine_report_file   .= '.gz';
 		}
-    }
-    else {
+	}
+	else {
 		if ($CX_context){
 			$cytosine_report_file   .= $gzip ? '.CX_report.txt.gz' : '.CX_report.txt';
 			$cytosine_coverage_file .= $gzip ? '.CX.cov.gz' : '.CX.cov';
@@ -126,81 +126,80 @@ sub handle_filehandles{
 			$cytosine_report_file   .= $gzip ? '.CpG_report.txt.gz' : '.CpG_report.txt';
 			$cytosine_coverage_file .= $gzip ? '.CpG.cov.gz' : '.CpG.cov';
 		}
-    }
-	
-    if ($gzip) {
+	}
+
+	if ($gzip) {
 	open (CYT,"| gzip -c - > ${output_dir}$cytosine_report_file") or die "Failed to write to file ${output_dir}$cytosine_report_file: $!\n";
 	if ($nome) {
-	    open (CYTCOV,"| gzip -c - > ${output_dir}$cytosine_coverage_file") or die "Failed to write to file ${output_dir}$cytosine_coverage_file: $!\n";
+		open (CYTCOV,"| gzip -c - > ${output_dir}$cytosine_coverage_file") or die "Failed to write to file ${output_dir}$cytosine_coverage_file: $!\n";
 	}
-    }
-    else {
+	}
+	else {
 		open (CYT,'>',"${output_dir}$cytosine_report_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_report_file: $!\n";
 		if ($nome) {
 			open (CYTCOV,'>',"${output_dir}$cytosine_coverage_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_coverage_file: $!\n";
 		}
-    }
+	}
 
-    $global_cyt_report = $cytosine_report_file; # needed for --merge_CpG option later on
+	$global_cyt_report = $cytosine_report_file; # needed for --merge_CpG option later on
 
-    if ($nome){
+	if ($nome){
 		warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n";
 		warn ">>> Writing genome-wide cytosine coverage file to: $cytosine_coverage_file <<<\n\n";
-		warn ">>> Writing all cytosine context summary file to: $context_summary_file <<<\n\n";
-    }
-    else{
+	}
+	else{
 		warn ">>> Writing genome-wide cytosine report to: $cytosine_report_file <<<\n\n";
-    }
-    
-    return(defined $my_chr ? $my_chr : ''); # returning chromosome in --split_by_chromosome mode
+	}
+	warn ">>> Writing all cytosine context summary file to: $context_summary_file <<<\n\n";
+
+	return(defined $my_chr ? $my_chr : ''); # returning chromosome in --split_by_chromosome mode
 
 }
 
 
 sub generate_genome_wide_cytosine_report {
-    
-    warn  "="x78,"\n";
-    warn "Methylation information will now be written into a genome-wide cytosine report\n";
-    warn  "="x78,"\n\n";
-    sleep (2);
-    
-    my $number_processed = 0;
-    my $current_out_chr = '';
-    
-    ### changing to the output directory again
-    #unless ($output_dir eq ''){ # default
-    # chdir $output_dir or die "Failed to change directory to $output_dir\n";
-    # warn "Changed directory to $output_dir\n";
-    # }
-    
-    my $in = shift;
-    # infiles handed over by the methylation extractor will be just the filename on their own. The directory should have been handed over with --dir
-    if ($in =~ /gz$/){
-		open (IN,"gunzip -c $in |") or die "Failed to read from gzipped file $in: $!\n"; # changed from gunzip -c to gunzip -c 08 04 16
-    }
-    else{
-		open (IN,"$in") or die "Failed to read from file $in: $!\n";
-    }
 
-	### 25 March 2020 (COVID19 lockdown)
-	# Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
-	if ($nome){
-		warn "Adding context-specific methylation summaries for NOMe-seq data\n\n";
-		reset_context_summary();	
+	warn  "="x78,"\n";
+	warn "Methylation information will now be written into a genome-wide cytosine report\n";
+	warn  "="x78,"\n\n";
+	sleep (2);
+
+	my $number_processed = 0;
+	my $current_out_chr = '';
+
+	### changing to the output directory again
+	#unless ($output_dir eq ''){ # default
+	# chdir $output_dir or die "Failed to change directory to $output_dir\n";
+	# warn "Changed directory to $output_dir\n";
+	# }
+
+	my $in = shift;
+	# infiles handed over by the methylation extractor will be just the filename on their own. The directory should have been handed over with --dir
+	if ($in =~ /gz$/){
+		open (IN,"gunzip -c $in |") or die "Failed to read from gzipped file $in: $!\n"; # changed from gunzip -c to gunzip -c 08 04 16
+	}
+	else{
+		open (IN,"$in") or die "Failed to read from file $in: $!\n";
 	}
 
-    # opening global output files unless --split_by_chromosome was specified
-    handle_filehandles() unless ($split_by_chromosome); ### writing all output to a single file (default)
-     
-    my $last_chr;
-    my %chr; # storing reads for one chromosome at a time
-    
-    my $count = 0;
-    while (<IN>){
+	### 25 March/ 28 April 2020 (COVID-19 lockdown)
+	# Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
+	warn "Adding context-specific methylation summaries\n\n";
+	reset_context_summary();
+
+
+	# opening global output files unless --split_by_chromosome was specified
+	handle_filehandles() unless ($split_by_chromosome); ### writing all output to a single file (default)
+
+	my $last_chr;
+	my %chr; # storing reads for one chromosome at a time
+
+	my $count = 0;
+	while (<IN>){
 		chomp;
 		++$count;
 		my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
-		
+
 		# defining the first chromosome
 		unless (defined $last_chr){
 			$last_chr = $chr;
@@ -211,7 +210,7 @@ sub generate_genome_wide_cytosine_report {
 				# warn "Returned the following current out chr: >>>$current_out_chr<<<\n";
 			}
 		}
-	
+
 		### As of version 0.9.1 the start positions are 1-based!
 		if ($chr eq $last_chr){
 			$chr{$chr}->{$start}->{meth} = $meth;
@@ -226,11 +225,11 @@ sub generate_genome_wide_cytosine_report {
 			my $penta_nt;
 			my $context;
 			my $upstream_context; # for NOMe-Seq
-			
+
 			$processed{$last_chr} = 1;
-			
+
 			while ( $chromosomes{$last_chr} =~ /([CG])/g){ # C or G
-		
+
 				$tri_nt = '';
 				$context = '';
 
@@ -238,17 +237,16 @@ sub generate_genome_wide_cytosine_report {
 					$tetra_nt = ''; # clearing
 					$penta_nt = '';
 				}
-				
-				if ($nome){
-					$upstream_context = '';
-				}
-				
+
+				$upstream_context = '';
+			
+
 				my $pos = pos$chromosomes{$last_chr};
-				
+
 				my $strand;
 				my $meth = 0;
 				my $nonmeth = 0;
-				
+
 				if ($1 eq 'C'){    # C on forward strand
 					$tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
 					if ($tetra){
@@ -266,10 +264,10 @@ sub generate_genome_wide_cytosine_report {
 							$penta_nt = '';
 						}
 					}
-					if ($nome){
-						$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-						# warn "$1\t$upstream_context\n"; sleep(1);
-					}
+					# Extended this to any run 28 April 2020
+					$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
+					# warn "$1\t$upstream_context\n"; sleep(1);
+				
 					$strand = '+';
 				}
 				elsif ($1 eq 'G'){ # C on reverse strand
@@ -279,15 +277,15 @@ sub generate_genome_wide_cytosine_report {
 					else{
 						$tri_nt = substr ($chromosomes{$last_chr},($pos-3),3);   # positions are 0-based!
 					}
-		    
+
 					$tri_nt = reverse $tri_nt;
 					$tri_nt =~ tr/ACTG/TGAC/;
-					
+
 					if ($tetra){
 						if ( $pos - 4 >= 0 ){
 							$tetra_nt = substr ($chromosomes{$last_chr},($pos-4),4);
 							$tetra_nt = reverse $tetra_nt;
-							$tetra_nt =~ tr/ACTG/TGAC/; 
+							$tetra_nt =~ tr/ACTG/TGAC/;
 						}
 						else{
 							$tetra_nt = '';
@@ -296,23 +294,23 @@ sub generate_genome_wide_cytosine_report {
 							$penta_nt = substr ($chromosomes{$last_chr},($pos-5),5);
 							$penta_nt = reverse $penta_nt;
 							$penta_nt =~ tr/ACTG/TGAC/;
-						} 
+						}
 						else{
 							$penta_nt = '';
 						}
 					}
+
+					# Extended this to any run 28 April 2020
+					$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
+					$upstream_context = reverse $upstream_context;
+					$upstream_context =~ tr/ACTG/TGAC/;
+					# warn "$1\t$upstream_context\n"; sleep(1);
 					
-					if ($nome){
-						$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-						$upstream_context = reverse $upstream_context;
-						$upstream_context =~ tr/ACTG/TGAC/;
-						# warn "$1\t$upstream_context\n"; sleep(1);
-					}
 					$strand = '-';
 				}
-		
+
 				next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
-		
+
 				### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
 				### will have been rejected due to insufficient length for $tri_nt
 				if ( (length($chromosomes{$last_chr}) - $pos) == 0){
@@ -320,19 +318,19 @@ sub generate_genome_wide_cytosine_report {
 				}
 
 				# if (length$penta_nt < 5){
-				# warn "$tri_nt\t$tetra_nt\t$penta_nt\n"; sleep(1);		  
+				# warn "$tri_nt\t$tetra_nt\t$penta_nt\n"; sleep(1);
 				# }
-				  
+
 				if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! (as of v0.9.1)
 					$meth =  $chr{$last_chr}->{$pos}->{meth};
 					$nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
 				}
-		
+
 				# added this on 28 June 2019
-				next unless ($meth + $nonmeth >= $threshold); # if the position was not covered well enough it won't be reported	
-					
-		
-				### determining cytosine context	
+				next unless ($meth + $nonmeth >= $threshold); # if the position was not covered well enough it won't be reported
+
+
+				### determining cytosine context
 				if ($tri_nt =~ /^CG/){
 					$context = 'CG';
 				}
@@ -349,12 +347,11 @@ sub generate_genome_wide_cytosine_report {
 				# warn "Context: $context\tTRI-cont: $tri_nt\tUpstream: $upstream_context\n"; sleep(1);
 
 				# this is merely for reporting # Added 25 March 2020
-				if ($nome){
-					context_reporting($tri_nt, $upstream_context, $meth, $nonmeth);
-				}
-
+				context_reporting($tri_nt, $upstream_context, $meth, $nonmeth);
+				# warn "$tri_nt, $upstream_context, $meth, $nonmeth\n"; sleep(1);
+				
 				if ($CpG_only){
-					
+
 					if ($tri_nt =~ /^CG/){ # CpG context is the default
 						if ($nome){ # NOMe-Seq is CpG context only
 							if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){
@@ -364,7 +361,7 @@ sub generate_genome_wide_cytosine_report {
 								next; # skipping this base
 							}
 						}
-						
+
 						if ($zero){ # zero based coordinates
 							$pos -= 1;
 							if ($tetra){
@@ -418,9 +415,9 @@ sub generate_genome_wide_cytosine_report {
 					}
 				}
 			}
-		
+
 			%chr = (); # resetting the hash
-	    
+
 			# new first entry
 			$last_chr = $chr;
 			$chr{$chr}->{$start}->{meth} = $meth;
@@ -432,51 +429,51 @@ sub generate_genome_wide_cytosine_report {
 				if ($nome){
 					close CYTCOV or warn $!;
 				}
-		
+
 				# opening new filehandle
 				$current_out_chr = handle_filehandles($last_chr);
 			}
 		}
-    }
-    
-    # Last found chromosome
-    # If there never was a last chromosome then something must have gone wrong with reading the data in
-    unless (defined $last_chr){
-		die "No last chromosome was defined, something must have gone wrong while reading the data in (e.g. specified wrong file path for a gzipped coverage file?). Please check your command!\n\n";
-    }
-    
-    warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
-    $processed{$last_chr} = 1;
+	}
 
-    my $tri_nt;
-    my $tetra_nt;
-    my $penta_nt;
-    my $context;
-    my $upstream_context;
-    
-    while ( $chromosomes{$last_chr} =~ /([CG])/g){
-      
+	# Last found chromosome
+	# If there never was a last chromosome then something must have gone wrong with reading the data in
+	unless (defined $last_chr){
+		die "No last chromosome was defined, something must have gone wrong while reading the data in (e.g. specified wrong file path for a gzipped coverage file?). Please check your command!\n\n";
+	}
+
+	warn "Writing cytosine report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+	$processed{$last_chr} = 1;
+
+	my $tri_nt;
+	my $tetra_nt;
+	my $penta_nt;
+	my $context;
+	my $upstream_context;
+
+	while ( $chromosomes{$last_chr} =~ /([CG])/g){
+
 		$tri_nt = ''; # clearing
 		$context = '';
-		
+
 		if ($tetra){
 			$tetra_nt = '';
 			$penta_nt = '';
 		}
-		if ($nome){
-			$upstream_context = ''; # clearing
-		}
 		
+		$upstream_context = ''; # clearing
+		
+
 		my $pos = pos$chromosomes{$last_chr};
-		
+
 		my $strand;
 		my $meth = 0;
 		my $nonmeth = 0;
-		  
+
 		if ($1 eq 'C'){    # C on forward strand
 			$tri_nt = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
 			$strand = '+';
-			
+
 			if ($tetra){
 				if ( length($chromosomes{$last_chr}) >= ($pos - 1 + 4) ){
 					$tetra_nt = substr ($chromosomes{$last_chr},($pos-1),4);
@@ -491,11 +488,10 @@ sub generate_genome_wide_cytosine_report {
 					$penta_nt = '';
 				}
 			}
-	    
-			if ($nome){
-				$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-				# warn "$1\t$upstream_context\n"; sleep(1);
-			}
+
+			# 28 April 2020: using this metric for any context
+			$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
+			# warn "$1\t$upstream_context\n"; sleep(1);
 		}
 		elsif ($1 eq 'G'){ # C on reverse strand
 			if ($pos-3 < 0) { # VB: 28 09 2017
@@ -508,55 +504,55 @@ sub generate_genome_wide_cytosine_report {
 			$tri_nt = reverse $tri_nt;
 			$tri_nt =~ tr/ACTG/TGAC/;
 			$strand = '-';
-			
+
 			if ($tetra){
 				if ( $pos - 4 >= 0 ){
 					$tetra_nt = substr ($chromosomes{$last_chr},($pos-4),4);
 					$tetra_nt = reverse $tetra_nt;
-					$tetra_nt =~ tr/ACTG/TGAC/; 
+					$tetra_nt =~ tr/ACTG/TGAC/;
 				}
 				else{
 					$tetra_nt = '';
 				}
-			
+
 				if ( $pos - 5 >= 0 ){
 					$penta_nt = substr ($chromosomes{$last_chr},($pos-5),5);
 					$penta_nt = reverse $penta_nt;
 					$penta_nt =~ tr/ACTG/TGAC/;
-				} 
+				}
 				else{
 					$penta_nt = '';
 				}
-			} 
-			if ($nome){
-				$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
-				$upstream_context = reverse $upstream_context;
-				$upstream_context =~ tr/ACTG/TGAC/;
-				# warn "$1\t$upstream_context\n"; sleep(1);
 			}
+			# 28 April 2020: using this metric for any context
+			$upstream_context = substr ($chromosomes{$last_chr},($pos-2),3);
+			$upstream_context = reverse $upstream_context;
+			$upstream_context =~ tr/ACTG/TGAC/;
+			# warn "$1\t$upstream_context\n"; sleep(1);
+			
 		}
-		
+
 		if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based! as of v0.9.1
 			$meth =  $chr{$last_chr}->{$pos}->{meth};
 			$nonmeth = $chr{$last_chr}->{$pos}->{nonmeth};
 		}
-	
+
 		# added this on 28 June 2019
-		next unless ($meth + $nonmeth >= $threshold); # if the position was not covered well enough it won't be reported	
-			
-	
+		next unless ($meth + $nonmeth >= $threshold); # if the position was not covered well enough it won't be reported
+
+
 		next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
 		### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
 		### will have been rejected due to insufficient length for $tri_nt
 		if ( (length($chromosomes{$last_chr}) - $pos) == 0){
 			next;
 		}
-	
+
 		# if (length$penta_nt < 5){
-		# warn "$tri_nt\t$tetra_nt\t$penta_nt\n"; sleep(1);		  
+		# warn "$tri_nt\t$tetra_nt\t$penta_nt\n"; sleep(1);
 		# }
-		
-		### determining cytosine context 
+
+		### determining cytosine context
 		if ($tri_nt =~ /^CG/){
 			$context = 'CG';
 		}
@@ -571,14 +567,14 @@ sub generate_genome_wide_cytosine_report {
 			next;
 		}
 
-		# this is merely for reporting # Added 25 March 2020
-		if ($nome){
-			context_reporting($tri_nt, $upstream_context, $meth, $nonmeth);
-		}
+		# this is merely for reporting # Added 25 March 2020, modified 28 April 2020
+		context_reporting($tri_nt, $upstream_context, $meth, $nonmeth);
+		# warn ("$tri_nt, $upstream_context, $meth, $nonmeth\n"); sleep(1);
+		
 
 		if ($CpG_only){
 			if ($tri_nt =~ /^CG/){ # CpG context is the default
-				if ($nome){ 
+				if ($nome){
 					if ( ($upstream_context eq 'ACG') or ($upstream_context eq 'TCG') ){
 					# fine
 					}
@@ -638,38 +634,38 @@ sub generate_genome_wide_cytosine_report {
 				}
 			}
 		}
-    }
+	}
 
-    if ($nome){
+	if ($nome){
 		warn "Finished writing out NOMe-Seq specific cytosine report for covered chromosomes (only reporting CGs in ACG and TCG context; processed $number_processed chromosomes/scaffolds in total)\n\n";
-    }
-    else{
+	}
+	else{
 		warn "Finished writing out cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
-    }
- 
-    if ($split_by_chromosome){
+	}
+
+	if ($split_by_chromosome){
 		close CYT or warn $!;
 		if ($nome){
 			close CYTCOV or warn $!;
-		}   
-    }
-    
-    ### Now processing chromosomes that were not covered in the coverage file
-    
-    if($nome){
+		}
+	}
+
+	### Now processing chromosomes that were not covered in the coverage file
+
+	if($nome){
 		# 22 Sepember update: We have changed the NOMe-Seq processing process so that only positions that are
 		# actually covered are getting reported, both for the CpG report as well as for the coverage file
-	
+
 		warn "NOMe-Seq processing only reports covered positions, so chromosomes that were not covered by any methylation calls in the coverage file are simply skipped...\nGenome-wide cytosine report processing complete\n\n";
-    }
+	}
 	elsif($threshold > 0){
 		warn "Coverage threshold was set to >$threshold<, so chromosomes that were not covered by any methylation calls in the coverage file are simply skipped...\nGenome-wide cytosine report processing complete\n\n";
-   	}	
-    else{
+   	}
+	else{
 		warn "Now processing chromosomes that were not covered by any methylation calls in the coverage file...\n";
-	
-        my $unprocessed = 0;
-	
+
+		my $unprocessed = 0;
+
 		foreach my $chr (sort keys %processed) {
 			unless ( $processed{$chr} ) {
 				++$unprocessed;
@@ -677,21 +673,21 @@ sub generate_genome_wide_cytosine_report {
 				process_unprocessed_chromosomes($chr);
 			}
 		}
-	
+
 		if ($unprocessed == 0) {
 			warn "All chromosomes in the genome were covered by at least some reads. coverage2cytosine processing complete.\n\n";
 		}
 		else{
 			warn "Finished writing out cytosine report (processed $number_processed chromosomes/scaffolds in total). coverage2cytosine processing complete.\n\n";
 		}
-    }
-    
-    unless ($split_by_chromosome){
+	}
+
+	unless ($split_by_chromosome){
 		close CYT or warn $!;
 		if ($nome){
 			close CYTCOV or warn $!;
 		}
-    }	
+	}
 
 }
 
@@ -701,42 +697,42 @@ sub generate_genome_wide_cytosine_report {
 
 sub generate_GC_context_report {
 
-    warn  "="x82,"\n";
-    warn "Methylation information for GC context will now be written to a GpC-context report\n";
-    warn  "="x82,"\n\n";
-    sleep (2);
-    
-    my $number_processed = 0;
-    my $current_out_chr = '';
-    
-    ### changing to the output directory again
-    # unless ($output_dir eq ''){ # default
-    #	chdir $output_dir or die "Failed to change directory to $output_dir\n";
-    #	# warn "Changed directory to $output_dir\n";
-    #    }
-    
-    my $in = shift;
-    if ($in =~ /gz$/){
+	warn  "="x82,"\n";
+	warn "Methylation information for GC context will now be written to a GpC-context report\n";
+	warn  "="x82,"\n\n";
+	sleep (2);
+
+	my $number_processed = 0;
+	my $current_out_chr = '';
+
+	### changing to the output directory again
+	# unless ($output_dir eq ''){ # default
+	#	chdir $output_dir or die "Failed to change directory to $output_dir\n";
+	#	# warn "Changed directory to $output_dir\n";
+	#    }
+
+	my $in = shift;
+	if ($in =~ /gz$/){
 		open (IN,"gunzip -c $in |") or die "Failed to read from gzipped file $in: $!\n";
-    }
-    else{
+	}
+	else{
 		open (IN,"$in") or die "Failed to read from file $in: $!\n";
-    }
+	}
 
-    ### for NOMe-Seq (nucleosome occupancy and methylome sequencing) we limit the reporting of
-    # 1. CpGs to A-C-G and T-C-G
-    # 2. GpC report files / cov files that only include G-C-A, G-C-C and G-C-T
+	### for NOMe-Seq (nucleosome occupancy and methylome sequencing) we limit the reporting of
+	# 1. CpGs to A-C-G and T-C-G
+	# 2. GpC report files / cov files that only include G-C-A, G-C-C and G-C-T
 
- 
-    # Local function to handle file names and options, similar to function in generate_genome_wide_cytosine_report().
-    # Assume $cytosine_out has been cleaned from unwanted suffixes
-    # First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
-    my $filehandles_func = sub {
+
+	# Local function to handle file names and options, similar to function in generate_genome_wide_cytosine_report().
+	# Assume $cytosine_out has been cleaned from unwanted suffixes
+	# First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
+	my $filehandles_func = sub {
 		my $my_chr = shift;
 		if (defined $my_chr){
 			# warn "working on chromosome $my_chr in --split_by_chromosome mode\n"; sleep(3);
 		}
-		
+
 		my $partial_name = $cytosine_out;
 		$partial_name =~ s/$/.chr${my_chr}/ if (defined $my_chr and $split_by_chromosome);
 		$partial_name .= '.NOMe' if ($nome);
@@ -757,78 +753,78 @@ sub generate_GC_context_report {
 		return(defined $my_chr ? $my_chr : '');
 	};
 
-    $current_out_chr = ${filehandles_func}->() unless ($split_by_chromosome); ### writing all output to a single file (default)
+	$current_out_chr = ${filehandles_func}->() unless ($split_by_chromosome); ### writing all output to a single file (default)
 
-    my $last_chr;
-    my %chr; # storing reads for one chromosome at a time
-    
-    my $count = 0;
- 
-    while (<IN>){
+	my $last_chr;
+	my %chr; # storing reads for one chromosome at a time
+
+	my $count = 0;
+
+	while (<IN>){
 	chomp;
 	++$count;
 	my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
-	
+
 	# defining the first chromosome
 	unless (defined $last_chr){
-	    $last_chr = $chr;
-	    ++$number_processed;
-	    warn "Storing all covered cytosine positions for chromosome: $chr\n";
-	    if ($split_by_chromosome){
+		$last_chr = $chr;
+		++$number_processed;
+		warn "Storing all covered cytosine positions for chromosome: $chr\n";
+		if ($split_by_chromosome){
 			$current_out_chr = ${filehandles_func}->($chr);
-	    } 
+		}
 	}
-	
+
 	### start positions are 1-based
 	if ($chr eq $last_chr){
-	    $chr{$chr}->{$start}->{meth} = $meth;
-	    $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+		$chr{$chr}->{$start}->{meth} = $meth;
+		$chr{$chr}->{$start}->{nonmeth} = $nonmeth;
 	}
 	else{
-	    warn "Writing cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
-	    ++$number_processed;
-	    $processed{$last_chr} = 1;
-	    my $enough = 0;
-	   
-	    while ( $chromosomes{$last_chr} =~ /(GC)/g){
-		
+		warn "Writing cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+		++$number_processed;
+		$processed{$last_chr} = 1;
+		my $enough = 0;
+
+		while ( $chromosomes{$last_chr} =~ /(GC)/g){
+
 			# a GC on the top strand automatically means that there is a GC on the bottom strand as well, so we can process both at the same time
 			my $context_top = '';
 			my $context_bottom = '';
 			my $pos = pos$chromosomes{$last_chr};
-			
+
 			my $meth_top = 0;
 			my $meth_bottom = 0;
 			my $nonmeth_top = 0;
 			my $nonmeth_bottom = 0;
-			
+
 			#warn "$1\n"; sleep(1);
 			# C on forward strand
 			my $tri_nt_top = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
 			my $strand_top = '+';
-			
+
 			# C on reverse strand
 			my $tri_nt_bottom = substr ($chromosomes{$last_chr},($pos-4),3);   # positions are 0-based!
 			$tri_nt_bottom = reverse $tri_nt_bottom;
 			$tri_nt_bottom =~ tr/ACTG/TGAC/;
 			my $strand_bottom = '-';
-			
+
 			next if (length $tri_nt_top < 3);     # trinucleotide sequence could not be extracted for the top strand
 			next if (length $tri_nt_bottom < 3);  # trinucleotide sequence could not be extracted for the reverse strand
-		
+
 			# top strand
 			if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based!
 				$meth_top    = $chr{$last_chr}->{$pos}->{meth};
 				$nonmeth_top = $chr{$last_chr}->{$pos}->{nonmeth};
 			}
-			
+
 			# bottom strand
 			if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 1-based! -1 for bottom strand Cs
 				$meth_bottom    = $chr{$last_chr}->{$pos-1}->{meth};
-				$nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth}; 
+				$nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth};
 			}
-			
-			### determining cytosine context top strand	
+
+			### determining cytosine context top strand
 			if ($tri_nt_top =~ /^CG/){
 				$context_top = 'CG';
 			}
@@ -842,7 +838,7 @@ sub generate_GC_context_report {
 				warn "The sequence context could not be determined for the top strand (found: '$tri_nt_top'). Skipping.\n";
 				next;
 			}
-			
+
 			### determining cytosine context bottom strand
 			if ($tri_nt_bottom =~ /^CG/){
 				$context_bottom = 'CG';
@@ -857,7 +853,7 @@ sub generate_GC_context_report {
 				warn "The sequence context could not be determined for the bottom strand (found: '$tri_nt_bottom'). Skipping.\n";
 				next;
 			}
-			
+
 			# if Cs were not covered at all they are not written out
 			if ($meth_bottom + $nonmeth_bottom >= $threshold){
 				my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
@@ -870,7 +866,7 @@ sub generate_GC_context_report {
 					print GC join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
 				}
 			}
-			
+
 			if ($meth_top + $nonmeth_top >= $threshold){
 				my $percentage = sprintf ("%.6f",$meth_top/ ($meth_top + $nonmeth_top) *100);
 				if ($nome and ($context_top eq 'CG') ){
@@ -880,101 +876,101 @@ sub generate_GC_context_report {
 				else{
 					print GCCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
 					print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
-				}	
+				}
 			}
-	    }
-		
-	    %chr = (); # resetting the hash
-	    
-	    # new first entry
-	    $last_chr = $chr;
-	    $chr{$chr}->{$start}->{meth} = $meth;
-	    $chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+		}
 
-	    if ($split_by_chromosome and $current_out_chr ne $last_chr){
+		%chr = (); # resetting the hash
+
+		# new first entry
+		$last_chr = $chr;
+		$chr{$chr}->{$start}->{meth} = $meth;
+		$chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+
+		if ($split_by_chromosome and $current_out_chr ne $last_chr){
 			# closing old filehandle(s)
 			close GC or warn $!;
 			if ($nome){
 				close GCCOV or warn $!;
 			}
-		
+
 			# opening new filehandle
 			$current_out_chr = ${filehandles_func}->($last_chr);
-	    }
-	    
+		}
+
 	}
-    }
-    
-    # Last found chromosome
-    warn "Writing cytosine GpC report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
-    $processed{$last_chr} = 1;
-    while ( $chromosomes{$last_chr} =~ /(GC)/g){
-	
+	}
+
+	# Last found chromosome
+	warn "Writing cytosine GpC report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+	$processed{$last_chr} = 1;
+	while ( $chromosomes{$last_chr} =~ /(GC)/g){
+
 	# a GC on the top strand automatically means that there is a GC on the bottom strand as well, so we can process both at the same time
 	my $context_top = '';
 	my $context_bottom = '';
 	my $pos = pos$chromosomes{$last_chr};
-	
+
 	my $meth_top = 0;
 	my $meth_bottom = 0;
 	my $nonmeth_top = 0;
 	my $nonmeth_bottom = 0;
-	
+
 	# C on forward strand
 	my $tri_nt_top = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
 	my $strand_top = '+';
-	
+
 	# C on reverse strand
 	my $tri_nt_bottom = substr ($chromosomes{$last_chr},($pos-4),3);   # positions are 0-based!
 	$tri_nt_bottom = reverse $tri_nt_bottom;
 	$tri_nt_bottom =~ tr/ACTG/TGAC/;
-	
+
 	my $strand_bottom = '-';
-	
+
 	next if (length $tri_nt_top < 3);     # trinucleotide sequence could not be extracted for the top strand
 	next if (length $tri_nt_bottom < 3);  # trinucleotide sequence could not be extracted for the bottom strand
 
-	### determining cytosine context top strand	
+	### determining cytosine context top strand
 	if ($tri_nt_top =~ /^CG/){
-	    $context_top = 'CG';
+		$context_top = 'CG';
 	}
 	elsif ($tri_nt_top =~ /^C.{1}G$/){
-	    $context_top = 'CHG';
+		$context_top = 'CHG';
 	}
 	elsif ($tri_nt_top =~ /^C.{2}$/){
-	    $context_top = 'CHH';
+		$context_top = 'CHH';
 	}
 	else{ # if the context can't be determined the positions will not be printed
-	    warn "The sequence context could not be determined for the top strand (found: '$tri_nt_top'). Skipping.\n";
-	    next;
+		warn "The sequence context could not be determined for the top strand (found: '$tri_nt_top'). Skipping.\n";
+		next;
 	}
 
 	### determining cytosine context bottom strand
 	if ($tri_nt_bottom =~ /^CG/){
-	    $context_bottom = 'CG';
+		$context_bottom = 'CG';
 	}
 	elsif ($tri_nt_bottom =~ /^C.{1}G$/){
-	    $context_bottom = 'CHG';
+		$context_bottom = 'CHG';
 	}
 	elsif ($tri_nt_bottom =~ /^C.{2}$/){
-	    $context_bottom = 'CHH';
+		$context_bottom = 'CHH';
 	}
 	else{ # if the context can't be determined the positions will not be printed
-	    warn "The sequence context could not be determined for the bottom strand (found: '$tri_nt_bottom'). Skipping.\n";
-	    next;
+		warn "The sequence context could not be determined for the bottom strand (found: '$tri_nt_bottom'). Skipping.\n";
+		next;
 	}
-	
+
 	# top strand
 	if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based!
-	    $meth_top    = $chr{$last_chr}->{$pos}->{meth};
-	    $nonmeth_top = $chr{$last_chr}->{$pos}->{nonmeth};
+		$meth_top    = $chr{$last_chr}->{$pos}->{meth};
+		$nonmeth_top = $chr{$last_chr}->{$pos}->{nonmeth};
 	}
 	# bottom strand
 	if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 1-based! -1 for bottom strand Cs
-	    $meth_bottom    = $chr{$last_chr}->{$pos-1}->{meth};
-	    $nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth};
+		$meth_bottom    = $chr{$last_chr}->{$pos-1}->{meth};
+		$nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth};
 	}
-	
+
 		# if Cs were not covered at all they are not written out
 		if ($meth_bottom + $nonmeth_bottom >= $threshold){
 			my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
@@ -1000,18 +996,18 @@ sub generate_GC_context_report {
 				print GC join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
 			}
 		}
-    }
-    
-    if ($nome){
-		warn "Finished writing out NOMe-Seq specific GpC cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
-    }
-    else{
-		warn "Finished writing out GpC cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
-    }
+	}
 
-    # closing last filehandles
-    close GC or warn $!;
-    close GCCOV or warn $!;
+	if ($nome){
+		warn "Finished writing out NOMe-Seq specific GpC cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
+	}
+	else{
+		warn "Finished writing out GpC cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
+	}
+
+	# closing last filehandles
+	close GC or warn $!;
+	close GCCOV or warn $!;
 	if ($nome){
 		close CONTEXTSUMMARY or warn $!;
 	}
@@ -1024,153 +1020,153 @@ sub generate_GC_context_report {
 sub process_unprocessed_chromosomes{
 
   my $chr = shift;
-  
+
   warn "Writing cytosine report for not covered chromosome $chr\n";
   $processed{$chr} = 1;
-  
+
   if ($split_by_chromosome){ ## writing output to 1 file per chromosome
-      handle_filehandles($chr);
+	  handle_filehandles($chr);
   }
-  
+
   my $tri_nt;
   my $tetra_nt;
   my $penta_nt;
   my $context;
-  
+
   while ( $chromosomes{$chr} =~ /([CG])/g){
 
-      $tri_nt = '';
-      $context = '';
-      if ($tetra){
+	  $tri_nt = '';
+	  $context = '';
+	  if ($tetra){
 	  $tetra_nt = ''; # clearing
 	  $penta_nt = '';
-      }
-      
-      my $pos = pos$chromosomes{$chr};
-      
-      my $strand;
-      my $meth = 0;
-      my $nonmeth = 0;
-      
-      if ($1 eq 'C'){    # C on forward strand
+	  }
+
+	  my $pos = pos$chromosomes{$chr};
+
+	  my $strand;
+	  my $meth = 0;
+	  my $nonmeth = 0;
+
+	  if ($1 eq 'C'){    # C on forward strand
 	  $tri_nt = substr ($chromosomes{$chr},($pos-1),3);   # positions are 0-based!
 	  $strand = '+';
 	  if ($tetra){
-	      if ( length($chromosomes{$chr}) >= ($pos - 1 + 4) ){
+		  if ( length($chromosomes{$chr}) >= ($pos - 1 + 4) ){
 		  $tetra_nt = substr ($chromosomes{$chr},($pos-1),4);
-	      }
-	      else{
+		  }
+		  else{
 		  $tetra_nt = '';
-	      }
-	      if ( length($chromosomes{$chr}) >= ($pos - 1 + 5) ){
+		  }
+		  if ( length($chromosomes{$chr}) >= ($pos - 1 + 5) ){
 		  $penta_nt = substr ($chromosomes{$chr},($pos-1),5);
-	      }
-	      else{
+		  }
+		  else{
 		  $penta_nt = '';
-	      }
+		  }
 	  }
-      }
-      elsif ($1 eq 'G'){ # C on reverse strand
+	  }
+	  elsif ($1 eq 'G'){ # C on reverse strand
 	  if ($pos-3 < 0) { # VB 28 09 2017
-	      $tri_nt = substr ($chromosomes{$chr},0,$pos);
+		  $tri_nt = substr ($chromosomes{$chr},0,$pos);
 	  }
 	  else{
-	      $tri_nt = substr ($chromosomes{$chr},($pos-3),3);   # positions are 0-based!
+		  $tri_nt = substr ($chromosomes{$chr},($pos-3),3);   # positions are 0-based!
 	  }
 
 	  $tri_nt = reverse $tri_nt;
 	  $tri_nt =~ tr/ACTG/TGAC/;
 	  $strand = '-';
-	  
+
 	  if ($tetra){
-	      if ( $pos - 4 >= 0 ){
+		  if ( $pos - 4 >= 0 ){
 		  $tetra_nt = substr ($chromosomes{$chr},($pos-4),4);
 		  $tetra_nt = reverse $tetra_nt;
-		  $tetra_nt =~ tr/ACTG/TGAC/; 
-	      }
-	      else{
+		  $tetra_nt =~ tr/ACTG/TGAC/;
+		  }
+		  else{
 		  $tetra_nt = '';
-	      }
-	      if ( $pos - 5 >= 0 ){
+		  }
+		  if ( $pos - 5 >= 0 ){
 		  $penta_nt = substr ($chromosomes{$chr},($pos-5),5);
 		  $penta_nt = reverse $penta_nt;
 		  $penta_nt =~ tr/ACTG/TGAC/;
-	      } 
-	      else{
+		  }
+		  else{
 		  $penta_nt = '';
-	      }
+		  }
 	  }
 	  $strand = '-';
-      }
-      
-      next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+	  }
 
-      ### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
-      ### will have been rejected due to insufficient length for $tri_nt
-      ### 03 Oct 2017: Changed this to be in agreement with positions on covered chromosomes where this position is also excluded
-      if ( (length($chromosomes{$chr}) - $pos) == 0){
+	  next if (length$tri_nt < 3); # trinucleotide sequence could not be extracted
+
+	  ### If the very last position is a C in CpG context on the bottom strand we need to exclude it because its top strand equivalent
+	  ### will have been rejected due to insufficient length for $tri_nt
+	  ### 03 Oct 2017: Changed this to be in agreement with positions on covered chromosomes where this position is also excluded
+	  if ( (length($chromosomes{$chr}) - $pos) == 0){
 	  next;
-      }
+	  }
 
-      ### determining cytosine context	
-      if ($tri_nt =~ /^CG/){
+	  ### determining cytosine context
+	  if ($tri_nt =~ /^CG/){
 	  $context = 'CG';
-      }
-      elsif ($tri_nt =~ /^C.{1}G$/){
+	  }
+	  elsif ($tri_nt =~ /^C.{1}G$/){
 	  $context = 'CHG';
-      }
-      elsif ($tri_nt =~ /^C.{2}$/){
+	  }
+	  elsif ($tri_nt =~ /^C.{2}$/){
 	  $context = 'CHH';
-      }
-      else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+	  }
+	  else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
 	  warn "The cytosine context could not be determined (found: '$tri_nt'). Skipping.\n";
 	  next;
-      }
-      
-      if ($CpG_only){
+	  }
+
+	  if ($CpG_only){
 	  if ($tri_nt =~ /^CG/){ # CpG context is the default
-	      if ($zero){ # zero-based coordinates
+		  if ($zero){ # zero-based coordinates
 		  $pos -= 1;
 		  if ($tetra){
-		      print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
+			  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
 		  }
 		  else{
-		      print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+			  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 		  }
-	      }
-	      else{ # default
+		  }
+		  else{ # default
 		  if ($tetra){
-		      print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
+			  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
 		  }
 		  else{
-		      print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
+			  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
 		  }
-	      }
+		  }
 	  }
-      }
-      else{ ## all cytosines, specified with --CX
+	  }
+	  else{ ## all cytosines, specified with --CX
 	  if ($zero){ # zero based coordinates
-	      $pos -= 1;
-	      if ($tetra){
+		  $pos -= 1;
+		  if ($tetra){
 		  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
-	      }
-	      else{
+		  }
+		  else{
 		  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	      }
+		  }
 	  }
 	  else{ # default
-	      if ($tetra){
+		  if ($tetra){
 		  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt,$tetra_nt,$penta_nt),"\n";
-	      }
-	      else{
+		  }
+		  else{
 		  print CYT join ("\t",$chr,$pos,$strand,$meth,$nonmeth,$context,$tri_nt),"\n";
-	      }
+		  }
 	  }
-      }
+	  }
   }
 
   if ($split_by_chromosome){
-      close CYT or warn $!;
+	  close CYT or warn $!;
   }
 
 }
@@ -1181,72 +1177,72 @@ sub process_unprocessed_chromosomes{
 
 sub on_screen_summary{
 
-    warn "Summary of parameters for genome-wide cytosine report:\n";
-    warn '='x78,"\n";
-    warn "Coverage infile:\t\t\t\t$coverage_infile\n";
-    warn "Output directory:\t\t\t\t>$output_dir<\n";
-    warn "Parent directory:\t\t\t\t>$parent_dir<\n";
-    warn "Genome directory:\t\t\t\t>$genome_folder<\n";
-	
+	warn "Summary of parameters for genome-wide cytosine report:\n";
+	warn '='x78,"\n";
+	warn "Coverage infile:\t\t\t\t$coverage_infile\n";
+	warn "Output directory:\t\t\t\t>$output_dir<\n";
+	warn "Parent directory:\t\t\t\t>$parent_dir<\n";
+	warn "Genome directory:\t\t\t\t>$genome_folder<\n";
+
 	if ($threshold){
 		warn "Coverage threshold\t\t\t\t$threshold (user defined)\n";
 	}
 	else{
 		warn "Coverage threshold\t\t\t\t$threshold (all positions will be reported, default)\n";
 	}
-	
-    if ($CX_context){
+
+	if ($CX_context){
 		warn "CX context:\t\t\t\t\tyes\n";
-    }
-    else{
-	warn "CX context:\t\t\t\t\tno (CpG context only, default)\n";
-    }
-
-    if ($merge_CpGs){
-	warn "Pooling CpG top/bottom strand evidence:\t\tyes\n";
-	if (defined $disco){
-	    warn "Applying top/bottom strand discrepancy filter:\tyes ($disco% methylation difference tolerated)\n";
-	}
-    }
-
-    if($nome){
-	warn "Sample specified as NOMe-Seq\t\t\tyes (only reporting ACG and TCG context)\n";
-    }
-
-    if($gc_context){
-	if($nome){
-	    warn "Optional GC context track:\t\t\tyes (NOMe-Seq; only reporting GCA, GCC and GCT context)\n";
 	}
 	else{
-	    warn "Optional GC context track:\t\t\tyes\n";
+	warn "CX context:\t\t\t\t\tno (CpG context only, default)\n";
 	}
-    }
 
-    if ($tetra){
+	if ($merge_CpGs){
+	warn "Pooling CpG top/bottom strand evidence:\t\tyes\n";
+	if (defined $disco){
+		warn "Applying top/bottom strand discrepancy filter:\tyes ($disco% methylation difference tolerated)\n";
+	}
+	}
+
+	if($nome){
+	warn "Sample specified as NOMe-Seq\t\t\tyes (only reporting ACG and TCG context)\n";
+	}
+
+	if($gc_context){
+	if($nome){
+		warn "Optional GC context track:\t\t\tyes (NOMe-Seq; only reporting GCA, GCC and GCT context)\n";
+	}
+	else{
+		warn "Optional GC context track:\t\t\tyes\n";
+	}
+	}
+
+	if ($tetra){
 	warn "Tetra/Penta nucleotide context:\t\t\tyes\n";
-    }
+	}
 
-    if ($zero){
+	if ($zero){
 	warn "Genome coordinates used:\t\t\t0-based (user specified)\n";
-    }
-    else{
+	}
+	else{
 	warn "Genome coordinates used:\t\t\t1-based (default)\n";
-    }
+	}
 
-    if ($gzip){
+	if ($gzip){
 	warn "GZIP compression:\t\t\t\tyes\n";
-    }
-    else{
+	}
+	else{
 	warn "GZIP compression:\t\t\t\tno\n";
-    }
+	}
 
-    if ($split_by_chromosome){
+	if ($split_by_chromosome){
 	warn "Split by chromosome:\t\t\t\tyes\n\n\n";
-    }
-    else{
+	}
+	else{
 	warn "Split by chromosome:\t\t\t\tno\n\n\n";
-    }
-    sleep (3);
+	}
+	sleep (3);
 }
 
 
@@ -1260,49 +1256,49 @@ sub read_genome_into_memory{
 
   ### if there aren't any genomic files with the extension .fa we will look for files with the extension .fa.gz
   unless (@chromosome_filenames){
-      warn "Couldn't find files ending in .fa, trying .fa.gz instead\n";
-      @chromosome_filenames =  <*.fa.gz>;
+	  warn "Couldn't find files ending in .fa, trying .fa.gz instead\n";
+	  @chromosome_filenames =  <*.fa.gz>;
   }
 
   ### if there aren't any genomic files with the extension .fa or .fq.gz we will look for files with the extension .fasta
   unless (@chromosome_filenames){
-      @chromosome_filenames =  <*.fasta>;
+	  @chromosome_filenames =  <*.fasta>;
   }
   ### if there aren't any genomic files with the extension .fa or .fa.gz or .fasta we will look for files with the extension .fasta.gz
   unless (@chromosome_filenames){
-      @chromosome_filenames =  <*.fasta.gz>;
+	  @chromosome_filenames =  <*.fasta.gz>;
   }
 
   unless (@chromosome_filenames){
-    die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
+	die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
   }
 
   foreach my $chromosome_filename (@chromosome_filenames){
 
-    # skipping the tophat entire mouse genome fasta file
-    next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
+	# skipping the tophat entire mouse genome fasta file
+	next if ($chromosome_filename eq 'Mus_musculus.NCBIM37.fa');
 
-    if( $chromosome_filename =~ /\.gz$/){
+	if( $chromosome_filename =~ /\.gz$/){
 	open (CHR_IN,"gunzip -c $chromosome_filename |") or die "Failed to read from sequence file $chromosome_filename $!\n";
-    }
-    else{
+	}
+	else{
 	open (CHR_IN,$chromosome_filename) or die "Failed to read from sequence file $chromosome_filename $!\n";
-    }
-    
-    ### first line needs to be a fastA header
-    my $first_line = <CHR_IN>;
-    chomp $first_line;
-    $first_line =~ s/\r//; # removing /r carriage returns
+	}
 
-    ### Extracting chromosome name from the FastA header
-    my $chromosome_name = extract_chromosome_name($first_line);
-	
-    my $sequence;
-    while (<CHR_IN>){
-      chomp;
-      $_ =~ s/\r//; # removing /r carriage returns
+	### first line needs to be a fastA header
+	my $first_line = <CHR_IN>;
+	chomp $first_line;
+	$first_line =~ s/\r//; # removing /r carriage returns
 
-      if ($_ =~ /^>/){
+	### Extracting chromosome name from the FastA header
+	my $chromosome_name = extract_chromosome_name($first_line);
+
+	my $sequence;
+	while (<CHR_IN>){
+	  chomp;
+	  $_ =~ s/\r//; # removing /r carriage returns
+
+	  if ($_ =~ /^>/){
 	### storing the previous chromosome in the %chromosomes hash, only relevant for Multi-Fasta-Files (MFA)
 	if (exists $chromosomes{$chromosome_name}){
 	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
@@ -1310,7 +1306,7 @@ sub read_genome_into_memory{
 	}
 	else {
 	  if (length($sequence) == 0){
-	    warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
+		warn "Chromosome $chromosome_name in the multi-fasta file $chromosome_filename did not contain any sequence information!\n";
 	  }
 	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
 	  $chromosomes{$chromosome_name} = $sequence;
@@ -1320,83 +1316,83 @@ sub read_genome_into_memory{
 	$sequence = '';
 	### setting new chromosome name
 	$chromosome_name = extract_chromosome_name($_);
-      }
-      else{
+	  }
+	  else{
 	$sequence .= uc$_;
-      }
-    }
+	  }
+	}
 
-    if (exists $chromosomes{$chromosome_name}){
-      warn "chr $chromosome_name (",length $sequence ," bp)\t";
-      die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
-    }
-    else{
-      if (length($sequence) == 0){
+	if (exists $chromosomes{$chromosome_name}){
+	  warn "chr $chromosome_name (",length $sequence ," bp)\t";
+	  die "Exiting because chromosome name already exists. Please make sure all chromosomes have a unique name.\n";
+	}
+	else{
+	  if (length($sequence) == 0){
 	warn "Chromosome $chromosome_name in the file $chromosome_filename did not contain any sequence information!\n";
-      }
-      warn "chr $chromosome_name (",length $sequence ," bp)\n";
-      $chromosomes{$chromosome_name} = $sequence;
-      $processed{$chromosome_name} = 0; # processed chromosomes will be set to 1 later to allow a record of which chromosome has been processed
-    }
+	  }
+	  warn "chr $chromosome_name (",length $sequence ," bp)\n";
+	  $chromosomes{$chromosome_name} = $sequence;
+	  $processed{$chromosome_name} = 0; # processed chromosomes will be set to 1 later to allow a record of which chromosome has been processed
+	}
   }
   warn "\n";
   chdir $parent_dir or die "Failed to move to directory $parent_dir\n";
 }
 
 sub extract_chromosome_name {
-    ## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
-    my $fasta_header = shift;
-    if ($fasta_header =~ s/^>//){
+	## Bowtie extracts the first string after the inition > in the FASTA file, so we are doing this as well
+	my $fasta_header = shift;
+	if ($fasta_header =~ s/^>//){
 	my ($chromosome_name) = split (/\s+/,$fasta_header);
 	return $chromosome_name;
-    }
-    else{
+	}
+	else{
 	die "The specified chromosome ($fasta_header) file doesn't seem to be in FASTA format as required!\n";
-    }
+	}
 }
 
 sub combine_CpGs_to_single_CG_entity{
 
-    my $CpG_report_file = shift;
-    # this input file will now be in the output folder
-    warn "Now merging top and bottom strand CpGs into a single CG dinucleotide entity (reading from file >>$CpG_report_file<<, in output directory '$output_dir')\n";
-    
-    if($CpG_report_file =~ /gz$/){
+	my $CpG_report_file = shift;
+	# this input file will now be in the output folder
+	warn "Now merging top and bottom strand CpGs into a single CG dinucleotide entity (reading from file >>$CpG_report_file<<, in output directory '$output_dir')\n";
+
+	if($CpG_report_file =~ /gz$/){
 	open (IN,"gunzip -c ${output_dir}$CpG_report_file |") or die "Failed to open file >>${output_dir}$CpG_report_file<<: $!\n\n";
-    }
-    else{
+	}
+	else{
 	open (IN,"${output_dir}$CpG_report_file") or die "Failed to open file >>${output_dir}$CpG_report_file<<: $!\n\n";
-    }
-    
-    $CpG_report_file =~ s/\.gz$//;
-    $CpG_report_file =~ s/\.txt$//;
-    my $pooled_CG        = $CpG_report_file;
-    my $disco_CpG_report = $CpG_report_file;
-    
-    $pooled_CG        =~ s/$/.merged_CpG_evidence.cov/;
-    if ($gzip){
+	}
+
+	$CpG_report_file =~ s/\.gz$//;
+	$CpG_report_file =~ s/\.txt$//;
+	my $pooled_CG        = $CpG_report_file;
+	my $disco_CpG_report = $CpG_report_file;
+
+	$pooled_CG        =~ s/$/.merged_CpG_evidence.cov/;
+	if ($gzip){
 	$pooled_CG  .= '.gz';
 	open (OUT,"| gzip -c - > ${output_dir}$pooled_CG") or die "Failed to write to file '${output_dir}$pooled_CG': $!\n\n";
-    }
-    else{
+	}
+	else{
 	open (OUT,'>',"${output_dir}$pooled_CG") or die "Failed to write to file '${output_dir}$pooled_CG': $!\n\n";
-    }
-    warn ">>> Writing a new coverage file with top and bottom strand CpG methylation evidence merged to $pooled_CG <<<\n\n";
-    
-    if ($disco){
+	}
+	warn ">>> Writing a new coverage file with top and bottom strand CpG methylation evidence merged to $pooled_CG <<<\n\n";
+
+	if ($disco){
 	$disco_CpG_report =~ s/$/.discordant_CpG_evidence.cov/;
 	if ($gzip){
-	    $disco_CpG_report  .= '.gz';
-	    open (DISCO,"| gzip -c - > ${output_dir}$disco_CpG_report") or die "Failed to write to file ${output_dir}$disco_CpG_report: $!\n\n";
+		$disco_CpG_report  .= '.gz';
+		open (DISCO,"| gzip -c - > ${output_dir}$disco_CpG_report") or die "Failed to write to file ${output_dir}$disco_CpG_report: $!\n\n";
 	}
-	
+
 	else{
-	    open (DISCO,'>',"${output_dir}$disco_CpG_report") or die "Failed to write to file ${output_dir}$disco_CpG_report: $!\n\n";
+		open (DISCO,'>',"${output_dir}$disco_CpG_report") or die "Failed to write to file ${output_dir}$disco_CpG_report: $!\n\n";
 	}
 	warn "CpG dinucleotides that disagree in their methylation values between top and bottom strand more than $disco% are written to a $disco_CpG_report\n\n";
-    }
-    
-    while (1){
+	}
+
+	while (1){
 	my $line1 = <IN>;
 	my $line2 = <IN>;
 	last unless ($line1 and $line2);
@@ -1408,45 +1404,45 @@ sub combine_CpGs_to_single_CG_entity{
 	my ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
 	# print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
 	# print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n"; sleep(1);
-	
+
 	# If there is a CpG right at the start of the reference chromosome it will be present for the top strand,
 	# but will be missing for the reverse strand because it is impossible to determine a trinucleotide context
-	if ($zero){ # if the CpG report was written out with zero-based coordinates 
-	    if ($pos1 < 1){ # the position has to be adjusted to by -1
+	if ($zero){ # if the CpG report was written out with zero-based coordinates
+		if ($pos1 < 1){ # the position has to be adjusted to by -1
 		if ($chr1 ne $chr2){
-		    # warn "Current chromsosomes mismatch! $chr1 and $chr2. Hmm\n\n";sleep(1);
-		    while (<IN>){ # reading new lines until chromosomes match again
+			# warn "Current chromsosomes mismatch! $chr1 and $chr2. Hmm\n\n";sleep(1);
+			while (<IN>){ # reading new lines until chromosomes match again
 			$line1 = $line2;
-			$line2 = $_; 
+			$line2 = $_;
 			chomp $line2;
 			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
 			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
 			# warn "line1 now: $line1\nline2 now: $line2\n"; sleep(1);
 			if ($chr1 eq $chr2){ # breaking out if we are now on the same chromosome
-			    # warn "Breaking out now\n";
-			    last;
+				# warn "Breaking out now\n";
+				last;
 			}
-		    }
-		    # If we are now on the same chromosome we need to check whether we are looking at a CG at position 0
-		    if ($pos1 < 1){
+			}
+			# If we are now on the same chromosome we need to check whether we are looking at a CG at position 0
+			if ($pos1 < 1){
 			$line1 = $line2;
 			$line2 = <IN>;
 			chomp $line2;
 			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
 			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
-		    }
+			}
 		}
-		else{	
-		    $line1 = $line2;
-		    $line2 = <IN>;
-		    chomp $line2;
-		    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-		    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+		else{
+			$line1 = $line2;
+			$line2 = <IN>;
+			chomp $line2;
+			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
 		}
-	    }
+		}
 	}
 	else{ # default
-	    if ($pos1 < 2){
+		if ($pos1 < 2){
 		# In certain cases we might see the following scenario:
 		# Scaffold100808  1       +       0       0       CG      CGC
 		# Scaffold100809  1       +       0       0       CG      CGG
@@ -1455,36 +1451,36 @@ sub combine_CpGs_to_single_CG_entity{
 		# Scaffold 808 is very short and only contains a single CG at position 1. Scaffold 809 also contains a CG at position 1, so we need to read in more lines
 		# until we have two reads from the same chromosome that are consecutive calls
 		if ($chr1 ne $chr2){
-		    # warn "Current chromsosomes mismatch! $chr1 and $chr2. Hmm\n\n";sleep(1);
-		    while (<IN>){ # reading new lines until chromosomes match again
+			# warn "Current chromsosomes mismatch! $chr1 and $chr2. Hmm\n\n";sleep(1);
+			while (<IN>){ # reading new lines until chromosomes match again
 			$line1 = $line2;
-			$line2 = $_; 
+			$line2 = $_;
 			chomp $line2;
 			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
 			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
 			# warn "line1 now: $line1\nline2 now: $line2\n"; sleep(1);
 			if ($chr1 eq $chr2){ # breaking out if we are now on the same chromosome
-			    # warn "Breaking out now\n";
-			    last;
+				# warn "Breaking out now\n";
+				last;
 			}
-		    }
-		    # If we are now on the same chromosome we need to check whether we are looking at a CG at position 1
-		    if ($pos1 < 2){
+			}
+			# If we are now on the same chromosome we need to check whether we are looking at a CG at position 1
+			if ($pos1 < 2){
 			$line1 = $line2;
 			$line2 = <IN>;
 			chomp $line2;
 			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
 			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
-		    }
+			}
 		}
 		else{
-		    $line1 = $line2;
-		    $line2 = <IN>;
-		    chomp $line2;
-		    ($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
-		    ($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
+			$line1 = $line2;
+			$line2 = <IN>;
+			chomp $line2;
+			($chr1,$pos1,$strand1,$m1,$u1,$context1) = (split /\t/,$line1);
+			($chr2,$pos2,$strand2,$m2,$u2,$context2) = (split /\t/,$line2);
 		}
-	    }
+		}
 	}
 
 	# a few sanity checks
@@ -1492,81 +1488,81 @@ sub combine_CpGs_to_single_CG_entity{
 	die "The context of the second line was not CG:\t$line2" unless ($context2 eq 'CG');
 
 	unless ($strand1 eq '+' and $strand2 eq'-'){
-	    die "The strand of line 1 and line 2 were not + and -:\nline1:\t$line1\nline2:\t$line2\n";
+		die "The strand of line 1 and line 2 were not + and -:\nline1:\t$line1\nline2:\t$line2\n";
 	}
 	unless ($pos2 eq ($pos1 + 1)){
-	    die "The reported position were not spaced 1 bp apart:\nline1:\t$line1\nline2:\t$line2\n";
+		die "The reported position were not spaced 1 bp apart:\nline1:\t$line1\nline2:\t$line2\n";
 	}
 	unless($chr1 eq $chr2){
-	    die "The chromsome information for line 1 and 2 did not match:\nline1:\t$line1\nline2:\t$line2\n";
+		die "The chromsome information for line 1 and 2 did not match:\nline1:\t$line1\nline2:\t$line2\n";
 	}
 
 	my $percentage_top;
 	my $percentage_bottom;
 
 	if ($disco){
-	    # If the two strands produce discordant methylation percentages we print them to the discordant file instead
-	    if ( ($m1 + $u1 == 0) or ($m2 + $u2 == 0)){
-		# if either the top strand or bottom strand was not measured at all we cannot judge their discordance. 
+		# If the two strands produce discordant methylation percentages we print them to the discordant file instead
+		if ( ($m1 + $u1 == 0) or ($m2 + $u2 == 0)){
+		# if either the top strand or bottom strand was not measured at all we cannot judge their discordance.
 		# In this case the results are written out the standard merged CpG report file
-		
+
 		# warn "At least one C was not measured at all:\n$line1\n$line2\n\n";sleep(1);
-	    }
-	    else{
+		}
+		else{
 		$percentage_top    = sprintf ("%.6f",$m1/ ($m1 + $u1) * 100);
 		$percentage_bottom = sprintf ("%.6f",$m2/ ($m2 + $u2) * 100);
 		if ( abs($percentage_top - $percentage_bottom) > $disco){
-		    # warn "difference was greater than threshold! (",abs($percentage_top - $percentage_bottom),"). Discordant...\n";
-		    # warn "$line1\n$line2\n\n##################\n";sleep(1);
-		    
-		    if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
+			# warn "difference was greater than threshold! (",abs($percentage_top - $percentage_bottom),"). Discordant...\n";
+			# warn "$line1\n$line2\n\n##################\n";sleep(1);
+
+			if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
 			print DISCO join ("\t",$chr1,$pos1,$pos1+1,$percentage_top,$m1,$u1),"\n";
 			print DISCO join ("\t",$chr2,$pos2,$pos2+1,$percentage_bottom,$m2,$u2),"\n";
-		    }	
-		    else{
+			}
+			else{
 			print DISCO join ("\t",$chr1,$pos1,$pos1,$percentage_top,$m1,$u1),"\n";
 			print DISCO join ("\t",$chr2,$pos2,$pos2,$percentage_bottom,$m2,$u2),"\n";
-		    }
-		    next; # not proceeding to merging
+			}
+			next; # not proceeding to merging
 		}
 		else{ # fine
-		    # warn "difference withing limits! (",abs($percentage_top - $percentage_bottom),"). Fine...\n";
-		    # warn "$line1\n$line2\n\n~~~~~~~~~~~~~~~~~\n";sleep(1);
+			# warn "difference withing limits! (",abs($percentage_top - $percentage_bottom),"). Fine...\n";
+			# warn "$line1\n$line2\n\n~~~~~~~~~~~~~~~~~\n";sleep(1);
 		}
-	    }
+		}
 	}
-	
+
 	# This looks alright, let's pool the 2 strands
 	my $pooled_m = $m1 + $m2;
 	my $pooled_u = $u1 + $u2;
-	
+
 	# since this is a new coverage file we only write it out if the coverage is at least 1
 	next unless ($pooled_m + $pooled_u) > 0;
-	
+
 	my $pooled_percentage = sprintf ("%.6f",$pooled_m/ ($pooled_m + $pooled_u) *100);
-	
+
 	# print join ("\t",$chr1,$pos1,$strand1,$m1,$u1,$context1),"\n";
 	# print join ("\t",$chr2,$pos2,$strand2,$m2,$u2,$context2),"\n";
 	# print join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
 	# sleep(1);
 	if ($zero){ # printing a half-open format (0-based starting coordinate and 1-based end coordinate like in a bedGraph file
-	    print OUT join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+		print OUT join ("\t",$chr1,$pos1,$pos2+1,$pooled_percentage,$pooled_m,$pooled_u),"\n";
 	}
 	else{
-	    print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
+		print OUT join ("\t",$chr1,$pos1,$pos2,$pooled_percentage,$pooled_m,$pooled_u),"\n";
 	}
 
-    }
+	}
 
-    warn "CpG merging complete. Good luck finding DMRs with bsseq!\n\n";
+	warn "CpG merging complete. Good luck finding DMRs with bsseq!\n\n";
 
 }
 
 
 sub reset_context_summary{
-	
+
 	%context_summary = (); # resetting
-	
+
 	foreach my $base ('A','C','G','T'){
 		foreach my $base2 ('A','C','G','T'){
 			foreach my $baseup ('A','C','G','T'){
@@ -1575,7 +1571,7 @@ sub reset_context_summary{
 				$context_summary{"C${base}$base2"}->{$baseup}->{m} = 0;
 			}
 		}
-	} 
+	}
 	# print_context_summary(); # test initialisation
 }
 
@@ -1584,8 +1580,9 @@ sub context_reporting{
 
 	my $ubase = substr($upstream_context,0,1);
 	# warn "Context: $context\tTRI-cont: $tri_nt\tU-base: $ubase\tUpstream: $upstream_context\t$meth\t$nonmeth\n"; sleep(1);
+
 	# Ok let's try and add this
-	unless ($tri_nt =~ /N/ or $ubase eq 'N'){
+	unless ($tri_nt =~ /[^ACTG]/ or $ubase =~ /[^ACTG]/){
 		$context_summary{$tri_nt}->{$ubase}->{m} += $meth;
 		$context_summary{$tri_nt}->{$ubase}->{u} += $nonmeth;
 	}
@@ -1607,22 +1604,22 @@ sub process_commandline{
 	my $merge_CpGs;
 	my $gc_context;
 	my $tetra;
-	my $nome; 
+	my $nome;
 	my $disco;
 	my $threshold;
 
 	my $command_line = GetOptions (
-	             'help|man'                         => \$help,
+				 'help|man'                         => \$help,
 				 'dir=s'                            => \$output_dir,
 				 'g|genome_folder=s'                => \$genome_folder,
-				 "zero_based"                       => \$zero,	
+				 "zero_based"                       => \$zero,
 				 "CX|CX_context"                    => \$CX_context,
 				 "split_by_chromosome"              => \$split_by_chromosome,
 				 'o|output=s'                       => \$cytosine_out,
 				 'parent_dir=s'                     => \$parent_dir,
 				 'version'                          => \$version,
 				 'merge_CpGs'                       => \$merge_CpGs,
-			     'GC|GC_context'                    => \$gc_context,
+				 'GC|GC_context'                    => \$gc_context,
 				 'ff|qq'                            => \$tetra,
 				 'gzip'                             => \$gzip,
 				 'nome-seq'                         => \$nome,
@@ -1632,121 +1629,121 @@ sub process_commandline{
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
   unless ($command_line){
-      die "Please respecify command line options\n";
+	  die "Please respecify command line options\n";
   }
 
   ### HELPFILE
   if ($help){
-    print_helpfile();
-    exit;
+	print_helpfile();
+	exit;
   }
 
   if ($version){
-    print << "VERSION";
+	print << "VERSION";
 
 
-                      Bismark Methylation Extractor Module -
-                               coverage2cytosine
+					  Bismark Methylation Extractor Module -
+							   coverage2cytosine
 
-                    Bismark coverage2cytosine Version: $coverage2cytosine_version
-              Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
-                www.bioinformatics.babraham.ac.uk/projects/bismark/
-                    https://github.com/FelixKrueger/Bismark
+					Bismark coverage2cytosine Version: $coverage2cytosine_version
+			  Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
+				www.bioinformatics.babraham.ac.uk/projects/bismark/
+					https://github.com/FelixKrueger/Bismark
 
 
 VERSION
-    exit;
+	exit;
   }
 
   ### no files provided
   unless (@ARGV){
-    warn "You need to provide a Bismark coverage file (with counts methylated/unmethylated cytosines) to create an individual C methylation output. Please respecify!\n";
-    sleep(2);
+	warn "You need to provide a Bismark coverage file (with counts methylated/unmethylated cytosines) to create an individual C methylation output. Please respecify!\n";
+	sleep(2);
 
-    print_helpfile();
-    exit;
+	print_helpfile();
+	exit;
   }
 
   my $coverage_infile = shift @ARGV;
-  
+
   ### PARENT DIRECTORY
   unless ($parent_dir){
-    $parent_dir = getcwd();
+	$parent_dir = getcwd();
   }
   unless ($parent_dir =~ /\/$/){
-    $parent_dir =~ s/$/\//;
+	$parent_dir =~ s/$/\//;
   }
 
   unless (defined $cytosine_out){
-    die "Please provide the name of the output file using the option -o/--output filename\n";
+	die "Please provide the name of the output file using the option -o/--output filename\n";
   }
 
   ### OUTPUT DIR PATH
   chdir $parent_dir or die "Failed to move back to current working directory\n";
 
   if (defined $output_dir){
-      unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
+	  unless ($output_dir eq ''){ # if the output dir has been passed on by the methylation extractor and is an empty string we don't want to change it
 	  unless ($output_dir =~ /\/$/){
-	      $output_dir =~ s/$/\//;
-	  }
-	  
-	  if (chdir $output_dir){
-	      $output_dir = getcwd(); #  making the path absolute
-	      unless ($output_dir =~ /\/$/){
 		  $output_dir =~ s/$/\//;
-	      }
+	  }
+
+	  if (chdir $output_dir){
+		  $output_dir = getcwd(); #  making the path absolute
+		  unless ($output_dir =~ /\/$/){
+		  $output_dir =~ s/$/\//;
+		  }
 	  }
 	  else{
-	      mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
-	      warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; sleep(1);
-	      chdir $output_dir or die "Failed to move to $output_dir\n";
-	      $output_dir = getcwd(); #  making the path absolute
-	      unless ($output_dir =~ /\/$/){
+		  mkdir $output_dir or die "Unable to create directory $output_dir $!\n";
+		  warn "Output directory $output_dir doesn't exist, creating it for you...\n\n"; sleep(1);
+		  chdir $output_dir or die "Failed to move to $output_dir\n";
+		  $output_dir = getcwd(); #  making the path absolute
+		  unless ($output_dir =~ /\/$/){
 		  $output_dir =~ s/$/\//;
-	      }
+		  }
 	  }
 	  warn "Output will be written into the directory: $output_dir\n";
-      }
+	  }
   }
   else{
-      $output_dir = '';
+	  $output_dir = '';
   }
-  
+
   unless ($CX_context){
-    $CX_context = 0;
-    $CpG_only = 1;
+	$CX_context = 0;
+	$CpG_only = 1;
   }
-  
+
   chdir $parent_dir or die "Failed to move back to current working directory\n";
   ### GENOME folder
   if (defined $genome_folder){
-      
-      if (chdir $genome_folder){
+
+	  if (chdir $genome_folder){
 	  $genome_folder = getcwd(); #  making the path absolute
 	  unless ($genome_folder =~ /\/$/){
-	      $genome_folder =~ s/$/\//;
+		  $genome_folder =~ s/$/\//;
 	  }
-      }
-      else{
+	  }
+	  else{
 	  die "Failed to move to '$genome_folder'. Make sure the path to the genome folder is correct, and respecify!\n\n";
-      }
-      
-      # warn "Using the following folder to look for the genome FastA files: $genome_folder\n";sleep(1);
+	  }
+
+	  # warn "Using the following folder to look for the genome FastA files: $genome_folder\n";sleep(1);
   }
   else{
-      die "Please specify a genome folder to proceed\n";
+	  die "Please specify a genome folder to proceed\n";
   }
   chdir $parent_dir or die "Failed to move back to current working directory\n";
-  
+
   if ($merge_CpGs){
-    if ($CX_context){
-      die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if CpG-context is selected only (lose the option --CX)\n";
-    }
-    if ($split_by_chromosome){
-      die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if a single CpG report is written out (lose the option --split_by_chromosome)\n";
-    }
+	if ($CX_context){
+	  die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if CpG-context is selected only (lose the option --CX)\n";
+	}
+	if ($split_by_chromosome){
+	  die "Merging individual CpG calls into a single CpG dinucleotide entity is currently only supported if a single CpG report is written out (lose the option --split_by_chromosome)\n";
+	}
   }
-  
+
 	if ($nome){
 		die "NOMe-Seq filtering only works for CpG context, please drop the '--CX' option\n" if ($CX_context);
 		die "NOMe-Seq filtering does not work in conjunction with --merge_CpG (because some postions may be filtered out). Please respecify\ns" if ($merge_CpGs);
@@ -1757,7 +1754,7 @@ VERSION
 		if (defined $threshold){
 			# warn "Positions coveraged by fewer reads than >$threshold< won't be reported (user defined)\n";
 		}
-		else{		
+		else{
 			$threshold = 1;
 			warn "NOMe-seq processing automatically sets the minimum coverage threshold to 1\n";
 		}
@@ -1766,13 +1763,13 @@ VERSION
 	# Discordance Filter of top and bottom strand CpGs
 	if (defined $disco){
 		die "Top/bottom strand CpG discordance filtering requires the option '--merge_CpG' as well. Please respecify!\n\n" unless ($merge_CpGs);
-      
+
 		# The discordance filter is the absolute percent methylation difference between top and bottom strand CpGs
 		unless ($disco > 0 and $disco <= 100){
 			die "The discordance between the top and bottom strand methylation of a CpG dinucleotides has to be a methylation percentage difference between 1 and 100. Please respecify!\n\n";
 		}
 	}
-  
+
 	# Coverage threshold
 	if (defined $threshold){
 		if ($merge_CpGs){
@@ -1780,15 +1777,15 @@ VERSION
 		}
 		unless ($threshold > 0){
 			die "Coverage threshold must be a positive integer greater than 0. Please respecify!\n\n";
-		}	
+		}
 		warn "\nPositions coveraged by fewer reads than >$threshold< won't be reported (user defined)\n\n";
 	}
 	else{
 		# warn "No specific coverage threshold defined, reporting all genomic positions\n";
 		$threshold = 0;
-	}	
-  
-  
+	}
+
+
   return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold);
 }
 
@@ -1821,17 +1818,17 @@ sub print_helpfile{
 --dir                    Output directory. Output is written to the current directory if not specified explicitly.
 
 --genome_folder <path>   Enter the genome folder you wish to use to extract sequences from (relative or full path). Accepted
-                         formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
+						 formats are FastA files ending with '.fa' or '.fasta'. Specifying a genome folder path is mandatory.
 
 -CX/--CX_context         The output file contains information on every single cytosine in the genome irrespective of
-                         its context. This applies to both forward and reverse strands. Please be aware that this will
-                         generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse.
-                         Default: OFF (i.e. Default = CpG context only).
+						 its context. This applies to both forward and reverse strands. Please be aware that this will
+						 generate output files with > 1.1 billion lines for a mammalian genome such as human or mouse.
+						 Default: OFF (i.e. Default = CpG context only).
 
 --merge_CpG              Using this option will post-process the genome-wide report to write out an additional coverage
-                         file (see above for the coverage file format) which has the top and bottom strand methylation
-                         evidence pooled into a single CpG dinucleotide entity. This may be the desirable input format
-                         for some downstream processing tools such as the R-package bsseq (by K.D. Hansen). An example would be:
+						 file (see above for the coverage file format) which has the top and bottom strand methylation
+						 evidence pooled into a single CpG dinucleotide entity. This may be the desirable input format
+						 for some downstream processing tools such as the R-package bsseq (by K.D. Hansen). An example would be:
 
 			   genome-wide CpG report (old)
 			   gi|9626372|ref|NC_001422.1|     157     +       313     156     CG
@@ -1840,55 +1837,55 @@ sub print_helpfile{
 			   gi|9626372|ref|NC_001422.1|     157     158     67.500000       648     312
 
 			 This option is currently experimental, and only works if CpG context only and a single genome-wide report
-                         were specified (i.e. it doesn't work with the options --CX or --split_by_chromosome).
-                         If --zero_based was specified as well the output coverage file is in zero-based half-open format like
-                         bedGraph files.
+						 were specified (i.e. it doesn't work with the options --CX or --split_by_chromosome).
+						 If --zero_based was specified as well the output coverage file is in zero-based half-open format like
+						 bedGraph files.
 
 --discordance <int>      When in '--merge_CpG' mode, apply a filter for the maximum allowed discordance between top and bottom
-                         strand methylation values expressed as the absolute difference in percent methylation. Discordant CpGs
-                         are written to a file called 'discordant_CpG_evidence.cov' (not merged). As example consider:
- 
-                         top:     gi|170079663|ref|NC_010473.1|   573     +       5       6       CG      CGC
-                         bottom:  gi|170079663|ref|NC_010473.1|   574     -       13      4       CG      CGG
-                         with '--discordance 20'
+						 strand methylation values expressed as the absolute difference in percent methylation. Discordant CpGs
+						 are written to a file called 'discordant_CpG_evidence.cov' (not merged). As example consider:
 
-                         The methylation % difference here is 31%, so the read would go into the discordant.cov file. CpG positions
-                         for which either the top or bottom strand was not measured at all will not be assessed for discordance, and
-                         hence appear in the regular 'merged_CpG_evidence.cov' file.
+						 top:     gi|170079663|ref|NC_010473.1|   573     +       5       6       CG      CGC
+						 bottom:  gi|170079663|ref|NC_010473.1|   574     -       13      4       CG      CGG
+						 with '--discordance 20'
+
+						 The methylation % difference here is 31%, so the read would go into the discordant.cov file. CpG positions
+						 for which either the top or bottom strand was not measured at all will not be assessed for discordance, and
+						 hence appear in the regular 'merged_CpG_evidence.cov' file.
 
 
---gc/--gc_context        In addition to normal processing this option will reprocess the genome to find methylation in 
-                         GpC context. This might be useful for specialist applications where GpC methylases had been
-                         deployed. The output format is exactly the same as for the normal cytosine report, and only
-                         positions covered by at least one read are reported (output file ends in .GpC_report.txt). In addition
-                         this will write out a Bismark coverage file (ending in GpC.cov).
+--gc/--gc_context        In addition to normal processing this option will reprocess the genome to find methylation in
+						 GpC context. This might be useful for specialist applications where GpC methylases had been
+						 deployed. The output format is exactly the same as for the normal cytosine report, and only
+						 positions covered by at least one read are reported (output file ends in .GpC_report.txt). In addition
+						 this will write out a Bismark coverage file (ending in GpC.cov).
 
 --nome-seq               Sample is NOMe-Seq (nucleosome occupancy and methylome sequencing) where accessible DNA gets methylated
-                         in a GpC context (sets option '--gc' as well). The option '--nome-seq':
+						 in a GpC context (sets option '--gc' as well). The option '--nome-seq':
 
-                            (i) filters the genome-wide CpG-report to only output cytosines in ACG and TCG context
-                           (ii) filters the GC context output to only report cytosines in GCA, GCC and GCT context
+							(i) filters the genome-wide CpG-report to only output cytosines in ACG and TCG context
+						   (ii) filters the GC context output to only report cytosines in GCA, GCC and GCT context
 
-                         Both of these measures aim to reduce unwanted biases, i.e. the influence of GCG and CCG on endogenous
-                         CpG methylation, and the inlfluence of CpG methylation on (the NOMe-Seq specific) GC context methylation.
-                         PLEASE NOTE that NOMe-Seq data requires a .cov.gz file as input which has been generated in
-                         non-CG mode (--CX), else the GpC output file will be empty... Default: OFF.
+						 Both of these measures aim to reduce unwanted biases, i.e. the influence of GCG and CCG on endogenous
+						 CpG methylation, and the inlfluence of CpG methylation on (the NOMe-Seq specific) GC context methylation.
+						 PLEASE NOTE that NOMe-Seq data requires a .cov.gz file as input which has been generated in
+						 non-CG mode (--CX), else the GpC output file will be empty... Default: OFF.
 
 --coverage_threshold INT   Positions have to be covered by at least INT calls (irrespective of their methylation state) before
-                         they get reported. For NOMe-seq, the minimum threshold is automatically set to 1 unless specified explicitly.
-                         Setting a coverage threshold does not work in conjunction with --merge_CpGs. Default: 0 (i.e. all genomic positions get reported).  
+						 they get reported. For NOMe-seq, the minimum threshold is automatically set to 1 unless specified explicitly.
+						 Setting a coverage threshold does not work in conjunction with --merge_CpGs. Default: 0 (i.e. all genomic positions get reported).
 
 --ff                     In addition to the standard output selecting --ff will also extract a four and five (tetra/penta)
-                         nucleotide context for the cytosines in question. Too short sequences (e.g. at the edges of the
-                         chromosome) will be left blank; sequences containing Ns are ignored.ll
+						 nucleotide context for the cytosines in question. Too short sequences (e.g. at the edges of the
+						 chromosome) will be left blank; sequences containing Ns are ignored.ll
 
 --zero_based             Uses 0-based coordinates instead of 1-based coordinates throughout. Default: OFF.
 
 --split_by_chromosome    Writes the output into individual files for each chromosome instead of a single output file. Files
-                         will be named to include the input filename and the chromosome number.
+						 will be named to include the input filename and the chromosome number.
 
 --gzip                   Output file will be GZIP compressed (ending in .gz). Only works for standard CpG- and CX-output.
- 
+
 --help                   Displays this help message and exits
 
 
@@ -1901,10 +1898,10 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-                              Script last modified: 28 June 2019
+							  Script last modified: 28 April 2020
 
 EOF
-    ;
+	;
   exit 1;
 }
 
