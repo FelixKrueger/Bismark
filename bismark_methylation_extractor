@@ -36,6 +36,7 @@ my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_
 my @sorting_files; # if files are to be written to bedGraph format, these are the methylation extractor output files
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
 my @bedfiles;
+my %chromosome_sizes;  # required for UCSC (--ucsc) bedGraph processing
 
 ### only needed for genome-wide cytosine methylation report
 my %chromosomes;
@@ -227,6 +228,21 @@ foreach my $filename (@filenames){
 	### performing a quick check to see if a paired-end SAM file has been sorted by positions which does interfere with the logic used by the extractor
 	if ($paired){
 		test_positional_sorting($filename);
+	}
+
+	### Recording chromosome sizes
+	if ($ucsc){
+		%chromosome_sizes = (); # resetting
+		get_chromosome_sizes($filename);
+
+		my $chromosome_sizes_file = $filename;
+		$chromosome_sizes_file =~ s/bam$//;
+		$chromosome_sizes_file .= "chromosome_sizes.txt";
+		open (SIZEABLE,">",$chromosome_sizes_file) or die "Failed to write to chromosome sizes file >$chromosome_sizes_file<: $!";
+		warn "Writing out file with recorded chromosome sizes to $chromosome_sizes_file\n";
+		foreach my $chr (sort keys %chromosome_sizes){
+			print SIZEABLE "$chr\t$chromosome_sizes{$chr}\n";
+		}
 	}
 
 	my ($pid,$pids,$report_basename) = process_Bismark_results_file($filename);
@@ -5662,6 +5678,38 @@ sub open_output_filehandles{
   return $report_filename;
 }
 
+sub get_chromosome_sizes{
+
+	my ($file) = @_;
+    warn "Recording chromosome sizes of file >>$file<< from the BAM header...\n";
+    
+    open (CHRSIZES,"$samtools_path view -H $file |") or die "Unable to read from BAM file $file: $!"; 
+
+    my $count = 0;
+    while (<CHRSIZES>){
+		chomp;
+		++$count;
+		if ($_ =~ /^\@SQ/){ 
+			#	print "$_\n";
+			$_ =~ /SN:(.*)\s+LN:(\d+)/;
+			my $chr = $1;
+			my $length = $2;
+			# making the chromosome names UCSC ready
+			if ($chr eq 'MT'){
+				$chr = 'chrM';
+			}
+			unless ($chr =~ /^chr/){
+				$chr = "chr$chr";
+			}
+			# print "$chr $length\n";
+			$chromosome_sizes{$chr} = $length;
+		}
+    }
+
+    close CHRSIZES; #  or warn "$!\n";
+	return;
+}
+
 sub isBam{
 
 	my $filename = shift;
@@ -5910,6 +5958,11 @@ bedGraph specific options:
                          which point it is advisable to use this option. Note that --ample_memory is not compatible
                          with options '--scaffolds/--gazillion' (as it requires pre-sorted files to begin with).
 
+--ucsc                   Writes out an additional bedGraph file (ending in '_UCSC.bedGraph.gz') that is compatible with the
+                    	 UCSC genome browser. If alignments were carried out against an Ensembl version of the genome, this
+                         step will prefix chromosome names with 'chr', and rename the mitochondrial chromosome from 'MT' to
+                    	 'chrM'. In addition, this wite out a tab delimited file ending in '.chromosome_sizes.txt' to enable
+						 tools such as bedGraphToBigWig.
 
 
 Genome-wide cytosine methylation report specific options:
@@ -5978,7 +6031,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 15 February 2019.
+This script was last modified on 22 September 2020.
 
 HOW_TO
 }
