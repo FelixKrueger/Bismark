@@ -8,7 +8,7 @@ use Carp;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -29,8 +29,8 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.22.3';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht) = process_commandline();
+my $version = 'v0.22.3dev';
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc) = process_commandline();
 
 ### only needed for bedGraph output
 my @sorting_files; # if files are to be written to bedGraph format, these are the methylation extractor output files
@@ -143,6 +143,11 @@ if ($bedGraph){
 	}
 	else{
 		warn "Setting a default memory usage for the bedGraph UNIX sort command to 2GB\n";
+	}
+
+	if ($ucsc){
+		warn "Writing out a UCSC compatible version of the bedGraph file. Data aligned to Ensembl genomes will have chromosome names prefixed with 'chr',\nand 'MT' replaced with 'chrM'\n";
+		warn "In addition, this option writes out a tab-delimited genome-size file (extracted from the BAM header) to enable tools such as bedGraphToBigWig\n";
 	}
 
 	if ($cytosine_report){
@@ -320,6 +325,10 @@ foreach my $filename (@filenames){
 		}
 		else{
 			push @args, "--buffer_size $sort_size";
+		}
+
+		if ($ucsc){
+			push @args, "--ucsc";
 		}
 
 		if ($zero){
@@ -921,6 +930,7 @@ sub process_commandline{
 	my $ignore_3prime_r2;
 	my $multicore;
 	my $yacht;
+	my $ucsc;
   
 	my $command_line = GetOptions ('help|man'             => \$help,
 				 'p|paired-end'         => \$paired_end,
@@ -956,6 +966,7 @@ sub process_commandline{
 				 'ignore_3prime_r2=i'   => \$ignore_3prime_r2,
 				 'parallel|multicore=i' => \$multicore,
 				 'yacht'                => \$yacht,
+				 'ucsc'                 => \$ucsc,
 	);
 
 	### EXIT ON ERROR if there were errors with any of the supplied options
@@ -976,7 +987,7 @@ sub process_commandline{
                            Bismark Methylation Extractor
 
                          Bismark Extractor Version: $version
-              Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                      https://github.com/FelixKrueger/Bismark
 
@@ -1294,7 +1305,13 @@ VERSION
 		die "The option '--yacht' does not work together with '--mbias_only'! Please respecify!\n\n" if ($mbias_only);
 	}
   
-	return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht);
+	if ($ucsc){
+    	warn "Creating an additional bedGraph file that has known Ensembl chromosome names replaced to work with the UCSC genome browser\n";
+    	warn "This option:\n- prefixes chromosome names with 'chr'\n";
+    	warn "- changes 'MT' to 'chrM'\n\n";
+	}
+
+	return ($ignore,$genomic_fasta,$single_end,$paired_end,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc);
 }
 
 sub bam_isTruncated{
