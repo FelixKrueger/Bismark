@@ -4,12 +4,12 @@ name: Bismark CI workflow
 
 # Controls when the action will run. Triggers the workflow on push or pull request events but only for the master branch
 on:
-  name: CI
   pull_request:
   push:
     branches: 
       - master
-    # branches: [ master, dev ]
+      - devel
+    # branches: [ master, devel ]
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
