@@ -28,6 +28,6 @@ jobs:
       run: echo "Hello World, this is my action!"
     
     - name: Bismark Help
-      run: bismark --help
+      run: $GITHUB_WORKSPACE/bismark --help
      
     
