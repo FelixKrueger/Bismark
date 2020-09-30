@@ -2,8 +2,8 @@
 
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
-## User Guide - v0.22.2
-#### 28 October, 2019
+## User Guide - v0.23.0
+#### 30 September, 2020
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
@@ -274,6 +274,22 @@ The methylation call string contains a dot `.` for every position in the BS-read
 - `u` - C in Unknown context (CN or CHN) - unmethylated
 - `U` - C in Unknown context (CN or CHN) - methylated
 - `.` - not a C or irrelevant position
+
+### Local alignments in Bowtie 2 or HISAT2 mode
+
+(This has been previously only been mentioned in the release notes here: https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0)
+
+Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](
+https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/), a publication by [Wu et al.](https://www.ncbi.nlm.nih.gov/pubmed/30859188) described in further detail that intra-fragment chimeras can hinder the efficient alignment of single-cell BS-seq libraries. In there, the authors described a pipeline that uses paired-end alignments first, followed by a second, single-end alignment step that uses local alignments in a bid to improve the mapping of intra-molecular chimeras. To allow this type of improvement for single-cell or PBAT libraries, Bismark also allows the use of local alignments. 
+
+**Please note** that we still do not recommend using local alignments as a means to *magically* increase mapping efficiencies (please see [here](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/)), but we do acknowledge that PBAT/scBSs-seq/scNMT-seq are exceptional applications where local alignments might indeed make a difference (there is only so much data to be had from a single cell...). 
+We didn't have the time yet to set more appropriate or stringent default values for local alignments (suggestions welcome), nor did we investigate whether the methylation extraction will require an additional `--ignore` flag if a read was found to the be soft-clipped (the so called 'micro-homology domains'). This might be added in the near future.
+
+### Bismark
+
+- Added support for local alignments by introducing the new option `--local`. This means that the CIGAR operation `S` (soft-clipping) is now supported
+
+
 
 ## (III) Bismark Deduplication Step
 
@@ -1000,13 +1016,17 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
  
   The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500.
 
-- `--multicore <int>`
+- `--parallel <int>`
 
-  Sets the number of parallel instances of Bismark to be run concurrently. This forks the Bismark alignment step very early on so that each individual Spawn of Bismark processes only every n-th sequence (n being set by `--multicore`). Once all processes have completed, the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged into single files in very much the same way as they would have been generated running Bismark conventionally with only a single instance.
+(May also be --multicore <int>). Sets the number of parallel instances of Bismark to be run concurrently. This forks the Bismark alignment step very early on so that each individual Spawn of Bismark processes only every n-th sequence (n being set by `--multicore`). Once all processes have completed, the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged into single files in very much the same way as they would have been generated running Bismark conventionally with only a single instance.
 
   If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
-  **WARNING:** Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--multicore 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. *You have been warned*.
+  **WARNING:** Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. *You have been warned*.
 
+
+- `--local`
+
+In this mode, it is not required that the entire read aligns from one end to the other. Rather, some characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible alignment score. For Bowtie 2, the match bonus `--ma` (default: 2) is used in this mode, and the best possible alignment score is equal to the match bonus (`--ma`) times the length of the read. This is mutually exclusive with end-to-end alignments. DEFAULT: OFF.
 
 ##### Output:
 
@@ -1132,7 +1152,7 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 - `--bowtie2` 
  
   Default: ON. Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (`.bt2`) and large (`.bt2l`) Bowtie 2 indexes are supported.
-
+  
 - `--dovetail`
 
   It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending "past" each other as in this example:
