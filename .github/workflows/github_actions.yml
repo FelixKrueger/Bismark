@@ -21,8 +21,14 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
     # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - uses: actions/checkout@v2
-    - uses: BenLangmead/bowtie2@master
+    - name: Checkout
+      uses: actions/checkout@v2
+    
+    - name: Install Bowtie2
+      uses: bowtie2/checkout@v2
+      with:
+        url: https://github.com/BenLangmead/bowtie2
+        branch: master
       
     # Runs a single command using the runners shell
     - name: Send greeting
