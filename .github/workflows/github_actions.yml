@@ -38,12 +38,13 @@ jobs:
         sudo cpanm GD::Graph
         wget https://sourceforge.net/projects/bowtie-bio/files/bowtie2/2.4.1/bowtie2-2.4.1-linux-x86_64.zip/download
         unzip download
-        ln -s bowtie2*/bowtie2 .
+        export PATH="~/bowtie2*/:$PATH"
+        source ~/.bashrc
         
     - name: software versions
       run:
         $GITHUB_WORKSPACE/bismark --version
-        $GITHUB_WORKSPACE/bowtie2 --version
+        §bowtie2 --version
        
      
     
