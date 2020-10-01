@@ -22,30 +22,28 @@ jobs:
     steps:
     # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
     - uses: actions/checkout@v2
-    
+    - uses: BenLangmead/bowtie2@master
+      
     # Runs a single command using the runners shell
     - name: Send greeting
       run: echo "Hello World, this is my action!"
     
     - name: Bismark Help
       run: $GITHUB_WORKSPACE/bismark --help
-    
+      
       # Runs a set of commands using the runners shell
     - name: Install dependencies
       run: |
         sudo apt-get install libgd-perl
         sudo cpan App::cpanminus
         sudo cpanm GD::Graph
-        wget https://sourceforge.net/projects/bowtie-bio/files/bowtie2/2.4.1/bowtie2-2.4.1-linux-x86_64.zip/download
-        unzip download
-        export PATH="~/bowtie2-2.4.1-linux-x86_64/:$PATH"
-        source ~/.bashrc
-        ~/bowtie2-2.4.1-linux-x86_64/bowtie2 --version
+      
+      # ~/bowtie2-2.4.1-linux-x86_64/bowtie2 --version
         
     - name: software versions
       run: |
         $GITHUB_WORKSPACE/bismark --version
-        bowtie2 --version
+        $GITHUB_WORKSPACE/bowtie2 --version
        
      
     
