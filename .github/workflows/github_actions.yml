@@ -35,6 +35,7 @@ jobs:
       run: |
         sudo apt install bowtie2
         sudo apt-get install libgd-perl
+        sudo cpan App::cpanminus
         sudo cpanm GD::Graph
         sudo apt install samtools
      
