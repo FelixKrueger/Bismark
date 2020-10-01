@@ -42,7 +42,7 @@ jobs:
         source ~/.bashrc
         
     - name: software versions
-      run:
+      run: |
         $GITHUB_WORKSPACE/bismark --version
         bowtie2 --version
        
