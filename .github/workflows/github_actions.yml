@@ -34,9 +34,16 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt install bowtie2
+        sudo apt install hisat2
         sudo apt-get install libgd-perl
         sudo cpan App::cpanminus
         sudo cpanm GD::Graph
         sudo apt install samtools
+        
+    - name: software versions
+      run:
+        $GITHUB_WORKSPACE/bismark --version
+        $GITHUB_WORKSPACE/bowtie2 --version
+        $GITHUB_WORKSPACE/hisat2 --version
      
     
