@@ -29,5 +29,13 @@ jobs:
     
     - name: Bismark Help
       run: $GITHUB_WORKSPACE/bismark --help
+    
+      # Runs a set of commands using the runners shell
+    - name: Install dependencies
+      run: |
+        sudo apt install bowtie2
+        sudo apt-get install libgd-perl
+        sudo cpanm GD::Graph
+        sudo apt install samtools
      
     
