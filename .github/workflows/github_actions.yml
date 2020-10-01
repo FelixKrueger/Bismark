@@ -36,7 +36,7 @@ jobs:
         sudo apt-get install libgd-perl
         sudo cpan App::cpanminus
         sudo cpanm GD::Graph
-        wget https://sourceforge.net/projects/bowtie-bio/files/latest/download
+        wget https://sourceforge.net/projects/bowtie-bio/files/bowtie2/2.4.1/bowtie2-2.4.1-linux-x86_64.zip/download
         unzip download
         ln -s bowtie2*/bowtie2 .
         
