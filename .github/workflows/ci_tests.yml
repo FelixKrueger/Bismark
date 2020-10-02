@@ -32,6 +32,7 @@ jobs:
 
       - name: Install conda dependencies
         shell: bash -l {0}
+        # Explanation for why we need to use shell: bash -l {0} is here: https://github.com/conda-incubator/setup-miniconda#important
         run: |
           conda config --add channels defaults
           conda config --add channels bioconda
@@ -51,7 +52,7 @@ jobs:
           hisat2 --version
         
       - name: Genome Preparation
-        # shell: bash -l {0} # required?
+        shell: bash -l {0} # required: yes! see above
         run: |
           pwd
           ./bismark_genome_preparation --verbose ./travis_files/
