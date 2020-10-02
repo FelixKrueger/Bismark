@@ -38,9 +38,11 @@ jobs:
           conda install bowtie2 hisat2 samtools
 
       - name: Bismark help message
+        shell: bash -l {0}
         run: ./bismark --help
 
       - name: software versions
+        shell: bash -l {0}
         run: |
           ./bismark --version
           bowtie2 --version
