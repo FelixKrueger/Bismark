@@ -1,0 +1,140 @@
+# This is a basic workflow to ensure the Bismark tools are working
+name: Bismark CI workflow
+
+# Controls when the action will run. Triggers the workflow on push or pull request events but only for the master branch
+on: [push, pull_request]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "BismarkCI"
+  BismarkCI:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+
+      - name: Check out Bismark source-code repository
+        uses: actions/checkout@v2
+
+    # Not sure I actually need those, was taken from FastQ Screen
+    #  - name: Install Perl dependencies
+    #    run: |
+    #      sudo apt-get install libgd-perl
+    #      sudo cpan App::cpanminus
+    #      sudo cpanm GD::Graph
+
+      - name: Set up conda
+        uses: conda-incubator/setup-miniconda@v1
+        with:
+          auto-update-conda: true
+          python-version: 3.8
+
+      - name: Install conda dependencies
+        shell: bash -l {0}
+        # Explanation for why we need to use shell: bash -l {0} is here: https://github.com/conda-incubator/setup-miniconda#important
+        run: |
+          conda config --add channels defaults
+          conda config --add channels bioconda
+          conda config --add channels conda-forge
+          conda install bowtie2 hisat2 samtools
+
+      - name: Bismark help message
+        shell: bash -l {0}
+        run: ./bismark --help
+
+      - name: software versions
+        shell: bash -l {0}
+        run: |
+          ./bismark --version
+          samtools --version
+          bowtie2 --version
+          hisat2 --version
+        
+      - name: Genome Preparation
+        shell: bash -l {0} # required: yes! see above
+        run: |
+          pwd
+          ./bismark_genome_preparation --verbose ./travis_files/
+          ./bismark_genome_preparation --verbose --parallel 4 ./travis_files/
+          
+      - name: Bismark PE run
+        shell: bash -l {0}
+        run: |
+          ./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam
+          ./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./travis_files/
+          ./bismark2report
+          ./bismark2summary
+
+      - name: Bismark SE run
+        shell: bash -l {0}
+        run: |
+          ./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz
+          ./deduplicate_bismark --bam test_R1_bismark_bt2.bam
+          ./bismark_methylation_extractor test_R1_bismark_bt2.bam --gzip --CX --bed --genome ./travis_files/
+  
+      - name: Bismark run with option ICPC
+        shell: bash -l {0}
+        run: |
+          ./bismark --bowtie2 --icpc ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./bismark --bowtie2 --icpc ./travis_files/ ./travis_files/test_R1.fastq.gz
+
+      - name: Bismark run using HISAT2
+        shell: bash -l {0}
+        run: |
+          ./bismark_genome_preparation --hisat2 --verbose ./travis_files/
+          ./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/
+          ./bismark --genome ./travis_files/ --hisat2 ./travis_files/test_R1.fastq.gz
+          ./bismark --genome ./travis_files/ --hisat2 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./deduplicate_bismark --bam test_R1_bismark_hisat2.bam
+          ./bismark_methylation_extractor test_R1_bismark_hisat2.bam  --gzip --CX --bed --genome ./travis_files/
+          ./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam  --gzip --CX --bed --genome ./travis_files/
+  
+      - name: Bismark run Multicore
+        shell: bash -l {0}
+        run: |
+          ./bismark --genome ./travis_files/ --parallel 4 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./bismark --genome ./travis_files/ --hisat2 --parallel 4 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz         
+          ./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --parallel 8 --genome ./travis_files/
+          ./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam --gzip --CX --bed --parallel 8 --genome ./travis_files/
+      
+      - name: coverage2cytosine
+        shell: bash -l {0}
+        run: |
+          ./coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --merge_CpG --genome ./travis_files/ -o test.output
+          ./coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --NOMe-seq --genome ./travis_files/ -o test.output
+    
+      - name: bam2nuc
+        shell: bash -l {0}
+        run: |
+          ./bam2nuc --genome_folder ./travis_files/ --genomic_composition_only
+          ./bam2nuc --genome_folder ./travis_files/ test_R1_bismark_bt2_pe.bam
+          ./bam2nuc --genome_folder ./travis_files/ test_R1_bismark_hisat2_pe.bam
+  
+      - name: Additional scenarios
+        shell: bash -l {0}
+        run: |
+          ./bismark --pbat --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./bismark --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./bismark --hisat2 --pbat --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./bismark --hisat2 --non_directional --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+        
+   
+      - name: bismark2bedGraph
+        shell: bash -l {0}
+        run: |
+          ./bismark2bedGraph -o test.bedGraph --buffer 5G CpG_*
+          ./bismark2bedGraph -o test.bedGraph --ucsc --buffer 5G CpG_*
+          ./bismark2bedGraph -o test.bedGraph --CX --scaffolds CpG* CHG_* CHH_*
+          ./bismark2bedGraph -o test.bedGraph --CX --ample_memory --zero_based CpG* CHH_* CHG_*
+  
+      - name: Filte non-conversion
+        shell: bash -l {0}
+        run: |
+          ./filter_non_conversion test_R1_bismark_bt2_pe.bam
+          ./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_bt2.bam
+          ./filter_non_conversion test_R1_bismark_hisat2_pe.bam
+          ./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_hisat2.bam
+          ./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_bt2_pe.bam
+          ./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_hisat2_pe.bam
