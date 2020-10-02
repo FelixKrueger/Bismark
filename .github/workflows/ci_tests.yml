@@ -56,8 +56,18 @@ jobs:
           pwd
           ./bismark_genome_preparation --verbose ./travis_files/
           ./bismark_genome_preparation --verbose --parallel 4 ./travis_files/
-      #    "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
-      #    "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
+          ./bismark_genome_preparation --hisat2 --verbose ./travis_files/
+          ./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/
+          
+      - name: Bismark PE run
+        shell: bash -l {0}
+        run: |
+          ./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+
+#- "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
+ # - "./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./travis_files/"
+ # - "./bismark2report"
+ # - "./bismark2summary"
 
 
 
