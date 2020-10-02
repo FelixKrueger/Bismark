@@ -57,8 +57,6 @@ jobs:
           pwd
           ./bismark_genome_preparation --verbose ./travis_files/
           ./bismark_genome_preparation --verbose --parallel 4 ./travis_files/
-          ./bismark_genome_preparation --hisat2 --verbose ./travis_files/
-          ./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/
           
       - name: Bismark PE run
         shell: bash -l {0}
@@ -75,19 +73,23 @@ jobs:
           ./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz
           ./deduplicate_bismark --bam test_R1_bismark_bt2.bam
           ./bismark_methylation_extractor test_R1_bismark_bt2.bam --gzip --CX --bed --genome ./travis_files/
+  
+      - name: Bismark run with option ICPC
+        shell: bash -l {0}
+        run: |
+          ./bismark --bowtie2 --icpc ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./bismark --bowtie2 --icpc ./travis_files/ ./travis_files/test_R1.fastq.gz
 
-#   ## Using option --icpc
-#   - "./bismark --bowtie2 --icpc ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
-#   - "./bismark --bowtie2 --icpc ./travis_files/ ./travis_files/test_R1.fastq.gz"
-
-#   # Using HISAT2
-#   - "./bismark_genome_preparation --hisat2 --verbose ./travis_files/"
-#   - "./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/"
-#   - "./bismark --genome ./travis_files/ --hisat2 ./travis_files/test_R1.fastq.gz"
-#   - "./bismark --genome ./travis_files/ --hisat2 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz"
-#   - "./deduplicate_bismark --bam test_R1_bismark_hisat2.bam"
-#   - "./bismark_methylation_extractor test_R1_bismark_hisat2.bam  --gzip --CX --bed --genome ./travis_files/"
-#   - "./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam  --gzip --CX --bed --genome ./travis_files/"
+      - name: Bismark run using HISAT2
+        shell: bash -l {0}
+        run: |
+          ./bismark_genome_preparation --hisat2 --verbose ./travis_files/
+          ./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./travis_files/
+          ./bismark --genome ./travis_files/ --hisat2 ./travis_files/test_R1.fastq.gz
+          ./bismark --genome ./travis_files/ --hisat2 -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
+          ./deduplicate_bismark --bam test_R1_bismark_hisat2.bam
+          ./bismark_methylation_extractor test_R1_bismark_hisat2.bam  --gzip --CX --bed --genome ./travis_files/
+          ./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam  --gzip --CX --bed --genome ./travis_files/
   
 
 #   # Multicore
