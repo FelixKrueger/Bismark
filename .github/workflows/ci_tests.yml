@@ -6,7 +6,7 @@ on: [push, pull_request]
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "BuildBismark"
+  # This workflow contains a single job called "BismarkCI"
   BismarkCI:
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
@@ -54,8 +54,8 @@ jobs:
         shell: bash -l {0}
         run: |
           pwd
-          ./bismark_genome_preparation --verbose
-      #    "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/
+          ./bismark_genome_preparation --verbose ./travis_files/
+          ./bismark_genome_preparation --verbose --parallel 4 ./travis_files/
       #    "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
       #    "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
 
