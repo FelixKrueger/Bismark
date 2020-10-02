@@ -129,11 +129,12 @@ jobs:
           ./bismark2bedGraph -o test.bedGraph --CX --scaffolds CpG* CHG_* CHH_*
           ./bismark2bedGraph -o test.bedGraph --CX --ample_memory --zero_based CpG* CHH_* CHG_*
   
-#   # Filter non conversion
-#   - "./filter_non_conversion test_R1_bismark_bt2_pe.bam"
-#   - "./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_bt2.bam"
-#   - "./filter_non_conversion test_R1_bismark_hisat2_pe.bam"
-#   - "./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_hisat2.bam"
-  
-#   - "./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_bt2_pe.bam"
-#   - "./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_hisat2_pe.bam"
+      - name: Filte non-conversion
+        shell: bash -l {0}
+        run: |
+          ./filter_non_conversion test_R1_bismark_bt2_pe.bam
+          ./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_bt2.bam
+          ./filter_non_conversion test_R1_bismark_hisat2_pe.bam
+          ./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_hisat2.bam
+          ./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_bt2_pe.bam
+          ./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_hisat2_pe.bam
