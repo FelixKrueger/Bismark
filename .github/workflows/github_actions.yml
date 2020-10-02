@@ -7,12 +7,21 @@ on: [push, pull_request]
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   # This workflow contains a single job called "BuildBismark"
-  BuildBismark:
+  BismarkCI:
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
+
+      - name: Check out Bismark source-code repository
+        uses: actions/checkout@v2
+
+      - name: Install perl dependencies
+        run: |
+          sudo apt-get install libgd-perl
+          sudo cpan App::cpanminus
+          sudo cpanm GD::Graph
 
       - name: Set up conda
         uses: conda-incubator/setup-miniconda@v1
@@ -28,21 +37,12 @@ jobs:
           conda config --add channels conda-forge
           conda install bowtie2 hisat2 samtools
 
-      - name: Install perl dependencies
-        run: |
-          sudo apt-get install libgd-perl
-          sudo cpan App::cpanminus
-          sudo cpanm GD::Graph
-
-      - name: Check out Bismark source-code repository
-        uses: actions/checkout@v2
-
       - name: Bismark help message
-        run: bismark --help
+        run: ./bismark --help
 
       - name: software versions
         run: |
-          bismark --version
+          ./bismark --version
           bowtie2 --version
 
 
