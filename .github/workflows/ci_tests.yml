@@ -17,7 +17,7 @@ jobs:
       - name: Check out Bismark source-code repository
         uses: actions/checkout@v2
 
-      - name: Install perl dependencies
+      - name: Install Perl dependencies
         run: |
           sudo apt-get install libgd-perl
           sudo cpan App::cpanminus
@@ -45,7 +45,9 @@ jobs:
         shell: bash -l {0}
         run: |
           ./bismark --version
+          ./bowtie2 --version
           bowtie2 --version
+          hisat2 --version
 
 
 
