@@ -1,15 +1,8 @@
 # This is a basic workflow to ensure the Bismark tools are working
-
 name: Bismark CI workflow
 
 # Controls when the action will run. Triggers the workflow on push or pull request events but only for the master branch
-on:
-  pull_request:
-  push:
-    branches: 
-      - master
-      - devel
-    # branches: [ master, devel ]
+on: [push, pull_request]
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -20,36 +13,37 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - name: Checkout
-      uses: actions/checkout@v2
-    
-    - name: Install Bowtie2
-      uses: bowtie2/checkout@v2
-      with:
-        url: https://github.com/BenLangmead/bowtie2
-        branch: master
-      
-    # Runs a single command using the runners shell
-    - name: Send greeting
-      run: echo "Hello World, this is my action!"
-    
-    - name: Bismark Help
-      run: $GITHUB_WORKSPACE/bismark --help
-      
-      # Runs a set of commands using the runners shell
-    - name: Install dependencies
-      run: |
-        sudo apt-get install libgd-perl
-        sudo cpan App::cpanminus
-        sudo cpanm GD::Graph
-      
-      # ~/bowtie2-2.4.1-linux-x86_64/bowtie2 --version
-        
-    - name: software versions
-      run: |
-        $GITHUB_WORKSPACE/bismark --version
-        $GITHUB_WORKSPACE/bowtie2 --version
-       
-     
-    
+
+      - name: Set up conda
+        uses: conda-incubator/setup-miniconda@v1
+        with:
+          auto-update-conda: true
+          python-version: 3.8
+
+      - name: Install conda dependencies
+        shell: bash -l {0}
+        run: |
+          conda config --add channels defaults
+          conda config --add channels bioconda
+          conda config --add channels conda-forge
+          conda install bowtie2 hisat2 samtools
+
+      - name: Install perl dependencies
+        run: |
+          sudo apt-get install libgd-perl
+          sudo cpan App::cpanminus
+          sudo cpanm GD::Graph
+
+      - name: Check out Bismark source-code repository
+        uses: actions/checkout@v2
+
+      - name: Bismark help message
+        run: bismark --help
+
+      - name: software versions
+        run: |
+          bismark --version
+          bowtie2 --version
+
+
+
