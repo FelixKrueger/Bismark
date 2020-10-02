@@ -71,7 +71,7 @@ jobs:
 
       - name: Bismark SE run
         shell: bash -l {0}
-        run:
+        run: |
           ./bismark --genome ./travis_files/ ./travis_files/test_R1.fastq.gz
           ./deduplicate_bismark --bam test_R1_bismark_bt2.bam
           ./bismark_methylation_extractor test_R1_bismark_bt2.bam --gzip --CX --bed --genome ./travis_files/
