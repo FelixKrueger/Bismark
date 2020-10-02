@@ -51,6 +51,7 @@ jobs:
           hisat2 --version
         
       - name: Genome Preparation
+        shell: bash -l {0}
         run: |
           "./bismark_genome_preparation --verbose ./travis_files/"
           "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
