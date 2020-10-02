@@ -51,7 +51,7 @@ jobs:
           hisat2 --version
         
       - name: Genome Preparation
-        shell: bash -l {0}
+        # shell: bash -l {0} # required?
         run: |
           pwd
           ./bismark_genome_preparation --verbose ./travis_files/
@@ -63,11 +63,10 @@ jobs:
         shell: bash -l {0}
         run: |
           ./bismark --genome ./travis_files/ -1 ./travis_files/test_R1.fastq.gz -2 ./travis_files/test_R2.fastq.gz
-
-#- "./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam"
- # - "./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./travis_files/"
- # - "./bismark2report"
- # - "./bismark2summary"
+          ./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam
+          ./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./travis_files/
+          ./bismark2report
+          ./bismark2summary
 
 
 
