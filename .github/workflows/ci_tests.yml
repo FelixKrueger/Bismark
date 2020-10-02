@@ -45,7 +45,7 @@ jobs:
         shell: bash -l {0}
         run: |
           ./bismark --version
-          ./bowtie2 --version
+          samtools --version
           bowtie2 --version
           hisat2 --version
 
