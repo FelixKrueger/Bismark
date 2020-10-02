@@ -51,11 +51,11 @@ jobs:
           hisat2 --version
         
       - name: Genome Preparation
-        run: 
-          - "./bismark_genome_preparation --verbose ./travis_files/"
-          - "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
-          - "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
-          - "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
+        run: |
+          "./bismark_genome_preparation --verbose ./travis_files/"
+          "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
+          "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
+          "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
 
 
 
