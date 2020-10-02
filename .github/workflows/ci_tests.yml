@@ -1,0 +1,51 @@
+# This is a basic workflow to ensure the Bismark tools are working
+name: Bismark CI workflow
+
+# Controls when the action will run. Triggers the workflow on push or pull request events but only for the master branch
+on: [push, pull_request]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "BuildBismark"
+  BismarkCI:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+
+      - name: Check out Bismark source-code repository
+        uses: actions/checkout@v2
+
+      - name: Install perl dependencies
+        run: |
+          sudo apt-get install libgd-perl
+          sudo cpan App::cpanminus
+          sudo cpanm GD::Graph
+
+      - name: Set up conda
+        uses: conda-incubator/setup-miniconda@v1
+        with:
+          auto-update-conda: true
+          python-version: 3.8
+
+      - name: Install conda dependencies
+        shell: bash -l {0}
+        run: |
+          conda config --add channels defaults
+          conda config --add channels bioconda
+          conda config --add channels conda-forge
+          conda install bowtie2 hisat2 samtools
+
+      - name: Bismark help message
+        shell: bash -l {0}
+        run: ./bismark --help
+
+      - name: software versions
+        shell: bash -l {0}
+        run: |
+          ./bismark --version
+          bowtie2 --version
+
+
+
