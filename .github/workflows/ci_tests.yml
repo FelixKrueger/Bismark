@@ -17,11 +17,12 @@ jobs:
       - name: Check out Bismark source-code repository
         uses: actions/checkout@v2
 
-      - name: Install Perl dependencies
-        run: |
-          sudo apt-get install libgd-perl
-          sudo cpan App::cpanminus
-          sudo cpanm GD::Graph
+    # Not sure I actually need those, was taken from FastQ Screen
+    #  - name: Install Perl dependencies
+    #    run: |
+    #      sudo apt-get install libgd-perl
+    #      sudo cpan App::cpanminus
+    #      sudo cpanm GD::Graph
 
       - name: Set up conda
         uses: conda-incubator/setup-miniconda@v1
@@ -48,6 +49,13 @@ jobs:
           samtools --version
           bowtie2 --version
           hisat2 --version
+        
+      - name: Genome Preparation
+        run: 
+          - "./bismark_genome_preparation --verbose ./travis_files/"
+          - "./bismark_genome_preparation --verbose --parallel 4 ./travis_files/"
+          - "./bismark_genome_preparation --bowtie2 --verbose ./travis_files/"
+          - "./bismark_genome_preparation --bowtie2 --verbose --parallel 4 ./travis_files/"
 
 
 
