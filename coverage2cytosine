@@ -25,21 +25,32 @@ my %processed;         # keeping a record of which chromosomes have been process
 my %context_summary;   # storing methylation values for all contexts for NOMe-seq or scNMT-experiments
 my $coverage2cytosine_version = 'v0.22.3dev';
 
+# DRACH motif filtering
 
-my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold) = process_commandline();
+my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold,$drach) = process_commandline();
 
 on_screen_summary();
 
 read_genome_into_memory();
 warn "Stored sequence information of ",scalar keys %chromosomes," chromosomes/scaffolds in total\n\n";
 my $global_cyt_report;
+
+### 18 August 2015. Update 12 Jan 2017: Additional restrictions for NOMe-Seq
+# The following section reprocessed the genome to generate cytosine methylation output in GC context (e.g. when a GpC methylase had been deployed
+if ($drach){
+	generate_DRACH_report($coverage_infile);
+	exit;
+}
+
+
+
+
 generate_genome_wide_cytosine_report($coverage_infile);
 
 ### 25 March 2020 (COVID19 lockdown)
 # Trying to add context specific methylation summaries for NOMe-seq data https://github.com/FelixKrueger/Bismark/issues/321
-#if ($nome){
+
 print_context_summary();
-#}
 
 ### 11 December 2014
 
@@ -69,6 +80,7 @@ sub print_context_summary{
 		}
 	}
 }
+
 ### 18 August 2015. Update 12 Jan 2017: Additional restrictions for NOMe-Seq
 # The following section reprocessed the genome to generate cytosine methylation output in GC context (e.g. when a GpC methylase had been deployed
 if ($gc_context){
@@ -129,10 +141,10 @@ sub handle_filehandles{
 	}
 
 	if ($gzip) {
-	open (CYT,"| gzip -c - > ${output_dir}$cytosine_report_file") or die "Failed to write to file ${output_dir}$cytosine_report_file: $!\n";
-	if ($nome) {
-		open (CYTCOV,"| gzip -c - > ${output_dir}$cytosine_coverage_file") or die "Failed to write to file ${output_dir}$cytosine_coverage_file: $!\n";
-	}
+		open (CYT,"| gzip -c - > ${output_dir}$cytosine_report_file") or die "Failed to write to file ${output_dir}$cytosine_report_file: $!\n";
+		if ($nome) {
+			open (CYTCOV,"| gzip -c - > ${output_dir}$cytosine_coverage_file") or die "Failed to write to file ${output_dir}$cytosine_coverage_file: $!\n";
+		}
 	}
 	else {
 		open (CYT,'>',"${output_dir}$cytosine_report_file") or die "Failed to open uncompressed file ${output_dir}$cytosine_report_file: $!\n";
@@ -152,7 +164,7 @@ sub handle_filehandles{
 	}
 	warn ">>> Writing all cytosine context summary file to: $context_summary_file <<<\n\n";
 
-	return(defined $my_chr ? $my_chr : ''); # returning chromosome in --split_by_chromosome mode
+	return(defined $my_chr ? $my_chr : '');     # returning chromosome in --split_by_chromosome mode
 
 }
 
@@ -1008,10 +1020,372 @@ sub generate_GC_context_report {
 	# closing last filehandles
 	close GC or warn $!;
 	close GCCOV or warn $!;
-	if ($nome){
-		close CONTEXTSUMMARY or warn $!;
-	}
+	close CONTEXTSUMMARY or warn $!;
 }
+
+sub generate_DRACH_report {
+
+	warn  "="x82,"\n";
+	warn "Methylation information for DRACH context will now be written to a GpC-context report\n";
+	warn  "="x82,"\n\n";
+	sleep (20);
+
+	my $number_processed = 0;
+	my $current_out_chr = '';
+
+	### changing to the output directory again
+	# unless ($output_dir eq ''){ # default
+	#	chdir $output_dir or die "Failed to change directory to $output_dir\n";
+	#	# warn "Changed directory to $output_dir\n";
+	#    }
+
+	my $in = shift;
+	if ($in =~ /gz$/){
+		open (IN,"gunzip -c $in |") or die "Failed to read from gzipped file $in: $!\n";
+	}
+	else{
+		open (IN,"$in") or die "Failed to read from file $in: $!\n";
+	}
+
+	# Transcriptome-wide m6A mapping requires us to find the motif DRACH, where: 
+	# D = A, G or U 
+	# H = A, C or U
+	# R = G or A
+
+	warn "I am now here, trying to find a DRACH motif...\n";
+
+	# Local function to handle file names and options, similar to function in generate_genome_wide_cytosine_report().
+	# Assume $cytosine_out has been cleaned from unwanted suffixes
+	# First arg is optional chromosome number. Takes $cytosine_out, $split_by_chromosome, $nome, $gzip from outer scope.
+	my $filehandles_func = sub {
+		
+		my $my_chr = shift;
+		if (defined $my_chr){
+			# warn "working on chromosome $my_chr in --split_by_chromosome mode\n"; sleep(3);
+		}
+
+		my $partial_name = $cytosine_out;
+		$partial_name =~ s/$/.chr${my_chr}/ if (defined $my_chr and $split_by_chromosome);
+		
+		my $drach_out = $partial_name.'_DRACH_report.txt';
+		my $drach_cov = $partial_name.'_DRACH.cov';
+		if ($gzip) {
+			$drach_out .= '.gz';
+			$drach_cov .= '.gz';
+			open (DRACH,    "| gzip -c - > ${output_dir}$drach_out")    or die "Failed to write to DRACH filtered file ${output_dir}$drach_out: !\n\n";
+			open (DRACHCOV, "| gzip -c - > ${output_dir}$drach_cov") or die "Failed to write to DRACH filtered coverage file ${output_dir}$drach_cov: !\n\n";
+		}
+		else {
+			open (DRACH,    '>', "${output_dir}$drach_out") or die "Failed to write to DRACH filtered file ${output_dir}$drach_out: !\n\n";
+			open (DRACHCOV, '>', "${output_dir}$drach_cov") or die "Failed to write to DRACH filtered coverage file ${output_dir}$drach_cov: !\n\n";
+		}
+		warn ">>> Writing genome-wide DRACH filtered cytosine report to: $drach_out <<<\n";
+		warn ">>> Writing genome-wide DRACH filtered coverage file to: $drach_cov <<<\n\n";
+		return(defined $my_chr ? $my_chr : '');
+	};
+
+	$current_out_chr = ${filehandles_func}->() unless ($split_by_chromosome); ### writing all output to a single file (default)
+
+	my $last_chr;
+	my %chr; # storing reads for one chromosome at a time
+
+	my $count = 0;
+
+	while (<IN>){
+		chomp;
+		++$count;
+		my ($chr,$start,$end,undef,$meth,$nonmeth) = (split /\t/);
+		# defining the first chromosome
+		unless (defined $last_chr){
+			$last_chr = $chr;
+			++$number_processed;
+			warn "Storing all covered cytosine positions for chromosome: $chr\n";
+			if ($split_by_chromosome){
+				$current_out_chr = ${filehandles_func}->($chr);
+			}
+		}
+
+		### start positions are 1-based
+		if ($chr eq $last_chr){
+			$chr{$chr}->{$start}->{meth} = $meth;
+			$chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+		}
+		else{
+			warn "Writing DRACH filtered cytosine report for chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+			++$number_processed;
+			$processed{$last_chr} = 1;
+			my $enough = 0;
+
+			while ( $chromosomes{$last_chr} =~ /(AC)/g){
+
+				# A DR AC H motif has to have AC in the sequence
+				my $context_top = '';
+				my $context_bottom = '';
+				my $pos = pos$chromosomes{$last_chr};
+
+				my $meth_top = 0;
+				my $meth_bottom = 0;
+				my $nonmeth_top = 0;
+				my $nonmeth_bottom = 0;
+
+				# warn "$1\n";
+				# C on forward strand
+				my $tri_nt_top = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
+				my $drach_top = substr ($chromosomes{$last_chr},($pos-4),5); 
+
+				my $strand_top = '+';
+				
+
+				### IUPAC nucleotide code	Base
+				# A	= Adenine
+				# C	= Cytosine
+				# G	= Guanine
+				# T = (or U)	Thymine (or Uracil)
+				# R	= A or G
+				# Y	= C or T
+				# S	= G or C
+				# W	= A or T
+				# K	= G or T
+				# M	= A or C
+				# B	= C or G or T (U)
+				# D	= A or G or T (U)
+				# H	= A or C or T (U)
+				# V	= A or C or G
+
+				# warn "Potential DRACH motif Top $tri_nt_top\t$drach_top\n"; sleep(1);
+				### POSITION 1
+				if (substr ($drach_top,0,1) ne 'C'){
+					# warn "Potential DRACH motif Top $tri_nt_top\t$drach_top\n"; sleep(1);
+
+					### POSITION 2
+					if ( (substr ($drach_top,1,1) eq 'A') or (substr ($drach_top,1,1) eq 'G') ){
+						# warn "Potential DRACH motif Top $tri_nt_top\t$drach_top\n"; sleep(1);
+
+						### POSITION 5
+						if ( substr ($drach_top,4,1) ne 'G'){
+							# warn "This IS a DRACH motif Top $tri_nt_top\t$drach_top\n"; sleep(1);
+
+							### These are position we want to carry forward
+						}
+						else{
+							# warn "Non-DRACH motif: $tri_nt_top\t$drach_top. Skippping...\n"; sleep(1);
+							next;
+						}
+
+					}
+					else{
+						# warn "Non-DRACH motif: $tri_nt_top\t$drach_top. Skippping...\n"; sleep(1);
+						next;
+					}
+				}
+				else{
+					# motif may not start with 'C'
+					# warn "Non-DRACH motif: $tri_nt_top\t$drach_top. Skippping...\n"; sleep(1);
+					next;
+				}
+
+				# # C on reverse strand
+				# my $tri_nt_bottom = substr ($chromosomes{$last_chr},($pos-4),3);   # positions are 0-based!
+				# $tri_nt_bottom = reverse $tri_nt_bottom;
+				# $tri_nt_bottom =~ tr/ACTG/TGAC/;
+				# my $strand_bottom = '-';
+
+				next if (length $tri_nt_top < 3);     # trinucleotide sequence could not be extracted for the top strand
+				# next if (length $tri_nt_bottom < 3);  # trinucleotide sequence could not be extracted for the reverse strand
+
+				# top strand
+				if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based!
+					$meth_top    = $chr{$last_chr}->{$pos}->{meth};
+					$nonmeth_top = $chr{$last_chr}->{$pos}->{nonmeth};
+				}
+
+				# # bottom strand
+				# if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 1-based! -1 for bottom strand Cs
+				# 	$meth_bottom    = $chr{$last_chr}->{$pos-1}->{meth};
+				# 	$nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth};
+				# }
+
+				# ### determining cytosine context top strand
+				# if ($tri_nt_top =~ /^CG/){
+				# 	$context_top = 'CG';
+				# }
+				# elsif ($tri_nt_top =~ /^C.{1}G$/){
+				# 	$context_top = 'CHG';
+				# }
+				# elsif ($tri_nt_top =~ /^C.{2}$/){
+				# 	$context_top = 'CHH';
+				# }
+				# else{ # if the context can't be determined the positions will not be printed (it will equally not have been reported by Bismark)
+				# 	warn "The sequence context could not be determined for the top strand (found: '$tri_nt_top'). Skipping.\n";
+				# 	next;
+				# }
+
+				# ### determining cytosine context bottom strand
+				# if ($tri_nt_bottom =~ /^CG/){
+				# 	$context_bottom = 'CG';
+				# }
+				# elsif ($tri_nt_bottom =~ /^C.{1}G$/){
+				# 	$context_bottom = 'CHG';
+				# }
+				# elsif ($tri_nt_bottom =~ /^C.{2}$/){
+				# 	$context_bottom = 'CHH';
+				# }
+				# else{ # if the context can't be determined the positions will not be printed
+				# 	warn "The sequence context could not be determined for the bottom strand (found: '$tri_nt_bottom'). Skipping.\n";
+				# 	next;
+				# }
+
+				# warn "Tri-nucleotide context: $tri_nt_bottom\n";
+				# sleep(1);
+				# if Cs were not covered at all they are not written out
+				# if ($meth_bottom + $nonmeth_bottom >= $threshold){
+				# 	my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
+				# 	if ($nome and ($context_bottom eq 'CG') ){
+				# 		# not reporting these (see point 2. above)
+				# 		# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";sleep(1);
+				# 	}
+				# 	else{
+				# 		print DRACHCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
+				# 		print DRACH join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
+				# 	}
+				# }
+
+				if ($meth_top + $nonmeth_top >= $threshold){
+					my $percentage = sprintf ("%.6f",$meth_top/ ($meth_top + $nonmeth_top) *100);
+					print DRACHCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
+					print DRACH join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$drach_top,$tri_nt_top),"\n";
+				}
+
+
+			}
+
+			%chr = (); # resetting the hash
+
+			# new first entry
+			$last_chr = $chr;
+			$chr{$chr}->{$start}->{meth} = $meth;
+			$chr{$chr}->{$start}->{nonmeth} = $nonmeth;
+
+			if ($split_by_chromosome and $current_out_chr ne $last_chr){
+				# closing old filehandle(s)
+				close GC or warn $!;
+				if ($nome){
+					close GCCOV or warn $!;
+				}
+
+				# opening new filehandle
+				$current_out_chr = ${filehandles_func}->($last_chr);
+			}
+
+		}
+	}
+
+	# Last found chromosome
+	warn "Writing cytosine GpC report for last chromosome $last_chr (stored ",scalar keys %{$chr{$last_chr}}," different covered positions)\n";
+	$processed{$last_chr} = 1;
+	while ( $chromosomes{$last_chr} =~ /(GC)/g){
+
+	# a GC on the top strand automatically means that there is a GC on the bottom strand as well, so we can process both at the same time
+	my $context_top = '';
+	my $context_bottom = '';
+	my $pos = pos$chromosomes{$last_chr};
+
+	my $meth_top = 0;
+	my $meth_bottom = 0;
+	my $nonmeth_top = 0;
+	my $nonmeth_bottom = 0;
+
+	# C on forward strand
+	my $tri_nt_top = substr ($chromosomes{$last_chr},($pos-1),3);   # positions are 0-based!
+	my $strand_top = '+';
+
+	# C on reverse strand
+	my $tri_nt_bottom = substr ($chromosomes{$last_chr},($pos-4),3);   # positions are 0-based!
+	$tri_nt_bottom = reverse $tri_nt_bottom;
+	$tri_nt_bottom =~ tr/ACTG/TGAC/;
+
+	my $strand_bottom = '-';
+
+	next if (length $tri_nt_top < 3);     # trinucleotide sequence could not be extracted for the top strand
+	next if (length $tri_nt_bottom < 3);  # trinucleotide sequence could not be extracted for the bottom strand
+
+	### determining cytosine context top strand
+	if ($tri_nt_top =~ /^CG/){
+		$context_top = 'CG';
+	}
+	elsif ($tri_nt_top =~ /^C.{1}G$/){
+		$context_top = 'CHG';
+	}
+	elsif ($tri_nt_top =~ /^C.{2}$/){
+		$context_top = 'CHH';
+	}
+	else{ # if the context can't be determined the positions will not be printed
+		warn "The sequence context could not be determined for the top strand (found: '$tri_nt_top'). Skipping.\n";
+		next;
+	}
+
+	### determining cytosine context bottom strand
+	if ($tri_nt_bottom =~ /^CG/){
+		$context_bottom = 'CG';
+	}
+	elsif ($tri_nt_bottom =~ /^C.{1}G$/){
+		$context_bottom = 'CHG';
+	}
+	elsif ($tri_nt_bottom =~ /^C.{2}$/){
+		$context_bottom = 'CHH';
+	}
+	else{ # if the context can't be determined the positions will not be printed
+		warn "The sequence context could not be determined for the bottom strand (found: '$tri_nt_bottom'). Skipping.\n";
+		next;
+	}
+
+	# top strand
+	if (exists $chr{$last_chr}->{($pos)}){ # stored positions are 1-based!
+		$meth_top    = $chr{$last_chr}->{$pos}->{meth};
+		$nonmeth_top = $chr{$last_chr}->{$pos}->{nonmeth};
+	}
+	# bottom strand
+	if (exists $chr{$last_chr}->{($pos-1)}){ # stored positions are 1-based! -1 for bottom strand Cs
+		$meth_bottom    = $chr{$last_chr}->{$pos-1}->{meth};
+		$nonmeth_bottom = $chr{$last_chr}->{$pos-1}->{nonmeth};
+	}
+
+		# if Cs were not covered at all they are not written out
+		if ($meth_bottom + $nonmeth_bottom >= $threshold){
+			my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
+			if ($nome and ($context_bottom eq 'CG') ){
+				# not reporting these (see point 2. above)
+				# print join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom)," (skipping)\n";
+			}
+			else{
+				$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
+				print DRACHCOV join ("\t",$last_chr,$pos-1,$pos-1,$percentage,$meth_bottom,$nonmeth_bottom),"\n";
+				print DRACH join ("\t",$last_chr,$pos-1,$strand_bottom,$meth_bottom,$nonmeth_bottom,$context_bottom,$tri_nt_bottom),"\n";
+			}
+		}
+		if ($meth_top + $nonmeth_top >= $threshold){
+			my $percentage = sprintf ("%.6f",$meth_top/ ($meth_top + $nonmeth_top) *100);
+			if ($nome and ($context_top eq 'CG') ){
+				# not reporting these (see point 2. above)
+				# print join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
+			}
+			else{
+				$current_out_chr = ${filehandles_func}->($last_chr) if ($split_by_chromosome and $current_out_chr ne $last_chr);
+				print DRACHCOV join ("\t",$last_chr,$pos,$pos,$percentage,$meth_top,$nonmeth_top),"\n";
+				print DRACH join ("\t",$last_chr,$pos,$strand_top,$meth_top,$nonmeth_top,$context_top,$tri_nt_top),"\n";
+			}
+		}
+	}
+
+	warn "Finished writing out DRACH filtering cytosine report for covered chromosomes (processed $number_processed chromosomes/scaffolds in total)\n\n";
+	
+	# closing last filehandles
+	close DRACH or warn $!;
+	close DRACHCOV or warn $!;
+	close CONTEXTSUMMARY or warn $!;
+	
+}
+
 
 ####
 ####
@@ -1210,12 +1584,12 @@ sub on_screen_summary{
 	}
 
 	if($gc_context){
-	if($nome){
-		warn "Optional GC context track:\t\t\tyes (NOMe-Seq; only reporting GCA, GCC and GCT context)\n";
-	}
-	else{
-		warn "Optional GC context track:\t\t\tyes\n";
-	}
+		if($nome){
+			warn "Optional GC context track:\t\t\tyes (NOMe-Seq; only reporting GCA, GCC and GCT context)\n";
+		}
+		else{
+			warn "Optional GC context track:\t\t\tyes\n";
+		}
 	}
 
 	if ($tetra){
@@ -1236,13 +1610,19 @@ sub on_screen_summary{
 	warn "GZIP compression:\t\t\t\tno\n";
 	}
 
+	if ($drach){
+		warn "Applying DRACH motif filtering (m6A):\t\tyes\n";
+	}
+
 	if ($split_by_chromosome){
-	warn "Split by chromosome:\t\t\t\tyes\n\n\n";
+		warn "Split by chromosome:\t\t\t\tyes\n\n\n";
 	}
 	else{
-	warn "Split by chromosome:\t\t\t\tno\n\n\n";
+		warn "Split by chromosome:\t\t\t\tno\n\n\n";
 	}
-	sleep (3);
+
+
+	sleep (1);
 }
 
 
@@ -1607,6 +1987,7 @@ sub process_commandline{
 	my $nome;
 	my $disco;
 	my $threshold;
+	my $drach;
 
 	my $command_line = GetOptions (
 				 'help|man'                         => \$help,
@@ -1625,6 +2006,7 @@ sub process_commandline{
 				 'nome-seq'                         => \$nome,
 				 'discordance_filter=i'             => \$disco,
 				 'threshold|coverage_threshold=i'   => \$threshold,
+				 'drach'                            => \$drach,
 		);
 
   ### EXIT ON ERROR if there were errors with any of the supplied options
@@ -1785,8 +2167,15 @@ VERSION
 		$threshold = 0;
 	}
 
+	if ($drach){
+		warn "Applying filtering for the DRACH motif to assess m6A methylation. Also setting coverage threshold to 1\n";
+		unless ($threshold > 0){
+			$threshold = 1;
+		} 
+		sleep(1);
+	}
 
-  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold);
+  return ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold,$drach);
 }
 
 
@@ -1898,7 +2287,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-							  Script last modified: 28 April 2020
+							  Script last modified: 02 Oct 2020
 
 EOF
 	;
