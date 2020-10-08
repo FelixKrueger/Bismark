@@ -788,7 +788,7 @@ VERSION
 
   if ($ucsc){
     warn "Creating additional bedGraph file that has known Ensembl chromosome names replaced to work with the UCSC genome browser\n";
-    warn "This option: - prefixes chromosome names with 'chr'\n";
+    warn "This option:\n- prefixes chromosome names with 'chr'\n";
     warn "- changes 'MT' to 'chrM'\n\n";
   }
 
