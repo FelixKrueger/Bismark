@@ -6,9 +6,13 @@
 
 - the command `deduplicate_bismark --barcode *bam` now works again. Previously the output file names were accidentally all derived from the first supplied file in `--barcode` (= UMI) mode (it had been fixed for normal files in 0.22.2).
 
+- Changed the way the library auto-detection works to only look at the @PG ID:Bismark line of the SAM header. 
+
 ### bismark_methylation_extractor / bismark2bedGraph
 
 - Added a new option `--ucsc` to `bismark2bedGraph` and `bismark_methylation_extractor` that will produce a UCSC-ready bedGraph file if the genome version used came from Ensembl. This option (i) prefixes chromosome names with 'chr', and (ii) changes the mitochondrial chromosome from 'MT' to 'chrM'. In addition, it will also write out a new file ending in `.chromosome_sizes.txt` for easier use of [`bedGraphToBigWig`](https://www.encodeproject.org/software/bedgraphtobigwig/). [More here](https://github.com/FelixKrueger/Bismark/issues/371).
+
+- Changed the way the library auto-detection works to only look at the @PG ID:Bismark line of the SAM header. 
 
 ### coverage2cytosine
 
