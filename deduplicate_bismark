@@ -10,7 +10,11 @@ use Cwd;
 my $dedup_version = 'v0.22.3_dev';
 my @filenames;
 
-my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile) = process_commandline();
+my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile,$parallel) = process_commandline();
+
+# Number of cores used for samtools view --threads. According to tests,
+# additional cores are simply not worth the while  (https://github.com/FelixKrueger/Bismark/issues/364)
+$parallel = 1;
 
 my $user_defined_outfile = 0;
 if (defined $outfile){
@@ -69,9 +73,17 @@ foreach my $file (@filenames){
 		while (<DETERMINE>){
 			last unless (/^\@/);
 			if ($_ =~ /^\@PG/){
-				# warn "found the \@PG line:\n";
+				# warn "Found a \@PG line:\n";
 				# warn "$_";
 				
+				if ($_ =~ /ID:Bismark/){
+					# warn "This is the Bismark command we are after. Extracting the library type...\n";
+				}
+				else{
+					# warn "This isn't a the Bismark \@PG line. Moving on...\n"; sleep(1);
+					next;
+				}
+
 				if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
 					warn "Treating file as paired-end data (extracted from \@PG line)\n"; # sleep(1);
 					$paired = 1;
@@ -147,7 +159,8 @@ foreach my $file (@filenames){
 				open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
 			}
 			elsif ($file =~ /\.bam$/){
-				open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+				# warn "Launching $samtools_path view -h with >>$parallel<< cores\n\n"; sleep(1);
+				open (IN,"$samtools_path view -h --threads $parallel $file |") or die "Unable to read from BAM file $file: $!\n";
 			}
 			else{
 				open (IN,$file) or die "Unable to read from $file: $!\n";
@@ -186,7 +199,8 @@ foreach my $file (@filenames){
 		warn "Output file is: $outfile\n\n";
 
 		if ($bam == 1){
-			open (OUT,"| $samtools_path view -bS - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
+			# Using $parallel threads. Currently set to 1, as more cores don't seem to help (see above)
+			open (OUT,"| $samtools_path view -bS --threads $parallel - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
 		}
 		elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
 			open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
@@ -210,7 +224,7 @@ foreach my $file (@filenames){
 			}
 
 			### if this was a SAM file we ignore header lines
-			if (/^\@\w{2}\t/){
+			if (/^\@\w{2}\s/){
 				print "skipping header line:\t$_";
 			
 				if ($multiple){ # the header gets set with samtools cat -h in this case
@@ -909,7 +923,7 @@ sub print_helpfile{
 	
 	print '='x111,"\n\n";
 
-	print "This script was last modified on 17 December 2019\n\n";
+	print "This script was last modified on 30 October 2020\n\n";
 }
 
 
@@ -1022,6 +1036,7 @@ sub process_commandline{
     my $multiple; # for multiple input files for the same sample
     my $output_dir;
 	my $outfile;
+	my $parallel;
 	
     my $command_line = GetOptions ('help'                => \$help,
 				   'representative'      => \$representative,
@@ -1035,6 +1050,8 @@ sub process_commandline{
 				   'multiple'            => \$multiple, 
 				   'output_dir=s'        => \$output_dir,
 				   'o|outfile=s'         => \$outfile,
+				   'parallel=i'          => \$parallel,
+
 	);
 
     die "Please respecify command line options\n\n" unless ($command_line);
@@ -1052,7 +1069,7 @@ sub process_commandline{
                   Bismark Deduplication Module
 
 	      Deduplicator Version: $dedup_version
-      Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+      Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
 	www.bioinformatics.babraham.ac.uk/projects/bismark/
 	    https://github.com/FelixKrueger/Bismark
   	  
@@ -1206,7 +1223,7 @@ VERSION
 		}
     }
     
-    return ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile);
+    return ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile,$parallel);
 }
 
 
