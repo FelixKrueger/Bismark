@@ -1152,7 +1152,15 @@ VERSION
 			if ($_ =~ /^\@PG/){
 				# warn "found the \@PG line:\n";
 				# warn "$_";
-			
+
+				if ($_ =~ /ID:Bismark/){
+					# warn "This is the Bismark command we are after. Extracting the library type...\n"; sleep(1);
+				}
+				else{
+					# warn "This isn't the Bismark \@PG line. Moving on...\n"; sleep(1);
+					next;
+				}
+
 				if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1  and --2 (or a combination thereof). 15 09 2016
 					warn "Treating file(s) as paired-end data (as extracted from \@PG line)\n\n"; sleep(1);
 					$paired_end = 1;
@@ -6031,7 +6039,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 22 September 2020.
+This script was last modified on 30 October 2020.
 
 HOW_TO
 }
