@@ -18,6 +18,9 @@
 
 - Added a new output file for all cytosine context methylation totals when `coverage2cytosine` is run in `--nome-seq` mode. More information here: https://github.com/FelixKrueger/Bismark/issues/321
 
+- Added new option `--drach/--m6A`. Most `m6A` sites are found in the conserved sequence motif `DRACH` (where `D`=`G`/`A`/`U`, `R`=`G`/`A`, `H`=`A`/`U`/`C`), and if bound by anti-m6A antibody, it causes the reverse transcriptase to introduce `C` to `T` transitions at the cytosine which follows `A` in the `DRACH` motif. This option also sets a coverage threshold of at 1 unless specified explicitly. This is a very specialised option and should only be used by experimentalists looking at `m6A` methylation (where the C to T transition acts as a proxy of `m6A`).
+
+
 
 ## Changelog for Bismark v0.22.3 (release on 19 Nov 2019)
 
