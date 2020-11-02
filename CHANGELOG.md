@@ -2,6 +2,8 @@
 
 ## Changelog for Bismark v0.22.3_dev
 
+- Migrated CI tests from Travis to Github Actions
+
 ### deduplicate_bismark
 
 - the command `deduplicate_bismark --barcode *bam` now works again. Previously the output file names were accidentally all derived from the first supplied file in `--barcode` (= UMI) mode (it had been fixed for normal files in 0.22.2).
