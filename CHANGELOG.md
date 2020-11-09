@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.22.3_dev
+## Changelog for Bismark v0.22.4 (released on 09 11 2020)
 
 - Migrated CI tests from Travis to Github Actions
 
@@ -18,11 +18,14 @@
 
 ### coverage2cytosine
 
-- Added a new output file for all cytosine context methylation totals. More information here: #321
+- Added a new output file for all cytosine context methylation totals. More information here: [#321](https://github.com/FelixKrueger/Bismark/issues/382).
 
 - Added new option `--drach/--m6A`. Most `m6A` sites are found in the conserved sequence motif `DRACH` (where `D`=`G`/`A`/`U`, `R`=`G`/`A`, `H`=`A`/`U`/`C`), and if bound by anti-m6A antibody, it causes the reverse transcriptase to introduce `C` to `T` transitions at the cytosine which follows `A` in the `DRACH` motif. This option also sets a coverage threshold of at 1 unless specified explicitly. This is a very specialised option and should only be used by experimentalists looking at `m6A` methylation (where the C to T transition acts as a proxy of `m6A`).
 
+### bismark2summary
 
+- Samples with absolutely 0 methylation calls in some context are now excluded from the graphical HTML output (as they break rendering the entire summary graph section). These samples and their statistics do still appear in the file `bismark_summary_report.txt`.  More information here: [#315](https://github.com/FelixKrueger/Bismark/issues/315).
+ 
 
 ## Changelog for Bismark v0.22.3 (release on 19 Nov 2019)
 
