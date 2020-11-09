@@ -5,7 +5,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-19, Felix Krueger <felix.krueger@babraham.ac.uk>.
+## This program is Copyright (C) 2010-20, Felix Krueger <felix.krueger@babraham.ac.uk>.
 ## Thanks to Phil Ewels <phil.ewels@scilifelab.se> (who wrote a first version of this
 ## script in 2013 or so when it was still 'legal' to use Highcharts.js (or maybe it 
 ## never was?....))
@@ -22,9 +22,9 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.22.3';
+my $bismark_version = '0.22.4';
 
-# Last modified 31 07 2019
+# Last modified 09 11 2020
 
 my ($report_basename,$page_title,$verbose) = process_commandline();
 
@@ -60,7 +60,7 @@ sub process_commandline{
                                  powered by Plot.ly
 
                            bismark2summary version: $bismark_version
-                          Copyright 2010-19 Felix Krueger
+                          Copyright 2010-20 Felix Krueger
                                Babraham Bioinformatics
                  www.bioinformatics.babraham.ac.uk/projects/bismark/
                       https://github.com/FelixKrueger/Bismark
@@ -93,6 +93,8 @@ sub print_helpfile{
 	  methylation extractor (splitting) reports based on the input file basename. If splitting reports are found they overwrite the
 	  methylation statistics of the initial alignment report.
 
+      Files with absulutely no methylation calls in any context are excluded from the HTML graphs (as they break the rendering with 
+      plot.ly. Such files and their values are reported in the file "bismark_summary_report.txt".
 
 	  USAGE: bismark2summary [options] [<BAM file(s)>]
 
@@ -116,7 +118,7 @@ sub print_helpfile{
 	  --help                      Displays this help message and exits.
 
 
-													Script last modified: 31 July 2019
+													Script last modified: 09 November 2020
 
 EOF
 		;
@@ -423,6 +425,22 @@ for my $bam (@bam_files){
     $meth_chh = 0       if $meth_chh eq '';
     $unmeth_chh = 0     if $unmeth_chh eq '';
     
+
+    # Samples with 0 calls in different context result in completely non-rendered plots. We therefore exclude these samples
+    # from the plotting. Their values are still present in the Textfile summary though
+    if ($meth_cpg == 0 and $unmeth_cpg == 0){
+        warn "Excluding sample >$name< for plotting as there were no calls in CpG context\n";
+        next;
+    }  
+     if ($meth_chg == 0 and $unmeth_chg == 0){
+        warn "Excluding sample >$name< for plotting as there were no calls in CHG context\n";
+        next;
+    }  
+     if ($meth_chh == 0 and $unmeth_chh == 0){
+        warn "Excluding sample >$name< for plotting as there were no calls in CHH context\n";
+        next;
+    }  
+
     push(@categories_arr,          "'$name'");
     push(@aligned_arr,             $aligned_reads);
     push(@not_aligned_arr,         $unaligned);
