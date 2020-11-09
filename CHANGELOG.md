@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.22.4 (release on 09 11 2020)
+## Changelog for Bismark v0.23.0 (release on 09 11 2020)
 
 - Migrated CI tests from Travis to Github Actions
 
