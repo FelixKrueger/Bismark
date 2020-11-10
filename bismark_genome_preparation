@@ -31,6 +31,7 @@ my $multi_fasta;
 my $single_fasta;
 my $bowtie2;
 my $hisat2;
+my $mm2;
 my $slam;
 my $large_index;
 
@@ -40,7 +41,7 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.23.0';
+my $bismark_version = 'v0.23.0dev';
 my $last_modified = "14 April 2019";
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
@@ -53,6 +54,7 @@ my $command_line = GetOptions ('verbose'         => \$verbose,
 			'single_fasta'        => \$single_fasta,
 			'bowtie2'             => \$bowtie2,
 			'hisat2'              => \$hisat2,
+			'minimap2|mm2'        => \$mm2,
 			'genomic_composition' => \$genomic_composition,
 			'large-index'         => \$large_index,
 	);
@@ -71,7 +73,7 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                https://github.com/FelixKrueger/Bismark
 			  
@@ -117,8 +119,20 @@ if ($hisat2){
 	if ($bowtie2){
 		die "You may not select both --bowtie2 and --hisat2. Make your pick! (default is Bowtie 2)\n";
     }
+	if ($mm2){
+		die "You may not select both --minimap2 and --hisat2. Make your pick!\n";
+    }
     $bowtie2 = 0;
+	$mm2 = 0;
     $verbose and print "Aligner to be used: >> HISAT2 <<\n";
+}
+elsif($mm2){
+	if ($bowtie2){
+		die "You may not select both --minimap2 and --bowtie2. Make your pick! (default is Bowtie 2)\n";
+ 	}
+	warn "Using Minimap2 to index the genome(s)!\n\n"; sleep(3);
+	$bowtie2 = 0;
+	$hisat2  = 0;
 }
 else{ # Bowtie 2 the default mode
     if ($bowtie2){
@@ -131,6 +145,9 @@ else{ # Bowtie 2 the default mode
 }
 
 if ($single_fasta){
+	if ($mm2){
+		die "Minimap2 mode does not work in conjunction with --single_fasta. Please respecify!\n\n";
+	}
     warn "Writing individual genomes out into single-entry fasta files (one per chromosome)\n\n";
     $multi_fasta = 0;
 }
@@ -142,9 +159,15 @@ else{
 
 if ($slam){
 	warn "Genome will be generated and indexed in with in-silico T->C transitions, and NOT in BISULFITE MODE\n"; sleep(3);
+	if ($mm2){
+		die "Minimap2 mode does not work in conjunction with --slam. Please respecify!\n\n";
+	}
 }
 
 if($large_index){
+	if ($mm2){
+		die "Minimap2 mode does not work in conjunction with --large_index. Please drop one option and respecify!\n\n";
+	}
 	warn "Large-index specified. Forcing generated index to be 'large', even if reference has fewer than 4 billion nucleotides.\n\n"; sleep(1);
 	$large_index = '--large-index';
 }
@@ -160,8 +183,6 @@ if ($genomic_composition){
     %chromosomes = (); # resetting
 }
 
-
-
 process_sequence_files ();
 
 launch_indexer();
@@ -170,7 +191,10 @@ sub launch_indexer{
     if ($bowtie2){
 		warn "Bismark Genome Preparation - Step III: Launching the Bowtie 2 indexer\n";
     }
-    else{
+	elsif($mm2){
+		warn "Bismark Genome Preparation - Step III: Launching the Minimap2 indexing process\n";
+	}
+	else{
 		warn "Bismark Genome Preparation - Step III: Launching the HISAT2 indexer\n";
     }
     print "Please be aware that this process can - depending on genome size - take several hours!\n";
@@ -181,8 +205,13 @@ sub launch_indexer{
 		if ($bowtie2){
 			$path_to_aligner =~ s/$/bowtie2-build/;	
 		}
+		elsif ($mm2){
+			# Acccording to https://github.com/lh3/minimap2#general-usage, the indexing command is simply:
+			# minimap2 -d ref.mmi ref.fa                     # indexing
+			$path_to_aligner =~ s/$/minimap2/;	
+		}
 		else{
-			$path_to_aligner =~ s/$/hisat2-build/;
+			$path_to_aligner =~ s/$/minimap2/;
 		}
     }
     ### otherwise we assume that build path is in the PATH environment
@@ -190,16 +219,30 @@ sub launch_indexer{
 		if ($bowtie2){
 			$path_to_aligner = 'bowtie2-build';
 		}
+		elsif ($mm2){
+			# Acccording to https://github.com/lh3/minimap2#general-usage, the indexing command is simply:
+			# minimap2 -d ref.mmi ref.fa                     # indexing
+			$path_to_aligner = 'minimap2';	
+		}
 		else{
 			$path_to_aligner = 'hisat2-build'; 
 		}
     }
 
-  $verbose and print "\n";
+  	$verbose and print "\n";
 
-	### Forking the program to run 2 instances of Bowtie-build or Bowtie2-build (= the Bowtie (1/2) indexer)
+	### Forking the program to run 2 instances of the indexing process (bowtie2-build, hisat2-build or minimap2)
 	my $pid = fork();
-	
+	my $multicore = ''; # If not specified we simply use an empty string (= the default)
+	if ($parallel) {
+		if ($mm2){
+			$multicore = "-t $parallel";
+		}
+		else{
+			$multicore = "--threads $parallel";
+		}
+	}
+
 	# parent process
 	if ($pid){
 		sleep(1);
@@ -207,18 +250,24 @@ sub launch_indexer{
 		$verbose and warn "Preparing indexing of CT converted genome in $CT_dir\n";
 		my @fasta_files = <*.fa>;
 		my $file_list = join (',',@fasta_files);
-		my $cmd = "$path_to_aligner $large_index -f $file_list BS_CT";
-		if($parallel) {
-			$cmd = "$cmd --threads $parallel";
+		my $cmd;
+		
+		if ($mm2){
+			$cmd = "$path_to_aligner $multicore -d BS_CT.mmi $file_list";
 		}
+		else{
+			$cmd = "$path_to_aligner $multicore $large_index -f $file_list BS_CT";
+		}
+	
 		$verbose and print "Parent process: Starting to index C->T converted genome with the following command:\n\n";
 		$verbose and print "$cmd\n\n";
 		
 		system ($cmd)== 0 or die "Parent process: Failed to build index\n";
 		waitpid( $pid, 0 );
 		$? == 0 or die "Parent process: Child process failed\n";
-	}
 
+		warn "\n=========================================\n\nParallel genome indexing complete. Enjoy!\n\n";
+	}
 	# child process
 	elsif ($pid == 0){
 		sleep(2);
@@ -226,10 +275,15 @@ sub launch_indexer{
 		$verbose and warn "Preparing indexing of GA converted genome in $GA_dir\n";
 		my @fasta_files = <*.fa>;
 		my $file_list = join (',',@fasta_files);
-		my $cmd = "$path_to_aligner $large_index -f $file_list BS_GA";
-		if($parallel) {
-			$cmd = "$cmd --threads $parallel";
+		my $cmd;
+		
+		if ($mm2){
+			$cmd = "$path_to_aligner $multicore -d BS_GA.mmi $file_list";
 		}
+		else{
+			$cmd = "$path_to_aligner $multicore  $large_index -f $file_list BS_GA";
+		}
+
 		$verbose and print "Child process: Starting to index G->A converted genome with the following command:\n\n";
 		$verbose and print "$cmd\n\n";
 
@@ -246,14 +300,24 @@ sub launch_indexer{
 		my @fasta_files = <*.fa>;
 		my $file_list = join (',',@fasta_files);
 		$verbose and print "$file_list\n\n";
+		my $cmd;
 		
-		my $cmd = "$path_to_aligner $large_index -f $file_list BS_CT";
-		if($parallel) {
-			$cmd = "$cmd --threads $parallel";
+		
+		if ($mm2){
+			$cmd = "$path_to_aligner $multicore -d BS_CT.mmi $file_list";
 		}
-		system ($cmd);
+		else{
+			$cmd = "$path_to_aligner $large_index -f $file_list BS_CT";
+		}
+
+		$verbose and print "Child process: Starting to index C->T converted genome with the following command:\n\n";
+		$verbose and print "$cmd\n\n";
+		system ($cmd)== 0 or die "Failed to build C>T index\n\n";
+		
+		# Resetting
 		@fasta_files=();
 		$file_list= '';
+		$cmd = '';
 
 		### moving to GA genome folder
 		$verbose and warn "Preparing to index GA converted genome in $GA_dir\n";
@@ -261,12 +325,19 @@ sub launch_indexer{
 		@fasta_files = <*.fa>;
 		$file_list = join (',',@fasta_files);
 		$verbose and print "$file_list\n\n";
-		# sleep(2);
-		$cmd = "$path_to_aligner $large_index -f $file_list BS_GA";
-		if($parallel) {
-			$cmd = "$cmd --threads $parallel";
+
+		if ($mm2){
+			$cmd = "$path_to_aligner $multicore -d BS_GA.mmi $file_list";
 		}
-		exec ($cmd);
+		else{
+			$cmd = "$path_to_aligner $large_index -f $file_list BS_GA";
+		}
+
+		$verbose and print "Child process: Starting to index G->A converted genome with the following command:\n\n";
+		$verbose and print "$cmd\n\n";
+		system ($cmd)== 0 or die "Failed to build G>A index\n\n";;
+
+		warn "Sequential genome indexing complete\n\n";
 	}
 }
 
@@ -549,7 +620,7 @@ sub create_bisulfite_genome_folders{
 		$verbose and print "Created Bisulfite Genome folder $bisulfite_dir\n";
 	}
 	else{
-		print "\nA directory called $bisulfite_dir already exists. Already existing converted sequences and/or already existing Bowtie 2 or HISAT2) indices will be overwritten!\n\n";
+		print "\nA directory called $bisulfite_dir already exists. Already existing converted sequences and/or already existing Bowtie 2, HISAT2 or Minimap2) indices will be overwritten!\n\n";
 	}
 
 	chdir $bisulfite_dir or die "Unable to move to $bisulfite_dir\n";
@@ -673,14 +744,13 @@ sub print_helpfile{
 
 DESCRIPTION
 
-This script is supposed to convert a specified reference genome into two different bisulfite
-converted versions and index them for alignments with Bowtie 2 (default), or HISAT2. The first
-bisulfite genome will have all Cs converted to Ts (C->T), and the other one will have all Gs
-converted to As (G->A). Both bisulfite genomes will be stored in subfolders within the reference
-genome folder. Once the bisulfite conversion has been completed, the program will fork and launch
-two simultaneous instances of the Bowtie 2 or HISAT2 indexer (bowtie2-build or hisat2-build,
-resepctively). Be aware that the indexing process can take up to several hours; this will mainly
-depend on genome size and system resources.
+This script is supposed to convert a specified reference genome into two different bisulfite converted
+versions and index them for alignments with Bowtie 2 (default), HISAT2 or Minimap2. The first bisulfite
+genome will have all Cs converted to Ts (C->T), and the other one will have all Gs converted to As (G->A).
+Both bisulfite genomes will be stored in subfolders within the reference genome folder. Once the bisulfite
+conversion has been completed, the program will fork and launch two simultaneous instances of the Bowtie 2,
+HISAT2 or Minimap2 indexer (bowtie2-build or hisat2-build or minimap2 -d, resepctively). Be aware that the 
+indexing process can take up to several hours; this will mainly depend on genome size and system resources.
 
 The new, and still experimental, --slam mode will produce T->C and A->G converted genomes instead.
 The structure of the genome folder will remain the same as for BS-Seq data. This might, or might not,
@@ -709,9 +779,13 @@ OPTIONS:
 --bowtie2                This will create bisulfite indexes for use with Bowtie 2. Recommended for most bisulfite
                          sequencing applications (Default: ON).
 
---hisat2                 This will create bisulfite indexes for use with HISAT2. At the time of writing, this is
-                         still unchartered territory, and only recommended for specialist applications such as
-                         RNA-methylation analyses or SLAM-seq type applications (see also: --slam). (Default: OFF).
+--hisat2                 This will create bisulfite indexes for use with HISAT2. This is recommended for specialist
+                         applications such as RNA methylation analyses or SLAM-seq type applications (see also: --slam).
+                         (Default: OFF).
+
+--minimap2/--mm2         This will create bisulfite indexes for use with Minimap2 (https://github.com/lh3/minimap2).
+                         This is recommended only for specialist applications such as EM-seq with ONT reads
+                         (Oxford Nanopore Technologies). (Default: OFF).
 
 --parallel INT           Use several threads for each indexing process to speed up the genome preparation step.
                          Remember that the indexing is run twice in parallel already (for the top and bottom strand
@@ -726,7 +800,7 @@ OPTIONS:
                          to be in the range of several thousand files; the operating system can
                          only handle lists up to a certain length, and some newly assembled
                          genomes may contain 20000-500000 contigs of scaffold files which do exceed
-                         this list length limit).
+                         this list length limit). Does not work in conjunction with --minimap2.
 
 --genomic_composition    Calculate and extract the genomic sequence composition for mono and di-nucleotides
                          and write the genomic composition table 'genomic_nucleotide_frequencies.txt' to the
@@ -738,10 +812,12 @@ OPTIONS:
                          or A to G (reverse strand). The folder structure and rest of the indexing process is currently
                          exactly the same as for bisulfite sequences, but this might change at some point. This means
                          that a genome prepared in --slam mode is currently indistinguishable from a true Bisulfite Genome,
-                         so please make sure you name the genome folder appropriately to avoid confusion.
+                         so please make sure you name the genome folder appropriately to avoid confusion. Does not 
+                         work in conjunction with --minimap2.
 
 --large-index            Force generated index to be 'large', even if reference has fewer than 4 billion nucleotides. At the time
-                         of writing this is required for parallel processing of VERY LARGE genomes (e.g. the axolotl)
+                         of writing this is required for parallel processing of VERY LARGE genomes (e.g. the axolotl). Does not
+                         work in conjunction with --minimap2.
 
 ARGUMENTS:
 
@@ -750,7 +826,7 @@ ARGUMENTS:
                          .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 14 April 2019.
+This script was last modified on 10 November 2020.
 
 HOW_TO
 }
