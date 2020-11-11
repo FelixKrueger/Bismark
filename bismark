@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.23.0';
+my $bismark_version = 'v0.23.0dev';
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
 
@@ -38,7 +38,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -6750,6 +6750,10 @@ sub ensure_the_aligner_is_working{
 		if ($aligner eq 'Bowtie 2'){
 			$aligner_version =~ /bowtie.*\s+version\s+(\d+\.\d+\.\d+)/;
 			$aligner_version = $1;
+		}
+		elsif($aligner eq 'minimap2'){
+			# warn "$aligner_version\n";
+			# minimap2 reports only the version number
 		}	
 		else{
 			$aligner_version =~ /hisat2.*\s+version\s+(\d+\.\d+\.\d+)/;
@@ -6920,6 +6924,7 @@ sub process_command_line{
 	my $mates2;
 	my $path_to_bowtie2;
 	my $path_to_hisat2;
+	my $path_to_minimap2;
 	my $fastq;
 	my $fasta;
 	my $skip;
@@ -6939,6 +6944,7 @@ sub process_command_line{
 	my $output_dir;
 	my $bowtie2;
 	my $hisat2;
+	my $mm2; # Minimap2
 	my $sam_no_hd;
 	my $seed_extension_fails;
 	my $reseed_repetitive_seeds;
@@ -6980,6 +6986,7 @@ sub process_command_line{
 				 '2=s'                     => \$mates2,
 				 'path_to_bowtie2=s'       => \$path_to_bowtie2,
 				 'path_to_hisat2=s'        => \$path_to_hisat2,
+				 'path_to_minimap2=s'      => \$path_to_minimap2,
 				 'genome_folder=s'         => \$genome_folder,
 				 'f|fasta'                 => \$fasta,
 				 'q|fastq'                 => \$fastq,
@@ -6999,6 +7006,7 @@ sub process_command_line{
 				 'o|output_dir=s'          => \$output_dir,
 				 'bowtie2'                 => \$bowtie2,
 				 'hisat2'                  => \$hisat2,
+				 'minimap2|mm2'            => \$mm2,
 				 'sam-no-hd'               => \$sam_no_hd,
 				 'D=i'                     => \$seed_extension_fails,
 				 'R=i'                     => \$reseed_repetitive_seeds,
@@ -7052,7 +7060,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                 https://github.com/FelixKrueger/Bismark
 
@@ -7070,15 +7078,29 @@ VERSION
 		if ($bowtie2){
 			die "You may not select both --hisat2 and --bowtie2. Make your pick! [default is Bowtie 2]\n";
 		}
+		if ($mm2){
+			die "You may not select both --hisat2 and --minimap2. Make your pick!\n";
+		}
 		$bowtie2 = 0;
+		$hisat2  = 1;
+		$mm2     = 0;
 	}
-	else{ # Bowtie 2 is the default mode (as of 27 July 2015)
+	elsif($mm2){
+		if ($bowtie2){
+			die "You may not select both --minimap2 and --bowtie2. Make your pick! [default is Bowtie 2]\n";
+		}
+		$bowtie2 = 0;
+		$hisat2  = 0;
+		$mm2     = 1;
+	}
+	else{ # Bowtie 2 is the default mode
 		$bowtie2 = 1;
-		$hisat2 = 0;
+		$hisat2  = 0;
+		$mm2     = 0;
 	}
 
 	unless ($sam_no_hd){
-		$sam_no_hd =0;
+		$sam_no_hd = 0;
 	}
 
 	
@@ -7119,18 +7141,41 @@ VERSION
 			warn "Path to HISAT2 specified as: $path_to_hisat2\n";
 		}
 	}
+	elsif($mm2){
+		if ($path_to_minimap2){
+			unless ($path_to_minimap2 =~ /\/$/){
+				$path_to_minimap2 =~ s/$/\//;
+			}
+			
+			if (-d $path_to_minimap2){
+				$path_to_minimap2 = "${path_to_minimap2}minimap2";
+			}
+			else{
+				die "The path to minimap2 provided ($path_to_minimap2) is invalid (it MUST be a directory)!\n";
+			}
+			warn "Path to minimap2 specified as: $path_to_minimap2\n";
+		}
+		else{
+			$path_to_minimap2 = 'minimap2';
+			warn "Minimap2 is assumed to be in PATH, using: '$path_to_minimap2'\n";
+		}
+	}
 	else{
-		die "We require either Bowtie 2, or HISAT2 mode...";
+		die "We require either Bowtie 2, HISAT2  or minimap2 mode...";
 	}
 	
 	### testing if the aligners appear to be working
 	my $aligner_version;
 	if ($bowtie2){
 		$aligner_version = ensure_the_aligner_is_working($path_to_bowtie2,'Bowtie 2');
+	}
+	elsif($mm2){
+		$aligner_version = ensure_the_aligner_is_working($path_to_minimap2,'minimap2');
 	}	
 	else{
 		$aligner_version = ensure_the_aligner_is_working($path_to_hisat2,'HISAT2');
 	}
+
 
 	### SAM/CRAM/BAM format
 	if ($sam){
@@ -7933,7 +7978,7 @@ VERSION
 		}
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2);
 }
 
 
