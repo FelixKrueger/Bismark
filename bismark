@@ -6757,9 +6757,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
 	}
 
 	foreach my $fh (@fhs) {
-		# TODO: re-enable these options my $mm2_options = $aligner_options;
-
-		my $mm2_options = '-ax sr'; # accurate short reads
+		my $mm2_options = $aligner_options;
 
 		# Map short accurate genomic reads
 		# minimap2 -ax sr ref.fa reads-se.fq > aln.sam           # single-end alignment
@@ -7064,8 +7062,9 @@ sub process_command_line{
 	my $known_splices;
 	my $icpc;
 	my $local;
+	my $mm2_short_read;
 
-	my $command_line = GetOptions ('help|man'                => \$help,
+	my $command_line = GetOptions ('help'  => \$help,
 				 '1=s'                     => \$mates1,
 				 '2=s'                     => \$mates2,
 				 'path_to_bowtie2=s'       => \$path_to_bowtie2,
@@ -7125,6 +7124,7 @@ sub process_command_line{
 				 'no-spliced-alignment'    => \$nosplice,
 				 'icpc'                    => \$icpc,
 				 'local'                   => \$local,
+				 'mm2_short_read'          => \$mm2_short_read,
 				);
 
 
@@ -8071,6 +8071,60 @@ VERSION
 		}
 	}
 	
+	### MINIMAP2 OPTIONS
+
+	if ($mm2){
+
+		# Minimap requires a completely different set of options, let's start with a clean slate.
+		@aligner_options = ();
+
+		# -a           output in the SAM format (PAF by default)	
+		push @aligner_options,'-a'; 
+
+		# Output an MD tag
+		push @aligner_options,'--MD'; 
+
+ 		# Not sure yet how to handle muliple threads per alignment. Let's be cautious initially
+		# -t INT       number of threads [3]
+		push @aligner_options,'-t 1'; 
+
+		if ($mm2_short_read){
+			# Preset:
+    		# -x STR       preset (always applied before other options; see minimap2.1 for details) []
+			#          - sr: genomic short-read mapping
+			#          - map-pb/map-ont: PacBio/Nanopore vs reference mapping          
+			#          - splice: long-read spliced alignment
+		
+			push @aligner_options,'-x sr'; 	
+		}
+		else{
+			# otherwise we will assume that the default mode is Nanopore vs reference mapping for now
+			push @aligner_options,'-x map-ont';
+		}
+		# Let's keep these options in mind		
+		# -L           write CIGAR with >65535 ops at the CG tag
+		# --cs[=STR]   output the cs tag; STR is 'short' (if absent) or 'long' [none]
+		# --eqx        write =/X CIGAR operators
+		# -Y           use soft clipping for supplementary alignments
+		# -K NUM       minibatch size for mapping [500M]
+	
+	  
+        
+        
+
+
+		###	NO SOFTCLIPPING - this is now negotiable
+		# if ($local){
+		# 	# warn "[EXPERIMENTAL]: local alignments with HISAT2\n\n|||||||||||||||||||\n\n";
+		# 	push @aligner_options,'--omit-sec-seq'; 
+		# }
+		# else{
+		# 	push @aligner_options,'--no-softclip --omit-sec-seq'; ## endToEnd alignments - default
+		# }
+	}
+
+
+
 	### SUMMARY OF ALL ALIGNER OPTIONS
 	my $aligner_options = join (' ',@aligner_options);
 	warn "Summary of all aligner options:\t$aligner_options\n"; sleep(2);
@@ -8078,6 +8132,9 @@ VERSION
 	
 	if ($slam){
 		die "The (experimental) SLAM-seq mode currently only works with FastQ files. Please re-specify\n\n" unless ($fastq);
+		if ($mm2){
+			die "Options --slam and --minimap2 do not work together. Please stop wanting that!\n\n";
+		}
 	}
 	
 	if ($icpc){
@@ -8087,6 +8144,10 @@ VERSION
 		if ($local){
 			die "The option --non_bs_mm is only available for end-to-end alignments\n\n";
 		}
+		if ($mm2){
+			die "The option --non_bs_mm is only available for end-to-end alignments (and doesn't work with minimap2)\n\n";
+		}
+
 	}
 	
 	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$path_to_minimap2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2);

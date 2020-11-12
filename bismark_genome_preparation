@@ -105,9 +105,12 @@ else{
 
 if (defined $parallel){
     die "--parallel should have a value of 2 or more. Please respecify\n\n" unless ($parallel > 1);
-
     warn "Using $parallel threads for the top and bottom strand indexing processes each, so using ",$parallel*2," cores in total\n"; sleep(1);
 }
+else{
+	$parallel = 1;
+}
+
 if ($slam){
 	warn "This is a SLAM-seq test version. Proceed with care!\n\n"; sleep(3);
 }	
@@ -130,9 +133,9 @@ elsif($mm2){
 	if ($bowtie2){
 		die "You may not select both --minimap2 and --bowtie2. Make your pick! (default is Bowtie 2)\n";
  	}
-	warn "Using Minimap2 to index the genome(s)!\n\n"; sleep(3);
 	$bowtie2 = 0;
 	$hisat2  = 0;
+	$verbose and print "Aligner to be used: >> Minimap2 <<\n";
 }
 else{ # Bowtie 2 the default mode
     if ($bowtie2){
