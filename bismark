@@ -38,7 +38,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$path_to_minimap2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -546,6 +546,10 @@ foreach my $filename (@filenames){
 			}
 			elsif ($bowtie2){
 				single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
+			}
+			elsif($mm2){
+				# warn "Now kicking off the single-end Minimap2 alignments\n\n"; sleep(3);
+				single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 ($C_to_T_infile,$G_to_A_infile);
 			}
 			else{ # HISAT2
 				single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 ($C_to_T_infile,$G_to_A_infile);
@@ -6729,6 +6733,86 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 {
 	}
 }
 
+# 11 11 2020
+### Minimap2   | SINGLE-END | FASTQ
+sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
+
+	my ($C_to_T_infile,$G_to_A_infile) = @_;
+	if ($directional){
+		warn "Input file is $C_to_T_infile (FastQ)\n\n";
+	}
+	elsif ($pbat){
+		warn "Input file is $G_to_A_infile (FastQ)\n\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
+	}
+
+	## Now starting up to 4 instances of Minimap2 feeding in the converted sequence files, reading in the first line of its output, and storing it
+	if ($directional or $pbat){
+		warn "Now running 2 instances of minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+
+	foreach my $fh (@fhs) {
+		# TODO: re-enable these options my $mm2_options = $aligner_options;
+
+		my $mm2_options = '-ax sr'; # accurate short reads
+
+		# Map short accurate genomic reads
+		# minimap2 -ax sr ref.fa reads-se.fq > aln.sam           # single-end alignment
+		# minimap2 -ax sr ref.fa read1.fq read2.fq > aln.sam     # paired-end alignment
+		# minimap2 -ax sr ref.fa reads-interleaved.fq > aln.sam  # paired-end alignment
+		
+		# if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+		# 	$mm2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		# }
+		# else {
+		# 	$mm2_options .= ' --nofw';
+		# }
+		
+		warn "Now starting >> minimap2 << for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $mm2_options)\n";
+		# warn "Using minimap2 index: $fh->{bisulfiteIndex}\n\n";
+		
+		# The minimap index requires the entire name of the index (including .mmi)
+		my $mmi = $fh->{bisulfiteIndex}.".mmi";
+		warn "Using minimap2 index: $mmi\n\n";
+		# warn "Minimap2 command line: $path_to_minmap2 $mm2_options $mmi $temp_dir$fh->{inputfile}\n";
+		open ($fh->{fh},"$path_to_minimap2 $mm2_options $mmi $temp_dir$fh->{inputfile} |") or die "Can't open pipe to minimap2: $!";
+		### Minimap2 outputs SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			# warn "$_\n";
+			# sleep(1);
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else {
+				last;
+			}
+		}
+
+		# HISAT2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+		if ($_) {
+			chomp;
+			my $id = (split(/\t/))[0]; # this is the first element of the HISAT2 output (= the sequence identifier)
+			$fh->{last_seq_id} = $id;
+			$fh->{last_line} = $_;
+			warn "Found first alignment:\t$fh->{last_line}\n";
+			warn "storing $id and\n$_\n";
+		}
+		# otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line} = undef;
+		}
+	}
+
+	warn "So far, so good\n"; sleep(5);
+}
 
 sub ensure_the_aligner_is_working{
 
@@ -7200,7 +7284,7 @@ VERSION
 			}
 		}
 		else{
-		warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
+			warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
 		}
 	}
 	else{
@@ -7257,18 +7341,18 @@ VERSION
 
 	### OPTION AMBIGUOUS BAM
 	if ($ambig_bam){
-		# this option simply outputs the current alignment to a file]
+		# this option simply outputs the current alignment to a file
 	}
-
 
 	####################################
 	### PROCESSING ARGUMENTS
 
 	### GENOME FOLDER
-	if (defined $genome_folder){ # 25 11 2015 The genome folder may now also be defined with the option --genome_folder
+	if (defined $genome_folder){ # the genome folder may be defined with the option --genome_folder
 		# warn "Genome folder specified with --genome_folder $genome_folder\n";
 	}
 	else{
+		# else the first argument is assumed to be the genome folder
 		$genome_folder = shift @ARGV; # mandatory
 	}
 
@@ -7303,6 +7387,8 @@ VERSION
 
 	my $hisat2_small_index_present = 1;
 	my $hisat2_large_index_present = 1;
+	 
+	my $mm2_index_present = 1;
 
 	if ($bowtie2){
 		### Checking for small indixes first (ending in .bt2)
@@ -7365,6 +7451,31 @@ VERSION
 			}
 			else{
 				die "Failed to detect either a standard (.bt2) or 64-bit (.bt2l) Bowtie 2 index for the genome specified. Please run the bismark_genome_preparation before launching Bismark\n\n";
+			}
+		}
+	}
+	if ($mm2){
+		### minimap2 indexes end in .mmi
+
+		# checking the integrity of $CT_dir
+		chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+
+		my @CT_mm2_index = ('BS_CT.mmi');
+		foreach my $file (@CT_mm2_index){
+			unless (-f $file){
+				warn "The minimap2 index of the C->T converted genome seems to be non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
+				$mm2_index_present = 0;
+			}
+		}
+    
+		# checking the integrity of $GA_dir
+		chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+		my @GA_mm2_index = ('BS_GA.mmi');
+
+		foreach my $file(@GA_mm2_index){
+			unless (-f $file){
+				warn "The minimap2 index of the G->A converted genome seems to be non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
+				$mm2_index_present = 0;
 			}
 		}
 	}
@@ -7463,7 +7574,7 @@ VERSION
 		warn "Skipping the first $skip reads from the input file\n";
 		# push @aligner_options,"-s $skip";
 	}
-
+	
 	### UPTO
 	if ($qupto){
 		warn "Processing sequences up to read no. $qupto from the input file\n";
@@ -7978,7 +8089,7 @@ VERSION
 		}
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$path_to_minimap2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2);
 }
 
 
