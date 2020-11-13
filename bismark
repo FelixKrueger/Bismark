@@ -1486,6 +1486,9 @@ sub start_methylation_call_procedure_single_ends {
 	if ($bowtie2){ # SAM format is the default for Bowtie 2
 		$outfile =~ s/$/_bismark_bt2.sam/;
 	}
+	elsif($mm2){  # SAM output is the default for minimap2
+		$outfile =~ s/$/_bismark_mm2.sam/;
+	}
 	else{ # SAM output is the default for HISAT2
 		$outfile =~ s/$/_bismark_hisat2.sam/;
 	}
@@ -1505,7 +1508,7 @@ sub start_methylation_call_procedure_single_ends {
 
 	if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
 		### for multicore processing we write out BAM files by default and merge them together as a single CRAM file in the merging step later on.
-		### This avoids having to change all the the file endings on the way
+		### This avoids having to change all the file endings on the way
 		if($multicore > 1){
 			$outfile =~ s/sam$/bam/;
 			open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
@@ -1541,6 +1544,9 @@ sub start_methylation_call_procedure_single_ends {
 	}
 	if ($bowtie2){
 		$reportfile =~ s/$/_bismark_bt2_SE_report.txt/;
+	}
+	elsif($mm2){
+		$reportfile =~ s/$/_bismark_mm2_SE_report.txt/;
 	}
 	else{
 		$reportfile =~ s/$/_bismark_hisat2_SE_report.txt/;
@@ -2312,6 +2318,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 	my $count = 0;
 
 	warn "\nReading in the sequence file $sequence_file\n";
+
 	while (1) {
 		my $identifier = <IN>;
 		my $sequence = <IN>;
@@ -6770,7 +6777,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
 		# else {
 		# 	$mm2_options .= ' --nofw';
 		# }
-		
+
 		warn "Now starting >> minimap2 << for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $mm2_options)\n";
 		# warn "Using minimap2 index: $fh->{bisulfiteIndex}\n\n";
 		
@@ -6808,8 +6815,6 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
 			$fh->{last_line} = undef;
 		}
 	}
-
-	warn "So far, so good\n"; sleep(5);
 }
 
 sub ensure_the_aligner_is_working{
