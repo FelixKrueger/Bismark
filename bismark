@@ -38,7 +38,11 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$path_to_minimap2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$path_to_minimap2,$sequence_file_format,$aligner_options,
+$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,
+$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,
+$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,
+$aligner_version,$slam,$icpc,$local,$mm2,$maximum_length_cutoff) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -5486,6 +5490,11 @@ sub biTransformFastQFiles {
 		}
 
 		$sequence = uc$sequence; # make input file case insensitive
+		# $maximum_length_cutoff  defined globally
+		if (length$sequence > $maximum_length_cutoff){
+			print "Removing this sequence with length ",length$sequence,"\n";
+			next;
+		}
 
 		# detecting if the input file contains tab stops, as this is likely to result in no alignments
 		if (index($identifier,"\t") != -1){
@@ -7189,6 +7198,7 @@ sub process_command_line{
 	my $icpc;
 	my $local;
 	my $mm2_short_read;
+	my $maximum_length_cutoff;
 
 	my $command_line = GetOptions ('help'  => \$help,
 				 '1=s'                     => \$mates1,
@@ -7251,6 +7261,7 @@ sub process_command_line{
 				 'icpc'                    => \$icpc,
 				 'local'                   => \$local,
 				 'mm2_short_read'          => \$mm2_short_read,
+				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
 				);
 
 
@@ -8202,8 +8213,24 @@ VERSION
 	if ($mm2_short_read){
 		die "You cannot specify minimap2 options (--mm2_short_reads) unless you also used --minimap2. Please respecify!\n\n" unless $mm2;
 	}
+	if ($maximum_length_cutoff){
+		die "You cannot specify minimap2 options (--mm2_maximum_length) unless you also used --minimap2. Please respecify!\n\n" unless $mm2;
+	}
 
 	if ($mm2){
+		
+		if (defined $maximum_length_cutoff){
+			if ($maximum_length_cutoff < 100){
+				die "Please select a sensible maximum sequence length cutoff (currently 100-100,000 bp)\n";
+			}
+			if ($maximum_length_cutoff > 100000){
+				die "Please select a sensible maximum sequence length cutoff (currently 100-100,000 bp)\n";
+			}
+		}
+		else{
+			$maximum_length_cutoff = 10000; # default
+		}
+		warn "Using a maximum length cutoff of $maximum_length_cutoff bp\n";
 
 		# Minimap requires a completely different set of options, let's start with a clean slate.
 		@aligner_options = ();
@@ -8280,7 +8307,11 @@ VERSION
 
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$path_to_minimap2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$mm2);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$path_to_minimap2,$sequence_format,$aligner_options,
+	$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,
+	$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,
+	$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,
+	$aligner_version,$slam,$icpc,$local,$mm2,$maximum_length_cutoff);
 }
 
 
