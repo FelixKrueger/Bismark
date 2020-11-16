@@ -547,6 +547,9 @@ foreach my $filename (@filenames){
 				if ($bowtie2){ # as of version 0.10.2 we also support PBAT alignments for Bowtie 2
 					single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 (undef,$G_to_A_infile);
 				}
+				elsif($mm2){
+					single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 (undef,$G_to_A_infile);
+				}
 				else{ # HISAT2
 					single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 (undef,$G_to_A_infile);
 				}
@@ -8243,7 +8246,7 @@ VERSION
 
  		# Not sure yet how to handle muliple threads per alignment. Let's be cautious initially
 		# -t INT       number of threads [3]
-		push @aligner_options,'-t 1'; 
+		push @aligner_options,'-t 3'; 
 
 		if ($mm2_short_read){
 			# Preset:
@@ -9835,6 +9838,8 @@ MINIMAP2-SPECIFIC OPTIONS:
                          -k21 -w11 --sr --frag=yes -A2 -B8 -O12,32 -E2,1 -r50 -p.5 -N20 -f1000,5000 -n2 -m20 -s40 -g200 -2K50m --heap-sort=yes --secondary=no
                          Default: OFF.
 
+--mm2_maximum_length <int>   Maximum length cutoff for very long sequences (currently allowed 100-100,000 bp). Default: 10000.
+
 
 Bismark BAM/SAM OUTPUT (default):
 
@@ -9859,6 +9864,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 26 July 2019
+Last modified on 16 November 2020
 HOW_TO
 }
