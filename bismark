@@ -650,6 +650,16 @@ foreach my $filename (@filenames){
 							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
 						}	
 					}
+					elsif($mm2){
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_mm22.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_mm2_SE_report.txt";
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_mm2.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_mm2_SE_report.txt";
+						}	
+					}
 					else{ # HISAT2
 						if ($gzip){
 							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2.bam";
@@ -697,6 +707,16 @@ foreach my $filename (@filenames){
 							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.bam";
 							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
 							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.ambig.bam";         # only for Bowtie 2
+						}
+					}
+					elsif($mm2){
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_mm2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_mm2_PE_report.txt";
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_mm2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_mm2_PE_report.txt";
 						}
 					}
 					else{
@@ -920,6 +940,9 @@ sub merge_individual_mapping_reports{
 		if ($bowtie2){
 			$report_file .= '_bismark_bt2_SE_report.txt';
 		}
+		elsif($mm2){
+			$report_file .= '_bismark_mm2_SE_report.txt';
+		}
 		else{
 			$report_file .= '_bismark_hisat2_SE_report.txt';
 		}
@@ -927,6 +950,9 @@ sub merge_individual_mapping_reports{
 	else{
 		if ($bowtie2){
 			$report_file .= '_bismark_bt2_PE_report.txt';
+		}
+		elsif($mm2){
+			$report_file .= '_bismark_mm2_PE_report.txt';
 		}
 		else{
 			$report_file .= '_bismark_hisat2_PE_report.txt';
@@ -1329,7 +1355,7 @@ sub merge_individual_BAM_files{
   my ($tempbam,$original_filename,$single_end) = @_;
   my $merged_name = $original_filename;
 
-  #warn "merged name is: $merged_name\n";
+  # warn "merged name is: $merged_name\n";
   $merged_name =~ s/.*\///; # deleting path information
   # warn "merged name is: $merged_name\n";
   $merged_name =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
@@ -1347,6 +1373,9 @@ sub merge_individual_BAM_files{
     if ($bowtie2){ # BAM format is the default for Bowtie 2
       $merged_name .= '_bismark_bt2.bam';
     }
+	elsif($mm2){  
+      $merged_name .= '_bismark_mm2.bam';
+    }
     else{          # BAM is the default output
       $merged_name .= '_bismark_hisat2.bam';
     }
@@ -1358,6 +1387,9 @@ sub merge_individual_BAM_files{
   else{
     if ($bowtie2){ # BAM format is the default for Bowtie 2
       $merged_name .= '_bismark_bt2_pe.bam';
+    }
+	elsif($mm2){  
+      $merged_name .= '_bismark_mm2_pe.bam';
     }
     else{          # BAM is the default output
       $merged_name .= '_bismark_hisat2_pe.bam';
