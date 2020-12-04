@@ -163,20 +163,19 @@ a) genuine methylation in non-CG context, b) bisulfite non-conversion and c) mis
 Other organisms, such as plants, may display elevated and different levels of methylation in non-CG context, so judging the conversion efficiency in this way may not be possible.
 
 **Look for lowest methylation genome-wide elsewhere**
-, else some people look at reads from the MT, or within CpG islands. 
+
+It may also be possible to look at more specific regions of the genome to find the lowest methylation possible. This could be CpG islands (which tend be be lowly methylated even in CpG context), the mitochondria (chrMT/chrM), or in plants reads aligned to the chloroplast sequence (which should not be methylated either). Whether mitochondria can be regarded as completely unmethylated or displaying some forms of methylation is probably still debatable... On top of this there could be tertiary structures or other conversion artefacts preventing some residues from getting bisulfite converted, as has been nicely demonstrated for the [methylation of mitochondria](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5671948/).
 
 
 **Spike-in controls**
 
+Some experimentalists choose to add spike-in controls into their experiment to measure the rate of (non-)conversion in their experiment. This may include unmethylated (e.g. Lambda, phiX, M13) or methylated controls (e.g. in-vitro methylated pUC19), or even oligonucleotides with known methylation states.
 
-Finally regarding the methylation state, I think that for mammalian systems your recommendation could be useful, but for plants systems not so much, because of they CHH and CHG potential methylation. Maybe I can use the chloroplast genome and map the reads. (chloroplast DNA doesn't get methylated)
+These spike-in controls do normally not align to any other genome, so one can index a spike-in genome and run a separate alignment to the spike-in genome in addition to the alignment against your genome of interest (without having to worry about cross-mapping artefacts). 
 
-Or even just oligoes with known conversion state
+Instead of running two consecutive rounds of alignments, one to the genome of interest and then second one against the spike-in sequence, another possibility would be to include the spike-in sequence as an additional 'chromosome' to the genome of interest, and then carry our the genome indexing once more. In this way you should be able to get both genomic alignments and conversion rates in a single step. 
 
-**One thing to add regarding spike-ins:** 
+This is not to say that the spike-in sequences will always be a useful control, almost more often than not the spike-ins seem to behave in a slightly weird way, e.g. the conversion efficiencies appear to be (slighlty) worse than what one sees for methylation in non-CG context of the genome of interest. In the end, one can often only take the values of the spike-in controls with a pinch of salt, acknowledge them - and move on regardless :)
 
-Instead of running two consecutive rounds of alignments, one to the genome of interest and then second one against the spike-in sequence, another possibility would be to include the spike-in sequence (e.g. lambda, phiX, M13 etc...) as an additional 'chromosome' to the genome of interest, and then carry our the genome indexing once more. In this way you should be able to get both alignments and conversion rates in a single step. 
-
-This is not to say that the spike-ins will be a useful control, almost more often than not the spike-ins seem to behave in a slightly weird way, e.g. the conversion efficiencies appear to be worse than what one sees for methylation in non-CG context of the genome of interest. This could have to do with tertiary structures or other conversion artefacts, as has been nicely demonstrated for the [methylation of mitochondria](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5671948/).
 
 ============
