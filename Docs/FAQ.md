@@ -152,7 +152,7 @@ The methylation state of cytosines which were called as methylated is generally 
  - bisulfite non-conversion
  - mis-mapping events (which tend to result in random, garbage methylation calls) 
 
-Generally, the bisulfite conversion of unmethylated cytosine residues should be as complete as possible, so that any cytosine tha is found non-converted can be assumed to be really methylated. However, if the bisulfite conversion was for whatever reason not very efficient (e.g. wrong temperature, incubation time too short, wrong salt concentrations, etc.) one has to expect spurious methylation calls, and hence noise in your results.
+Generally, the bisulfite conversion of unmethylated cytosine residues should be as complete as possible, so that any cytosine that is found non-converted can be assumed to be really methylated. However, if the bisulfite conversion was for whatever reason not very efficient (e.g. wrong temperature, incubation time too short, wrong salt concentrations, etc.) one has to expect spurious methylation calls, and hence noise in your results.
 
 If the bisulfite coversion rate is found to be quite high, one might opt to repeat the experiment altogether (if that is possible at all) rather than dealing with potentially quite noisy data. If repeating the experiment is not an option, one is frankly somehwat limited with what you can do downstream to alleviate this. One could try to identify and remove reads that completely 'evaded' conversion using [`methylation_consistency`](https://github.com/FelixKrueger/Bismark/tree/master/Docs#x-concordance-of-methylation-calls-across-bisulfite-reads), or bear the non-conversion value in mind when interpreting the data. Simply subtracting the conversion error from the results doesn't seem to be a great option, as in our experience different contexts are affected differently (CpG methylation seems to be less affected than non-CG content, probably because it tends to have more methylation generally?)
 
@@ -161,9 +161,9 @@ To judge the bisulfite conversion rate and gauge whether this is likely a factor
 
 **Look for lowest methylation genome-wide in non-CG context**
 
-If you don't have any spike-in controls (see below), one could simply look at the lowest methylation levels you see anywhere in your experiment. In mammalian systems, where the rate of methylation in non-CG context is often very low \*, it may be enough to just look at the methylation levels in non-CG context. As an example, if you see a general methylation of 0.3% in non-CG context over many millions of methylation calls, then the bisulfite conversion must have been at least 99.7% efficient. 
+If you don't have any spike-in controls (see below), one could simply look at the lowest methylation levels you see anywhere in your experiment. In mammalian systems, where the rate of methylation in non-CG context is often very low (\*), it may be enough to just look at the methylation levels in non-CG context. As an example, if you see a general methylation of 0.3% in non-CG context over many millions of methylation calls, then the bisulfite conversion must have been at least 99.7% efficient. 
 
-**\*** So a value of 0.3% does not necessarily mean that this is the exact number of methylated cytosines that did not get converted (it may have been 99.95% efficient for all we know...), but it can't have been any worse. 
+**\*)** A value of 0.3% methylation in non-CG context does not necessarily mean that this is the exact number of methylated cytosines that did not get converted, see above (it may have been 99.95% efficient for all we know...), but it certainly can't have been any worse.... 
 
 Other organisms, such as plants, may display elevated and different levels of methylation in non-CG context, so judging the conversion efficiency in this way may not be possible.
 
