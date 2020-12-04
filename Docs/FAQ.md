@@ -2,13 +2,13 @@
 
 This will be a collection of fairly common issues that arise fairly regularly. Started on 03 Sept 2019
 
-[Single-cell and PBAT libraries](#issue-1)
-[Low mapping efficiency of paired-end libraries](#issue-2)
-[Context change between coverage and cytosine reports](#issue-3)
-[Bisulfite conversion efficiency](#issue-4)
+- [Single-cell and PBAT libraries](#issue-1)
+- [Low mapping efficiency of paired-end libraries](#issue-2)
+- [Context change between coverage and cytosine reports](#issue-3)
+- [Bisulfite conversion efficiency](#issue-4)
 
 
-## Issue 1
+### Issue 1
 ## Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
 
 Bisulfite sequencing based on post-bisulfite adapter tagging (PBAT), including [scBS-seq](https://www.nature.com/articles/nmeth.3035) (single-cell Bisulfite-Seq) or [scNMT-seq](https://www.nature.com/articles/s41467-018-03149-4) (single-cell nucleosome, methylation and transcription sequencing) often suffers from a number of 'issues' that one should keep in mind when processing the data:
@@ -58,7 +58,7 @@ Because of the issues described above we have traditionally aligned single-cell 
  
  
 
-## Issue 2
+### Issue 2
 ## Low mapping effiency of paired-end bisulfite-seq sample
 
 This is a question that pops up every so often, and might have been discussed in numerous issues on Github or at seqanswers.com. 
@@ -87,7 +87,7 @@ If you still have any questions, feel free to send me an email with your issues.
 
 
 
-## Issue 3
+### Issue 3
 ## Context change/discrepancy between Bismark coverage and genome-wide cytosine reports
 
 A question that comes up every so often is: "Why do some positions have a different cytosine context between the coverage 
@@ -143,12 +143,40 @@ the reference sequence. On the other hand it may also contain a few newly gained
 If you are working in `--CX` mode, or with the genome-wide report (or both), I am afraid it is a little more complicated...
 
 
-## Issue 4
+### Issue 4
 ## Bisulfite conversion rate - Considerations
 
+This comes up quite regularly, so it might be a good idea to collect some thoughts around this topic.
+
+Generally, the bisulfite conversion of unmethylated cytosine residues should be as complete as possible, so that any is non-converted can be assumed to be really methylated. If the bisulfite conversion was for whatever reason not very efficient (e.g. wrong temperature, too short incubation, wrong salt concentrations, etc.) one has to expect spurious methylation calls, and hence noise in your results.
+
+To judge bisulfite conversion one has a few options. 
 
 
+**Look for lowest methylation genome-wide in non-CG context**
+
+If you don't have any spike-in controls (see below), one could simply look at the lowest methylation levels you see anywhere in your experiment. In mammalian systems, where the rate of methylation in non-CG context is often very low \*, it may be enough to just look at the methylation levels in non-CG context. As an example, if you see a general methylation of 0.3% in non-CG context over many millions of methylation calls, then the bisulfite conversion must have been at least 99.7% efficient. 
+
+**\*** One should probably mention that the average methylation level of cytosines in non-CG context is generally a mix of at least three factors: 
+a) genuine methylation in non-CG context, b) bisulfite non-conversion and c) mis-mapping events which will simply result in garbage methylation calls. So a value of 0.3% does not necessarily mean that this is the exact number of methylated cytosines that did not get converted (it may have been 99.95% efficient for all we know...), but it can't have been any worse. 
+
+Other organisms, such as plants, may display elevated and different levels of methylation in non-CG context, so judging the conversion efficiency in this way may not be possible.
+
+**Look for lowest methylation genome-wide elsewhere**
+, else some people look at reads from the MT, or within CpG islands. 
 
 
+**Spike-in controls**
+
+
+Finally regarding the methylation state, I think that for mammalian systems your recommendation could be useful, but for plants systems not so much, because of they CHH and CHG potential methylation. Maybe I can use the chloroplast genome and map the reads. (chloroplast DNA doesn't get methylated)
+
+Or even just oligoes with known conversion state
+
+**One thing to add regarding spike-ins:** 
+
+Instead of running two consecutive rounds of alignments, one to the genome of interest and then second one against the spike-in sequence, another possibility would be to include the spike-in sequence (e.g. lambda, phiX, M13 etc...) as an additional 'chromosome' to the genome of interest, and then carry our the genome indexing once more. In this way you should be able to get both alignments and conversion rates in a single step. 
+
+This is not to say that the spike-ins will be a useful control, almost more often than not the spike-ins seem to behave in a slightly weird way, e.g. the conversion efficiencies appear to be worse than what one sees for methylation in non-CG context of the genome of interest. This could have to do with tertiary structures or other conversion artefacts, as has been nicely demonstrated for the [methylation of mitochondria](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5671948/).
 
 ============
