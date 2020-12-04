@@ -2,7 +2,14 @@
 
 This will be a collection of fairly common issues that arise fairly regularly. Started on 03 Sept 2019
 
-## Issue 1) Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
+[Single-cell and PBAT libraries](#issue-1)
+[Low mapping efficiency of paired-end libraries](#issue-2)
+[Context change between coverage and cytosine reports](#issue-3)
+[Bisulfite conversion efficiency](#issue-4)
+
+
+## Issue 1
+## Thoughts and considerations regarding single-cell and PBAT libraries (September 18, 2019).
 
 Bisulfite sequencing based on post-bisulfite adapter tagging (PBAT), including [scBS-seq](https://www.nature.com/articles/nmeth.3035) (single-cell Bisulfite-Seq) or [scNMT-seq](https://www.nature.com/articles/s41467-018-03149-4) (single-cell nucleosome, methylation and transcription sequencing) often suffers from a number of 'issues' that one should keep in mind when processing the data:
 
@@ -51,7 +58,8 @@ Because of the issues described above we have traditionally aligned single-cell 
  
  
 
-## Issue 2) Low mapping effiency of paired-end bisulfite-seq sample
+## Issue 2
+## Low mapping effiency of paired-end bisulfite-seq sample
 
 This is a question that pops up every so often, and might have been discussed in numerous issues on Github or at seqanswers.com. 
 
@@ -79,7 +87,8 @@ If you still have any questions, feel free to send me an email with your issues.
 
 
 
-## Issue 3) Context change/discrepancy between Bismark coverage and genome-wide cytosine reports
+## Issue 3
+## Context change/discrepancy between Bismark coverage and genome-wide cytosine reports
 
 A question that comes up every so often is: "Why do some positions have a different cytosine context between the coverage 
 and genome-wide cytosine reports produced by `coverage2cytosine`? In rare(r) cases, the same position can even be present 
@@ -133,3 +142,13 @@ the reference sequence. On the other hand it may also contain a few newly gained
 
 If you are working in `--CX` mode, or with the genome-wide report (or both), I am afraid it is a little more complicated...
 
+
+## Issue 4
+## Bisulfite conversion rate - Considerations
+
+
+
+
+
+
+============
