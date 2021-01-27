@@ -6,7 +6,7 @@ use Getopt::Long;
 $|++;
 
 
-## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -40,8 +40,8 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.23.0';
-my $last_modified = "14 April 2019";
+my $bismark_version = 'v0.23.0dev';
+my $last_modified = "27 Jan 2021";
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
 			'help'                => \$help,
@@ -533,7 +533,7 @@ sub create_bisulfite_genome_folders{
 	}
 	### if there aren't any genomic files with the extension .fa, .fa.gz or .fasta we will look for files with the extension .fasta.gz
 	unless (@filenames){
-		@filenames =  <*.fasta>;
+		@filenames =  <*.fasta.gz>;
 	}
 	unless (@filenames){
 		die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
@@ -750,7 +750,7 @@ ARGUMENTS:
                          .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 14 April 2019.
+This script was last modified on 27 Jan 2021.
 
 HOW_TO
 }
