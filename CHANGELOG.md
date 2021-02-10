@@ -1,5 +1,11 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.23.0dev
+
+### filter_non_conversion
+
+- fixed global setting of `--paired` or `--single` mode. Auto-detection now works by only looking at the `@PG ID:Bismark` line of the SAM header.
+
 ## Changelog for Bismark v0.23.0 (release on 09 11 2020)
 
 - Migrated CI tests from Travis to Github Actions
@@ -8,7 +14,7 @@
 
 - the command `deduplicate_bismark --barcode *bam` now works again. Previously the output file names were accidentally all derived from the first supplied file in `--barcode` (= UMI) mode (it had been fixed for normal files in 0.22.2).
 
-- Changed the way the library auto-detection works to only look at the `@PG ID:Bismark` line of the SAM header. 
+- Changed the way the library auto-detection works by only looking at the `@PG ID:Bismark` line of the SAM header. 
 
 ### bismark_methylation_extractor / bismark2bedGraph
 
