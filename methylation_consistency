@@ -3,7 +3,7 @@ use warnings;
 use strict;
 use Getopt::Long;
 
-my $VERSION = "0.23.0";
+my $VERSION = "0.23.0dev";
 my ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path) = process_commandline();
 
 
@@ -135,7 +135,7 @@ sub process_file {
 	warn "Now processing file: $file\n     ~~~~~\n";
 	if ($file =~ /\.bam$/){
         my $return = bam_isEmpty($file);
-		warn "Return was: $return\n";
+		# warn "Return was: $return\n";
 		if ($return == 1){
 			warn "Skipping this file altogether\n";
 			return;
@@ -337,6 +337,14 @@ sub determine_mapping_type{
 			# warn "found the \@PG line:\n";
 			# warn "$_";
 
+			if ($_ =~ /ID:Bismark/){
+				# warn "This is the Bismark command we are after. Extracting the library type...\n";
+			}
+			else{
+				# warn "This isn't a the Bismark \@PG line. Moving on...\n"; sleep(1);
+				next;
+			}
+
 			if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
 					warn "Treating file as paired-end data (extracted from \@PG line)\n"; # sleep(1);
 					$paired = 1;
@@ -512,5 +520,5 @@ OPTIONS:
 --help                  Print this help information and exit
 
 
-This script was last modified on 14 11 2019
+This script was last modified on 08 03 2021
 
