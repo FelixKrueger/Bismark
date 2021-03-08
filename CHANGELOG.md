@@ -6,6 +6,11 @@
 
 - fixed global setting of `--paired` or `--single` mode. Auto-detection now works by only looking at the `@PG ID:Bismark` line of the SAM header.
 
+### methylation_consistency
+
+- Auto-detection now works by only looking at the `@PG ID:Bismark` line of the SAM header.
+- 
+
 ## Changelog for Bismark v0.23.0 (release on 09 11 2020)
 
 - Migrated CI tests from Travis to Github Actions
