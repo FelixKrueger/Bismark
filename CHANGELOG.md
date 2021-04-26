@@ -9,7 +9,10 @@
 ### methylation_consistency
 
 - Auto-detection now works by only looking at the `@PG ID:Bismark` line of the SAM header.
-- 
+
+### coverage2cytosine
+
+- Swapped the columns for count methylated and count unmethylated for the context summary report to match the header line.
 
 ## Changelog for Bismark v0.23.0 (release on 09 11 2020)
 
