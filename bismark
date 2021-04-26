@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.23.0dev';
+my $bismark_version = 'v0.23.0devmm2';
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
 
@@ -6905,7 +6905,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 {
 	}
 }
 
-# 11 11 2020
+# 23 04 2021
 ### Minimap2   | SINGLE-END | FASTQ
 sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
 
@@ -6949,8 +6949,11 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
 		# The minimap index requires the entire name of the index (including .mmi)
 		my $mmi = $fh->{bisulfiteIndex}.".mmi";
 		warn "Using minimap2 index: $mmi\n\n";
-		# warn "Minimap2 command line: $path_to_minmap2 $mm2_options $mmi $temp_dir$fh->{inputfile}\n";
-		open ($fh->{fh},"$path_to_minimap2 $mm2_options $mmi $temp_dir$fh->{inputfile} |") or die "Can't open pipe to minimap2: $!";
+		
+		my $minimap_commandline = "$path_to_minimap2 $mm2_options $mmi $temp_dir$fh->{inputfile}";
+		warn "Minimap2 command line:\n$minimap_commandline\n";
+		
+		open ($fh->{fh},"$minimap_commandline |") or die "Can't open pipe to minimap2: $!";
 		### Minimap2 outputs SAM format, so we need to skip everything until the first sequence
 		while (1){
 			$_ = $fh->{fh}->getline();
