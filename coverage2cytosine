@@ -72,7 +72,7 @@ sub print_context_summary{
 			else{
 				$perc =  "N/A";
 			}
-			print CONTEXTSUMMARY "$ubase\t$context\t$ubase$context\t$context_summary{$context}->{$ubase}->{u}\t$context_summary{$context}->{$ubase}->{m}\t$perc\n";
+			print CONTEXTSUMMARY "$ubase\t$context\t$ubase$context\t$context_summary{$context}->{$ubase}->{m}\t$context_summary{$context}->{$ubase}->{u}\t$perc\n";
 		}
 	}
 }
