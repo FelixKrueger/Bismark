@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.23.0dev
+## Changelog for Bismark v0.23.1 (release on 26 07 2021)
 
 ### filter_non_conversion
 
