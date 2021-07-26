@@ -8,7 +8,7 @@ use Carp;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.23.0';
+my $version = 'v0.23.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc) = process_commandline();
 
 ### only needed for bedGraph output
