@@ -23,6 +23,7 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+# adding --secondary=no to try to increase speed
 
 my $parent_dir = getcwd();
 my $bismark_version = 'v0.23.0devmm2';
@@ -2627,13 +2628,14 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
 }
 
-########################################
-### BOWTIE 2 // HISAT2 // SINGLE-END ###
-########################################
+####################################################
+### BOWTIE 2 // HISAT2 // MINIMAP2 // SINGLE-END ###
+####################################################
 
 sub check_results_single_end{
 	my ($sequence,$identifier,$quality_value) = @_;
 	# warn "\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\nCurrent sequence: $sequence\t$identifier\t$quality_value\n";
+	# sleep(10);
 	
 	unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
 		$quality_value = 'I'x(length$sequence);
@@ -2652,11 +2654,11 @@ sub check_results_single_end{
   
 	### reading from the Bowtie 2 output filehandles
 	foreach my $index (0..$#fhs){
-		#	if ($fhs[$index]->{last_line} =~ /\d+S/){
-			#print "Index: $index\n";
-			#print "$fhs[$index]->{last_line}\n";
-			#print "$fhs[$index]->{last_seq_id}\n";
-		#	}
+			# if ($fhs[$index]->{last_line} =~ /\d+S/){
+			# print "Index: $index\n";
+			# print "$fhs[$index]->{last_line}\n";
+			# print "$fhs[$index]->{last_seq_id}\n";
+			# }
 		### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
 		next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -2704,6 +2706,7 @@ sub check_results_single_end{
 			my @fields = split (/\t/,$fhs[$index]->{last_line});
 
 			foreach (11..$#fields){
+				#warn "$fields[$_]";
 				if ($fields[$_] =~ /AS:i:(.*)/){
 					$alignment_score = $1;
 				}
@@ -2724,7 +2727,7 @@ sub check_results_single_end{
 					}
 				}
 			}
-
+			#sleep(5);
 			my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
 			# the read will be assigned to the wrong strand which may result in incorrect methylation calls.
 			# this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
@@ -7236,6 +7239,7 @@ sub process_command_line{
 	my $icpc;
 	my $local;
 	my $mm2_short_read;
+	my $mm2_pacbio;
 	my $maximum_length_cutoff;
 
 	my $command_line = GetOptions ('help'  => \$help,
@@ -7300,6 +7304,7 @@ sub process_command_line{
 				 'local'                   => \$local,
 				 'mm2_short_read'          => \$mm2_short_read,
 				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
+				 'pacbio'                  => \$mm2_pacbio,
 				);
 
 
@@ -7319,7 +7324,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                 https://github.com/FelixKrueger/Bismark
 
@@ -8279,6 +8284,9 @@ VERSION
 		# Output an MD tag
 		push @aligner_options,'--MD'; 
 
+		# Adding --secondary=no to reduce alignment time
+		push @aligner_options,'--secondary=no'; 
+
  		# Not sure yet how to handle muliple threads per alignment. Let's be cautious initially
 		# -t INT       number of threads [3]
 		push @aligner_options,'-t 3'; 
@@ -8289,13 +8297,20 @@ VERSION
 			#          - sr: genomic short-read mapping
 			#          - map-pb/map-ont: PacBio/Nanopore vs reference mapping          
 			#          - splice: long-read spliced alignment
-		
+			warn "Using preset for short read mapping (-x sr)\n\n";
 			push @aligner_options,'-x sr'; 	
 		}
-		else{
+		elsif($mm2_pacbio){
 			# otherwise we will assume that the default mode is Nanopore vs reference mapping for now
+			warn "Using preset for PacBio mapping (-x map-pb)\n\n";
+			push @aligner_options,'-x map-pb';
+		}
+		else{
+			# otherwise we will assume that the default mode is ONT Nanopore vs reference mapping for now
+			warn "Using preset for ONT mapping (-x map-ont)\n\n";
 			push @aligner_options,'-x map-ont';
 		}
+
 		# Let's keep these options in mind		
 		# -L           write CIGAR with >65535 ops at the CG tag
 		# --cs[=STR]   output the cs tag; STR is 'short' (if absent) or 'long' [none]
@@ -8303,11 +8318,6 @@ VERSION
 		# -Y           use soft clipping for supplementary alignments
 		# -K NUM       minibatch size for mapping [500M]
 	
-	  
-        
-        
-
-
 		###	NO SOFTCLIPPING - this is now negotiable
 		# if ($local){
 		# 	# warn "[EXPERIMENTAL]: local alignments with HISAT2\n\n|||||||||||||||||||\n\n";
