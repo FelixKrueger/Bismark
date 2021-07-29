@@ -7240,6 +7240,7 @@ sub process_command_line{
 	my $local;
 	my $mm2_short_read;
 	my $mm2_pacbio;
+	my $mm2_nanopore;
 	my $maximum_length_cutoff;
 
 	my $command_line = GetOptions ('help'  => \$help,
@@ -7304,7 +7305,8 @@ sub process_command_line{
 				 'local'                   => \$local,
 				 'mm2_short_read'          => \$mm2_short_read,
 				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
-				 'pacbio'                  => \$mm2_pacbio,
+				 'mm2_pacbio|pacbio'       => \$mm2_pacbio,
+				 'mm2_nanopore|nanopore'   => \$mm2_nanopore,
 				);
 
 
@@ -7323,7 +7325,7 @@ sub process_command_line{
 
           Bismark - Bisulfite Mapper and Methylation Caller.
 
-                       Bismark Version: $bismark_version
+                       Bismark Version: $bismark_version - MM2 dev
         Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                 https://github.com/FelixKrueger/Bismark
@@ -8253,15 +8255,22 @@ VERSION
 	
 	### MINIMAP2 OPTIONS
 
-	if ($mm2_short_read){
-		die "You cannot specify minimap2 options (--mm2_short_reads) unless you also used --minimap2. Please respecify!\n\n" unless $mm2;
-	}
-	if ($maximum_length_cutoff){
-		die "You cannot specify minimap2 options (--mm2_maximum_length) unless you also used --minimap2. Please respecify!\n\n" unless $mm2;
+	unless ($mm2){
+		if ($mm2_short_read){
+			die "You cannot specify minimap2 options (--mm2_short_read) unless you also use --minimap2. Please respecify!\n\n";
+		}
+		if ($maximum_length_cutoff){
+			die "You cannot specify minimap2 options (--mm2_maximum_length) unless you also use --minimap2. Please respecify!\n\n";
+		}
+		if ($mm2_pacbio){
+			die "You cannot specify minimap2 options (--pacbio) unless you also use --minimap2. Please respecify!\n\n";
+		}
+		if ($mm2_nanopore){
+			die "You cannot specify minimap2 options (--nanopore) unless you also use --minimap2. Please respecify!\n\n";
+		}
 	}
 
 	if ($mm2){
-		
 		if (defined $maximum_length_cutoff){
 			if ($maximum_length_cutoff < 100){
 				die "Please select a sensible maximum sequence length cutoff (currently 100-100,000 bp)\n";
@@ -8284,7 +8293,7 @@ VERSION
 		# Output an MD tag
 		push @aligner_options,'--MD'; 
 
-		# Adding --secondary=no to reduce alignment time
+		# Adding --secondary=no to reduce alignment time. Or does it?
 		push @aligner_options,'--secondary=no'; 
 
  		# Not sure yet how to handle muliple threads per alignment. Let's be cautious initially
@@ -8292,6 +8301,12 @@ VERSION
 		push @aligner_options,'-t 3'; 
 
 		if ($mm2_short_read){
+			if ($mm2_nanopore){
+				die "Please select minimap2 in Short Read or Nanopore mode, but not both...\n\n";
+			}
+			if ($mm2_pacbio){
+				die "Please select minimap2 in Short Read or PacBio mode, but not both...\n\n";
+			}
 			# Preset:
     		# -x STR       preset (always applied before other options; see minimap2.1 for details) []
 			#          - sr: genomic short-read mapping
@@ -8301,12 +8316,17 @@ VERSION
 			push @aligner_options,'-x sr'; 	
 		}
 		elsif($mm2_pacbio){
-			# otherwise we will assume that the default mode is Nanopore vs reference mapping for now
+
+			if ($mm2_nanopore){
+				die "Please select minimap2 in PacBio or Nanopore mode, but not both...\n\n";
+			}
+			
 			warn "Using preset for PacBio mapping (-x map-pb)\n\n";
 			push @aligner_options,'-x map-pb';
 		}
 		else{
 			# otherwise we will assume that the default mode is ONT Nanopore vs reference mapping for now
+			$mm2_nanopore = 1;
 			warn "Using preset for ONT mapping (-x map-ont)\n\n";
 			push @aligner_options,'-x map-ont';
 		}
@@ -8318,14 +8338,7 @@ VERSION
 		# -Y           use soft clipping for supplementary alignments
 		# -K NUM       minibatch size for mapping [500M]
 	
-		###	NO SOFTCLIPPING - this is now negotiable
-		# if ($local){
-		# 	# warn "[EXPERIMENTAL]: local alignments with HISAT2\n\n|||||||||||||||||||\n\n";
-		# 	push @aligner_options,'--omit-sec-seq'; 
-		# }
-		# else{
-		# 	push @aligner_options,'--no-softclip --omit-sec-seq'; ## endToEnd alignments - default
-		# }
+
 	}
 
 
@@ -8333,7 +8346,6 @@ VERSION
 	### SUMMARY OF ALL ALIGNER OPTIONS
 	my $aligner_options = join (' ',@aligner_options);
 	warn "Summary of all aligner options:\t$aligner_options\n"; sleep(2);
-	
 	
 	if ($slam){
 		die "The (experimental) SLAM-seq mode currently only works with FastQ files. Please re-specify\n\n" unless ($fastq);
@@ -9873,9 +9885,15 @@ MINIMAP2-SPECIFIC OPTIONS:
 
 
 --minimap2/--mm2         Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that
-                         things may change in the near future. The default mapping mode is '-x map-ont' (Nanopore reads). Currently,
+                         things may change in the near future. The default mapping mode is --nanopore (preset '-x map-ont' (Nanopore reads)). Currently,
                          there are no plans to support PacBio reads. Internally, minimap2 is run with the options -a --MD. More information
-                         here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF. 
+                         here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
+
+--mm2_nanopore           Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (-x map-ont). Only works in conjuntion with --minimap2.
+                         Default mode when --minimap2 is specified without additional qualifiers.
+
+--mm2_pacbio             Using the minimap2 preset for PacBio vs reference mapping (-x map-pb). Only works in conjuntion with --minimap2.
+                         Default: OFF.
 
 --mm2_short_reads        This option invokes the minmap2 preset setting '-x sr' and is intended for genomic short-read mapping with
                          accurate reads (probably Illumina 150bp+ ?). For spliced short-reads, please use --hisat2 instead. 
@@ -9909,6 +9927,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 16 November 2020
+Last modified on  29 July 2021
 HOW_TO
 }
