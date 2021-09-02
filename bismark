@@ -8691,8 +8691,14 @@ sub paired_end_SAM_output{
 	}
 	else{ # default
 		if ($rg_tag){
-			print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group)), "\n";
-			print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group)), "\n";
+			if ($strandID){
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group,$strandID)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group,$strandID)), "\n";
+			}
+			else{
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group)), "\n";
+			}
 		}
 		else{
 			if ($strandID){
@@ -9245,6 +9251,12 @@ Output:
 --rg_sample <string>     Sets the SM field in the \@RG header line; can't be set without setting --rg_id as well. The default is
                          'SAMPLE'.
 
+--strandID               For non-directional libraries, the strands identity is encoded by the order in which R1 and R2 are
+                         reported, as well as the read and genome conversion state. If third party tools re-organise this order
+                         it may become difficult to determine the alignment strand identity. This option adds an optional tag,
+                         e.g. 'YS:Z:OT' or 'YS:Z:CTOB' to preserve this information. See also this thread for more details:
+                         https://github.com/FelixKrueger/Bismark/issues/455
+
 -un/--unmapped           Write all reads that could not be aligned to a file in the output directory. Written reads will
                          appear as they did in the input, without any translation of quality values that may have
                          taken place within Bowtie or Bismark. Paired-end reads will be written to two parallel files with _1
@@ -9476,6 +9488,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 26 July 2019
+Last modified on 02 September 2021
 HOW_TO
 }
