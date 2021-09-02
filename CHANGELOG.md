@@ -1,5 +1,11 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.23.1dev
+
+### Bismark
+
+- Added new option `--strandID` which reports the alignment strand identity for paired-end, non-directional libraries, e.g. `YS:Z:CTOT`. This information may be difficult to obtain if third party tools interfered with the read ordering (admittedly there is a fine balance of read reporting position, FLAG, Read 1 and Genome conversion state to make it work in the first place. More information can be found in [this thread](https://github.com/FelixKrueger/Bismark/issues/455)). 
+
 ## Changelog for Bismark v0.23.1 (release on 26 07 2021)
 
 ### filter_non_conversion
