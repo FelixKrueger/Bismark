@@ -6,7 +6,7 @@ use Getopt::Long;
 $|++;
 
 
-## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -41,8 +41,8 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.23.0dev';
-my $last_modified = "14 April 2019";
+my $bismark_version = 'v0.23.0devmm2';
+my $last_modified = "04 August 2021";
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
 			'help'                => \$help,
@@ -73,7 +73,7 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
+        Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                https://github.com/FelixKrueger/Bismark
 			  
@@ -237,8 +237,17 @@ sub launch_indexer{
 	### Forking the program to run 2 instances of the indexing process (bowtie2-build, hisat2-build or minimap2)
 	my $pid = fork();
 	my $multicore = ''; # If not specified we simply use an empty string (= the default)
+	
+ 	# In a conversation, Heng Li suggested: 
+	# "Due to the reduced alphabet, you could probably increase the k-mer size such that "mid_occ" in stderr is about several hundred.
+	# the default is 15. See here for a little benchmark: https://github.com/FelixKrueger/Bismark/issues/446
+	# -k 20 seems to be something like a sweet spot, but I'd be happy to open it up as an adjustable parameter if that helps
+
+	my $kmer = "-k 20"; 
+	
 	if ($parallel) {
 		if ($mm2){
+			# minimap2 indexes with a maximum of 3 cores
 			$multicore = "-t $parallel";
 		}
 		else{
@@ -256,7 +265,7 @@ sub launch_indexer{
 		my $cmd;
 		
 		if ($mm2){
-			$cmd = "$path_to_aligner $multicore -d BS_CT.mmi $file_list";
+			$cmd = "$path_to_aligner $kmer $multicore -d BS_CT.mmi $file_list";
 		}
 		else{
 			$cmd = "$path_to_aligner $multicore $large_index -f $file_list BS_CT";
@@ -281,7 +290,7 @@ sub launch_indexer{
 		my $cmd;
 		
 		if ($mm2){
-			$cmd = "$path_to_aligner $multicore -d BS_GA.mmi $file_list";
+			$cmd = "$path_to_aligner $kmer $multicore -d BS_GA.mmi $file_list";
 		}
 		else{
 			$cmd = "$path_to_aligner $multicore  $large_index -f $file_list BS_GA";

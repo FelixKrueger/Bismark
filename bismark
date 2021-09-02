@@ -8298,7 +8298,7 @@ VERSION
 
  		# Not sure yet how to handle muliple threads per alignment. Let's be cautious initially
 		# -t INT       number of threads [3]
-		push @aligner_options,'-t 3'; 
+		push @aligner_options,'-t 2'; 
 
 		if ($mm2_short_read){
 			if ($mm2_nanopore){
@@ -8323,6 +8323,7 @@ VERSION
 			
 			warn "Using preset for PacBio mapping (-x map-pb)\n\n";
 			push @aligner_options,'-x map-pb';
+			
 		}
 		else{
 			# otherwise we will assume that the default mode is ONT Nanopore vs reference mapping for now
@@ -8331,13 +8332,14 @@ VERSION
 			push @aligner_options,'-x map-ont';
 		}
 
+		
 		# Let's keep these options in mind		
 		# -L           write CIGAR with >65535 ops at the CG tag
 		# --cs[=STR]   output the cs tag; STR is 'short' (if absent) or 'long' [none]
 		# --eqx        write =/X CIGAR operators
 		# -Y           use soft clipping for supplementary alignments
 		# -K NUM       minibatch size for mapping [500M]
-	
+		push @aligner_options, "-K 250K";
 
 	}
 
