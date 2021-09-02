@@ -25,7 +25,8 @@ use lib "$RealBin/../lib";
 
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.23.1';
+my $bismark_version = 'v0.23.1dev';
+my $copyright_dates = "2010-21";
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
 
@@ -6974,6 +6975,7 @@ sub process_command_line{
 	my $known_splices;
 	my $icpc;
 	my $local;
+	my $strandID;
 
 	my $command_line = GetOptions ('help|man'                => \$help,
 				 '1=s'                     => \$mates1,
@@ -7033,6 +7035,7 @@ sub process_command_line{
 				 'no-spliced-alignment'    => \$nosplice,
 				 'icpc'                    => \$icpc,
 				 'local'                   => \$local,
+				 'strandID'                => \$strandID,
 				);
 
 
@@ -7052,7 +7055,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+        Copyright $copyright_dates Felix Krueger, Babraham Bioinformatics
               www.bioinformatics.babraham.ac.uk/projects/
                 https://github.com/FelixKrueger/Bismark
 
@@ -7933,7 +7936,7 @@ VERSION
 		}
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$strandID);
 }
 
 
@@ -8230,18 +8233,23 @@ sub paired_end_SAM_output{
 	# die "Reference sequence ($ref_seq_2) contains invalid nucleotides!\n" if $ref_seq_2 =~ /[^ACTGNRYMKSWBDHVX]/i;
 
 	my $index; # used to store the srand origin of the alignment in a less convoluted way
+	my $strandID = "YS:Z:";
 
 	if ($read_conversion_1 eq 'CT' and $genome_conversion eq 'CT'){
 		$index = 0; ## this is OT   (original top strand)
+		$strandID .= "OT";
 	}
 	elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'GA'){
 		$index = 1; ## this is CTOB (complementary to OB)
+		$strandID .= "CTOB";
 	}
 	elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'CT'){
 		$index = 2; ## this is CTOT (complementary to OT)
+		$strandID .= "CTOT";
 	}
 	elsif ($read_conversion_1 eq 'CT' and $genome_conversion eq 'GA'){
 		$index = 3; ## this is OB   (original bottom)
+		$strandID .= "OB";
 	}	
 	else {
 		die "Unexpected combination of read 1 and genome conversion: $read_conversion_1 / $genome_conversion\n";
@@ -8687,9 +8695,14 @@ sub paired_end_SAM_output{
 			print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group)), "\n";
 		}
 		else{
-			print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
-			print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
-		
+			if ($strandID){
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$strandID)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$strandID)), "\n";
+			}
+			else{
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+			}
 			#print join("\t", ("READ 1:",$id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
 			#print join("\t", ("READ 2:",$id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
 			#print "\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";
