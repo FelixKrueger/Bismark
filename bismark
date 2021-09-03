@@ -39,7 +39,7 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$strandID) = process_command_line();
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -8233,23 +8233,23 @@ sub paired_end_SAM_output{
 	# die "Reference sequence ($ref_seq_2) contains invalid nucleotides!\n" if $ref_seq_2 =~ /[^ACTGNRYMKSWBDHVX]/i;
 
 	my $index; # used to store the srand origin of the alignment in a less convoluted way
-	my $strandID = "YS:Z:";
+	my $strandID_str = "YS:Z:";
 
 	if ($read_conversion_1 eq 'CT' and $genome_conversion eq 'CT'){
 		$index = 0; ## this is OT   (original top strand)
-		$strandID .= "OT";
+		$strandID_str .= "OT";
 	}
 	elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'GA'){
 		$index = 1; ## this is CTOB (complementary to OB)
-		$strandID .= "CTOB";
+		$strandID_str .= "CTOB";
 	}
 	elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'CT'){
 		$index = 2; ## this is CTOT (complementary to OT)
-		$strandID .= "CTOT";
+		$strandID_str .= "CTOT";
 	}
 	elsif ($read_conversion_1 eq 'CT' and $genome_conversion eq 'GA'){
 		$index = 3; ## this is OB   (original bottom)
-		$strandID .= "OB";
+		$strandID_str .= "OB";
 	}	
 	else {
 		die "Unexpected combination of read 1 and genome conversion: $read_conversion_1 / $genome_conversion\n";
@@ -8692,8 +8692,8 @@ sub paired_end_SAM_output{
 	else{ # default
 		if ($rg_tag){
 			if ($strandID){
-				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group,$strandID)), "\n";
-				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group,$strandID)), "\n";
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group,$strandID_str)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group,$strandID_str)), "\n";
 			}
 			else{
 				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group)), "\n";
@@ -8702,8 +8702,8 @@ sub paired_end_SAM_output{
 		}
 		else{
 			if ($strandID){
-				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$strandID)), "\n";
-				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$strandID)), "\n";
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$strandID_str)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$strandID_str)), "\n";
 			}
 			else{
 				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
@@ -9251,11 +9251,11 @@ Output:
 --rg_sample <string>     Sets the SM field in the \@RG header line; can't be set without setting --rg_id as well. The default is
                          'SAMPLE'.
 
---strandID               For non-directional libraries, the strands identity is encoded by the order in which R1 and R2 are
-                         reported, as well as the read and genome conversion state. If third party tools re-organise this order
+--strandID               For non-directional paired-end libraries, the strands identity is encoded by the order in which R1 and R2
+                         are reported, as well as the read and genome conversion state. If third party tools re-organise this order
                          it may become difficult to determine the alignment strand identity. This option adds an optional tag,
                          e.g. 'YS:Z:OT' or 'YS:Z:CTOB' to preserve this information. See also this thread for more details:
-                         https://github.com/FelixKrueger/Bismark/issues/455
+                         https://github.com/FelixKrueger/Bismark/issues/455. Default: OFF.
 
 -un/--unmapped           Write all reads that could not be aligned to a file in the output directory. Written reads will
                          appear as they did in the input, without any translation of quality values that may have
