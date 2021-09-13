@@ -20,7 +20,7 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.23.1';
+my $bismark2report_version = 'v0.23.1dev';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
@@ -1066,7 +1066,7 @@ sub process_commandline{
                               Bismark HTML Report Module
 
                          bismark2report version: $bismark2report_version
-                     Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+                     Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
                        www.bioinformatics.babraham.ac.uk/projects/bismark/
                             https://github.com/FelixKrueger/Bismark
 	
@@ -1292,7 +1292,7 @@ sub print_helpfile{
                            '--nucleotide_coverage') in the current working directory. Including a nucleotide coverage statistics
                            report is optional, and using the FILE 'none' will skip this report entirely.
 
-                           Script last modified: 03 May 2019
+                           Script last modified: 13 Sep 2021
 
 EOF
     ;
