@@ -1003,7 +1003,7 @@ sub process_commandline{
                            Bismark Methylation Extractor
 
                          Bismark Extractor Version: $version
-              Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-22 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                      https://github.com/FelixKrueger/Bismark
 
@@ -6037,7 +6037,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 30 October 2020.
+This script was last modified on 10 March 2022.
 
 HOW_TO
 }
