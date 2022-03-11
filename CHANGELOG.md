@@ -10,7 +10,9 @@
 
 - The CHH/CHG labels for the Cytosine Methylation after Extraction plot now appear in the correct order.
 
+### bismark_methylation_extractor
 
+- removed a print statement that would flood STDOUT the logfile if `--merge_non_CG` (but not `--comprehensive`) had been selected.
 
 
 ## Changelog for Bismark v0.23.1 (release on 26 07 2021)
