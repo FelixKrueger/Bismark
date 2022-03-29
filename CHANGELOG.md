@@ -6,6 +6,10 @@
 
 - Added new option `--strandID` which reports the alignment strand identity for paired-end, non-directional libraries, e.g. `YS:Z:CTOT`. This information may be difficult to obtain if third party tools interfered with the read ordering (admittedly there is a fine balance of read reporting position, FLAG, Read 1 and Genome conversion state to make it work in the first place. More information can be found in [this thread](https://github.com/FelixKrueger/Bismark/issues/455)). 
 
+### methylation_consistency
+
+- Added new option `--chh` to use cytosines in CHH instead of CpG context to enable some trouble shooting and method development
+
 ### bismark2report
 
 - The CHH/CHG labels for the Cytosine Methylation after Extraction plot now appear in the correct order.
