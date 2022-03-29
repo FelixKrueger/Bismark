@@ -3,9 +3,13 @@ use warnings;
 use strict;
 use Getopt::Long;
 
-my $VERSION = "0.23.1";
-my ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path) = process_commandline();
+my $VERSION = "0.23.1dev";
+my ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path,$chh) = process_commandline();
 
+if ($chh){
+	warn "     ~~~~~     \nTHIS IS AN EXPERIMENTAL VERSION that works on CHH context and **NOT** on the usual CpG context. You have been warned!\n     ~~~~\n\n";
+	sleep(3);
+}
 
 sub process_commandline{
 
@@ -17,12 +21,14 @@ sub process_commandline{
 	my $lower_threshold;
 	my $upper_threshold;
 	my $samtools_path;
+	my $chh;
 
 
 	GetOptions ("help"          => \$help,
 			"version"           => \$version,
 			"p|paired_end"      => \$global_paired,
 			"s|single_end"      => \$global_single,
+			"chh"               => \$chh,
 			"lower_threshold=i" => \$lower_threshold,
 			"upper_threshold=i" => \$upper_threshold,
 			'samtools_path=s'   => \$samtools_path,
@@ -39,8 +45,7 @@ sub process_commandline{
 
              Bismark Read Methylation Constistency
 		         v$VERSION
-       Copyright 2019-21 Felix Krueger, Babraham Bioinformatics
-        www.bioinformatics.babraham.ac.uk/projects/bismark/
+       Copyright 2019-22 Felix Krueger, Altos Bioinformatics
               https://github.com/FelixKrueger/Bismark
 
 VERSION
@@ -118,7 +123,7 @@ VERSION
     }
 
 
-	return ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path);
+	return ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path,$chh);
 }
 
 my @files = @ARGV;
@@ -179,16 +184,19 @@ sub process_file {
 
     my $file_root = $file;
     $file_root =~ s/\.bam$//;
-
+	my $chh_status = '';
+	if ($chh){
+		$chh_status = '_CHH';
+	}
     my $all_meth_count = 0;
     my $all_unmeth_count = 0;
     my $mixed_meth_count = 0;
     my $discarded_count = 0;
 
-    open (METH,"| samtools view -b -S - > \"${file_root}_all_meth.bam\"") or die "Can't write to all meth file: $!";
-	open (UNMETH,"| samtools view -b -S - > \"${file_root}_all_unmeth.bam\"") or die "Can't write to all unmeth file: $!";
-	open (MIXED,"| samtools view -b -S - > \"${file_root}_mixed_meth.bam\"") or die "Can't write to mixed meth file: $!";
-	open (REPORT,'>',"${file_root}_consistency_report.txt") or die "Can't write to consistency report file: $!";
+    open (METH,"| samtools view -b -S - > \"${file_root}${chh_status}_all_meth.bam\"") or die "Can't write to all meth file: $!";
+	open (UNMETH,"| samtools view -b -S - > \"${file_root}${chh_status}_all_unmeth.bam\"") or die "Can't write to all unmeth file: $!";
+	open (MIXED,"| samtools view -b -S - > \"${file_root}${chh_status}_mixed_meth.bam\"") or die "Can't write to mixed meth file: $!";
+	open (REPORT,'>',"${file_root}${chh_status}_consistency_report.txt") or die "Can't write to consistency report file: $!";
 
     open (IN,"samtools view \"$file\" |") or die "Can't read $file : $!";
 
@@ -203,8 +211,15 @@ sub process_file {
 		    ($id1) = (split /\t/,$_)[0]; 
 		    # warn "This is R1, ID is: $id1\n";
 
-		    $meth_count   += ($calls =~ tr/Z//);
-		    $unmeth_count += ($calls =~ tr/z//);
+
+			if ($chh){
+				$meth_count   += ($calls =~ tr/H//);
+		    	$unmeth_count += ($calls =~ tr/h//);
+			}
+			else{
+		    	$meth_count   += ($calls =~ tr/Z//);
+		    	$unmeth_count += ($calls =~ tr/z//);
+			}
 		}
 		else {
 	 		warn "No methylation call data found - doesn't look like a bismark file\n";
@@ -223,8 +238,14 @@ sub process_file {
 				unless ($id1 eq $id2){
 					die "READ IDs of R1 ($id1) and R2 ($id2) did not match. This doesn't look like paired-end data. Please correct settings and try again.\n\n";
 				}
-				$meth_count   += ($calls =~ tr/Z//);
-				$unmeth_count += ($calls =~ tr/z//);
+				if ($chh){
+					$meth_count   += ($calls =~ tr/H//);
+			    	$unmeth_count += ($calls =~ tr/h//);
+				}
+				else{
+					$meth_count   += ($calls =~ tr/Z//);
+					$unmeth_count += ($calls =~ tr/z//);
+				}
 			}
 			else {
 				warn "No methylation call data found - doesn't look like a bismark file\n";
@@ -304,14 +325,23 @@ sub process_file {
 	warn "All methylated    [ >= $upper_threshold% ] -\t$all_meth_count ($perc_meth%)\n";
     warn "All unmethylated  [ <= $lower_threshold% ] -\t$all_unmeth_count ($perc_unmeth%)\n";
     warn "Mixed methylation [ ${lower_threshold}-${upper_threshold}% ] -\t$mixed_meth_count ($perc_mixed%)\n";
-    warn "Too few CpGs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";	
-
+    if ($chh){
+		warn "Too few CHHs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";	
+	}
+	else{
+		warn "Too few CpGs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";	
+	}
 	print REPORT "Total $type records     -\t",($all_meth_count+$all_unmeth_count+$mixed_meth_count+$discarded_count),"\n";
     print REPORT "-------------------------------------------------\n";
 	print REPORT "All methylated    [ >= $upper_threshold% ] -\t$all_meth_count ($perc_meth%)\n";
     print REPORT "All unmethylated  [ <= $lower_threshold% ] -\t$all_unmeth_count ($perc_unmeth%)\n";
     print REPORT "Mixed methylation [ ${lower_threshold}-${upper_threshold}% ] -\t$mixed_meth_count ($perc_mixed%)\n";
-    print REPORT "Too few CpGs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";
+    if ($chh){
+		print REPORT "Too few CHHs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";	
+	}
+	else{
+		print REPORT "Too few CpGs   [min-count $min_count] -\t$discarded_count ($perc_discarded%)\n";
+	}
 
     close METH   or warn "Can't close meth file: $!";
     close UNMETH or warn "Can't close unmeth file: $!";
@@ -504,6 +534,8 @@ OPTIONS:
 --min-count -m          Set the minumum number of CpGs which need to be present for a read to be considered at all
                         [Default: 5]. Reads with fewer CpGs than this will be discarded.
 
+--chh                   Looking for methylation in CHH context. Experimental. [OFF]
+
 -s/--single_end         Input files will be treated as single-end Bismark BAM files. Default: [AUTO-DETECT]
 
 -p/--paired_end         Input files will be treated as paired-end Bismark BAM files. Default: [AUTO-DETECT]
@@ -520,5 +552,5 @@ OPTIONS:
 --help                  Print this help information and exit
 
 
-This script was last modified on 08 03 2021
+This script was last modified on 28 03 2022
 
