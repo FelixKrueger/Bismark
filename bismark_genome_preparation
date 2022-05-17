@@ -6,7 +6,7 @@ use Getopt::Long;
 $|++;
 
 
-## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-22, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -43,7 +43,8 @@ my %freqs;
 
 
 my $bismark_version = 'v0.23.1dev';
-my $last_modified = "04 August 2021";
+my $last_modified = "17 May 2022";
+my $copyright_dates = "2010-22";
 
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
@@ -75,8 +76,8 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-        Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
-              www.bioinformatics.babraham.ac.uk/projects/
+       Copyright $copyright_dates, Felix Krueger, Altos Labs Bioinformatics
+              
                https://github.com/FelixKrueger/Bismark
 			  
 
@@ -216,7 +217,7 @@ sub launch_indexer{
 			$path_to_aligner =~ s/$/minimap2/;	
 		}
 		else{
-			$path_to_aligner =~ s/$/minimap2/;
+			$path_to_aligner =~ s/$/hisat2-build/;
 		}
     }
     ### otherwise we assume that build path is in the PATH environment
