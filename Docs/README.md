@@ -754,7 +754,7 @@ Here is a table summarising general recommendations for different library types 
         </tr>
         <tr>
             <td align="left">Accel-NGS (Swift)</td>
-            <td align="center">10 bp</td>
+            <td align="center">R1: 10, R2:15bp</td>
             <td align="center">(10 bp)</td>
             <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
             <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>

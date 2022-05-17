@@ -41,8 +41,10 @@ my $genomic_composition;
 my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
-my $bismark_version = 'v0.23.0devmm2';
+
+my $bismark_version = 'v0.23.1dev';
 my $last_modified = "04 August 2021";
+
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
 			'help'                => \$help,
@@ -616,7 +618,7 @@ sub create_bisulfite_genome_folders{
 	}
 	### if there aren't any genomic files with the extension .fa, .fa.gz or .fasta we will look for files with the extension .fasta.gz
 	unless (@filenames){
-		@filenames =  <*.fasta>;
+		@filenames =  <*.fasta.gz>;
 	}
 	unless (@filenames){
 		die "The specified genome folder $genome_folder does not contain any sequence files in FastA format (with .fa, .fa.gz, .fasta or .fasta.gz file extensions)\n";
@@ -838,7 +840,8 @@ ARGUMENTS:
                          .fasta (also ending in .gz)). Specifying this path is mandatory.
 
 
-This script was last modified on 10 November 2020.
+
+This script was last modified on 27 Jan 2021.
 
 HOW_TO
 }

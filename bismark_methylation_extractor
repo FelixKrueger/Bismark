@@ -8,7 +8,7 @@ use Carp;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-20, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-22, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ my $parent_dir = getcwd();
 
 my %fhs;
 
-my $version = 'v0.23.0';
+my $version = 'v0.23.1dev';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc) = process_commandline();
 
 ### only needed for bedGraph output
@@ -1003,7 +1003,7 @@ sub process_commandline{
                            Bismark Methylation Extractor
 
                          Bismark Extractor Version: $version
-              Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
+              Copyright 2010-22 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                      https://github.com/FelixKrueger/Bismark
 
@@ -2887,7 +2887,6 @@ sub print_individual_C_methylation_states_paired_end_files{
 			if ($full) {
 				if ($strand eq '+') {
 					for my $index (0..$#methylation_calls) {
-			
 						if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 							my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
 							# print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
@@ -3057,10 +3056,9 @@ sub print_individual_C_methylation_states_paired_end_files{
 			else {
 				if ($strand eq '+') {
 					for my $index (0..$#methylation_calls) {
-
 						if ($cigar and @comp_cigar){ # only needed for SAM reads with InDels
 							my ($cigar_mod,$pos_mod) = check_cigar_string($index,$cigar_offset,$pos_offset,$strand,\@comp_cigar);	
-							print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
+							# print "index: $index\tmethylation_call: $methylation_calls[$index]\tposition+index: ",$start+$index,"\t";
 							$cigar_offset += $cigar_mod;
 							$pos_offset += $pos_mod;
 						}
@@ -6039,7 +6037,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 30 October 2020.
+This script was last modified on 10 March 2022.
 
 HOW_TO
 }

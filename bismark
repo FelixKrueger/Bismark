@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-22, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -26,7 +26,10 @@ use lib "$RealBin/../lib";
 # adding --secondary=no to try to increase speed
 
 my $parent_dir = getcwd();
-my $bismark_version = 'v0.23.0devmm2';
+
+my $bismark_version = 'v0.23.1dev';
+my $copyright_dates = "2010-21";
+
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
 
@@ -43,7 +46,8 @@ my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_t
 $directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,
 $insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,
 $score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,
-$aligner_version,$slam,$icpc,$local,$mm2,$maximum_length_cutoff) = process_command_line();
+$aligner_version,$slam,$icpc,$local,$strandID,$mm2,$maximum_length_cutoff) = process_command_line();
+
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -7242,6 +7246,8 @@ sub process_command_line{
 	my $mm2_pacbio;
 	my $mm2_nanopore;
 	my $maximum_length_cutoff;
+	my $strandID;
+
 
 	my $command_line = GetOptions ('help'  => \$help,
 				 '1=s'                     => \$mates1,
@@ -7307,6 +7313,7 @@ sub process_command_line{
 				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
 				 'mm2_pacbio|pacbio'       => \$mm2_pacbio,
 				 'mm2_nanopore|nanopore'   => \$mm2_nanopore,
+				 'strandID'                => \$strandID,
 				);
 
 
@@ -7325,9 +7332,8 @@ sub process_command_line{
 
           Bismark - Bisulfite Mapper and Methylation Caller.
 
-                       Bismark Version: $bismark_version - MM2 dev
-        Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
-              www.bioinformatics.babraham.ac.uk/projects/
+                       Bismark Version: $bismark_version
+        Copyright $copyright_dates Felix Krueger, Babraham Bioinformatics  
                 https://github.com/FelixKrueger/Bismark
 
 
@@ -8373,7 +8379,7 @@ VERSION
 	$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,
 	$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,
 	$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,
-	$aligner_version,$slam,$icpc,$local,$mm2,$maximum_length_cutoff);
+	$aligner_version,$slam,$icpc,$local,$strandID,$mm2,$maximum_length_cutoff);
 }
 
 
@@ -8670,18 +8676,23 @@ sub paired_end_SAM_output{
 	# die "Reference sequence ($ref_seq_2) contains invalid nucleotides!\n" if $ref_seq_2 =~ /[^ACTGNRYMKSWBDHVX]/i;
 
 	my $index; # used to store the srand origin of the alignment in a less convoluted way
+	my $strandID_str = "YS:Z:";
 
 	if ($read_conversion_1 eq 'CT' and $genome_conversion eq 'CT'){
 		$index = 0; ## this is OT   (original top strand)
+		$strandID_str .= "OT";
 	}
 	elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'GA'){
 		$index = 1; ## this is CTOB (complementary to OB)
+		$strandID_str .= "CTOB";
 	}
 	elsif ($read_conversion_1 eq 'GA' and $genome_conversion eq 'CT'){
 		$index = 2; ## this is CTOT (complementary to OT)
+		$strandID_str .= "CTOT";
 	}
 	elsif ($read_conversion_1 eq 'CT' and $genome_conversion eq 'GA'){
 		$index = 3; ## this is OB   (original bottom)
+		$strandID_str .= "OB";
 	}	
 	else {
 		die "Unexpected combination of read 1 and genome conversion: $read_conversion_1 / $genome_conversion\n";
@@ -9123,13 +9134,24 @@ sub paired_end_SAM_output{
 	}
 	else{ # default
 		if ($rg_tag){
-			print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group)), "\n";
-			print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group)), "\n";
+			if ($strandID){
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group,$strandID_str)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group,$strandID_str)), "\n";
+			}
+			else{
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$read_group)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$read_group)), "\n";
+			}
 		}
 		else{
-			print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
-			print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
-		
+			if ($strandID){
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag,$strandID_str)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag,$strandID_str)), "\n";
+			}
+			else{
+				print OUT join("\t", ($id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
+				print OUT join("\t", ($id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
+			}
 			#print join("\t", ("READ 1:",$id_1, $flag_1, $chr, $start_read_1, $mapq, $cigar_1, $rnext, $pnext_1, $tlen_1, $actual_seq_1, $qual_1, $NM_tag_1, $MD_tag_1, $XM_tag_1,$XR_tag_1,$XG_tag)), "\n";
 			#print join("\t", ("READ 2:",$id_2, $flag_2, $chr, $start_read_2, $mapq, $cigar_2, $rnext, $pnext_2, $tlen_2, $actual_seq_2, $qual_2, $NM_tag_2, $MD_tag_2, $XM_tag_2,$XR_tag_2,$XG_tag)), "\n";
 			#print "\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n";
@@ -9676,6 +9698,12 @@ Output:
 --rg_sample <string>     Sets the SM field in the \@RG header line; can't be set without setting --rg_id as well. The default is
                          'SAMPLE'.
 
+--strandID               For non-directional paired-end libraries, the strands identity is encoded by the order in which R1 and R2
+                         are reported, as well as the read and genome conversion state. If third party tools re-organise this order
+                         it may become difficult to determine the alignment strand identity. This option adds an optional tag,
+                         e.g. 'YS:Z:OT' or 'YS:Z:CTOB' to preserve this information. See also this thread for more details:
+                         https://github.com/FelixKrueger/Bismark/issues/455. Default: OFF.
+
 -un/--unmapped           Write all reads that could not be aligned to a file in the output directory. Written reads will
                          appear as they did in the input, without any translation of quality values that may have
                          taken place within Bowtie or Bismark. Paired-end reads will be written to two parallel files with _1
@@ -9929,6 +9957,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on  29 July 2021
+Last modified on 17 May 2022
 HOW_TO
 }

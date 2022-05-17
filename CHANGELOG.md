@@ -1,5 +1,38 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.23.1dev
+
+### Bismark
+
+- Added new option `--strandID` which reports the alignment strand identity for paired-end, non-directional libraries, e.g. `YS:Z:CTOT`. This information may be difficult to obtain if third party tools interfered with the read ordering (admittedly there is a fine balance of read reporting position, FLAG, Read 1 and Genome conversion state to make it work in the first place. More information can be found in [this thread](https://github.com/FelixKrueger/Bismark/issues/455)). 
+
+### methylation_consistency
+
+- Added new option `--chh` to use cytosines in CHH instead of CpG context to enable some trouble shooting and method development
+
+### bismark2report
+
+- The CHH/CHG labels for the Cytosine Methylation after Extraction plot now appear in the correct order.
+
+### bismark_methylation_extractor
+
+- removed a print statement that would flood STDOUT the logfile if `--merge_non_CG` (but not `--comprehensive`) had been selected.
+
+
+## Changelog for Bismark v0.23.1 (release on 26 07 2021)
+
+### filter_non_conversion
+
+- fixed global setting of `--paired` or `--single` mode. Auto-detection now works by only looking at the `@PG ID:Bismark` line of the SAM header.
+
+### methylation_consistency
+
+- Auto-detection now works by only looking at the `@PG ID:Bismark` line of the SAM header.
+
+### coverage2cytosine
+
+- Swapped the columns for count methylated and count unmethylated for the context summary report to match the header line.
+
 ## Changelog for Bismark v0.23.0 (release on 09 11 2020)
 
 - Migrated CI tests from Travis to Github Actions
@@ -8,7 +41,7 @@
 
 - the command `deduplicate_bismark --barcode *bam` now works again. Previously the output file names were accidentally all derived from the first supplied file in `--barcode` (= UMI) mode (it had been fixed for normal files in 0.22.2).
 
-- Changed the way the library auto-detection works to only look at the `@PG ID:Bismark` line of the SAM header. 
+- Changed the way the library auto-detection works by only looking at the `@PG ID:Bismark` line of the SAM header. 
 
 ### bismark_methylation_extractor / bismark2bedGraph
 

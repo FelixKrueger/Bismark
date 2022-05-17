@@ -661,7 +661,7 @@
 
 		var data = [
 		  	{
-				x: ['CpG context', 'CHH context', 'CHG context'],
+				x: ['CpG context', 'CHG context', 'CHH context'],
 				y: [{{cytosine_methylation_post_duplication_plotly}}],
 				type: 'bar',
 				marker: {

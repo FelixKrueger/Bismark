@@ -6,7 +6,7 @@ use Cwd;
 $|++;
 
 
-## This program is Copyright (C) 2010-19, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -22,50 +22,52 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.23.0';
-my ($single,$paired);
+my $filter_version = 'v0.23.1';
+
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count) = process_commandline();
 
+my ($single,$paired);
 my $start_run = time();
 # warn "Run started at: $start_run\n";
 
 
 foreach my $file (@ARGV){
     $single = $paired = undef; # resetting
-    unless ($file =~ /bam$/){
-	die "Please provide a BAM file to continue!\n";
+    
+	unless ($file =~ /bam$/){
+		die "Please provide a BAM file to continue!\n";
     }
     
     # Testing if the file appears to be truncated, in which case we bail with a big scary warning message
     if ($file =~ /(\.bam$)/){
-	bam_isTruncated($file);
+		bam_isTruncated($file);
     } 
     
     # Testing is th file is empty
     if ($file =~ /(\.bam$|\.sam$)/){
-	bam_isEmpty($file);
+		bam_isEmpty($file);
     }
     
     # FILE TYPE
     if ($global_single){
-	$paired = 0;
-	$single = 1;
+		$paired = 0;
+		$single = 1;
     }
     elsif($global_paired){
-	$paired = 1;
-	$single = 0;
-    }
+		$paired = 1;
+		$single = 0;
+	}
     
     unless($global_single or $global_paired){
-	determine_file_type($file);
+		($single,$paired) = determine_file_type($file);
     }
     
     unless ($single or $paired){
-	die "Please specify either -s (single-end) or -p (paired-end) file, or provide a SAM/BAM file that contains the \@PG header line\n\n";
+		die "Please specify either -s (single-end) or -p (paired-end) file, or provide a SAM/BAM file that contains the \@PG header line\n\n";
     }
     
     if ($paired){
-	test_positional_sorting($file);
+		test_positional_sorting($file);
     }
 
     # looks like we should be good to actually do something
@@ -98,20 +100,20 @@ sub process_file{
     my $count = 0;
     my $kicked = 0;
     if ($single){
-	if (defined $percentage_cutoff){
-	    warn "Using an overall percentage of >> $percentage_cutoff% << and a minimum count of >> $minimum_count << cytosines in non-CG context as filtering criteria before a read gets removed\n\n";
-	}
-	else{
-	    warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read gets removed\n\n";
-	}
+		if (defined $percentage_cutoff){
+			warn "Using an overall percentage of >> $percentage_cutoff% << and a minimum count of >> $minimum_count << cytosines in non-CG context as filtering criteria before a read gets removed\n\n";
+		}
+		else{
+			warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read gets removed\n\n";
+		}
     }
     else{
-	if (defined $percentage_cutoff){
-	    warn "Using an overall percentage of >> $percentage_cutoff% << and a minimum count of >> $minimum_count << cytosines in non-CG context as filtering criteria before a read pair gets removed (either read can fail the entire read pair)\n\n";
-	}
-	else{
-	    warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read pair gets removed (either read can fail the entire read pair)\n\n";
-	}
+		if (defined $percentage_cutoff){
+			warn "Using an overall percentage of >> $percentage_cutoff% << and a minimum count of >> $minimum_count << cytosines in non-CG context as filtering criteria before a read pair gets removed (either read can fail the entire read pair)\n\n";
+		}
+		else{
+			warn "Using a threshold of >> $threshold << methylation calls in non-CG context before a read pair gets removed (either read can fail the entire read pair)\n\n";
+		}
     }
     
     while (<IN>){
@@ -361,33 +363,42 @@ sub determine_file_type{
     
     ### if the user did not specify whether the alignment file was single-end or paired-end we are trying to get this information from the @PG header line in the BAM file
     if ($file =~ /\.gz$/){
-	open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
+		open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
-	open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+		open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
-	open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
+		open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
     }
     while (<DETERMINE>){
-	last unless (/^\@/);
-	if ($_ =~ /^\@PG/){
-	    # warn "found the \@PG line:\n";
-	    # warn "$_";
-	    
-	    if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
-		warn "Treating file as paired-end data (extracted from \@PG line)\n"; sleep(1);
-		$paired = 1;
-		$single = 0;
-	    }
-	    else{
-		warn "Treating file as single-end data (extracted from \@PG line)\n"; sleep(1);
-		$paired = 0;
-		$single = 1;
-	    }
-	}
+		last unless (/^\@/);
+		if ($_ =~ /^\@PG/){
+			# warn "found a \@PG line:\n";
+			# warn "$_";
+			
+			if ($_ =~ /ID:Bismark/){
+					# warn "This is the Bismark command we are after. Extracting the library type...\n";
+				}
+				else{
+					# warn "This isn't a the Bismark \@PG line. Moving on...\n"; sleep(1);
+					next;
+				}
+
+			if ($_ =~ /\s+--?1\s+/ and $_ =~ /\s+--?2\s+/){ # allowing -1 and -2 or --1 and --2
+				warn "Treating file as paired-end data (extracted from \@PG line)\n";
+				$paired = 1;
+				$single = 0;
+			}
+			else{
+				warn "Treating file as single-end data (extracted from \@PG line)\n";
+				$paired = 0;
+				$single = 1;
+			}
+		}
     }
     close DETERMINE or warn "$!\n";
+	return ($single,$paired);
 }
 
 sub test_positional_sorting{
@@ -458,8 +469,6 @@ sub test_positional_sorting{
 sub process_commandline{
     
     my $help;
-    my $single;
-    my $paired;
     my $global_single;
     my $global_paired;
     my $samtools_path;
@@ -469,7 +478,7 @@ sub process_commandline{
     my $percentage_cutoff;
     my $minimum_count;
     
-    my $command_line = GetOptions ('help'                 => \$help,
+    my $command_line = GetOptions ('help' => \$help,
 				   's|single'             => \$global_single,
 				   'p|paired'             => \$global_paired,
 				   'samtools_path=s'      => \$samtools_path,
@@ -483,8 +492,8 @@ sub process_commandline{
     die "Please respecify command line options\n\n" unless ($command_line);
     
     if ($help){
-	print_helpfile();
-	exit;
+		print_helpfile();
+		exit;
     }
     
     if ($version){
@@ -493,7 +502,7 @@ sub process_commandline{
                 	Bismark non-conversion filtering
 	    
                	    Bismark non-conversion version: $filter_version
-	    Copyright 2010-19 Felix Krueger, Babraham Bioinformatics
+	    Copyright 2010-21 Felix Krueger, Babraham Bioinformatics
                 www.bioinformatics.babraham.ac.uk/projects/bismark/
                     https://github.com/FelixKrueger/Bismark
 		
@@ -503,48 +512,46 @@ VERSION
     }
     
     unless (@ARGV){
-	print "Please provide one or more Bismark output files for non-bisulfite conversion filtering\n\n";
-	sleep (1);
-	print_helpfile();
-	exit;
+		print "Please provide one or more Bismark output files for non-bisulfite conversion filtering\n\n";
+		print_helpfile();
+		exit;
     }
   
     ### OPTIONS
-
     if (defined $percentage_cutoff){
-	die "The options --percentage_cutoff and --consecutive are mutually exclusive. Please respecify!\n\n" if ($consecutive);
-	
-	unless ($percentage_cutoff >= 0 and $percentage_cutoff <= 100){
-	    die "The percentage cutoff value has to be within the range of 0-100 [%]. Please repecify!\n\n";
-	}
+		die "The options --percentage_cutoff and --consecutive are mutually exclusive. Please respecify!\n\n" if ($consecutive);
+		
+		unless ($percentage_cutoff >= 0 and $percentage_cutoff <= 100){
+			die "The percentage cutoff value has to be within the range of 0-100 [%]. Please repecify!\n\n";
+		}
 
-	# If a percentage cutoff was selected, we also need a minimum count of non-CGs per read before we will use the percentage as a filtering criterion
-	if (defined $minimum_count){
-	    unless ($minimum_count > 0){
-		die "Please select a sensible number of non-CG cytosines as minimum count (1 or more...)\n\n";
-	    }
-	}
-	else{
-	    $minimum_count = 5; # default
-	}
+		# If a percentage cutoff was selected, we also need a minimum count of non-CGs per read before we will use the percentage as a filtering criterion
+		if (defined $minimum_count){
+			unless ($minimum_count > 0){
+			die "Please select a sensible number of non-CG cytosines as minimum count (1 or more...)\n\n";
+			}
+		}
+		else{
+			$minimum_count = 5; # default
+		}
     }
 
-    ### USER DEFINED SINGLE OR PAIRED-END MODE
+	### USER DEFINED SINGLE OR PAIRED-END MODE
     unless ($global_single or $global_paired){
-	warn "\nNeither -s (single-end) nor -p (paired-end) selected for non-bisulfite conversion filtering. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
+		warn "\nNeither -s (single-end) nor -p (paired-end) selected for non-bisulfite conversion filtering. Trying to extract this information for each file separately from the \@PG line of the SAM/BAM file\n";
     }
     
     if ($global_paired){
-	if ($global_single){
-	    die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
-	}
+		if ($global_single){
+		    die "Please select either -s for single-end files or -p for paired-end files, but not both at the same time!\n\n";
+		}
 	
-	warn "Processing paired-end Bismark output file(s) (SAM format):\n";
-	warn join ("\t",@ARGV),"\n\n";
+		warn "Processing paired-end Bismark output file(s) (SAM format):\n";
+		warn join ("\t",@ARGV),"\n\n";
     }
     elsif ($global_single){
-	warn "Processing single-end Bismark output file(s) (SAM format):\n";
-	warn join ("\t",@ARGV),"\n\n";
+		warn "Processing single-end Bismark output file(s) (SAM format):\n";
+		warn join ("\t",@ARGV),"\n\n";
     }
     
     ### PATH TO SAMTOOLS
@@ -573,31 +580,30 @@ VERSION
     }
     # Check whether Samtools is in the PATH if no path was supplied by the user
     else{
-	if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
-	    $samtools_path = `which samtools`;
-	    chomp $samtools_path;
-	}
+		if (!system "which samtools >/dev/null 2>&1"){ # STDOUT is binned, STDERR is redirected to STDOUT. Returns 0 if Samtools is in the PATH
+			$samtools_path = `which samtools`;
+			chomp $samtools_path;
+		}
     }
 
     if (defined $samtools_path){
 	# fine
     }
     else{
-	die "No Samtools found on your system, please install Samtools or specify its path using --samtools_path /path/\n\n";
+		die "No Samtools found on your system, please install Samtools or specify its path using --samtools_path /path/\n\n";
     }
     
     ### THRESHOLD of methylated Cs in non-CG context
     if (defined $threshold){
-	unless ($threshold > 0 ){
-	    die "Please use a sensible value for $threshold (positive numbers only, default: [3])\n\n";
-	}
+		unless ($threshold > 0 ){
+			die "Please use a sensible value for $threshold (positive numbers only, default: [3])\n\n";
+		}
     }
     else{
-	$threshold = 3; # default
+		$threshold = 3; # default
     }
 
- 
-    return ($single,$paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count);
+	return ($global_single,$global_paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count);
 }
 
 sub bam_isEmpty{
@@ -605,21 +611,21 @@ sub bam_isEmpty{
     my $file = shift;
 
     if ($file =~ /\.bam$/){
-	open (EMPTY,"$samtools_path view $file |") or die "Unable to read from BAM file $file: $!\n";
+		open (EMPTY,"$samtools_path view $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
-	open (EMPTY,$file) or die "Unable to read from $file: $!\n";
+		open (EMPTY,$file) or die "Unable to read from $file: $!\n";
     }
     my $count = 0;
     while (<EMPTY>){
-	if ($_){
-	    $count++;  # file contains data, fine.
-	}
-	last; # one line is enough
+		if ($_){
+			$count++;  # file contains data, fine.
+		}
+		last; # one line is enough
     }
 
     if ($count == 0){
-	die "\n### File appears to be empty, terminating non-CG filtering process. Please make sure the input file has not been truncated. ###\n\n";
+		die "\n### File appears to be empty, terminating non-CG filtering process. Please make sure the input file has not been truncated. ###\n\n";
     }
     close EMPTY or warn "$!\n";
 }
@@ -633,16 +639,16 @@ sub bam_isTruncated{
     
     my $count = 0;
     while (<TRUNC>){
-	chomp;
-	++$count;
-	# errors tend to start with a [], I have seen e.g.: 
-	# [W::bam_hdr_read] EOF marker is absent. The input is probably truncated.
-	if ($_ =~ /^\[/){ 
-	    if ($_ =~ /[EOF|truncated]/){ 
-		die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
-	    }
-	}
-	last if ($count == 10); 	# this should be enough
+		chomp;
+		++$count;
+		# errors tend to start with a [], I have seen e.g.: 
+		# [W::bam_hdr_read] EOF marker is absent. The input is probably truncated.
+		if ($_ =~ /^\[/){ 
+			if ($_ =~ /[EOF|truncated]/){ 
+			die "Captured error message: '$_'\n\n[ERROR] The file appears to be truncated, please ensure that there were no errors while copying the file!!! Exiting...\n\n";
+			}
+		}
+		last if ($count == 10); 	# this should be enough
     }
     close TRUNC or warn "$!\n";
 }
@@ -711,7 +717,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version                   Displays version information and exits.
 
 
-                                Last modified: 06 September 2017
+                                Last modified: 10 February 2021
 
 EOF
     ;
