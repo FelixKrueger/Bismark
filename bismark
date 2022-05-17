@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-21, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-22, Felix Krueger (felix.krueger@babraham.ac.uk)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -23,10 +23,13 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+# adding --secondary=no to try to increase speed
 
 my $parent_dir = getcwd();
+
 my $bismark_version = 'v0.23.1dev';
 my $copyright_dates = "2010-21";
+
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
 
@@ -39,7 +42,12 @@ foreach my $arg (@ARGV){
 }
 my @filenames;   # will be populated by processing the command line
 
-my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$sequence_file_format,$aligner_options,$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$strandID) = process_command_line();
+my ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie,$path_to_hisat2,$path_to_minimap2,$sequence_file_format,$aligner_options,
+$directional,$unmapped,$ambiguous,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$upto,$temp_dir,$non_bs_mm,$insertion_open,
+$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,
+$score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,
+$aligner_version,$slam,$icpc,$local,$strandID,$mm2,$maximum_length_cutoff) = process_command_line();
+
 
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
@@ -452,6 +460,9 @@ foreach my $filename (@filenames){
 			if ($bowtie2){
 				paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
+			elsif ($mm2){
+				paired_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
+			}
 			else{ #
 				paired_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2);
 			}
@@ -541,12 +552,19 @@ foreach my $filename (@filenames){
 				if ($bowtie2){ # as of version 0.10.2 we also support PBAT alignments for Bowtie 2
 					single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 (undef,$G_to_A_infile);
 				}
+				elsif($mm2){
+					single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 (undef,$G_to_A_infile);
+				}
 				else{ # HISAT2
 					single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 (undef,$G_to_A_infile);
 				}
 			}
 			elsif ($bowtie2){
 				single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 ($C_to_T_infile,$G_to_A_infile);
+			}
+			elsif($mm2){
+				# warn "Now kicking off the single-end Minimap2 alignments\n\n"; sleep(3);
+				single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 ($C_to_T_infile,$G_to_A_infile);
 			}
 			else{ # HISAT2
 				single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 ($C_to_T_infile,$G_to_A_infile);
@@ -637,6 +655,16 @@ foreach my $filename (@filenames){
 							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
 						}	
 					}
+					elsif($mm2){
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_mm22.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_mm2_SE_report.txt";
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_mm2.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_mm2_SE_report.txt";
+						}	
+					}
 					else{ # HISAT2
 						if ($gzip){
 							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2.bam";
@@ -684,6 +712,16 @@ foreach my $filename (@filenames){
 							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.bam";
 							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_PE_report.txt";
 							push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_bt2_pe.ambig.bam";         # only for Bowtie 2
+						}
+					}
+					elsif($mm2){
+						if ($gzip){
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_mm2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_bismark_mm2_PE_report.txt";
+						}
+						else{
+							push @temp_output,     "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_mm2_pe.bam";
+							push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_bismark_mm2_PE_report.txt";
 						}
 					}
 					else{
@@ -907,6 +945,9 @@ sub merge_individual_mapping_reports{
 		if ($bowtie2){
 			$report_file .= '_bismark_bt2_SE_report.txt';
 		}
+		elsif($mm2){
+			$report_file .= '_bismark_mm2_SE_report.txt';
+		}
 		else{
 			$report_file .= '_bismark_hisat2_SE_report.txt';
 		}
@@ -914,6 +955,9 @@ sub merge_individual_mapping_reports{
 	else{
 		if ($bowtie2){
 			$report_file .= '_bismark_bt2_PE_report.txt';
+		}
+		elsif($mm2){
+			$report_file .= '_bismark_mm2_PE_report.txt';
 		}
 		else{
 			$report_file .= '_bismark_hisat2_PE_report.txt';
@@ -1316,7 +1360,7 @@ sub merge_individual_BAM_files{
   my ($tempbam,$original_filename,$single_end) = @_;
   my $merged_name = $original_filename;
 
-  #warn "merged name is: $merged_name\n";
+  # warn "merged name is: $merged_name\n";
   $merged_name =~ s/.*\///; # deleting path information
   # warn "merged name is: $merged_name\n";
   $merged_name =~ s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//; # attempting to remove fastq.gz etc to make filename a little shorter
@@ -1334,6 +1378,9 @@ sub merge_individual_BAM_files{
     if ($bowtie2){ # BAM format is the default for Bowtie 2
       $merged_name .= '_bismark_bt2.bam';
     }
+	elsif($mm2){  
+      $merged_name .= '_bismark_mm2.bam';
+    }
     else{          # BAM is the default output
       $merged_name .= '_bismark_hisat2.bam';
     }
@@ -1345,6 +1392,9 @@ sub merge_individual_BAM_files{
   else{
     if ($bowtie2){ # BAM format is the default for Bowtie 2
       $merged_name .= '_bismark_bt2_pe.bam';
+    }
+	elsif($mm2){  
+      $merged_name .= '_bismark_mm2_pe.bam';
     }
     else{          # BAM is the default output
       $merged_name .= '_bismark_hisat2_pe.bam';
@@ -1483,6 +1533,9 @@ sub start_methylation_call_procedure_single_ends {
 	if ($bowtie2){ # SAM format is the default for Bowtie 2
 		$outfile =~ s/$/_bismark_bt2.sam/;
 	}
+	elsif($mm2){  # SAM output is the default for minimap2
+		$outfile =~ s/$/_bismark_mm2.sam/;
+	}
 	else{ # SAM output is the default for HISAT2
 		$outfile =~ s/$/_bismark_hisat2.sam/;
 	}
@@ -1502,7 +1555,7 @@ sub start_methylation_call_procedure_single_ends {
 
 	if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
 		### for multicore processing we write out BAM files by default and merge them together as a single CRAM file in the merging step later on.
-		### This avoids having to change all the the file endings on the way
+		### This avoids having to change all the file endings on the way
 		if($multicore > 1){
 			$outfile =~ s/sam$/bam/;
 			open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
@@ -1538,6 +1591,9 @@ sub start_methylation_call_procedure_single_ends {
 	}
 	if ($bowtie2){
 		$reportfile =~ s/$/_bismark_bt2_SE_report.txt/;
+	}
+	elsif($mm2){
+		$reportfile =~ s/$/_bismark_mm2_SE_report.txt/;
 	}
 	else{
 		$reportfile =~ s/$/_bismark_hisat2_SE_report.txt/;
@@ -1630,8 +1686,11 @@ sub start_methylation_call_procedure_single_ends {
 	if ($bowtie2){
 		print REPORT "Bismark was run with Bowtie 2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
 	}
+	elsif ($mm2){
+		print REPORT "Bismark was run with minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
 	else{
-		print REPORT "Bismark was run with HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+		print REPORT   "Bismark was run with HISAT2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
 	}
 
 
@@ -2309,6 +2368,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 	my $count = 0;
 
 	warn "\nReading in the sequence file $sequence_file\n";
+
 	while (1) {
 		my $identifier = <IN>;
 		my $sequence = <IN>;
@@ -2572,13 +2632,14 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
 }
 
-########################################
-### BOWTIE 2 // HISAT2 // SINGLE-END ###
-########################################
+####################################################
+### BOWTIE 2 // HISAT2 // MINIMAP2 // SINGLE-END ###
+####################################################
 
 sub check_results_single_end{
 	my ($sequence,$identifier,$quality_value) = @_;
 	# warn "\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\nCurrent sequence: $sequence\t$identifier\t$quality_value\n";
+	# sleep(10);
 	
 	unless ($quality_value){ # FastA sequences get assigned a quality value of Phred 40 throughout
 		$quality_value = 'I'x(length$sequence);
@@ -2597,11 +2658,11 @@ sub check_results_single_end{
   
 	### reading from the Bowtie 2 output filehandles
 	foreach my $index (0..$#fhs){
-		#	if ($fhs[$index]->{last_line} =~ /\d+S/){
-			#print "Index: $index\n";
-			#print "$fhs[$index]->{last_line}\n";
-			#print "$fhs[$index]->{last_seq_id}\n";
-		#	}
+			# if ($fhs[$index]->{last_line} =~ /\d+S/){
+			# print "Index: $index\n";
+			# print "$fhs[$index]->{last_line}\n";
+			# print "$fhs[$index]->{last_seq_id}\n";
+			# }
 		### skipping this index if the last alignment has been set to undefined already (i.e. end of bowtie output)
 		next unless ($fhs[$index]->{last_line} and defined $fhs[$index]->{last_seq_id});
 
@@ -2649,6 +2710,7 @@ sub check_results_single_end{
 			my @fields = split (/\t/,$fhs[$index]->{last_line});
 
 			foreach (11..$#fields){
+				#warn "$fields[$_]";
 				if ($fields[$_] =~ /AS:i:(.*)/){
 					$alignment_score = $1;
 				}
@@ -2669,7 +2731,7 @@ sub check_results_single_end{
 					}
 				}
 			}
-
+			#sleep(5);
 			my $overwrite = 0; # If we get 2 alignments to the very same position, e.g. to OT with and AS of -156 and to CTOB with and AS of 0 we need the latter to trump the former, else
 			# the read will be assigned to the wrong strand which may result in incorrect methylation calls.
 			# this was brought to our attention by Sylvain Foret (ANU Canberra), 13 April 2016
@@ -5470,6 +5532,11 @@ sub biTransformFastQFiles {
 		}
 
 		$sequence = uc$sequence; # make input file case insensitive
+		# $maximum_length_cutoff  defined globally
+		if (length$sequence > $maximum_length_cutoff){
+			print "Removing this sequence with length ",length$sequence,"\n";
+			next;
+		}
 
 		# detecting if the input file contains tab stops, as this is likely to result in no alignments
 		if (index($identifier,"\t") != -1){
@@ -5811,10 +5878,20 @@ sub biTransformFastQFiles_paired_end {
 		my $sequence_C_to_T = my $sequence_G_to_A = $sequence;
 
 		if ($read_number == 1){
-			$identifier =~ s/$/\/1\/1/;
+			if ($mm2){
+				$identifier =~ s/$/\/1/; # minimap2 does not remove the last /1 /2 automatically
+			}
+			else{
+				$identifier =~ s/$/\/1\/1/;
+			}
 		}
 		elsif ($read_number == 2){
-			$identifier =~ s/$/\/2\/2/;
+			if ($mm2){
+				$identifier =~ s/$/\/2/; # minimap2 does not remove the last /1 /2 automatically
+			}
+			else{
+				$identifier =~ s/$/\/2\/2/;
+			}
 		}
 		else{
 			die "Read number needs to be 1 or 2\n";
@@ -6354,7 +6431,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 
 		my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first bowtie output line (= the sequence identifier)
 		my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second bowtie output line
-		
+		warn "$id_1\n$id_2\n";sleep(1);
 		if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that Bowtie2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
 			$fh->{last_seq_id} = $id_1;
 		}
@@ -6364,7 +6441,7 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
 		else{
 			die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
 		}
-		
+		warn "$id_1\n$id_2\n";sleep(1);
 		$fh->{last_line_1} = $line_1; # this contains read 1 or read 2
 		$fh->{last_line_2} = $line_2; # this contains read 1 or read 2
 		# warn "Set last_seq_id as: $fh->{last_seq_id}\n";
@@ -6475,6 +6552,111 @@ sub paired_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 {
 		}
 	}
 }
+
+
+### MINIMAP2   | PAIRED-END | FASTQ
+sub paired_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
+
+	my ($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2) = @_;
+	if ($directional){
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_2 (FastQ)\n";
+	}
+	elsif ($pbat){
+		warn "Input files are $G_to_A_infile_1 and $C_to_T_infile_2 (FastQ)\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile_1 and $G_to_A_infile_1 and $C_to_T_infile_2 and $G_to_A_infile_2 (FastQ)\n";
+	}
+
+	## Now starting up 4 instances of minimap2 feeding in the converted sequence files and reading in the first line of the output, and storing it
+
+	if ($directional or $pbat){
+		warn "Now running 2 instances of minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	
+	foreach my $fh (@fhs) {
+
+		if ($directional or $pbat){ # skipping unwanted filehandles
+			unless ($fh->{inputfile_1}){
+				$fh->{last_seq_id} = undef;
+				$fh->{last_line_1} = undef;
+				$fh->{last_line_2} = undef;
+				next;
+			}
+		}
+
+		my $mm2_options = $aligner_options;
+		# Have yet to find out whether this is relevant at all
+		# if ($fh->{name} eq 'CTread1GAread2CTgenome' or $fh->{name} eq 'GAread1CTread2GAgenome'){
+		# 	$hisat2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		# }
+		# else {
+		# 	$hisat2_options .= ' --nofw';
+		# }
+		# The minimap index requires the entire name of the index (including .mmi)
+		my $mmi = $fh->{bisulfiteIndex}.".mmi";
+		warn "Using minimap2 index: $mmi\n\n";
+
+		warn "Now starting a minimap2 paired-end alignment for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile_1} and $temp_dir$fh->{inputfile_2}, with the options: $mm2_options))\n";
+		open ($fh->{fh},"$path_to_minimap2 $mm2_options $mmi $temp_dir$fh->{inputfile_1} $temp_dir$fh->{inputfile_2} |") or die "Can't open pipe to minimap2: $!";
+
+		### minimap2 outputs out SAM format (option -a), so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else{
+				last; # no alignment output
+			}
+		}
+
+		my $line_1 = $_;
+		my $line_2 = $fh->{fh}->getline();
+
+		# we store the first line of the output (unmapped reads should also produce a SAM line)
+		if ($line_1 and $line_2) {
+			chomp $line_1;
+			chomp $line_2;
+			
+			# Need to make sure minimap2 does the same
+			### Bowtie always reports the alignment with the smaller chromosomal position first. This can be either sequence 1 or sequence 2.
+			### We will thus identify which sequence was read 1 and store this ID as last_seq_id
+
+			my $id_1 = (split(/\t/,$line_1))[0]; # this is the first element of the first minimap2 output line (= the sequence identifier)
+			my $id_2 = (split(/\t/,$line_2))[0]; # this is the first element of the second minimap2 output line
+			
+			# TODO: Need to check this.
+			warn "$id_1\n$id_2\n";sleep(1);
+ 			if ($id_1 =~ s/\/1$//){ # removing the read 1 tag if present (remember that HISAT2 clips off /1 or /2 line endings itself, so we added /1/1 or /2/2 to start with
+				$fh->{last_seq_id} = $id_1;
+			}
+			elsif ($id_2 =~ s/\/1$//){ # removing the read 1 tag if present
+				$fh->{last_seq_id} = $id_2;
+			}
+			else{
+				die "Either the first or the second id need to be read 1! ID1 was: $id_1; ID2 was: $id_2\n";
+			}
+			warn "$id_1\n$id_2\n";sleep(1);
+
+			$fh->{last_line_1} = $line_1; # this contains read 1 or read 2
+			$fh->{last_line_2} = $line_2; # this contains read 1 or read 2
+			warn "Set last_seq_id as: $fh->{last_seq_id}\n";
+			warn "Found first alignment:\n$fh->{last_line_1}\n$fh->{last_line_2}\n";
+		}
+		# otherwise we just initialise last_seq_id and last_lines as undefined
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_lines\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line_1} = undef;
+			$fh->{last_line_2} = undef;
+		}
+	}
+}
+
 
 #####################################################################################################################################################
 
@@ -6730,6 +6912,85 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_hisat2 {
 	}
 }
 
+# 23 04 2021
+### Minimap2   | SINGLE-END | FASTQ
+sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
+
+	my ($C_to_T_infile,$G_to_A_infile) = @_;
+	if ($directional){
+		warn "Input file is $C_to_T_infile (FastQ)\n\n";
+	}
+	elsif ($pbat){
+		warn "Input file is $G_to_A_infile (FastQ)\n\n";
+	}
+	else{
+		warn "Input files are $C_to_T_infile and $G_to_A_infile (FastQ)\n\n";
+	}
+
+	## Now starting up to 4 instances of Minimap2 feeding in the converted sequence files, reading in the first line of its output, and storing it
+	if ($directional or $pbat){
+		warn "Now running 2 instances of minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+	else{
+		warn "Now running 4 individual instances of minimap2 against the bisulfite genome of $genome_folder with the specified options: $aligner_options\n\n";
+	}
+
+	foreach my $fh (@fhs) {
+		my $mm2_options = $aligner_options;
+
+		# Map short accurate genomic reads
+		# minimap2 -ax sr ref.fa reads-se.fq > aln.sam           # single-end alignment
+		# minimap2 -ax sr ref.fa read1.fq read2.fq > aln.sam     # paired-end alignment
+		# minimap2 -ax sr ref.fa reads-interleaved.fq > aln.sam  # paired-end alignment
+		
+		# if ($fh->{name} eq 'CTreadCTgenome' or $fh->{name} eq 'GAreadGAgenome'){
+		# 	$mm2_options .= ' --norc'; ### ensuring the alignments are only reported in a sensible manner
+		# }
+		# else {
+		# 	$mm2_options .= ' --nofw';
+		# }
+
+		warn "Now starting >> minimap2 << for $fh->{name} (reading in sequences from $temp_dir$fh->{inputfile} with options $mm2_options)\n";
+		# warn "Using minimap2 index: $fh->{bisulfiteIndex}\n\n";
+		
+		# The minimap index requires the entire name of the index (including .mmi)
+		my $mmi = $fh->{bisulfiteIndex}.".mmi";
+		warn "Using minimap2 index: $mmi\n\n";
+		
+		my $minimap_commandline = "$path_to_minimap2 $mm2_options $mmi $temp_dir$fh->{inputfile}";
+		warn "Minimap2 command line:\n$minimap_commandline\n";
+		
+		open ($fh->{fh},"$minimap_commandline |") or die "Can't open pipe to minimap2: $!";
+		### Minimap2 outputs SAM format, so we need to skip everything until the first sequence
+		while (1){
+			$_ = $fh->{fh}->getline();
+			# warn "$_\n";
+			# sleep(1);
+			if ($_) {
+				last unless ($_ =~ /^\@/); # SAM headers start with @
+			}
+			else {
+				last;
+			}
+		}
+
+		# HISAT2 outputs a result line even for sequences without any alignments. We thus store the first line of the output
+		if ($_) {
+			chomp;
+			my $id = (split(/\t/))[0]; # this is the first element of the output (= the sequence identifier)
+			$fh->{last_seq_id} = $id;
+			$fh->{last_line} = $_;
+			warn "Found first alignment:\t$fh->{last_line}\n";
+			warn "storing $id and\n$_\n";
+		}
+		# otherwise we just initialise last_seq_id and last_line as undefined. This should only happen at the end of a file for Bowtie 2 output
+		else {
+			warn "Found no alignment, assigning undef to last_seq_id and last_line\n";
+			$fh->{last_seq_id} = undef;
+			$fh->{last_line} = undef;
+		}
+	}
+}
 
 sub ensure_the_aligner_is_working{
 
@@ -6751,6 +7012,10 @@ sub ensure_the_aligner_is_working{
 		if ($aligner eq 'Bowtie 2'){
 			$aligner_version =~ /bowtie.*\s+version\s+(\d+\.\d+\.\d+)/;
 			$aligner_version = $1;
+		}
+		elsif($aligner eq 'minimap2'){
+			# warn "$aligner_version\n";
+			# minimap2 reports only the version number
 		}	
 		else{
 			$aligner_version =~ /hisat2.*\s+version\s+(\d+\.\d+\.\d+)/;
@@ -6921,6 +7186,7 @@ sub process_command_line{
 	my $mates2;
 	my $path_to_bowtie2;
 	my $path_to_hisat2;
+	my $path_to_minimap2;
 	my $fastq;
 	my $fasta;
 	my $skip;
@@ -6940,6 +7206,7 @@ sub process_command_line{
 	my $output_dir;
 	my $bowtie2;
 	my $hisat2;
+	my $mm2; # Minimap2
 	my $sam_no_hd;
 	my $seed_extension_fails;
 	my $reseed_repetitive_seeds;
@@ -6975,13 +7242,19 @@ sub process_command_line{
 	my $known_splices;
 	my $icpc;
 	my $local;
+	my $mm2_short_read;
+	my $mm2_pacbio;
+	my $mm2_nanopore;
+	my $maximum_length_cutoff;
 	my $strandID;
 
-	my $command_line = GetOptions ('help|man'                => \$help,
+
+	my $command_line = GetOptions ('help'  => \$help,
 				 '1=s'                     => \$mates1,
 				 '2=s'                     => \$mates2,
 				 'path_to_bowtie2=s'       => \$path_to_bowtie2,
 				 'path_to_hisat2=s'        => \$path_to_hisat2,
+				 'path_to_minimap2=s'      => \$path_to_minimap2,
 				 'genome_folder=s'         => \$genome_folder,
 				 'f|fasta'                 => \$fasta,
 				 'q|fastq'                 => \$fastq,
@@ -7001,6 +7274,7 @@ sub process_command_line{
 				 'o|output_dir=s'          => \$output_dir,
 				 'bowtie2'                 => \$bowtie2,
 				 'hisat2'                  => \$hisat2,
+				 'minimap2|mm2'            => \$mm2,
 				 'sam-no-hd'               => \$sam_no_hd,
 				 'D=i'                     => \$seed_extension_fails,
 				 'R=i'                     => \$reseed_repetitive_seeds,
@@ -7035,6 +7309,10 @@ sub process_command_line{
 				 'no-spliced-alignment'    => \$nosplice,
 				 'icpc'                    => \$icpc,
 				 'local'                   => \$local,
+				 'mm2_short_read'          => \$mm2_short_read,
+				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
+				 'mm2_pacbio|pacbio'       => \$mm2_pacbio,
+				 'mm2_nanopore|nanopore'   => \$mm2_nanopore,
 				 'strandID'                => \$strandID,
 				);
 
@@ -7055,8 +7333,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright $copyright_dates Felix Krueger, Babraham Bioinformatics
-              www.bioinformatics.babraham.ac.uk/projects/
+        Copyright $copyright_dates Felix Krueger, Babraham Bioinformatics  
                 https://github.com/FelixKrueger/Bismark
 
 
@@ -7073,15 +7350,29 @@ VERSION
 		if ($bowtie2){
 			die "You may not select both --hisat2 and --bowtie2. Make your pick! [default is Bowtie 2]\n";
 		}
+		if ($mm2){
+			die "You may not select both --hisat2 and --minimap2. Make your pick!\n";
+		}
 		$bowtie2 = 0;
+		$hisat2  = 1;
+		$mm2     = 0;
 	}
-	else{ # Bowtie 2 is the default mode (as of 27 July 2015)
+	elsif($mm2){
+		if ($bowtie2){
+			die "You may not select both --minimap2 and --bowtie2. Make your pick! [default is Bowtie 2]\n";
+		}
+		$bowtie2 = 0;
+		$hisat2  = 0;
+		$mm2     = 1;
+	}
+	else{ # Bowtie 2 is the default mode
 		$bowtie2 = 1;
-		$hisat2 = 0;
+		$hisat2  = 0;
+		$mm2     = 0;
 	}
 
 	unless ($sam_no_hd){
-		$sam_no_hd =0;
+		$sam_no_hd = 0;
 	}
 
 	
@@ -7122,18 +7413,41 @@ VERSION
 			warn "Path to HISAT2 specified as: $path_to_hisat2\n";
 		}
 	}
+	elsif($mm2){
+		if ($path_to_minimap2){
+			unless ($path_to_minimap2 =~ /\/$/){
+				$path_to_minimap2 =~ s/$/\//;
+			}
+			
+			if (-d $path_to_minimap2){
+				$path_to_minimap2 = "${path_to_minimap2}minimap2";
+			}
+			else{
+				die "The path to minimap2 provided ($path_to_minimap2) is invalid (it MUST be a directory)!\n";
+			}
+			warn "Path to minimap2 specified as: $path_to_minimap2\n";
+		}
+		else{
+			$path_to_minimap2 = 'minimap2';
+			warn "Minimap2 is assumed to be in PATH, using: '$path_to_minimap2'\n";
+		}
+	}
 	else{
-		die "We require either Bowtie 2, or HISAT2 mode...";
+		die "We require either Bowtie 2, HISAT2  or minimap2 mode...";
 	}
 	
 	### testing if the aligners appear to be working
 	my $aligner_version;
 	if ($bowtie2){
 		$aligner_version = ensure_the_aligner_is_working($path_to_bowtie2,'Bowtie 2');
+	}
+	elsif($mm2){
+		$aligner_version = ensure_the_aligner_is_working($path_to_minimap2,'minimap2');
 	}	
 	else{
 		$aligner_version = ensure_the_aligner_is_working($path_to_hisat2,'HISAT2');
 	}
+
 
 	### SAM/CRAM/BAM format
 	if ($sam){
@@ -7158,7 +7472,7 @@ VERSION
 			}
 		}
 		else{
-		warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
+			warn "CRAM reference not specified explicitely, regenerating from FastA reference files\n\n";
 		}
 	}
 	else{
@@ -7215,18 +7529,18 @@ VERSION
 
 	### OPTION AMBIGUOUS BAM
 	if ($ambig_bam){
-		# this option simply outputs the current alignment to a file]
+		# this option simply outputs the current alignment to a file
 	}
-
 
 	####################################
 	### PROCESSING ARGUMENTS
 
 	### GENOME FOLDER
-	if (defined $genome_folder){ # 25 11 2015 The genome folder may now also be defined with the option --genome_folder
+	if (defined $genome_folder){ # the genome folder may be defined with the option --genome_folder
 		# warn "Genome folder specified with --genome_folder $genome_folder\n";
 	}
 	else{
+		# else the first argument is assumed to be the genome folder
 		$genome_folder = shift @ARGV; # mandatory
 	}
 
@@ -7261,6 +7575,8 @@ VERSION
 
 	my $hisat2_small_index_present = 1;
 	my $hisat2_large_index_present = 1;
+	 
+	my $mm2_index_present = 1;
 
 	if ($bowtie2){
 		### Checking for small indixes first (ending in .bt2)
@@ -7323,6 +7639,31 @@ VERSION
 			}
 			else{
 				die "Failed to detect either a standard (.bt2) or 64-bit (.bt2l) Bowtie 2 index for the genome specified. Please run the bismark_genome_preparation before launching Bismark\n\n";
+			}
+		}
+	}
+	elsif ($mm2){
+		### minimap2 indexes end in .mmi
+
+		# checking the integrity of $CT_dir
+		chdir $CT_dir or die "Failed to move to directory $CT_dir: $!\n";
+
+		my @CT_mm2_index = ('BS_CT.mmi');
+		foreach my $file (@CT_mm2_index){
+			unless (-f $file){
+				warn "The minimap2 index of the C->T converted genome seems to be non-existant ('$file'). Please run the bismark_genome_preparation before running Bismark\n";
+				$mm2_index_present = 0;
+			}
+		}
+    
+		# checking the integrity of $GA_dir
+		chdir $GA_dir or die "Failed to move to directory $GA_dir: $!\n";
+		my @GA_mm2_index = ('BS_GA.mmi');
+
+		foreach my $file(@GA_mm2_index){
+			unless (-f $file){
+				warn "The minimap2 index of the G->A converted genome seems to be non-existant ('$file'). Please run bismark_genome_preparation before running Bismark\n";
+				$mm2_index_present = 0;
 			}
 		}
 	}
@@ -7421,7 +7762,7 @@ VERSION
 		warn "Skipping the first $skip reads from the input file\n";
 		# push @aligner_options,"-s $skip";
 	}
-
+	
 	### UPTO
 	if ($qupto){
 		warn "Processing sequences up to read no. $qupto from the input file\n";
@@ -7918,13 +8259,107 @@ VERSION
 		}
 	}
 	
+	### MINIMAP2 OPTIONS
+
+	unless ($mm2){
+		if ($mm2_short_read){
+			die "You cannot specify minimap2 options (--mm2_short_read) unless you also use --minimap2. Please respecify!\n\n";
+		}
+		if ($maximum_length_cutoff){
+			die "You cannot specify minimap2 options (--mm2_maximum_length) unless you also use --minimap2. Please respecify!\n\n";
+		}
+		if ($mm2_pacbio){
+			die "You cannot specify minimap2 options (--pacbio) unless you also use --minimap2. Please respecify!\n\n";
+		}
+		if ($mm2_nanopore){
+			die "You cannot specify minimap2 options (--nanopore) unless you also use --minimap2. Please respecify!\n\n";
+		}
+	}
+
+	if ($mm2){
+		if (defined $maximum_length_cutoff){
+			if ($maximum_length_cutoff < 100){
+				die "Please select a sensible maximum sequence length cutoff (currently 100-100,000 bp)\n";
+			}
+			if ($maximum_length_cutoff > 100000){
+				die "Please select a sensible maximum sequence length cutoff (currently 100-100,000 bp)\n";
+			}
+		}
+		else{
+			$maximum_length_cutoff = 10000; # default
+		}
+		warn "Using a maximum length cutoff of $maximum_length_cutoff bp\n";
+
+		# Minimap requires a completely different set of options, let's start with a clean slate.
+		@aligner_options = ();
+
+		# -a           output in the SAM format (PAF by default)	
+		push @aligner_options,'-a'; 
+
+		# Output an MD tag
+		push @aligner_options,'--MD'; 
+
+		# Adding --secondary=no to reduce alignment time. Or does it?
+		push @aligner_options,'--secondary=no'; 
+
+ 		# Not sure yet how to handle muliple threads per alignment. Let's be cautious initially
+		# -t INT       number of threads [3]
+		push @aligner_options,'-t 2'; 
+
+		if ($mm2_short_read){
+			if ($mm2_nanopore){
+				die "Please select minimap2 in Short Read or Nanopore mode, but not both...\n\n";
+			}
+			if ($mm2_pacbio){
+				die "Please select minimap2 in Short Read or PacBio mode, but not both...\n\n";
+			}
+			# Preset:
+    		# -x STR       preset (always applied before other options; see minimap2.1 for details) []
+			#          - sr: genomic short-read mapping
+			#          - map-pb/map-ont: PacBio/Nanopore vs reference mapping          
+			#          - splice: long-read spliced alignment
+			warn "Using preset for short read mapping (-x sr)\n\n";
+			push @aligner_options,'-x sr'; 	
+		}
+		elsif($mm2_pacbio){
+
+			if ($mm2_nanopore){
+				die "Please select minimap2 in PacBio or Nanopore mode, but not both...\n\n";
+			}
+			
+			warn "Using preset for PacBio mapping (-x map-pb)\n\n";
+			push @aligner_options,'-x map-pb';
+			
+		}
+		else{
+			# otherwise we will assume that the default mode is ONT Nanopore vs reference mapping for now
+			$mm2_nanopore = 1;
+			warn "Using preset for ONT mapping (-x map-ont)\n\n";
+			push @aligner_options,'-x map-ont';
+		}
+
+		
+		# Let's keep these options in mind		
+		# -L           write CIGAR with >65535 ops at the CG tag
+		# --cs[=STR]   output the cs tag; STR is 'short' (if absent) or 'long' [none]
+		# --eqx        write =/X CIGAR operators
+		# -Y           use soft clipping for supplementary alignments
+		# -K NUM       minibatch size for mapping [500M]
+		push @aligner_options, "-K 250K";
+
+	}
+
+
+
 	### SUMMARY OF ALL ALIGNER OPTIONS
 	my $aligner_options = join (' ',@aligner_options);
 	warn "Summary of all aligner options:\t$aligner_options\n"; sleep(2);
 	
-	
 	if ($slam){
 		die "The (experimental) SLAM-seq mode currently only works with FastQ files. Please re-specify\n\n" unless ($fastq);
+		if ($mm2){
+			die "Options --slam and --minimap2 do not work together. Please stop wanting that!\n\n";
+		}
 	}
 	
 	if ($icpc){
@@ -7934,9 +8369,17 @@ VERSION
 		if ($local){
 			die "The option --non_bs_mm is only available for end-to-end alignments\n\n";
 		}
+		if ($mm2){
+			die "The option --non_bs_mm is only available for end-to-end alignments (and doesn't work with minimap2)\n\n";
+		}
+
 	}
 	
-	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$sequence_format,$aligner_options,$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,$aligner_version,$slam,$icpc,$local,$strandID);
+	return ($genome_folder,$CT_index_basename,$GA_index_basename,$path_to_bowtie2,$path_to_hisat2,$path_to_minimap2,$sequence_format,$aligner_options,
+	$directional,$unmapped,$multi_map,$phred64,$output_dir,$bowtie2,$hisat2,$sam_no_hd,$skip,$qupto,$temp_dir,$non_bs_mm,$insertion_open,
+	$insertion_extend,$deletion_open,$deletion_extend,$gzip,$bam,$samtools_path,$pbat,$prefix,$old_flag,$basename,$score_min_intercept,
+	$score_min_slope,$bt2_large_index_present,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_bam,$cram,$cram_ref,$nucleotide_coverage,$dovetail,
+	$aligner_version,$slam,$icpc,$local,$strandID,$mm2,$maximum_length_cutoff);
 }
 
 
@@ -9161,11 +9604,15 @@ Input:
 
 --phred64-quals          FASTQ qualities are ASCII chars equal to the Phred quality plus 64. Default: off.
 
---path_to_bowtie2        The full path </../../> to the Bowtie 2 installation on your system. If not
-                         specified it is assumed that Bowtie 2 is in the PATH.
+--path_to_bowtie2        The full path </../../> to the Bowtie 2 installation folder on your system (not the
+                         bowtie2 executable itself). If not specified, it is assumed that Bowtie 2 is in the PATH.
 
---path_to_hisat2         The full path </../../> to the HISAT2 installation on your system. If not
-                         specified it is assumed that HISAT2 is in the PATH.
+--path_to_hisat2         The full path </../../> to the HISAT2 installation folder on your system (not the 
+                         hisat2 executable itself). If not specified, it is assumed that HISAT2 is in the PATH.
+
+--path_to_minimap2       The full path </../../> to the minimap2 installation folder on your system (not the
+                         minimap2 executable itself). If not specified, it is assumed that  minimap2 is in the PATH.
+
 
 Alignment:
 
@@ -9464,6 +9911,28 @@ Scoring options:
                          a penalty of <int1> + N * <int2>. Default: 5, 3.
 
 
+MINIMAP2-SPECIFIC OPTIONS:
+
+
+--minimap2/--mm2         Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that
+                         things may change in the near future. The default mapping mode is --nanopore (preset '-x map-ont' (Nanopore reads)). Currently,
+                         there are no plans to support PacBio reads. Internally, minimap2 is run with the options -a --MD. More information
+                         here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
+
+--mm2_nanopore           Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (-x map-ont). Only works in conjuntion with --minimap2.
+                         Default mode when --minimap2 is specified without additional qualifiers.
+
+--mm2_pacbio             Using the minimap2 preset for PacBio vs reference mapping (-x map-pb). Only works in conjuntion with --minimap2.
+                         Default: OFF.
+
+--mm2_short_reads        This option invokes the minmap2 preset setting '-x sr' and is intended for genomic short-read mapping with
+                         accurate reads (probably Illumina 150bp+ ?). For spliced short-reads, please use --hisat2 instead. 
+                         The 'sr' preset mode (short single-end reads without splicing) uses the following options: 
+                         -k21 -w11 --sr --frag=yes -A2 -B8 -O12,32 -E2,1 -r50 -p.5 -N20 -f1000,5000 -n2 -m20 -s40 -g200 -2K50m --heap-sort=yes --secondary=no
+                         Default: OFF.
+
+--mm2_maximum_length <int>   Maximum length cutoff for very long sequences (currently allowed 100-100,000 bp). Default: 10000.
+
 
 Bismark BAM/SAM OUTPUT (default):
 
@@ -9488,6 +9957,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 02 September 2021
+Last modified on 17 May 2022
 HOW_TO
 }
