@@ -43,13 +43,8 @@ my %freqs;
 
 
 my $bismark_version = 'v0.23.1dev';
-<<<<<<< HEAD
 my $copyright_date = '2010-22';
 my $last_modified = "19 May 2022";
-=======
-my $last_modified = "17 May 2022";
-my $copyright_dates = "2010-22";
->>>>>>> 7b1a4fdbafe90b7aa5ef24f5dd75cfbd5dced803
 
 
 my $command_line = GetOptions ('verbose'         => \$verbose,
@@ -81,11 +76,7 @@ if ($version){
           Bismark - Bisulfite Mapper and Methylation Caller.
 
           Bismark Genome Preparation Version: $bismark_version
-<<<<<<< HEAD
         Copyright $copyright_date, Felix Krueger, Altos Bioinformatics
-=======
-       Copyright $copyright_dates, Felix Krueger, Altos Labs Bioinformatics
->>>>>>> 7b1a4fdbafe90b7aa5ef24f5dd75cfbd5dced803
               
                https://github.com/FelixKrueger/Bismark
 			  
@@ -773,7 +764,7 @@ versions and index them for alignments with Bowtie 2 (default), HISAT2 or Minima
 genome will have all Cs converted to Ts (C->T), and the other one will have all Gs converted to As (G->A).
 Both bisulfite genomes will be stored in subfolders within the reference genome folder. Once the bisulfite
 conversion has been completed, the program will fork and launch two simultaneous instances of the Bowtie 2,
-HISAT2 or Minimap2 indexer (bowtie2-build or hisat2-build or minimap2 -d, resepctively). Be aware that the 
+HISAT2 or minimap2 indexer (bowtie2-build or hisat2-build or minimap2 -d, resepctively). Be aware that the 
 indexing process can take up to several hours; this will mainly depend on genome size and system resources.
 
 The new, and still experimental, --slam mode will produce T->C and A->G converted genomes instead.
@@ -795,10 +786,10 @@ OPTIONS:
 
 --verbose                Print verbose output for more details or debugging.
 
---path_to_aligner </../> The full path to the Bowtie 2 or HISAT2 installation folder on your system
+--path_to_aligner </../> The full path to the Bowtie 2, HISAT2 or minimap2 installation folder on your system
                          (depending on which aligner/indexer you intend to use; please note that this
                          is the folder and not any executable). Unless this path is specified, it is
-                         assumed that the aligner in question (Bowtie 2/HISAT2) is in the PATH.
+                         assumed that the aligner in question (Bowtie 2/HISAT2/minimap2) is in the PATH.
 
 --bowtie2                This will create bisulfite indexes for use with Bowtie 2. Recommended for most bisulfite
                          sequencing applications (Default: ON).
@@ -807,9 +798,9 @@ OPTIONS:
                          applications such as RNA methylation analyses or SLAM-seq type applications (see also: --slam).
                          (Default: OFF).
 
---minimap2/--mm2         This will create bisulfite indexes for use with Minimap2 (https://github.com/lh3/minimap2).
-                         This is recommended only for specialist applications such as EM-seq with ONT reads
-                         (Oxford Nanopore Technologies). (Default: OFF).
+--minimap2/--mm2         This will create bisulfite indexes for use with minimap2 (https://github.com/lh3/minimap2).
+                         This is recommended only for specialist applications such as EM-seq with ONT
+                         (Oxford Nanopore Technologies) or PacBio reads. (Default: OFF).
 
 --parallel INT           Use several threads for each indexing process to speed up the genome preparation step.
                          Remember that the indexing is run twice in parallel already (for the top and bottom strand
@@ -851,7 +842,7 @@ ARGUMENTS:
 
 
 
-This script was last modified on 27 Jan 2021.
+This script was last modified on 19 May 2022.
 
 HOW_TO
 }
