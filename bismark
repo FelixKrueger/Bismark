@@ -587,13 +587,21 @@ foreach my $filename (@filenames){
 			# warn "here are the child IDs: @pids\n";
 			# warn "Looping through the child process IDs:\n";
 
+			my $all_children_succeeded = 1;
 			foreach my $id (@pids){
 				# print "$id\t";
 				my $kid = waitpid ($id,0);
 				# print "Returned: $kid\nExit status: $?\n";
 				unless ($? == 0){
+					$all_children_succeeded = 0;
 					warn "\nChild process terminated with exit signal: '$?'\n\n";
 				}
+			}
+			if ($all_children_succeeded) {
+				print "All child process successfully finished.";
+			}
+			else {
+				die "\nTerminating. Not all child processes successfully finished.";
 			}
 
 			# regenerating names for temporary files
