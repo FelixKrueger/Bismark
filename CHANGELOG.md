@@ -6,17 +6,23 @@
 
 - Added new option `--strandID` which reports the alignment strand identity for paired-end, non-directional libraries, e.g. `YS:Z:CTOT`. This information may be difficult to obtain if third party tools interfered with the read ordering (admittedly there is a fine balance of read reporting position, FLAG, Read 1 and Genome conversion state to make it work in the first place. More information can be found in [this thread](https://github.com/FelixKrueger/Bismark/issues/455)). 
 
+- runs with `--parallel/--multicore` > 1 specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed (more [#494](https://github.com/FelixKrueger/Bismark/issues/494))
+
+- runs with `--parallel/--multicore` > 1 as well as `--unmapped` and/or `--ambiguous` specified will no longer potentially produce corrupt FastQ files (more [#495](https://github.com/FelixKrueger/Bismark/issues/495)) 
+ 
 ### methylation_consistency
 
 - Added new option `--chh` to use cytosines in CHH instead of CpG context to enable some trouble shooting and method development
 
 ### bismark2report
 
-- The CHH/CHG labels for the Cytosine Methylation after Extraction plot now appear in the correct order.
+- The CHH/CHG labels for the Cytosine Methylation after Extraction plot now appear in the correct order
 
 ### bismark_methylation_extractor
 
-- removed a print statement that would flood STDOUT the logfile if `--merge_non_CG` (but not `--comprehensive`) had been selected.
+- removed a print statement that would flood STDOUT the logfile if `--merge_non_CG` (but not `--comprehensive`) had been selected
+
+- runs with `--parallel/--multicore` specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed
 
 
 ## Changelog for Bismark v0.23.1 (release on 26 07 2021)
