@@ -17,18 +17,11 @@ jobs:
       - name: Check out Bismark source-code repository
         uses: actions/checkout@v2
 
-    # Not sure I actually need those, was taken from FastQ Screen
-    #  - name: Install Perl dependencies
-    #    run: |
-    #      sudo apt-get install libgd-perl
-    #      sudo cpan App::cpanminus
-    #      sudo cpanm GD::Graph
-
       - name: Set up conda
         uses: conda-incubator/setup-miniconda@v2
         with:
           auto-update-conda: true
-          python-version: 3.8
+          python-version: 3.9
 
       - name: Install conda dependencies
         shell: bash -l {0}
