@@ -5553,10 +5553,12 @@ sub biTransformFastQFiles {
 		}
 
 		$sequence = uc$sequence; # make input file case insensitive
-		# $maximum_length_cutoff  defined globally
-		if (length$sequence > $maximum_length_cutoff){
-			print "Removing this sequence with length ",length$sequence,"\n";
-			next;
+		if (defined $maximum_length_cutoff){
+			# $maximum_length_cutoff  defined globally for mm2 runs
+			if (length$sequence > $maximum_length_cutoff){
+				print "Removing this sequence with length ",length$sequence,"\n";
+				next;
+			}
 		}
 
 		# detecting if the input file contains tab stops, as this is likely to result in no alignments
