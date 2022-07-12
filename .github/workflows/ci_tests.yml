@@ -30,7 +30,8 @@ jobs:
           conda config --add channels defaults
           conda config --add channels bioconda
           conda config --add channels conda-forge
-          conda install bowtie2 hisat2 samtools
+          conda config --set channel_priority strict
+          conda install bowtie2>=2.4 hisat2 samtools
 
       - name: Bismark help message
         shell: bash -l {0}
