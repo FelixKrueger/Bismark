@@ -258,7 +258,7 @@ The mate read of paired-end alignments is written out as an additional separate 
 
 [3rd party program notice]: Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
 
-Please note that while Genozip is free for academic use (>90% of users), it is a commercial product, so users would need to register to it separately.
+Please note that while Genozip is free for academic use, it is a commercial product, so users would need to register to it separately.
 
 
 ### Data visualisation
