@@ -58,7 +58,9 @@ As a result of these tests, we changed the default settings for minimap2 alignme
 ### deduplicate_bismark
 
 - when using an output filename `-o customname` the deduplication report will also be derived from customname.
-- 
+
+
+Added a sentence to the Docs that Genozip 14 and above supports Bismark BAM files (with a substantial gain in compression).
 
 ## Changelog for Bismark v0.23.1 (release on 26 07 2021)
 
