@@ -3,7 +3,7 @@
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
 ## User Guide - v0.23.1
-#### 20 July, 2022
+#### 21 September, 2022
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
@@ -253,6 +253,12 @@ By default, Bismark generates SAM output for all alignment modes. Please note th
 15. `XR-tag` (read conversion state for the alignment) (16) XG-tag (genome conversion state for the alignment)
 
 The mate read of paired-end alignments is written out as an additional separate line in the same format.
+
+### BAM compression with Genozip (as of: 21 09 2022)
+
+[3rd party program notice]: Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
+
+Please note that while Genozip is free for academic use (>90% of users), it is a commercial product, so users would need to register to it separately.
 
 
 ### Data visualisation
