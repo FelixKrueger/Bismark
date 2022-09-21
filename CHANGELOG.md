@@ -55,6 +55,10 @@ As a result of these tests, we changed the default settings for minimap2 alignme
 
 - Added option `--mm2/--minimap2`. The genome indexing process (`bismark_genome_preparation`) writes out a minimap2 index to the genome folder, using the optimized k-mer size of `-k 20` (see comments for bismark itself). This pre-generated minimap2 index takes precedence over indexing options that would otherwise happen as part of the alignment procedure.
 
+### deduplicate_bismark
+
+- when using an output filename `-o customname` the deduplication report will also be derived from customname.
+- 
 
 ## Changelog for Bismark v0.23.1 (release on 26 07 2021)
 
