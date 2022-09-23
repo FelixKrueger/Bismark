@@ -967,7 +967,7 @@ sub process_commandline{
 				 'version'              => \$extractor_version,
 				 'no_overlap'           => \$no_overlap,
 				 'merge_non_CpG'        => \$merge_non_CpG,
-				 'o|output=s'           => \$output_dir,
+				 'o|output_dir=s'           => \$output_dir,
 				 'no_header'            => \$no_header,
 				 'bedGraph'             => \$bedGraph,
 				 "cutoff=i"             => \$coverage_threshold,
@@ -5872,7 +5872,7 @@ OPTIONS:
 --no_header              Suppresses the Bismark version header line in all output files for more convenient
                          batch processing.
 
--o/--output DIR          Allows specification of a different output directory (absolute or relative
+-o/--output_dir DIR      Allows specification of a different output directory (absolute or relative
                          path). If not specified explicitly, the output will be written to the current directory.
 
 --samtools_path          The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified
@@ -6045,7 +6045,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 
 
 
-This script was last modified on 10 March 2022.
+This script was last modified on 23 September 2022.
 
 HOW_TO
 }
