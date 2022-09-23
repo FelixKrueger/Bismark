@@ -51,6 +51,8 @@ As a result of these tests, we changed the default settings for minimap2 alignme
 
 - runs with `--parallel/--multicore` specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed
 
+- changed the option `-o/--output` to `-o/--output_dir` for consistency reasons... 
+
 ### bismark_genome_preparation
 
 - Added option `--mm2/--minimap2`. The genome indexing process (`bismark_genome_preparation`) writes out a minimap2 index to the genome folder, using the optimized k-mer size of `-k 20` (see comments for bismark itself). This pre-generated minimap2 index takes precedence over indexing options that would otherwise happen as part of the alignment procedure.
