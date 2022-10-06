@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-22, Felix Krueger (felix.krueger@babraham.ac.uk)
+## This program is Copyright (C) 2010-22, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -23,12 +23,10 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-# adding --secondary=no to try to increase speed
-
 my $parent_dir = getcwd();
 
-my $bismark_version = 'v0.23.1dev';
-my $copyright_dates = "2010-21";
+my $bismark_version = 'v0.24.0';
+my $copyright_dates = "2010-22";
 
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
@@ -7356,7 +7354,7 @@ sub process_command_line{
           Bismark - Bisulfite Mapper and Methylation Caller.
 
                        Bismark Version: $bismark_version
-        Copyright $copyright_dates Felix Krueger, Babraham Bioinformatics  
+        Copyright $copyright_dates Felix Krueger, Altos Bioinformatics  
                 https://github.com/FelixKrueger/Bismark
 
 

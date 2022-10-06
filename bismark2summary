@@ -5,7 +5,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-21, Felix Krueger <felix.krueger@babraham.ac.uk>.
+## This program is Copyright (C) 2010-22, Felix Krueger <fkrueger@altoslabs.com>.
 ## Thanks to Phil Ewels <phil.ewels@scilifelab.se> (who wrote a first version of this
 ## script in 2013 or so when it was still 'legal' to use Highcharts.js (or maybe it 
 ## never was?....))
@@ -22,7 +22,7 @@ use lib "$RealBin/../lib";
 
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
-my $bismark_version = '0.23.1';
+my $bismark_version = '0.24.0';
 
 # Last modified 09 11 2020
 
@@ -60,9 +60,8 @@ sub process_commandline{
                                  powered by Plot.ly
 
                            bismark2summary version: $bismark_version
-                          Copyright 2010-20 Felix Krueger
-                               Babraham Bioinformatics
-                 www.bioinformatics.babraham.ac.uk/projects/bismark/
+                          Copyright 2010-22 Felix Krueger
+                               Altos Bioinformatics
                       https://github.com/FelixKrueger/Bismark
 
 
