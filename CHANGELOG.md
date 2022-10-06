@@ -8,7 +8,34 @@
 
 - runs with `--parallel/--multicore` > 1 specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed (more [#494](https://github.com/FelixKrueger/Bismark/issues/494))
 
-- runs with `--parallel/--multicore` > 1 as well as `--unmapped` and/or `--ambiguous` specified will no longer potentially produce corrupt FastQ files (more [#495](https://github.com/FelixKrueger/Bismark/issues/495)) 
+- runs with `--parallel/--multicore` > 1 as well as `--unmapped` and/or `--ambiguous` specified will no longer produce potentially corrupt FastQ files (more [#495](https://github.com/FelixKrueger/Bismark/issues/495))
+
+- Added option `--mm2/--minimap2` to use [minimap2](https://github.com/lh3/minimap2) as the underlying aligner. The minimap2 alignment modes include Oxford Nanopore, PacBio and accurate short reads. In its current implementation, minimap2 can be invoked in one of the following ways:
+
+- `--mm2_nanopore`: Sets preset settings for Oxford Nanopore vs reference mapping '-x map-ont' [default]
+
+- `--mm2_pacbio`: Sets preset settings for PacBio vs. reference mapping '-x map-pb' 
+
+- `--mm2_short_reads`: Sets preset settings for accurate short reads '-x sr'
+
+- added option `--mm2_maximum_length <int>` to set a maximum length cutoff, which might be required for very long reads exceeding the maximum number of CIGAR operations tolerated by the BAM formatted reads (>65535). The default is 10,000 bp.
+
+Other options that are currently set within Bismark include '-a' (SAM output), '--MD' (MD tag), '--secondary=no'.
+
+Prompted by fairly slow alignment speeds with the minimap2 default settings, we set out to improve the performance of the alignment process by tweaking several different parameters 
+
+Speed optimisiation: [optimisation of minimap2 parameters](https://github.com/FelixKrueger/Bismark/issues/446)
+
+k-mer size 
+Due to the reduced DNA alphabet the minimap2 default k-mer size of 15 leads to substantially higher alignment times. Based on our tests we settled for a new default of ‘-k 20’
+minibatch size 
+The minimap2 default minibatch size of 500 million bp means that a substantial amount of data is aligned and held in memory before additional alignment threads can be started. Reducing the minibatch size to 250K reads seemed to be a good compromise (‘-K 250K’).
+minimap2 multi-threading
+minimap2 alignments may utilize multiple cores for each alignment process; we found that ‘-t 2’ offered a good speed-up, while allowing additional resources had diminishing returns.
+Bismark multi-threading
+We also tested the potential of using additional resources for Bismark itself (--parallel), which appeared to result in a speed-up of the alignment process as expected; however this comes at the cost of requiring additional system resources.
+ 
+As a result of these tests, we changed the default settings for minimap2 alignment parameters to ‘-t 2 -k 20 -K 250K’.
  
 ### methylation_consistency
 
@@ -24,6 +51,18 @@
 
 - runs with `--parallel/--multicore` specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed
 
+- changed the option `-o/--output` to `-o/--output_dir` for consistency reasons... 
+
+### bismark_genome_preparation
+
+- Added option `--mm2/--minimap2`. The genome indexing process (`bismark_genome_preparation`) writes out a minimap2 index to the genome folder, using the optimized k-mer size of `-k 20` (see comments for bismark itself). This pre-generated minimap2 index takes precedence over indexing options that would otherwise happen as part of the alignment procedure.
+
+### deduplicate_bismark
+
+- when using an output filename `-o customname` the deduplication report will also be derived from customname.
+
+
+Added a sentence to the Docs that Genozip 14 and above supports Bismark BAM files (with a substantial gain in compression).
 
 ## Changelog for Bismark v0.23.1 (release on 26 07 2021)
 

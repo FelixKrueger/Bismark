@@ -2,8 +2,8 @@
 
 <img title="Bismark" id="header_img" src="Images/bismark.png">
 
-## User Guide - v0.23.0
-#### 30 September, 2020
+## User Guide - v0.23.1
+#### 21 September, 2022
 
 This User Guide outlines the Bismark suite of tools and gives more details for each individual step. For troubleshooting some of the more commonly experienced problems in sequencing in general and bisulfite-sequencing in particular please browse through the sequencing section at [QCFail.com](https://sequencing.qcfail.com/).
 
@@ -253,6 +253,12 @@ By default, Bismark generates SAM output for all alignment modes. Please note th
 15. `XR-tag` (read conversion state for the alignment) (16) XG-tag (genome conversion state for the alignment)
 
 The mate read of paired-end alignments is written out as an additional separate line in the same format.
+
+### BAM compression with Genozip (as of: 21 09 2022)
+
+[3rd party program notice]: Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
+
+Please note that while Genozip is free for academic use, it is a commercial product, so users would need to register to it separately.
 
 
 ### Data visualisation
@@ -768,6 +774,14 @@ Here is a table summarising general recommendations for different library types 
             <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
             <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
         </tr>
+        <tr>
+            <td align="left">EM-seq (NEB)</td>
+            <td align="center">10 bp</td>
+            <td align="center">10 bp</td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+            <td align="center"><g-emoji alias="white_check_mark" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2705.png" ios-version="6.0">✅</g-emoji></td>
+            <td align="center"><g-emoji alias="white_large_square" fallback-src="https://assets-cdn.github.com/images/icons/emoji/unicode/2b1c.png" ios-version="6.0">⬜️</g-emoji></td>
+        </tr>
     </tbody>
 </table>
 
@@ -827,9 +841,14 @@ The Pico Methyl-Seq kit also uses a random priming step similar to the PBAT // s
 
 #### Swift
 [Manufacturer's page](https://swiftbiosci.com/products/accel-ngs-methyl-seq-dna-library-kit/)
-The Accel-NGS Methyl-Seq protocol uses Adaptase technology for capturing single-stranded DNA in an unbiased (again, not that unbiased actually...) manner. Also here, the first ~10 bp show extreme biases in sequence composition and M-bias, so trimming off at *least* 10 bp is advisable (please check the M-bias plot if even more is needed). Please also see the section _3' Trimming in general_ below.
+The Accel-NGS Methyl-Seq protocol uses Adaptase technology for capturing single-stranded DNA in an unbiased (again, not that unbiased actually...) manner. Also here, the first ~10-15 bp show extreme biases in sequence composition and M-bias, so trimming off at *least* 10 bp is advisable (please check the M-bias plot if even more is needed). Please also see the section _3' Trimming in general_ below.
 
-
+#### EM-seq (NEB)
+[EM-seq protocol](https://www.neb.com/protocols/2019/03/28/protocol-for-use-with-large-insert-libraries-470-520-bp-e7120).
+The Enzymatic Methyl-seq (EM-seq) protocol uses different enzymes to detect 5mC and 5hmC in a non-bisulfite dependent manner that allows capturing longer fragments and working with very low levels of starting material ([EM-seq paper](https://genome.cshlp.org/content/31/7/1280.full)). NEB internally don't trim more than 5bp from each read, but as discussed in [this thread](https://github.com/FelixKrueger/Bismark/issues/509), the recommended conservative trimming parameters are: 
+```
+--clip_R1 10 --clip_R2 10 --three_clip_R1 10 --three_prime_clip_R2 10
+```
 
 #### Random priming and 3' Trimming in general
 

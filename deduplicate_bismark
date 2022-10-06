@@ -7,7 +7,7 @@ use Cwd;
 ### This script is supposed to remove alignments to the same position in the genome which can arise by e.g. PCR amplification
 ### Paired-end alignments are considered a duplicate if both partner reads start and end at the exact same position
 
-my $dedup_version = 'v0.23.1';
+my $dedup_version = 'v0.24.0';
 my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile,$parallel) = process_commandline();
@@ -115,7 +115,15 @@ foreach my $file (@filenames){
     
 
     ### writing to a report file
-    my $report = $file;
+    my $report;
+	
+	if (defined $outfile){ 
+		$report = $outfile;	
+	}
+	else{
+		$report = $file;
+	}
+
     # now would be a good time to get rid of the path information
     $report =~ s/.*\///; # removing path information
     # warn "Now: $report\n";
@@ -923,7 +931,7 @@ sub print_helpfile{
 	
 	print '='x111,"\n\n";
 
-	print "This script was last modified on 30 October 2020\n\n";
+	print "This script was last modified on 20 September 2022\n\n";
 }
 
 
@@ -1069,8 +1077,7 @@ sub process_commandline{
                   Bismark Deduplication Module
 
 	      Deduplicator Version: $dedup_version
-      Copyright 2010-20 Felix Krueger, Babraham Bioinformatics
-	www.bioinformatics.babraham.ac.uk/projects/bismark/
+      Copyright 2010-22 Felix Krueger, Altos Labs Bioinformatics
 	    https://github.com/FelixKrueger/Bismark
   	  
 	  
