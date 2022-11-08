@@ -2,6 +2,8 @@
 
 ## Changelog for Bismark v0.24.1dev
 
+- Added new documentation website, built using [Material for Mkdocs](https://squidfunk.github.io/mkdocs-material/).
+
 ## Changelog for Bismark v0.24.0 (Release on 07 October 2022)
 
 ### Bismark
