@@ -10,9 +10,9 @@
 
 - Added new option `--strandID` which reports the alignment strand identity for paired-end, non-directional libraries, e.g. `YS:Z:CTOT`. This information may be difficult to obtain if third party tools interfered with the read ordering (admittedly there is a fine balance of read reporting position, FLAG, Read 1 and Genome conversion state to make it work in the first place. More information can be found in [this thread](https://github.com/FelixKrueger/Bismark/issues/455)).
 
-- runs with `--parallel/--multicore` > 1 specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed (more [#494](https://github.com/FelixKrueger/Bismark/issues/494))
+- runs with `--parallel` / `--multicore` > 1 specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed (more [#494](https://github.com/FelixKrueger/Bismark/issues/494))
 
-- runs with `--parallel/--multicore` > 1 as well as `--unmapped` and/or `--ambiguous` specified will no longer produce potentially corrupt FastQ files (more [#495](https://github.com/FelixKrueger/Bismark/issues/495))
+- runs with `--parallel` / `--multicore` > 1 as well as `--unmapped` and/or `--ambiguous` specified will no longer produce potentially corrupt FastQ files (more [#495](https://github.com/FelixKrueger/Bismark/issues/495))
 
 - Added option `--mm2/--minimap2` to use [minimap2](https://github.com/lh3/minimap2) as the underlying aligner. The minimap2 alignment modes include Oxford Nanopore, PacBio and accurate short reads. In its current implementation, minimap2 can be invoked in one of the following ways:
 
@@ -53,7 +53,7 @@ As a result of these tests, we changed the default settings for minimap2 alignme
 
 - removed a print statement that would flood STDOUT the logfile if `--merge_non_CG` (but not `--comprehensive`) had been selected
 
-- runs with `--parallel/--multicore` specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed
+- runs with `--parallel` / `--multicore` specified will now terminate with an error message whenever one of the child processes fails. This prevents potentially incomplete result files making it through to the end unnoticed
 
 - changed the option `-o/--output` to `-o/--output_dir` for consistency reasons...
 
