@@ -1,6 +1,7 @@
 site_name: Bismark
 repo_name: FelixKrueger/Bismark
 repo_url: https://github.com/FelixKrueger/Bismark
+site_url: https://felixkrueger.github.io/Bismark/
 edit_uri: edit/master/docs/
 
 theme:
@@ -66,3 +67,5 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.details
+plugins:
+  - social
