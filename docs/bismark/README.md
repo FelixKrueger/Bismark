@@ -1,4 +1,5 @@
 # Running Bismark
+
 Running Bismark is split up into three main steps:
 
 1. First, the genome of interest needs to be bisulfite converted and indexed to allow Bowtie alignments. This step needs to be carried out only once for each genome. Note that Bowtie 2 and HISAT2 require distinct indexing steps since their indexes are not compatible.

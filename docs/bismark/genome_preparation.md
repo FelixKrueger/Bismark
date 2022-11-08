@@ -5,6 +5,7 @@ This script needs to be run only once to prepare the genome of interest for bisu
 Again, **please note** that Bowtie 2 and HISAT2 indexes are not compatible! To create a genome index for use with HISAT2 the option `--hisat2` needs to be included as well.
 
 ### Running `bismark_genome_preparation`
+
 **USAGE:** `bismark_genome_preparation [options] <path_to_genome_folder>`
 
 A typical command could look like this:

@@ -4,6 +4,7 @@ hide:
 ---
 
 # Installation
+
 Bismark is written in Perl and is executed from the command line. To install Bismark simply copy the bismark_v0.X.Y.tar.gz file into a Bismark installation folder and extract all files by typing:
 
 ```
@@ -11,6 +12,7 @@ tar xzf bismark_v0.X.Y.tar.gz
 ```
 
 ## Dependencies
+
 Bismark requires a working of Perl and [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)) to be installed on your machine. Bismark will assume that the Bowtie 2/ HISAT2 executable is in your path unless the path to Bowtie/ HISAT2 is specified manually with:
 
 ```
@@ -19,17 +21,18 @@ Bismark requires a working of Perl and [Bowtie 2](http://bowtie-bio.sourceforge.
 ```
 
 ## Hardware requirements
+
 Bismark holds the reference genome in memory, and in addition to that runs up to four parallel instances of Bowtie 2. The memory usage is dependent on the size of the reference genome. For a large eukaryotic genome (human or mouse) we experienced a typical memory usage of around 12GB. We thus recommend running Bismark on a machine with 5 CPU cores and at least 12 GB of RAM. The memory requirements of Bowtie 2 are somewhat larger (possibly to allow gapped alignments). When running Bismark using Bowtie 2 we therefore recommend a system with at least 5 cores and > 16GB of RAM.
 
 Alignment speed depends largely on the read length and alignment parameters used. Allowing many mismatches and using a short seed length tends to be fairly slow.
 
 ## BS-Seq test data set
+
 A test BS-Seq data set is available for download from the Bismark project or Github pages. It contains 10,000 single- end shotgun BS reads from human ES cells in FastQ format (from SRR020138, Lister et al., 2009; trimmed to 50 bp; base call qualities are Sanger encoded Phred values (Phred33)).
 
-
 ### Bismark reports for the test data set
-Please note that this has been run with a fairly early version however I wouldn't expect the numbers to change much.
 
+Please note that this has been run with a fairly early version however I wouldn't expect the numbers to change much.
 
 #### Using Bowtie 2:
 

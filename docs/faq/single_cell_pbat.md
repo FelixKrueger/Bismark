@@ -18,7 +18,6 @@ The presence of chimeric reads has previously been discussed in more detail over
 
 Expanding on this idea, a recent [article in Bioinformatics](https://www.ncbi.nlm.nih.gov/pubmed/30859188 "Wu et al., 2019") also demonstrated that chimeric reads are the main problem for the low mapping efficiency in scBS-seq. In their article, Wu and colleagues demonstrate that the post-bisulfite based library construction protocol leads to a substantial amount of chimeric molecules as a result of recombination of genomic proximal sequences with ‘microhomology regions (MR)’. As a means to combat this problem the authors suggest a method that uses local alignments of reads that do not align in a traditional manner, and in addition remove MR sequences from these local alignments as they can introduce noise into the methylation data.
 
-
 ### Mapping strategies for paired-end data
 
 #### PBAT
@@ -38,7 +37,6 @@ bismark2bedGraph -o SE_and_PE_merged.bedGraph CpG*
 ```
 
 If you are feeling adventurous you could also attempt using local alignments (option `--local` in Bismark) for either the paired-end step, or the second single-end step, or both. (Please also see our thoughts on [local alignments/ soft-clipping](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/).
-
 
 #### Single-cell data
 

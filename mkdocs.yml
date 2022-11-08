@@ -52,11 +52,11 @@ nav:
       - options/alignment.md
       - options/methylation_extraction.md
   - FAQ:
-    - faq/README.md
-    - faq/single_cell_pbat.md
-    - faq/low_mapping.md
-    - faq/context_change.md
-    - faq/conversion_efficiency.md
+      - faq/README.md
+      - faq/single_cell_pbat.md
+      - faq/low_mapping.md
+      - faq/context_change.md
+      - faq/conversion_efficiency.md
 
 markdown_extensions:
   - admonition
@@ -66,4 +66,3 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.details
-

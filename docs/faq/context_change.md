@@ -14,27 +14,24 @@ cases where the cytosine context may change due to a deletion in the immediate d
 `C---GGGA` here the context would effectively have changed from CHH to CG.
 
 At least for mammalian systems it is quite likely that such a change would also affect the methylation state of the cytosine involved
- because CpGs are typically methylated whereas non-CG cytosines are largely completely unmethylated.
+because CpGs are typically methylated whereas non-CG cytosines are largely completely unmethylated.
 
-This context change only ever occurs for deletions immediate downstream of a cytosine, but *not insertions*. The reason for this is
+This context change only ever occurs for deletions immediate downstream of a cytosine, but _not insertions_. The reason for this is
 that insertions are padded with `X` during the methylation call procedure, which would render the cytosine context `Unknown`.
 
 `coverage2cytosine` on the other hand is fully reference genome-based, so it will go through the reference sequence
 and check whether a cytosine was covered or not. The sequence context is purely assigned based on the reference sequence.
 
-* For CpG context only (the default), it will therefore ‘miss’ out any of the calls where a deletion had changed the sequence
-context from `CpG` to either `CHG` or `CHH`.
+- For CpG context only (the default), it will therefore ‘miss’ out any of the calls where a deletion had changed the sequence
+  context from `CpG` to either `CHG` or `CHH`.
 
-*  In `--CX` context: One may encounter cases where the context of a cytosine has changed, or much more rarely, where the very same position
-may have been called with different cytosine contexts in the intitial CHG, CHH and CpG-context files produced by the `bismark_methylation_extractor`.
-If now, howevever, `--CX` was used for `bismark2bedGraph`
-and `coverage2cytosine` (or directly during the `bismark_methylation_extractor` step), those *different* cytosine contexts will be merged
-again for that position, and will get the cytosine context assigned purely based on the reference sequence. In other words: If there truly
-was a cytosine context - that may or may not affect the methylation state - it would be, probably erroneously, attributed to the context
-provided by the reference sequence.
-
-
-
+- In `--CX` context: One may encounter cases where the context of a cytosine has changed, or much more rarely, where the very same position
+  may have been called with different cytosine contexts in the intitial CHG, CHH and CpG-context files produced by the `bismark_methylation_extractor`.
+  If now, howevever, `--CX` was used for `bismark2bedGraph`
+  and `coverage2cytosine` (or directly during the `bismark_methylation_extractor` step), those _different_ cytosine contexts will be merged
+  again for that position, and will get the cytosine context assigned purely based on the reference sequence. In other words: If there truly
+  was a cytosine context - that may or may not affect the methylation state - it would be, probably erroneously, attributed to the context
+  provided by the reference sequence.
 
 #### In a nutshell:
 
@@ -44,7 +41,6 @@ would be dependent on the basecall accuracy of the inserted base(s), so we chose
 Deletions on the other hand are a very rare error in Illumina data, and we believe it should be fine to proceed with the default behavior
 of calling changed sequence context because it is very likely that a change from CHH to CpG context, or vice versa, will really
 also lead to a change in that residue's methylation state.
-
 
 If you work with **coverage files** in `CpG` context only you may miss a few positions that should be CpG positions according to
 the reference sequence. On the other hand it may also contain a few newly gained CpGs positions that had a different context

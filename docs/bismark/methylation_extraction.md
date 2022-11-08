@@ -28,7 +28,6 @@ Examples for cytosines in CHH context:
 
     HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920184 h
 
-
 The `bismark_methylation_extractor` comes with a few options, such as ignoring the first <int> number of positions in the methylation call string, e.g. to remove a restriction enzyme site (if RRBS is performed with non-directional BS-Seq libraries it might be required to remove reconstituted MspI sites at the beginning of each read as they will introduce a bias into the first methylation call). Another useful option for paired-end reads is called `--no_overlap` (on by default): specifying this option will extract the methylation calls of overlapping parts in the middle of paired-end reads only once (using the calls from the first read which is presumably the one with a lowest error rate).
 
 For a full list of options type: `bismark_methylation_extractor --help` on the command line or refer to the Appendix section at the end of this User Guide.
@@ -57,12 +56,15 @@ If strand-specific methylation is not of interest, all available methylation inf
 Both strand-specific and context-dependent options can be combined with the `--merge_non_CpG` option.
 
 ### Optional bedGraph output
+
 The Bismark methylation extractor can optionally also output a file in [`bedGraph`](http://genome.ucsc.edu/goldenPath/help/bedgraph.html) format which uses 0-based genomic start and 1- based end coordinates. The module `bismark2bedGraph` (part of the Bismark package) may also be run individually. It will be sorted by chromosomal coordinates and looks like this:
+
 ```
 <chromosome> <start position> <end position> <methylation percentage>
 ```
 
 As the methylation percentage is _per se_ not informative of the actual read coverage of detected methylated or unmethylated reads at a position, `bismark2bedGraph` also writes out a coverage file (using 1-based genomic genomic coordinates) that features two additional columns:
+
 ```
 <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
 ```
@@ -70,7 +72,9 @@ As the methylation percentage is _per se_ not informative of the actual read cov
 These two additional columns enable basically any downstream processing from the file. By default, this mode will only consider cytosines in CpG context, but it can be extended to cytosines in any sequence context by using the option `--CX` (cf. Appendix (III)).
 
 ### (Optional): genome-wide cytosine report output
+
 Starting from the `coverage` output, the Bismark methylation extractor can optionally also output a genome-wide cytosine methylation report. The module `coverage2cytosine` (part of the Bismark package) may also be run individually. It is also sorted by chromosomal coordinates but also contains the sequence context and is in the following format:
+
 ```
 <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
 ```
@@ -88,9 +92,8 @@ The `coverage2cytosine` module can be instructed that a sample is a NOMe-seq (**
 
 Both of these measures aim to reduce unwanted biases, i.e. the influence of `G-CG` (intended) and `C-CG` (off-target) on endogenous CpG methylation, and the influence of CpG methylation on (the NOMe-seq specific) `GC` context methylation. **PLEASE NOTE** that NOMe-seq data requires a `.cov.gz` file as input which has been generated in non-CG mode!! (`--CX`), else the `GpC` output file will be empty...
 
-
-
 ### M-bias plot
+
 Starting with Bismark v0.8.0, the Bismark methylation extractor also produces a methylation bias plot which shows the methylation proportion across each possible position in the read (described in further detail in: [Hansen et al., Genome Biology, 2012, 13:R83](https://genomebiology.biomedcentral.com/articles/10.1186/gb-2012-13-10-r83)). The data for the M-bias plot is also written into a coverage text file (ending in `.cov` or `.cov.gz`) and is in the following format:
 
 ```
@@ -114,6 +117,7 @@ For more on this topic please also see [this post on QCFail.com](https://sequenc
 The M-bias plot should enable researchers to make an informed decision whether or not to leave the bias in the final data or to remove it (e.g. using the methylation extractor option `--ignore`).
 
 ### (III) Running `bismark_methylation_extractor`
+
 **USAGE:** `bismark_methylation_extractor [options] <filenames>`
 
 A typical command for a single-end file could look like this:

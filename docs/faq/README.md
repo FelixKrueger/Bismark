@@ -6,4 +6,3 @@ This will be a collection of fairly common issues that arise fairly regularly. S
 - [Low mapping efficiency of paired-end libraries](low_mapping.md)
 - [Context change between coverage and cytosine reports](context_change.md)
 - [Bisulfite conversion efficiency](conversion_efficiency.md)
-

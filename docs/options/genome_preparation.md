@@ -1,5 +1,5 @@
-
 ## Appendix (I): Bismark Genome Preparation
+
 A full list of options can also be viewed by typing: `bismark_genome_preparation --help`
 
 #### USAGE: `bismark_genome_preparation [options] <arguments>`
@@ -36,18 +36,14 @@ A full list of options can also be viewed by typing: `bismark_genome_preparation
 
 - `--genomic_composition`
 
-  Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table *genomic\_nucleotide\_frequencies.txt* to the genome folder. This may be useful later on when using `bam2nuc` or the Bismark option `--nucleotide_coverage`.
+  Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table _genomic_nucleotide_frequencies.txt_ to the genome folder. This may be useful later on when using `bam2nuc` or the Bismark option `--nucleotide_coverage`.
 
 - `--slam`
 
   Instead of performing an in-silico bisulfite conversion, this mode transforms T to C (forward strand), or A to G (reverse strand). The folder structure and rest of the indexing process is currently exactly the same as for bisulfite sequences, but this might change at some point. This means that a genome prepared in --slam mode is currently indistinguishable from a true Bisulfite Genome, so please make sure you name the genome folder appropriately to avoid confusion.
-
-
 
 #### ARGUMENTS:
 
 - `<path_to_genome_folder>`
 
   The path to the folder containing the genome to be bisulfite converted (this may be an absolute or relative path). Bismark Genome Preparation expects one or more `FastA` files in the folder (valid file extensions: `.fa` or `.fasta`).
-
-

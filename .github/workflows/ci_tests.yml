@@ -13,7 +13,6 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-
       - name: Check out Bismark source-code repository
         uses: actions/checkout@v2
 
@@ -113,7 +112,6 @@ jobs:
           ./bismark --non_directional --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
           ./bismark --hisat2 --pbat --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
           ./bismark --hisat2 --non_directional --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-
 
       - name: bismark2bedGraph
         shell: bash -l {0}

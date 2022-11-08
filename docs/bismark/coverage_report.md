@@ -7,13 +7,11 @@ taken into consideration. Mono- or dinucleotides containing Ns are ignored as we
 
 `bam2nuc` handles both Bismark single-end and paired-end files (determined automatically). Both BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is required for CRAM files.
 
-
 **USAGE:**
+
 ```
 bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 ```
-
-
 
 - `--dir`
 
@@ -29,7 +27,7 @@ The path to your Samtools installation, e.g. /home/user/samtools/. Does not need
 
 - `--genomic_composition_only`
 
-Only calculate and extract the genomic sequence composition and exit thereafter. This option will attempt to write the genomic composition table 'genomic\_nucleotide\_frequencies.txt' to the genome folder or to the output directory instead if that doesn't succeed.
+Only calculate and extract the genomic sequence composition and exit thereafter. This option will attempt to write the genomic composition table 'genomic_nucleotide_frequencies.txt' to the genome folder or to the output directory instead if that doesn't succeed.
 
 - `--help`
 
@@ -37,13 +35,11 @@ Displays this help message and exits
 
 **GENOMIC COMPOSITION**
 
-Since the calculation of the average genomic (di-)nucleotide composition may take a while, `bam2nuc` attempts to write out a file called 'genomic\_nucleotide\_frequencies.txt' to the genome folder if it wasn't there already. The next time `bam2nuc` is run it will then use this file instead of calculating the average genome composition again. If writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory instead.
-
+Since the calculation of the average genomic (di-)nucleotide composition may take a while, `bam2nuc` attempts to write out a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The next time `bam2nuc` is run it will then use this file instead of calculating the average genome composition again. If writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory instead.
 
 **OUTPUT FORMAT**
 
-
-`bam2nuc` writes out a file ending in _.nucleotide\_stats.txt_ in the following format (tab-delimited):
+`bam2nuc` writes out a file ending in _.nucleotide_stats.txt_ in the following format (tab-delimited):
 
     (di-)nucleotide count sample    percent sample  count genomic   percent genomic coverage
     A       14541   30.91   3768086 30.98   0.004
@@ -66,8 +62,6 @@ Since the calculation of the average genomic (di-)nucleotide composition may tak
     TC      2823    6.12    754531  6.20    0.004
     TG      2996    6.50    782761  6.44    0.004
     TT      5055    10.96   1314144 10.80   0.004
-
-
 
 This file is picked up and plotted by `bismark2report` automatically if found in the folder in the following manner:
 

@@ -21,4 +21,3 @@ This is a question that pops up every so often, and might have been discussed in
 - Look at sequence composition plots in FastQC. Is there anything unusual/unexpected that might prevent alignments?
 
 If you still have any questions, feel free to send me an email with your issues. You might want to attach ~200K raw FastQ reads (compressed withy `gzip`) and mention the genome of interest in your email.
-

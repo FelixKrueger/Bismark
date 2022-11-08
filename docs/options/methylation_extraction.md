@@ -1,4 +1,3 @@
-
 ## Appendix (III): Bismark Methylation Extractor
 
 A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing `bismark_methylation_extractor --help`
@@ -7,9 +6,9 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 #### ARGUMENTS:
 
--  `<filenames>`
+- `<filenames>`
 
-  A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads. For alignment files in the older custom Bismark output see option `--vanilla`.
+A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads. For alignment files in the older custom Bismark output see option `--vanilla`.
 
 #### OPTIONS:
 
@@ -27,7 +26,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `--no_overlap`
 
-  For paired-end reads it is theoretically possible that Read 1 and Read 2 overlap. This option avoids scoring overlapping methylation calls twice (only methylation calls of read 1 are used for in the process since read 1 has historically higher quality basecalls than read 2). Whilst this option removes a bias towards more  methylation calls in the center of sequenced fragments it may *de facto* remove a sizeable proportion of the data. This option is on by default for paired-end data but can be disabled using `--include_overlap`.  Default: ON.
+  For paired-end reads it is theoretically possible that Read 1 and Read 2 overlap. This option avoids scoring overlapping methylation calls twice (only methylation calls of read 1 are used for in the process since read 1 has historically higher quality basecalls than read 2). Whilst this option removes a bias towards more methylation calls in the center of sequenced fragments it may _de facto_ remove a sizeable proportion of the data. This option is on by default for paired-end data but can be disabled using `--include_overlap`. Default: ON.
 
 - `--include_overlap`
 
@@ -53,16 +52,16 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
   Specifying this option will merge all four possible strand-specific methylation info into context-dependent output files. The default contexts are:
 
-     - CpG context
-     - CHG context
-     - CHH context
+  - CpG context
+  - CHG context
+  - CHH context
 
 - `--merge_non_CpG`
 
   This will produce two output files (in `--comprehensive mode`) or eight strand-specific output files (default) for Cs in
 
-     - CpG context
-     - non-CpG context
+  - CpG context
+  - non-CpG context
 
 - `--report`
 
@@ -82,7 +81,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `--gzip`
 
-  The methylation extractor files (CpG\_OT\_..., CpG\_OB\_... etc) will be written out in a `GZIP` compressed form to save disk space. This option is also passed on to the genome-wide cytosine report. `bedGraph` and `coverage` files are written out as `.gz` by default.
+  The methylation extractor files (CpG_OT\_..., CpG_OB\_... etc) will be written out in a `GZIP` compressed form to save disk space. This option is also passed on to the genome-wide cytosine report. `bedGraph` and `coverage` files are written out as `.gz` by default.
 
 - `--mbias_only`
 
@@ -104,12 +103,11 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
   Displays this help file and exits.
 
-
 ##### bedGraph specific options:
 
 - `--bedGraph`
 
-  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take *MUCH* longer!). The `bedGraph` conversion step is performed by the external module `bismark2bedGraph`; this script needs to reside in the same folder as the bismark\_methylation\_extractor itself.
+  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the external module `bismark2bedGraph`; this script needs to reside in the same folder as the bismark_methylation_extractor itself.
 
 - `--zero_based`
 
@@ -117,7 +115,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `--cutoff [threshold]`
 
- The minimum number of times any methylation state (methylated or unmethylated) has to be seen for a nucleotide before its methylation percentage is reported. Default: 1.
+The minimum number of times any methylation state (methylated or unmethylated) has to be seen for a nucleotide before its methylation percentage is reported. Default: 1.
 
 - `--remove_spaces`
 
@@ -137,13 +135,13 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `--ample_memory`
 
-  Using this option will not sort chromosomal positions using the UNIX `sort` command, but will instead use two arrays to sort methylated and unmethylated calls. This may result in a faster sorting process of very large files, but this comes at the cost of a larger memory footprint (two arrays of the length of the largest human chromosome 1 (~250M bp) consume around 16GB of RAM). Due to overheads in creating and looping through these arrays it seems that it will actually be *slower* for small files (few million alignments), and we are currently testing at which point it is advisable to use this option. Note that `--ample_memory` is not compatible with options `--scaffolds/--gazillion` (as it requires pre-sorted files to begin with).
+  Using this option will not sort chromosomal positions using the UNIX `sort` command, but will instead use two arrays to sort methylated and unmethylated calls. This may result in a faster sorting process of very large files, but this comes at the cost of a larger memory footprint (two arrays of the length of the largest human chromosome 1 (~250M bp) consume around 16GB of RAM). Due to overheads in creating and looping through these arrays it seems that it will actually be _slower_ for small files (few million alignments), and we are currently testing at which point it is advisable to use this option. Note that `--ample_memory` is not compatible with options `--scaffolds/--gazillion` (as it requires pre-sorted files to begin with).
 
 ##### Genome-wide cytosine methylation report specific options:
 
 - `--cytosine_report`
 
-  After the conversion to bedGraph has completed, the option `--cytosine_report` produces a genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all cytosine context is optional). The output considers all Cs on both forward and reverse strands and reports their position, strand, trinucleotide content and methylation state (counts are 0 if not covered). The cytosine report conversion step is performed by the external module `coverage2cytosine`; this script needs to reside in the same folder as the bismark\_methylation\_extractor itself.
+  After the conversion to bedGraph has completed, the option `--cytosine_report` produces a genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all cytosine context is optional). The output considers all Cs on both forward and reverse strands and reports their position, strand, trinucleotide content and methylation state (counts are 0 if not covered). The cytosine report conversion step is performed by the external module `coverage2cytosine`; this script needs to reside in the same folder as the bismark_methylation_extractor itself.
 
 - `--CX/--CX_context`
 
@@ -162,7 +160,8 @@ A brief description of the Bismark methylation extractor and a full list of opti
   Writes the output into individual files for each chromosome instead of a single output file. Files are named to include the input filename as well as the chromosome number.
 
 #### OUTPUT
-##### The bismark\_methylation_extractor output is in the form (tab delimited, 1-based coords):
+
+##### The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
 
     <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
 
@@ -176,10 +175,8 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 ##### The coverage output looks like this (tab-delimited; 1-based genomic coords):
 
-
     <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
 
 ##### The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
-
 
     <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>

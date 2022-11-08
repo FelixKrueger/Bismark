@@ -1,6 +1,6 @@
 # Deduplication
 
-```USAGE: ./deduplicate_bismark [options] filename(s)```
+`USAGE: ./deduplicate_bismark [options] filename(s)`
 
 The script `deduplicate_bismark` is supposed to remove alignments to the same position in the genome from the Bismark mapping output (both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. Sequences which align to the same genomic position but on different strands are scored individually.
 
@@ -30,4 +30,3 @@ This option option is equivalent to using [UmiBam](https://github.com/FelixKrueg
 When using the option `--multiple`, all specified input files are treated as a **single** sample and concatenated together for deduplication. This uses Unix `cat` for SAM files and `samtools cat` for BAM files.
 
 Additional notes for BAM files: Although this works on either BAM or CRAM, all input files must be the same format as each other. The sequence dictionary of each input file must be identical, although this command does not check this. By default the header is taken from the first file to be concatenated.
-
