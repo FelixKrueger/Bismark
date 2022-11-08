@@ -65,4 +65,4 @@ It should be stressed that the percent methylation value (context) is just a ver
 
 Bismark was written by Felix Krueger at the [Babraham Bioinformatics Group](http://www.bioinformatics.babraham.ac.uk/).
 
-![Babraham Bioinformatics](Images/bioinformatics_logo.png)
+![Babraham Bioinformatics](images/bioinformatics_logo.png)

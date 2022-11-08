@@ -119,7 +119,7 @@ Added a sentence to the Docs that Genozip 14 and above supports Bismark BAM file
 
 ## Changelog for Bismark v0.22.2 (release on 16 10 2019)
 
-Added [FAQ](Docs/FAQ.md) document for questions that keep coming up.
+Added [FAQ](docs/faq/README.md) document for questions that keep coming up.
 
 ### Bismark
 
@@ -1099,12 +1099,12 @@ Please be aware that this option might take a looooong time to complete, dependi
 the input files, and the memory you allocate to this process (see --buffer_size). Nevertheless, it seems
 to be working (even with the option --CX specified).
 
-Added a new option '--ample_memory'. Using this option will not sort chromosomal positions using the UNIX
+Added a new option '--ample*memory'. Using this option will not sort chromosomal positions using the UNIX
 'sort' command, but will instead use two arrays to sort methylated and unmethylated calls, respectively.
 This may result in a faster sorting process for very large files, but this comes at the cost of a larger
 memory footprint (as an estimate, two arrays of the length of the largest human chromosome 1 (~250 million bp)
 consume around 16GB of RAM). Note however that due to the overhead of creating and looping through huge
-arrays this option might in fact be _slower_ for small-ish files (up to a few million alignments). Note
+arrays this option might in fact be \_slower* for small-ish files (up to a few million alignments). Note
 also that this option is not currently compatible with options '--scaffolds/--gazillion'. This option
 still needs some efficiency testing as to when it actually makes sense to use it, but it produces identical
 results to the default sort option.

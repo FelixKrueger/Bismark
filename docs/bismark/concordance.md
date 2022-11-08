@@ -10,7 +10,7 @@ mixed:       10 -  90% methylated
 methylated:  90 - 100% methylated (inclusive)
 ```
 
-![Methylation Concordance Plot](Images/methylation_concordance.png)
+![Methylation Concordance Plot](../images/methylation_concordance.png)
 
 A consistency report looks roughly like this:
 

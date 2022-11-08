@@ -50,4 +50,4 @@ Displays this help text end exits.
 
 Displays version information and exits.
 
-If you get stuck at any point or have any questions or comments please contact me via e-mail: [felix.krueger@babraham.ac.uk](felix.krueger@babraham.ac.uk)
+If you get stuck at any point or have any questions or comments please contact me via e-mail: [felix.krueger@babraham.ac.uk](mailto:felix.krueger@babraham.ac.uk)

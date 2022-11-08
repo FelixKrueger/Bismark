@@ -65,4 +65,4 @@ Since the calculation of the average genomic (di-)nucleotide composition may tak
 
 This file is picked up and plotted by `bismark2report` automatically if found in the folder in the following manner:
 
-![Nucleotide Coverage Plot](Images/nucleocoverage.png)
+![Nucleotide Coverage Plot](../images/nucleocoverage.png)

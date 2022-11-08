@@ -104,13 +104,13 @@ This allows generating nice graphs by alternative means, e.g. using R or Excel. 
 
 The M-bias plot can for example show the methylation bias at the start of reads in PBAT-Seq experiments:
 
-![SE PBAT](Images/PBAT_SE_M-bias.jpg)
+![SE PBAT](../images/PBAT_SE_M-bias.jpg)
 
 For more on this topic please also see [this post on QCFail.com](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/).
 
 Or it can reveal a 3’-end-repair bias at the first couple of positions in read 2 of paired-end reads, like here:
 
-![PE fill-in](Images/PE_M-bias.jpg)
+![PE fill-in](../images/PE_M-bias.jpg)
 
 For more on this topic please also see [this post on QCFail.com](https://sequencing.qcfail.com/articles/library-end-repair-reaction-introduces-methylation-biases-in-paired-end-pe-bisulfite-seq-applications/).
 
