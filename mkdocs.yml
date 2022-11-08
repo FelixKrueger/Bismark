@@ -5,25 +5,25 @@ edit_uri: edit/master/docs/
 
 theme:
   name: material
+  logo: images/bismark.png
   icon:
-    logo: fontawesome/solid/map-pin
     repo: fontawesome/brands/github
   palette:
     # Palette toggle for dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: blue
+      primary: teal
       accent: blue
       toggle:
-        icon: material/brightness-4
+        icon: material/weather-night
         name: Switch to light mode
     # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: blue
+      primary: teal
       accent: blue
       toggle:
-        icon: material/brightness-7
+        icon: material/weather-sunny
         name: Switch to dark mode
   font:
     text: Noto Sans
