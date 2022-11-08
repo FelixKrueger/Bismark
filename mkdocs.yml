@@ -1,0 +1,63 @@
+site_name: Bismark
+repo_name: FelixKrueger/Bismark
+repo_url: https://github.com/FelixKrueger/Bismark
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  icon:
+    logo: fontawesome/solid/map-pin
+    repo: fontawesome/brands/github
+  palette:
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  font:
+    text: Noto Sans
+  features:
+    - navigation.instant
+
+#nav:
+#  - Home: index.md
+#  - Usage:
+#      - usage/github_action.md
+#      - usage/cli.md
+#      - usage/docker_image.md
+#  - Inputs:
+#      - inputs/markdown.md
+#      - inputs/direct_inputs.md
+#      - inputs/config_file.md
+#  - Configuration:
+#      - config/overview.md
+#      - config/time_limits.md
+#      - config/tweaks.md
+#      - config/command_setup.md
+#      - config/width.md
+#      - config/colours.md
+#      - config/cleaning.md
+#      - config/ignoring_changes.md
+#  - safety.md
+#  - troubleshooting.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+
