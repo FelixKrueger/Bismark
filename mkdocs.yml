@@ -29,28 +29,34 @@ theme:
     text: Noto Sans
   features:
     - navigation.instant
+    - navigation.tabs
 
-#nav:
-#  - Home: index.md
-#  - Usage:
-#      - usage/github_action.md
-#      - usage/cli.md
-#      - usage/docker_image.md
-#  - Inputs:
-#      - inputs/markdown.md
-#      - inputs/direct_inputs.md
-#      - inputs/config_file.md
-#  - Configuration:
-#      - config/overview.md
-#      - config/time_limits.md
-#      - config/tweaks.md
-#      - config/command_setup.md
-#      - config/width.md
-#      - config/colours.md
-#      - config/cleaning.md
-#      - config/ignoring_changes.md
-#  - safety.md
-#  - troubleshooting.md
+nav:
+  - Home: README.md
+  - quick_reference.md
+  - installation.md
+  - Usage:
+      - bismark/README.md
+      - bismark/genome_preparation.md
+      - bismark/alignment.md
+      - bismark/deduplication.md
+      - bismark/methylation_extraction.md
+      - bismark/processing_report.md
+      - bismark/summary_report.md
+      - bismark/coverage_report.md
+      - bismark/filter_nonconverted_reads.md
+      - bismark/library_types.md
+      - bismark/concordance.md
+  - Full list of options:
+      - options/genome_preparation.md
+      - options/alignment.md
+      - options/methylation_extraction.md
+  - FAQ:
+      - faq/README.md
+      - faq/single_cell_pbat.md
+      - faq/low_mapping.md
+      - faq/context_change.md
+      - faq/conversion_efficiency.md
 
 markdown_extensions:
   - admonition
@@ -60,4 +66,3 @@ markdown_extensions:
   - pymdownx.snippets
   - pymdownx.superfences
   - pymdownx.details
-
