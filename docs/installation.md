@@ -7,7 +7,7 @@ hide:
 
 Bismark is written in Perl and is executed from the command line. To install Bismark simply copy the bismark_v0.X.Y.tar.gz file into a Bismark installation folder and extract all files by typing:
 
-```
+```bash
 tar xzf bismark_v0.X.Y.tar.gz
 ```
 

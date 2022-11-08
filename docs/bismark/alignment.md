@@ -72,9 +72,15 @@ By default, Bismark generates SAM output for all alignment modes. Please note th
 
 The mate read of paired-end alignments is written out as an additional separate line in the same format.
 
-### BAM compression with Genozip (as of: 21 09 2022)
+### BAM compression with Genozip
 
-[3rd party program notice]: Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
+!!! info
+
+    3rd party program notice.
+
+    Information valid as of: 21/09/2022.
+
+Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
 
 Please note that while Genozip is free for academic use, it is a commercial product, so users would need to register to it separately.
 
@@ -82,7 +88,11 @@ Please note that while Genozip is free for academic use, it is a commercial prod
 
 To see the location of the mapped reads the Bismark output file can be imported into a genome viewer, such as SeqMonk, using the chromosome, start and end positions (this can be useful to identify regions in the genome which display an artefactually high number of aligned reads). The alignment output can also be used to apply post-processing steps such as de-duplication (allowing only 1 read for each position in the genome to remove PCR artefacts) or filtering on the number of bisulfite conversion related non-bisulfite mismatches \* (please note that such post-processing scripts are not part of the Bismark package).
 
-> \* Bisulfite conversion related non-bisulfite mismatches are mismatch positions which have a C in the BS-read but a T in the genome; such mismatches may occur due to the way bisulfite read alignments are performed. Reads containing this kind of mismatches are not automatically removed from the alignment output in order not to introduce a bias for methylated reads. It should be noted that, even though no methylation calls are performed for these positions, reads containing bisulfite conversion related non-bisulfite mismatches might lead to false alignments if particularly lax alignment parameters were specified.
+!!! tip
+
+    Bisulfite conversion related non-bisulfite mismatches are mismatch positions which have a C in the BS-read but a T in the genome; such mismatches may occur due to the way bisulfite read alignments are performed. Reads containing this kind of mismatches are not automatically removed from the alignment output in order not to introduce a bias for methylated reads.
+
+    It should be noted that, even though no methylation calls are performed for these positions, reads containing bisulfite conversion related non-bisulfite mismatches might lead to false alignments if particularly lax alignment parameters were specified.
 
 ### Methylation call
 
@@ -100,13 +110,11 @@ The methylation call string contains a dot `.` for every position in the BS-read
 
 ### Local alignments in Bowtie 2 or HISAT2 mode
 
-(This has been previously only been mentioned in the release notes here: https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0)
+!!! note
+
+    This has been previously only been mentioned in the release notes here: <https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0>
 
 Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/), a publication by [Wu et al.](https://www.ncbi.nlm.nih.gov/pubmed/30859188) described in further detail that intra-fragment chimeras can hinder the efficient alignment of single-cell BS-seq libraries. In there, the authors described a pipeline that uses paired-end alignments first, followed by a second, single-end alignment step that uses local alignments in a bid to improve the mapping of intra-molecular chimeras. To allow this type of improvement for single-cell or PBAT libraries, Bismark also allows the use of local alignments.
 
 **Please note** that we still do not recommend using local alignments as a means to _magically_ increase mapping efficiencies (please see [here](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/)), but we do acknowledge that PBAT/scBSs-seq/scNMT-seq are exceptional applications where local alignments might indeed make a difference (there is only so much data to be had from a single cell...).
 We didn't have the time yet to set more appropriate or stringent default values for local alignments (suggestions welcome), nor did we investigate whether the methylation extraction will require an additional `--ignore` flag if a read was found to the be soft-clipped (the so called 'micro-homology domains'). This might be added in the near future.
-
-### Bismark
-
-- Added support for local alignments by introducing the new option `--local`. This means that the CIGAR operation `S` (soft-clipping) is now supported

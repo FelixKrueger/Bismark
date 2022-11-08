@@ -13,31 +13,31 @@ First you need to download a reference genome and place it in a genome folder. G
 
 The following examples will use the file `test_dataset.fastq` which is available for download from the Bismark project or Github pages (it contains 10,000 reads in FastQ format, Phred33 qualities, 50 bp long reads, from a human directional BS-Seq library). An example report can be found in Appendix IV.
 
-## (I) Running `bismark_genome_preparation`
+## Genome preparation
 
 **USAGE:**
 
-```
+```bash
 bismark_genome_preparation [options] <path_to_genome_folder>
 ```
 
 A typical genome indexing could look like this:
 
-```
+```bash
 /bismark/bismark_genome_preparation --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
 ```
 
-## (II) Running `bismark`
+## Alignment
 
 **USAGE:**
 
-```
+```bash
 bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 ```
 
 Typical alignment example:
 
-```
+```bash
 bismark --genome /data/genomes/homo_sapiens/GRCh37/ test_dataset.fastq
 ```
 
@@ -46,27 +46,29 @@ This will produce two output files:
 1. `test_dataset_bismark_bt2.bam` (contains all alignments plus methylation call strings)
 2. `test_dataset_bismark_SE_report.txt` (contains alignment and methylation summary)
 
-**NOTE:** In order to work properly the current working directory must contain the sequence files to be analysed.
+!!! note
 
-## (III) Running `deduplicate_bismark`
+    In order to work properly the current working directory must contain the sequence files to be analysed.
 
-```
+## Deduplication
+
+```bash
 deduplicate_bismark --bam [options] <filenames>
 ```
 
 This command will deduplicate the Bismark alignment BAM file and remove all reads but one which align to the the very same position and in the same orientation. This step is recommended for whole-genome bisulfite samples, but should not be used for reduced representation libraries such as RRBS, amplicon or target enrichment libraries.
 
-## (IV) Running `bismark_methylation_extractor`
+## Methylation extraction
 
 **USAGE:**
 
-```
+```bash
 bismark_methylation_extractor [options] <filenames>
 ```
 
 A typical command to extract context-dependent (CpG/CHG/CHH) methylation could look like this:
 
-```
+```bash
 bismark_methylation_extractor --gzip --bedGraph test_dataset_bismark_bt2.bam
 ```
 
@@ -78,7 +80,7 @@ This will produce three methytlation output files:
 
 as well as a bedGraph and a Bismark coverage file. For more on these files and their formats please see below.
 
-## (V) Running `bismark2report`
+## Sample report
 
 **USAGE:**
 
@@ -88,7 +90,7 @@ bismark2report [options]
 
 This command attempts to find Bismark alignment, deduplication and methylation extraction (splitting) reports as well as M-bias files to generate a graphical HTML report such as this [example Bismark paired-end report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html) for each sample in a directory.
 
-## (VI) Running `bismark2summary`
+## Summary report
 
 **USAGE:**
 

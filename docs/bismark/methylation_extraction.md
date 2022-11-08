@@ -6,27 +6,33 @@ As of Bismark version 0.6 or higher the default input format for the `bismark_me
 
 ### The methylation extractor output looks like this (tab separated):
 
-    1. seq-ID
-    2. methylation state
-    3. chromosome
-    4. start position (= end position)
-    5. methylation call
+1. seq-ID
+2. methylation state
+3. chromosome
+4. start position _(= end position)_
+5. methylation call
 
 Methylated cytosines receive a `+` orientation, unmethylated cytosines receive a `-` orientation.
 
 Examples for cytosines in CpG context:
 
-    HWUSI-EAS611_0006:3:1:1058:15806#0/1 - 6 91793279 z
-    HWUSI-EAS611_0006:3:1:1058:17564#0/1 + 8 122855484 Z
+```
+HWUSI-EAS611_0006:3:1:1058:15806#0/1 - 6 91793279 z
+HWUSI-EAS611_0006:3:1:1058:17564#0/1 + 8 122855484 Z
+```
 
 Examples for cytosines in CHG context:
 
-    HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920171 x
-    HWUSI-EAS611_0006:3:1:1054:1405#0/1 + 7 89920172 X
+```
+HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920171 x
+HWUSI-EAS611_0006:3:1:1054:1405#0/1 + 7 89920172 X
+```
 
 Examples for cytosines in CHH context:
 
-    HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920184 h
+```
+HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920184 h
+```
 
 The `bismark_methylation_extractor` comes with a few options, such as ignoring the first <int> number of positions in the methylation call string, e.g. to remove a restriction enzyme site (if RRBS is performed with non-directional BS-Seq libraries it might be required to remove reconstituted MspI sites at the beginning of each read as they will introduce a bias into the first methylation call). Another useful option for paired-end reads is called `--no_overlap` (on by default): specifying this option will extract the methylation calls of overlapping parts in the middle of paired-end reads only once (using the calls from the first read which is presumably the one with a lowest error rate).
 
@@ -83,7 +89,7 @@ The main difference to the `bedGraph` or `coverage` output is that **every** cyt
 
 ### (Optional): NOMe-seq or scNMT-seq
 
-The `coverage2cytosine` module can be instructed that a sample is a NOMe-seq (**N**ucleosome **O**ccupancy and **Me**thylome sequencing; https://genome.cshlp.org/content/22/12/2497.long) or scNMT-seq (**s**ingle-**c**ell **N**ucleosome, **M**ethylation and **T**ranscription sequencing (https://www.nature.com/articles/s41467-018-03149-4)) sample, where accessible DNA gets methylated in a GpC context (sets option `--gc` as well). The option `--nome-seq`:
+The `coverage2cytosine` module can be instructed that a sample is a NOMe-seq ([**N**ucleosome **O**ccupancy and **Me**thylome sequencing](https://genome.cshlp.org/content/22/12/2497.long)) or scNMT-seq ([**s**ingle-**c**ell **N**ucleosome, **M**ethylation and **T**ranscription sequencing](https://www.nature.com/articles/s41467-018-03149-4)) sample, where accessible DNA gets methylated in a GpC context (sets option `--gc` as well). The option `--nome-seq`:
 
 ```
  (i) filters the genome-wide CpG-report to only output cytosines in ACG and TCG context
