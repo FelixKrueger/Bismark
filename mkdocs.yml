@@ -69,3 +69,4 @@ markdown_extensions:
   - pymdownx.details
 plugins:
   - social
+  - search
