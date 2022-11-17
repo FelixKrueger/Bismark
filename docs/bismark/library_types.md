@@ -152,7 +152,7 @@ The Accel-NGS Methyl-Seq protocol uses Adaptase technology for capturing single-
 The Enzymatic Methyl-seq (EM-seq) protocol uses different enzymes to detect 5mC and 5hmC in a non-bisulfite dependent manner that allows capturing longer fragments and working with very low levels of starting material ([EM-seq paper](https://genome.cshlp.org/content/31/7/1280.full)). NEB internally don't trim more than 5bp from each read, but as discussed in [this thread](https://github.com/FelixKrueger/Bismark/issues/509), the recommended conservative trimming parameters are:
 
 ```
---clip_R1 10 --clip_R2 10 --three_clip_R1 10 --three_prime_clip_R2 10
+--clip_R1 10 --clip_R2 10 --three_prime_clip_R1 10 --three_prime_clip_R2 10
 ```
 
 ### Random priming and 3' Trimming in general
@@ -161,7 +161,7 @@ As we have seen before, the random priming of post-bisulfite methods (such as PB
 The same problems of random priming (indels, mispriming) will however most likely occur on both sides of the fragment to be sequenced, but it is doubtful that one would be able to spot these problems on the 3' end of reads because the problems would be expected on the 3' end of reads just before reading through into the adapter, and this may occur
 
 - at different positions in the read (depending on how short the fragment was)
-- at different positions within the read because of quality trimming in addition to adapter read-through contamination
+- at different positions within the read because of quality trimming in add`em`ition to adapter read-through contamination
 - not at all within the read length (whenever a fragment is longer than the sequenced read length)
 - at the 3' end even without hitting the adapter (i.e. just before the adapter)
 
