@@ -2271,13 +2271,13 @@ sub print_final_analysis_report_paired_ends{
 	}
 
 	### printing methylated C percentage (Unknown C context) if applicable
-	if ($percent_meC_unknown){	
-		warn "C methylated in unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
-		print REPORT "C methylated in unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+	if ($percent_meC_unknown){
+		warn "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
+		print REPORT "C methylated in Unknown context (CN or CHN):\t${percent_meC_unknown}%\n";
 	}
 	else{
-		warn "Can't determine percentage of methylated Cs in unknown context (CN or CHN) if value was 0\n";
-		print REPORT "Can't determine percentage of methylated Cs in unknown context (CN or CHN) if value was 0\n";
+		warn "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
+		print REPORT "Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0\n";
 	}
 
 	print REPORT "\n\n";

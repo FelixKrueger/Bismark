@@ -327,7 +327,7 @@ sub read_alignment_report{
       $perc_CHH =~ s/%//;
       print "percentage CHH >> $perc_CHH <<\n" if ($verbose);
     }
-    elsif($_ =~ /^C methylated in Unknown context:/ ){
+    elsif($_ =~ /^C methylated in Unknown context \(CN or CHN\):/ ){
       (undef,$perc_unknown) = split /\t/;
       $perc_unknown =~ s/%//;
       print "percentage Unknown >> $perc_unknown <<\n" if ($verbose);
