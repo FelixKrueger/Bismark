@@ -7345,7 +7345,7 @@ sub process_command_line{
 				 'no-spliced-alignment'    => \$nosplice,
 				 'icpc'                    => \$icpc,
 				 'local'                   => \$local,
-				 'mm2_short_read'          => \$mm2_short_read,
+				 'mm2_short_reads'          => \$mm2_short_read,
 				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
 				 'mm2_pacbio|pacbio'       => \$mm2_pacbio,
 				 'mm2_nanopore|nanopore'   => \$mm2_nanopore,
@@ -8299,7 +8299,7 @@ VERSION
 
 	unless ($mm2){
 		if ($mm2_short_read){
-			die "You cannot specify minimap2 options (--mm2_short_read) unless you also use --minimap2. Please respecify!\n\n";
+			die "You cannot specify minimap2 options (--mm2_short_reads) unless you also use --minimap2. Please respecify!\n\n";
 		}
 		if ($maximum_length_cutoff){
 			die "You cannot specify minimap2 options (--mm2_maximum_length) unless you also use --minimap2. Please respecify!\n\n";
@@ -9993,6 +9993,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 03 May 2023
+Last modified on 16 May 2023
 HOW_TO
 }
