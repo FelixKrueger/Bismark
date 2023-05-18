@@ -33,9 +33,7 @@ Bismark needs the following tools to be installed and ideally available in the `
   - http://www.ncbi.nlm.nih.gov/pubmed/21493656
 - Our review about primary data analysis in BS-Seq
   - http://www.ncbi.nlm.nih.gov/pubmed/22290186
-- Our protocol _"Quality Control, trimming and alignment of Bisulfite-Seq data"_
-  - http://www.epigenesys.eu/en/protocols/bio-informatics/483-quality-control-trimming-and-alignment-of-bisulfite-seq-data-prot-57
-
+  
 ## Credits
 
 Bismark was written by Felix Krueger, part of the [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) group.
