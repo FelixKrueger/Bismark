@@ -220,7 +220,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
   Default: ON. Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (`.bt2`) and large (`.bt2l`) Bowtie 2 indexes are supported.
 
-- `--dovetail`
+- `--no_dovetail`
 
   It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending "past" each other as in this example:
 
@@ -228,7 +228,10 @@ For reads that have multiple alignments a random alignment is written out to a s
                          Mate 2:            TATGAGTCAGCTACGATATTGTTTGGGGTGACACAT
                          Reference: GCAGATTATATGAGTCAGCTACGATATTGTTTGGGGTGACACATTACGCGTCTTTGAC
 
-  By default, dovetailing is considered inconsistent with concordant alignment, but setting `--dovetail` causes Bowtie 2 to consider dovetailing alignments as concordant. This becomes relevant whenever reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues. `--dovetail` is set automatically for PBAT libraries.
+  Dovetailing is considered inconsistent with concordant alignment, but by default Bismark calls Bowtie 2 with `--dovetail`, causing it to consider dovetailing alignments as concordant. This becomes relevant whenever reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues such as in PBAT or EM-seq libraries.
+
+  Specify `--no_dovetail` to turn off this behaviour for paired-end libraries. Default: OFF.
+
 
 ##### HISAT2 SPECIFIC OPTIONS:
 
