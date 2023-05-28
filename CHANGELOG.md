@@ -4,6 +4,8 @@
 
 - Added new documentation website, built using [Material for Mkdocs](https://squidfunk.github.io/mkdocs-material/).
 
+- Added documentation for cytosine context summary, useful for `GpC` methylation or filtering for specific C context (e.g. `CpA`)
+
 ## Changelog for Bismark v0.24.0 (Release on 07 October 2022)
 
 ### Bismark
