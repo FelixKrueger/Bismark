@@ -87,7 +87,26 @@ Starting from the `coverage` output, the Bismark methylation extractor can optio
 
 The main difference to the `bedGraph` or `coverage` output is that **every** cytosine on both the top and bottom strands will be considered irrespective of whether they were actually covered by any reads in the experiment or not. For this to work one has to also specify the genome that was used for the `Bismark` alignments using the option `--genome_folder <path>`. As for the `bedGraph` mode, this will only consider cytosines in CpG context by default but can be extended to cytosines in any sequence context by using the option `--CX` (cf. Appendix (III)). Be aware though that this might mean an output with individual lines for more than 1.1 billion cytosines for any large mammalian genome...
 
-### (Optional): NOMe-seq or scNMT-seq
+#### GpC methylation assessment: Context-specific methylation summary report
+
+Every time `coverage2cyyosine` is run, the counts for each cytosine context are recorded and printed to a special file called `*.cytosine_context_summary.txt` for each input coverage file. 
+
+The report ([introduced here](https://github.com/FelixKrueger/Bismark/issues/321)) looks at 2 bp downstream, as well as 1 bp upstream of the cytosine taking part in the methylation call. This is useful for looking at methylation in specific contexts (e.g. `CpA` only), and also when using `GpC` methylases that introduce methylation in `GpC` context. The report looks like this: 
+
+
+```
+upstream	C-context	full context	count methylated	count unmethylated	percent methylation
+A	CAA	ACAA	308398	93360	23.24
+C	CAA	CCAA	329555	75518	18.64
+G	CAA	GCAA	242262	118175	32.79
+T	CAA	TCAA	302209	86219	22.20
+A	CAC	ACAC	266786	91121	25.46
+C	CAC	CCAC	409749	89154	17.87
+...
+```
+
+
+#### (Optional): NOMe-seq or scNMT-seq
 
 The `coverage2cytosine` module can be instructed that a sample is a NOMe-seq ([**N**ucleosome **O**ccupancy and **Me**thylome sequencing](https://genome.cshlp.org/content/22/12/2497.long)) or scNMT-seq ([**s**ingle-**c**ell **N**ucleosome, **M**ethylation and **T**ranscription sequencing](https://www.nature.com/articles/s41467-018-03149-4)) sample, where accessible DNA gets methylated in a GpC context (sets option `--gc` as well). The option `--nome-seq`:
 
