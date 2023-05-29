@@ -1,10 +1,19 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.24.1dev
+## Changelog for Bismark v0.24.1 (release on 29 May 2023)
 
-- Added new documentation website, built using [Material for Mkdocs](https://squidfunk.github.io/mkdocs-material/).
+- Added new [documentation website](http://felixkrueger.github.io/Bismark/), built using [Material for Mkdocs](https://squidfunk.github.io/mkdocs-material/). Thanks to @ewels for a great (late-night) effort to break up and restructure what had become a fairly unwieldy monolithic beast
 
 - Added documentation for cytosine context summary, useful for `GpC` methylation or filtering for specific C context (e.g. `CpA`)
+
+- Updated docs for the dovetailing 
+
+
+### Bismark
+- Warning messages for closing ambiguous and unmapped filehandles only occur when these options were specified [see here](https://github.com/FelixKrueger/Bismark/commit/1e86f6473415b5f95ba686f93efab7aa70c7bb86)
+
+
+
 
 ## Changelog for Bismark v0.24.0 (Release on 07 October 2022)
 

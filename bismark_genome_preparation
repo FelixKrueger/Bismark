@@ -6,7 +6,7 @@ use Getopt::Long;
 $|++;
 
 
-## This program is Copyright (C) 2010-22, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-23, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -42,8 +42,8 @@ my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
 
-my $bismark_version = 'v0.24.0';
-my $copyright_date = '2010-22';
+my $bismark_version = 'v0.24.1';
+my $copyright_date = '2010-23';
 my $last_modified = "19 May 2022";
 
 

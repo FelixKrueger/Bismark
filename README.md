@@ -24,7 +24,7 @@ Bismark is written in Perl and is executed from the command line. To install Bis
 
 Bismark needs the following tools to be installed and ideally available in the `PATH` environment:
 
-- [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)
+- [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) or [minimap2](https://lh3.github.io/minimap2/minimap2.html)
 - [Samtools](http://www.htslib.org/)
 
 ## Links

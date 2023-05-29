@@ -15,9 +15,9 @@ This User Guide outlines the Bismark suite of tools and gives more details for e
 
 Bismark is a set of tools for the time-efficient analysis of Bisulfite-Seq (BS-Seq) data. Bismark performs alignments of bisulfite-treated reads to a reference genome and cytosine methylation calls at the same time. Bismark is written in Perl and is run from the command line. Bisulfite-treated reads are mapped using the short read aligner Bowtie 2, or alternatively HISAT2. Therefore, it is a requirement that Bowtie 2 (or HISAT2) are also installed on your machine (see Dependencies).
 
-All files associated with Bismark as well as a test BS-Seq data set can be downloaded from [Babraham Bioinformatics](http://www.bioinformatics.babraham.ac.uk/projects/bismark/) or [Github](https://github.com/FelixKrueger/Bismark).
+All files associated with Bismark as well as a test BS-Seq data set can be downloaded from [Github](https://github.com/FelixKrueger/Bismark).
 
-We would like to hear your comments, suggestions or bugs about Bismark! Please e-mail them to: [felix.krueger@babraham.ac.uk](mailto:felix.krueger@babraham.ac.uk)
+We would like to hear your comments, suggestions or bugs about Bismark! Please e-mail them to: [fkrueger@altoslabs.com](mailto:fkrueger@altoslabs.com)
 
 ### Which kind of BS-Seq files are supported?
 
@@ -31,7 +31,7 @@ Bismark supports the alignment of bisulfite-treated reads (whole genome shotgun 
 
 A full list of alignments modes can be found in [`Bismark_alignment_modes.pdf`](http://www.bioinformatics.babraham.ac.uk/projects/bismark/Bismark_alignment_modes.pdf).
 
-In addition, Bismark retains much of the flexibility of Bowtie 2 / HISAT2 (adjustable seed length, number of mismatches, insert size ...). For a full list of options please run:
+In addition, Bismark retains much of the flexibility of Bowtie 2 / HISAT2 / minimap2 (adjustable seed length, number of mismatches, insert size ...). For a full list of options please run:
 
 ```
 bismark --help
@@ -63,6 +63,6 @@ It should be stressed that the percent methylation value (context) is just a ver
 
 ## Credits
 
-Bismark was written by Felix Krueger at the [Babraham Bioinformatics Group](http://www.bioinformatics.babraham.ac.uk/).
+Bismark was written by Felix Krueger at the [Babraham Bioinformatics Group](http://www.bioinformatics.babraham.ac.uk/), now at Altos Labs, [Cambridge Institute](https://altoslabs.com/).
 
 ![Babraham Bioinformatics](images/bioinformatics_logo.png)

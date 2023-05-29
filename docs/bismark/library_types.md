@@ -161,10 +161,10 @@ As we have seen before, the random priming of post-bisulfite methods (such as PB
 The same problems of random priming (indels, mispriming) will however most likely occur on both sides of the fragment to be sequenced, but it is doubtful that one would be able to spot these problems on the 3' end of reads because the problems would be expected on the 3' end of reads just before reading through into the adapter, and this may occur
 
 - at different positions in the read (depending on how short the fragment was)
-- at different positions within the read because of quality trimming in add`em`ition to adapter read-through contamination
+- at different positions within the read because of quality trimming in addition to adapter read-through contamination
 - not at all within the read length (whenever a fragment is longer than the sequenced read length)
 - at the 3' end even without hitting the adapter (i.e. just before the adapter)
 
 I guess there is a trade-off between accepting that a certain proportion of the reads may have a few biased biased positions towards their 5' ends, and preemptively trimming the 3' end by the same amount of bases as the 5' end. As a general rule it is probably safe to say that the shorter the average insert size of a library - the more of a problem the bias is. We have e.g. seen Pico Methyl libraries where ~80% of all fragments were shorter than 100bp, so a 2x125bp run would most likely be affected by the random priming bias on the 5' and 3' ends in nearly all fragments sequenced. We realise that trimming off say 10 bp from the 5' end and 3' end of a 100 bp read already removes 20% of the actually sequenced data, but this is the price you have to pay for using post-bisulfite kits...
 
-For these reasons we have put the _3' Trimming_ values in the table above in _(parentheses)_ as a reminder that you **should** probably perform 3' trimming of the data as well.
+For these reasons we have put the _3' Trimming_ values in the table above in _(parentheses)_ as a reminder that you **should** perform 3' trimming of the data as well.
