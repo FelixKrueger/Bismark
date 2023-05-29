@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-22, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-23, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -25,8 +25,8 @@ use lib "$RealBin/../lib";
 
 my $parent_dir = getcwd();
 
-my $bismark_version = 'v0.24.0';
-my $copyright_dates = "2010-22";
+my $bismark_version = 'v0.24.1';
+my $copyright_dates = "2010-23";
 
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
@@ -921,13 +921,14 @@ foreach my $filename (@filenames){
 				warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
 			}
 		}
+		exit 0;
 	}
 	else{
 		# If multiple files were supplied as the command line, like so:
 		# -1 R1.fastq,simulated_1.fastq,ZZZ_R1.fastq -2 R2.fastq,simulated_2.fastq,ZZZ_R2.fastq --multicore 4
 		# we need to exit from the child processes if we don't want a steady increase of new Bismark instances! Fixed 30 10 2017
 		# warn "Terminating Child process\n\n"; 
-		exit;
+		exit 0;
 	}
 
 }
@@ -2350,8 +2351,12 @@ sub process_single_end_fastA_file_for_methylation_call{
 	print "Processed $counting{sequences_count} sequences in total\n\n";
 
 	close OUT or warn "Failed to close filehandle OUT: $!\n";
-	close AMBIG or warn "Failed to close filehandle AMBIG: $!";
-	close UNMAPPED or warn "Failed to close filehandle UNMAPPED: $!";
+	if ($ambiguous){
+		close AMBIG or warn "Failed to close filehandle AMBIG: $!";
+	}
+	if ($unmapped){
+		close UNMAPPED or warn "Failed to close filehandle UNMAPPED: $!";
+	}
 
 	print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 
@@ -2434,8 +2439,12 @@ sub process_single_end_fastQ_file_for_methylation_call{
 	print "Processed $counting{sequences_count} sequences in total\n\n";
 
 	close OUT or warn "Failed to close filehandle OUT: $!";
-	close AMBIG or warn "Failed to close filehandle AMBIG: $!";
-	close UNMAPPED or warn "Failed to close filehandle UNMAPPED: $!";
+	if ($ambiguous){
+		close AMBIG or warn "Failed to close filehandle AMBIG: $!";
+	}
+	if ($unmapped){
+		close UNMAPPED or warn "Failed to close filehandle UNMAPPED: $!";
+	}
 
 	print_final_analysis_report_single_end($C_to_T_infile,$G_to_A_infile,$pid);
 	if ($ambig_bam){
@@ -2526,11 +2535,14 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
 	warn "Processed $counting{sequences_count} sequences in total\n\n";
 	close OUT or die $!;
-	close AMBIG_1 or warn "Failed to close filehandle AMBIG_1: $!";
-	close AMBIG_2 or warn "Failed to close filehandle AMBIG_2: $!";
-	close UNMAPPED_1 or warn "Failed to close filehandle UNMAPPED_1: $!";
-	close UNMAPPED_2 or warn "Failed to close filehandle UNMAPPED_2: $!";
-
+	if ($ambiguous){
+		close AMBIG_1 or warn "Failed to close filehandle AMBIG_1: $!";
+		close AMBIG_2 or warn "Failed to close filehandle AMBIG_2: $!";
+	}
+	if ($unmapped){
+		close UNMAPPED_1 or warn "Failed to close filehandle UNMAPPED_1: $!";
+		close UNMAPPED_2 or warn "Failed to close filehandle UNMAPPED_2: $!";
+	}
 	print_final_analysis_report_paired_ends($C_to_T_infile_1,$G_to_A_infile_1,$C_to_T_infile_2,$G_to_A_infile_2,$pid);
 
 }
@@ -2638,10 +2650,14 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 	warn "Processed $counting{sequences_count} sequences in total\n\n";
 
 	close OUT or warn "Failed to close filehandle OUT: $!\n\n";
-	close AMBIG_1 or warn "Failed to close filehandle AMBIG_1: $!";
-	close AMBIG_2 or warn "Failed to close filehandle AMBIG_2: $!";
-	close UNMAPPED_1 or warn "Failed to close filehandle UNMAPPED_1: $!";
-	close UNMAPPED_2 or warn "Failed to close filehandle UNMAPPED_2: $!";
+	if ($ambiguous){
+		close AMBIG_1 or warn "Failed to close filehandle AMBIG_1: $!";
+		close AMBIG_2 or warn "Failed to close filehandle AMBIG_2: $!";
+	}
+	if ($unmapped){
+		close UNMAPPED_1 or warn "Failed to close filehandle UNMAPPED_1: $!";
+		close UNMAPPED_2 or warn "Failed to close filehandle UNMAPPED_2: $!";
+	}
 
 	if ($ambig_bam){
 		close AMBIBAM or warn "Had trouble closing filehandle AMBIBAM: $!\n\n";
@@ -7330,7 +7346,7 @@ sub process_command_line{
 				 'no-spliced-alignment'    => \$nosplice,
 				 'icpc'                    => \$icpc,
 				 'local'                   => \$local,
-				 'mm2_short_read'          => \$mm2_short_read,
+				 'mm2_short_reads'          => \$mm2_short_read,
 				 'mm2_maximum_length=i'    => \$maximum_length_cutoff,
 				 'mm2_pacbio|pacbio'       => \$mm2_pacbio,
 				 'mm2_nanopore|nanopore'   => \$mm2_nanopore,
@@ -8284,7 +8300,7 @@ VERSION
 
 	unless ($mm2){
 		if ($mm2_short_read){
-			die "You cannot specify minimap2 options (--mm2_short_read) unless you also use --minimap2. Please respecify!\n\n";
+			die "You cannot specify minimap2 options (--mm2_short_reads) unless you also use --minimap2. Please respecify!\n\n";
 		}
 		if ($maximum_length_cutoff){
 			die "You cannot specify minimap2 options (--mm2_maximum_length) unless you also use --minimap2. Please respecify!\n\n";
@@ -9978,6 +9994,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 17 May 2022
+Last modified on 28 May 2023
 HOW_TO
 }

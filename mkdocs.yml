@@ -1,0 +1,72 @@
+site_name: Bismark
+repo_name: FelixKrueger/Bismark
+repo_url: https://github.com/FelixKrueger/Bismark
+site_url: https://felixkrueger.github.io/Bismark/
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  logo: images/bismark.png
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  font:
+    text: Noto Sans
+  features:
+    - navigation.instant
+    - navigation.tabs
+
+nav:
+  - Home: README.md
+  - quick_reference.md
+  - installation.md
+  - Usage:
+      - bismark/README.md
+      - bismark/genome_preparation.md
+      - bismark/alignment.md
+      - bismark/deduplication.md
+      - bismark/methylation_extraction.md
+      - bismark/coverage_report.md
+      - bismark/processing_report.md
+      - bismark/summary_report.md
+      - bismark/filter_nonconverted_reads.md
+      - bismark/library_types.md
+      - bismark/concordance.md
+  - Full list of options:
+      - options/genome_preparation.md
+      - options/alignment.md
+      - options/methylation_extraction.md
+  - FAQ:
+      - faq/README.md
+      - faq/single_cell_pbat.md
+      - faq/low_mapping.md
+      - faq/context_change.md
+      - faq/conversion_efficiency.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+plugins:
+  - social
+  - search
