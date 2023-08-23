@@ -6,6 +6,11 @@
 
 - removed an `exit 0` that would terminate runs after processing a single (set of) input file(s).
 
+### deduplicate_bismark
+
+- Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
+
+
 ## Changelog for Bismark v0.24.1 (release on 29 May 2023)
 
 - Added new [documentation website](http://felixkrueger.github.io/Bismark/), built using [Material for Mkdocs](https://squidfunk.github.io/mkdocs-material/). Thanks to @ewels for a great (late-night) effort to break up and restructure what had become a fairly unwieldy monolithic beast

@@ -154,7 +154,7 @@ foreach my $file (@filenames){
 		if ($multiple){
 			# we are assuming that all files are either in BAM format
 			if ($file =~ /\.bam$/){
-				open (IN,"$samtools_path cat -h $file @filenames | samtools view -h |") or die "Unable to read from BAM files in '@filenames': $!\n";
+				open (IN,"$samtools_path cat -h $file @filenames | $samtools_path view -h |") or die "Unable to read from BAM files in '@filenames': $!\n";
 			}
 			# or all in SAM format
 			else{ # if the reads are in SAM format we simply concatenate them

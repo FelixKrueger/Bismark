@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 my $parent_dir = getcwd();
 
-my $bismark_version = 'v0.24.1';
+my $bismark_version = 'v0.24.1dev';
 my $copyright_dates = "2010-23";
 
 my $start_run = time();
@@ -921,7 +921,7 @@ foreach my $filename (@filenames){
 				warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
 			}
 		}
-		exit 0;
+		# exit 0; # will terminate after a single supplied file....
 	}
 	else{
 		# If multiple files were supplied as the command line, like so:
@@ -7963,9 +7963,9 @@ VERSION
 
 	### BOWTIE 2/HISAT2 PARALLELIZATION OPTIONS
 	if ($parallel){
-		die "Please select a value for -p of 2 or more (ideally not higher than 4 though...)!\n" unless ($parallel > 1);
+		die "Please select a value for -p of 2 or more!\n" unless ($parallel > 1);
 		if ($parallel > 4){
-			warn "Attention: using more than 4 cores per alignment thread has been reported to have diminishing returns. If possible try to limit -p to a value of 4\n"; sleep(2);
+			warn "Attention: early reports suggested that high values of -p  to have diminishing returns. Please test different values using a small subset of data for your hardware setting.\n"; sleep(1);
 		}
 		push @aligner_options,"-p $parallel";
 		push @aligner_options,'--reorder'; ## re-orders the Bowtie 2 or HISAT2 output so that it does match the input files. This is abolutely required for parallelization to work.
@@ -9916,7 +9916,7 @@ Bowtie 2/ HISAT2 parallelization options:
                          and synchronize when parsing reads and outputting alignments. Searching for alignments is highly
                          parallel, and speedup is close to linear. Increasing -p increases Bowtie 2's memory footprint.
                          E.g. when aligning to a human genome index, increasing -p from 1 to 8 increases the memory footprint
-                         by a few hundred megabytes. This option is only available if bowtie is linked with the pthreads
+                         by a few hundred megabytes. This option is only available if Bowtie 2 is linked with the pthreads
                          library (i.e. if BOWTIE_PTHREADS=0 is not specified at build time). In addition, this option will
                          automatically use the option '--reorder', which guarantees that output SAM records are printed in
                          an order corresponding to the order of the reads in the original input file, even when -p is set
@@ -9994,6 +9994,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 28 May 2023
+Last modified on 23 August 2023
 HOW_TO
 }
