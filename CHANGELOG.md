@@ -1,8 +1,15 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.24.1dev 
+
+### Bismark
+
+- removed an `exit 0` that would terminate runs after processing a single (set of) input file(s).
+
 ### deduplicate_bismark
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
+
 
 ## Changelog for Bismark v0.24.1 (release on 29 May 2023)
 
