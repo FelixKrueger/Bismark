@@ -1,5 +1,11 @@
 # Bismark Changelog
 
+## Changelog for Bismark v0.24.1dev 
+
+### Bismark
+
+- removed an `exit 0` that would terminate runs after processing a single (set of) input file(s).
+
 ## Changelog for Bismark v0.24.1 (release on 29 May 2023)
 
 - Added new [documentation website](http://felixkrueger.github.io/Bismark/), built using [Material for Mkdocs](https://squidfunk.github.io/mkdocs-material/). Thanks to @ewels for a great (late-night) effort to break up and restructure what had become a fairly unwieldy monolithic beast
