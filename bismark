@@ -921,7 +921,7 @@ foreach my $filename (@filenames){
 				warn "Nucleotide coverage statistics are currently only available for BAM or CRAM files\n\n";
 			}
 		}
-		exit 0;
+		# exit 0; # will terminate after a single supplied file....
 	}
 	else{
 		# If multiple files were supplied as the command line, like so:
@@ -9994,6 +9994,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 28 May 2023
+Last modified on 23 August 2023
 HOW_TO
 }
