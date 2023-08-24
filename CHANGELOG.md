@@ -10,6 +10,7 @@
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
 
+Added scripts for merging coverage files (e.g. for when R1 and R2 had been run in single-end mode) 
 
 ## Changelog for Bismark v0.24.1 (release on 29 May 2023)
 
