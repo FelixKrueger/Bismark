@@ -23,7 +23,7 @@ use Carp;
 my %chromosomes;       # storing sequence information of all chromosomes/scaffolds
 my %processed;         # keeping a record of which chromosomes have been processed
 my %context_summary;   # storing methylation values for all contexts for NOMe-seq or scNMT-experiments
-my $coverage2cytosine_version = 'v0.24.1';
+my $coverage2cytosine_version = 'v0.24.1dev';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold,$drach) = process_commandline();
 
@@ -708,6 +708,12 @@ sub generate_GC_context_report {
 	warn  "="x82,"\n";
 	warn "Methylation information for GC context will now be written to a GpC-context report\n";
 	warn  "="x82,"\n\n";
+	
+	warn "For the GC report, positions need to have coverage of at least 1 call. The threshold currently is: $threshold\n";
+	if ($threshold == 0){
+		warn "Setting threshold to 1\n";
+		$threshold = 1;
+	}
 	sleep (2);
 
 	my $number_processed = 0;
@@ -981,6 +987,8 @@ sub generate_GC_context_report {
 
 		# if Cs were not covered at all they are not written out
 		if ($meth_bottom + $nonmeth_bottom >= $threshold){
+
+			# warn ("methylation bottom strand: $meth_bottom\nnon-methylation bottom strand: $nonmeth_bottom\nThreshold: $threshold\n\n"); sleep (1);
 			my $percentage = sprintf ("%.6f",$meth_bottom/ ($meth_bottom + $nonmeth_bottom) *100);
 			if ($nome and ($context_bottom eq 'CG') ){
 				# not reporting these (see point 2. above)
@@ -1965,12 +1973,12 @@ sub process_commandline{
 	print << "VERSION";
 
 
-					  Bismark Methylation Extractor Module -
-							   coverage2cytosine
+					Bismark Methylation Extractor Module -
+						coverage2cytosine
 
-					Bismark coverage2cytosine Version: $coverage2cytosine_version
-			  Copyright 2010-22 Felix Krueger, Altos Bioinformatics
-					https://github.com/FelixKrueger/Bismark
+					       Version: $coverage2cytosine_version
+			      Copyright 2010-23 Felix Krueger, Altos Bioinformatics
+				        https://github.com/FelixKrueger/Bismark
 
 
 VERSION
@@ -2231,7 +2239,7 @@ The genome-wide cytosine methylation output file is tab-delimited in the followi
 <chromosome>  <position>  <strand>  <count methylated>  <count non-methylated>  <C-context>  <trinucleotide context>
 
 
-							  Script last modified: 06 Oct 2020
+							  Script last modified: 09 Sep 2023
 
 EOF
 	;
