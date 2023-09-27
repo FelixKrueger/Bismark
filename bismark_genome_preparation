@@ -42,7 +42,7 @@ my %genomic_freqs; # storing the genomic sequence composition
 my %freqs;
 
 
-my $bismark_version = 'v0.24.1';
+my $bismark_version = 'v0.24.2';
 my $copyright_date = '2010-23';
 my $last_modified = "19 May 2022";
 

@@ -14,8 +14,6 @@ print ("Merging Bismark coverage files given as command line arguments")
 #         print_options(options)
 
 
-
-
 def parse_options():
     parser = argparse.ArgumentParser(description="Set base-name to write merged Bismark coverage files to")
     parser.add_argument("-b","--basename", type=str, help="Basename of file to write merged coverage output to (default 'merged_coverage_file')", default="merged_coverage_file.cov.gz")
