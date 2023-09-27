@@ -7,7 +7,7 @@ use Cwd;
 ### This script is supposed to remove alignments to the same position in the genome which can arise by e.g. PCR amplification
 ### Paired-end alignments are considered a duplicate if both partner reads start and end at the exact same position
 
-my $dedup_version = 'v0.24.1';
+my $dedup_version = 'v0.24.2';
 my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile,$parallel) = process_commandline();
@@ -154,7 +154,7 @@ foreach my $file (@filenames){
 		if ($multiple){
 			# we are assuming that all files are either in BAM format
 			if ($file =~ /\.bam$/){
-				open (IN,"$samtools_path cat -h $file @filenames | samtools view -h |") or die "Unable to read from BAM files in '@filenames': $!\n";
+				open (IN,"$samtools_path cat -h $file @filenames | $samtools_path view -h |") or die "Unable to read from BAM files in '@filenames': $!\n";
 			}
 			# or all in SAM format
 			else{ # if the reads are in SAM format we simply concatenate them
