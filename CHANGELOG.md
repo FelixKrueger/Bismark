@@ -1,6 +1,6 @@
 # Bismark Changelog
 
-## Changelog for Bismark v0.24.1dev 
+## Changelog for Bismark v0.24.2 (release on 27 Sep 2023) 
 
 ### Bismark
 
@@ -10,11 +10,13 @@
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
 
-Added scripts for merging coverage files (e.g. for when R1 and R2 had been run in single-end mode) 
-
 ### coverage2cytosine
 
 - set threshold reads to 1 (if it was 0) for `--gc_context` as intended and mentioned in the help text. Fixes [#621](https://github.com/FelixKrueger/Bismark/issues/621)
+
+
+Added scripts for merging coverage files (e.g. for when R1 and R2 had been run in single-end mode) 
+
 
 ## Changelog for Bismark v0.24.1 (release on 29 May 2023)
 
