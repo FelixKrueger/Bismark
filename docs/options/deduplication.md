@@ -2,9 +2,9 @@
 
 This script is supposed to remove alignments to the same position in the genome from the Bismark mapping output (both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. If sequences align to the same genomic position but on different strands they will be scored individually.
 
-!!! Important:
+!!! important
 
-  Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using samtools sort -n)
+    Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using samtools sort -n)
 
 A brief description of the Bismark deduplication and a full list of options can also be viewed by typing `deduplicate_bismark --help`.
 
