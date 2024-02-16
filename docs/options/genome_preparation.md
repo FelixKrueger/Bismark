@@ -64,7 +64,7 @@ Force generated index to be 'large', even if reference has fewer than 4 billion 
 
 This script is supposed to convert a specified reference genome into two different bisulfite converted versions and index them for alignments with Bowtie 2 (default), HISAT2 or minimap2. The first bisulfite genome will have all Cs converted to Ts (C->T), and the other one will have all Gs converted to As (G->A).
 Both bisulfite genomes will be stored in subfolders within the reference genome folder containing the unconverted reference sequence (in FastA format). Once the bisulfite
-conversion has been completed, the program will fork and launch two simultaneous instances of the Bowtie 2, HISAT2 or minimap2 indexer (`bowtie2-build` or `hisat2-build` or `minimap2 -d`, resepctively). Here is the structure of the reference genome folder after successful indexing (with Bowtie2 in this case):
+conversion has been completed, the program will fork and launch two simultaneous instances of the Bowtie 2, HISAT2 or minimap2 indexer (`bowtie2-build` or `hisat2-build` or `minimap2 -d`, respectively). Here is the structure of the reference genome folder after successful indexing (with Bowtie2 in this case):
 
 ```
 ├── Bisulfite_Genome
