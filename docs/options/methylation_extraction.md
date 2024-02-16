@@ -161,6 +161,8 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
 #### OUTPUT
 
+##### Extractor output
+
 The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
 
     <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
@@ -181,6 +183,8 @@ simulated_1_bismark_bt2_pe.M-bias.txt
 simulated_1_bismark_bt2_pe_splitting_report.txt
 ```
 
+##### bedGraph output
+
 The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
 
     track type=bedGraph (header line)
@@ -192,6 +196,8 @@ Example output files (default mode only):
 simulated_1_bismark_bt2_pe.bedGraph.gz
 ```
 
+##### Coverage output
+
 The coverage output looks like this (tab-delimited; 1-based genomic coords):
 
     <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
@@ -201,6 +207,8 @@ Example output files (default mode only):
 ```
 simulated_1_bismark_bt2_pe.bismark.cov.gz
 ```
+
+##### Cytosine report
 
 The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
 
