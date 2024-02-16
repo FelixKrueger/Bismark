@@ -161,22 +161,54 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
 #### OUTPUT
 
-##### The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
+The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
 
     <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
 
       Methylated cytosines receive a '+' orientation,
     Unmethylated cytosines receive a '-' orientation.
 
-##### The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
+Example output files (default mode only):
+
+```
+CHG_OB_simulated_1_bismark_bt2_pe.txt.gz
+CHG_OT_simulated_1_bismark_bt2_pe.txt.gz
+CHH_OB_simulated_1_bismark_bt2_pe.txt.gz
+CHH_OT_simulated_1_bismark_bt2_pe.txt.gz
+CpG_OB_simulated_1_bismark_bt2_pe.txt.gz
+CpG_OT_simulated_1_bismark_bt2_pe.txt.gz
+simulated_1_bismark_bt2_pe.M-bias.txt
+simulated_1_bismark_bt2_pe_splitting_report.txt
+```
+
+The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
 
     track type=bedGraph (header line)
     <chromosome> <start position> <end position> <methylation percentage>
 
-##### The coverage output looks like this (tab-delimited; 1-based genomic coords):
+Example output files (default mode only):
+
+```
+simulated_1_bismark_bt2_pe.bedGraph.gz
+```
+
+The coverage output looks like this (tab-delimited; 1-based genomic coords):
 
     <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
 
-##### The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
+Example output files (default mode only):
+
+```
+simulated_1_bismark_bt2_pe.bismark.cov.gz
+```
+
+The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
 
     <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
+
+Example output files (default mode only):
+
+```
+simulated_1_bismark_bt2_pe.CpG_report.txt.gz
+simulated_1_bismark_bt2_pe.cytosine_context_summary.txt
+```
