@@ -1,4 +1,4 @@
-## Appendix (III): Bismark Methylation Extractor
+## Appendix (IV): Bismark Methylation Extractor
 
 A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing `bismark_methylation_extractor --help`
 

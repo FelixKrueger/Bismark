@@ -51,8 +51,8 @@ nav:
   - Full list of options:
       - options/genome_preparation.md
       - options/alignment.md
-      - options/methylation_extraction.md
       - options/deduplication.md
+      - options/methylation_extraction.md
   - FAQ:
       - faq/README.md
       - faq/single_cell_pbat.md
