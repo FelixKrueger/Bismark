@@ -286,3 +286,28 @@ For reads that have multiple alignments a random alignment is written out to a s
 - `--rfg <int1>,<int2>`
 
   Sets the reference gap open (&lt;int1>) and extend (&lt;int2>) penalties. A reference gap of length N gets a penalty of `<int1> + N * <int2>`. Default: 5, 3.
+
+
+#### OUTPUT:
+
+The output is a BAM format by default, as well as a aligment report deduplication report (ending in '_deduplication_report.txt')
+
+For a single-end file called 'simulated.fastq', the expected output for Bowtie 2, HISAT2 or minimap2 is:
+
+```
+simulated_bismark_bt2.bam
+simulated_bismark_bt2_SE_report.txt
+simulated_bismark_hisat2.bam
+simulated_bismark_hisat2_SE_report.txt
+simulated_bismark_mm2.bam
+simulated_bismark_mm2_SE_report.txt
+```
+
+In a paired-end situation, for files 'simulated_1.fastq' and 'simulated_2.fastq' you would expect for Bowtie2 or HISAT2:
+
+```
+simulated_1_bismark_bt2_pe.bam
+simulated_1_bismark_bt2_PE_report.txt
+simulated_1_bismark_hisat2_pe.bam
+simulated_1_bismark_hisat2_PE_report.txt
+```

@@ -4,7 +4,7 @@ This script is supposed to remove alignments to the same position in the genome 
 
 !!! important
 
-    Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using samtools sort -n)
+    Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using `samtools sort -n`)
 
 A brief description of the Bismark deduplication and a full list of options can also be viewed by typing `deduplicate_bismark --help`.
 
@@ -60,7 +60,7 @@ The path to your Samtools installation, e.g. `/home/user/samtools/`. Does not ne
 Print version information and exit
 
 
-#### OUTPUT
+#### OUTPUT:
 
 The output is a BAM format by default, as well as a deduplication report (ending in '_deduplication_report.txt') 
 
