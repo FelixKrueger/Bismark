@@ -1175,7 +1175,7 @@ VERSION
 		warn join ("\t",@filenames),"\n\n";
 	}
     else{
-	    warn "Processing single-end Bismark output file(s) (SAM format):\n";
+	    warn "Processing Bismark output file(s) (SAM format):\n";
 	    warn join ("\t",@filenames),"\n\n";
 	}
     
