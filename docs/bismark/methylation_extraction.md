@@ -89,7 +89,7 @@ The main difference to the `bedGraph` or `coverage` output is that **every** cyt
 
 #### GpC methylation assessment: Context-specific methylation summary report
 
-Every time `coverage2cyyosine` is run, the counts for each cytosine context are recorded and printed to a special file called `*.cytosine_context_summary.txt` for each input coverage file. 
+Every time `coverage2cytosine` is run, the counts for each cytosine context are recorded and printed to a special file called `*.cytosine_context_summary.txt` for each input coverage file. 
 
 The report ([introduced here](https://github.com/FelixKrueger/Bismark/issues/321)) looks at 2 bp downstream, as well as 1 bp upstream of the cytosine taking part in the methylation call. This is useful for looking at methylation in specific contexts (e.g. `CpA` only), and also when using `GpC` methylases that introduce methylation in `GpC` context. The report looks like this: 
 
