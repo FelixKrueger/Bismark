@@ -26,7 +26,7 @@ In addition to chromosome, start (and end position for paired-end libraries) pos
 MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
 ```
 
-This option option is equivalent to using [UmiBam](https://github.com/FelixKrueger/Umi-Grinder) in the following mode:
+This option is equivalent to using [UmiBam](https://github.com/FelixKrueger/Umi-Grinder) in the following mode:
 `UmiBam --umi input.bam`, however UmiBam has additional functionality such as a double UMI feature or the option to allow mismatches in the UMI(s).
 
 ### Deduplication of multiple files of the same library
