@@ -1,5 +1,14 @@
 # Bismark Changelog
 
+
+## Changelog for Bismark v0.24.2dev
+
+
+
+### filter_non_conversion
+
+- changed shebang line to use env
+
 ## Changelog for Bismark v0.24.2 (release on 27 Sep 2023) 
 
 ### Bismark
