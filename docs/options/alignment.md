@@ -132,6 +132,10 @@ In this mode, it is not required that the entire read aligns from one end to the
 
   Sets the SM field in the `@RG` header line; can't be set without setting `--rg_id` as well. Default: SAMPLE
 
+- `--strandID`
+
+For non-directional paired-end libraries, the strands identity is encoded by the order in which R1 and R2 are reported, as well as the read and genome conversion state. If third party tools re-organise this order it may become difficult to determine the alignment strand identity. This option adds an optional tag, e.g. `YS:Z:OT` or `YS:Z:CTOB` to preserve this information. See also [this thread for more details](https://github.com/FelixKrueger/Bismark/issues/455). Default: OFF.
+
 - `--quiet`
 
   Print nothing besides alignments.
