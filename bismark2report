@@ -20,7 +20,7 @@ use lib "$RealBin/../lib";
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2report_version = 'v0.24.2';
+my $bismark2report_version = 'v0.24.2dev';
 my (@alignment_reports,@dedup_reports,@splitting_reports,@mbias_reports,@nuc_reports);
 
 my ($output_dir,$verbose,$manual_output_file) = process_commandline();
@@ -636,8 +636,24 @@ sub read_nucleotide_coverage_report{
 	    my $counts_exp = $nucs{$key}->{exp}->{counts};
 	    my $cov = $nucs{$key}->{obs}->{coverage};
 
-	    # calculating log2 observed/expected
-	    my $ratio = $nuc_obs/$nuc_exp;
+	    # Avoiding calculation errors for weird situations where nucleotides are not present, e.g. amplicons
+      # as the genome. More here. https://github.com/FelixKrueger/Bismark/issues/711
+      unless (defined $nuc_exp){
+        $nuc_exp = 0;
+      }
+      unless (defined $nuc_obs){
+        $nuc_obs = 0;
+      }
+
+      my $ratio;
+      if ($nuc_exp == 0){
+        $ratio = "N/A";
+      }
+      else{
+        # calculating log2 observed/expected
+	      $ratio = $nuc_obs/$nuc_exp;
+      }
+      
 	    #  my $logratio = sprintf ("%.2f",log($ratio)/log(2));
 	    # if (abs($logratio) > $minmax){
 	    # $minmax = abs($logratio);
