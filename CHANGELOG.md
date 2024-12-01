@@ -15,6 +15,8 @@
 
 - removed an `exit 0` that would terminate runs after processing a single (set of) input file(s).
 
+- now using 4 cores for merging multiple BAM files (more details [here](https://github.com/FelixKrueger/Bismark/issues/707)
+
 ### deduplicate_bismark
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
