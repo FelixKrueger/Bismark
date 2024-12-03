@@ -136,13 +136,13 @@ sub subset_input_file_FastQ{
   $temp .= ".temp.$offset";
   $temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
 
-    if ($gzip){
-      $temp .= '.gz';
-      open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
-    }
-    else{
-      open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
-    }
+  if ($gzip){
+    $temp .= '.gz';
+    open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+  }
+  else{
+    open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+  }
 
   my $line_count = 0;
   my $seqs_processed = 0;
