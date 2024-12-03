@@ -204,13 +204,13 @@ sub subset_input_file_FastA{
   $temp .= ".temp.$offset";
   $temp =~ s/^.*\///; # replacing everything upto and including the last /, i.e. removing file path information
 
-    if ($gzip){
-      $temp .= '.gz';
-      open (TEMPFA,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
-    }
-    else{
-      open (TEMPFA,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
-    }
+  if ($gzip){
+    $temp .= '.gz';
+    open (TEMPFA,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+  }
+  else{
+    open (TEMPFA,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
+  }
 
   warn "Writing temporary infile to $temp\n";
 
@@ -647,20 +647,20 @@ foreach my $filename (@filenames){
 
           # Temp Output Files
           my $pathless_filename = ${original_filename}; # 10 Jan 2017
-            $pathless_filename =~ s/.*\///; # deleting path information    
+          $pathless_filename =~ s/.*\///; # deleting path information    
 
-            if ($bowtie2){
-              if ($gzip){
-                push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.bam";
-                push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2_SE_report.txt";
-                push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.ambig.bam";   # only for Bowtie 2
-              }
-              else{
-                push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.bam";
-                push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2_SE_report.txt";
-                push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
-              }	
+          if ($bowtie2){
+            if ($gzip){
+              push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.bam";
+              push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2_SE_report.txt";
+              push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_bt2.ambig.bam";   # only for Bowtie 2
             }
+            else{
+              push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.bam";
+              push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2_SE_report.txt";
+              push @temp_ambig_bam,  "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_bt2.ambig.bam";      # only for Bowtie 2
+            }	
+          }
           elsif($mm2){
             if ($gzip){
               push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_mm22.bam";
@@ -671,16 +671,16 @@ foreach my $filename (@filenames){
               push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_mm2_SE_report.txt";
             }	
           }
-            else{ # HISAT2
-              if ($gzip){
-                push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2.bam";
-                push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2_SE_report.txt";
-              }
-              else{
-                push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_hisat2.bam";
-                push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_hisat2_SE_report.txt";
-              }
+          else{ # HISAT2
+            if ($gzip){
+              push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2.bam";
+              push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}.gz_bismark_hisat2_SE_report.txt";
             }
+            else{
+              push @temp_output,     "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_hisat2.bam";
+              push @temp_reports,    "${output_dir}${add_prefix}${pathless_filename}.temp.${_}_bismark_hisat2_SE_report.txt";
+            }
+          }
 
           if ($unmapped){
             if ($gzip){
