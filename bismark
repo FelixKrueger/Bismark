@@ -2314,7 +2314,7 @@ sub process_single_end_fastA_file_for_methylation_call{
 
     $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
 
-      ++$count;
+    ++$count;
 
     if ($skip){
       next unless ($count > $skip);
@@ -2330,7 +2330,7 @@ sub process_single_end_fastA_file_for_methylation_call{
 
     $identifier =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-      my $return = check_results_single_end (uc$sequence,$identifier);
+    my $return = check_results_single_end (uc$sequence,$identifier);
 
     unless ($return){
       $return = 0;
@@ -2391,7 +2391,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
     chomp $identifier;
     $identifier = fix_IDs($identifier); # this is to avoid problems with truncated read ID when they contain white spaces
-      $identifier .= "\n";
+    $identifier .= "\n";
 
     ++$count;
 
@@ -2413,7 +2413,7 @@ sub process_single_end_fastQ_file_for_methylation_call{
 
     $identifier =~ s/^\@//;  # deletes the @ at the beginning of Illumin FastQ headers
 
-      my $return = check_results_single_end (uc$sequence,$identifier,$quality_value);
+    my $return = check_results_single_end (uc$sequence,$identifier,$quality_value);
 
     unless ($return){
       $return = 0;
@@ -2490,7 +2490,7 @@ sub process_fastA_files_for_paired_end_methylation_calls{
     chomp $identifier_2;
 
     $identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
-      $identifier_2 = fix_IDs($identifier_2);
+    $identifier_2 = fix_IDs($identifier_2);
 
     ++$count;
 
@@ -2510,7 +2510,7 @@ sub process_fastA_files_for_paired_end_methylation_calls{
 
     $identifier_1 =~ s/^>//; # deletes the > at the beginning of FastA headers
 
-      my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
+    my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1);
 
     unless ($return){
       $return = 0;
@@ -2574,13 +2574,13 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     my $identifier_1 = <IN1>;
     my $sequence_1 = <IN1>;
     my $ident_1 = <IN1>;         # not needed
-      my $quality_value_1 = <IN1>; # not needed
-      # reading from the second input file
-      my $identifier_2 = <IN2>;
+    my $quality_value_1 = <IN1>; # not needed
+    # reading from the second input file
+    my $identifier_2 = <IN2>;
     my $sequence_2 = <IN2>;
     my $ident_2 = <IN2>;         # not needed
-      my $quality_value_2 = <IN2>; # not needed
-      last unless ($identifier_1 and $sequence_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $quality_value_2);
+    my $quality_value_2 = <IN2>; # not needed
+    last unless ($identifier_1 and $sequence_1 and $quality_value_1 and $identifier_2 and $sequence_2 and $quality_value_2);
 
     chomp $sequence_1;
     chomp $identifier_1;
@@ -2590,7 +2590,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
     chomp $quality_value_2;
 
     $identifier_1 = fix_IDs($identifier_1); # this is to avoid problems with truncated read ID when they contain white spaces
-      $identifier_2 = fix_IDs($identifier_2);
+    $identifier_2 = fix_IDs($identifier_2);
 
     ++$count;
 
@@ -2611,7 +2611,7 @@ sub process_fastQ_files_for_paired_end_methylation_calls{
 
     $identifier_1 =~ s/^\@//;  # deletes the @ at the beginning of the FastQ ID
 
-      my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
+    my $return = check_results_paired_end (uc$sequence_1,uc$sequence_2,$identifier_1,$quality_value_1,$quality_value_2);
 
     unless ($return){
       $return = 0;
@@ -2686,12 +2686,12 @@ sub check_results_single_end{
 
   my $alignment_ambiguous = 0;
   my $first_ambig_alignment; # storing the first ambiguous alignment so it can be written out in case '--ambig_bam' was specified
-    my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
-    my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
+  my $best_AS_so_far;   ## we need to keep a memory of the best alignment score so far
+  my $amb_same_thread = 0;   ## if a reads primary and secondary alignments have the same alignment score we set this to true.
 
-    my %alignments = ();
+  my %alignments = ();
 
-    ### reading from the Bowtie 2 output filehandles
+  ### reading from the Bowtie 2 output filehandles
   foreach my $index (0..$#fhs){
     # if ($fhs[$index]->{last_line} =~ /\d+S/){
     # print "Index: $index\n";
