@@ -6744,7 +6744,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_bowtie2 {
     if ($_) {
       chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the Bowtie output (= the sequence identifier)
-        $fh->{last_seq_id} = $id;
+      $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
       warn "Found first alignment:\t$fh->{last_line}\n";
     }
@@ -6804,7 +6804,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastA_hisat2 {
     if ($_) {
       chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the HISAT2 output (= the sequence identifier)
-        $fh->{last_seq_id} = $id;
+      $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
       warn "Found first alignment:\t$fh->{last_line}\n";
     }
@@ -6869,7 +6869,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_bowtie2 {
     if ($_) {
       chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the Bowtie 2 output (= the sequence identifier)
-        $fh->{last_seq_id} = $id;
+      $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
       warn "Found first alignment:\t$fh->{last_line}\n";
       # warn "storing $id and\n$_\n";
@@ -7015,7 +7015,7 @@ sub single_end_align_fragments_to_bisulfite_genome_fastQ_minimap2 {
     if ($_) {
       chomp;
       my $id = (split(/\t/))[0]; # this is the first element of the output (= the sequence identifier)
-        $fh->{last_seq_id} = $id;
+      $fh->{last_seq_id} = $id;
       $fh->{last_line} = $_;
       warn "Found first alignment:\t$fh->{last_line}\n";
       warn "storing $id and\n$_\n";
