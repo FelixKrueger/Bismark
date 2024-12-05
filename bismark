@@ -395,7 +395,7 @@ foreach my $filename (@filenames){
 
         if ($slam){
           ($C_to_T_infile_1,$read1_count) = biTransformFastQFiles_paired_end_slam ($filename_1,1); # also passing the read number
-            ($G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end_slam ($filename_2,2);
+          ($G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end_slam ($filename_2,2);
         }
         else{
           ($C_to_T_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
@@ -415,7 +415,7 @@ foreach my $filename (@filenames){
         ### At the moment we are only performing alignments only with uncompressed FastQ files
         if ($slam){
           ($G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end_slam ($filename_1,1); # also passing the read number
-            ($C_to_T_infile_2,$read2_count) = biTransformFastQFiles_paired_end_slam ($filename_2,2);
+          ($C_to_T_infile_2,$read2_count) = biTransformFastQFiles_paired_end_slam ($filename_2,2);
         }	
         else{
           ($G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
@@ -434,7 +434,7 @@ foreach my $filename (@filenames){
       else{ # non-directional
         if ($slam){
           ($C_to_T_infile_1,$G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end_slam ($filename_1,1); # also passing the read number
-            ($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end_slam ($filename_2,2);
+          ($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end_slam ($filename_2,2);
         }	
         else{
           ($C_to_T_infile_1,$G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
@@ -607,9 +607,9 @@ foreach my $filename (@filenames){
       my @temp_output;
       my @temp_reports;
       my @temp_unmapped_1;  # will store single end reads or R1 of paired-end
-        my @temp_unmapped_2;
+      my @temp_unmapped_2;
       my @temp_ambiguous_1; # will store single end reads or R1 of paired-end
-        my @temp_ambiguous_2;
+      my @temp_ambiguous_2;
       my @temp_ambig_bam;
 
       for (1..$offset){
