@@ -1218,9 +1218,9 @@ sub merge_individual_ambiguous_files{
   my $ambiguous_file = $original_filename;
   $ambiguous_file =~ s/.*\///; # removing path information
 
-    if ($prefix){
-      $ambiguous_file = "${prefix}.${ambiguous_file}";
-    }
+  if ($prefix){
+    $ambiguous_file = "${prefix}.${ambiguous_file}";
+  }
 
   if ($single_end){
 
@@ -1293,9 +1293,9 @@ sub merge_individual_unmapped_files{
   my $unmapped_file = $original_filename;
   $unmapped_file =~ s/.*\///; # removing path information
 
-    if ($prefix){
-      $unmapped_file = "${prefix}.${unmapped_file}";
-    }
+  if ($prefix){
+    $unmapped_file = "${prefix}.${unmapped_file}";
+  }
 
   if ($single_end){
 
