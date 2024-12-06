@@ -790,7 +790,7 @@ foreach my $filename (@filenames){
       foreach my $temp (@temp_output){
         # print "$temp\t";
         $temp =~ s/.*\///; # deleting path information
-          print "${output_dir}${temp}\t";
+        print "${output_dir}${temp}\t";
         unlink "${output_dir}${temp}" or warn "Failed to delete temporary BAM file ${output_dir}${temp}: $!\n";
       }
       print "\n\n";
@@ -811,7 +811,7 @@ foreach my $filename (@filenames){
         foreach my $temp (@temp_ambig_bam){
           # print "$temp\t";
           $temp =~ s/.*\///; # deleting path information
-            print "${output_dir}${temp}\t";
+          print "${output_dir}${temp}\t";
           unlink "${output_dir}${temp}" or warn "Failed to delete temporary ambiguous BAM file ${output_dir}${temp}: $!\n";
         }
         print "\n\n";
