@@ -1463,9 +1463,9 @@ sub merge_individual_ambig_BAM_files{
   $merged_name =~ s/.*\///; # deleting path information
   # warn "merged name is: $merged_name\n"; sleep(1);
 
-    foreach my $temp_bam(@$tempbam){
-      $temp_bam =~ s/.*\///; # deleting path information
-    }
+  foreach my $temp_bam(@$tempbam){
+    $temp_bam =~ s/.*\///; # deleting path information
+  }
 
   if ($prefix){
     $merged_name = "$prefix.$merged_name";
