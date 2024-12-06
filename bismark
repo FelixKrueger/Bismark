@@ -339,7 +339,7 @@ foreach my $filename (@filenames){
 
       if ($directional){
         ($C_to_T_infile_1,$read1_count) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
-          ($G_to_A_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
+        ($G_to_A_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
 
         $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
         $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -352,7 +352,7 @@ foreach my $filename (@filenames){
       }
       elsif($pbat){ # PBAT-Seq
         ($G_to_A_infile_1,$read1_count) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
-          ($C_to_T_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
+        ($C_to_T_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
 
         $fhs[0]->{inputfile_1} = undef;
         $fhs[0]->{inputfile_2} = undef;
@@ -365,7 +365,7 @@ foreach my $filename (@filenames){
       }
       else{
         ($C_to_T_infile_1,$G_to_A_infile_1,$read1_count) = biTransformFastAFiles_paired_end ($filename_1,1); # also passing the read number
-          ($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
+        ($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastAFiles_paired_end ($filename_2,2);
 
         $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
         $fhs[0]->{inputfile_2} = $G_to_A_infile_2;
@@ -399,7 +399,7 @@ foreach my $filename (@filenames){
         }
         else{
           ($C_to_T_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
-            ($G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
+          ($G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
         }
 
         $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
@@ -419,7 +419,7 @@ foreach my $filename (@filenames){
         }	
         else{
           ($G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
-            ($C_to_T_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
+          ($C_to_T_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
         }
 
         $fhs[0]->{inputfile_1} = undef;
@@ -438,7 +438,7 @@ foreach my $filename (@filenames){
         }	
         else{
           ($C_to_T_infile_1,$G_to_A_infile_1,$read1_count) = biTransformFastQFiles_paired_end ($filename_1,1); # also passing the read number
-            ($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
+          ($C_to_T_infile_2,$G_to_A_infile_2,$read2_count) = biTransformFastQFiles_paired_end ($filename_2,2);
         }
 
         $fhs[0]->{inputfile_1} = $C_to_T_infile_1;
