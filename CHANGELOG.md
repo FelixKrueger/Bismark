@@ -25,6 +25,7 @@
 
 - set threshold reads to 1 (if it was 0) for `--gc_context` as intended and mentioned in the help text. Fixes [#621](https://github.com/FelixKrueger/Bismark/issues/621)
 
+- Expanded option `--ff` into `--ffs` to extract **f**our, **f**ive, and **s**ix nucleotide contexts to enable hexamer context analyses. More details here: [#717](https://github.com/FelixKrueger/Bismark/issues/717)
 
 Added scripts for merging coverage files (e.g. for when R1 and R2 had been run in single-end mode) 
 
