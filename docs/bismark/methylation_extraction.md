@@ -121,10 +121,12 @@ Both of these measures aim to reduce unwanted biases, i.e. the influence of `G-C
 
 The `coverage2cytosine` module can be instructed to also extract a **f**our-, **f**ive- and **s**ix-nucleotide context (`--ffs`) for cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored.
 
+  ```
   Example:
   U00096.3    90  +   0   0   CG  CGT CGTG    CGTGA   GCCGTG
   U00096.3    91  -   1   0   CG  CGG CGGC    CGGCA   CACGGC
-
+  ```
+  
 ### M-bias plot
 
 Starting with Bismark v0.8.0, the Bismark methylation extractor also produces a methylation bias plot which shows the methylation proportion across each possible position in the read (described in further detail in: [Hansen et al., Genome Biology, 2012, 13:R83](https://genomebiology.biomedcentral.com/articles/10.1186/gb-2012-13-10-r83)). The data for the M-bias plot is also written into a coverage text file (ending in `.cov` or `.cov.gz`) and is in the following format:
