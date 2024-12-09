@@ -159,6 +159,14 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
   Writes the output into individual files for each chromosome instead of a single output file. Files are named to include the input filename as well as the chromosome number.
 
+- `--ffs`
+
+  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. This option needs to be run via `coverage2cytosine` itself.
+
+  Example:
+  U00096.3    90  +   0   0   CG  CGT CGTG    CGTGA   GCCGTG
+  U00096.3    91  -   1   0   CG  CGG CGGC    CGGCA   CACGGC
+
 #### OUTPUT
 
 ##### Extractor output
