@@ -17,6 +17,8 @@
 
 - now using 4 cores for merging multiple BAM files (more details [here](https://github.com/FelixKrueger/Bismark/issues/707)
 
+- fixed a corner case when reads were aligned in FastA mode with `--parallel` and in addition either `--ambiguous` and/or `--unmapped` (see [#723](https://github.com/FelixKrueger/Bismark/issues/723)
+
 ### deduplicate_bismark
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
