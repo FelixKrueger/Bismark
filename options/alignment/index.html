@@ -1,0 +1,1666 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://felixkrueger.github.io/Bismark/options/alignment/">
+      
+      
+        <link rel="prev" href="../genome_preparation/">
+      
+      
+        <link rel="next" href="../methylation_extraction/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>Alignment - Bismark</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Sans:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Noto Sans";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+      
+        <meta  property="og:type"  content="website" >
+      
+        <meta  property="og:title"  content="Alignment - Bismark" >
+      
+        <meta  property="og:description"  content="None" >
+      
+        <meta  property="og:image"  content="https://felixkrueger.github.io/Bismark/assets/images/social/options/alignment.png" >
+      
+        <meta  property="og:image:type"  content="image/png" >
+      
+        <meta  property="og:image:width"  content="1200" >
+      
+        <meta  property="og:image:height"  content="630" >
+      
+        <meta  property="og:url"  content="https://felixkrueger.github.io/Bismark/options/alignment/" >
+      
+        <meta  name="twitter:card"  content="summary_large_image" >
+      
+        <meta  name="twitter:title"  content="Alignment - Bismark" >
+      
+        <meta  name="twitter:description"  content="None" >
+      
+        <meta  name="twitter:image"  content="https://felixkrueger.github.io/Bismark/assets/images/social/options/alignment.png" >
+      
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#appendix-ii-bismark" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Bismark" class="md-header__button md-logo" aria-label="Bismark" data-md-component="logo">
+      
+  <img src="../../images/bismark.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Bismark
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Alignment
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/FelixKrueger/Bismark" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    FelixKrueger/Bismark
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../quick_reference/" class="md-tabs__link">
+        
+  
+    
+  
+  Quick Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../installation/" class="md-tabs__link">
+        
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../bismark/" class="md-tabs__link">
+          
+  
+  Usage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../genome_preparation/" class="md-tabs__link">
+          
+  
+  Full list of options
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../faq/" class="md-tabs__link">
+          
+  
+  FAQ
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Bismark" class="md-nav__button md-logo" aria-label="Bismark" data-md-component="logo">
+      
+  <img src="../../images/bismark.png" alt="logo">
+
+    </a>
+    Bismark
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/FelixKrueger/Bismark" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    FelixKrueger/Bismark
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quick_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Quick Reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Installation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Usage
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Usage
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Running Bismark
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/genome_preparation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Genome preparation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/alignment/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Alignment
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/deduplication/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Deduplication
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/methylation_extraction/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Methylation extraction
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/coverage_report/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Nucleotide coverage report
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/processing_report/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Processing report
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/summary_report/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Summary report
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/filter_nonconverted_reads/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Filtering out non-bisulfite converted reads
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/library_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Library types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../bismark/concordance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Concordance across reads
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Full list of options
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Full list of options
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../genome_preparation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Genome preparation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Alignment
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Alignment
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-ii-bismark" class="md-nav__link">
+    <span class="md-ellipsis">
+      Appendix (II): Bismark
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appendix (II): Bismark">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      USAGE:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      ARGUMENTS:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      OPTIONS:
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OPTIONS:">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#input" class="md-nav__link">
+    <span class="md-ellipsis">
+      Input:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alignment:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output" class="md-nav__link">
+    <span class="md-ellipsis">
+      Output:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other" class="md-nav__link">
+    <span class="md-ellipsis">
+      Other:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bowtie-2-specific-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      BOWTIE 2 SPECIFIC OPTIONS
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hisat2-specific-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      HISAT2 SPECIFIC OPTIONS:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paired-end-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Paired-end options:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bowtie-2-effort-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bowtie 2 Effort options:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallelization-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parallelization options:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scoring-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scoring options:
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methylation_extraction/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Methylation extraction
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    FAQ
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            FAQ
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Bismark FAQs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/single_cell_pbat/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Single cell PBAT
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/low_mapping/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Low mapping
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/context_change/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Context change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../faq/conversion_efficiency/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversion efficiency
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-ii-bismark" class="md-nav__link">
+    <span class="md-ellipsis">
+      Appendix (II): Bismark
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Appendix (II): Bismark">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      USAGE:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      ARGUMENTS:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      OPTIONS:
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OPTIONS:">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#input" class="md-nav__link">
+    <span class="md-ellipsis">
+      Input:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alignment:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output" class="md-nav__link">
+    <span class="md-ellipsis">
+      Output:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other" class="md-nav__link">
+    <span class="md-ellipsis">
+      Other:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bowtie-2-specific-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      BOWTIE 2 SPECIFIC OPTIONS
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hisat2-specific-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      HISAT2 SPECIFIC OPTIONS:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paired-end-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Paired-end options:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bowtie-2-effort-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bowtie 2 Effort options:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parallelization-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parallelization options:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scoring-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scoring options:
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+  <h1>Alignment</h1>
+
+<h2 id="appendix-ii-bismark">Appendix (II): Bismark</h2>
+<p>A brief description of Bismark and a full list of options can also be viewed by typing:
+<code>bismark --help</code></p>
+<h4 id="usage">USAGE:</h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>bismark [options] --genome &lt;genome_folder&gt; {-1 &lt;mates1&gt; -2 &lt;mates2&gt; | &lt;singles&gt;}
+</code></pre></div>
+<h4 id="arguments">ARGUMENTS:</h4>
+<ul>
+<li><code>&lt;genome_folder&gt;</code></li>
+</ul>
+<p>The full path to the folder containing the unmodified reference genome as well as the sub folders created by the <code>bismark_genome_preparation</code> script (<code>Bisulfite_Genome/CT_conversion/</code> and <code>Bisulfite_Genome/GA_conversion/</code>). Bismark expects one or more <code>FastA</code> files in this folder (file extension: <code>.fa</code> or <code>.fasta</code>). The path to the genome folder can be relative or absolute. The path may also be set as <code>--genome_folder /path/to/genome/folder/</code>.</p>
+<ul>
+<li><code>-1 &lt;mates1&gt;</code></li>
+</ul>
+<p>Comma-separated list of files containing the #1 mates (filename usually includes <code>_1</code>), e.g. <code>flyA_1.fq</code>, <code>flyB_1.fq</code>). Sequences specified with this option must correspond file-for-file and read-for-read with those specified in <code>&lt;mates2&gt;</code>. Reads may be a mix of different lengths. Bismark will produce one mapping result and one report file per paired-end input file pair.</p>
+<ul>
+<li><code>-2 &lt;mates2&gt;</code></li>
+</ul>
+<p>Comma-separated list of files containing the #2 mates (filename usually includes <code>_2</code>), e.g. <code>flyA_2.fq</code>, <code>flyB_2.fq</code>). Sequences specified with this option must correspond file-for-file and read-for-read with those specified in <code>&lt;mates1&gt;</code>. Reads may be a mix of different lengths.</p>
+<ul>
+<li><code>&lt;singles&gt;</code></li>
+</ul>
+<p>A comma or space separated list of files containing the reads to be aligned (e.g. <code>lane1.fq</code>,<code>lane2.fq</code> <code>lane3.fq</code>). Reads may be a mix of different lengths. Bismark will produce one mapping result and one report file per input file.</p>
+<h4 id="options">OPTIONS:</h4>
+<h5 id="input">Input:</h5>
+<ul>
+<li><code>--se &lt;list&gt;</code> / <code>--single_end &lt;list&gt;</code></li>
+</ul>
+<p>Sets single-end mapping mode explicitly giving a list of file names as <list>. The filenames may be provided as a comma [<code>,</code>] or colon [<code>:</code>]-separated list.</p>
+<ul>
+<li><code>-q</code> / <code>--fastq</code></li>
+</ul>
+<p>The query input files (specified as <code>&lt;mate1&gt;</code>, <code>&lt;mate2&gt;</code> or <code>&lt;singles&gt;</code> are FastQ files (usually having extension <code>.fq</code> or <code>.fastq</code>). Input files may also be <code>gzip</code> compressed (ending in <code>.gz</code>). This is the default. See also <code>--solexa-quals</code> and <code>--integer-quals</code>.</p>
+<ul>
+<li><code>-f</code> / <code>--fasta</code></li>
+</ul>
+<p>The query input files (specified as <code>&lt;mate1&gt;</code>, <code>&lt;mate2&gt;</code> or <code>&lt;singles&gt;</code> are FastA files (usually having extension <code>.fa</code>, <code>.mfa</code>, <code>.fna</code> or similar). Input files may also be <code>gzip</code> compressed (ending in <code>.gz</code>). All quality values are assumed to be 40 on the Phred scale. FASTA files are expected to contain the read name and the sequence on a single line each (and not spread over several lines)</p>
+<ul>
+<li><code>-s &lt;int&gt;</code> / <code>--skip &lt;int&gt;</code></li>
+</ul>
+<p>Skip (i.e. do not align) the first &lt;int&gt; reads or read pairs from the input.</p>
+<ul>
+<li><code>-u &lt;int&gt;</code> / <code>--upto &lt;int&gt;</code></li>
+</ul>
+<p>Only aligns the first &lt;int&gt; reads or read pairs from the input. Default: no limit.</p>
+<ul>
+<li><code>--phred33-quals</code></li>
+</ul>
+<p>FastQ qualities are ASCII chars equal to the Phred quality plus 33. Default: ON.</p>
+<ul>
+<li><code>--phred64-quals</code></li>
+</ul>
+<p>FastQ qualities are ASCII chars equal to the Phred quality plus 64. Default: OFF.</p>
+<ul>
+<li><code>--path_to_bowtie2</code></li>
+</ul>
+<p>The full path <code>&lt;/../../&gt;</code> to the Bowtie 2 installation on your system. If not specified it will be assumed that Bowtie 2 is in the <code>PATH</code>.</p>
+<ul>
+<li><code>--path_to_hisat2</code></li>
+</ul>
+<p>The full path <code>&lt;/../../&gt;</code> to the HISAT2 installation on your system. If not specified it will be assumed that HISAT2 is in the <code>PATH</code>.</p>
+<h5 id="alignment">Alignment:</h5>
+<ul>
+<li><code>-N &lt;int&gt;</code></li>
+</ul>
+<p>Sets the number of mismatches to be allowed in a seed alignment during multiseed alignment. Can be set to 0 or 1. Setting this higher makes alignment slower (often <em>much</em> slower) but increases sensitivity. Default: 0.</p>
+<ul>
+<li><code>-L &lt;int&gt;</code></li>
+</ul>
+<p>Sets the length of the seed substrings to align during multiseed alignment. Smaller values make alignment slower but more sensitive. Default: the <code>--sensitive</code> preset of Bowtie 2 is used by default, which sets <code>-L</code> to 20.</p>
+<ul>
+<li><code>--ignore-quals</code></li>
+</ul>
+<p>When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in <code>-f</code> mode). For bisulfite alignments in Bismark, this option is invariably turned on by default.</p>
+<ul>
+<li><code>-I &lt;int&gt;</code> / <code>--minins &lt;int&gt;</code></li>
+</ul>
+<p>The minimum insert size for valid paired-end alignments. E.g. if <code>-I 60</code> is specified and a paired-end alignment consists of two 20-bp alignments in the appropriate orientation with a 20-bp gap between them, that alignment is considered valid (as long as <code>-X</code> is also satisfied). A 19-bp gap would not be valid in that case. Default: 0.</p>
+<ul>
+<li><code>-X &lt;int&gt;</code> / <code>--maxins &lt;int&gt;</code></li>
+</ul>
+<p>The maximum insert size for valid paired-end alignments. E.g. if <code>-X 100</code> is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as <code>-I</code> is also satisfied). A 61-bp gap would not be valid in that case. Default: 500.</p>
+<ul>
+<li><code>--parallel &lt;int&gt;</code></li>
+</ul>
+<p>(May also be --multicore <int>). Sets the number of parallel instances of Bismark to be run concurrently. This forks the Bismark alignment step very early on so that each individual Spawn of Bismark processes only every n-th sequence (n being set by <code>--multicore</code>). Once all processes have completed, the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged into single files in very much the same way as they would have been generated running Bismark conventionally with only a single instance.</p>
+<p>If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to <code>--multicore 8</code> tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
+<strong>WARNING:</strong> Bismark Parallel is <strong>resource hungry</strong>! Each value of <code>--multicore</code> specified will effectively lead to a linear increase in compute and memory requirements, so <code>--parallel 4</code> for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. <em>You have been warned</em>.</p>
+<ul>
+<li><code>--local</code></li>
+</ul>
+<p>In this mode, it is not required that the entire read aligns from one end to the other. Rather, some characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible alignment score. For Bowtie 2, the match bonus <code>--ma</code> (default: 2) is used in this mode, and the best possible alignment score is equal to the match bonus (<code>--ma</code>) times the length of the read. This is mutually exclusive with end-to-end alignments. DEFAULT: OFF.</p>
+<h5 id="output">Output:</h5>
+<ul>
+<li><code>--non_directional</code></li>
+</ul>
+<p>The sequencing library was constructed in a non strand-specific manner, alignments to all four bisulfite strands will be reported.
+  (The current Illumina protocol for BS-Seq is directional, in which case the strands complementary to the original strands are merely theoretical and should not exist in reality. Specifying directional alignments (which is the default) will only run 2 alignment threads to the original top (OT) or bottom (OB) strands in parallel and report these alignments. This is the recommended option for strand-specific libraries).
+  Default: OFF</p>
+<ul>
+<li><code>--pbat</code></li>
+</ul>
+<p>This option may be used for PBAT-Seq libraries (Post-Bisulfite Adapter Tagging; Kobayashi et al., PLoS Genetics, 2012). This is essentially the exact opposite of alignments in 'directional' mode, as it will only launch two alignment threads to the CTOT and CTOB strands instead of the normal OT and OB ones. Use this option only if you are certain that your libraries were constructed following a PBAT protocol (if you don't know what PBAT-Seq is you should not specify this option). The option <code>--pbat</code> works only for FastQ files and uncompressed temporary files.</p>
+<ul>
+<li><code>--sam-no-hd</code></li>
+</ul>
+<p>Suppress SAM header lines (starting with @). This might be useful when very large input files are split up into several smaller files to run concurrently and the output files are to be merged afterwards.</p>
+<ul>
+<li><code>--rg_tag</code></li>
+</ul>
+<p>Write out a Read Group tag to the resulting SAM/BAM file. This will write the following line to the SAM header:</p>
+<p>@RG PL: ILLUMINA ID:SAMPLE SM:SAMPLE</p>
+<p>to set ID and SM see <code>--rg_id</code> and <code>--rg_sample</code>. In addition each read receives an <code>RG:Z:RG-ID</code> tag. Default: OFF (to not inflate file sizes).</p>
+<ul>
+<li><code>--rg_id &lt;string&gt;</code></li>
+</ul>
+<p>Sets the ID field in the <code>@RG</code> header line. Default: SAMPLE</p>
+<ul>
+<li><code>--rg_sample &lt;string&gt;</code></li>
+</ul>
+<p>Sets the SM field in the <code>@RG</code> header line; can't be set without setting <code>--rg_id</code> as well. Default: SAMPLE</p>
+<ul>
+<li><code>--quiet</code></li>
+</ul>
+<p>Print nothing besides alignments.</p>
+<ul>
+<li><code>--un</code></li>
+</ul>
+<p>Write all reads that could not be aligned to the file <code>_unmapped_reads.fq.gz</code> in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within <code>Bowtie</code> or <code>Bismark</code>. Paired-end reads will be written to two parallel files with <code>_1</code> and <code>_2</code> inserted in their filenames, i.e. <code>unmapped_reads_1.fq.gz</code> and <code>unmapped_reads_2.fq.gz</code>. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to <code>unmapped_reads.fq.gz</code> unless <code>--ambiguous</code> is also specified.</p>
+<ul>
+<li><code>--ambiguous</code></li>
+</ul>
+<p>Write all reads which produce more than one valid alignment with the same number of lowest mismatches or other reads that fail to align uniquely to <code>_ambiguous_reads.fq</code>. Written reads will appear as they did in the input, without any of the translation of quality values that may have taken place within <code>Bowtie</code> or <code>Bismark</code>. Paired-end reads will be written to two parallel files with <code>_1</code> and <code>_2</code> inserted in their filenames, i.e. <code>_ambiguous_reads_1.fq</code> and <code>_ambiguous_reads_2.fq</code>. These reads are not written to the file specified with <code>--un</code>.</p>
+<ul>
+<li><code>-o/--output_dir &lt;dir&gt;</code></li>
+</ul>
+<p>Write all output files into this directory. By default the output files will be written into the same folder as the input file. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.</p>
+<ul>
+<li><code>--temp_dir &lt;dir&gt;</code></li>
+</ul>
+<p>Write temporary files to this directory instead of into the same directory as the input files. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.</p>
+<ul>
+<li><code>--non_bs_mm</code></li>
+</ul>
+<p>Optionally outputs an extra column specifying the number of non-bisulfite mismatches a read during the alignment step. This option is only available for SAM format. In Bowtie 2 context, this value is just the number of actual non-bisulfite mismatches and ignores potential insertions or deletions. The format for single-end reads and read 1 of paired-end reads is <code>XA:Z:number of mismatches</code> and <code>XB:Z:number of mismatches</code> for read 2 of paired-end reads.</p>
+<ul>
+<li><code>--gzip</code></li>
+</ul>
+<p>Temporary bisulfite conversion files will be written out in a <code>GZIP</code> compressed form to save disk space. This option is available for most alignment modes but is not available for paired-end <code>FastA</code> files.</p>
+<ul>
+<li><code>--sam</code></li>
+</ul>
+<p>The output will be written out in <code>SAM</code> format instead of the default <code>BAM</code> format.</p>
+<ul>
+<li><code>--cram</code></li>
+</ul>
+<p>Writes the output to a <code>CRAM</code> file instead of <code>BAM</code>. This requires the use of Samtools 1.2 or higher.</p>
+<ul>
+<li><code>--cram_ref &lt;ref_file&gt;</code></li>
+</ul>
+<p><code>CRAM</code> output requires you to specify a reference genome as a single FastA file. If this single-FastA reference file is not supplied explicitly it will be regenerated from the genome <code>.fa</code> sequence(s) used for the Bismark run and written to a file called <code>Bismark_genome_CRAM_reference.mfa</code> into the output directory.</p>
+<ul>
+<li><code>--samtools_path</code></li>
+</ul>
+<p>The path to your <code>Samtools</code> installation, e.g. <code>/home/user/samtools/</code>. Does not need to be specified explicitly if <code>Samtools</code> is in the <code>PATH</code> already.</p>
+<ul>
+<li><code>--prefix &lt;prefix&gt;</code></li>
+</ul>
+<p>Prefixes <code>&lt;prefix&gt;</code> to the output file names. Trailing dots will be replaced by a single one. For example, <code>--prefix test</code> with <code>file.fq</code> would result in the output file <code>test.file_bismark.bam</code> etc.</p>
+<ul>
+<li><code>-B/--basename &lt;basename&gt;</code></li>
+</ul>
+<p>Write all output to files starting with this base file name. For example, <code>--basename foo</code> would result in the files <code>foo.bam</code> and <code>foo_SE_report.txt</code> (or its paired-end equivalent). Takes precedence over <code>--prefix</code>.</p>
+<ul>
+<li><code>--old_flag</code></li>
+</ul>
+<p>Only in paired-end SAM mode, uses the FLAG values used by Bismark 0.8.2 and before. In addition, this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since both the appended read IDs and custom FLAG values may cause problems with some downstream tools such as Picard, new defaults were implemented as of version 0.8.3.</p>
+<div class="highlight"><pre><span></span><code>            default                  old_flag
+       ===================     ===================
+       Read 1       Read 2     Read 1       Read 2
+     OT:    99           147        67           131
+     OB:    83           163       115           179
+     CTOT:  99           147        67           131
+     CTOB:  83           163       115           179
+</code></pre></div>
+<ul>
+<li><code>--ambig_bam</code></li>
+</ul>
+<p>For reads that have multiple alignments a random alignment is written out to a special file ending in <code>.ambiguous.bam</code>. The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.</p>
+<ul>
+<li><code>--nucleotide_coverage</code></li>
+</ul>
+<p>Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete by calling <code>bam2nuc</code>. Since this calculation may take a while, <code>bam2nuc</code> attempts to write the genomic sequence composition into a file called <em>genomic_nucleotide_frequencies.txt</em> inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. If a file <em>nucleotide_stats.txt</em> is found with the Bismark reports it will be automatically detected and used for the Bismark HTML report. This option works only for BAM or CRAM files.</p>
+<h5 id="other">Other:</h5>
+<ul>
+<li><code>-h/--help</code></li>
+</ul>
+<p>Displays this help file. Displays version information.</p>
+<ul>
+<li><code>-v/--version</code></li>
+</ul>
+<p>Displays version information and exits.</p>
+<h5 id="bowtie-2-specific-options">BOWTIE 2 SPECIFIC OPTIONS</h5>
+<ul>
+<li><code>--bowtie2</code></li>
+</ul>
+<p>Default: ON. Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (<code>.bt2</code>) and large (<code>.bt2l</code>) Bowtie 2 indexes are supported.</p>
+<ul>
+<li><code>--no_dovetail</code></li>
+</ul>
+<p>It is possible, though unusual, for the mates to "dovetail", with the mates seemingly extending "past" each other as in this example:</p>
+<div class="highlight"><pre><span></span><code>                     Mate 1:                 GTCAGCTACGATATTGTTTGGGGTGACACATTACGC
+                     Mate 2:            TATGAGTCAGCTACGATATTGTTTGGGGTGACACAT
+                     Reference: GCAGATTATATGAGTCAGCTACGATATTGTTTGGGGTGACACATTACGCGTCTTTGAC
+</code></pre></div>
+<p>Dovetailing is considered inconsistent with concordant alignment, but by default Bismark calls Bowtie 2 with <code>--dovetail</code>, causing it to consider dovetailing alignments as concordant. This becomes relevant whenever reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues such as in PBAT or EM-seq libraries.</p>
+<p>Specify <code>--no_dovetail</code> to turn off this behaviour for paired-end libraries. Default: OFF.</p>
+<h5 id="hisat2-specific-options">HISAT2 SPECIFIC OPTIONS:</h5>
+<ul>
+<li><code>--hisat2</code></li>
+</ul>
+<p>Default: OFF. Uses HISAT2. Bismark limits HISAT2 to perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments) using the option <code>--no-softclipping</code>. Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (<code>.ht2</code>) and large (<code>.ht2l</code>) HISAT2 indexes are supported.</p>
+<ul>
+<li><code>--no-spliced-alignment</code></li>
+</ul>
+<p>Disable spliced alignment.</p>
+<ul>
+<li><code>--known-splicesite-infile &lt;path&gt;</code></li>
+</ul>
+<p>Provide a list of known splice sites.</p>
+<h5 id="paired-end-options">Paired-end options:</h5>
+<ul>
+<li><code>--no-mixed</code></li>
+</ul>
+<p>This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. This option is invariably on by default.</p>
+<ul>
+<li><code>--no-discordant</code></li>
+</ul>
+<p>Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (<code>--fr</code>/<code>--rf</code>/<code>--ff</code>, <code>-I</code>, <code>-X</code>). This option disables that behaviour and is on by default.</p>
+<h5 id="bowtie-2-effort-options">Bowtie 2 Effort options:</h5>
+<ul>
+<li><code>-D &lt;int&gt;</code></li>
+</ul>
+<p>Up to &lt;int&gt; consecutive seed extension attempts can "fail" before Bowtie 2 moves on, using the alignments found so far. A seed extension "fails" if it does not yield a new best or a new second-best alignment. Default: 15.</p>
+<ul>
+<li><code>-R &lt;int&gt;</code></li>
+</ul>
+<p>&lt;int&gt; is the maximum number of times Bowtie 2 will "re-seed" reads with repetitive seeds. When "re-seeding," Bowtie 2 simply chooses a new set of reads (same length, same number of mismatches allowed) at different offsets and searches for more alignments. A read is considered to have repetitive seeds if the total number of seed hits divided by the number of seeds that aligned at least once is greater than 300. Default: 2.</p>
+<h5 id="parallelization-options">Parallelization options:</h5>
+<ul>
+<li><code>-p NTHREADS</code></li>
+</ul>
+<p>Launch NTHREADS parallel search threads (default: 1). Threads will run on separate processors/cores and synchronize when parsing reads and outputting alignments. Searching for alignments is highly parallel, and speed-up is close to linear. NOTE: It is currently unclear whether this speed increase also translates into a speed increase of Bismark since it is running several instances of Bowtie 2 concurrently! Increasing <code>-p</code> increases Bowtie 2's memory footprint. E.g. when aligning to a human genome index, increasing <code>-p</code> from 1 to 8 increases the memory footprint by a few hundred megabytes (for each instance of Bowtie 2!). This option is only available if Bowtie is linked with the pthreads library (i.e. if BOWTIE_PTHREADS=0 is not specified at build time). In addition, this option will automatically use the option <code>--reorder</code>, which guarantees that output SAM records are printed in an order corresponding to the order of the reads in the original input file, even when <code>-p</code> is set greater than 1 (Bismark requires the Bowtie 2 output to be this way). Specifying <code>--reorder</code> and setting <code>-p</code> greater than 1 causes Bowtie 2 to run somewhat slower and use somewhat more memory than if <code>--reorder</code> were not specified. Has no effect if <code>-p</code> is set to 1, since output order will naturally correspond to input order in that case.</p>
+<h5 id="scoring-options">Scoring options:</h5>
+<ul>
+<li><code>--score_min &lt;func&gt;</code></li>
+</ul>
+<p>Sets a function governing the minimum alignment score needed for an alignment to be considered "valid" (i.e. good enough to report). This is a function of read length. For instance, specifying <code>L,0,-0.2</code> sets the minimum-score function <code>f</code> to <code>f(x) = 0 + -0.2 * x</code>, where <code>x</code> is the read length. See also: setting function options at http://bowtie-bio.sourceforge.net/bowtie2. The default is: L,0,-0.2.</p>
+<ul>
+<li><code>--rdg &lt;int1&gt;,&lt;int2&gt;</code></li>
+</ul>
+<p>Sets the read gap open (&lt;int1&gt;) and extend (&lt;int2&gt;) penalties. A read gap of length N gets a penalty of <code>&lt;int1&gt; + N * &lt;int2&gt;</code>. Default: 5, 3.</p>
+<ul>
+<li><code>--rfg &lt;int1&gt;,&lt;int2&gt;</code></li>
+</ul>
+<p>Sets the reference gap open (&lt;int1&gt;) and extend (&lt;int2&gt;) penalties. A reference gap of length N gets a penalty of <code>&lt;int1&gt; + N * &lt;int2&gt;</code>. Default: 5, 3.</p>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.tabs"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+    
+  </body>
+</html>
