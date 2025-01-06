@@ -4,7 +4,7 @@
 
 > **See the documentation**: <https://felixkrueger.github.io/Bismark>
 
-Bismark is a program to map bisulfite treated sequencing reads to a genome of interest and perform methylation calls in a single step. The output can be easily imported into a genome viewer, such as [SeqMonk](http://www.bioinformatics.babraham.ac.uk/projects/seqmonk/), and enables a researcher to analyze the methylation levels of their samples straight away. Its main features are:
+Bismark is a program to map bisulfite treated sequencing reads to a genome of interest and perform methylation calls in a single step. The output can be easily imported into a genome viewer, such as [SeqMonk](http://www.bioinformatics.babraham.ac.uk/projects/seqmonk/), and enables a researcher to analyse the methylation levels of their samples straight away. Its main features are:
 
 - Bisulfite mapping and methylation calling in one single step
 - Supports single-end and paired-end read alignments
@@ -29,10 +29,8 @@ Bismark needs the following tools to be installed and ideally available in the `
 
 ## Links
 
-- Bismark Publication  
-  http://www.ncbi.nlm.nih.gov/pubmed/21493656
-- Our review about primary data analysis in BS-Seq  
-  http://www.ncbi.nlm.nih.gov/pubmed/22290186
+- Bismark Publication: http://www.ncbi.nlm.nih.gov/pubmed/21493656
+- Our review about primary data analysis in BS-Seq: http://www.ncbi.nlm.nih.gov/pubmed/22290186
 
 ## Credits
 
