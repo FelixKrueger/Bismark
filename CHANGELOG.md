@@ -1,7 +1,7 @@
 # Bismark Changelog
 
 
-## Changelog for Bismark v0.24.2dev
+## Changelog for Bismark v0.25.0dev
 
 
 
@@ -22,6 +22,9 @@
 ### deduplicate_bismark
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
+
+- added check to see if the UMI appears to be in the middle of the readID, e.g. added by bcl-convert (prompted in [#699](https://github.com/FelixKrueger/Bismark/issues/699)). Also added new option `--bclconvert` to use this internal UMI instead of the one at the end. Allowing the `+` symbol now for dual-indexed runs.
+
 
 ### coverage2cytosine
 
