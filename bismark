@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-24, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-25, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ use lib "$RealBin/../lib";
 my $parent_dir = getcwd();
 
 my $bismark_version = 'v0.24.2';
-my $copyright_dates = "2010-24";
+my $copyright_dates = "2010-25";
 
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
