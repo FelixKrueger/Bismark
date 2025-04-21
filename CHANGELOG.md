@@ -3,6 +3,10 @@
 
 ## Changelog for Bismark v0.25.0dev
 
+### deduplicate_bismark
+
+- added check to see if the UMI appears to be in the middle of the readID, e.g. if added by `bcl-convert` (prompted in [#699](https://github.com/FelixKrueger/Bismark/issues/699)). Also added new option `--bclconvert` to use this internal UMI instead of the one at the end. Also allowing the `+` symbol now for dual-indexed runs.
+
 
 
 ### filter_non_conversion
@@ -15,9 +19,9 @@
 
 - removed an `exit 0` that would terminate runs after processing a single (set of) input file(s).
 
-- now using 4 cores for merging multiple BAM files (more details [here](https://github.com/FelixKrueger/Bismark/issues/707)
+- now using 4 cores for merging multiple BAM files (more details [here](https://github.com/FelixKrueger/Bismark/issues/707))
 
-- fixed a corner case when reads were aligned in FastA mode with `--parallel` and in addition either `--ambiguous` and/or `--unmapped` (see [#723](https://github.com/FelixKrueger/Bismark/issues/723)
+- fixed a corner case when reads were aligned in FastA mode with `--parallel` and in addition either `--ambiguous` and/or `--unmapped` (see [#723](https://github.com/FelixKrueger/Bismark/issues/723))
 
 ### deduplicate_bismark
 
