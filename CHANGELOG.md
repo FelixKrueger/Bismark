@@ -3,15 +3,34 @@
 
 ## Changelog for Bismark v0.25.0dev
 
+
+### Bismark
+
+- now using 4 cores for merging multiple BAM files (more details [#707](https://github.com/FelixKrueger/Bismark/issues/707))
+
+- fixed a corner case when reads were aligned in FastA mode with `--parallel` and in addition either `--ambiguous` and/or `--unmapped` (see [#723](https://github.com/FelixKrueger/Bismark/issues/723))
+
+
 ### deduplicate_bismark
 
 - added check to see if the UMI appears to be in the middle of the readID, e.g. if added by `bcl-convert` (prompted in [#699](https://github.com/FelixKrueger/Bismark/issues/699)). Also added new option `--bclconvert` to use this internal UMI instead of the one at the end. Also allowing the `+` symbol now for dual-indexed runs.
 
+### bismark2bedGraph
 
+- fixed a bug in non-CpG methylation call for CHH context (more details [#647](https://github.com/FelixKrueger/Bismark/issues/647))
+
+### coverage2cytosine
+
+- Expanded option `--ff` into `--ffs` to extract **f**our, **f**ive, and **s**ix nucleotide contexts to enable hexamer context analyses. More details here: [#717](https://github.com/FelixKrueger/Bismark/issues/717)
 
 ### filter_non_conversion
 
 - changed shebang line to use env
+
+### bismark2report
+
+- better handling of division by 0 error [see here](ab027e28c5736ab5aebb034f5bca5fb78814046d)
+
 
 ## Changelog for Bismark v0.24.2 (release on 27 Sep 2023) 
 
@@ -19,24 +38,20 @@
 
 - removed an `exit 0` that would terminate runs after processing a single (set of) input file(s).
 
-- now using 4 cores for merging multiple BAM files (more details [here](https://github.com/FelixKrueger/Bismark/issues/707))
-
-- fixed a corner case when reads were aligned in FastA mode with `--parallel` and in addition either `--ambiguous` and/or `--unmapped` (see [#723](https://github.com/FelixKrueger/Bismark/issues/723))
-
 ### deduplicate_bismark
 
 - Changed the path to Samtools to custom variable ([#609](https://github.com/FelixKrueger/Bismark/issues/609))
-
-- added check to see if the UMI appears to be in the middle of the readID, e.g. added by bcl-convert (prompted in [#699](https://github.com/FelixKrueger/Bismark/issues/699)). Also added new option `--bclconvert` to use this internal UMI instead of the one at the end. Allowing the `+` symbol now for dual-indexed runs.
-
 
 ### coverage2cytosine
 
 - set threshold reads to 1 (if it was 0) for `--gc_context` as intended and mentioned in the help text. Fixes [#621](https://github.com/FelixKrueger/Bismark/issues/621)
 
-- Expanded option `--ff` into `--ffs` to extract **f**our, **f**ive, and **s**ix nucleotide contexts to enable hexamer context analyses. More details here: [#717](https://github.com/FelixKrueger/Bismark/issues/717)
-
 Added scripts for merging coverage files (e.g. for when R1 and R2 had been run in single-end mode) 
+
+
+
+
+
 
 
 ## Changelog for Bismark v0.24.1 (release on 29 May 2023)
