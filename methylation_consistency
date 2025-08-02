@@ -3,7 +3,7 @@ use warnings;
 use strict;
 use Getopt::Long;
 
-my $VERSION = "0.24.2";
+my $VERSION = "0.25.0";
 my ($min_count,$global_single,$global_paired,$lower_threshold,$upper_threshold,$samtools_path,$chh) = process_commandline();
 
 if ($chh){

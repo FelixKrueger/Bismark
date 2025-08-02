@@ -25,7 +25,7 @@ use lib "$RealBin/../lib";
 
 my $parent_dir = getcwd();
 
-my $bismark_version = 'v0.24.2';
+my $bismark_version = 'v0.25.0';
 my $copyright_dates = "2010-25";
 
 my $start_run = time();

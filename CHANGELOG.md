@@ -1,7 +1,7 @@
 # Bismark Changelog
 
 
-## Changelog for Bismark v0.25.0dev
+## Changelog for Bismark v0.25.0 (release on 03 Aug 2025)
 
 
 ### Bismark
@@ -13,7 +13,7 @@
 
 ### deduplicate_bismark
 
-- added check to see if the UMI appears to be in the middle of the readID, e.g. if added by `bcl-convert` (prompted in [#699](https://github.com/FelixKrueger/Bismark/issues/699)). Also added new option `--bclconvert` to use this internal UMI instead of the one at the end. Also allowing the `+` symbol now for dual-indexed runs.
+- added check to see if the UMI appears to be in the middle of the readID, e.g. if added by `bcl-convert` (prompted in [#699](https://github.com/FelixKrueger/Bismark/issues/699)). Also added new option `--bclconvert` to use this internal UMI instead of the one at the end. Also allowing the `+` symbol now for dual-indexed runs
 
 ### bismark2bedGraph
 
@@ -25,11 +25,11 @@
 
 ### filter_non_conversion
 
-- changed shebang line to use env
+- changed shebang line to use `env`
 
 ### bismark2report
 
-- better handling of division by 0 error [see here](ab027e28c5736ab5aebb034f5bca5fb78814046d)
+- better handling of division by 0 error [see more here](https://github.com/FelixKrueger/Bismark/issues/711)
 
 
 ## Changelog for Bismark v0.24.2 (release on 27 Sep 2023) 

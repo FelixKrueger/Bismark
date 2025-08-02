@@ -22,7 +22,7 @@ use Cwd;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $dedup_version = 'v0.25.0dev';
+my $dedup_version = 'v0.25.0';
 my $copyright_dates = "2010-25";
 
 my @filenames;

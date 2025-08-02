@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-23, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-25, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@ my %freqs;   # keeping a record of which chromosomes have been processed
 my %genomic_freqs;
 my %processed;
 
-my $bam2nuc_version = 'v0.24.2';
+my $bam2nuc_version = 'v0.25.0';
 
 my ($output_dir,$genome_folder,$parent_dir,$samtools_path,$genome_freq_only) = process_commandline();
 
