@@ -1443,14 +1443,14 @@ sub merge_individual_BAM_files{
       warn "At this stage we write out a single CRAM file and delete all temporary BAM files\n";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<< (using --threads 4)\n";
       $final_output_filename = "${output_dir}${merged_name}";
-	  # 01 Dez 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
+	  # 01 Dec 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
 	  # see more here: https://github.com/FelixKrueger/Bismark/issues/707	  
       open (OUT,"| $samtools_path view --threads 4 -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
   }
   else{
       $final_output_filename = "${output_dir}${merged_name}";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<< (using --threads 4)\n";
-	  # 01 Dez 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
+	  # 01 Dec 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
 	  # see more here: https://github.com/FelixKrueger/Bismark/issues/707
       open (OUT,"| $samtools_path view --threads 4 -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
   }
@@ -10022,6 +10022,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 01 Dezember 2024
+Last modified on 01 December 2024
 HOW_TO
 }
