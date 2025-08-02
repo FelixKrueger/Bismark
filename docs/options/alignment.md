@@ -132,6 +132,10 @@ In this mode, it is not required that the entire read aligns from one end to the
 
   Sets the SM field in the `@RG` header line; can't be set without setting `--rg_id` as well. Default: SAMPLE
 
+- `--strandID`
+
+For non-directional paired-end libraries, the strands identity is encoded by the order in which R1 and R2 are reported, as well as the read and genome conversion state. If third party tools re-organise this order it may become difficult to determine the alignment strand identity. This option adds an optional tag, e.g. `YS:Z:OT` or `YS:Z:CTOB` to preserve this information. See also [this thread for more details](https://github.com/FelixKrueger/Bismark/issues/455). Default: OFF.
+
 - `--quiet`
 
   Print nothing besides alignments.
@@ -286,3 +290,52 @@ For reads that have multiple alignments a random alignment is written out to a s
 - `--rfg <int1>,<int2>`
 
   Sets the reference gap open (&lt;int1>) and extend (&lt;int2>) penalties. A reference gap of length N gets a penalty of `<int1> + N * <int2>`. Default: 5, 3.
+
+
+#### MINIMAP2-SPECIFIC OPTIONS:
+
+
+- `--minimap2/--mm2`
+
+Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that things may change in the near future. The default mapping mode is `--nanopore` (preset `-x map-ont` (Nanopore reads)). Internally, minimap2 is run with the options `-a --MD`. More information here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
+
+- `--mm2_nanopore`
+
+Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x map-ont`). Only works in conjuntion with `--minimap2`. Default mode when `--minimap2` is specified without additional qualifiers.
+
+- `--mm2_pacbio`
+
+Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2`. Default: OFF.
+
+- `--mm2_short_reads`
+
+This option invokes the minmap2 preset setting `-x sr` and is intended for genomic short-read mapping with accurate reads (probably Illumina 150bp+ ?). For spliced short-reads, please use `--hisat2` instead. The `sr` preset mode (short single-end reads without splicing) uses the following options:
+`-k21 -w11 --sr --frag=yes -A2 -B8 -O12,32 -E2,1 -r50 -p.5 -N20 -f1000,5000 -n2 -m20 -s40 -g200 -2K50m --heap-sort=yes --secondary=no`. Default: OFF.
+
+- `--mm2_maximum_length <int>`
+
+Maximum length cutoff for very long sequences (currently allowed 100-100,000 bp). Default: 10000.
+
+#### OUTPUT:
+
+The output is a BAM file by default, as well as a aligment report text file.
+
+For a single-end file called 'simulated.fastq', the expected output for Bowtie 2, HISAT2 or minimap2 is:
+
+```
+simulated_bismark_bt2.bam
+simulated_bismark_bt2_SE_report.txt
+simulated_bismark_hisat2.bam
+simulated_bismark_hisat2_SE_report.txt
+simulated_bismark_mm2.bam
+simulated_bismark_mm2_SE_report.txt
+```
+
+In a paired-end situation, for files 'simulated_1.fastq' and 'simulated_2.fastq' you would expect the following result files Bowtie2 or HISAT2:
+
+```
+simulated_1_bismark_bt2_pe.bam
+simulated_1_bismark_bt2_PE_report.txt
+simulated_1_bismark_hisat2_pe.bam
+simulated_1_bismark_hisat2_PE_report.txt
+```

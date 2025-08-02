@@ -6,7 +6,7 @@ use Getopt::Long;
 use Cwd;
 use Carp;
 
-## This program is Copyright (C) 2010-23, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-25, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ use Carp;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $bismark2bedGraph_version = 'v0.24.2';
+my $bismark2bedGraph_version = 'v0.25.0';
 
 my @bedfiles;
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -578,10 +578,10 @@ sub check_CpG_methylation_call{
 sub check_nonCpG_methylation_call{
   my $meth1 = shift;
   my $meth2 = shift;
-  return 1 if($meth1 eq "+" && $meth2 eq "C");
+  return 1 if($meth1 eq "+" && $meth2 eq "Z");
   return 1 if($meth1 eq "+" && $meth2 eq "X");
   return 1 if($meth1 eq "+" && $meth2 eq "H");
-  return 1 if($meth1 eq "-" && $meth2 eq "c");
+  return 1 if($meth1 eq "-" && $meth2 eq "z");
   return 1 if($meth1 eq "-" && $meth2 eq "x");
   return 1 if($meth1 eq "-" && $meth2 eq "h");
   return 0;
@@ -884,7 +884,7 @@ The coverage output looks like this (tab-delimited, 1-based genomic coords; opti
 <chromosome>  <start position>  <end position>  <methylation percentage>  <count methylated>  <count non-methylated>
 
 
-                          Script last modified: 22 Sept 2020
+                          Script last modified: 04 Jan 2024
 
 EOF
     ;

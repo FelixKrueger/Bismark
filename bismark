@@ -8,7 +8,7 @@ use Getopt::Long;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 
-## This program is Copyright (C) 2010-23, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-25, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -25,8 +25,8 @@ use lib "$RealBin/../lib";
 
 my $parent_dir = getcwd();
 
-my $bismark_version = 'v0.24.2';
-my $copyright_dates = "2010-23";
+my $bismark_version = 'v0.25.0';
+my $copyright_dates = "2010-25";
 
 my $start_run = time();
 my $command_line = join (" ",@ARGV);
@@ -596,7 +596,7 @@ foreach my $filename (@filenames){
 				}
 			}
 			if ($all_children_succeeded) {
-				print "All child process successfully finished.";
+				warn "All child processes successfully finished.";
 			}
 			else {
 				die "\nTerminating. Not all child processes successfully finished.";
@@ -743,23 +743,47 @@ foreach my $filename (@filenames){
 
 					if ($unmapped){
 						if ($gzip){
-							push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_unmapped_reads_1.fq";
-							push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_unmapped_reads_2.fq";
+							if ($sequence_file_format eq 'FASTA'){
+								push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_unmapped_reads_1.fa";
+								push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_unmapped_reads_2.fa";
+							}
+							else{
+								push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_unmapped_reads_1.fq";
+								push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_unmapped_reads_2.fq";
+							}
 						}
 						else{
-							push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_unmapped_reads_1.fq";
-							push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_unmapped_reads_2.fq";
+							if ($sequence_file_format eq 'FASTA'){
+								push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_unmapped_reads_1.fa";
+								push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_unmapped_reads_2.fa";
+							}
+							else{
+								push @temp_unmapped_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_unmapped_reads_1.fq";
+								push @temp_unmapped_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_unmapped_reads_2.fq";
+							}
 						}
 					}
 			  
 					if ($ambiguous){
 						if ($gzip){
-							push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_ambiguous_reads_1.fq";
-							push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_ambiguous_reads_2.fq";
+							if ($sequence_file_format eq 'FASTA'){
+								push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_ambiguous_reads_1.fa";
+								push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_ambiguous_reads_2.fa";
+							}
+							else{
+								push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}.gz_ambiguous_reads_1.fq";
+								push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}.gz_ambiguous_reads_2.fq";
+							}
 						}
 						else{
-							push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_ambiguous_reads_1.fq";
-							push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+							if ($sequence_file_format eq 'FASTA'){
+								push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_ambiguous_reads_1.fa";
+								push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_ambiguous_reads_2.fa";
+							}
+							else{
+								push @temp_ambiguous_1,   "${output_dir}${add_prefix}${pathless_filename_1}.temp.${_}_ambiguous_reads_1.fq";
+								push @temp_ambiguous_2,   "${output_dir}${add_prefix}${pathless_filename_2}.temp.${_}_ambiguous_reads_2.fq";
+							}
 						}
 					}
 				}
@@ -1262,7 +1286,8 @@ sub merge_individual_ambiguous_files{
   }
 
   foreach my $temp(@$temp_ambiguous){
-    $temp =~ s/.*\///; # removing path information
+	$temp =~ s/.*\///; # removing path information
+  	# warn "These are the temp ambiguous files: $temp\n"; sleep(5);
   }
 
   open (AMBIGUOUS,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
@@ -1416,15 +1441,18 @@ sub merge_individual_BAM_files{
   if ($cram){
       $merged_name =~ s/bam$/cram/;
       warn "At this stage we write out a single CRAM file and delete all temporary BAM files\n";
-      warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
+      warn "Now merging BAM files @$tempbam into >>> $merged_name <<< (using --threads 4)\n";
       $final_output_filename = "${output_dir}${merged_name}";
-
-      open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+	  # 01 Dec 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
+	  # see more here: https://github.com/FelixKrueger/Bismark/issues/707	  
+      open (OUT,"| $samtools_path view --threads 4 -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
   }
   else{
       $final_output_filename = "${output_dir}${merged_name}";
-      warn "Now merging BAM files @$tempbam into >>> $merged_name <<<\n";
-      open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
+      warn "Now merging BAM files @$tempbam into >>> $merged_name <<< (using --threads 4)\n";
+	  # 01 Dec 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
+	  # see more here: https://github.com/FelixKrueger/Bismark/issues/707
+      open (OUT,"| $samtools_path view --threads 4 -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
   }
 
   my $first = 0;
@@ -9994,6 +10022,6 @@ Bismark BAM/SAM OUTPUT (default):
 Each read of paired-end alignments is written out in a separate line in the above format.
 
 
-Last modified on 23 August 2023
+Last modified on 01 December 2024
 HOW_TO
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use Getopt::Long;
@@ -6,7 +6,7 @@ use Cwd;
 $|++;
 
 
-## This program is Copyright (C) 2010-23, Felix Krueger (fkrueger@altoslabs.com)
+## This program is Copyright (C) 2010-25, Felix Krueger (fkrueger@altoslabs.com)
 
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@ $|++;
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 my $parent_dir = getcwd();
-my $filter_version = 'v0.24.2';
+my $filter_version = 'v0.25.0';
 
 my ($global_single,$global_paired,$samtools_path,$threshold,$consecutive,$percentage_cutoff,$minimum_count) = process_commandline();
 
@@ -716,7 +716,7 @@ by read name first (e.g. using samtools sort -n)  ***
 --version                   Displays version information and exits.
 
 
-                                Last modified: 10 February 2021
+                                Last modified: 31 July 2024
 
 EOF
     ;

@@ -1,4 +1,4 @@
-## Appendix (III): Bismark Methylation Extractor
+## Appendix (IV): Bismark Methylation Extractor
 
 A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing `bismark_methylation_extractor --help`
 
@@ -159,24 +159,74 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
   Writes the output into individual files for each chromosome instead of a single output file. Files are named to include the input filename as well as the chromosome number.
 
+- `--ffs`
+
+  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. This option needs to be run via `coverage2cytosine` itself.
+
+  ```
+  Example:
+  U00096.3    90  +   0   0   CG  CGT CGTG    CGTGA   GCCGTG
+  U00096.3    91  -   1   0   CG  CGG CGGC    CGGCA   CACGGC
+  ```
+  
 #### OUTPUT
 
-##### The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
+##### Extractor output
+
+The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
 
     <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
 
       Methylated cytosines receive a '+' orientation,
     Unmethylated cytosines receive a '-' orientation.
 
-##### The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
+Example output files (default mode only):
+
+```
+CHG_OB_simulated_1_bismark_bt2_pe.txt.gz
+CHG_OT_simulated_1_bismark_bt2_pe.txt.gz
+CHH_OB_simulated_1_bismark_bt2_pe.txt.gz
+CHH_OT_simulated_1_bismark_bt2_pe.txt.gz
+CpG_OB_simulated_1_bismark_bt2_pe.txt.gz
+CpG_OT_simulated_1_bismark_bt2_pe.txt.gz
+simulated_1_bismark_bt2_pe.M-bias.txt
+simulated_1_bismark_bt2_pe_splitting_report.txt
+```
+
+##### bedGraph output
+
+The bedGraph output (optional) looks like this (tab-delimited, 0-based start, 1-based end coords):
 
     track type=bedGraph (header line)
     <chromosome> <start position> <end position> <methylation percentage>
 
-##### The coverage output looks like this (tab-delimited; 1-based genomic coords):
+Example output files (default mode only):
+
+```
+simulated_1_bismark_bt2_pe.bedGraph.gz
+```
+
+##### Coverage output
+
+The coverage output looks like this (tab-delimited; 1-based genomic coords):
 
     <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
 
-##### The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
+Example output files (default mode only):
+
+```
+simulated_1_bismark_bt2_pe.bismark.cov.gz
+```
+
+##### Cytosine report
+
+The genome-wide cytosine report (optional) is tab-delimited in the following format (1-based coords):
 
     <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
+
+Example output files (default mode only):
+
+```
+simulated_1_bismark_bt2_pe.CpG_report.txt.gz
+simulated_1_bismark_bt2_pe.cytosine_context_summary.txt
+```
