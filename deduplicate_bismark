@@ -647,7 +647,7 @@ sub deduplicate_barcoded_rrbs{
 		my $barcode2;
 
 		if ($bclconvert){
-			$id =~ /:([CAGTN]+)_\d:N:\d:([CAGTN\+]+)$/;
+			$id =~ /:([CAGTN\+]+)_\d:N:\d:([CAGTN\+]+)$/;
 			$barcode = $1;
 			$barcode2 = $2;
 			# warn "Detected bcl-convert UMI in readID (>>$id<<)\n";
@@ -967,7 +967,7 @@ sub test_readIDs_for_bclconvert{
 
 		# warn "ID: $id\n";
 	
-		if ($id =~ /:([CAGTN]+)_\d:N:\d:([CAGTN\+]+)$/){
+		if ($id =~ /:([CAGTN\+]+)_\d:N:\d:([CAGTN\+]+)$/){
 
 			# The default barcode is located after the last colon, but in some cases it is preceded by an underscore,
 			# e.g. as produced by bcl-convert:
