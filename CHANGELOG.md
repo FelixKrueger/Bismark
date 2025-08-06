@@ -1,8 +1,15 @@
 # Bismark Changelog
 
 
-## Changelog for Bismark v0.25.0 (release on 03 Aug 2025)
+## Changelog for Bismark v0.25.1 (release on 06 Aug 2025)
 
+### deduplicate_bismark
+
+- Also allowing the `+` sign as valid symbol when considering UMIs in `--bclconvert` mode [commit](268a8a26997f847c8e404f55cbdfb753a044190c)
+
+
+
+## Changelog for Bismark v0.25.0 (release on 03 Aug 2025)
 
 ### Bismark
 
