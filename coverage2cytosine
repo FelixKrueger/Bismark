@@ -23,7 +23,7 @@ use Carp;
 my %chromosomes;       # storing sequence information of all chromosomes/scaffolds
 my %processed;         # keeping a record of which chromosomes have been processed
 my %context_summary;   # storing methylation values for all contexts for NOMe-seq or scNMT-experiments
-my $coverage2cytosine_version = 'v0.25.0';
+my $coverage2cytosine_version = 'v0.25.1';
 
 my ($output_dir,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$parent_dir,$coverage_infile,$cytosine_out,$merge_CpGs,$gc_context,$gzip,$tetra,$nome,$disco,$threshold,$drach) = process_commandline();
 
