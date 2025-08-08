@@ -1,6 +1,12 @@
 # Bismark Changelog
 
 
+## Changelog for Bismark v0.25.1dev
+
+### deduplicate_bismark
+
+- setting `--bclconvert` now also sets `--barcode/--umi` automatically
+
 ## Changelog for Bismark v0.25.1 (release on 06 Aug 2025)
 
 ### deduplicate_bismark

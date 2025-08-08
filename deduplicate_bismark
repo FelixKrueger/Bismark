@@ -22,7 +22,7 @@ use Cwd;
 ## You should have received a copy of the GNU General Public License
 ## along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-my $dedup_version = 'v0.25.1';
+my $dedup_version = 'v0.25.1dev';
 my $copyright_dates = "2010-25";
 
 my @filenames;
@@ -1059,7 +1059,7 @@ sub print_helpfile{
 	print "--barcode/--umi\t\tIn addition to chromosome, orientation, start (and end) position (for paired-end alignments) this option\n\t\t\talso takes a potential barcode/UMI into consideration while deduplicating. The barcode/UMI needs to be\n\t\t\tthe last element of the read ID, consist of DNA sequence and/or the + sign, and be separated by a ':', e.g.:\n\t\t\tMISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCTTAG\n\n";
 	print "\t\t\tNOTE: UMI-handling by bcl-convert creates additional internal UMIs in the read IDs, which is not supported by this option!\n\t\t\tsPlease see this issue for more information: https://github.com/FelixKrueger/Bismark/issues/699\n\n";
 	print "--bclconvert\t\tExtract UMI from internal position as produced by bcl-convert instead. The barcode/UMI must consist of\n\t\t\tDNA sequence and/or the + sign, and follow a pattern expected for bcl-convert', e.g.:";
-	print "\n\t\t\tCAAGAG in the readID: A00001:001:HN2F7DRX1:1:1101:1452:1000:CAAGAG_1:N:0:AATGACGC\n\n";
+	print "\n\t\t\tCAAGAG in the readID: A00001:001:HN2F7DRX1:1:1101:1452:1000:CAAGAG_1:N:0:AATGACGC. Also set --barcode/--umi\n\n";
 
 	print "--bam\t\t\tThe output will be written out in BAM format. This script will attempt to use the path to Samtools\n\t\t\tthat was specified with '--samtools_path', or, if it hasn't been specified, attempt to find Samtools\n\t\t\tin the PATH. If no installation of Samtools can be found, a GZIP compressed output is written out\n\t\t\tinstead (yielding a .sam.gz output file). Default: ON.\n\n";
 	print "--sam\t\t\tThe output will be written out in SAM format. Default: OFF.\n\n";
@@ -1070,7 +1070,7 @@ sub print_helpfile{
 	
 	print '='x111,"\n\n";
 
-	print "This script was last modified on 21 April 2025\n\n";
+	print "This script was last modified on 8 August 2025\n\n";
 }
 
 
@@ -1373,7 +1373,10 @@ VERSION
 	if ($bclconvert){
 		warn "Manually setting the UMI position to bcl-convert mode (UMI is expected to be within the readID before the multiplexing index), e.g. CAAGAG in the readID:\n";
 		warn "A00001:001:HN2F7DRX1:1:1101:1452:1000:CAAGAG_1:N:0:AATGACGC\n";
-		sleep(1);
+
+		warn "Also setting option --barcode\n";
+		sleep(1);	
+		$rrbs = 1;
 	}
     
     return ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile,$parallel,$bclconvert);
