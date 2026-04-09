@@ -1,0 +1,92 @@
+nextflow_process {
+
+    name "Test BISMARK_CONVERT_GENOME"
+    script "modules/local/bismark_convert_genome.nf"
+    process "BISMARK_CONVERT_GENOME"
+    config "tests/config/nextflow.config"
+
+    test("Should create CT and GA conversion directories") {
+        when {
+            process {
+                """
+                input[0] = file("${projectDir}/test_files/NC_010473.fa.gz")
+                input[1] = false
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def bs_dir = process.out.bisulfite_dir[0]
+
+            // CT and GA conversion dirs exist
+            assert path(bs_dir + "/CT_conversion").exists()
+            assert path(bs_dir + "/GA_conversion").exists()
+
+            // Output FASTA files exist and are non-empty
+            def ct_fa = path(bs_dir + "/CT_conversion/genome_mfa.CT_conversion.fa")
+            def ga_fa = path(bs_dir + "/GA_conversion/genome_mfa.GA_conversion.fa")
+            assert ct_fa.exists()
+            assert ga_fa.exists()
+            assert ct_fa.size() > 0
+            assert ga_fa.size() > 0
+
+            // CT file should have no C in sequence lines (all converted to T)
+            def ct_text = ct_fa.text
+            ct_text.eachLine { line ->
+                if (!line.startsWith(">")) {
+                    assert !line.contains("C") : "CT conversion file still contains C"
+                }
+            }
+
+            // GA file should have no G in sequence lines (all converted to A)
+            def ga_text = ga_fa.text
+            ga_text.eachLine { line ->
+                if (!line.startsWith(">")) {
+                    assert !line.contains("G") : "GA conversion file still contains G"
+                }
+            }
+
+            // Headers should have _CT_converted / _GA_converted suffixes
+            assert ct_text.contains("_CT_converted")
+            assert ga_text.contains("_GA_converted")
+        }
+    }
+
+    test("Should handle SLAM mode conversions") {
+        when {
+            process {
+                """
+                input[0] = file("${projectDir}/test_files/NC_010473.fa.gz")
+                input[1] = true
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def bs_dir = process.out.bisulfite_dir[0]
+            def ct_fa = path(bs_dir + "/CT_conversion/genome_mfa.CT_conversion.fa")
+            def ga_fa = path(bs_dir + "/GA_conversion/genome_mfa.GA_conversion.fa")
+
+            assert ct_fa.exists()
+            assert ga_fa.exists()
+
+            // SLAM CT: T->C, so no T in sequence lines
+            ct_fa.text.eachLine { line ->
+                if (!line.startsWith(">")) {
+                    assert !line.contains("T") : "SLAM CT conversion file still contains T"
+                }
+            }
+
+            // SLAM GA: A->G, so no A in sequence lines
+            ga_fa.text.eachLine { line ->
+                if (!line.startsWith(">")) {
+                    assert !line.contains("A") : "SLAM GA conversion file still contains A"
+                }
+            }
+        }
+    }
+}
