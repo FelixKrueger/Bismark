@@ -1,0 +1,55 @@
+nextflow_workflow {
+
+    name "Test BISMARK_METHYLATION subworkflow"
+    script "subworkflows/local/bismark_methylation.nf"
+    workflow "BISMARK_METHYLATION"
+    config "tests/config/nextflow.config"
+
+    test("Should run methylation pipeline with deduplication") {
+        when {
+            workflow {
+                """
+                input[0] = Channel.of(
+                    [[id: 'test_sample', single_end: false], file("${params.test_data_dir}/test_aligned.bam")]
+                )
+                input[1] = file("${params.test_data_dir}")
+                """
+            }
+        }
+
+        then {
+            assert workflow.success
+
+            assert workflow.out.bam != null
+            assert workflow.out.cpg_calls != null
+            assert workflow.out.report != null
+            assert workflow.out.bedgraph != null
+            assert workflow.out.coverage != null
+        }
+    }
+
+    test("Should skip deduplication when configured") {
+        when {
+            params {
+                skip_deduplication = true
+            }
+            workflow {
+                """
+                input[0] = Channel.of(
+                    [[id: 'test_sample', single_end: false], file("${params.test_data_dir}/test_aligned.bam")]
+                )
+                input[1] = file("${params.test_data_dir}")
+                """
+            }
+        }
+
+        then {
+            assert workflow.success
+
+            assert workflow.out.bam != null
+            assert workflow.out.cpg_calls != null
+            assert workflow.out.bedgraph != null
+            assert workflow.out.coverage != null
+        }
+    }
+}
