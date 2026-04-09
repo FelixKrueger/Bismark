@@ -1,0 +1,83 @@
+nextflow_process {
+
+    name "Test COVERAGE2CYTOSINE module"
+    script "modules/local/bismark_wrapper/coverage2cytosine.nf"
+    process "COVERAGE2CYTOSINE"
+    config "tests/config/nextflow.config"
+
+    test("Should generate CpG cytosine report from coverage file") {
+
+        when {
+            params {
+                CX_context = false
+                merge_CpGs = false
+            }
+            process {
+                """
+                // Prepare uncompressed genome directory
+                def genomeDir = file("\${workDir}/genome_dir")
+                genomeDir.mkdirs()
+                def faGz = file("\${projectDir}/test_files/NC_010473.fa.gz")
+                def faOut = genomeDir.resolve("NC_010473.fa")
+                faOut.text = new java.util.zip.GZIPInputStream(faGz.newInputStream()).text
+
+                // Create synthetic coverage file
+                def covFile = file("\${workDir}/test_sample.cov")
+                covFile.text = "NC_010473\\t100\\t100\\t50\\t1\\t1\\nNC_010473\\t200\\t200\\t100\\t2\\t0\\n"
+
+                input[0] = Channel.of([ [id: 'test_sample'], covFile ])
+                input[1] = genomeDir
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.cpg_report != null
+            assert process.out.cpg_report.size() == 1
+
+            with(process.out.cpg_report) {
+                assert get(0).get(1).toString().contains("CpG_report.txt")
+            }
+        }
+    }
+
+    test("Should generate CX report when CX_context is enabled") {
+
+        when {
+            params {
+                CX_context = true
+                merge_CpGs = false
+            }
+            process {
+                """
+                // Prepare uncompressed genome directory
+                def genomeDir = file("\${workDir}/genome_dir_cx")
+                genomeDir.mkdirs()
+                def faGz = file("\${projectDir}/test_files/NC_010473.fa.gz")
+                def faOut = genomeDir.resolve("NC_010473.fa")
+                faOut.text = new java.util.zip.GZIPInputStream(faGz.newInputStream()).text
+
+                // Create synthetic coverage file
+                def covFile = file("\${workDir}/test_cx.cov")
+                covFile.text = "NC_010473\\t100\\t100\\t50\\t1\\t1\\nNC_010473\\t200\\t200\\t100\\t2\\t0\\n"
+
+                input[0] = Channel.of([ [id: 'test_cx'], covFile ])
+                input[1] = genomeDir
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            // CX mode produces CX_report only, no CpG_report
+            assert process.out.cpg_report.size() == 0
+            assert process.out.cx_report != null
+            assert process.out.cx_report.size() == 1
+
+            with(process.out.cx_report) {
+                assert get(0).get(1).toString().contains("CX_report.txt")
+            }
+        }
+    }
+}
