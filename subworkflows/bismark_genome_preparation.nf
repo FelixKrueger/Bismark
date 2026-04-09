@@ -12,8 +12,7 @@ workflow BISMARK_GENOME_PREPARATION_WF {
     main:
     BISMARK_CONVERT_GENOME(
         fasta,
-        false,  // multi_fasta is false for single fasta file
-        params.slam ?: false  // Default to false if not set
+        params.slam ?: false
     )
     
     BISMARK_INDEX_GENOME(
