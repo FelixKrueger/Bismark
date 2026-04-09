@@ -1,0 +1,60 @@
+nextflow_process {
+
+    name "Test DEDUPLICATE_BISMARK"
+    script "modules/local/bismark_wrapper/deduplicate.nf"
+    process "DEDUPLICATE_BISMARK"
+    config "tests/config/nextflow.config"
+
+    test("Should deduplicate paired-end BAM") {
+        when {
+            params {
+                barcode = false
+            }
+            process {
+                """
+                input[0] = Channel.of([
+                    [id: 'test_pe', single_end: false],
+                    file("${projectDir}/test_files/fixtures/test_bismark_pe.bam")
+                ])
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.bam
+            assert process.out.report
+            with(process.out.bam) {
+                assert get(0).get(1).toString().endsWith(".deduplicated.bam")
+            }
+            with(process.out.report) {
+                assert get(0).get(1).toString().endsWith(".deduplication_report.txt")
+            }
+        }
+    }
+
+    test("Should deduplicate single-end BAM") {
+        when {
+            params {
+                barcode = false
+            }
+            process {
+                """
+                input[0] = Channel.of([
+                    [id: 'test_se', single_end: true],
+                    file("${projectDir}/test_files/fixtures/test_bismark_se.bam")
+                ])
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.bam
+            assert process.out.report
+            with(process.out.bam) {
+                assert get(0).get(1).toString().endsWith(".deduplicated.bam")
+            }
+        }
+    }
+}
