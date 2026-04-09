@@ -1,0 +1,35 @@
+nextflow_workflow {
+
+    name "Test METHYLATION_EXTRACTOR process"
+    script "tests/modules/methylation_extractor_workflow.nf"
+    workflow "METHYLATION_EXTRACTOR_TEST"
+    config "tests/config/nextflow.config"
+
+    test("Should extract methylation calls from paired-end BAM") {
+        when {
+            workflow {
+                """
+                input[0] = file("${projectDir}/test_files/NC_010473.fa.gz")
+                input[1] = file("${projectDir}/test_files/test_R1.fastq.gz")
+                input[2] = file("${projectDir}/test_files/test_R2.fastq.gz")
+                """
+            }
+        }
+
+        then {
+            assert workflow.success
+
+            // CpG context calls should exist
+            assert workflow.out.cpg_calls != null
+            assert workflow.out.cpg_calls.get(0).get(1).toString().contains("CpG_")
+
+            // Splitting report should exist
+            assert workflow.out.report != null
+            assert workflow.out.report.get(0).get(1).toString().contains("splitting_report")
+
+            // M-bias report should exist
+            assert workflow.out.mbias != null
+            assert workflow.out.mbias.get(0).get(1).toString().contains("M-bias")
+        }
+    }
+}
