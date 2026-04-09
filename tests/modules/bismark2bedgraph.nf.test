@@ -1,0 +1,98 @@
+nextflow_process {
+
+    name "Test BISMARK2BEDGRAPH process"
+    script "modules/local/bismark2bedgraph.nf"
+    process "BISMARK2BEDGRAPH"
+    config "tests/config/nextflow.config"
+
+    test("Should convert methylation calls to bedGraph and coverage") {
+        setup {
+            // Create synthetic CpG methylation call file
+            run("CREATE_TEST_DATA") {
+                script """
+                    process CREATE_TEST_DATA {
+                        output:
+                        tuple val([id: 'test_sample']), path("CpG_context_test_sample.txt"), emit: methylation_calls
+
+                        script:
+                        '''
+                        cat > CpG_context_test_sample.txt <<'DATA'
+Bismark methylation extractor version v0.24.2
+read_1\t+\tNC_010473\t100\tZ
+read_2\t-\tNC_010473\t100\tz
+read_3\t+\tNC_010473\t200\tZ
+read_4\t+\tNC_010473\t200\tZ
+read_5\t-\tNC_010473\t200\tz
+read_6\t+\tNC_010473\t500\tZ
+read_7\t+\tNC_010473\t500\tZ
+read_8\t+\tNC_010473\t500\tZ
+DATA
+                        '''
+                    }
+                """
+            }
+        }
+
+        when {
+            process {
+                """
+                input[0] = CREATE_TEST_DATA.out.methylation_calls
+                input[1] = false
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            // bedGraph output exists and is gzipped
+            assert process.out.bedgraph != null
+            assert process.out.bedgraph.get(0).get(1).toString().endsWith(".bedGraph.gz")
+
+            // coverage output exists and is gzipped
+            assert process.out.coverage != null
+            assert process.out.coverage.get(0).get(1).toString().endsWith(".bismark.cov.gz")
+        }
+    }
+
+    test("Should respect coverage cutoff") {
+        setup {
+            run("CREATE_TEST_DATA_CUTOFF") {
+                script """
+                    process CREATE_TEST_DATA_CUTOFF {
+                        output:
+                        tuple val([id: 'test_cutoff']), path("CpG_context_test_cutoff.txt"), emit: methylation_calls
+
+                        script:
+                        '''
+                        cat > CpG_context_test_cutoff.txt <<'DATA'
+read_1\t+\tNC_010473\t100\tZ
+read_2\t+\tNC_010473\t200\tZ
+read_3\t+\tNC_010473\t200\tZ
+read_4\t-\tNC_010473\t200\tz
+DATA
+                        '''
+                    }
+                """
+            }
+        }
+
+        when {
+            params {
+                coverage_threshold = 2
+            }
+            process {
+                """
+                input[0] = CREATE_TEST_DATA_CUTOFF.out.methylation_calls
+                input[1] = false
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert process.out.bedgraph != null
+            assert process.out.coverage != null
+        }
+    }
+}
