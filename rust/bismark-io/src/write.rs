@@ -300,6 +300,14 @@ mod tests {
         *record.reference_sequence_id_mut() = Some(0);
         *record.alignment_start_mut() = Some(noodles_core::Position::try_from(10).unwrap());
         *record.sequence_mut() = Sequence::from(b"ACGTC".to_vec());
+        // Quality scores: 5 bytes matching the sequence length. CRAM encodes
+        // quality scores into the QualityScores external block (#28); a record
+        // with no qualities causes the writer to skip the block, but the reader
+        // then errors with "missing external block: 28" when iterating records.
+        // Real Bismark BAMs always have qualities; synthetic records must
+        // include them too.
+        *record.quality_scores_mut() =
+            noodles_sam::alignment::record_buf::QualityScores::from(vec![30u8; 5]);
         record
             .data_mut()
             .insert(Tag::from(*b"XM"), Value::String(BString::from(".....")));
@@ -488,10 +496,8 @@ mod tests {
     fn cram_writer_produces_cram_file_with_magic_bytes() {
         // Soft check: CramWriter::from_path + write_record + finish
         // produces a file beginning with the CRAM file-definition magic
-        // (`CRAM\x03\x00` for CRAM 3.0). A full write-then-read round-trip
-        // test exists at `cram_writer_roundtrip_via_tempfile` but is
-        // currently `#[ignore]`d pending noodles-cram block-encoder
-        // configuration work (see follow-up tracking).
+        // (`CRAM\x03\x00` for CRAM 3.0). The full write-then-read round-trip
+        // is exercised by `cram_writer_roundtrip_via_tempfile` below.
         let tmp = TempDir::new().unwrap();
         let fasta_path = write_tiny_fasta_with_fai(tmp.path());
         let cram_path = tmp.path().join("test.cram");
@@ -518,8 +524,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "noodles-cram 0.93 default block-encoder produces CRAM that fails CramReader round-trip with 'missing external block'; needs deeper container/slice configuration. Tracked as a Phase F integration-test follow-up under epic #794."]
     fn cram_writer_roundtrip_via_tempfile() {
+        // Full CRAM write → read round-trip. Requires the synthetic record
+        // to include quality scores; without them, the QualityScores
+        // external block (#28) is omitted by the writer and the reader
+        // errors with "missing external block: 28" on iteration. Real
+        // Bismark BAMs always have quality scores, so this only affects
+        // hand-constructed test records.
         let tmp = TempDir::new().unwrap();
         let fasta_path = write_tiny_fasta_with_fai(tmp.path());
         let cram_path = tmp.path().join("test.cram");
@@ -535,7 +546,37 @@ mod tests {
         let records: Vec<_> = reader.records().collect();
         assert_eq!(records.len(), 1, "CRAM round-trip should yield 1 record");
         let read_back = records.into_iter().next().unwrap().unwrap();
-        assert_eq!(read_back.record_strand(), BismarkStrand::OT);
-        assert_eq!(read_back.xm(), b".....");
+
+        // Semantic round-trip assertions: strand, methylation call string,
+        // alignment position, qname, and sequence length survive the
+        // round-trip. Byte-identical CRAM container is NOT a goal
+        // (per DESIGN.md §Q3).
+        assert_eq!(
+            read_back.record_strand(),
+            BismarkStrand::OT,
+            "strand classification survives CRAM round-trip"
+        );
+        assert_eq!(read_back.xm(), b".....", "XM tag survives CRAM round-trip");
+        assert_eq!(
+            read_back.alignment_start(),
+            Some(10),
+            "alignment_start survives CRAM round-trip"
+        );
+        let qname_bytes: &[u8] = AsRef::as_ref(
+            read_back
+                .inner()
+                .name()
+                .expect("synthetic record has a name"),
+        );
+        assert_eq!(qname_bytes, b"read1", "qname survives CRAM round-trip");
+        // Byte-equality on the sequence: stronger than length-only check.
+        // CRAM reference-based compression decodes against the fixture
+        // FASTA, which has "ACGTC" at positions 10..14 — so the round-trip
+        // must recover those exact bytes.
+        assert_eq!(
+            read_back.inner().sequence().as_ref(),
+            b"ACGTC",
+            "sequence bytes survive CRAM reference-based round-trip"
+        );
     }
 }
