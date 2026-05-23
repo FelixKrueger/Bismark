@@ -1,0 +1,16 @@
+[package]
+name = "bismark-io"
+version = "0.0.0"
+description = "Bismark-aware BAM/SAM/CRAM I/O on top of noodles"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Dependencies (noodles-bam, noodles-sam, noodles-cram, noodles-fasta,
+# thiserror) will be added in the implementation PR per DESIGN.md.
