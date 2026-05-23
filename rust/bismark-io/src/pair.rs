@@ -51,6 +51,13 @@ impl BismarkPair {
 
         // Borrow-compare first; only allocate on the error path. At 27M+
         // pairs from a typical PE WGBS run the cheap-path matters.
+        //
+        // Both-None case: when neither record has a qname (unusual — Bismark
+        // always names reads), both sides become `b""` and compare equal.
+        // We treat this as "matching qnames" rather than an error; if upstream
+        // is feeding us nameless reads, surfacing a MateMismatch here would
+        // be misleading. Real corruption would manifest as one name set and
+        // the other missing, which still triggers MateMismatch correctly.
         let r1_name_opt = r1.inner().name();
         let r2_name_opt = r2.inner().name();
         let r1_bytes: &[u8] = r1_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));

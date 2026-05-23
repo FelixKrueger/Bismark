@@ -218,9 +218,6 @@ Closes user-facing request: [#788](https://github.com/FelixKrueger/Bismark/issue
 ```rust
 #[derive(Debug, thiserror::Error)]
 pub enum BismarkIoError {
-    #[error("malformed BAM/SAM record at offset {offset}: {reason}")]
-    MalformedRecord { offset: u64, reason: String },
-
     #[error("missing required Bismark tag: {tag}")]
     MissingTag { tag: &'static str },
 
@@ -233,10 +230,11 @@ pub enum BismarkIoError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("noodles BAM error: {0}")]
-    Bam(#[from] noodles::bam::io::reader::Error),
-
     // … additional variants as the surface area grows
+    // (MalformedTag, XmSeqLengthMismatch, MateMismatch, ReadIdentityMismatch,
+    // UnsortedInput, MissingCramReference). noodles' BAM/SAM/CRAM readers
+    // surface their errors as std::io::Error, so the single `Io` variant
+    // covers them — no per-format wrapper variants are needed.
 }
 ```
 
