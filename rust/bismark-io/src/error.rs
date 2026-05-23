@@ -19,14 +19,22 @@ pub enum BismarkIoError {
     ///
     /// `XR:Z:` and `XG:Z:` are required by `BismarkRecord` construction.
     #[error("missing required Bismark tag: {tag}")]
-    MissingTag { tag: &'static str },
+    MissingTag {
+        /// Name of the missing tag (e.g. `"XR"`, `"XG"`, `"XM"`).
+        tag: &'static str,
+    },
 
     /// A Bismark optional tag is present but cannot be decoded.
     ///
     /// For example: `XR:Z:` tag with non-UTF-8 bytes, or `NM:i:` with a
     /// non-integer value.
     #[error("malformed Bismark tag {tag}: {reason}")]
-    MalformedTag { tag: &'static str, reason: String },
+    MalformedTag {
+        /// Name of the malformed tag.
+        tag: &'static str,
+        /// Human-readable description of the malformation.
+        reason: String,
+    },
 
     /// The combination of XR/XG values is not one of the four valid
     /// Bismark strand encodings.
@@ -34,7 +42,12 @@ pub enum BismarkIoError {
     /// Valid combinations: `(CT, CT) → OT`, `(GA, CT) → CTOT`,
     /// `(CT, GA) → OB`, `(GA, GA) → CTOB`.
     #[error("invalid XR/XG combination: XR={xr:?}, XG={xg:?}")]
-    InvalidStrandTags { xr: Vec<u8>, xg: Vec<u8> },
+    InvalidStrandTags {
+        /// The raw `XR:Z:` bytes that were not `b"CT"` or `b"GA"`.
+        xr: Vec<u8>,
+        /// The raw `XG:Z:` bytes that were not `b"CT"` or `b"GA"`.
+        xg: Vec<u8>,
+    },
 
     /// The XM methylation-call string length does not match the read
     /// sequence length.
@@ -43,12 +56,19 @@ pub enum BismarkIoError {
     /// by external tools can produce length-mismatched XM tags that would
     /// silently misalign methylation calls.
     #[error("XM/seq length mismatch: XM={xm_len}, seq={seq_len}")]
-    XmSeqLengthMismatch { xm_len: usize, seq_len: usize },
+    XmSeqLengthMismatch {
+        /// Length of the `XM:Z:` methylation-call string.
+        xm_len: usize,
+        /// Length of the read sequence (must equal `xm_len`).
+        seq_len: usize,
+    },
 
     /// Paired-end mate validation: R1 and R2 records have different qnames.
     #[error("paired-end mate mismatch: r1 qname={r1_qname:?}, r2 qname={r2_qname:?}")]
     MateMismatch {
+        /// Raw qname bytes of the R1 record.
         r1_qname: Vec<u8>,
+        /// Raw qname bytes of the R2 record.
         r2_qname: Vec<u8>,
     },
 
@@ -59,7 +79,11 @@ pub enum BismarkIoError {
     /// Stored as a string to keep the error module decoupled from the
     /// `ReadIdentity` enum in `record.rs`.
     #[error("read identity mismatch: {description}")]
-    ReadIdentityMismatch { description: String },
+    ReadIdentityMismatch {
+        /// Human-readable description of which read-identity mismatch
+        /// was detected (e.g. "expected R1 for first mate, got R2").
+        description: String,
+    },
 
     /// The input BAM is coordinate-sorted (`@HD SO:coordinate`). Bismark
     /// downstream tools require name-grouped or unsorted input for
@@ -88,7 +112,10 @@ pub enum BismarkIoError {
         "duplicate chromosome name in reconstituted reference: {name} \
          (multiple input FASTAs in the Bismark genome directory declared this chromosome)"
     )]
-    DuplicateChromosomeName { name: String },
+    DuplicateChromosomeName {
+        /// The duplicate chromosome name (lossy-decoded for display).
+        name: String,
+    },
 
     /// The given file path does not have a recognised BAM/SAM/CRAM
     /// extension.

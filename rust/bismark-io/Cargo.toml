@@ -25,3 +25,4 @@ thiserror = "2"
 [dev-dependencies]
 tempfile = "3"
 bstr = "1"
+proptest = "1"
