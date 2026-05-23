@@ -12,5 +12,16 @@ authors.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-# Dependencies (noodles-bam, noodles-sam, noodles-cram, noodles-fasta,
-# thiserror) will be added in the implementation PR per DESIGN.md.
+# noodles family — exact-pinned. See DESIGN.md and PLAN.md (rev 3) for rationale.
+noodles-bam = "=0.89.0"
+noodles-sam = "=0.85.0"
+noodles-cram = "=0.93.0"
+noodles-fasta = "=0.61.0"
+noodles-core = "=0.20.0"
+noodles-bgzf = "=0.47.0"
+noodles-csi = "=0.50.0"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+bstr = "1"
