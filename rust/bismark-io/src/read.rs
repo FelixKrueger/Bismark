@@ -1,6 +1,6 @@
-//! BAM and SAM readers that yield [`BismarkRecord`]s.
+//! BAM, SAM, and CRAM readers that yield [`BismarkRecord`]s.
 //!
-//! Both readers wrap their underlying noodles reader and produce
+//! All three readers wrap their underlying noodles reader and produce
 //! [`BismarkRecord`] via [`BismarkRecord::from_noodles_record`]. The
 //! iterator-level adapter:
 //!
@@ -12,15 +12,35 @@
 //!   `@HD SO:` field at construction time. Coordinate-sorted BAMs make
 //!   PE work meaningless (R1 and R2 are not adjacent); raises
 //!   [`BismarkIoError::UnsortedInput`]. SE-only callers can opt out by
-//!   calling [`BamReader::without_sort_check`].
+//!   calling `without_sort_check` on the relevant reader.
 //!
-//! CRAM reader, BAM/SAM writers, and CRAM writer are delivered in
-//! subsequent sub-issues under epic #794.
+//! ## Path-dispatching helper
+//!
+//! [`open_reader`] returns an [`AnyReader`] enum that wraps the concrete
+//! reader. Use this when the input format is determined at runtime (CLI
+//! argument or file extension).
+//!
+//! **Deviation from #807's body:** the original sub-issue body specified
+//! a `BismarkRecordReader` trait + `Box<dyn>` dispatch. noodles-cram 0.93
+//! exposes records only via a `Records<'r, 'h, R>` iterator that borrows
+//! the reader, with no stepwise `read_record_buf` equivalent. Implementing
+//! an object-safe `next_record(&mut self)` would have required self-cell
+//! / self-referential storage. The enum-dispatch design here achieves the
+//! same functional outcome (single call site for path-dispatch) without
+//! the self-referential storage problem or a new dependency.
+//!
+//! ## What's still deferred
+//!
+//! BAM/SAM/CRAM writers (Phase D), integration tests on committed fixture
+//! BAM (Phase F1), and `proptest` round-trip property tests (Phase F3)
+//! live in subsequent sub-issues under epic #794.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::Path;
 
+use noodles_fasta::Repository;
+use noodles_fasta::repository::adapters::IndexedReader as IndexedFastaAdapter;
 use noodles_sam::Header;
 use noodles_sam::alignment::RecordBuf;
 use noodles_sam::header::record::value::map::header::sort_order::COORDINATE;
@@ -153,6 +173,133 @@ impl<R: BufRead> SamReader<R> {
         self.inner
             .record_bufs(header)
             .filter_map(filter_unmapped_then_classify)
+    }
+}
+
+/// CRAM reader producing [`BismarkRecord`]s.
+///
+/// CRAM requires a reference FASTA — passed at construction time via the
+/// `cram_ref` path. The FASTA must have a sibling `.fai` index file in
+/// v1.0 (we use noodles-fasta's IndexedReader adapter). Auto-generating
+/// the index is future work.
+pub struct CramReader<R: Read + Seek> {
+    inner: noodles_cram::io::Reader<R>,
+    header: Header,
+}
+
+impl CramReader<File> {
+    /// Open a CRAM file from a path. The `cram_ref` path must point at a
+    /// FASTA reference with an existing `.fai` index alongside.
+    pub fn from_path(path: &Path, cram_ref: &Path) -> Result<Self, BismarkIoError> {
+        let repo = build_fasta_repository(cram_ref)?;
+        let mut inner = noodles_cram::io::reader::Builder::default()
+            .set_reference_sequence_repository(repo)
+            .build_from_path(path)?;
+        let header = inner.read_header()?;
+        check_not_coordinate_sorted(&header)?;
+        Ok(Self { inner, header })
+    }
+
+    /// Open without the coordinate-sort check. For SE-only callers.
+    pub fn from_path_without_sort_check(
+        path: &Path,
+        cram_ref: &Path,
+    ) -> Result<Self, BismarkIoError> {
+        let repo = build_fasta_repository(cram_ref)?;
+        let mut inner = noodles_cram::io::reader::Builder::default()
+            .set_reference_sequence_repository(repo)
+            .build_from_path(path)?;
+        let header = inner.read_header()?;
+        Ok(Self { inner, header })
+    }
+}
+
+impl<R: Read + Seek> CramReader<R> {
+    /// Header from the CRAM file.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
+    /// Unmapped reads are silently filtered.
+    pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .records(header)
+            .filter_map(filter_unmapped_then_classify)
+    }
+}
+
+/// Build a noodles-fasta `Repository` from a FASTA path. Requires a `.fai`
+/// sidecar alongside the FASTA.
+fn build_fasta_repository(cram_ref: &Path) -> Result<Repository, BismarkIoError> {
+    let indexed_reader =
+        noodles_fasta::io::indexed_reader::Builder::default().build_from_path(cram_ref)?;
+    Ok(Repository::new(IndexedFastaAdapter::new(indexed_reader)))
+}
+
+/// Path-dispatching reader that returns the concrete reader for the
+/// detected alignment kind. Use when the input format is determined at
+/// runtime.
+///
+/// See module-level docs for why this is an enum rather than a `Box<dyn>`
+/// trait object.
+pub enum AnyReader<R: BufRead, RC: Read + Seek> {
+    /// BAM-format reader.
+    Bam(BamReader<R>),
+    /// SAM-format reader.
+    Sam(SamReader<R>),
+    /// CRAM-format reader.
+    Cram(CramReader<RC>),
+}
+
+impl<R: BufRead, RC: Read + Seek> AnyReader<R, RC> {
+    /// Header from the underlying reader.
+    pub fn header(&self) -> &Header {
+        match self {
+            Self::Bam(r) => r.header(),
+            Self::Sam(r) => r.header(),
+            Self::Cram(r) => r.header(),
+        }
+    }
+
+    /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
+    /// Unmapped reads are silently filtered. The returned iterator is
+    /// boxed (one allocation per call); per-record dispatch is via the
+    /// vtable, ~5-10 ns per record per the plan's quantification.
+    pub fn records(
+        &mut self,
+    ) -> Box<dyn Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_> {
+        match self {
+            Self::Bam(r) => Box::new(r.records()),
+            Self::Sam(r) => Box::new(r.records()),
+            Self::Cram(r) => Box::new(r.records()),
+        }
+    }
+}
+
+/// Open a BAM, SAM, or CRAM file by path, dispatching on extension.
+///
+/// `cram_ref` is required when the path resolves to CRAM; for BAM/SAM
+/// the argument is ignored. Returns [`BismarkIoError::MissingCramReference`]
+/// if a CRAM file is opened without `cram_ref`.
+///
+/// The returned `AnyReader` enforces the coordinate-sort check by default
+/// (`UnsortedInput` error for coordinate-sorted input). SE-only callers
+/// that need to opt out should construct the concrete reader directly via
+/// its `without_sort_check` constructor.
+pub fn open_reader(
+    path: &Path,
+    cram_ref: Option<&Path>,
+) -> Result<AnyReader<BufReader<File>, File>, BismarkIoError> {
+    match AlignmentKind::from_path(path)? {
+        AlignmentKind::Bam => Ok(AnyReader::Bam(BamReader::from_path(path)?)),
+        AlignmentKind::Sam => Ok(AnyReader::Sam(SamReader::from_path(path)?)),
+        AlignmentKind::Cram => {
+            let cram_ref =
+                cram_ref.ok_or_else(|| BismarkIoError::MissingCramReference(path.to_path_buf()))?;
+            Ok(AnyReader::Cram(CramReader::from_path(path, cram_ref)?))
+        }
     }
 }
 
@@ -339,5 +486,85 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
             matches!(err, BismarkIoError::MissingTag { tag: "XR" }),
             "expected MissingTag {{ tag: \"XR\" }}, got {err:?}"
         );
+    }
+
+    // ---- AnyReader + open_reader tests ----
+
+    fn expect_err<T>(r: Result<T, BismarkIoError>) -> BismarkIoError {
+        // Helper: AnyReader/CramReader don't impl Debug (noodles internals
+        // don't), so `unwrap_err()` won't compile. Match-and-panic instead.
+        match r {
+            Ok(_) => panic!("expected Err, got Ok"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn open_reader_cram_without_cram_ref_errors() {
+        // A .cram path with no cram_ref should fail with MissingCramReference,
+        // even before any file I/O is attempted (we check the missing-ref
+        // condition before opening the CRAM).
+        let err = expect_err(open_reader(Path::new("nonexistent.cram"), None));
+        assert!(
+            matches!(err, BismarkIoError::MissingCramReference(_)),
+            "expected MissingCramReference, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn open_reader_unsupported_extension_errors() {
+        let err = expect_err(open_reader(Path::new("foo.txt"), None));
+        assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    }
+
+    #[test]
+    fn open_reader_no_extension_errors() {
+        let err = expect_err(open_reader(Path::new("noext"), None));
+        assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    }
+
+    #[test]
+    fn any_reader_sam_variant_delegates_header_and_records() {
+        // Construct AnyReader::Sam manually and verify header() + records()
+        // delegate correctly to the underlying SamReader.
+        let inner = SamReader::new(Cursor::new(SAM_ONE_MAPPED)).unwrap();
+        // AnyReader is generic over the inner reader types; for this test,
+        // both type parameters are Cursor<&[u8]> and File respectively. We
+        // only use the Sam variant, so the RC param is whatever phantom
+        // type the compiler infers from the constructor.
+        let mut any: AnyReader<Cursor<&[u8]>, File> = AnyReader::Sam(inner);
+        // header() works
+        let _hdr = any.header();
+        // records() yields exactly the one mapped record from the fixture
+        let records: Vec<_> = any.records().collect();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].as_ref().is_ok());
+    }
+
+    #[test]
+    fn any_reader_sam_variant_silently_drops_unmapped() {
+        // Verify AnyReader inherits the iterator-level unmapped filter
+        // behavior from the underlying SamReader.
+        let inner = SamReader::new(Cursor::new(SAM_MAPPED_AND_UNMAPPED)).unwrap();
+        let mut any: AnyReader<Cursor<&[u8]>, File> = AnyReader::Sam(inner);
+        let records: Vec<_> = any.records().collect();
+        assert_eq!(
+            records.len(),
+            1,
+            "AnyReader must inherit the unmapped silent filter"
+        );
+    }
+
+    #[test]
+    fn cram_reader_from_path_missing_file_errors() {
+        // We don't have a CRAM fixture to test full round-trip; the
+        // construction error path is testable via a nonexistent path.
+        // Real CRAM round-trip tests land in Phase F integration tests.
+        let nonexistent_cram = Path::new("/tmp/bismark_io_definitely_nonexistent_88912.cram");
+        let nonexistent_ref = Path::new("/tmp/bismark_io_definitely_nonexistent_88912.fa");
+        let err = expect_err(CramReader::from_path(nonexistent_cram, nonexistent_ref));
+        // Either Io (file not found for cram_ref or cram itself) — both
+        // surface as BismarkIoError::Io.
+        assert!(matches!(err, BismarkIoError::Io(_)));
     }
 }

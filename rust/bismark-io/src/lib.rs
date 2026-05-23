@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cigar;
+pub mod cram_ref;
 pub mod error;
 pub mod pair;
 pub mod read;
@@ -22,8 +23,9 @@ pub mod strand;
 pub mod tags;
 
 pub use cigar::{AlignedPosition, AlignedPositions, CigarExt};
+pub use cram_ref::reconstitute_cram_reference_from_bismark_genome;
 pub use error::BismarkIoError;
 pub use pair::BismarkPair;
-pub use read::{AlignmentKind, BamReader, SamReader};
+pub use read::{AlignmentKind, AnyReader, BamReader, CramReader, SamReader, open_reader};
 pub use record::{BismarkRecord, ReadIdentity};
 pub use strand::BismarkStrand;
