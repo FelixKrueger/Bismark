@@ -12,6 +12,7 @@
 //! [`noodles`]: https://github.com/zaeleus/noodles
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod cigar;
 pub mod cram_ref;
