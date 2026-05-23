@@ -39,8 +39,6 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::Path;
 
-use noodles_fasta::Repository;
-use noodles_fasta::repository::adapters::IndexedReader as IndexedFastaAdapter;
 use noodles_sam::Header;
 use noodles_sam::alignment::RecordBuf;
 use noodles_sam::header::record::value::map::header::sort_order::COORDINATE;
@@ -230,20 +228,9 @@ impl<R: Read + Seek> CramReader<R> {
     }
 }
 
-/// Build a noodles-fasta `Repository` from a FASTA path. Requires a `.fai`
-/// sidecar alongside the FASTA; surfaces `MissingFastaIndex` with an
-/// actionable hint if the sidecar is missing.
-fn build_fasta_repository(cram_ref: &Path) -> Result<Repository, BismarkIoError> {
-    let mut fai_path = cram_ref.as_os_str().to_owned();
-    fai_path.push(".fai");
-    let fai_path = std::path::PathBuf::from(fai_path);
-    if !fai_path.exists() {
-        return Err(BismarkIoError::MissingFastaIndex(fai_path));
-    }
-    let indexed_reader =
-        noodles_fasta::io::indexed_reader::Builder::default().build_from_path(cram_ref)?;
-    Ok(Repository::new(IndexedFastaAdapter::new(indexed_reader)))
-}
+// `build_fasta_repository` lives in `crate::cram_ref` so both reader and
+// writer can share it.
+use crate::cram_ref::build_fasta_repository;
 
 /// Path-dispatching reader that returns the concrete reader for the
 /// detected alignment kind. Use when the input format is determined at
