@@ -21,6 +21,7 @@ pub mod read;
 pub mod record;
 pub mod strand;
 pub mod tags;
+pub mod write;
 
 pub use cigar::{AlignedPosition, AlignedPositions, CigarExt};
 pub use cram_ref::reconstitute_cram_reference_from_bismark_genome;
@@ -29,3 +30,4 @@ pub use pair::BismarkPair;
 pub use read::{AlignmentKind, AnyReader, BamReader, CramReader, SamReader, open_reader};
 pub use record::{BismarkRecord, ReadIdentity};
 pub use strand::BismarkStrand;
+pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, open_writer};
