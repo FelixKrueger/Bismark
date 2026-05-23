@@ -296,6 +296,6 @@ impl BismarkRecord {
 
 No implementation. Implementation lives in the next sub-issue under [#794](https://github.com/FelixKrueger/Bismark/issues/794) (`impl(noodles-io): BAM/SAM reader`).
 
-## Open invitations
+## Open to feedback
 
-If you (Phil, Felix, contributors) disagree with any of the four decisions above, or want a different crate split for Phase 1, this is the place to push back — every decision here propagates to ~10 binary crates, so resolving disagreements now is far cheaper than later.
+If you disagree with any of the four decisions above, or want a different crate split for Phase 1, this is the place to push back — every decision here propagates to ~10 binary crates, so resolving disagreements now is far cheaper than later.
