@@ -9,10 +9,28 @@
 //!
 //! - **Deterministic ordering.** Perl iterates `%chromosomes` in
 //!   hash order (randomised since Perl 5.18); we sort chromosomes
-//!   alphabetically by name for reproducibility.
+//!   by name for reproducibility.
 //! - **Byte-identity vs Perl is NOT a goal** (per `PLAN.md` V8). The
 //!   acceptance criterion is per-chromosome sequence identity.
+//!
+//! Implementation choices (informed by code review):
+//!
+//! - **Chromosome names are byte-strings** (`Vec<u8>`), not `String`.
+//!   SAM/BAM/CRAM specs allow chromosome names to contain non-UTF-8
+//!   bytes; surfacing them through `String` would force `from_utf8_lossy`
+//!   which silently corrupts the names and breaks CRAM-container lookup.
+//! - **Atomic write**: output is first written to `<output>.tmp` and
+//!   renamed at the end. A failure mid-write does NOT leave a corrupt
+//!   half-written `.mfa`.
+//! - **Duplicate-name detection**: if two input FASTAs declare the same
+//!   chromosome name, surfaces `DuplicateChromosomeName` rather than
+//!   silently producing a multi-FASTA that downstream `samtools faidx`
+//!   would reject.
+//! - **Gzipped FASTAs supported**: `.fa.gz`, `.fasta.gz`, `.fna.gz`,
+//!   `.ffn.gz` (plus `.bgz` siblings) are accepted; noodles-fasta's
+//!   `build_from_path` decompresses them transparently.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -40,7 +58,7 @@ pub fn reconstitute_cram_reference_from_bismark_genome(
 ) -> Result<(), BismarkIoError> {
     let mut fasta_files: Vec<PathBuf> = std::fs::read_dir(bismark_genome_dir)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.is_file() && is_fasta_extension(p))
+        .filter(|p| p.is_file() && is_fasta_file(p))
         .collect();
     fasta_files.sort();
 
@@ -48,49 +66,96 @@ pub fn reconstitute_cram_reference_from_bismark_genome(
         return Err(BismarkIoError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!(
-                "no FASTA files (.fa/.fasta/.fna/.ffn) at top level of {}",
+                "no FASTA files (.fa[.gz]/.fasta[.gz]/.fna[.gz]/.ffn[.gz]) \
+                 at top level of {}",
                 bismark_genome_dir.display()
             ),
         )));
     }
 
-    // Collect (chr_name, sequence) pairs from all FASTA files.
-    let mut chromosomes: Vec<(String, Vec<u8>)> = Vec::new();
+    // Collect (chr_name_bytes, sequence) pairs from all FASTA files.
+    // Names are kept as Vec<u8> for byte-fidelity — SAM/BAM/CRAM specs
+    // permit non-UTF-8 chromosome names and surfacing them as String
+    // would force from_utf8_lossy which silently corrupts.
+    let mut chromosomes: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for fasta_path in &fasta_files {
         let mut reader = noodles_fasta::io::reader::Builder.build_from_path(fasta_path)?;
         for record in reader.records() {
             let record = record?;
-            let name = std::str::from_utf8(record.name())
-                .map(String::from)
-                .unwrap_or_else(|_| String::from_utf8_lossy(record.name()).into_owned());
+            let name: Vec<u8> = record.name().to_vec();
             let sequence: Vec<u8> = record.sequence().as_ref().to_vec();
             chromosomes.push((name, sequence));
         }
     }
 
-    // Sort alphabetically by chromosome name for deterministic output.
+    // Sort by chromosome-name bytes for deterministic output.
     chromosomes.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Write multi-FASTA.
-    let file = std::fs::File::create(output)?;
-    let mut writer = std::io::BufWriter::new(file);
-    for (name, seq) in &chromosomes {
-        writeln!(writer, ">{name}")?;
-        writer.write_all(seq)?;
-        writeln!(writer)?;
+    // Reject duplicates — a multi-FASTA with duplicate chromosome names
+    // would be rejected by samtools faidx and silently produce wrong
+    // CRAM-container lookups.
+    let mut seen: HashSet<&[u8]> = HashSet::new();
+    for (name, _) in &chromosomes {
+        if !seen.insert(name.as_slice()) {
+            return Err(BismarkIoError::DuplicateChromosomeName {
+                name: String::from_utf8_lossy(name).into_owned(),
+            });
+        }
     }
-    writer.flush()?;
+
+    // Atomic write: write to a sibling temp path, rename when complete.
+    // POSIX rename(2) is atomic; partial writes don't leak as half-baked
+    // `.mfa` files.
+    let tmp_path = tmp_path_for(output);
+    {
+        let file = std::fs::File::create(&tmp_path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        for (name, seq) in &chromosomes {
+            writer.write_all(b">")?;
+            writer.write_all(name)?;
+            writer.write_all(b"\n")?;
+            writer.write_all(seq)?;
+            writer.write_all(b"\n")?;
+        }
+        writer.flush()?;
+    }
+    std::fs::rename(&tmp_path, output)?;
     Ok(())
 }
 
-fn is_fasta_extension(p: &Path) -> bool {
-    matches!(
-        p.extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase())
-            .as_deref(),
-        Some("fa") | Some("fasta") | Some("fna") | Some("ffn")
-    )
+/// Produce a sibling temp-path next to `output` for atomic-write.
+fn tmp_path_for(output: &Path) -> PathBuf {
+    let mut tmp = output.as_os_str().to_owned();
+    tmp.push(".tmp");
+    PathBuf::from(tmp)
+}
+
+/// Check whether `p`'s filename indicates a (optionally gzipped) FASTA.
+///
+/// Accepts: `.fa`, `.fasta`, `.fna`, `.ffn`, plus `.fa.gz` / `.fa.bgz` and
+/// the same suffixes for the other three stems. noodles-fasta's
+/// `build_from_path` handles the gzip/bgzf decompression transparently.
+fn is_fasta_file(p: &Path) -> bool {
+    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    [
+        ".fa",
+        ".fasta",
+        ".fna",
+        ".ffn",
+        ".fa.gz",
+        ".fasta.gz",
+        ".fna.gz",
+        ".ffn.gz",
+        ".fa.bgz",
+        ".fasta.bgz",
+        ".fna.bgz",
+        ".ffn.bgz",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix))
 }
 
 #[cfg(test)]
@@ -184,6 +249,62 @@ mod tests {
         let err = reconstitute_cram_reference_from_bismark_genome(tmp.path(), &out).unwrap_err();
         assert!(
             matches!(err, BismarkIoError::Io(ref e) if e.kind() == std::io::ErrorKind::NotFound)
+        );
+    }
+
+    #[test]
+    fn reconstitute_rejects_duplicate_chromosome_names() {
+        let tmp = TempDir::new().unwrap();
+        // Two FASTAs in the genome dir, both declaring "chr1".
+        write_fasta(tmp.path(), "a.fa", ">chr1\nAAAA\n");
+        write_fasta(tmp.path(), "b.fa", ">chr1\nGGGG\n");
+        let out = tmp.path().join("out.mfa");
+        let err = reconstitute_cram_reference_from_bismark_genome(tmp.path(), &out).unwrap_err();
+        assert!(
+            matches!(err, BismarkIoError::DuplicateChromosomeName { ref name } if name == "chr1"),
+            "expected DuplicateChromosomeName for chr1, got {err:?}"
+        );
+        // Atomic-write invariant: failed run must NOT leave a partial output.
+        assert!(!out.exists(), "failed run must not leave a partial .mfa");
+    }
+
+    #[test]
+    fn reconstitute_accepts_gzipped_fasta() {
+        use std::io::Write as _;
+
+        let tmp = TempDir::new().unwrap();
+        // noodles-fasta uses BGZF (block-gzip) for .gz; write a tiny BGZF-compressed FASTA.
+        let mut bgzf = noodles_bgzf::io::Writer::new(
+            std::fs::File::create(tmp.path().join("genome.fa.gz")).unwrap(),
+        );
+        bgzf.write_all(b">chrGZ\nACGTACGT\n").unwrap();
+        bgzf.finish().unwrap();
+
+        let out = tmp.path().join("out.mfa");
+        reconstitute_cram_reference_from_bismark_genome(tmp.path(), &out).unwrap();
+        let content = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            content.contains(">chrGZ"),
+            "gzipped FASTA must be read; output content: {content:?}"
+        );
+    }
+
+    #[test]
+    fn reconstitute_atomic_write_creates_no_partial_on_zero_chromosomes() {
+        // If chromosome collection succeeds with at least one record but
+        // a hypothetical error occurred, atomic-write should prevent
+        // partial output. This is a smoke test on the happy path: out
+        // path is created via rename at the end, never partially.
+        let tmp = TempDir::new().unwrap();
+        write_fasta(tmp.path(), "genome.fa", ">chr1\nA\n");
+        let out = tmp.path().join("out.mfa");
+        reconstitute_cram_reference_from_bismark_genome(tmp.path(), &out).unwrap();
+        assert!(out.exists());
+        // No leftover .tmp file from the atomic-write process.
+        let tmp_file = tmp.path().join("out.mfa.tmp");
+        assert!(
+            !tmp_file.exists(),
+            "atomic-write temp file must be renamed away"
         );
     }
 

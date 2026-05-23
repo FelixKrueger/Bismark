@@ -71,8 +71,24 @@ pub enum BismarkIoError {
     UnsortedInput,
 
     /// A CRAM operation was requested but no reference FASTA was supplied.
-    #[error("CRAM reference required for {0}")]
+    /// Pass the reference via the binary's `--cram_ref <path>` flag.
+    #[error("CRAM reference required for {0} (pass --cram_ref <path>)")]
     MissingCramReference(PathBuf),
+
+    /// A FASTA was supplied as the CRAM reference but it has no `.fai`
+    /// index sidecar. Generate one with `samtools faidx <fasta>` (or
+    /// equivalent) and retry.
+    #[error("FASTA index (.fai) missing for CRAM reference: {0} — generate with `samtools faidx`")]
+    MissingFastaIndex(PathBuf),
+
+    /// The reconstituted multi-FASTA would contain duplicate chromosome
+    /// names because multiple input FASTAs declared the same chromosome.
+    /// Inspect the Bismark genome directory.
+    #[error(
+        "duplicate chromosome name in reconstituted reference: {name} \
+         (multiple input FASTAs in the Bismark genome directory declared this chromosome)"
+    )]
+    DuplicateChromosomeName { name: String },
 
     /// The given file path does not have a recognised BAM/SAM/CRAM
     /// extension.

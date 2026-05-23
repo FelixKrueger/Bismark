@@ -231,8 +231,15 @@ impl<R: Read + Seek> CramReader<R> {
 }
 
 /// Build a noodles-fasta `Repository` from a FASTA path. Requires a `.fai`
-/// sidecar alongside the FASTA.
+/// sidecar alongside the FASTA; surfaces `MissingFastaIndex` with an
+/// actionable hint if the sidecar is missing.
 fn build_fasta_repository(cram_ref: &Path) -> Result<Repository, BismarkIoError> {
+    let mut fai_path = cram_ref.as_os_str().to_owned();
+    fai_path.push(".fai");
+    let fai_path = std::path::PathBuf::from(fai_path);
+    if !fai_path.exists() {
+        return Err(BismarkIoError::MissingFastaIndex(fai_path));
+    }
     let indexed_reader =
         noodles_fasta::io::indexed_reader::Builder::default().build_from_path(cram_ref)?;
     Ok(Repository::new(IndexedFastaAdapter::new(indexed_reader)))
@@ -556,15 +563,17 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
     }
 
     #[test]
-    fn cram_reader_from_path_missing_file_errors() {
-        // We don't have a CRAM fixture to test full round-trip; the
-        // construction error path is testable via a nonexistent path.
-        // Real CRAM round-trip tests land in Phase F integration tests.
+    fn cram_reader_from_path_missing_fai_errors() {
+        // The .fai existence check short-circuits before the cram is opened.
+        // For a nonexistent cram_ref path, the .fai sibling also doesn't
+        // exist → MissingFastaIndex with the .fai path embedded.
         let nonexistent_cram = Path::new("/tmp/bismark_io_definitely_nonexistent_88912.cram");
         let nonexistent_ref = Path::new("/tmp/bismark_io_definitely_nonexistent_88912.fa");
         let err = expect_err(CramReader::from_path(nonexistent_cram, nonexistent_ref));
-        // Either Io (file not found for cram_ref or cram itself) — both
-        // surface as BismarkIoError::Io.
-        assert!(matches!(err, BismarkIoError::Io(_)));
+        assert!(
+            matches!(err, BismarkIoError::MissingFastaIndex(_)),
+            "expected MissingFastaIndex (the .fai sidecar of the nonexistent ref \
+             doesn't exist), got {err:?}"
+        );
     }
 }
