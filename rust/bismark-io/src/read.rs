@@ -40,6 +40,8 @@ use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::Path;
 
 use noodles_sam::Header;
+
+use crate::cram_ref::build_fasta_repository;
 use noodles_sam::alignment::RecordBuf;
 use noodles_sam::header::record::value::map::header::sort_order::COORDINATE;
 use noodles_sam::header::record::value::map::header::tag::SORT_ORDER;
@@ -228,9 +230,8 @@ impl<R: Read + Seek> CramReader<R> {
     }
 }
 
-// `build_fasta_repository` lives in `crate::cram_ref` so both reader and
-// writer can share it.
-use crate::cram_ref::build_fasta_repository;
+// `build_fasta_repository` is imported at the top of this file; it lives
+// in `crate::cram_ref` so both reader and writer can share it.
 
 /// Path-dispatching reader that returns the concrete reader for the
 /// detected alignment kind. Use when the input format is determined at

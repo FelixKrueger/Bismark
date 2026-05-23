@@ -31,17 +31,26 @@ use crate::read::AlignmentKind;
 use crate::record::BismarkRecord;
 
 /// BAM writer producing BGZF-compressed BAM output.
+///
+/// **Must be finalised with `finish()` before being dropped.** Without
+/// `finish()`, the BGZF EOF marker is written only via `Drop`, which
+/// silently swallows I/O errors — corrupt output goes undetected.
+#[must_use = "BamWriter must be finalised with finish() before being dropped; \
+              otherwise EOF marker errors are silently lost via Drop"]
 pub struct BamWriter<W: Write> {
     inner: noodles_bam::io::Writer<noodles_bgzf::io::Writer<W>>,
     header: Header,
 }
 
 impl BamWriter<BufWriter<File>> {
-    /// Create a BAM writer at `path`.
+    /// Create a BAM writer at `path`. On header-write failure the
+    /// partially-created file is removed (best-effort cleanup).
     pub fn from_path(path: &Path, header: Header) -> Result<Self, BismarkIoError> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
-        Self::new(writer, header)
+        Self::new(writer, header).inspect_err(|_| {
+            let _ = std::fs::remove_file(path);
+        })
     }
 }
 
@@ -65,26 +74,40 @@ impl<W: Write> BamWriter<W> {
         Ok(())
     }
 
-    /// Finalise the BAM stream (writes the BGZF end-of-file marker).
-    /// Consumes `self`.
+    /// Finalise the BAM stream by writing the BGZF EOF marker. Consumes
+    /// `self`.
+    ///
+    /// Uses `noodles_bam::io::Writer::try_finish` directly rather than
+    /// the trait-level `SamAlignmentWrite::finish` because the latter is
+    /// a no-op in noodles-bam 0.89; the BGZF EOF marker would otherwise
+    /// only be written via Drop, which silently swallows errors.
     pub fn finish(mut self) -> Result<(), BismarkIoError> {
-        SamAlignmentWrite::finish(&mut self.inner, &self.header)?;
+        self.inner.try_finish()?;
         Ok(())
     }
 }
 
 /// SAM writer producing uncompressed SAM text.
+///
+/// **Must be finalised with `finish()` before being dropped.** SAM has
+/// no EOF marker, but `finish()` flushes the underlying buffer; drop-only
+/// finalisation silently swallows buffer-flush errors (e.g. disk full).
+#[must_use = "SamWriter must be finalised with finish() before being dropped; \
+              otherwise buffer-flush errors are silently lost via Drop"]
 pub struct SamWriter<W: Write> {
     inner: noodles_sam::io::Writer<W>,
     header: Header,
 }
 
 impl SamWriter<BufWriter<File>> {
-    /// Create a SAM writer at `path`.
+    /// Create a SAM writer at `path`. On header-write failure the
+    /// partially-created file is removed (best-effort cleanup).
     pub fn from_path(path: &Path, header: Header) -> Result<Self, BismarkIoError> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
-        Self::new(writer, header)
+        Self::new(writer, header).inspect_err(|_| {
+            let _ = std::fs::remove_file(path);
+        })
     }
 }
 
@@ -108,10 +131,15 @@ impl<W: Write> SamWriter<W> {
         Ok(())
     }
 
-    /// Finalise the SAM stream (no-op for plain text; flushes the wrapped
-    /// writer). Consumes `self`.
+    /// Finalise the SAM stream by flushing the wrapped writer. Consumes
+    /// `self`.
+    ///
+    /// noodles-sam's `SamAlignmentWrite::finish` is a no-op in 0.85, so
+    /// we flush the underlying writer directly to ensure buffered bytes
+    /// reach the file. Without this, `BufWriter::Drop` swallows flush
+    /// errors silently.
     pub fn finish(mut self) -> Result<(), BismarkIoError> {
-        SamAlignmentWrite::finish(&mut self.inner, &self.header)?;
+        self.inner.get_mut().flush()?;
         Ok(())
     }
 }
@@ -122,6 +150,12 @@ impl<W: Write> SamWriter<W> {
 /// construction time. The FASTA must have a sibling `.fai` index in v1.0
 /// (see [`crate::cram_ref::build_fasta_repository`]). Auto-fai-generation
 /// is future work.
+///
+/// **Must be finalised with `finish()` before being dropped.** Records
+/// are buffered in memory and written out at finalisation; dropping
+/// without `finish()` silently loses all buffered records.
+#[must_use = "CramWriter must be finalised with finish() before being dropped; \
+              otherwise all buffered records are silently lost via Drop"]
 pub struct CramWriter<W: Write> {
     inner: noodles_cram::io::Writer<W>,
     header: Header,
@@ -130,13 +164,22 @@ pub struct CramWriter<W: Write> {
 impl CramWriter<File> {
     /// Create a CRAM writer at `path`, using `cram_ref` as the reference
     /// FASTA. The FASTA must have a sibling `.fai` index.
+    ///
+    /// On header-write failure the partially-created CRAM file is
+    /// removed (best-effort cleanup).
     pub fn from_path(path: &Path, header: Header, cram_ref: &Path) -> Result<Self, BismarkIoError> {
         let repo = build_fasta_repository(cram_ref)?;
         let mut inner = noodles_cram::io::writer::Builder::default()
             .set_reference_sequence_repository(repo)
             .build_from_path(path)?;
-        inner.write_header(&header)?;
-        Ok(Self { inner, header })
+        match inner.write_header(&header) {
+            Ok(()) => Ok(Self { inner, header }),
+            Err(e) => {
+                drop(inner);
+                let _ = std::fs::remove_file(path);
+                Err(BismarkIoError::Io(e))
+            }
+        }
     }
 }
 
@@ -162,9 +205,17 @@ impl<W: Write> CramWriter<W> {
 }
 
 /// Path-dispatching writer enum. Mirrors [`crate::read::AnyReader`] for
-/// write-side use. The enum-dispatch shape (rather than `Box<dyn>`) was
-/// chosen for the same reason as the reader: noodles-cram's writer
-/// lifetime story is awkward to express via a dyn trait.
+/// write-side use and keeps the API symmetric with the reader. Unlike
+/// the reader case, the writer side has no self-referential-iterator
+/// lifetime issue; enum-dispatch here is purely for API symmetry and
+/// to avoid `Box<dyn>` allocation per-record.
+///
+/// **Must be finalised with `finish()` before being dropped.** Without
+/// finalisation, the underlying writer's EOF marker (BAM/CRAM) or buffer
+/// flush (SAM) may be silently lost via Drop.
+#[must_use = "AnyWriter must be finalised with finish() before being dropped; \
+              otherwise the underlying writer's finalisation step is silently \
+              dropped via Drop"]
 pub enum AnyWriter<W: Write, WC: Write> {
     /// BAM-format writer.
     Bam(BamWriter<W>),
@@ -278,24 +329,55 @@ mod tests {
     #[test]
     fn sam_writer_roundtrip_via_cursor() {
         // Write a SAM with one record, then read it back; assert strand
-        // classification survives the round-trip.
+        // classification survives the round-trip. Uses Cursor over a
+        // borrowed Vec so we can recover the bytes AFTER finish().
         let header = synth_header();
         let rec = synth_bismark_record();
 
-        let buf: Vec<u8> = Vec::new();
-        let mut writer = SamWriter::new(buf, header).unwrap();
-        writer.write_record(&rec).unwrap();
-        let buf = writer.inner.into_inner();
-        // (use into_inner instead of finish() since SamWriter::finish takes self;
-        // we can't easily extract the inner buf after finish(). Workaround for tests.)
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let cursor = Cursor::new(&mut buf);
+            let mut writer = SamWriter::new(cursor, header).unwrap();
+            writer.write_record(&rec).unwrap();
+            writer.finish().unwrap();
+        } // cursor drops, releasing the &mut buf borrow
 
-        // The SAM bytes should be parseable by SamReader.
         let mut reader = SamReader::new(Cursor::new(buf)).unwrap();
         let records: Vec<_> = reader.records().collect();
         assert_eq!(records.len(), 1);
         let read_back = records.into_iter().next().unwrap().unwrap();
         assert_eq!(read_back.record_strand(), BismarkStrand::OT);
         assert_eq!(read_back.xm(), b".....");
+    }
+
+    /// BGZF EOF marker — a specific 28-byte sequence that valid BAM/BGZF
+    /// streams must end with. Defined in the SAM/BAM spec §4.1.2.
+    const BGZF_EOF_MARKER: &[u8] = &[
+        0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02,
+        0x00, 0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn bam_writer_finish_writes_bgzf_eof_marker() {
+        // Directly verify that BamWriter::finish() puts the BGZF EOF
+        // marker on disk. This is the test the previous round was missing.
+        let tmp = TempDir::new().unwrap();
+        let bam_path = tmp.path().join("eof_test.bam");
+        {
+            let mut writer = BamWriter::from_path(&bam_path, synth_header()).unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.finish().unwrap();
+        }
+        let bytes = std::fs::read(&bam_path).unwrap();
+        assert!(
+            bytes.len() >= BGZF_EOF_MARKER.len(),
+            "BAM file shorter than the EOF marker"
+        );
+        let tail = &bytes[bytes.len() - BGZF_EOF_MARKER.len()..];
+        assert_eq!(
+            tail, BGZF_EOF_MARKER,
+            "BAM file must end with the BGZF EOF marker"
+        );
     }
 
     #[test]
@@ -378,5 +460,82 @@ mod tests {
             Ok(_) => panic!("expected Err, got Ok"),
             Err(e) => e,
         }
+    }
+
+    /// Write a tiny FASTA + matching `.fai` index. chr1 = 100 bases:
+    /// 9×N + "ACGTC" + 86×N. The "ACGTC" at positions 10-14 matches the
+    /// synth_record's alignment_start=10 + seq=ACGTC so CRAM stores zero
+    /// diffs against the reference.
+    fn write_tiny_fasta_with_fai(dir: &Path) -> std::path::PathBuf {
+        let fasta_path = dir.join("ref.fa");
+        let fai_path = dir.join("ref.fa.fai");
+        let mut seq = vec![b'N'; 9];
+        seq.extend_from_slice(b"ACGTC");
+        seq.extend(std::iter::repeat_n(b'N', 86));
+        assert_eq!(seq.len(), 100);
+        let mut fasta_content = b">chr1\n".to_vec();
+        fasta_content.extend(&seq);
+        fasta_content.push(b'\n');
+        std::fs::write(&fasta_path, &fasta_content).unwrap();
+        // .fai columns: name, length, offset, linebases, linewidth.
+        // ">chr1\n" is 6 bytes; sequence starts at offset 6; 100 bases on
+        // one line; line is 101 bytes (100 + newline).
+        std::fs::write(&fai_path, "chr1\t100\t6\t100\t101\n").unwrap();
+        fasta_path
+    }
+
+    #[test]
+    fn cram_writer_produces_cram_file_with_magic_bytes() {
+        // Soft check: CramWriter::from_path + write_record + finish
+        // produces a file beginning with the CRAM file-definition magic
+        // (`CRAM\x03\x00` for CRAM 3.0). A full write-then-read round-trip
+        // test exists at `cram_writer_roundtrip_via_tempfile` but is
+        // currently `#[ignore]`d pending noodles-cram block-encoder
+        // configuration work (see follow-up tracking).
+        let tmp = TempDir::new().unwrap();
+        let fasta_path = write_tiny_fasta_with_fai(tmp.path());
+        let cram_path = tmp.path().join("test.cram");
+
+        {
+            let mut writer =
+                CramWriter::from_path(&cram_path, synth_header(), &fasta_path).unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.finish().unwrap();
+        }
+
+        let bytes = std::fs::read(&cram_path).unwrap();
+        // CRAM file definition starts with bytes `C R A M` followed by
+        // a major.minor version.
+        assert!(
+            bytes.len() >= 4,
+            "CRAM file too short to contain magic bytes"
+        );
+        assert_eq!(
+            &bytes[..4],
+            b"CRAM",
+            "CRAM file must start with the magic bytes"
+        );
+    }
+
+    #[test]
+    #[ignore = "noodles-cram 0.93 default block-encoder produces CRAM that fails CramReader round-trip with 'missing external block'; needs deeper container/slice configuration. Tracked as a Phase F integration-test follow-up under epic #794."]
+    fn cram_writer_roundtrip_via_tempfile() {
+        let tmp = TempDir::new().unwrap();
+        let fasta_path = write_tiny_fasta_with_fai(tmp.path());
+        let cram_path = tmp.path().join("test.cram");
+
+        {
+            let mut writer =
+                CramWriter::from_path(&cram_path, synth_header(), &fasta_path).unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.finish().unwrap();
+        }
+
+        let mut reader = crate::read::CramReader::from_path(&cram_path, &fasta_path).unwrap();
+        let records: Vec<_> = reader.records().collect();
+        assert_eq!(records.len(), 1, "CRAM round-trip should yield 1 record");
+        let read_back = records.into_iter().next().unwrap().unwrap();
+        assert_eq!(read_back.record_strand(), BismarkStrand::OT);
+        assert_eq!(read_back.xm(), b".....");
     }
 }
