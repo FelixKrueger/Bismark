@@ -49,20 +49,16 @@ impl BismarkPair {
             });
         }
 
-        let r1_name: Vec<u8> = r1
-            .inner()
-            .name()
-            .map(|n| <_ as AsRef<[u8]>>::as_ref(n).to_vec())
-            .unwrap_or_default();
-        let r2_name: Vec<u8> = r2
-            .inner()
-            .name()
-            .map(|n| <_ as AsRef<[u8]>>::as_ref(n).to_vec())
-            .unwrap_or_default();
-        if r1_name != r2_name {
+        // Borrow-compare first; only allocate on the error path. At 27M+
+        // pairs from a typical PE WGBS run the cheap-path matters.
+        let r1_name_opt = r1.inner().name();
+        let r2_name_opt = r2.inner().name();
+        let r1_bytes: &[u8] = r1_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));
+        let r2_bytes: &[u8] = r2_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));
+        if r1_bytes != r2_bytes {
             return Err(BismarkIoError::MateMismatch {
-                r1_qname: r1_name,
-                r2_qname: r2_name,
+                r1_qname: r1_bytes.to_vec(),
+                r2_qname: r2_bytes.to_vec(),
             });
         }
 

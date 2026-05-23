@@ -15,11 +15,6 @@ use std::path::PathBuf;
 /// variants.
 #[derive(Debug, thiserror::Error)]
 pub enum BismarkIoError {
-    /// A SAM/BAM record could not be parsed at all (noodles reported it
-    /// malformed, or our parsing layer found something irrecoverable).
-    #[error("malformed BAM/SAM record at offset {offset}: {reason}")]
-    MalformedRecord { offset: u64, reason: String },
-
     /// A required Bismark optional tag is absent from the record.
     ///
     /// `XR:Z:` and `XG:Z:` are required by `BismarkRecord` construction.

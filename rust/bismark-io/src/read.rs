@@ -194,6 +194,21 @@ fn check_not_coordinate_sorted(header: &Header) -> Result<(), BismarkIoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bstr::BString;
+    use noodles_sam::header::record::value::Map;
+    use noodles_sam::header::record::value::map::header::Version;
+    use std::io::Cursor;
+
+    /// Build a SAM header with the given SO value (or no SO if `so` is None).
+    fn header_with_sort_order(so: Option<&[u8]>) -> Header {
+        let mut hd =
+            Map::<noodles_sam::header::record::value::map::Header>::new(Version::new(1, 6));
+        if let Some(so_bytes) = so {
+            hd.other_fields_mut()
+                .insert(SORT_ORDER, BString::from(so_bytes.to_vec()));
+        }
+        noodles_sam::Header::builder().set_header(hd).build()
+    }
 
     #[test]
     fn alignment_kind_from_path_bam() {
@@ -233,5 +248,96 @@ mod tests {
     fn alignment_kind_from_path_no_extension_errors() {
         let err = AlignmentKind::from_path(Path::new("noext")).unwrap_err();
         assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    }
+
+    #[test]
+    fn check_not_coordinate_sorted_rejects_coordinate() {
+        let header = header_with_sort_order(Some(b"coordinate"));
+        let err = check_not_coordinate_sorted(&header).unwrap_err();
+        assert!(matches!(err, BismarkIoError::UnsortedInput));
+    }
+
+    #[test]
+    fn check_not_coordinate_sorted_allows_queryname() {
+        let header = header_with_sort_order(Some(b"queryname"));
+        assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    #[test]
+    fn check_not_coordinate_sorted_allows_unsorted() {
+        let header = header_with_sort_order(Some(b"unsorted"));
+        assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    #[test]
+    fn check_not_coordinate_sorted_allows_unknown() {
+        let header = header_with_sort_order(Some(b"unknown"));
+        assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    #[test]
+    fn check_not_coordinate_sorted_allows_no_so_field() {
+        let header = header_with_sort_order(None);
+        assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    #[test]
+    fn check_not_coordinate_sorted_allows_no_hd_at_all() {
+        // A header with no @HD record at all (Default header).
+        let header = noodles_sam::Header::default();
+        assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    /// Minimal SAM bytes with a single mapped record carrying valid Bismark
+    /// tags. Useful for iterator-level integration tests.
+    const SAM_ONE_MAPPED: &[u8] = b"@HD\tVN:1.6\tSO:unsorted\n\
+@SQ\tSN:chr1\tLN:1000\n\
+read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\tXG:Z:CT\n";
+
+    /// SAM with one mapped + one unmapped record. Unmapped has FLAG 0x4.
+    const SAM_MAPPED_AND_UNMAPPED: &[u8] = b"@HD\tVN:1.6\tSO:unsorted\n\
+@SQ\tSN:chr1\tLN:1000\n\
+mapped_read\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\tXG:Z:CT\n\
+unmapped_read\t4\t*\t0\t0\t*\t*\t0\t0\tACGTC\tIIIII\n";
+
+    /// SAM with one record that is missing the XR tag entirely.
+    const SAM_MISSING_XR: &[u8] = b"@HD\tVN:1.6\tSO:unsorted\n\
+@SQ\tSN:chr1\tLN:1000\n\
+read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
+
+    #[test]
+    fn sam_reader_yields_mapped_record() {
+        let mut reader = SamReader::new(Cursor::new(SAM_ONE_MAPPED)).unwrap();
+        let records: Vec<_> = reader.records().collect();
+        assert_eq!(records.len(), 1);
+        let rec = records.into_iter().next().unwrap().unwrap();
+        assert_eq!(rec.record_strand(), crate::BismarkStrand::OT);
+    }
+
+    #[test]
+    fn sam_reader_silently_drops_unmapped_records() {
+        let mut reader = SamReader::new(Cursor::new(SAM_MAPPED_AND_UNMAPPED)).unwrap();
+        let records: Vec<_> = reader.records().collect();
+        // Only the mapped record should appear; unmapped is silently filtered.
+        assert_eq!(
+            records.len(),
+            1,
+            "unmapped read (FLAG & 0x4) must be silently dropped, not surfaced"
+        );
+        let rec = records.into_iter().next().unwrap().unwrap();
+        // Verify it's the mapped one by checking we got a successful BismarkRecord.
+        let _ = rec.record_strand();
+    }
+
+    #[test]
+    fn sam_reader_propagates_missing_tag_error() {
+        let mut reader = SamReader::new(Cursor::new(SAM_MISSING_XR)).unwrap();
+        let records: Vec<_> = reader.records().collect();
+        assert_eq!(records.len(), 1);
+        let err = records.into_iter().next().unwrap().unwrap_err();
+        assert!(
+            matches!(err, BismarkIoError::MissingTag { tag: "XR" }),
+            "expected MissingTag {{ tag: \"XR\" }}, got {err:?}"
+        );
     }
 }
