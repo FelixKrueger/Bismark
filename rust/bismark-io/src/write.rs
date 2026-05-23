@@ -496,10 +496,8 @@ mod tests {
     fn cram_writer_produces_cram_file_with_magic_bytes() {
         // Soft check: CramWriter::from_path + write_record + finish
         // produces a file beginning with the CRAM file-definition magic
-        // (`CRAM\x03\x00` for CRAM 3.0). A full write-then-read round-trip
-        // test exists at `cram_writer_roundtrip_via_tempfile` but is
-        // currently `#[ignore]`d pending noodles-cram block-encoder
-        // configuration work (see follow-up tracking).
+        // (`CRAM\x03\x00` for CRAM 3.0). The full write-then-read round-trip
+        // is exercised by `cram_writer_roundtrip_via_tempfile` below.
         let tmp = TempDir::new().unwrap();
         let fasta_path = write_tiny_fasta_with_fai(tmp.path());
         let cram_path = tmp.path().join("test.cram");
@@ -571,10 +569,14 @@ mod tests {
                 .expect("synthetic record has a name"),
         );
         assert_eq!(qname_bytes, b"read1", "qname survives CRAM round-trip");
+        // Byte-equality on the sequence: stronger than length-only check.
+        // CRAM reference-based compression decodes against the fixture
+        // FASTA, which has "ACGTC" at positions 10..14 — so the round-trip
+        // must recover those exact bytes.
         assert_eq!(
-            read_back.inner().sequence().as_ref().len(),
-            5,
-            "sequence length survives CRAM round-trip"
+            read_back.inner().sequence().as_ref(),
+            b"ACGTC",
+            "sequence bytes survive CRAM reference-based round-trip"
         );
     }
 }
