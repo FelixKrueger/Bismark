@@ -6,7 +6,7 @@
 //! `test_files/README.md`; it is generated once by Bismark Perl v0.25.1
 //! and committed.
 
-use bismark_io::{BamReader, BismarkStrand, ReadIdentity};
+use bismark_io::{BamReader, BismarkPair, BismarkStrand, ReadIdentity};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -48,8 +48,10 @@ fn fixture_bam_strand_distribution_matches_perl_output() {
     //   55 CTOT   (XR:GA XG:CT)  -- R2 of OT-pairs
     //   47 OB     (XR:CT XG:GA)  -- R1 of OB-pairs
     //   46 CTOB   (XR:GA XG:GA)  -- R2 of OB-pairs
-    //                            ^- 1 fewer than R1 count because the
-    //                            head-208 cutoff included an extra R1.
+    // Totals: R1 = 55 + 47 = 102; R2 = 55 + 46 = 101.
+    // The head-208 cutoff (8 header lines + 200 alignment) crossed the
+    // pair boundary slightly, leaving +2 extra R1 and +1 extra R2 over
+    // 100 pairs.
     let mut reader = BamReader::from_path(&fixture_path()).expect("open fixture BAM");
     let mut counts: HashMap<BismarkStrand, usize> = HashMap::new();
     for rec in reader.records() {
@@ -77,14 +79,115 @@ fn fixture_bam_read_identity_decoding() {
             ReadIdentity::Single => se_count += 1,
         }
     }
-    // 100 PE pairs = 100 R1 + 100 R2; +3 extra R1 from the head-208 cutoff
-    // (the tail of the subset has unmatched R1 records).
+    // 100 PE pairs + boundary effects from the head-208 cutoff:
+    // R1 = 102 (= 55 OT + 47 OB), R2 = 101 (= 55 CTOT + 46 CTOB).
+    // SE = 0 (PE library never produces SE records).
     assert_eq!(se_count, 0, "PE library should never produce SE records");
-    // R1 count = OT R1 + OB R1 + 3 extra = 55 + 47 + ? Let's check what we got.
-    assert!(r1_count >= 100, "expected >=100 R1 records, got {r1_count}");
-    assert!(r2_count >= 100, "expected >=100 R2 records, got {r2_count}");
-    // Together they equal the total record count.
-    assert_eq!(r1_count + r2_count, 203);
+    assert_eq!(
+        r1_count, 102,
+        "expected exactly 102 R1 records, got {r1_count}"
+    );
+    assert_eq!(
+        r2_count, 101,
+        "expected exactly 101 R2 records, got {r2_count}"
+    );
+    // Together they equal the total record count (no SE).
+    let total_records: usize = {
+        let mut reader = BamReader::from_path(&fixture_path()).expect("open fixture BAM");
+        reader.records().count()
+    };
+    assert_eq!(r1_count + r2_count, total_records);
+}
+
+#[test]
+fn fixture_bam_pair_strand_counts_directional_library() {
+    // PLAN.md §Phase F2: read the fixture, build BismarkPair instances
+    // from adjacent R1/R2 records, verify pair_strand counts.
+    //
+    // For a directional library (this fixture):
+    //   - Every successfully-paired R1+R2 must have pair_strand of either
+    //     OT or OB. NEVER CTOT or CTOB (those only appear in non-
+    //     directional libraries).
+    //   - Specifically: 55 OT-pairs, 46 OB-pairs = 101 complete pairs.
+    //     (R2 count is 101; R1 has 1 extra unpaired at the tail.)
+    let mut reader = BamReader::from_path(&fixture_path()).expect("open fixture BAM");
+    let records: Vec<_> = reader
+        .records()
+        .map(|r| r.expect("record classification"))
+        .collect();
+
+    let mut pair_strand_counts: HashMap<BismarkStrand, usize> = HashMap::new();
+    let mut unpaired = 0usize;
+
+    // Walk the records pair-by-pair (Bismark output is name-grouped, so
+    // consecutive R1 + R2 with matching qname form a pair).
+    let mut i = 0;
+    while i < records.len() {
+        if i + 1 < records.len()
+            && records[i].read_identity() == ReadIdentity::R1
+            && records[i + 1].read_identity() == ReadIdentity::R2
+        {
+            let r1 = records[i].clone();
+            let r2 = records[i + 1].clone();
+            match BismarkPair::from_mates(r1, r2) {
+                Ok(pair) => {
+                    *pair_strand_counts.entry(pair.pair_strand()).or_insert(0) += 1;
+                    i += 2;
+                    continue;
+                }
+                Err(_) => {
+                    unpaired += 1;
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        unpaired += 1;
+        i += 1;
+    }
+
+    let total_pairs: usize = pair_strand_counts.values().sum();
+    assert_eq!(
+        total_pairs, 101,
+        "expected 101 complete pairs, got {total_pairs}"
+    );
+    assert_eq!(
+        unpaired, 1,
+        "expected exactly 1 unpaired record (the extra R1 at the tail), got {unpaired}"
+    );
+
+    // The structural-correctness promise: directional libraries produce
+    // ONLY OT and OB pair-strands. CTOT and CTOB pair-strands appear
+    // only in non-directional library prep.
+    assert_eq!(
+        pair_strand_counts
+            .get(&BismarkStrand::CTOT)
+            .copied()
+            .unwrap_or(0),
+        0,
+        "directional library must have zero CTOT-pairs"
+    );
+    assert_eq!(
+        pair_strand_counts
+            .get(&BismarkStrand::CTOB)
+            .copied()
+            .unwrap_or(0),
+        0,
+        "directional library must have zero CTOB-pairs"
+    );
+
+    // OT-pairs + OB-pairs should account for all pairs.
+    let ot = pair_strand_counts
+        .get(&BismarkStrand::OT)
+        .copied()
+        .unwrap_or(0);
+    let ob = pair_strand_counts
+        .get(&BismarkStrand::OB)
+        .copied()
+        .unwrap_or(0);
+    assert_eq!(ot, 55, "expected 55 OT-pairs, got {ot}");
+    assert_eq!(ob, 46, "expected 46 OB-pairs, got {ob}");
+    assert_eq!(ot + ob, total_pairs);
 }
 
 #[test]

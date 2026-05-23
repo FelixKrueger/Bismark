@@ -95,30 +95,53 @@ fn cigar_strategy() -> impl Strategy<Value = Cigar> {
     prop::collection::vec(cigar_op(), 0..=20).prop_map(Cigar::from)
 }
 
+/// Ground-truth `(consumes_reference, consumes_read)` table per CIGAR
+/// op kind, derived directly from the SAM/BAM spec §1.4.6 — NOT from
+/// our implementation. Used as an independent ground truth for the
+/// `cigar_spans_account_for_all_consumed_bytes` property so it detects
+/// implementation drift rather than tautologically matching the impl's
+/// match arms.
+const CIGAR_CONSUMPTION_GROUND_TRUTH: &[(Kind, bool, bool)] = &[
+    // (op kind, consumes_ref, consumes_read)
+    (Kind::Match, true, true),
+    (Kind::Insertion, false, true),
+    (Kind::Deletion, true, false),
+    (Kind::Skip, true, false),
+    (Kind::SoftClip, false, true),
+    (Kind::HardClip, false, false),
+    (Kind::Pad, false, false),
+    (Kind::SequenceMatch, true, true),
+    (Kind::SequenceMismatch, true, true),
+];
+
+fn ground_truth_consumes(kind: Kind) -> (bool, bool) {
+    CIGAR_CONSUMPTION_GROUND_TRUTH
+        .iter()
+        .find(|(k, _, _)| *k == kind)
+        .map(|&(_, cr, cq)| (cr, cq))
+        .expect("all CIGAR Kind variants enumerated in ground truth table")
+}
+
 proptest! {
-    /// `reference_span` + `read_span` consistency:
-    /// for any op, the sum (ref_consumed + read_consumed) for op-types
-    /// that consume both equals 2*len (we count it in both sums); for
-    /// ref-only ops we count in ref-span only; for read-only ops we
-    /// count in read-span only. Specifically: total bytes accounted-for
-    /// = sum over ops of (ref_consumed + read_consumed) — and this
-    /// equals reference_span() + read_span().
+    /// `reference_span` + `read_span` consistency against an independent
+    /// ground-truth table derived from the SAM/BAM spec §1.4.6.
+    ///
+    /// This property catches implementation drift in `CigarExt`: if a
+    /// future change miscategorises a CIGAR op (e.g. swapping
+    /// `Insertion` ↔ `Deletion`), the ground truth here stays fixed and
+    /// the test fails. The table is the spec, not our match arms.
     #[test]
     fn cigar_spans_account_for_all_consumed_bytes(cigar in cigar_strategy()) {
         let ref_span = cigar.reference_span();
         let read_span = cigar.read_span();
 
-        // Independently compute the expected sums op-by-op.
         let (expected_ref, expected_read) = cigar.as_ref().iter().fold(
             (0usize, 0usize),
             |(r, q), op| {
+                let (consumes_ref, consumes_read) = ground_truth_consumes(op.kind());
                 let len = op.len();
-                let (dr, dq) = match op.kind() {
-                    Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => (len, len),
-                    Kind::Insertion | Kind::SoftClip => (0, len),
-                    Kind::Deletion | Kind::Skip => (len, 0),
-                    Kind::HardClip | Kind::Pad => (0, 0),
-                };
+                let dr = if consumes_ref { len } else { 0 };
+                let dq = if consumes_read { len } else { 0 };
                 (r + dr, q + dq)
             },
         );

@@ -7,7 +7,18 @@ A 22 KB Bismark-Perl-generated BAM, used by the integration test
 
 ### How it was generated
 
-Bismark Perl v0.25.1, against the existing repo-level test fixtures:
+Pinned tool versions used at fixture-generation time (2026-05-23):
+
+- **Bismark Perl v0.25.1**
+- **bowtie2 2.4.5** (the aligner Bismark uses)
+- **samtools 1.21** (used by Bismark for BAM I/O + the `head|samtools view` subsetting step)
+
+Regenerating with substantially different versions of any of these may
+produce a slightly different BAM (different `@PG` lines, possibly
+different alignment ties), in which case the integration-test
+assertions on exact record counts will need updating to match.
+
+Against the existing repo-level test fixtures:
 
 ```bash
 # 1. Decompress the genome and run Bismark genome preparation.
@@ -33,7 +44,7 @@ samtools view -h /tmp/work/test_R1_bismark_bt2_pe.bam \
 ### What the fixture contains
 
 - **Header**: `@HD VN:1.0 SO:unsorted`, single `@SQ` for `Ecoli_K12`, Bismark `@PG`.
-- **203 alignment records** total (100 R1 + matching R2, plus one extra R1 at the tail from the head-208 cutoff). All mapped.
+- **203 alignment records** total: 102 R1 + 101 R2 (boundary effects from the head-208 cutoff: +2 extra R1, +1 extra R2 over the 100 complete pairs). All mapped.
 - **Strand variety** (per-record `XR/XG` distribution):
   - 55 records `XR:Z:CT XG:Z:CT` → `BismarkStrand::OT` (R1 of OT-pairs)
   - 55 records `XR:Z:GA XG:Z:CT` → `BismarkStrand::CTOT` (R2 of OT-pairs)
