@@ -154,6 +154,14 @@ impl ThreadedBamWriter {
     /// on the inner BGZF writer (via `get_mut`). This is the parallel
     /// equivalent of [`BamWriter::finish`]'s `try_finish` call — both
     /// produce a valid BAM file ending in the canonical BGZF EOF marker.
+    ///
+    /// **Drop interaction**: after `finish()` returns, the
+    /// `MultithreadedWriter`'s internal state transitions to `Done`.
+    /// The subsequent `Drop` (when `self` falls out of scope) is a
+    /// no-op for the BGZF layer — it does not attempt to re-write the
+    /// EOF marker or re-flush pending blocks. This avoids the silent-
+    /// double-finalise bug that would arise if Drop ran the same logic
+    /// `finish()` already did.
     pub fn finish(mut self) -> Result<(), BismarkIoError> {
         // `noodles_bam::io::Writer::get_mut` exposes the inner BGZF writer.
         // For the MultithreadedWriter, `finish()` produces the EOF marker

@@ -39,8 +39,11 @@ identically to v1.0.0-beta.1.
   Same `#[must_use]` finalisation contract as `BamWriter`. The BGZF
   EOF marker is verified-equivalent to single-threaded output by the
   `threaded_bam_writer_finish_writes_bgzf_eof_marker` test. Block
-  boundaries on disk may differ between threaded and single-threaded
-  output, but the **decoded record stream is byte-identical**.
+  boundaries on disk **will** differ between threaded and single-threaded
+  output (different worker assignment patterns produce different block
+  sizes), but the **decoded record stream is byte-identical** — which is
+  what byte-identity gates in downstream consumers (e.g. bismark-dedup's
+  Phase F gate against Perl baseline) actually check.
 
 - 7 new tests covering: order preservation, strand classification
   preservation, EOF-marker validity, threaded-writer→single-threaded-reader
