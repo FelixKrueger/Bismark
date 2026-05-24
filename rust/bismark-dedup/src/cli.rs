@@ -118,6 +118,14 @@ pub struct ResolvedConfig {
     pub output_dir: PathBuf,
     /// `--multiple` mode flag.
     pub multiple: bool,
+    /// BGZF decoder/encoder worker thread count. `1` = single-threaded
+    /// (the v1.0 default; honoured by [`pipeline::run_single`]).
+    /// `> 1` enables BGZF parallel decode + encode for BAM input/output
+    /// via [`pipeline::run_single_parallel`]. `0` is rejected at
+    /// [`Cli::validate`]. Ignored for SAM (no BGZF) and CRAM (CRAM
+    /// container decode isn't BGZF-based; v1.1 falls back to
+    /// single-threaded + emits a one-line stderr warning).
+    pub parallel: usize,
 }
 
 impl Cli {
@@ -127,8 +135,10 @@ impl Cli {
     /// Reject (in priority order):
     /// 1. `--representative` → [`BismarkDedupError::RepresentativeRemoved`]
     /// 2. `--barcode` / `--bclconvert` → [`BismarkDedupError::UnsupportedFlagV1`]
-    /// 3. Empty `files` → [`BismarkDedupError::NoInputFiles`]
-    /// 4. `--outfile` with `>1` files and no `--multiple` →
+    /// 3. `--parallel 0` → [`BismarkDedupError::InvalidParallelValue`]
+    ///    (clap's `u32` parser accepts 0; explicit check needed here)
+    /// 4. Empty `files` → [`BismarkDedupError::NoInputFiles`]
+    /// 5. `--outfile` with `>1` files and no `--multiple` →
     ///    [`BismarkDedupError::OutfileWithMultipleInputs`]
     ///
     /// `--single` / `--paired` are mutually exclusive (enforced by clap
@@ -143,6 +153,9 @@ impl Cli {
         }
         if self.bclconvert {
             return Err(BismarkDedupError::UnsupportedFlagV1 { flag: "bclconvert" });
+        }
+        if self.parallel == 0 {
+            return Err(BismarkDedupError::InvalidParallelValue { value: 0 });
         }
         if self.files.is_empty() {
             return Err(BismarkDedupError::NoInputFiles);
@@ -161,9 +174,8 @@ impl Cli {
             (true, true) => unreachable!("clap conflicts_with prevents this"),
         };
 
-        // --parallel and --samtools_path are silently accepted and ignored
-        // (matches Perl's silence on --parallel). No warning needed.
-        let _ = self.parallel;
+        // --samtools_path is silently accepted and ignored (no warning;
+        // bismark-io is pure-Rust). --parallel is honoured in v1.1.
         let _ = self.samtools_path;
         let _ = self.bam; // implicit default; --sam overrides.
 
@@ -175,6 +187,7 @@ impl Cli {
             outfile: self.outfile,
             output_dir: self.output_dir,
             multiple: self.multiple,
+            parallel: self.parallel as usize,
         })
     }
 }

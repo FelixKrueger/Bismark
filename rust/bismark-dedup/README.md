@@ -2,7 +2,9 @@
 
 Rust port of [Bismark](https://github.com/FelixKrueger/Bismark)'s `deduplicate_bismark` script — removes PCR-duplicate alignments from Bismark BAM/SAM/CRAM files.
 
-**Status:** v1.0.0-beta.1 — feature-complete, byte-identical to Bismark Perl v0.25.1's output on real WGBS data; first public pre-release on crates.io. The beta is functionally identical to what 1.0.0 will ship; published as beta to allow integration feedback before the immutable 1.0.0 lands. See [`CHANGELOG.md`](./CHANGELOG.md).
+**Status:** v1.1.0-beta.1 — adds BGZF-threaded BAM I/O behind `--parallel N`
+while preserving every byte-identity guarantee from v1.0.0-beta.1. See
+[`CHANGELOG.md`](./CHANGELOG.md).
 
 ## What it does
 
@@ -48,7 +50,25 @@ deduplicate_bismark_rs --sam --paired sample.bam
 
 # CRAM input/output (mirrors input format):
 deduplicate_bismark_rs --paired --cram_ref genome.fa sample.cram
+
+# v1.1: parallel BGZF (de)compression for BAM input/output:
+deduplicate_bismark_rs --paired --parallel 4 sample_bismark_bt2_pe.bam
 ```
+
+### `--parallel N` (v1.1)
+
+`--parallel N` parallelises the BGZF (de)compression step for BAM inputs
+and outputs using `noodles_bgzf::MultithreadedReader` / `MultithreadedWriter`.
+The dedup state itself remains single-threaded — byte-identity with the
+single-threaded path is preserved.
+
+- **BAM only.** CRAM input or output with `--parallel N > 1` emits a
+  one-line stderr warning and runs single-threaded. The parallel path is
+  scheduled to gain CRAM support in a later release.
+- **N = 0 is rejected** at CLI-validate time (`--parallel must be ≥ 1`).
+  `N = 1` takes the existing single-threaded path.
+- **Same output as N = 1.** Retained-qname set, PE pair adjacency, and
+  report bytes are unchanged regardless of N.
 
 ### Flag reference
 
@@ -65,7 +85,7 @@ deduplicate_bismark_rs --paired --cram_ref genome.fa sample.cram
 | `--multiple` | Treat all positional inputs as one combined sample |
 | `--barcode`, `--umi` | **Not in v1.0** — errors with v1.1 deferral message |
 | `--bclconvert` | **Not in v1.0** — errors with v1.1 deferral message |
-| `--parallel <N>` | Accepted for compat, silently ignored (single-threaded in v1.0) |
+| `--parallel <N>` | v1.1: parallel BGZF (de)compression workers for BAM I/O (`N ≥ 1`). CRAM falls back to single-threaded with a warning. |
 | `--samtools_path <PATH>` | Accepted for compat, silently ignored (`bismark-dedup` is pure-Rust) |
 | `--representative` | Errors with Perl-verbatim joke (deprecated upstream) |
 | `-V`, `--version` | Print provenance string and exit |
@@ -97,10 +117,10 @@ BISMARK_REAL_DATA_DIR=/path/to/dataset/ \
 
 (Default: `~/Desktop/TrimG_Bismark_test/profiling/`. Skips with explicit reason if dataset absent.)
 
-## Out of scope for v1.0 (deferred to v1.1+)
+## Out of scope (still deferred)
 
-- **UMI / RRBS mode** (`--barcode`, `--umi`, `--bclconvert`) — use Bismark Perl `deduplicate_bismark` for these workflows.
-- **Multi-threading** (`--parallel N > 1`) — single-threaded in v1.0; rayon-based chunked dedup deferred to v1.1.
+- **UMI / RRBS mode** (`--barcode`, `--umi`, `--bclconvert`) — use Bismark Perl `deduplicate_bismark` for these workflows. Scheduled for a later v1.x.
+- **CRAM parallelism** — `--parallel N` is BAM-only in v1.1; CRAM input or output falls back to single-threaded with a warning.
 - **Sorted-input auto-handling** — coordinate-sorted PE input is rejected with a clear "re-sort with `samtools sort -n` first" error message rather than auto-sorting.
 
 ## Using as a library in other tools
@@ -111,7 +131,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bismark-dedup = "=1.0.0-beta.1"
+bismark-dedup = "=1.1.0-beta.1"
 ```
 
 End-to-end example — dedup a Bismark BAM from within your own Rust pipeline:
@@ -137,6 +157,31 @@ fn dedup_bam(input: &Path, output: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+Threaded variant (v1.1 — BGZF-parallel BAM I/O):
+
+```rust
+use bismark_dedup::pipeline::run_single_parallel;
+use std::num::NonZero;
+use std::path::Path;
+
+fn dedup_bam_threaded(input: &Path, output: &Path) -> anyhow::Result<()> {
+    let parallel = NonZero::new(4).unwrap();
+    let report = run_single_parallel(
+        input,
+        output,
+        /* is_paired = */ true,
+        input.display().to_string(),
+        parallel,
+    )?;
+    println!("{}", report.format());
+    Ok(())
+}
+```
+
+Note: `run_single_parallel` / `run_multiple_parallel` are **BAM-only** —
+the threaded path does not accept SAM or CRAM input. Use `run_single` /
+`run_multiple` for non-BAM inputs, or for `parallel == 1`.
 
 Multi-file mode (one combined sample across N input BAMs):
 
@@ -202,7 +247,7 @@ cargo build --release --package bismark-dedup
 
 `bismark-dedup` depends on:
 
-- [`bismark-io`](../bismark-io/README.md) (path dep, version `=1.0.0-beta.1`) — Bismark-aware BAM/SAM/CRAM I/O on top of noodles.
+- [`bismark-io`](../bismark-io/README.md) (path dep, version `=1.0.0-beta.2`) — Bismark-aware BAM/SAM/CRAM I/O on top of noodles.
 - [`clap`](https://crates.io/crates/clap) `=4.5.30` — CLI parsing
 - [`rustc-hash`](https://crates.io/crates/rustc-hash) `=2.1.0` — `FxHashSet` for dedup-key storage
 - [`thiserror`](https://crates.io/crates/thiserror) `=2.0.0` — typed errors

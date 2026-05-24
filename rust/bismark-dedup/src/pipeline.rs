@@ -262,18 +262,39 @@ fn qname_lossy(record: &BismarkRecord) -> String {
         .unwrap_or_default()
 }
 
+/// Internal trait abstracting "write one BismarkRecord" across the
+/// single-threaded [`AnyWriter`] and the v1.1 threaded
+/// [`bismark_io::ThreadedBamWriter`]. Lets `stream_se` / `stream_pe`
+/// be generic over the writer type — same dedup logic, different
+/// underlying BGZF concurrency.
+trait WriteBismark {
+    fn write_one(&mut self, record: &BismarkRecord) -> Result<(), bismark_io::BismarkIoError>;
+}
+
+impl WriteBismark for Writer {
+    fn write_one(&mut self, record: &BismarkRecord) -> Result<(), bismark_io::BismarkIoError> {
+        AnyWriter::write_record(self, record)
+    }
+}
+
+impl WriteBismark for bismark_io::ThreadedBamWriter {
+    fn write_one(&mut self, record: &BismarkRecord) -> Result<(), bismark_io::BismarkIoError> {
+        bismark_io::ThreadedBamWriter::write_record(self, record)
+    }
+}
+
 /// Stream SE records: per-record, compute key, observe, write on unique.
-fn stream_se(
+fn stream_se<W: WriteBismark>(
     records: impl Iterator<Item = Result<BismarkRecord, bismark_io::BismarkIoError>>,
     refid_table: &[u32],
     state: &mut DedupState,
-    writer: &mut Writer,
+    writer: &mut W,
 ) -> Result<(), BismarkDedupError> {
     for record_result in records {
         let record = record_result?;
         let key = compute_se_key(&record, refid_table)?;
         if state.observe(key) {
-            writer.write_record(&record)?;
+            writer.write_one(&record)?;
         }
     }
     Ok(())
@@ -282,11 +303,11 @@ fn stream_se(
 /// Stream PE records: pair two adjacent records at a time via
 /// [`BismarkPair::from_mates`] (qname-equality + R1/R2 read-identity
 /// enforced there); compute key, observe, write **both** mates on unique.
-fn stream_pe(
+fn stream_pe<W: WriteBismark>(
     records: impl Iterator<Item = Result<BismarkRecord, bismark_io::BismarkIoError>>,
     refid_table: &[u32],
     state: &mut DedupState,
-    writer: &mut Writer,
+    writer: &mut W,
 ) -> Result<(), BismarkDedupError> {
     let mut iter = records;
     loop {
@@ -312,8 +333,8 @@ fn stream_pe(
         let pair = BismarkPair::from_mates(r1, r2)?;
         let key = compute_pe_key(&pair, refid_table)?;
         if state.observe(key) {
-            writer.write_record(pair.r1())?;
-            writer.write_record(pair.r2())?;
+            writer.write_one(pair.r1())?;
+            writer.write_one(pair.r2())?;
         }
     }
     Ok(())
@@ -463,6 +484,157 @@ pub fn run_multiple(
     }
 
     // Stream subsequent files (empty is OK — they just contribute no records).
+    for (i_zero_based, mut reader) in readers_iter.enumerate() {
+        let i = i_zero_based + 1;
+        let records = reader.records();
+        if is_paired {
+            stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+        } else {
+            stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+        }
+    }
+
+    writer.finish()?;
+    Ok(state.into_report(file_label))
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// v1.1: parallel BAM I/O via noodles' MultithreadedReader/Writer.
+//
+// `run_single_parallel` and `run_multiple_parallel` are the threaded
+// counterparts to `run_single` / `run_multiple`. They:
+//
+// - Accept BAM input + BAM output ONLY (caller must dispatch SAM and CRAM
+//   to the single-threaded `run_single` / `run_multiple`).
+// - Take a `parallel: NonZero<usize>` worker count.
+// - Reuse all of: peek-before-writer-open, chr-name interning,
+//   stream_se / stream_pe, DedupState semantics. The ONLY difference
+//   from `run_single` / `run_multiple` is the reader/writer construction
+//   (`ThreadedBamReader::from_path` + `ThreadedBamWriter::from_path`).
+//
+// Library API note: these are NEW functions, not modifications to
+// `run_single` / `run_multiple`. External library consumers of v1.0
+// continue to use the existing functions unchanged.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Run dedup on a single BAM input with `parallel` BGZF decoder/encoder
+/// worker threads. **BAM input + BAM output only** — caller must
+/// dispatch SAM / CRAM to the single-threaded [`run_single`].
+///
+/// All other semantics are identical to [`run_single`]:
+/// - Peek-before-writer-open empty-input detection
+/// - Chr-name interning by BString
+/// - PE pair adjacency via [`BismarkPair::from_mates`]
+/// - Same report bytes
+///
+/// New in `bismark-dedup` v1.1.0-beta.1.
+pub fn run_single_parallel(
+    input: &Path,
+    output: &Path,
+    is_paired: bool,
+    file_label: String,
+    parallel: std::num::NonZero<usize>,
+) -> Result<DedupReport, BismarkDedupError> {
+    let mut reader = bismark_io::ThreadedBamReader::from_path(input, parallel)?;
+    let header = reader.header().clone();
+
+    // Peek first record before opening writer.
+    let mut records = reader.records().peekable();
+    if records.peek().is_none() {
+        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
+    }
+
+    let intern = build_chr_intern(&header);
+    let refid_table = build_refid_table(&header, &intern);
+
+    let mut writer = bismark_io::ThreadedBamWriter::from_path(output, header, parallel)?;
+    let mut state = DedupState::new();
+
+    if is_paired {
+        stream_pe(records, &refid_table, &mut state, &mut writer)?;
+    } else {
+        stream_se(records, &refid_table, &mut state, &mut writer)?;
+    }
+
+    writer.finish()?;
+    Ok(state.into_report(file_label))
+}
+
+/// Run dedup on multiple BAM inputs combined into one sample, with
+/// `parallel` BGZF decoder/encoder worker threads. **BAM input + BAM
+/// output only.**
+///
+/// All inputs must share format (BAM) AND share `@SQ` name set, same
+/// as [`run_multiple`]'s contract.
+///
+/// New in `bismark-dedup` v1.1.0-beta.1.
+pub fn run_multiple_parallel(
+    inputs: &[PathBuf],
+    output: &Path,
+    is_paired: bool,
+    file_label: String,
+    parallel: std::num::NonZero<usize>,
+) -> Result<DedupReport, BismarkDedupError> {
+    if inputs.is_empty() {
+        return Err(BismarkDedupError::EmptyInput(PathBuf::new()));
+    }
+    if inputs.len() == 1 {
+        return run_single_parallel(&inputs[0], output, is_paired, file_label, parallel);
+    }
+
+    // All inputs must be BAM (caller dispatches CRAM/SAM to single-threaded).
+    // For safety, verify here.
+    for path in inputs {
+        if bismark_io::AlignmentKind::from_path(path)? != bismark_io::AlignmentKind::Bam {
+            return Err(BismarkDedupError::MultipleMixedFormat);
+        }
+    }
+
+    // Open all readers (threaded) and capture their headers up front.
+    let mut readers: Vec<bismark_io::ThreadedBamReader> = inputs
+        .iter()
+        .map(|p| bismark_io::ThreadedBamReader::from_path(p, parallel))
+        .collect::<Result<Vec<_>, _>>()?;
+    let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
+
+    // Build intern from file1; validate all others.
+    let intern = build_chr_intern(&headers[0]);
+    for (i, header) in headers.iter().enumerate().skip(1) {
+        validate_chr_consistency(&inputs[i], header, &intern)?;
+    }
+
+    let refid_tables: Vec<Vec<u32>> = headers
+        .iter()
+        .map(|h| build_refid_table(h, &intern))
+        .collect();
+
+    // Peek file1's first record BEFORE opening the writer (matches the
+    // single-threaded run_multiple's no-output-on-empty-file1 invariant).
+    let mut readers_iter = readers.drain(..);
+    let mut first_reader = readers_iter
+        .next()
+        .expect("inputs.is_empty() checked above; readers has ≥1 element");
+    let first_record: BismarkRecord = {
+        let mut peek_iter = first_reader.records();
+        match peek_iter.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
+        }
+    };
+
+    let mut writer =
+        bismark_io::ThreadedBamWriter::from_path(output, headers[0].clone(), parallel)?;
+    let mut state = DedupState::new();
+
+    let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
+        .chain(first_reader.records());
+    if is_paired {
+        stream_pe(combined, &refid_tables[0], &mut state, &mut writer)?;
+    } else {
+        stream_se(combined, &refid_tables[0], &mut state, &mut writer)?;
+    }
+
     for (i_zero_based, mut reader) in readers_iter.enumerate() {
         let i = i_zero_based + 1;
         let records = reader.records();

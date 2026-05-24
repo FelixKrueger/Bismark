@@ -657,3 +657,256 @@ fn pe_dedup_report_with_no_duplicates_renders_zero_percent() {
     );
     assert_eq!(report, expected);
 }
+
+// ────────── v1.1: --parallel N tests (BGZF-threaded BAM I/O) ──────────
+
+/// PE dedup with `--parallel 4` produces the same retained-qname set as
+/// `--parallel 1`. The headline equivalence check for the v1.1 threaded
+/// path (PLAN rev 2 V3).
+#[test]
+fn pe_parallel_4_produces_same_qname_set_as_single_threaded() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+
+    // Build a fixture with enough pairs to span multiple BGZF blocks.
+    // Each record is ~200 bytes; 250 pairs × 2 = 500 records ≈ 100 KB,
+    // comfortably more than 1 BGZF block (~64 KB compressed).
+    let mut records = Vec::new();
+    for i in 0..250 {
+        records.extend(ot_pair(&format!("u{i}"), 1000 + i * 100, 1100 + i * 100));
+    }
+    // Inject 3 duplicates at known positions.
+    records.extend(ot_pair("dup_a", 1000, 1100));
+    records.extend(ot_pair("dup_b", 2000, 2100));
+    records.extend(ot_pair("dup_c", 5000, 5100));
+    write_bam(&input, &records);
+
+    // Run with --parallel 1 (single-threaded path).
+    let out1 = dir.path().join("single");
+    std::fs::create_dir_all(&out1).unwrap();
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("1")
+        .arg("--output_dir")
+        .arg(&out1)
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Run with --parallel 4 (threaded path).
+    let out4 = dir.path().join("threaded");
+    std::fs::create_dir_all(&out4).unwrap();
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--output_dir")
+        .arg(&out4)
+        .arg(&input)
+        .assert()
+        .success();
+
+    let single_qnames: HashSet<String> = read_qnames(&out1.join("input.deduplicated.bam"))
+        .into_iter()
+        .collect();
+    let threaded_qnames: HashSet<String> = read_qnames(&out4.join("input.deduplicated.bam"))
+        .into_iter()
+        .collect();
+
+    assert_eq!(
+        threaded_qnames, single_qnames,
+        "--parallel 4 must produce same retained-qname set as --parallel 1"
+    );
+    assert_eq!(
+        threaded_qnames.len(),
+        250,
+        "250 unique pairs retained (3 dups removed)"
+    );
+}
+
+/// Same equivalence check for SE mode.
+#[test]
+fn se_parallel_4_produces_same_qname_set_as_single_threaded() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+
+    let mut records = Vec::new();
+    for i in 0..500 {
+        records.push(se_ot(&format!("u{i}"), 1000 + i * 100));
+    }
+    records.push(se_ot("dup_a", 1000));
+    records.push(se_ot("dup_b", 2000));
+    write_bam(&input, &records);
+
+    let out1 = dir.path().join("single");
+    std::fs::create_dir_all(&out1).unwrap();
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--single")
+        .arg("--parallel")
+        .arg("1")
+        .arg("--output_dir")
+        .arg(&out1)
+        .arg(&input)
+        .assert()
+        .success();
+
+    let out4 = dir.path().join("threaded");
+    std::fs::create_dir_all(&out4).unwrap();
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--single")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--output_dir")
+        .arg(&out4)
+        .arg(&input)
+        .assert()
+        .success();
+
+    let single: HashSet<String> = read_qnames(&out1.join("input.deduplicated.bam"))
+        .into_iter()
+        .collect();
+    let threaded: HashSet<String> = read_qnames(&out4.join("input.deduplicated.bam"))
+        .into_iter()
+        .collect();
+    assert_eq!(threaded, single);
+    assert_eq!(threaded.len(), 500);
+}
+
+/// `--multiple --parallel 4` produces the same retained-qname set as
+/// `--multiple --parallel 1`.
+#[test]
+fn multiple_parallel_4_produces_same_qname_set_as_single_threaded() {
+    let dir = TempDir::new().unwrap();
+    let input1 = dir.path().join("file1.bam");
+    let input2 = dir.path().join("file2.bam");
+
+    let mut f1 = Vec::new();
+    for i in 0..150 {
+        f1.extend(ot_pair(&format!("f1_u{i}"), 1000 + i * 100, 1100 + i * 100));
+    }
+    write_bam(&input1, &f1);
+
+    let mut f2 = Vec::new();
+    // Space file2 well above file1's range (1000..16000) to avoid
+    // unintended cross-file key collisions.
+    for i in 0..150 {
+        f2.extend(ot_pair(
+            &format!("f2_u{i}"),
+            100_000 + i * 100,
+            100_100 + i * 100,
+        ));
+    }
+    // Cross-file duplicate.
+    f2.extend(ot_pair("dup_of_f1_u0", 1000, 1100));
+    write_bam(&input2, &f2);
+
+    let out1 = dir.path().join("single");
+    std::fs::create_dir_all(&out1).unwrap();
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--multiple")
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("1")
+        .arg("--output_dir")
+        .arg(&out1)
+        .arg(&input1)
+        .arg(&input2)
+        .assert()
+        .success();
+
+    let out4 = dir.path().join("threaded");
+    std::fs::create_dir_all(&out4).unwrap();
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--multiple")
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--output_dir")
+        .arg(&out4)
+        .arg(&input1)
+        .arg(&input2)
+        .assert()
+        .success();
+
+    let single: HashSet<String> = read_qnames(&out1.join("file1.multiple.deduplicated.bam"))
+        .into_iter()
+        .collect();
+    let threaded: HashSet<String> = read_qnames(&out4.join("file1.multiple.deduplicated.bam"))
+        .into_iter()
+        .collect();
+    assert_eq!(threaded, single);
+    assert_eq!(
+        threaded.len(),
+        300,
+        "300 unique pairs retained (1 cross-file dup removed)"
+    );
+}
+
+/// PE pair adjacency (R1-then-R2) preserved under `--parallel 4`.
+#[test]
+fn pe_parallel_4_preserves_r1_followed_by_r2_adjacency() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    let mut records = Vec::new();
+    for i in 0..200 {
+        records.extend(ot_pair(
+            &format!("read_{i}"),
+            1000 + i * 100,
+            1100 + i * 100,
+        ));
+    }
+    write_bam(&input, &records);
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let out_records = read_records(&dir.path().join("input.deduplicated.bam"));
+    assert_eq!(out_records.len(), 400, "200 pairs × 2 = 400");
+    for (i, record) in out_records.iter().enumerate() {
+        let flags = u16::from(record.inner().flags());
+        if i % 2 == 0 {
+            assert!(
+                flags & 0x40 != 0,
+                "record {i} must be R1 under --parallel 4"
+            );
+        } else {
+            assert!(
+                flags & 0x80 != 0,
+                "record {i} must be R2 under --parallel 4"
+            );
+        }
+    }
+}
+
+/// `--parallel 0` is rejected at validate stage.
+#[test]
+fn parallel_zero_is_rejected_at_validate() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &ot_pair("u0", 1000, 1100));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("0")
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("must be ≥ 1"));
+}

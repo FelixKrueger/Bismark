@@ -125,6 +125,15 @@ pub enum BismarkDedupError {
         input: PathBuf,
     },
 
+    /// `--parallel N` was given with `N == 0`. Clap's `u32` parser accepts
+    /// 0 (since 0 is a valid `u32`), so an explicit validate-stage check
+    /// is needed.
+    #[error("--parallel must be ≥ 1 (got {value})")]
+    InvalidParallelValue {
+        /// The invalid value the user supplied.
+        value: u32,
+    },
+
     /// Direct `std::io::Error` from the orchestration layer (e.g. writing
     /// the report file).
     #[error("std I/O: {0}")]
