@@ -4,6 +4,68 @@ All notable changes to `bismark-dedup` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-beta.1] — 2026-05-24
+
+First v1.1 pre-release. Adds **BGZF-threaded BAM I/O** behind `--parallel N`,
+keeping every v1.0 byte-identity guarantee intact.
+
+### Added
+
+- **`--parallel N`** now does real work for BAM inputs/outputs. The flag
+  previously existed for CLI compatibility but was silently ignored; with
+  `N > 1` and BAM I/O, the pipeline now uses
+  `noodles_bgzf::MultithreadedReader`/`MultithreadedWriter` to parallelise
+  the BGZF (de)compression step.
+- **`pipeline::run_single_parallel`** and **`pipeline::run_multiple_parallel`** —
+  additive library entry points; existing `run_single`/`run_multiple`
+  retain their v1.0 signatures and single-threaded behaviour.
+- **Startup line** `BGZF threading: N worker(s) per reader/writer` printed
+  to stderr when the threaded path is taken, so users can confirm the
+  flag is in effect.
+- **CRAM fallback warning** — `--parallel N` with a CRAM input or output
+  emits a single-line stderr warning and runs single-threaded; the
+  parallel path is BAM-only in this release.
+- **Six new integration tests** in `tests/integration_dedup.rs`:
+  - `pe_parallel_4_produces_same_qname_set_as_single_threaded` (2000 PE pairs spanning multiple BGZF blocks)
+  - `se_parallel_4_produces_same_qname_set_as_single_threaded` (3000 SE reads)
+  - `multiple_parallel_4_produces_same_qname_set_as_single_threaded` (1000 pairs per file × 2 files)
+  - `pe_parallel_4_preserves_r1_followed_by_r2_adjacency` (1500 PE pairs)
+  - `parallel_zero_is_rejected_at_validate`
+  - `cram_with_parallel_n_logs_warning_and_runs_single_threaded` — verifies the CRAM fallback warning fires exactly once and the threaded-path startup banner does NOT appear (proving the warn-and-fall-back contract)
+- **Fixture-size guards** in each `--parallel` equivalence test:
+  `assert!(bam_size > 64 KiB)` to prevent future regressions that
+  would silently collapse the synthetic BAM into a single BGZF block
+  (leaving the `MultithreadedReader`'s in-order frame contract
+  unstressed). Fixtures use varied-base + varied-XM data to defeat
+  BGZF dictionary compression.
+
+### Changed
+
+- **`bismark-io` pin bumped to `=1.0.0-beta.2`** — additive: re-exports
+  `ThreadedBamReader` / `ThreadedBamWriter` used by the new entry points.
+
+### Validated
+
+- **`--parallel 0`** is now an explicit `InvalidParallelValue` error at
+  CLI-validate time. clap's `u32` parser previously accepted 0; the
+  validate stage rejects it before any I/O begins.
+
+### Byte-identity contract preserved
+
+- The retained-qname set under `--parallel N` is equal to the
+  single-threaded set across SE, PE, and `--multiple` modes (V3 of the
+  plan). PE pair adjacency is preserved by `MultithreadedReader`'s
+  in-order FIFO frame contract (V4).
+- The existing `byte_identity_real_data` gate (`#[ignore]`'d) is
+  unchanged and still passes; a `--parallel 4` variant against the same
+  10M PE WGBS baseline is scheduled for Phase C.
+
+### Out of scope (still deferred)
+
+- RRBS UMI dedup mode (`--barcode`/`--umi`/`--bclconvert`).
+- vergen-based provenance string in `--version`.
+- CRAM parallelism (current release is BAM-only for the threaded path).
+
 ## [1.0.0-beta.1] — 2026-05-24
 
 First **public pre-release** of `bismark-dedup`. Feature-complete and

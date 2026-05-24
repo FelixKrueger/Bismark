@@ -69,13 +69,35 @@ fn process_one(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkDedup
 
     eprintln!("Output file is: {}", out_path.display());
 
-    let report = pipeline::run_single(
-        input,
-        &out_path,
-        config.cram_ref.as_deref(),
-        is_paired,
-        file_label,
-    )?;
+    // v1.1: dispatch on AlignmentKind for the threaded path. BAM with
+    // parallel > 1 → run_single_parallel; CRAM with parallel > 1 →
+    // warn-and-fall-back to single-threaded; everything else →
+    // existing single-threaded run_single.
+    let kind = bismark_io::AlignmentKind::from_path(input)?;
+    let use_parallel = config.parallel > 1 && matches!(kind, bismark_io::AlignmentKind::Bam);
+
+    if config.parallel > 1 && matches!(kind, bismark_io::AlignmentKind::Cram) {
+        eprintln!(
+            "warning: --parallel {} is currently BAM-only; \
+             CRAM input/output runs single-threaded in this release",
+            config.parallel
+        );
+    }
+
+    let report = if use_parallel {
+        let parallel =
+            std::num::NonZero::new(config.parallel).expect("Cli::validate rejects parallel == 0");
+        eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
+        pipeline::run_single_parallel(input, &out_path, is_paired, file_label, parallel)?
+    } else {
+        pipeline::run_single(
+            input,
+            &out_path,
+            config.cram_ref.as_deref(),
+            is_paired,
+            file_label,
+        )?
+    };
     report.write_to(&report_path)?;
     eprintln!("{}", report.format());
     Ok(())
@@ -96,13 +118,42 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
     eprintln!();
     eprintln!("Output file is: {}", out_path.display());
 
-    let report = pipeline::run_multiple(
-        &config.files,
-        &out_path,
-        config.cram_ref.as_deref(),
-        is_paired,
-        file_label,
-    )?;
+    // v1.1: parallel dispatch. All-BAM inputs + parallel > 1 →
+    // run_multiple_parallel. Any CRAM with parallel > 1 → warn and fall
+    // back to single-threaded.
+    let kinds: Result<Vec<_>, _> = config
+        .files
+        .iter()
+        .map(|p| bismark_io::AlignmentKind::from_path(p))
+        .collect();
+    let kinds = kinds?;
+    let all_bam = kinds.iter().all(|k| *k == bismark_io::AlignmentKind::Bam);
+    let any_cram = kinds.contains(&bismark_io::AlignmentKind::Cram);
+
+    let use_parallel = config.parallel > 1 && all_bam;
+
+    if config.parallel > 1 && any_cram {
+        eprintln!(
+            "warning: --parallel {} is currently BAM-only; \
+             CRAM input/output runs single-threaded in this release",
+            config.parallel
+        );
+    }
+
+    let report = if use_parallel {
+        let parallel =
+            std::num::NonZero::new(config.parallel).expect("Cli::validate rejects parallel == 0");
+        eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
+        pipeline::run_multiple_parallel(&config.files, &out_path, is_paired, file_label, parallel)?
+    } else {
+        pipeline::run_multiple(
+            &config.files,
+            &out_path,
+            config.cram_ref.as_deref(),
+            is_paired,
+            file_label,
+        )?
+    };
     report.write_to(&report_path)?;
     eprintln!("{}", report.format());
     Ok(())
