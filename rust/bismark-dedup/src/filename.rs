@@ -24,11 +24,14 @@ use std::path::Path;
 /// 1. **Path-stripped** (`s/.*\///` — only the final path component
 ///    survives). So `--outfile /tmp/sample.bam` yields stem `sample`, NOT
 ///    `/tmp/sample`.
-/// 2. **Extension-stripped** — one trailing match from the ordered list
-///    `[".gz", ".sam", ".bam", ".txt"]` is removed. Only one is removed
-///    per call (`.txt.gz` becomes `.txt` after one call; the caller would
-///    need to call again to strip further — matching Perl's sequential
-///    `s///` chain at lines 227-230 / 578-581).
+/// 2. **Extension-stripped sequentially** — Perl's chain of four
+///    independent `s///` ops (`s/\.gz$//; s/\.sam$//; s/\.bam$//; s/\.txt$//`)
+///    applies each substitution to the result of the previous, so each
+///    can strip at most one trailing extension. The chain together can
+///    strip up to TWO extensions in practice (e.g. `.txt.gz` → strip
+///    `.gz` first → strip `.txt` → final stem). Implementation is a
+///    `for ext in [".gz", ".sam", ".bam", ".txt"]` loop with `strip_suffix`
+///    matching Perl's chain exactly.
 ///
 /// # Examples
 ///

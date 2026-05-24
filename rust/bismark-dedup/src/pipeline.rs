@@ -57,21 +57,22 @@ fn build_chr_intern(header: &Header) -> FxHashMap<BString, u32> {
 /// For single-file input this table is the identity `[0, 1, 2, ...]`.
 /// For multi-file `--multiple` with reordered `@SQ` across inputs, the
 /// values reflect the file1-derived intern map.
-fn build_refid_table(
-    header: &Header,
-    intern: &FxHashMap<BString, u32>,
-) -> Result<Vec<u32>, BismarkDedupError> {
+fn build_refid_table(header: &Header, intern: &FxHashMap<BString, u32>) -> Vec<u32> {
+    // Single-file: trivially `[0, 1, 2, ...]` because the intern was
+    // built from the same header. Multi-file: `validate_chr_consistency`
+    // ran first so every chr name in `header` IS in `intern`. Hence
+    // `expect` here is safe — a missing chr means an upstream invariant
+    // was violated, which is a programming error, not a user-input error.
     header
         .reference_sequences()
         .keys()
         .map(|name| {
-            intern
-                .get(name)
-                .copied()
-                .ok_or_else(|| BismarkDedupError::MultipleSqMismatch {
-                    offending_file: PathBuf::new(),
-                    missing_chrs: vec![format!("{name}")],
-                })
+            *intern.get(name).unwrap_or_else(|| {
+                panic!(
+                    "build_refid_table invariant violated: chr {name:?} not in intern; \
+                     callers must validate_chr_consistency first"
+                )
+            })
         })
         .collect()
 }
@@ -87,22 +88,21 @@ fn validate_chr_consistency(
     let this_names: std::collections::HashSet<&BString> =
         header.reference_sequences().keys().collect();
     let intern_names: std::collections::HashSet<&BString> = reference_intern.keys().collect();
-    let missing: Vec<String> = intern_names
+    let missing_chrs: Vec<String> = intern_names
         .difference(&this_names)
         .map(|n| format!("{n}"))
         .collect();
-    let extra: Vec<String> = this_names
+    let extra_chrs: Vec<String> = this_names
         .difference(&intern_names)
         .map(|n| format!("{n}"))
         .collect();
-    if missing.is_empty() && extra.is_empty() {
+    if missing_chrs.is_empty() && extra_chrs.is_empty() {
         Ok(())
     } else {
-        let mut combined = missing;
-        combined.extend(extra.into_iter().map(|n| format!("(extra) {n}")));
         Err(BismarkDedupError::MultipleSqMismatch {
             offending_file: offending_file.to_path_buf(),
-            missing_chrs: combined,
+            missing_chrs,
+            extra_chrs,
         })
     }
 }
@@ -123,7 +123,7 @@ fn compute_se_key(
     let refid =
         inner
             .reference_sequence_id()
-            .ok_or_else(|| BismarkDedupError::MissingAlignmentStart {
+            .ok_or_else(|| BismarkDedupError::MissingReferenceId {
                 qname: qname_lossy(record),
             })?;
     let chr_id = *refid_table
@@ -153,7 +153,7 @@ fn compute_pe_key(pair: &BismarkPair, refid_table: &[u32]) -> Result<DedupKey, B
     let r1 = pair.r1();
     let r2 = pair.r2();
     let refid = r1.inner().reference_sequence_id().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
+        BismarkDedupError::MissingReferenceId {
             qname: qname_lossy(r1),
         }
     })?;
@@ -285,7 +285,7 @@ pub fn run_single(
     }
 
     let intern = build_chr_intern(&header);
-    let refid_table = build_refid_table(&header, &intern)?;
+    let refid_table = build_refid_table(&header, &intern);
 
     let mut writer = bismark_io::open_writer(output, header, cram_ref)?;
     let mut state = DedupState::new();
@@ -352,7 +352,7 @@ pub fn run_multiple(
     let refid_tables: Vec<Vec<u32>> = headers
         .iter()
         .map(|h| build_refid_table(h, &intern))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
 
     // Peek file1 for empty before opening writer.
     {
@@ -384,6 +384,15 @@ pub fn run_multiple(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use noodles_core::Position;
+    use noodles_sam::alignment::RecordBuf;
+    use noodles_sam::alignment::record::Flags;
+    use noodles_sam::alignment::record::cigar::Op;
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::Cigar;
+    use noodles_sam::alignment::record_buf::Sequence;
+    use noodles_sam::alignment::record_buf::data::field::Value;
     use noodles_sam::header::record::value::Map;
     use noodles_sam::header::record::value::map::ReferenceSequence;
     use std::num::NonZeroUsize;
@@ -399,6 +408,43 @@ mod tests {
         header
     }
 
+    /// Build a synthetic `BismarkRecord` with the given strand, refid,
+    /// alignment_start, CIGAR ops, and read-identity flags. Sequence is
+    /// `"ACGTC"` and XM is `"....."` to satisfy the length-parity check.
+    fn synth_record(
+        xr: &[u8],
+        xg: &[u8],
+        refid: usize,
+        start: usize,
+        cigar_ops: &[(Kind, usize)],
+        flags: u16,
+    ) -> BismarkRecord {
+        let mut record = RecordBuf::default();
+        *record.name_mut() = Some(BString::from("read1".as_bytes().to_vec()));
+        *record.flags_mut() = Flags::from(flags);
+        *record.reference_sequence_id_mut() = Some(refid);
+        *record.alignment_start_mut() = Some(Position::try_from(start).unwrap());
+        *record.cigar_mut() = Cigar::from(
+            cigar_ops
+                .iter()
+                .map(|(k, n)| Op::new(*k, *n))
+                .collect::<Vec<_>>(),
+        );
+        *record.sequence_mut() = Sequence::from(b"ACGTC".to_vec());
+        *record.quality_scores_mut() =
+            noodles_sam::alignment::record_buf::QualityScores::from(vec![30u8; 5]);
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XR"), Value::String(BString::from(xr.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XG"), Value::String(BString::from(xg.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XM"), Value::String(BString::from(".....")));
+        BismarkRecord::from_noodles_record(record).unwrap()
+    }
+
     #[test]
     fn build_chr_intern_assigns_zero_based_indices_in_sq_order() {
         let header = header_with_chrs(&["chr1", "chr2", "chrX"]);
@@ -412,7 +458,7 @@ mod tests {
     fn build_refid_table_single_file_is_identity() {
         let header = header_with_chrs(&["chr1", "chr2", "chr3"]);
         let intern = build_chr_intern(&header);
-        let table = build_refid_table(&header, &intern).unwrap();
+        let table = build_refid_table(&header, &intern);
         assert_eq!(table, vec![0, 1, 2]);
     }
 
@@ -423,11 +469,22 @@ mod tests {
         // build_refid_table on file2 yields refid → file1's chr_id
         let intern = build_chr_intern(&header_with_chrs(&["chr1", "chr2", "chr3"]));
         let file2_header = header_with_chrs(&["chr2", "chr3", "chr1"]);
-        let table = build_refid_table(&file2_header, &intern).unwrap();
+        let table = build_refid_table(&file2_header, &intern);
         // file2 refid 0 (chr2) → file1's chr_id 1
         // file2 refid 1 (chr3) → file1's chr_id 2
         // file2 refid 2 (chr1) → file1's chr_id 0
         assert_eq!(table, vec![1, 2, 0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "invariant violated")]
+    fn build_refid_table_panics_if_called_without_validate_chr_consistency_first() {
+        // Defensive contract test: if a caller skips validate_chr_consistency
+        // and passes a header with chrs absent from the intern,
+        // build_refid_table panics with a clear invariant-violation message.
+        let intern = build_chr_intern(&header_with_chrs(&["chr1"]));
+        let other = header_with_chrs(&["chrX"]); // chrX not in intern
+        let _ = build_refid_table(&other, &intern);
     }
 
     #[test]
@@ -445,6 +502,7 @@ mod tests {
         match err {
             BismarkDedupError::MultipleSqMismatch {
                 missing_chrs,
+                extra_chrs,
                 offending_file,
             } => {
                 assert_eq!(offending_file, PathBuf::from("other.bam"));
@@ -452,6 +510,7 @@ mod tests {
                     missing_chrs.iter().any(|c| c == "chr3"),
                     "got: {missing_chrs:?}"
                 );
+                assert!(extra_chrs.is_empty(), "got extras: {extra_chrs:?}");
             }
             other => panic!("expected MultipleSqMismatch, got {other:?}"),
         }
@@ -463,14 +522,226 @@ mod tests {
         let other = header_with_chrs(&["chr1", "chr2", "chr3"]); // extra chr3
         let err = validate_chr_consistency(Path::new("other.bam"), &other, &intern).unwrap_err();
         match err {
-            BismarkDedupError::MultipleSqMismatch { missing_chrs, .. } => {
+            BismarkDedupError::MultipleSqMismatch {
+                missing_chrs,
+                extra_chrs,
+                ..
+            } => {
+                assert!(missing_chrs.is_empty(), "got missing: {missing_chrs:?}");
                 assert!(
-                    missing_chrs.iter().any(|c| c.contains("chr3")),
-                    "got: {missing_chrs:?}"
+                    extra_chrs.iter().any(|c| c == "chr3"),
+                    "got extras: {extra_chrs:?}"
                 );
             }
             other => panic!("expected MultipleSqMismatch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn validate_chr_consistency_reports_both_missing_and_extra() {
+        let intern = build_chr_intern(&header_with_chrs(&["chr1", "chr2"]));
+        let other = header_with_chrs(&["chr1", "chrX"]); // missing chr2 + extra chrX
+        let err = validate_chr_consistency(Path::new("other.bam"), &other, &intern).unwrap_err();
+        match err {
+            BismarkDedupError::MultipleSqMismatch {
+                missing_chrs,
+                extra_chrs,
+                ..
+            } => {
+                assert!(missing_chrs.iter().any(|c| c == "chr2"));
+                assert!(extra_chrs.iter().any(|c| c == "chrX"));
+            }
+            other => panic!("expected MultipleSqMismatch, got {other:?}"),
+        }
+    }
+
+    // ─── compute_se_key tests (one per strand) ─────────────────────────
+
+    #[test]
+    fn compute_se_key_ot_forward_uses_alignment_start_unchanged() {
+        // OT (forward): key_pos = alignment_start. Matches Perl line 343-344.
+        let record = synth_record(b"CT", b"CT", 0, 100, &[(Kind::Match, 50)], 0);
+        let key = compute_se_key(&record, &[0]).unwrap();
+        assert_eq!(key, DedupKey::se(BismarkStrand::OT, 0, 100));
+    }
+
+    #[test]
+    fn compute_se_key_ctob_forward_uses_alignment_start_unchanged() {
+        // CTOB (forward, despite "C" prefix): key_pos = alignment_start.
+        // Per Perl line 343 — index 0 (OT) AND index 2 (CTOB) both use start.
+        let record = synth_record(b"GA", b"GA", 0, 100, &[(Kind::Match, 50)], 0);
+        let key = compute_se_key(&record, &[0]).unwrap();
+        assert_eq!(key, DedupKey::se(BismarkStrand::CTOB, 0, 100));
+    }
+
+    #[test]
+    fn compute_se_key_ctot_reverse_uses_reference_end() {
+        // CTOT (reverse): key_pos = reference_end = start + ref_span - 1.
+        // 50M consumes 50 ref bases, so end = 100 + 50 - 1 = 149.
+        let record = synth_record(b"GA", b"CT", 0, 100, &[(Kind::Match, 50)], 0);
+        let key = compute_se_key(&record, &[0]).unwrap();
+        assert_eq!(key, DedupKey::se(BismarkStrand::CTOT, 0, 149));
+    }
+
+    #[test]
+    fn compute_se_key_ob_reverse_uses_reference_end() {
+        // OB (reverse): same end formula as CTOT.
+        let record = synth_record(b"CT", b"GA", 0, 100, &[(Kind::Match, 50)], 0);
+        let key = compute_se_key(&record, &[0]).unwrap();
+        assert_eq!(key, DedupKey::se(BismarkStrand::OB, 0, 149));
+    }
+
+    #[test]
+    fn compute_se_key_reverse_with_deletion_counts_d_op_in_ref_span() {
+        // CIGAR 5M2D3M: ref_span = 5+2+3 = 10. start=100 → end = 109.
+        // Matches Perl line 372-376 (D adds to end position).
+        let record = synth_record(
+            b"GA",
+            b"CT",
+            0,
+            100,
+            &[(Kind::Match, 5), (Kind::Deletion, 2), (Kind::Match, 3)],
+            0,
+        );
+        let key = compute_se_key(&record, &[0]).unwrap();
+        assert_eq!(key, DedupKey::se(BismarkStrand::CTOT, 0, 109));
+    }
+
+    #[test]
+    fn compute_se_key_reverse_with_soft_clip_does_not_count_s_op() {
+        // CIGAR 2S8M2S: ref_span = 8 (S consumes read, not ref).
+        // start=100 → end = 107. Matches Perl line 380-381 (S doesn't add).
+        let record = synth_record(
+            b"GA",
+            b"CT",
+            0,
+            100,
+            &[(Kind::SoftClip, 2), (Kind::Match, 8), (Kind::SoftClip, 2)],
+            0,
+        );
+        let key = compute_se_key(&record, &[0]).unwrap();
+        assert_eq!(key, DedupKey::se(BismarkStrand::CTOT, 0, 107));
+    }
+
+    #[test]
+    fn compute_se_key_uses_refid_table_for_chr_id_translation() {
+        // refid_table[0] = 5, so record's refid=0 → chr_id=5.
+        // Demonstrates that compute_se_key honours the per-file refid
+        // table for multi-file --multiple chr_id resolution.
+        let record = synth_record(b"CT", b"CT", 0, 100, &[(Kind::Match, 10)], 0);
+        let key = compute_se_key(&record, &[5]).unwrap();
+        assert_eq!(key.chr_id, 5);
+    }
+
+    /// Phase C divergence regression: per PLAN §4.6, a `*` CIGAR
+    /// (empty CIGAR) yields `reference_span = 0`. Perl emits `start - 1`
+    /// for reverse-strand `*` records (via `$start -= 1` + zero loop
+    /// iterations). bismark-io's `CigarExt::reference_end` returns
+    /// `start` (not `start - 1`) for span=0 to avoid u32 underflow at
+    /// chromosome-start boundaries. This test pins the documented
+    /// divergence — if it ever changes, the test fails loudly.
+    ///
+    /// Unreachable in practice: real Bismark BAMs from Bowtie2 never
+    /// contain `*` CIGAR for mapped records, and unmapped records are
+    /// filtered by `bismark-io`'s iterator before reaching this code.
+    #[test]
+    fn compute_se_key_star_cigar_diverges_from_perl_documented() {
+        let record = synth_record(b"GA", b"CT", 0, 100, &[], 0);
+        let key = compute_se_key(&record, &[0]).unwrap();
+        // Rust: start = 100, ref_span = 0, reference_end = 100.
+        // Perl would emit: 100 - 1 + 0 = 99. Divergence documented in §4.6.
+        assert_eq!(
+            key.end, 100,
+            "Rust returns start for `*` CIGAR; Perl returns start - 1"
+        );
+    }
+
+    // ─── compute_pe_key tests (forward and reverse pair-strands) ───────
+
+    fn synth_pair_records(
+        r1_xr_xg: (&[u8], &[u8]),
+        r2_xr_xg: (&[u8], &[u8]),
+        r1_start: usize,
+        r1_cigar: &[(Kind, usize)],
+        r2_start: usize,
+        r2_cigar: &[(Kind, usize)],
+    ) -> (BismarkRecord, BismarkRecord) {
+        let r1 = synth_record(r1_xr_xg.0, r1_xr_xg.1, 0, r1_start, r1_cigar, 0x41);
+        let r2 = synth_record(r2_xr_xg.0, r2_xr_xg.1, 0, r2_start, r2_cigar, 0x81);
+        (r1, r2)
+    }
+
+    #[test]
+    fn compute_pe_key_ot_pair_forward_start_r1_end_r2() {
+        // OT pair (forward): start = R1.alignment_start = 100;
+        // end = R2.reference_end = R2.start + ref_span - 1 = 200 + 50 - 1 = 249.
+        // Matches Perl lines 398-443.
+        let (r1, r2) = synth_pair_records(
+            (b"CT", b"CT"),
+            (b"GA", b"CT"),
+            100,
+            &[(Kind::Match, 50)],
+            200,
+            &[(Kind::Match, 50)],
+        );
+        let pair = BismarkPair::from_mates(r1, r2).unwrap();
+        let key = compute_pe_key(&pair, &[0]).unwrap();
+        assert_eq!(key, DedupKey::pe(BismarkStrand::OT, 0, 100, 249));
+    }
+
+    #[test]
+    fn compute_pe_key_ob_pair_reverse_start_r2_end_r1() {
+        // OB pair (reverse pair-strand: R1 XR=CT XG=GA → OB):
+        // end = R1.reference_end = 100 + 50 - 1 = 149;
+        // start = R2.alignment_start = 200.
+        // Matches Perl lines 446-492.
+        let (r1, r2) = synth_pair_records(
+            (b"CT", b"GA"),
+            (b"GA", b"GA"),
+            100,
+            &[(Kind::Match, 50)],
+            200,
+            &[(Kind::Match, 50)],
+        );
+        let pair = BismarkPair::from_mates(r1, r2).unwrap();
+        let key = compute_pe_key(&pair, &[0]).unwrap();
+        assert_eq!(key, DedupKey::pe(BismarkStrand::OB, 0, 200, 149));
+    }
+
+    #[test]
+    fn compute_pe_key_ctob_pair_forward_start_r1_end_r2() {
+        // CTOB pair (forward — R1 XR=GA XG=GA → CTOB):
+        // start = R1.start = 100; end = R2.reference_end.
+        let (r1, r2) = synth_pair_records(
+            (b"GA", b"GA"),
+            (b"CT", b"GA"),
+            100,
+            &[(Kind::Match, 30)],
+            150,
+            &[(Kind::Match, 30)],
+        );
+        let pair = BismarkPair::from_mates(r1, r2).unwrap();
+        let key = compute_pe_key(&pair, &[0]).unwrap();
+        // R2.reference_end = 150 + 30 - 1 = 179.
+        assert_eq!(key, DedupKey::pe(BismarkStrand::CTOB, 0, 100, 179));
+    }
+
+    #[test]
+    fn compute_pe_key_ctot_pair_reverse_start_r2_end_r1() {
+        // CTOT pair (reverse, non-directional library — R1 XR=GA XG=CT → CTOT):
+        // end = R1.reference_end; start = R2.start.
+        let (r1, r2) = synth_pair_records(
+            (b"GA", b"CT"),
+            (b"CT", b"CT"),
+            100,
+            &[(Kind::Match, 30)],
+            200,
+            &[(Kind::Match, 30)],
+        );
+        let pair = BismarkPair::from_mates(r1, r2).unwrap();
+        let key = compute_pe_key(&pair, &[0]).unwrap();
+        // R1.reference_end = 100 + 30 - 1 = 129.
+        assert_eq!(key, DedupKey::pe(BismarkStrand::CTOT, 0, 200, 129));
     }
 
     #[test]

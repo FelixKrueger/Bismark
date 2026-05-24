@@ -63,13 +63,15 @@ pub enum BismarkDedupError {
     /// names from `offending_file` are not the same set as file1's.
     #[error(
         "--multiple inputs have non-identical @SQ name sets: {offending_file} \
-         is missing chr name(s) {missing_chrs:?}"
+         missing chr name(s) {missing_chrs:?}; extra chr name(s) {extra_chrs:?}"
     )]
     MultipleSqMismatch {
         /// Path of the input file whose @SQ name set diverges from file1's.
         offending_file: PathBuf,
         /// Chromosome names present in file1 but absent in `offending_file`.
         missing_chrs: Vec<String>,
+        /// Chromosome names present in `offending_file` but absent in file1.
+        extra_chrs: Vec<String>,
     },
 
     /// `--multiple` inputs span more than one file format. All inputs must
@@ -87,6 +89,15 @@ pub enum BismarkDedupError {
     MissingChrInIntern {
         /// The unmapped refID encountered.
         refid: usize,
+    },
+
+    /// A record had no `reference_sequence_id` despite passing the
+    /// unmapped-record filter. Defensive — shouldn't happen with
+    /// well-formed BAM input.
+    #[error("record has no reference_sequence_id despite being mapped (qname={qname:?})")]
+    MissingReferenceId {
+        /// qname (read identifier) of the offending record.
+        qname: String,
     },
 
     /// A record's alignment_start was `None` despite passing the
