@@ -1,0 +1,28 @@
+[package]
+name = "bismark-io"
+version = "0.0.0"
+description = "Bismark-aware BAM/SAM/CRAM I/O on top of noodles"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# noodles family — exact-pinned. See DESIGN.md and PLAN.md (rev 3) for rationale.
+noodles-bam = "=0.89.0"
+noodles-sam = "=0.85.0"
+noodles-cram = "=0.93.0"
+noodles-fasta = "=0.61.0"
+noodles-core = "=0.20.0"
+noodles-bgzf = "=0.47.0"
+noodles-csi = "=0.50.0"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+bstr = "1"
+proptest = "1"
