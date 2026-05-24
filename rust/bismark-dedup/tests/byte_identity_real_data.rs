@@ -9,13 +9,21 @@
 //! ## Why `#[ignore]`?
 //!
 //! The dataset is ~1.35 GB and takes 1-3 minutes to dedup. We don't want
-//! every `cargo test` invocation to run this — it's the "go for v1.0
+//! every `cargo test` invocation to run this — it's the "go for v1.x
 //! release" gate, not the unit-test loop. Invoke explicitly with:
 //!
 //! ```sh
+//! # v1.0 gate (single-threaded):
 //! BISMARK_REAL_DATA_DIR=/path/to/dataset/dir \
-//!   cargo test --release -- --ignored byte_identity_real_data
+//!   cargo test --release -- --ignored --exact byte_identity_real_data_10m_pe_wgbs
+//!
+//! # v1.1 gate (--parallel 4, BGZF-threaded path):
+//! BISMARK_REAL_DATA_DIR=/path/to/dataset/dir \
+//!   cargo test --release -- --ignored --exact byte_identity_real_data_10m_pe_wgbs_parallel_4
 //! ```
+//!
+//! `--exact` matters: the v1.0 gate name is a prefix of the v1.1 one,
+//! and `cargo test`'s default substring-match would run both.
 //!
 //! ## Dataset location
 //!

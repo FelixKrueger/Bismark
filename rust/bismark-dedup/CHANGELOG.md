@@ -65,8 +65,10 @@ keeping every v1.0 byte-identity guarantee intact.
   single-threaded baseline. Run with:
   ```sh
   BISMARK_REAL_DATA_DIR=<dataset-dir> \
-    cargo test --release -- --ignored byte_identity_real_data_10m_pe_wgbs_parallel_4
+    cargo test --release -- --ignored --exact byte_identity_real_data_10m_pe_wgbs_parallel_4
   ```
+  `--exact` matters because the v1.0 gate name is a prefix of the v1.1
+  one (substring-match would trigger both).
   The common body is shared via `run_byte_identity_at_parallel(parallel)` so
   the two tests cannot drift apart.
 

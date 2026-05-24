@@ -113,12 +113,15 @@ Test it locally:
 ```sh
 # v1.0 gate (single-threaded):
 BISMARK_REAL_DATA_DIR=/path/to/dataset/ \
-  cargo test --release -- --ignored byte_identity_real_data_10m_pe_wgbs
+  cargo test --release -- --ignored --exact byte_identity_real_data_10m_pe_wgbs
 
 # v1.1 gate (--parallel 4, BGZF-threaded path):
 BISMARK_REAL_DATA_DIR=/path/to/dataset/ \
-  cargo test --release -- --ignored byte_identity_real_data_10m_pe_wgbs_parallel_4
+  cargo test --release -- --ignored --exact byte_identity_real_data_10m_pe_wgbs_parallel_4
 ```
+
+`--exact` matters: without it, the v1.0 invocation's name is a prefix of
+the v1.1 one and would substring-match both gates.
 
 Both gates compare against the **same** Perl v0.25.1 baseline — the v1.1
 contract is that BGZF threading produces byte-identical output to the
