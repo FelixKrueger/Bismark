@@ -9,12 +9,27 @@
 //!
 //! ## Status
 //!
-//! **Phase A scaffolding only.** The public API surface (CLI, `DedupKey`,
-//! `DedupState`, `DedupReport`, pipeline) lands in Phases B through G as
-//! separate sub-issues with their own dual-review cycle.
+//! **Phase B in progress.** Public API surface so far:
+//!
+//! - [`DedupKey`] — the value used to detect duplicates (SE = 3-tuple,
+//!   PE = 4-tuple). Stable 16-byte `#[repr(C)]` layout.
+//! - [`DedupState`] — accumulates the seen-set, duplicate-positions set,
+//!   and running counters. [`DedupState::observe`] is the one-record
+//!   entry point.
+//! - [`DedupReport`] — byte-equal-to-Perl dedup report formatter.
+//!
+//! CLI surface, `bismark-io` wiring, integration tests, and the 10M PE
+//! WGBS byte-identity gate land in Phases C through G as separate
+//! sub-issues with their own dual-review cycle.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+pub mod dedup;
+pub mod report;
+
+pub use dedup::{DedupKey, DedupState};
+pub use report::DedupReport;
 
 /// Returns a TG-style provenance string for the binary's `--version` output.
 ///
