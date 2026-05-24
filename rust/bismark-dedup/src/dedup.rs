@@ -109,8 +109,13 @@ impl DedupState {
         Self::default()
     }
 
-    /// Pre-allocate the seen-set hash table to `capacity` records. Useful
-    /// at the start of a large input — saves rehashing.
+    /// Pre-allocate the **seen-set** hash table to `capacity` records.
+    /// Useful at the start of a large input — saves rehashing as the set
+    /// grows. The duplicate-positions set is left at default capacity,
+    /// since it's bounded by the number of distinct duplicate positions
+    /// (typically much smaller than the seen-set on real data: e.g. on
+    /// the 10M PE WGBS audit dataset, seen ≈ 8.0M but
+    /// duplicate-positions ≈ 0.6M).
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {

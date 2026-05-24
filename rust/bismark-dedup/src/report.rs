@@ -37,10 +37,15 @@ pub struct DedupReport {
 }
 
 impl DedupReport {
-    /// Construct a report. Typically called via
-    /// [`crate::dedup::DedupState::into_report`].
+    /// Construct a report.
+    ///
+    /// Crate-private intentionally: the only legitimate construction path
+    /// is via [`crate::dedup::DedupState::into_report`], which guarantees
+    /// `removed <= count` and thus prevents an underflow in
+    /// [`DedupReport::leftover`]. Callers outside this crate should use
+    /// the `DedupState` path.
     #[must_use]
-    pub fn new(file_label: String, count: u64, removed: u64, n_positions: usize) -> Self {
+    pub(crate) fn new(file_label: String, count: u64, removed: u64, n_positions: usize) -> Self {
         Self {
             file_label,
             count,
