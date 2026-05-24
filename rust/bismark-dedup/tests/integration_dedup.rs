@@ -37,6 +37,7 @@ use noodles_sam::alignment::record_buf::Sequence;
 use noodles_sam::alignment::record_buf::data::field::Value;
 use noodles_sam::header::record::value::Map;
 use noodles_sam::header::record::value::map::ReferenceSequence;
+use predicates::prelude::*;
 use std::num::NonZeroUsize;
 use tempfile::TempDir;
 
@@ -147,6 +148,106 @@ fn ctot_pair(qname: &str, r1_start: usize, r2_start: usize) -> [RecordBuf; 2] {
 /// Single-end OT record (no PE flag bits set).
 fn se_ot(qname: &str, start: usize) -> RecordBuf {
     build_record(qname, b"CT", b"CT", 0, 0, start, 50)
+}
+
+/// Generate a high-entropy sequence (length `len`) seeded by `seed`. The
+/// `--parallel N` equivalence tests need fixtures large enough to span
+/// multiple BGZF blocks — uniform `'A'`s compress so heavily that several
+/// hundred records still fit in a single ~64 KB block. Using an LCG-driven
+/// ACGT stream defeats that and forces the BAM to span ≥3 blocks at the
+/// chosen record counts.
+fn varied_seq(seed: u64, len: usize) -> Vec<u8> {
+    let bases = [b'A', b'C', b'G', b'T'];
+    let mut state = seed
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(0xBF58_476D_1CE4_E5B9);
+    (0..len)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            bases[((state >> 33) & 3) as usize]
+        })
+        .collect()
+}
+
+/// Companion to [`varied_seq`] — generate a varied XM call string. Uses
+/// the seven canonical Bismark XM symbols (`.zZxXhH`) so the resulting
+/// byte stream has real entropy and resists BGZF dictionary compression.
+fn varied_xm(seed: u64, len: usize) -> Vec<u8> {
+    let symbols = [b'.', b'z', b'Z', b'x', b'X', b'h', b'H'];
+    let mut state = seed
+        .wrapping_mul(0xD1B5_4A32_D192_ED03)
+        .wrapping_add(0x94D0_49BB_1331_11EB);
+    (0..len)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            symbols[((state >> 33) % 7) as usize]
+        })
+        .collect()
+}
+
+/// PE pair with varied (high-entropy) bases + XM string, seeded by `seed`.
+/// Used by the `--parallel N` equivalence tests to force the synthetic
+/// BAM to span multiple BGZF blocks; the standard [`ot_pair`] uses a
+/// uniform `'A'`-only sequence that compresses to a tiny fraction of one
+/// block at any record count and would mask threading-order bugs.
+fn ot_pair_varied(qname: &str, r1_start: usize, r2_start: usize, seed: u64) -> [RecordBuf; 2] {
+    [
+        build_record_varied(qname, b"CT", b"CT", 0x41, 0, r1_start, 100, seed),
+        build_record_varied(
+            qname,
+            b"GA",
+            b"CT",
+            0x81,
+            0,
+            r2_start,
+            100,
+            seed.wrapping_add(1),
+        ),
+    ]
+}
+
+/// SE OT record with varied bases + XM. See [`ot_pair_varied`] for rationale.
+fn se_ot_varied(qname: &str, start: usize, seed: u64) -> RecordBuf {
+    build_record_varied(qname, b"CT", b"CT", 0, 0, start, 100, seed)
+}
+
+/// Varied-base counterpart of [`build_record`]. The 8-arg signature
+/// mirrors `build_record` plus a per-record `seed` — refactoring into a
+/// struct would obscure call-sites that are already wide.
+#[allow(clippy::too_many_arguments)]
+fn build_record_varied(
+    qname: &str,
+    xr: &[u8],
+    xg: &[u8],
+    flags: u16,
+    refid: usize,
+    start: usize,
+    read_len: usize,
+    seed: u64,
+) -> RecordBuf {
+    let mut record = RecordBuf::default();
+    *record.name_mut() = Some(BString::from(qname.as_bytes().to_vec()));
+    *record.flags_mut() = Flags::from(flags);
+    *record.reference_sequence_id_mut() = Some(refid);
+    *record.alignment_start_mut() = Some(Position::try_from(start).unwrap());
+    *record.cigar_mut() = Cigar::from(vec![Op::new(Kind::Match, read_len)]);
+    *record.sequence_mut() = Sequence::from(varied_seq(seed, read_len));
+    *record.quality_scores_mut() = QualityScores::from(vec![30u8; read_len]);
+    record
+        .data_mut()
+        .insert(Tag::from(*b"XR"), Value::String(BString::from(xr.to_vec())));
+    record
+        .data_mut()
+        .insert(Tag::from(*b"XG"), Value::String(BString::from(xg.to_vec())));
+    record.data_mut().insert(
+        Tag::from(*b"XM"),
+        Value::String(BString::from(varied_xm(seed ^ 0xDEAD_BEEF, read_len))),
+    );
+    record
 }
 
 // ───────────────────────────── tests ───────────────────────────────────
@@ -668,17 +769,37 @@ fn pe_parallel_4_produces_same_qname_set_as_single_threaded() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("input.bam");
 
-    // Build a fixture with enough pairs to span multiple BGZF blocks.
-    // Each record is ~200 bytes; 250 pairs × 2 = 500 records ≈ 100 KB,
-    // comfortably more than 1 BGZF block (~64 KB compressed).
+    // Build a fixture large AND high-entropy enough to span ≥3 BGZF
+    // blocks (~192 KB compressed). 2000 pairs × 2 records × ~300 B raw ≈
+    // 1.2 MB raw; with varied-base/varied-XM data the compression ratio
+    // is only ~3-4x, so the BAM spans many blocks. Uniform-base records
+    // (the standard `ot_pair`'s `'A'×50`) compress ~25× and would fit a
+    // single block at any reasonable record count, leaving the threading
+    // queue unstressed.
     let mut records = Vec::new();
-    for i in 0..250 {
-        records.extend(ot_pair(&format!("u{i}"), 1000 + i * 100, 1100 + i * 100));
+    for i in 0..2000u64 {
+        records.extend(ot_pair_varied(
+            &format!("u{i}"),
+            1000 + (i as usize) * 100,
+            1100 + (i as usize) * 100,
+            i,
+        ));
     }
-    // Inject 3 duplicates at known positions.
-    records.extend(ot_pair("dup_a", 1000, 1100));
-    records.extend(ot_pair("dup_b", 2000, 2100));
-    records.extend(ot_pair("dup_c", 5000, 5100));
+    // Inject 3 duplicates at known positions (matching unique reads at
+    // i=0, i=100, i=500).
+    records.extend(ot_pair_varied("dup_a", 1000, 1100, 1_000_000));
+    records.extend(ot_pair_varied(
+        "dup_b",
+        1000 + 100 * 100,
+        1100 + 100 * 100,
+        1_000_001,
+    ));
+    records.extend(ot_pair_varied(
+        "dup_c",
+        1000 + 500 * 100,
+        1100 + 500 * 100,
+        1_000_002,
+    ));
     write_bam(&input, &records);
 
     // Run with --parallel 1 (single-threaded path).
@@ -722,8 +843,19 @@ fn pe_parallel_4_produces_same_qname_set_as_single_threaded() {
     );
     assert_eq!(
         threaded_qnames.len(),
-        250,
-        "250 unique pairs retained (3 dups removed)"
+        2000,
+        "2000 unique pairs retained (3 dups removed)"
+    );
+
+    // Confirm the fixture actually spans ≥2 BGZF blocks — otherwise the
+    // MultithreadedReader's in-order frame contract is unstressed. A
+    // BGZF block compresses to ≤65_536 bytes; > 64 KiB on disk guarantees
+    // ≥2 blocks were written.
+    let bam_size = std::fs::metadata(&input).unwrap().len();
+    assert!(
+        bam_size > 64 * 1024,
+        "PE parallel fixture too small to span multiple BGZF blocks ({bam_size} bytes); \
+         increase pair count or use higher-entropy data"
     );
 }
 
@@ -734,11 +866,11 @@ fn se_parallel_4_produces_same_qname_set_as_single_threaded() {
     let input = dir.path().join("input.bam");
 
     let mut records = Vec::new();
-    for i in 0..500 {
-        records.push(se_ot(&format!("u{i}"), 1000 + i * 100));
+    for i in 0..3000u64 {
+        records.push(se_ot_varied(&format!("u{i}"), 1000 + (i as usize) * 100, i));
     }
-    records.push(se_ot("dup_a", 1000));
-    records.push(se_ot("dup_b", 2000));
+    records.push(se_ot_varied("dup_a", 1000, 1_000_000));
+    records.push(se_ot_varied("dup_b", 1000 + 50 * 100, 1_000_001));
     write_bam(&input, &records);
 
     let out1 = dir.path().join("single");
@@ -774,7 +906,17 @@ fn se_parallel_4_produces_same_qname_set_as_single_threaded() {
         .into_iter()
         .collect();
     assert_eq!(threaded, single);
-    assert_eq!(threaded.len(), 500);
+    assert_eq!(
+        threaded.len(),
+        3000,
+        "3000 unique reads retained (2 dups removed)"
+    );
+
+    let bam_size = std::fs::metadata(&input).unwrap().len();
+    assert!(
+        bam_size > 64 * 1024,
+        "SE parallel fixture too small to span multiple BGZF blocks ({bam_size} bytes)"
+    );
 }
 
 /// `--multiple --parallel 4` produces the same retained-qname set as
@@ -786,23 +928,29 @@ fn multiple_parallel_4_produces_same_qname_set_as_single_threaded() {
     let input2 = dir.path().join("file2.bam");
 
     let mut f1 = Vec::new();
-    for i in 0..150 {
-        f1.extend(ot_pair(&format!("f1_u{i}"), 1000 + i * 100, 1100 + i * 100));
+    for i in 0..1000u64 {
+        f1.extend(ot_pair_varied(
+            &format!("f1_u{i}"),
+            1000 + (i as usize) * 100,
+            1100 + (i as usize) * 100,
+            i,
+        ));
     }
     write_bam(&input1, &f1);
 
     let mut f2 = Vec::new();
-    // Space file2 well above file1's range (1000..16000) to avoid
-    // unintended cross-file key collisions.
-    for i in 0..150 {
-        f2.extend(ot_pair(
+    // Space file2 well above file1's range (1000..101_000) to avoid
+    // unintended cross-file position-key collisions.
+    for i in 0..1000u64 {
+        f2.extend(ot_pair_varied(
             &format!("f2_u{i}"),
-            100_000 + i * 100,
-            100_100 + i * 100,
+            500_000 + (i as usize) * 100,
+            500_100 + (i as usize) * 100,
+            i + 10_000,
         ));
     }
-    // Cross-file duplicate.
-    f2.extend(ot_pair("dup_of_f1_u0", 1000, 1100));
+    // Cross-file duplicate of f1_u0 (same chr/positions).
+    f2.extend(ot_pair_varied("dup_of_f1_u0", 1000, 1100, 1_000_000));
     write_bam(&input2, &f2);
 
     let out1 = dir.path().join("single");
@@ -844,8 +992,15 @@ fn multiple_parallel_4_produces_same_qname_set_as_single_threaded() {
     assert_eq!(threaded, single);
     assert_eq!(
         threaded.len(),
-        300,
-        "300 unique pairs retained (1 cross-file dup removed)"
+        2000,
+        "2000 unique pairs retained (1 cross-file dup removed)"
+    );
+
+    let total =
+        std::fs::metadata(&input1).unwrap().len() + std::fs::metadata(&input2).unwrap().len();
+    assert!(
+        total > 64 * 1024,
+        "--multiple parallel fixture too small to span multiple BGZF blocks ({total} bytes)"
     );
 }
 
@@ -854,15 +1009,26 @@ fn multiple_parallel_4_produces_same_qname_set_as_single_threaded() {
 fn pe_parallel_4_preserves_r1_followed_by_r2_adjacency() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("input.bam");
+    // 1500 pairs of varied-base records spans multiple BGZF blocks, so
+    // the in-order FIFO contract of `MultithreadedReader` is actually
+    // exercised across worker boundaries rather than collapsed into a
+    // single block.
     let mut records = Vec::new();
-    for i in 0..200 {
-        records.extend(ot_pair(
+    for i in 0..1500u64 {
+        records.extend(ot_pair_varied(
             &format!("read_{i}"),
-            1000 + i * 100,
-            1100 + i * 100,
+            1000 + (i as usize) * 100,
+            1100 + (i as usize) * 100,
+            i,
         ));
     }
     write_bam(&input, &records);
+
+    let bam_size = std::fs::metadata(&input).unwrap().len();
+    assert!(
+        bam_size > 64 * 1024,
+        "PE adjacency fixture too small to span multiple BGZF blocks ({bam_size} bytes)"
+    );
 
     Command::cargo_bin("deduplicate_bismark_rs")
         .unwrap()
@@ -876,7 +1042,7 @@ fn pe_parallel_4_preserves_r1_followed_by_r2_adjacency() {
         .success();
 
     let out_records = read_records(&dir.path().join("input.deduplicated.bam"));
-    assert_eq!(out_records.len(), 400, "200 pairs × 2 = 400");
+    assert_eq!(out_records.len(), 3000, "1500 pairs × 2 = 3000");
     for (i, record) in out_records.iter().enumerate() {
         let flags = u16::from(record.inner().flags());
         if i % 2 == 0 {
@@ -909,4 +1075,107 @@ fn parallel_zero_is_rejected_at_validate() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("must be ≥ 1"));
+}
+
+/// Write a small FASTA (chr1 of length `len`) + its FAI alongside, suitable
+/// as a `--cram_ref` for tests that construct a CRAM input. All `N`s — CRAM
+/// stores sequence diffs against this reference, so the only constraint is
+/// that `len` covers every record's reference span.
+fn write_test_fasta(dir: &Path, len: usize) -> PathBuf {
+    let fasta_path = dir.join("ref.fa");
+    let fai_path = dir.join("ref.fa.fai");
+    let mut fasta_content = b">chr1\n".to_vec();
+    fasta_content.extend(std::iter::repeat_n(b'N', len));
+    fasta_content.push(b'\n');
+    std::fs::write(&fasta_path, &fasta_content).unwrap();
+    // .fai cols: name, length, offset, linebases, linewidth.
+    // ">chr1\n" is 6 bytes; the sequence is on one line of `len` bases.
+    std::fs::write(&fai_path, format!("chr1\t{len}\t6\t{len}\t{}\n", len + 1)).unwrap();
+    fasta_path
+}
+
+/// Build a synthetic header whose chr1 has length `chr1_len` (rather than
+/// the standard 1_000_000). Needed for CRAM tests so the reference FASTA
+/// can be small (the FASTA must cover every record's reference span).
+fn synth_header_with_chr1_len(chr1_len: usize) -> Header {
+    let mut header = Header::default();
+    header.reference_sequences_mut().insert(
+        BString::from("chr1"),
+        Map::<ReferenceSequence>::new(NonZeroUsize::try_from(chr1_len).unwrap()),
+    );
+    header
+}
+
+/// PLAN V5: `--parallel N > 1` with CRAM input emits a single-line stderr
+/// warning and falls back to single-threaded execution. The retained
+/// records must still be correct.
+#[test]
+fn cram_with_parallel_n_logs_warning_and_runs_single_threaded() {
+    let dir = TempDir::new().unwrap();
+    let fasta = write_test_fasta(dir.path(), 10_000);
+
+    let cram_in = dir.path().join("input.cram");
+    {
+        let header = synth_header_with_chr1_len(10_000);
+        let mut writer = bismark_io::open_writer(&cram_in, header, Some(&fasta)).unwrap();
+        let mut records = Vec::new();
+        for i in 0..5 {
+            records.extend(ot_pair(&format!("u{i}"), 100 + i * 200, 200 + i * 200));
+        }
+        // Duplicate of u0.
+        records.extend(ot_pair("dup_a", 100, 200));
+        for r in &records {
+            let bismark_record = BismarkRecord::from_noodles_record(r.clone()).unwrap();
+            writer.write_record(&bismark_record).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    let output = Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--cram_ref")
+        .arg(&fasta)
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&cram_in)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "CRAM input/output runs single-threaded",
+        ))
+        .stderr(predicates::str::contains("--parallel 4"))
+        // The threaded-path startup banner must NOT appear — CRAM took
+        // the single-threaded fallback.
+        .stderr(predicates::str::contains("BGZF threading:").not())
+        .get_output()
+        .clone();
+
+    // Exactly ONE warning line per invocation (not per record / per file).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let warning_count = stderr
+        .lines()
+        .filter(|l| l.contains("CRAM input/output runs single-threaded"))
+        .count();
+    assert_eq!(warning_count, 1, "CRAM warning must appear exactly once");
+
+    // v1.0 output-naming: for CRAM input, the stem keeps the `.cram`
+    // extension (filename.rs:194-195), so the output is BAM-named
+    // `<input>.cram.deduplicated.bam`. CRAM-mirror output is README-
+    // aspirational, not implemented in v1.0; the important contract here
+    // is the dedup correctness on the single-threaded fallback path.
+    let out_path = dir.path().join("input.cram.deduplicated.bam");
+    assert!(
+        out_path.exists(),
+        "expected dedup output at {}",
+        out_path.display()
+    );
+    let qnames: HashSet<String> = read_qnames(&out_path).into_iter().collect();
+    let expected: HashSet<String> = (0..5).map(|i| format!("u{i}")).collect();
+    assert_eq!(
+        qnames, expected,
+        "CRAM fallback must retain the same 5 unique pairs"
+    );
 }
