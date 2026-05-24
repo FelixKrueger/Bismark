@@ -27,9 +27,31 @@ fn short_version_flag_works_too() {
 }
 
 #[test]
-fn unknown_invocation_exits_nonzero_with_status_notice() {
+fn invocation_with_no_input_files_errors_with_clear_message() {
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
     cmd.assert()
         .failure()
-        .stderr(predicates::str::contains("not yet implemented"));
+        .stderr(predicates::str::contains("no input file"));
+}
+
+#[test]
+fn representative_flag_errors_with_perl_verbatim_joke() {
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--representative")
+        .arg("dummy.bam")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Please stop wanting that"));
+}
+
+#[test]
+fn barcode_flag_errors_with_v1_deferral_message() {
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--barcode")
+        .arg("dummy.bam")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "not supported in bismark-dedup v1.0",
+        ));
 }

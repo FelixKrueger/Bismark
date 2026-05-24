@@ -114,6 +114,71 @@ fn is_forward(strand: BismarkStrand) -> bool {
     matches!(strand, BismarkStrand::OT | BismarkStrand::CTOB)
 }
 
+/// Auto-detect library mode (single-end vs paired-end) from a Bismark
+/// BAM header.
+///
+/// Walks the `@PG` lines, finds the Bismark-aligner entry (ID starting
+/// with `Bismark`), and inspects its command line for `-1`/`--1` AND
+/// `-2`/`--2` arguments (which Bismark only passes in paired-end mode).
+///
+/// Returns:
+/// - `Some(true)` — PE (Bismark @PG found with both `-1`/`--1` and `-2`/`--2`)
+/// - `Some(false)` — SE (Bismark @PG found, missing one or both of those)
+/// - `None` — no Bismark @PG line in the header; caller must error out
+///   (CLI parse-stage forces the user to specify `--single`/`--paired`
+///   explicitly in that case).
+///
+/// Mirrors Perl `deduplicate_bismark` lines 90–116.
+#[must_use]
+pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
+    // Serialize the header to its on-disk SAM text representation and
+    // search for the Bismark @PG line. This is robust to noodles API
+    // shape changes across versions (the SAM text format is the stable
+    // contract here, not the in-memory `Programs` type).
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut writer = noodles_sam::io::Writer::new(&mut buf);
+        if writer.write_header(header).is_err() {
+            return None;
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    for line in text.lines() {
+        // SAM header @PG line format: `@PG\tID:<id>\t...\tCL:<args>...`
+        // The `ID:Bismark` substring identifies the Bismark @PG.
+        if !line.starts_with("@PG") || !line.contains("ID:Bismark") {
+            continue;
+        }
+        // Look for -1/--1 AND -2/--2 in the command-line args. Bismark's
+        // PE invocation always has both; SE has neither.
+        // We accept space-separated, tab-separated, or end-of-line
+        // boundaries to be robust to argument quoting differences.
+        let has_1 = arg_present(line, "-1") || arg_present(line, "--1");
+        let has_2 = arg_present(line, "-2") || arg_present(line, "--2");
+        return Some(has_1 && has_2);
+    }
+    None
+}
+
+/// True if `arg` appears as a standalone token in `text`, delimited by
+/// whitespace or tab on **both** sides.
+///
+/// Matches Perl's `/\s+--?1\s+/` semantics: a `-1` at the very end of the
+/// line (without trailing whitespace) is NOT considered present, even
+/// though Bismark in practice always appends a path after `-1`/`-2`.
+/// Being strict here matches Perl exactly — important for byte-identity
+/// when the same input is run through both implementations.
+fn arg_present(text: &str, arg: &str) -> bool {
+    let arg_space = format!(" {arg} ");
+    let arg_tab_left = format!("\t{arg} ");
+    let arg_tab_right = format!(" {arg}\t");
+    let arg_tab_both = format!("\t{arg}\t");
+    text.contains(&arg_space)
+        || text.contains(&arg_tab_left)
+        || text.contains(&arg_tab_right)
+        || text.contains(&arg_tab_both)
+}
+
 /// Compute the SE dedup key from a `BismarkRecord`.
 fn compute_se_key(
     record: &BismarkRecord,
