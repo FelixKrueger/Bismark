@@ -525,9 +525,135 @@ fn multiple_mode_rejects_different_sq_name_sets_across_inputs() {
         .arg(&input2)
         .assert()
         .failure()
-        .stderr(predicates::str::contains("non-identical @SQ name sets"));
+        // Tighten per B-M2: assert path-of-offender + missing-chr name
+        // so a future regression that mis-blames file1 wouldn't pass.
+        .stderr(predicates::str::contains("non-identical @SQ name sets"))
+        .stderr(predicates::str::contains("f2.bam"))
+        .stderr(predicates::str::contains("\"chr1\""));
 }
 
-/// Silence-by-default: `PathBuf` for the dummy "not used in this test" import.
-#[allow(dead_code)]
-fn _suppress_unused(_: PathBuf) {}
+/// `--multiple` with empty file1 errors out AND leaves no output BAM
+/// or report file behind. This is the headline regression test for the
+/// Phase E rev-2 writer-before-peek fix.
+///
+/// Both Phase E reviewers (A-H1 and B-M3) independently found that
+/// `run_multiple` opened the writer BEFORE the file1 empty-peek, leaving
+/// a header-only output BAM on disk if file1 was empty. The rev-2 fix
+/// moves the peek before the writer-open via the `iter::once+chain`
+/// pattern (PLAN.md rev 1's original design — confirmed correct here).
+#[test]
+fn multiple_mode_empty_file1_leaves_no_output_files_behind() {
+    let dir = TempDir::new().unwrap();
+    let input1 = dir.path().join("empty1.bam");
+    let input2 = dir.path().join("nonempty2.bam");
+
+    // file1: header only, no records.
+    write_bam(&input1, &[]);
+    // file2: one PE pair.
+    write_bam(&input2, &ot_pair("u0", 1000, 1100));
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--multiple")
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input1)
+        .arg(&input2)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("input file is empty"));
+
+    // Critical: no output BAM, no report file — the writer must NOT have
+    // been opened before the empty-peek detected file1's emptiness.
+    let out_bam = dir.path().join("empty1.multiple.deduplicated.bam");
+    let out_report = dir.path().join("empty1.multiple.deduplication_report.txt");
+    assert!(
+        !out_bam.exists(),
+        "empty file1 should not leave a header-only output BAM behind: {}",
+        out_bam.display()
+    );
+    assert!(
+        !out_report.exists(),
+        "empty file1 should not leave a report behind: {}",
+        out_report.display()
+    );
+}
+
+/// `--multiple` with mixed input formats (one BAM + one SAM) errors out
+/// at startup (PLAN §10.8). Phase D's [`Cli::validate`] does not catch
+/// this — it's enforced by `pipeline::run_multiple`'s pre-flight check.
+#[test]
+fn multiple_mode_rejects_mixed_input_formats() {
+    let dir = TempDir::new().unwrap();
+    let input_bam = dir.path().join("f1.bam");
+    let input_sam = dir.path().join("f2.sam");
+
+    write_bam(&input_bam, &ot_pair("u0", 1000, 1100));
+
+    // Construct a SAM file with the same content as a BAM but text format.
+    // Easiest: write a BAM, samtools view -h to text, save as .sam. But
+    // we don't depend on samtools in tests. Instead, use bismark-io's
+    // SamWriter directly.
+    {
+        use bismark_io::SamWriter;
+        let header = synth_header();
+        let file = std::fs::File::create(&input_sam).unwrap();
+        let writer_inner = std::io::BufWriter::new(file);
+        let mut writer = SamWriter::new(writer_inner, header).unwrap();
+        for record in ot_pair("u0_sam", 1000, 1100) {
+            let bismark_record = BismarkRecord::from_noodles_record(record).unwrap();
+            writer.write_record(&bismark_record).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--multiple")
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input_bam)
+        .arg(&input_sam)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("must all share the same format"));
+}
+
+/// Single input with **no duplicates at all** → report shows
+/// `removed = 0 (0.00%)`, `n_positions = 0 different position(s)`, and
+/// `leftover = count (100.00% of total)`. Pins the contract from
+/// PLAN §10.14 / Phase B's `format_removed_zero_no_duplicates` test —
+/// here verified end-to-end through the binary.
+#[test]
+fn pe_dedup_report_with_no_duplicates_renders_zero_percent() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    let mut records = Vec::new();
+    for i in 0..5 {
+        records.extend(ot_pair(
+            &format!("uniq_{i}"),
+            1000 + i * 1000,
+            1100 + i * 1000,
+        ));
+    }
+    write_bam(&input, &records);
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let report =
+        std::fs::read_to_string(dir.path().join("input.deduplication_report.txt")).unwrap();
+    let input_path_str = input.display().to_string();
+    let expected = format!(
+        "\nTotal number of alignments analysed in {input_path_str}:\t5\n\
+         Total number duplicated alignments removed:\t0 (0.00%)\n\
+         Duplicated alignments were found at:\t0 different position(s)\n\n\
+         Total count of deduplicated leftover sequences: 5 (100.00% of total)\n\n"
+    );
+    assert_eq!(report, expected);
+}
