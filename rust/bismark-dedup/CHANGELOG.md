@@ -89,18 +89,26 @@ gates above.
 
 | `--parallel` | Wall-time (min / median / max) | Peak RSS (median) | Speedup vs N=1 (median) |
 |-------------:|-------------------------------:|------------------:|------------------------:|
-| 1 | _to-fill_ | _to-fill_ | 1.00× |
-| 2 | _to-fill_ | _to-fill_ | _to-fill_ |
-| 4 | _to-fill_ | _to-fill_ | _to-fill_ |
-| 8 | _to-fill_ | _to-fill_ | _to-fill_ |
+| 1 | 81.39 / 81.46 / 81.77 s | 455 MB | 1.00× |
+| 2 | 30.48 / 30.54 / 30.56 s | 456 MB | **2.67×** |
+| 4 | 16.66 / 16.71 / 16.94 s | 457 MB | **4.88×** |
+| 8 | 16.57 / 16.68 / 16.89 s | 457 MB | 4.88× (saturation) |
+
+**Methodology:** measurements taken with `/usr/bin/time -v` wrapping the
+release-mode `deduplicate_bismark_rs` binary directly (no `cargo test`
+wrapper). The wrapper's post-dedup qname-set comparison would add ~60 s
+of constant-cost test scaffolding to every run, masking the real
+parallel speedup as a smaller ratio.
 
 **Caveat:** measured on a single host (`dockyard-oxy-0`), single input
 dataset (10M PE WGBS), single dedup workload. Absolute numbers will
 vary with hardware and input characteristics. The N=2/4/8 byte-identity
 claim is validated by the corresponding `#[ignore]`'d integration tests
-in `tests/byte_identity_real_data.rs`. Speedup ceiling reflects that
-the dedup state itself is single-threaded; only BGZF (de)compression
-parallelizes.
+in `tests/byte_identity_real_data.rs`. Speedup ceiling at ~5× reflects
+that the dedup state itself is single-threaded; only BGZF
+(de)compression parallelizes — N=8 shows no improvement over N=4
+because the BGZF queue depth has saturated the I/O parallelism budget.
+Memory cost of threading is negligible (≤2 MB across N).
 
 ### Out of scope (still deferred)
 

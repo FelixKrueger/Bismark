@@ -69,10 +69,12 @@ requires `=1.0.0-beta.2`.
 ### Downstream-measured performance
 
 `bismark-dedup v1.1.0-beta.1`'s `--parallel N` path (which uses
-`ThreadedBamReader` + `ThreadedBamWriter`) is **measurably faster** than
-its single-threaded counterpart on real-data WGBS, with byte-identical
-output across N. See bismark-dedup's CHANGELOG for the full N-curve +
-memory observations on the 10M PE oxy benchmark.
+`ThreadedBamReader` + `ThreadedBamWriter`) is **4.88× faster at N=4**
+than its single-threaded counterpart on the 10M PE WGBS oxy benchmark,
+with byte-identical output across N (validated by the
+`byte_identity_real_data_10m_pe_wgbs[_parallel_N]` gates). Memory cost
+of threading is negligible (≤2 MB across N=1..8). See bismark-dedup's
+CHANGELOG for the full curve.
 
 ## [1.0.0-beta.1] — 2026-05-24
 
