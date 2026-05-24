@@ -20,6 +20,10 @@ path = "src/main.rs"
 
 [dependencies]
 bismark-io = { version = "=1.0.0", path = "../bismark-io" }
+# noodles-sam pinned to match bismark-io =1.0.0's transitive choice.
+# Needed directly for `Header` (returned by `bismark_io::open_reader`
+# via `AnyReader::header`) and for test-helper types.
+noodles-sam = "=0.85.0"
 clap = { version = "=4.5.30", features = ["derive"] }
 rustc-hash = "=2.1.0"
 thiserror = "=2.0.0"
@@ -30,3 +34,5 @@ bstr = "=1.10.0"
 assert_cmd = "=2.0.16"
 predicates = "=3.1.2"
 tempfile = "=3.10.1"
+# Test-only: synthetic record construction for compute_*_key unit tests.
+noodles-core = "=0.20.0"

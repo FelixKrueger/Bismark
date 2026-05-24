@@ -9,7 +9,7 @@
 //!
 //! ## Status
 //!
-//! **Phase B in progress.** Public API surface so far:
+//! **Phase C in progress.** Public API surface so far:
 //!
 //! - [`DedupKey`] — the value used to detect duplicates (SE = 3-tuple,
 //!   PE = 4-tuple). Stable 16-byte `#[repr(C)]` layout.
@@ -17,18 +17,29 @@
 //!   and running counters. [`DedupState::observe`] is the one-record
 //!   entry point.
 //! - [`DedupReport`] — byte-equal-to-Perl dedup report formatter.
+//! - [`pipeline::run_single`] / [`pipeline::run_multiple`] — the
+//!   end-to-end dedup pipelines for one input file or several inputs
+//!   concatenated. Both wire [`bismark_io`] reader/writer to
+//!   [`DedupState::observe`].
+//! - [`filename`] — Perl-compatible output-stem derivation.
+//! - [`BismarkDedupError`] — typed errors raised at the orchestration
+//!   layer.
 //!
-//! CLI surface, `bismark-io` wiring, integration tests, and the 10M PE
-//! WGBS byte-identity gate land in Phases C through G as separate
+//! CLI surface, integration tests on seeded-dup fixtures, and the 10M PE
+//! WGBS byte-identity gate land in Phases D through G as separate
 //! sub-issues with their own dual-review cycle.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod dedup;
+pub mod error;
+pub mod filename;
+pub mod pipeline;
 pub mod report;
 
 pub use dedup::{DedupKey, DedupState};
+pub use error::BismarkDedupError;
 pub use report::DedupReport;
 
 /// Returns a TG-style provenance string for the binary's `--version` output.
