@@ -1,0 +1,71 @@
+name: Rust CI
+
+on:
+  push:
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust_ci.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust_ci.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy, rustfmt
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build --workspace
+        run: cargo build --workspace --all-targets
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
