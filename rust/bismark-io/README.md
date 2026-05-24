@@ -4,7 +4,7 @@ Bismark-aware BAM/SAM/CRAM I/O on top of [`noodles`](https://github.com/zaeleus/
 
 `bismark-io` is the shared library crate for [Bismark](https://github.com/FelixKrueger/Bismark)'s Rust rewrite. It wraps the `noodles` crate family to expose record types that already know about Bismark's strand classification (OT/CTOT/OB/CTOB derived from the `XR:Z:` and `XG:Z:` tags), tag-decoded accessors (`XM`, `XR`, `XG`, `MD`, `NM`), and CIGAR-aware position helpers. Every Bismark Rust binary crate (`bismark-dedup`, `bismark-extractor`, `bismark-bedgraph`, …) depends on it.
 
-**Status:** v1.0.0 — feature-complete; first stable release. See [`CHANGELOG.md`](./CHANGELOG.md).
+**Status:** v1.0.0-beta.1 — feature-complete; first public pre-release on crates.io. The beta is functionally identical to what 1.0.0 will ship; published as beta to allow integration feedback before the immutable 1.0.0 lands. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Why a Bismark wrapper around `noodles`?
 
@@ -112,7 +112,7 @@ The pin policy: noodles releases frequently and occasionally bumps MSRV. Exact-p
 
 ## Stability
 
-This is **v1.0.0** — the public API is stable; breaking changes will bump the major version. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
+This is **v1.0.0-beta.1** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
 
 ## crates.io
 

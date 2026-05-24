@@ -2,7 +2,7 @@
 
 Rust port of [Bismark](https://github.com/FelixKrueger/Bismark)'s `deduplicate_bismark` script — removes PCR-duplicate alignments from Bismark BAM/SAM/CRAM files.
 
-**Status:** v1.0.0 — feature-complete, byte-identical to Bismark Perl v0.25.1's output on real WGBS data. See [`CHANGELOG.md`](./CHANGELOG.md).
+**Status:** v1.0.0-beta.1 — feature-complete, byte-identical to Bismark Perl v0.25.1's output on real WGBS data; first public pre-release on crates.io. The beta is functionally identical to what 1.0.0 will ship; published as beta to allow integration feedback before the immutable 1.0.0 lands. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## What it does
 
@@ -128,7 +128,7 @@ cargo build --release --package bismark-dedup
 
 `bismark-dedup` depends on:
 
-- [`bismark-io`](../bismark-io/README.md) (path dep, version `=1.0.0`) — Bismark-aware BAM/SAM/CRAM I/O on top of noodles.
+- [`bismark-io`](../bismark-io/README.md) (path dep, version `=1.0.0-beta.1`) — Bismark-aware BAM/SAM/CRAM I/O on top of noodles.
 - [`clap`](https://crates.io/crates/clap) `=4.5.30` — CLI parsing
 - [`rustc-hash`](https://crates.io/crates/rustc-hash) `=2.1.0` — `FxHashSet` for dedup-key storage
 - [`thiserror`](https://crates.io/crates/thiserror) `=2.0.0` — typed errors
