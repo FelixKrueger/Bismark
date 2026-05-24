@@ -160,26 +160,23 @@ pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
     None
 }
 
-/// True if `arg` appears as a standalone token in `text` (delimited by
-/// whitespace, tab, or end of string).
+/// True if `arg` appears as a standalone token in `text`, delimited by
+/// whitespace or tab on **both** sides.
+///
+/// Matches Perl's `/\s+--?1\s+/` semantics: a `-1` at the very end of the
+/// line (without trailing whitespace) is NOT considered present, even
+/// though Bismark in practice always appends a path after `-1`/`-2`.
+/// Being strict here matches Perl exactly — important for byte-identity
+/// when the same input is run through both implementations.
 fn arg_present(text: &str, arg: &str) -> bool {
-    // Build the patterns we'll search for: arg surrounded by whitespace/tab,
-    // or arg at end of line.
     let arg_space = format!(" {arg} ");
     let arg_tab_left = format!("\t{arg} ");
     let arg_tab_right = format!(" {arg}\t");
     let arg_tab_both = format!("\t{arg}\t");
-    let arg_end_space = format!(" {arg}");
-    let arg_end_tab = format!("\t{arg}");
-    if text.contains(&arg_space)
+    text.contains(&arg_space)
         || text.contains(&arg_tab_left)
         || text.contains(&arg_tab_right)
         || text.contains(&arg_tab_both)
-    {
-        return true;
-    }
-    // At end of string: require the arg to be the trailing token.
-    text.ends_with(&arg_end_space) || text.ends_with(&arg_end_tab)
 }
 
 /// Compute the SE dedup key from a `BismarkRecord`.

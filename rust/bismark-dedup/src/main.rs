@@ -116,7 +116,11 @@ fn resolve_paired_mode(input: &Path, config: &ResolvedConfig) -> Result<bool, Bi
     }
     // Auto-detect: open the reader briefly to inspect the header. The
     // file will be opened again by the pipeline; the redundant open is
-    // cheap (the header is small and decompressed once).
+    // cheap for BAM/SAM (microseconds) but **non-trivial for CRAM**
+    // (must build the FASTA reference repository twice). For v1.0,
+    // accepted as a known overhead; v1.1 will refactor auto-detect into
+    // the pipeline itself to share the reader. Users who care can pass
+    // `-s`/`-p` explicitly to skip auto-detect.
     let reader = bismark_io::open_reader(input, config.cram_ref.as_deref())?;
     match pipeline::detect_paired_from_header(reader.header()) {
         Some(is_paired) => {
