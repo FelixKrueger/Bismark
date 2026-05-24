@@ -103,6 +103,80 @@ BISMARK_REAL_DATA_DIR=/path/to/dataset/ \
 - **Multi-threading** (`--parallel N > 1`) — single-threaded in v1.0; rayon-based chunked dedup deferred to v1.1.
 - **Sorted-input auto-handling** — coordinate-sorted PE input is rejected with a clear "re-sort with `samtools sort -n` first" error message rather than auto-sorting.
 
+## Using as a library in other tools
+
+`bismark-dedup` ships as both a binary (`deduplicate_bismark_rs`) AND a Rust library. Other tools can embed the dedup pipeline as a direct function call rather than spawning the binary — matching the [Trim Galore ↔ fastqc-rust](https://github.com/FelixKrueger/TrimGalore) integration model.
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+bismark-dedup = "=1.0.0-beta.1"
+```
+
+End-to-end example — dedup a Bismark BAM from within your own Rust pipeline:
+
+```rust
+use bismark_dedup::pipeline::run_single;
+use std::path::Path;
+
+fn dedup_bam(input: &Path, output: &Path) -> anyhow::Result<()> {
+    // is_paired: true for PE, false for SE. Auto-detection is in `detect_paired_from_header`.
+    let report = run_single(
+        input,
+        output,
+        None,                                // cram_ref — None for BAM/SAM input
+        /* is_paired = */ true,
+        input.display().to_string(),         // file_label echoed in the report
+    )?;
+
+    // Report can be written to a file OR consumed in-memory:
+    println!("dedup complete: {} records analysed, {} removed ({:.2}%)",
+             report.count(), report.removed(),
+             100.0 * report.removed() as f64 / report.count() as f64);
+    Ok(())
+}
+```
+
+Multi-file mode (one combined sample across N input BAMs):
+
+```rust
+use bismark_dedup::pipeline::run_multiple;
+
+fn dedup_combined(inputs: &[std::path::PathBuf], output: &std::path::Path) -> anyhow::Result<()> {
+    let report = run_multiple(
+        inputs,
+        output,
+        None,
+        true,  // is_paired
+        inputs[0].display().to_string(),
+    )?;
+    report.write_to(&output.with_extension("deduplication_report.txt"))?;
+    Ok(())
+}
+```
+
+Lower-level primitives — if you want to drive the dedup loop yourself (e.g., on records already in memory, or with a custom input source):
+
+```rust
+use bismark_dedup::{DedupKey, DedupState};
+use bismark_io::BismarkStrand;
+
+let mut state = DedupState::new();
+let key = DedupKey::pe(BismarkStrand::OT, /* chr_id */ 0, /* start */ 100, /* end */ 200);
+
+if state.observe(key) {
+    // record is unique — emit it to your output
+} else {
+    // record is a duplicate — drop it
+}
+
+let report = state.into_report("my_sample.bam".to_string());
+// report.format() returns the Perl-byte-equal report string.
+```
+
+See `cargo doc --open --package bismark-dedup` for the full library API. The same algorithm that powers the `deduplicate_bismark_rs` binary is available to your code with zero subprocess overhead.
+
 ## How is this different from Bismark Perl's `deduplicate_bismark`?
 
 | | Perl `deduplicate_bismark` | `deduplicate_bismark_rs` (v1.0) |

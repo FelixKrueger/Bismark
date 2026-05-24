@@ -82,6 +82,74 @@ fn main() -> anyhow::Result<()> {
 
 For paired-end work, pair adjacent records with `BismarkPair::from_mates(r1, r2)?` and use `pair.pair_strand()` for output routing.
 
+## Using as a library in other tools
+
+`bismark-io` is designed to be the I/O foundation for Bismark-aware Rust tools — both the binary crates in this workspace (`bismark-dedup`, future `bismark-extractor` / `bismark-bedgraph` / etc.) and external consumers (pipeline frameworks, custom analysis scripts, methylation orchestrators).
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+bismark-io = "=1.0.0-beta.1"
+```
+
+End-to-end example — count records per strand:
+
+```rust
+use bismark_io::{open_reader, BismarkStrand};
+use std::path::Path;
+
+fn count_records_by_strand(bam_path: &Path) -> anyhow::Result<[u64; 4]> {
+    let mut reader = open_reader(bam_path, None)?;
+    let mut counts = [0u64; 4]; // OT, CTOT, OB, CTOB
+
+    for result in reader.records() {
+        let record = result?;
+        let idx = match record.record_strand() {
+            BismarkStrand::OT   => 0,
+            BismarkStrand::CTOT => 1,
+            BismarkStrand::OB   => 2,
+            BismarkStrand::CTOB => 3,
+        };
+        counts[idx] += 1;
+    }
+    Ok(counts)
+}
+```
+
+Pair-strand example (paired-end with R1-derived routing):
+
+```rust
+use bismark_io::{open_reader, BismarkPair};
+
+fn pair_strands(bam_path: &std::path::Path) -> anyhow::Result<Vec<bismark_io::BismarkStrand>> {
+    let mut reader = open_reader(bam_path, None)?;
+    let mut records = reader.records();
+    let mut pair_strands = Vec::new();
+    loop {
+        let Some(r1) = records.next().transpose()? else { break };
+        let Some(r2) = records.next().transpose()? else {
+            anyhow::bail!("PE input ended with unpaired R1");
+        };
+        let pair = BismarkPair::from_mates(r1, r2)?;  // validates qname + R1/R2 ordering
+        pair_strands.push(pair.pair_strand());
+    }
+    Ok(pair_strands)
+}
+```
+
+CIGAR-aware position helpers (the dedup key formula uses these):
+
+```rust
+use bismark_io::CigarExt;
+
+// reference_end(start) = start + reference_span - 1
+// (or `start` for empty CIGAR — see CigarExt docs for the edge case).
+let end = record.cigar().reference_end(record.alignment_start().unwrap());
+```
+
+See `cargo doc --open --package bismark-io` for the full API surface, including `BismarkRecord`, `BismarkPair`, `CigarExt`, `tags::{xm, xr, xg, md, nm}`, and the `reconstitute_cram_reference_from_bismark_genome` helper.
+
 ## MSRV
 
 Rust **1.89.0**. Required by `noodles-bam` 0.89.
