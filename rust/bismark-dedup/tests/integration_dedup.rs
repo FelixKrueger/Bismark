@@ -1179,3 +1179,83 @@ fn cram_with_parallel_n_logs_warning_and_runs_single_threaded() {
         "CRAM fallback must retain the same 5 unique pairs"
     );
 }
+
+/// PLAN V8 (Phase C): the v1.1 `ThreadedBamWriter` must emit the
+/// canonical 28-byte BGZF EOF marker as the final bytes of the output
+/// BAM under `--multiple --parallel 4`. This exercises the
+/// `run_multiple_parallel` path (multiple `ThreadedBamReader`s feeding
+/// one `ThreadedBamWriter`), end-to-end through the binary.
+///
+/// `bismark-io` v1.0.0-beta.2 has a writer-level unit test for the same
+/// invariant on the single-input path; this test confirms the
+/// guarantee survives the binary's multi-file orchestration.
+#[test]
+fn parallel_4_multiple_mode_output_ends_with_bgzf_eof_marker() {
+    // Canonical BGZF EOF marker — an empty BGZF block. Wire format is
+    // stable per the BGZF spec (RFC 1952 + custom BC subfield) and
+    // documented in htslib / noodles.
+    const BGZF_EOF: [u8; 28] = [
+        0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02,
+        0x00, 0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    let dir = TempDir::new().unwrap();
+    let input1 = dir.path().join("file1.bam");
+    let input2 = dir.path().join("file2.bam");
+
+    let mut f1 = Vec::new();
+    for i in 0..400u64 {
+        f1.extend(ot_pair_varied(
+            &format!("a{i}"),
+            1000 + (i as usize) * 100,
+            1100 + (i as usize) * 100,
+            i,
+        ));
+    }
+    write_bam(&input1, &f1);
+
+    let mut f2 = Vec::new();
+    for i in 0..400u64 {
+        f2.extend(ot_pair_varied(
+            &format!("b{i}"),
+            500_000 + (i as usize) * 100,
+            500_100 + (i as usize) * 100,
+            i + 100_000,
+        ));
+    }
+    write_bam(&input2, &f2);
+
+    let combined =
+        std::fs::metadata(&input1).unwrap().len() + std::fs::metadata(&input2).unwrap().len();
+    assert!(
+        combined > 64 * 1024,
+        "fixture combined size ({combined} B) too small to span multiple BGZF blocks"
+    );
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--multiple")
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input1)
+        .arg(&input2)
+        .assert()
+        .success();
+
+    let out_path = dir.path().join("file1.multiple.deduplicated.bam");
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert!(
+        bytes.len() >= BGZF_EOF.len(),
+        "output BAM too short to contain a BGZF EOF marker ({} B)",
+        bytes.len()
+    );
+    let trailer = &bytes[bytes.len() - BGZF_EOF.len()..];
+    assert_eq!(
+        trailer, &BGZF_EOF,
+        "ThreadedBamWriter under `--multiple --parallel 4` failed to emit the canonical \
+         BGZF EOF marker; got trailer: {trailer:?}"
+    );
+}
