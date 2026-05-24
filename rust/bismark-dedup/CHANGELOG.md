@@ -25,12 +25,19 @@ keeping every v1.0 byte-identity guarantee intact.
 - **CRAM fallback warning** — `--parallel N` with a CRAM input or output
   emits a single-line stderr warning and runs single-threaded; the
   parallel path is BAM-only in this release.
-- **Five new integration tests** in `tests/integration_dedup.rs`:
-  - `pe_parallel_4_produces_same_qname_set_as_single_threaded`
-  - `se_parallel_4_produces_same_qname_set_as_single_threaded`
-  - `multiple_parallel_4_produces_same_qname_set_as_single_threaded`
-  - `pe_parallel_4_preserves_r1_followed_by_r2_adjacency`
+- **Six new integration tests** in `tests/integration_dedup.rs`:
+  - `pe_parallel_4_produces_same_qname_set_as_single_threaded` (2000 PE pairs spanning multiple BGZF blocks)
+  - `se_parallel_4_produces_same_qname_set_as_single_threaded` (3000 SE reads)
+  - `multiple_parallel_4_produces_same_qname_set_as_single_threaded` (1000 pairs per file × 2 files)
+  - `pe_parallel_4_preserves_r1_followed_by_r2_adjacency` (1500 PE pairs)
   - `parallel_zero_is_rejected_at_validate`
+  - `cram_with_parallel_n_logs_warning_and_runs_single_threaded` — verifies the CRAM fallback warning fires exactly once and the threaded-path startup banner does NOT appear (proving the warn-and-fall-back contract)
+- **Fixture-size guards** in each `--parallel` equivalence test:
+  `assert!(bam_size > 64 KiB)` to prevent future regressions that
+  would silently collapse the synthetic BAM into a single BGZF block
+  (leaving the `MultithreadedReader`'s in-order frame contract
+  unstressed). Fixtures use varied-base + varied-XM data to defeat
+  BGZF dictionary compression.
 
 ### Changed
 
