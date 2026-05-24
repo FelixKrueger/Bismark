@@ -1,12 +1,15 @@
 [package]
 name = "bismark-io"
-version = "0.0.0"
+version = "1.0.0"
 description = "Bismark-aware BAM/SAM/CRAM I/O on top of noodles"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "bioinformatics", "noodles"]
+categories = ["science::bioinformatics"]
 
 [lib]
 path = "src/lib.rs"
