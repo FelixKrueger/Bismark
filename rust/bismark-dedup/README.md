@@ -24,8 +24,8 @@ This matches Bismark Perl `deduplicate_bismark` v0.25.1 exactly.
 cd rust/
 cargo install --path bismark-dedup
 
-# After release on crates.io (not yet published):
-# cargo install bismark-dedup
+# From crates.io (specify a prerelease version explicitly until 1.x is stable):
+# cargo install bismark-dedup --version 1.1.0-beta.1
 ```
 
 During the Perl → Rust coexistence period, the binary installs as **`deduplicate_bismark_rs`** (with `_rs` suffix) so it can sit alongside the Perl `deduplicate_bismark` on `$PATH` without conflict.

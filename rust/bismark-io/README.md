@@ -90,7 +90,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bismark-io = "=1.0.0-beta.1"
+bismark-io = "=1.0.0-beta.2"
 ```
 
 End-to-end example — count records per strand:
@@ -138,6 +138,35 @@ fn pair_strands(bam_path: &std::path::Path) -> anyhow::Result<Vec<bismark_io::Bi
 }
 ```
 
+Threaded BAM I/O (v1.1 — used by `bismark-dedup`'s `--parallel N` path):
+
+```rust
+use bismark_io::{ThreadedBamReader, ThreadedBamWriter};
+use std::num::NonZero;
+use std::path::Path;
+
+// Copy a BAM through the threaded reader+writer pair (no dedup logic —
+// just demonstrates the API surface; a real dedup loop would consult
+// bismark_dedup::pipeline).
+fn copy_threaded(input: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let parallel = NonZero::new(4).unwrap();
+    let mut reader = ThreadedBamReader::from_path(input, parallel)?;
+    let header = reader.header().clone();
+    let mut writer = ThreadedBamWriter::from_path(output, header, parallel)?;
+    for record in reader.records() {
+        writer.write_record(&record?)?;
+    }
+    writer.finish()?;
+    Ok(())
+}
+```
+
+`ThreadedBamReader` / `ThreadedBamWriter` wrap noodles'
+`MultithreadedReader` / `MultithreadedWriter` over BGZF; the single-threaded
+`BamReader<R>` and `BamWriter<W>` API surface is unchanged. The threaded
+variants are BAM-only (the `--parallel` path falls back to single-threaded
+for CRAM in `bismark-dedup`).
+
 CIGAR-aware position helpers (the dedup key formula uses these):
 
 ```rust
@@ -180,11 +209,11 @@ The pin policy: noodles releases frequently and occasionally bumps MSRV. Exact-p
 
 ## Stability
 
-This is **v1.0.0-beta.1** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
+This is **v1.0.0-beta.2** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The v1.0.0-beta.2 release is additive: it adds `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF (de)compression but leaves every v1.0.0-beta.1 type/function signature unchanged. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
 
 ## crates.io
 
-This release is **not yet published to crates.io**. Within the Bismark workspace, path-dep usage is the supported integration model. Publication is deferred until at least one downstream binary crate lands, to keep the publish-bump cycle in lockstep with binary crates.
+Published as both `bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line, Phase A of the rayon epic) and `bismark-io = "=1.0.0-beta.2"` (the v1.1 BGZF-threaded line, Phase D of the rayon epic). Within the Bismark workspace, `bismark-dedup` pins `=1.0.0-beta.2` for the threaded BAM I/O. External consumers can pin either depending on whether they need threaded readers/writers.
 
 ## License
 

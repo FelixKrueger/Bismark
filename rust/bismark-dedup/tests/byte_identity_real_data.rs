@@ -273,3 +273,22 @@ fn byte_identity_real_data_10m_pe_wgbs() {
 fn byte_identity_real_data_10m_pe_wgbs_parallel_4() {
     run_byte_identity_at_parallel(Some(4));
 }
+
+/// v1.1 Phase D speedup-curve gate at `--parallel 2`. Same correctness
+/// invariant as the `_parallel_4` sibling: retained-qname set + report
+/// bytes equal Perl v0.25.1's single-threaded baseline.
+#[test]
+#[ignore]
+fn byte_identity_real_data_10m_pe_wgbs_parallel_2() {
+    run_byte_identity_at_parallel(Some(2));
+}
+
+/// v1.1 Phase D speedup-curve gate at `--parallel 8`. Same correctness
+/// invariant. At N=8 the speedup may flatten (or regress slightly) since
+/// the dedup state itself is single-threaded; only BGZF (de)compression
+/// parallelizes. The test asserts only byte-identity, not speedup.
+#[test]
+#[ignore]
+fn byte_identity_real_data_10m_pe_wgbs_parallel_8() {
+    run_byte_identity_at_parallel(Some(8));
+}

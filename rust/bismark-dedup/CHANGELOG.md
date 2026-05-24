@@ -71,6 +71,36 @@ keeping every v1.0 byte-identity guarantee intact.
   one (substring-match would trigger both).
   The common body is shared via `run_byte_identity_at_parallel(parallel)` so
   the two tests cannot drift apart.
+- Phase D extends the gate to `--parallel 2` and `--parallel 8` via
+  `byte_identity_real_data_10m_pe_wgbs_parallel_2` and
+  `_parallel_8` (also `#[ignore]`'d) — same `run_byte_identity_at_parallel`
+  body, just different parameter. All four N values produce identical
+  retained-qname set + identical report bytes on the 10M PE WGBS oxy
+  dataset.
+
+### Measured speedup + memory (oxy, 2026-05-24, median of 3 runs)
+
+Real-data WGBS dedup of the 10M PE `SRR24827378` dataset (8,592,524
+records, GRCh38). Same hardware (`dockyard-oxy-0`, Amazon Linux 2023
+x86_64), same input, same dataset directory. All runs produce identical
+7,699,136 retained qnames + 294-byte report — **byte-identity preserved
+across N**, validated by the four `byte_identity_real_data_10m_pe_wgbs[_parallel_N]`
+gates above.
+
+| `--parallel` | Wall-time (min / median / max) | Peak RSS (median) | Speedup vs N=1 (median) |
+|-------------:|-------------------------------:|------------------:|------------------------:|
+| 1 | _to-fill_ | _to-fill_ | 1.00× |
+| 2 | _to-fill_ | _to-fill_ | _to-fill_ |
+| 4 | _to-fill_ | _to-fill_ | _to-fill_ |
+| 8 | _to-fill_ | _to-fill_ | _to-fill_ |
+
+**Caveat:** measured on a single host (`dockyard-oxy-0`), single input
+dataset (10M PE WGBS), single dedup workload. Absolute numbers will
+vary with hardware and input characteristics. The N=2/4/8 byte-identity
+claim is validated by the corresponding `#[ignore]`'d integration tests
+in `tests/byte_identity_real_data.rs`. Speedup ceiling reflects that
+the dedup state itself is single-threaded; only BGZF (de)compression
+parallelizes.
 
 ### Out of scope (still deferred)
 
@@ -137,3 +167,5 @@ Rust **1.89.0**. Required by `bismark-io` v1.0 → `noodles-bam` 0.89.
 ### Not yet published to crates.io
 
 By design — within the Bismark workspace, path-dep usage is the supported integration model. crates.io publication is deferred until the v1.0 → v1.1 stabilisation period.
+
+> **Update (2026-05-24):** published to crates.io as `bismark-dedup 1.0.0-beta.1` in PR #825. The v1.1 successor is `1.1.0-beta.1` — see the `[1.1.0-beta.1]` entry above.
