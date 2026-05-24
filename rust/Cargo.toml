@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bismark-io"]
+members = ["bismark-io", "bismark-dedup"]
 
 [workspace.package]
 edition = "2024"
