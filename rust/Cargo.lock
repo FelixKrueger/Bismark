@@ -104,6 +104,7 @@ dependencies = [
  "bismark-io",
  "bstr",
  "clap",
+ "noodles-sam",
  "predicates",
  "rustc-hash",
  "tempfile",
