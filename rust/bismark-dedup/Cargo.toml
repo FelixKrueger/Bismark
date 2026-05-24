@@ -1,6 +1,6 @@
 [package]
 name = "bismark-dedup"
-version = "0.0.0"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's deduplicate_bismark script"
 edition.workspace = true
 rust-version.workspace = true
