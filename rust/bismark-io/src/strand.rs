@@ -25,7 +25,14 @@
 use crate::error::BismarkIoError;
 
 /// Bismark four-way strand classification.
+///
+/// `#[repr(u8)]` pins the layout to a single byte so downstream consumers
+/// (e.g. `bismark-dedup`'s `DedupKey`) can make explicit, stable
+/// size-of-struct contracts. Without this annotation, Rust's default-enum
+/// layout is unspecified, and a future compiler change could grow the
+/// discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum BismarkStrand {
     /// Original Top (XR=CT, XG=CT).
     OT,
