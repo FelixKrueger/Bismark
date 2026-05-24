@@ -402,7 +402,7 @@ pub fn run_multiple(
 
     // Open all readers and capture their headers up front. We need each
     // header for chr-consistency validation before opening the writer.
-    let mut readers: Vec<_> = inputs
+    let readers: Vec<_> = inputs
         .iter()
         .map(|p| bismark_io::open_reader(p, cram_ref))
         .collect::<Result<Vec<_>, _>>()?;
@@ -419,26 +419,41 @@ pub fn run_multiple(
         .map(|h| build_refid_table(h, &intern))
         .collect();
 
-    // Peek file1 for empty before opening writer.
-    {
-        let mut peek_iter = readers[0].records().peekable();
-        if peek_iter.peek().is_none() {
-            return Err(BismarkDedupError::EmptyInput(inputs[0].clone()));
-        }
-        // peek_iter dropped at end of scope, releasing borrow of readers[0].
-    }
-
     // Open writer with file1's header. Output format follows input.
+    // Note: emptiness of file1 is detected inline during streaming
+    // (see the `i == 0` branch below). We cannot use `Peekable` here
+    // the way `run_single` does, because dropping a `Peekable` after
+    // peeking the first record DOES consume that record from the
+    // underlying iterator — re-calling `reader.records()` then starts
+    // at the second record. The `iter::once(first).chain(rest)` pattern
+    // (PLAN.md rev 1's original design) avoids this and is the only
+    // correct shape when the writer must be opened AFTER the peek.
     let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
     let mut state = DedupState::new();
 
-    // Stream each input in order, accumulating into the shared state.
-    for (i, reader) in readers.iter_mut().enumerate() {
-        let records = reader.records();
-        if is_paired {
-            stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+    for (i, mut reader) in readers.into_iter().enumerate() {
+        if i == 0 {
+            // File 1: peek-by-next + chain pattern.
+            let mut iter = reader.records();
+            let first = match iter.next() {
+                Some(Ok(r)) => r,
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
+            };
+            let combined = std::iter::once(Ok(first)).chain(iter);
+            if is_paired {
+                stream_pe(combined, &refid_tables[i], &mut state, &mut writer)?;
+            } else {
+                stream_se(combined, &refid_tables[i], &mut state, &mut writer)?;
+            }
         } else {
-            stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            // Subsequent files: empty is OK (they just contribute no records).
+            let records = reader.records();
+            if is_paired {
+                stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            } else {
+                stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            }
         }
     }
 
