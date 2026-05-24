@@ -402,7 +402,7 @@ pub fn run_multiple(
 
     // Open all readers and capture their headers up front. We need each
     // header for chr-consistency validation before opening the writer.
-    let mut readers: Vec<_> = inputs
+    let readers: Vec<_> = inputs
         .iter()
         .map(|p| bismark_io::open_reader(p, cram_ref))
         .collect::<Result<Vec<_>, _>>()?;
@@ -419,21 +419,52 @@ pub fn run_multiple(
         .map(|h| build_refid_table(h, &intern))
         .collect();
 
-    // Peek file1 for empty before opening writer.
-    {
-        let mut peek_iter = readers[0].records().peekable();
-        if peek_iter.peek().is_none() {
-            return Err(BismarkDedupError::EmptyInput(inputs[0].clone()));
+    // ────────────────────────────────────────────────────────────────
+    // Peek file1's first record BEFORE opening the writer.
+    //
+    // Both dual reviewers (Phase E) flagged that opening the writer
+    // first leaves a header-only output BAM on disk if file1 is empty
+    // — violating PLAN §10.9's "no output files left behind on
+    // EmptyInput error" invariant.
+    //
+    // We can't use the `Peekable` pattern here the way `run_single`
+    // does, because dropping a `Peekable` after peeking consumes the
+    // record from the underlying reader — re-calling `reader.records()`
+    // later starts at the second record. Instead we use the
+    // `iter::once(first).chain(rest)` pattern: stash the peeked record
+    // outside the borrow, drop the iterator borrow, open the writer,
+    // then prepend the stashed record to a fresh iterator borrow.
+    // ────────────────────────────────────────────────────────────────
+    let mut readers_iter = readers.into_iter();
+    let mut first_reader = readers_iter
+        .next()
+        .expect("inputs.is_empty() checked above; readers has ≥1 element");
+    let first_record: BismarkRecord = {
+        let mut peek_iter = first_reader.records();
+        match peek_iter.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
         }
-        // peek_iter dropped at end of scope, releasing borrow of readers[0].
-    }
+        // `peek_iter` (and the borrow on `first_reader`) dropped here.
+    };
 
-    // Open writer with file1's header. Output format follows input.
+    // Now safe to open the writer — file1 is not empty.
     let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
     let mut state = DedupState::new();
 
-    // Stream each input in order, accumulating into the shared state.
-    for (i, reader) in readers.iter_mut().enumerate() {
+    // Stream file1 starting from the stashed first record.
+    let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
+        .chain(first_reader.records());
+    if is_paired {
+        stream_pe(combined, &refid_tables[0], &mut state, &mut writer)?;
+    } else {
+        stream_se(combined, &refid_tables[0], &mut state, &mut writer)?;
+    }
+
+    // Stream subsequent files (empty is OK — they just contribute no records).
+    for (i_zero_based, mut reader) in readers_iter.enumerate() {
+        let i = i_zero_based + 1;
         let records = reader.records();
         if is_paired {
             stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
