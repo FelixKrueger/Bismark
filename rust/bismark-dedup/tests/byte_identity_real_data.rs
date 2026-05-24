@@ -107,25 +107,17 @@ fn read_qname_set(path: &Path) -> HashSet<String> {
     set
 }
 
-/// THE byte-identity gate for `bismark-dedup` v1.0.
+/// Shared body for the v1.0 (single-threaded) and v1.1 (`--parallel 4`)
+/// byte-identity gates. Invoking with `parallel == None` runs without the
+/// `--parallel` flag at all, which matches the v1.0 invocation byte-for-byte
+/// (and is the safest control). Invoking with `parallel == Some(N)` adds
+/// `--parallel N` to the command line.
 ///
-/// Runs `deduplicate_bismark_rs --paired <basename>` from the dataset
-/// directory (so the report includes the basename, matching Perl's
-/// baseline). Compares:
-///
-/// 1. **Retained-qname set equality** — Rust's output BAM has exactly
-///    the same set of qnames as Perl's. Order may differ (Rust preserves
-///    input order; Perl does too in practice, but we sort/set-compare
-///    to be robust).
-///
-/// 2. **Dedup report byte equality** — Rust's `.deduplication_report.txt`
-///    is byte-equal to Perl's.
-///
-/// If either fails, the test prints a diff-style summary so the failure
-/// is actionable without re-running.
-#[test]
-#[ignore]
-fn byte_identity_real_data_10m_pe_wgbs() {
+/// In **both** invocations the assertion is the same: the Rust output's
+/// retained-qname set and report bytes must equal the **single Perl
+/// baseline** (Perl is single-threaded; the v1.1 contract is that
+/// threading doesn't change observable output).
+fn run_byte_identity_at_parallel(parallel: Option<u32>) {
     let Some(dataset_dir) = resolve_dataset_dir() else {
         // SKIP is graceful — print-and-return-success so CI without the
         // dataset doesn't see a spurious failure.
@@ -139,22 +131,23 @@ fn byte_identity_real_data_10m_pe_wgbs() {
     let out_dir = TempDir::new().expect("create tmp dir");
 
     eprintln!(
-        "running bismark-dedup_rs against {} (dataset dir: {})",
+        "running bismark-dedup_rs against {} (dataset dir: {}, parallel: {:?})",
         INPUT_BAM,
-        dataset_dir.display()
+        dataset_dir.display(),
+        parallel,
     );
 
     // Run from the dataset dir with the basename so the report includes
     // exactly the same `file_label` as the Perl baseline.
-    Command::cargo_bin("deduplicate_bismark_rs")
-        .unwrap()
-        .current_dir(&dataset_dir)
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.current_dir(&dataset_dir)
         .arg("--paired")
         .arg("--output_dir")
-        .arg(out_dir.path())
-        .arg(INPUT_BAM)
-        .assert()
-        .success();
+        .arg(out_dir.path());
+    if let Some(n) = parallel {
+        cmd.arg("--parallel").arg(n.to_string());
+    }
+    cmd.arg(INPUT_BAM).assert().success();
 
     // 1) Retained-qname set comparison.
     let rust_bam_path = out_dir
@@ -182,7 +175,7 @@ fn byte_identity_real_data_10m_pe_wgbs() {
         let only_rust: Vec<&String> = rust_qnames.difference(&perl_qnames).take(5).collect();
         let only_perl: Vec<&String> = perl_qnames.difference(&rust_qnames).take(5).collect();
         panic!(
-            "byte-identity FAIL: retained-qname sets differ.\n\
+            "byte-identity FAIL (parallel={parallel:?}): retained-qname sets differ.\n\
              Rust: {} qnames\n\
              Perl: {} qnames\n\
              First 5 only-in-Rust: {:?}\n\
@@ -217,13 +210,58 @@ fn byte_identity_real_data_10m_pe_wgbs() {
         eprintln!("{perl_report}");
         eprintln!("--- Rust report (bytes={}) ---", rust_report.len());
         eprintln!("{rust_report}");
-        panic!("byte-identity FAIL: dedup report bytes differ — see eprintln above");
+        panic!(
+            "byte-identity FAIL (parallel={parallel:?}): dedup report bytes differ — \
+             see eprintln above"
+        );
     }
     eprintln!("✓ report bytes match: {} bytes each", rust_report.len());
 
     eprintln!(
-        "byte-identity gate PASSED: {} retained qnames + {} report bytes",
+        "byte-identity gate PASSED (parallel={parallel:?}): \
+         {} retained qnames + {} report bytes",
         rust_qnames.len(),
         rust_report.len()
     );
+}
+
+/// THE byte-identity gate for `bismark-dedup` v1.0 (single-threaded).
+///
+/// Runs `deduplicate_bismark_rs --paired <basename>` from the dataset
+/// directory (so the report includes the basename, matching Perl's
+/// baseline). Compares:
+///
+/// 1. **Retained-qname set equality** — Rust's output BAM has exactly
+///    the same set of qnames as Perl's.
+///
+/// 2. **Dedup report byte equality** — Rust's `.deduplication_report.txt`
+///    is byte-equal to Perl's.
+///
+/// If either fails, the test prints a diff-style summary so the failure
+/// is actionable without re-running.
+#[test]
+#[ignore]
+fn byte_identity_real_data_10m_pe_wgbs() {
+    run_byte_identity_at_parallel(None);
+}
+
+/// v1.1 headline gate: real-data byte-identity at `--parallel 4`.
+///
+/// Asserts that the BGZF-threaded BAM path produces **the same retained
+/// qnames + the same report bytes** as Perl v0.25.1's single-threaded
+/// `deduplicate_bismark`. Perl's output is the single baseline for both
+/// the single-threaded Rust path and the `--parallel 4` Rust path — the
+/// v1.1 byte-identity contract is that threading doesn't change anything
+/// observable.
+///
+/// Run on **oxy** (where the 10M PE WGBS dataset + Perl baselines live):
+///
+/// ```sh
+/// BISMARK_REAL_DATA_DIR=<oxy-dataset-dir> \
+///   cargo test --release -- --ignored byte_identity_real_data_10m_pe_wgbs_parallel_4
+/// ```
+#[test]
+#[ignore]
+fn byte_identity_real_data_10m_pe_wgbs_parallel_4() {
+    run_byte_identity_at_parallel(Some(4));
 }
