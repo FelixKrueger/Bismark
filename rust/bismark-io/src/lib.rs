@@ -28,7 +28,9 @@ pub use cigar::{AlignedPosition, AlignedPositions, CigarExt};
 pub use cram_ref::reconstitute_cram_reference_from_bismark_genome;
 pub use error::BismarkIoError;
 pub use pair::BismarkPair;
-pub use read::{AlignmentKind, AnyReader, BamReader, CramReader, SamReader, open_reader};
+pub use read::{
+    AlignmentKind, AnyReader, BamReader, CramReader, SamReader, ThreadedBamReader, open_reader,
+};
 pub use record::{BismarkRecord, ReadIdentity};
 pub use strand::BismarkStrand;
-pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, open_writer};
+pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, ThreadedBamWriter, open_writer};

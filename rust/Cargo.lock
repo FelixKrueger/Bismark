@@ -114,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-io"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 dependencies = [
  "bstr",
  "noodles-bam",

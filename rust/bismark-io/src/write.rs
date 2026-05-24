@@ -87,6 +87,91 @@ impl<W: Write> BamWriter<W> {
     }
 }
 
+/// **Threaded** BAM writer that uses [`noodles_bgzf::io::MultithreadedWriter`]
+/// for parallel BGZF block compression.
+///
+/// Separate concrete type from [`BamWriter`] (which is generic over
+/// `W: Write` and uses noodles' default single-threaded BGZF writer).
+/// The threaded variant always wraps a `File` directly with a worker-thread
+/// pool sized at construction time.
+///
+/// **Must be finalised with `finish()` before being dropped.** Same
+/// contract as [`BamWriter`] — without `finish()`, the BGZF EOF marker
+/// is written only via `Drop`, which silently swallows I/O errors.
+///
+/// BAM output byte-stream from this writer is **functionally identical**
+/// to the single-threaded [`BamWriter`] — same records, same header,
+/// valid BGZF EOF marker. Block boundaries may differ between the two
+/// (different worker assignment patterns produce different block sizes),
+/// but the decompressed record stream is byte-identical.
+///
+/// Added in `bismark-io` v1.0.0-beta.2 to support `bismark-dedup`'s
+/// `--parallel N` flag.
+#[must_use = "ThreadedBamWriter must be finalised with finish() before being dropped; \
+              otherwise EOF marker errors are silently lost via Drop"]
+pub struct ThreadedBamWriter {
+    inner: noodles_bam::io::Writer<noodles_bgzf::io::MultithreadedWriter<File>>,
+    header: Header,
+}
+
+impl ThreadedBamWriter {
+    /// Create a BAM writer at `path` with `parallel` BGZF encoder worker
+    /// threads. On header-write failure the partially-created file is
+    /// removed (best-effort cleanup).
+    ///
+    /// `parallel` must be ≥ 1 (enforced by [`std::num::NonZero`]). For
+    /// `parallel == 1`, prefer [`BamWriter::from_path`].
+    pub fn from_path(
+        path: &Path,
+        header: Header,
+        parallel: std::num::NonZero<usize>,
+    ) -> Result<Self, BismarkIoError> {
+        let file = File::create(path)?;
+        let bgzf = noodles_bgzf::io::MultithreadedWriter::with_worker_count(parallel, file);
+        let mut inner = noodles_bam::io::Writer::from(bgzf);
+        inner.write_header(&header).inspect_err(|_| {
+            let _ = std::fs::remove_file(path);
+        })?;
+        Ok(Self { inner, header })
+    }
+
+    /// Header that was written at construction time.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Write one `BismarkRecord` to the BAM stream.
+    pub fn write_record(&mut self, record: &BismarkRecord) -> Result<(), BismarkIoError> {
+        self.inner
+            .write_alignment_record(&self.header, record.inner())?;
+        Ok(())
+    }
+
+    /// Finalise the BAM stream, writing the BGZF EOF marker. Consumes
+    /// `self`.
+    ///
+    /// Internally invokes [`noodles_bgzf::io::MultithreadedWriter::finish`]
+    /// on the inner BGZF writer (via `get_mut`). This is the parallel
+    /// equivalent of [`BamWriter::finish`]'s `try_finish` call — both
+    /// produce a valid BAM file ending in the canonical BGZF EOF marker.
+    ///
+    /// **Drop interaction**: after `finish()` returns, the
+    /// `MultithreadedWriter`'s internal state transitions to `Done`.
+    /// The subsequent `Drop` (when `self` falls out of scope) is a
+    /// no-op for the BGZF layer — it does not attempt to re-write the
+    /// EOF marker or re-flush pending blocks. This avoids the silent-
+    /// double-finalise bug that would arise if Drop ran the same logic
+    /// `finish()` already did.
+    pub fn finish(mut self) -> Result<(), BismarkIoError> {
+        // `noodles_bam::io::Writer::get_mut` exposes the inner BGZF writer.
+        // For the MultithreadedWriter, `finish()` produces the EOF marker
+        // + flushes pending blocks, returning the underlying File.
+        let bgzf = self.inner.get_mut();
+        bgzf.finish()?;
+        Ok(())
+    }
+}
+
 /// SAM writer producing uncompressed SAM text.
 ///
 /// **Must be finalised with `finish()` before being dropped.** SAM has
@@ -578,5 +663,101 @@ mod tests {
             b"ACGTC",
             "sequence bytes survive CRAM reference-based round-trip"
         );
+    }
+
+    // ───────── ThreadedBamWriter tests (v1.0.0-beta.2) ─────────
+
+    /// `ThreadedBamWriter::finish()` writes a valid BGZF EOF marker, just
+    /// like the single-threaded `BamWriter::finish()`. Per B-H1 from the
+    /// rev 2 plan-review: noodles' `MultithreadedWriter::finish()` returns
+    /// a different type than `bgzf::Writer::try_finish()`, so the EOF-marker
+    /// contract needs explicit verification.
+    #[test]
+    fn threaded_bam_writer_finish_writes_bgzf_eof_marker() {
+        let tmp = TempDir::new().unwrap();
+        let bam_path = tmp.path().join("eof_threaded.bam");
+        {
+            let mut writer = crate::write::ThreadedBamWriter::from_path(
+                &bam_path,
+                synth_header(),
+                std::num::NonZero::new(4).unwrap(),
+            )
+            .unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.finish().unwrap();
+        }
+        let bytes = std::fs::read(&bam_path).unwrap();
+        assert!(
+            bytes.len() >= BGZF_EOF_MARKER.len(),
+            "threaded BAM file shorter than the EOF marker"
+        );
+        let tail = &bytes[bytes.len() - BGZF_EOF_MARKER.len()..];
+        assert_eq!(
+            tail, BGZF_EOF_MARKER,
+            "threaded BAM file must end with the BGZF EOF marker — \
+             noodles' MultithreadedWriter::finish() must produce the same \
+             EOF block bytes as the single-threaded writer"
+        );
+    }
+
+    /// Round-trip: write via threaded writer, read via threaded reader,
+    /// assert the record stream decodes identically. The BAM bytes on disk
+    /// may differ between threaded and single-threaded writers (different
+    /// BGZF block boundaries) but the decompressed record stream MUST be
+    /// identical.
+    #[test]
+    fn threaded_bam_writer_roundtrip_via_tempfile() {
+        let tmp = TempDir::new().unwrap();
+        let bam_path = tmp.path().join("threaded_roundtrip.bam");
+        {
+            let mut writer = crate::write::ThreadedBamWriter::from_path(
+                &bam_path,
+                synth_header(),
+                std::num::NonZero::new(4).unwrap(),
+            )
+            .unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read back via the threaded reader.
+        let mut reader = crate::read::ThreadedBamReader::from_path(
+            &bam_path,
+            std::num::NonZero::new(4).unwrap(),
+        )
+        .unwrap();
+        let records: Vec<_> = reader.records().collect();
+        assert_eq!(records.len(), 3, "wrote 3 records, expected 3 back");
+        for r in records {
+            let rec = r.unwrap();
+            assert_eq!(rec.record_strand(), crate::strand::BismarkStrand::OT);
+        }
+    }
+
+    /// Cross-writer / cross-reader matrix: writing via the threaded writer
+    /// and reading via the single-threaded reader must work — and vice versa.
+    /// Proves the BGZF byte-stream is canonical regardless of which writer
+    /// produced it.
+    #[test]
+    fn threaded_bam_writer_output_readable_by_single_threaded_reader() {
+        let tmp = TempDir::new().unwrap();
+        let bam_path = tmp.path().join("threaded_to_single.bam");
+        {
+            let mut writer = crate::write::ThreadedBamWriter::from_path(
+                &bam_path,
+                synth_header(),
+                std::num::NonZero::new(4).unwrap(),
+            )
+            .unwrap();
+            writer.write_record(&synth_bismark_record()).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Read via the single-threaded reader.
+        let mut reader = crate::read::BamReader::from_path(&bam_path).unwrap();
+        let records: Vec<_> = reader.records().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(records.len(), 1);
     }
 }

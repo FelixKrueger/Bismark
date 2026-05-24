@@ -5,6 +5,67 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.2] — 2026-05-24
+
+Additive release adding parallel BGZF reader/writer support, used by
+`bismark-dedup` v1.1.0-beta.1's `--parallel N` flag. **Public API
+unchanged for existing callers** — `BamReader<R>`, `BamWriter<W>`,
+`AnyReader`, `AnyWriter`, `open_reader`, `open_writer` all behave
+identically to v1.0.0-beta.1.
+
+### Added
+
+- **`ThreadedBamReader`** — new concrete struct wrapping
+  `noodles_bam::io::Reader<noodles_bgzf::io::MultithreadedReader<File>>`.
+  Mirrors `BamReader`'s public API (`header()`, `records()`,
+  `from_path`, `from_path_without_sort_check`) but with a worker-thread
+  pool for parallel BGZF block decompression. Use when consuming large
+  BAM files where decompression is the bottleneck.
+
+  ```rust
+  use std::num::NonZero;
+  use bismark_io::ThreadedBamReader;
+
+  let mut reader = ThreadedBamReader::from_path(
+      Path::new("sample.bam"),
+      NonZero::new(4).unwrap(),  // 4 BGZF decoder worker threads
+  )?;
+  for result in reader.records() {
+      // ...
+  }
+  ```
+
+- **`ThreadedBamWriter`** — symmetric. Wraps `noodles_bam::io::Writer<noodles_bgzf::io::MultithreadedWriter<File>>`.
+  Same `#[must_use]` finalisation contract as `BamWriter`. The BGZF
+  EOF marker is verified-equivalent to single-threaded output by the
+  `threaded_bam_writer_finish_writes_bgzf_eof_marker` test. Block
+  boundaries on disk **will** differ between threaded and single-threaded
+  output (different worker assignment patterns produce different block
+  sizes), but the **decoded record stream is byte-identical** — which is
+  what byte-identity gates in downstream consumers (e.g. bismark-dedup's
+  Phase F gate against Perl baseline) actually check.
+
+- 7 new tests covering: order preservation, strand classification
+  preservation, EOF-marker validity, threaded-writer→single-threaded-reader
+  cross-compatibility round-trip.
+
+### Not added (deferred to a later beta)
+
+- Generic refactor of `BamReader<R>` / `BamWriter<W>` (the "option (a)"
+  approach from the v1.1 plan) — superseded by the simpler additive-struct
+  approach. The existing `BamReader<R>` and `BamWriter<W>` remain unchanged.
+- `open_reader_with_threads` / `open_writer_with_threads` path-dispatching
+  helpers — out of scope because `AnyReader`/`AnyWriter` don't need to
+  unify threaded + single-threaded variants under one enum (the threaded
+  path in `bismark-dedup` v1.1 calls `ThreadedBamReader`/`ThreadedBamWriter`
+  directly, bypassing the `AnyReader` enum).
+
+### Pinning
+
+Downstream consumers pinning `=1.0.0-beta.1` should bump to `=1.0.0-beta.2`
+when they want the threaded readers/writers. `bismark-dedup v1.1.0-beta.1`
+requires `=1.0.0-beta.2`.
+
 ## [1.0.0-beta.1] — 2026-05-24
 
 First **public pre-release** of `bismark-io` on crates.io. Feature-complete

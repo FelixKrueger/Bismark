@@ -6,8 +6,9 @@
 //! `test_files/README.md`; it is generated once by Bismark Perl v0.25.1
 //! and committed.
 
-use bismark_io::{BamReader, BismarkPair, BismarkStrand, ReadIdentity};
+use bismark_io::{BamReader, BismarkPair, BismarkStrand, ReadIdentity, ThreadedBamReader};
 use std::collections::HashMap;
+use std::num::NonZero;
 use std::path::PathBuf;
 
 fn fixture_path() -> PathBuf {
@@ -214,4 +215,110 @@ fn fixture_bam_directional_library_pair_strand_invariant() {
             }
         }
     }
+}
+
+// ───────────────────────── Threaded reader tests (v1.0.0-beta.2) ─────────────
+
+/// `ThreadedBamReader::from_path` yields the same record count as
+/// the single-threaded `BamReader::from_path` on the committed fixture.
+///
+/// At `parallel = 4` on a 203-record fixture spanning a small number of
+/// BGZF blocks, the threaded reader's worker pool may or may not have
+/// meaningful parallelism — but the *output* (the record stream) must
+/// be identical to the single-threaded reader's. This is the
+/// fundamental byte-identity claim Option C depends on.
+#[test]
+fn threaded_bam_reader_parallel_4_matches_single_threaded_record_count() {
+    let single: Vec<_> = {
+        let mut reader = BamReader::from_path(&fixture_path()).expect("single-threaded open");
+        reader
+            .records()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("single-threaded records")
+    };
+    let threaded: Vec<_> = {
+        let mut reader = ThreadedBamReader::from_path(&fixture_path(), NonZero::new(4).unwrap())
+            .expect("threaded open");
+        reader
+            .records()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("threaded records")
+    };
+
+    assert_eq!(
+        threaded.len(),
+        single.len(),
+        "threaded reader produced {} records; single-threaded produced {}",
+        threaded.len(),
+        single.len(),
+    );
+}
+
+/// `ThreadedBamReader` yields records with the same qnames, in the same
+/// order, as `BamReader`. Order preservation is the critical claim for
+/// PE pair-adjacency.
+#[test]
+fn threaded_bam_reader_preserves_record_order() {
+    fn qnames_of(
+        reader: impl Iterator<Item = Result<bismark_io::BismarkRecord, bismark_io::BismarkIoError>>,
+    ) -> Vec<String> {
+        reader
+            .map(|r| {
+                let rec = r.unwrap();
+                String::from_utf8_lossy(AsRef::as_ref(rec.inner().name().unwrap())).into_owned()
+            })
+            .collect()
+    }
+
+    let single_qnames = {
+        let mut reader = BamReader::from_path(&fixture_path()).unwrap();
+        qnames_of(reader.records())
+    };
+    let threaded_qnames = {
+        let mut reader =
+            ThreadedBamReader::from_path(&fixture_path(), NonZero::new(4).unwrap()).unwrap();
+        qnames_of(reader.records())
+    };
+
+    assert_eq!(
+        threaded_qnames, single_qnames,
+        "threaded reader produced records in a different order than single-threaded \
+         — order preservation is required for PE pair adjacency"
+    );
+}
+
+/// `ThreadedBamReader` yields records with the same strand classifications
+/// as `BamReader`. Validates that BGZF parallel decode doesn't corrupt
+/// the XR/XG tag bytes (which would manifest as different per-record
+/// strand classifications).
+#[test]
+fn threaded_bam_reader_preserves_strand_classification() {
+    let single_strands: Vec<BismarkStrand> = {
+        let mut reader = BamReader::from_path(&fixture_path()).unwrap();
+        reader
+            .records()
+            .map(|r| r.unwrap().record_strand())
+            .collect()
+    };
+    let threaded_strands: Vec<BismarkStrand> = {
+        let mut reader =
+            ThreadedBamReader::from_path(&fixture_path(), NonZero::new(4).unwrap()).unwrap();
+        reader
+            .records()
+            .map(|r| r.unwrap().record_strand())
+            .collect()
+    };
+    assert_eq!(threaded_strands, single_strands);
+}
+
+/// `ThreadedBamReader::from_path(path, parallel=1)` still works — but
+/// callers are encouraged to use `BamReader::from_path` instead to skip
+/// the worker-thread spawn overhead (per the rev 2 plan's bypass-at-N=1
+/// decision in main.rs).
+#[test]
+fn threaded_bam_reader_parallel_1_is_valid_but_overhead() {
+    let mut reader = ThreadedBamReader::from_path(&fixture_path(), NonZero::new(1).unwrap())
+        .expect("parallel=1 should work even though it's not the intended path");
+    let count = reader.records().count();
+    assert_eq!(count, 203);
 }
