@@ -109,6 +109,22 @@ pub enum BismarkDedupError {
         qname: String,
     },
 
+    /// User passed no positional input files.
+    #[error("no input file(s) provided — pass one or more BAM/SAM/CRAM paths on the command line")]
+    NoInputFiles,
+
+    /// User specified neither `--single`/`--paired` AND the input BAM
+    /// header has no `@PG ID:Bismark` line with both `-1`/`--1` and
+    /// `-2`/`--2` args, so library mode cannot be inferred.
+    #[error(
+        "cannot auto-detect single-end vs paired-end mode from {input}'s @PG header; \
+         please pass --single or --paired explicitly"
+    )]
+    CannotAutoDetectMode {
+        /// Input file whose @PG header was inspected.
+        input: PathBuf,
+    },
+
     /// Direct `std::io::Error` from the orchestration layer (e.g. writing
     /// the report file).
     #[error("std I/O: {0}")]
