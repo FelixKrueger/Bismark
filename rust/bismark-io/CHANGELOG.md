@@ -5,16 +5,26 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — 2026-05-24
+## [1.0.0-beta.1] — 2026-05-24
 
-First stable release of `bismark-io`, the shared library crate for Bismark's
-Rust rewrite. Wraps the [`noodles`](https://github.com/zaeleus/noodles) family
-to provide Bismark-aware BAM/SAM/CRAM I/O: strand-classified record types,
+First **public pre-release** of `bismark-io` on crates.io. Feature-complete
+and test-passing per the v1.0 contract; published as beta to allow a
+period of integration feedback before the immutable 1.0.0 lands.
+
+The beta is intended to be **functionally identical** to what 1.0.0 will
+ship — no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`.
+Downstream consumers pinning `=1.0.0-beta.1` and `=1.0.0` should observe
+the same behaviour.
+
+`bismark-io` is the shared library crate for Bismark's Rust rewrite.
+Wraps the [`noodles`](https://github.com/zaeleus/noodles) family to
+provide Bismark-aware BAM/SAM/CRAM I/O: strand-classified record types,
 tag-decoded accessors, CIGAR-aware position helpers.
 
 This release is feature-complete for the v1.0 scope defined in `DESIGN.md`.
 Downstream binary crates (`bismark-dedup`, `bismark-bedgraph`,
-`bismark-extractor`, `bismark-coverage2cytosine`) will pin to `=1.0.0`.
+`bismark-extractor`, `bismark-coverage2cytosine`) will pin to `=1.0.0-beta.1`
+during the beta period, then bump to `=1.0.0` at final release.
 
 ### Added
 

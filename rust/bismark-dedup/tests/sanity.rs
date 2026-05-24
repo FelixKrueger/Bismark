@@ -13,8 +13,11 @@ fn version_output_matches_provenance_regex() {
     cmd.arg("--version")
         .assert()
         .success()
-        // `deduplicate_bismark_rs <semver> (<os>/<arch>)`
-        .stdout(is_match(r"^deduplicate_bismark_rs \d+\.\d+\.\d+ \(\S+/\S+\)\n$").unwrap());
+        // `deduplicate_bismark_rs <semver> (<os>/<arch>)` where <semver>
+        // may include a pre-release suffix (e.g. `1.0.0-beta.1`).
+        .stdout(
+            is_match(r"^deduplicate_bismark_rs \d+\.\d+\.\d+(-[\w.]+)? \(\S+/\S+\)\n$").unwrap(),
+        );
 }
 
 #[test]

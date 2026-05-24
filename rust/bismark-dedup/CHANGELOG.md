@@ -4,7 +4,15 @@ All notable changes to `bismark-dedup` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — 2026-05-24
+## [1.0.0-beta.1] — 2026-05-24
+
+First **public pre-release** of `bismark-dedup`. Feature-complete and
+verified byte-identical to Bismark Perl v0.25.1 on real WGBS data;
+published as beta to allow a period of integration feedback before the
+immutable 1.0.0 lands on crates.io.
+
+The beta is intended to be **functionally identical** to what 1.0.0 will
+ship: no breaking changes are planned between 1.0.0-beta.N and 1.0.0.
 
 First stable release. Feature-complete Rust port of Bismark Perl v0.25.1's `deduplicate_bismark` script — **verified byte-identical** to Perl's output on the 10M PE WGBS audit dataset (7,969,632 retained qnames + 294-byte dedup report).
 
