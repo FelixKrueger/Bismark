@@ -4,7 +4,7 @@ Bismark-aware BAM/SAM/CRAM I/O on top of [`noodles`](https://github.com/zaeleus/
 
 `bismark-io` is the shared library crate for [Bismark](https://github.com/FelixKrueger/Bismark)'s Rust rewrite. It wraps the `noodles` crate family to expose record types that already know about Bismark's strand classification (OT/CTOT/OB/CTOB derived from the `XR:Z:` and `XG:Z:` tags), tag-decoded accessors (`XM`, `XR`, `XG`, `MD`, `NM`), and CIGAR-aware position helpers. Every Bismark Rust binary crate (`bismark-dedup`, `bismark-extractor`, `bismark-bedgraph`, …) depends on it.
 
-**Status:** v1.0.0-beta.1 — feature-complete; first public pre-release on crates.io. The beta is functionally identical to what 1.0.0 will ship; published as beta to allow integration feedback before the immutable 1.0.0 lands. See [`CHANGELOG.md`](./CHANGELOG.md).
+**Status:** v1.0.0-beta.2 — adds `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF decode/encode (additive; existing API unchanged). Used by `bismark-dedup v1.1.0-beta.1`'s `--parallel N` flag. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Why a Bismark wrapper around `noodles`?
 

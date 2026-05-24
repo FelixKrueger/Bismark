@@ -131,6 +131,78 @@ impl<R: BufRead> BamReader<R> {
     }
 }
 
+/// **Threaded** BAM reader that uses [`noodles_bgzf::io::MultithreadedReader`]
+/// for parallel BGZF block decompression.
+///
+/// This is a separate concrete type from [`BamReader`] (which is generic
+/// over `R: BufRead` and uses noodles' default single-threaded BGZF
+/// reader). The threaded variant always wraps a `File` directly with a
+/// worker-thread pool sized at construction time.
+///
+/// Use this when `--parallel N > 1` is requested AND the input is BAM
+/// (SAM is text — no BGZF — and CRAM uses its own container format).
+/// For `N == 1`, prefer [`BamReader::from_path`] — the threaded
+/// constructor always spawns at least one worker thread regardless of
+/// the worker count.
+///
+/// Public API mirrors [`BamReader`]'s exactly: `header()`, `records()`,
+/// `without_sort_check`-equivalent via a separate constructor.
+///
+/// Added in `bismark-io` v1.0.0-beta.2 to support `bismark-dedup`'s
+/// `--parallel N` flag (parallel-BAM-I/O variant).
+pub struct ThreadedBamReader {
+    inner: noodles_bam::io::Reader<noodles_bgzf::io::MultithreadedReader<File>>,
+    header: Header,
+}
+
+impl ThreadedBamReader {
+    /// Open a BAM file with `parallel` BGZF decoder worker threads.
+    /// Reads the header eagerly and rejects coordinate-sorted input.
+    ///
+    /// `parallel` must be ≥ 1 (enforced by the [`std::num::NonZero`]
+    /// type). For `parallel == 1`, prefer [`BamReader::from_path`]
+    /// — this constructor still spawns one worker thread per noodles'
+    /// `MultithreadedReader` contract.
+    pub fn from_path(
+        path: &Path,
+        parallel: std::num::NonZero<usize>,
+    ) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let bgzf = noodles_bgzf::io::MultithreadedReader::with_worker_count(parallel, file);
+        let mut inner = noodles_bam::io::Reader::from(bgzf);
+        let header = inner.read_header()?;
+        check_not_coordinate_sorted(&header)?;
+        Ok(Self { inner, header })
+    }
+
+    /// Open a BAM file with `parallel` workers, without rejecting
+    /// coordinate-sorted input. For SE-only callers.
+    pub fn from_path_without_sort_check(
+        path: &Path,
+        parallel: std::num::NonZero<usize>,
+    ) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let bgzf = noodles_bgzf::io::MultithreadedReader::with_worker_count(parallel, file);
+        let mut inner = noodles_bam::io::Reader::from(bgzf);
+        let header = inner.read_header()?;
+        Ok(Self { inner, header })
+    }
+
+    /// Header from the BAM file.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
+    /// Unmapped reads (SAM FLAG & 0x4) are silently filtered.
+    pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(filter_unmapped_then_classify)
+    }
+}
+
 /// SAM reader producing [`BismarkRecord`]s.
 pub struct SamReader<R: BufRead> {
     inner: noodles_sam::io::Reader<R>,
