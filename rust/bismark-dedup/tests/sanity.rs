@@ -5,6 +5,7 @@
 //! Phase A: the binary builds, runs, and emits a recognisable identity string.
 
 use assert_cmd::Command;
+use predicates::prelude::*; // PredicateBooleanExt for `.not()` + `.and()`
 use predicates::str::is_match;
 
 #[test]
@@ -47,14 +48,42 @@ fn representative_flag_errors_with_perl_verbatim_joke() {
         .stderr(predicates::str::contains("Please stop wanting that"));
 }
 
+/// Phase B (v1.2): `--barcode` engages UMI mode. The startup banner
+/// matches Perl `deduplicate_bismark:167` byte-for-byte. (The previous
+/// banner string was fabricated; dual code review C2/H1 caught it.)
 #[test]
-fn barcode_flag_errors_with_v1_deferral_message() {
+fn barcode_flag_emits_perl_line_167_startup_banner() {
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
     cmd.arg("--barcode")
         .arg("dummy.bam")
         .assert()
         .failure()
+        .stderr(predicates::str::contains("Deduplicating data in UMI mode"));
+}
+
+/// Phase B (v1.2): `--bclconvert` engages UMI mode with the bcl-convert
+/// extractor. The startup banner matches Perl
+/// `deduplicate_bismark:172` byte-for-byte.
+#[test]
+fn bclconvert_flag_emits_perl_line_172_startup_banner() {
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--bclconvert")
+        .arg("dummy.bam")
+        .assert()
+        .failure()
         .stderr(predicates::str::contains(
-            "not supported in bismark-dedup v1.0",
+            "Deduplicating data in bcl-convert UMI mode",
         ));
+}
+
+/// Negative case (Reviewer B M3): a non-UMI invocation must NOT emit
+/// either UMI startup banner. Locks the conditional emission in `main.rs`.
+#[test]
+fn non_umi_invocation_does_not_emit_umi_startup_banner() {
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("dummy.bam").assert().failure().stderr(
+        predicates::str::contains("Deduplicating data in UMI mode")
+            .not()
+            .and(predicates::str::contains("Deduplicating data in bcl-convert UMI mode").not()),
+    );
 }

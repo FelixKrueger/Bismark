@@ -1,6 +1,6 @@
 [package]
 name = "bismark-io"
-version = "1.0.0-beta.4"
+version = "1.0.0-beta.5"
 description = "Bismark-aware BAM/SAM/CRAM I/O on top of noodles"
 edition.workspace = true
 rust-version.workspace = true
@@ -24,6 +24,10 @@ noodles-core = "=0.20.0"
 noodles-bgzf = "=0.47.0"
 noodles-csi = "=0.50.0"
 thiserror = "2"
+# Phase B (v1.2 UMI epic): BismarkRecord carries an optional UMI as a
+# stack-allocated SmallVec for ≤16-byte UMIs (covers all known Bismark
+# workflows; longer UMIs heap-allocate without semantic change).
+smallvec = "=1.13.2"
 
 [dev-dependencies]
 tempfile = "3"

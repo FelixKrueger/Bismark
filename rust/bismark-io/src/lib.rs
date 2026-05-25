@@ -32,7 +32,7 @@ pub use pair::BismarkPair;
 pub use read::{
     AlignmentKind, AnyReader, BamReader, CramReader, SamReader, ThreadedBamReader, open_reader,
 };
-pub use record::{BismarkRecord, ReadIdentity};
+pub use record::{BismarkRecord, ReadIdentity, Umi};
 pub use strand::BismarkStrand;
 pub use umi::{extract_barcode, extract_bclconvert};
 pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, ThreadedBamWriter, open_writer};

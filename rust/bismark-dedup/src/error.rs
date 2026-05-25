@@ -30,16 +30,6 @@ pub enum BismarkDedupError {
         qname: String,
     },
 
-    /// CLI flag deferred to v1.1; v1.0 stub for explicit error rather than
-    /// silent acceptance.
-    #[error(
-        "--{flag} is not supported in bismark-dedup v1.0; use the Perl `deduplicate_bismark` for this mode"
-    )]
-    UnsupportedFlagV1 {
-        /// Name of the flag (e.g. `"barcode"`, `"bclconvert"`).
-        flag: &'static str,
-    },
-
     /// `--outfile` specified with multiple positional inputs but no
     /// `--multiple` flag.
     #[error("--outfile requires a single input file unless --multiple is set (got {n_files})")]
@@ -138,6 +128,24 @@ pub enum BismarkDedupError {
     /// the report file).
     #[error("std I/O: {0}")]
     StdIo(#[from] std::io::Error),
+
+    /// UMI mode (`--barcode` / `--umi` / `--bclconvert`) was requested but a
+    /// record's qname did not match the extractor's pattern.
+    ///
+    /// Mirrors Perl `deduplicate_bismark`'s "Failed to extract a barcode
+    /// from the read ID" error at line 662-663. Errors at the first
+    /// failed record; no partial output left on disk.
+    #[error(
+        "--{flag} mode requires UMI in qname; failed to extract from qname={qname:?}. \
+         Check that the input was generated with the matching UMI flag — see `--help` \
+         for which qname format each flag expects."
+    )]
+    UmiExtractionFailed {
+        /// CLI flag name driving extraction: `"barcode"` or `"bclconvert"`.
+        flag: &'static str,
+        /// The offending qname (lossy UTF-8).
+        qname: String,
+    },
 }
 
 #[cfg(test)]

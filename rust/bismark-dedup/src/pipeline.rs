@@ -32,7 +32,11 @@ use rustc_hash::FxHashMap;
 use crate::DedupKey;
 use crate::DedupReport;
 use crate::DedupState;
+use crate::UmiDedupKey;
+use crate::UmiDedupState;
+use crate::cli::UmiMode;
 use crate::error::BismarkDedupError;
+use smallvec::SmallVec;
 
 /// Concrete writer type returned by `bismark_io::open_writer`.
 type Writer = AnyWriter<BufWriter<File>, File>;
@@ -647,6 +651,496 @@ pub fn run_multiple_parallel(
 
     writer.finish()?;
     Ok(state.into_report(file_label))
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// v1.2 Phase B: UMI-aware dedup (`--barcode` / `--umi` / `--bclconvert`).
+//
+// The functions below are siblings of `compute_*_key`, `stream_*`, and
+// `run_*`. They:
+//
+// - Take an additional `umi_mode: UmiMode` parameter (or, for the
+//   per-record-key helpers, derive the UMI from `BismarkRecord::umi()`
+//   which the reader pre-extracted at parse time).
+// - Build [`UmiDedupKey`]s instead of [`DedupKey`]s.
+// - Accumulate into [`UmiDedupState`] instead of [`DedupState`].
+// - Produce reports with the `(UMI mode)` banner suffix.
+//
+// API-evolution note (PLAN §4.2): these are NEW `pub fn`s, not modified
+// signatures. External v1.1 callers that imported `run_single`,
+// `run_single_parallel`, `run_multiple`, `run_multiple_parallel`
+// continue to compile against v1.2 without source changes.
+// ──────────────────────────────────────────────────────────────────────
+
+/// On error, best-effort unlink `output` so callers don't see a partial
+/// output file. Phase B fix (code-review C1) for the
+/// `UmiExtractionFailed`-mid-stream case: the writer is opened during
+/// streaming so a record-N failure leaves a header-only BAM on disk.
+/// Plan §4.3 and `error.rs` doc-comment both promise "no partial output";
+/// this helper makes good on that.
+fn cleanup_partial_output_on_err<T>(
+    output: &Path,
+    result: Result<T, BismarkDedupError>,
+) -> Result<T, BismarkDedupError> {
+    if result.is_err() {
+        let _ = std::fs::remove_file(output);
+    }
+    result
+}
+
+/// Map a [`UmiMode`] to the corresponding [`bismark_io::umi`] extractor
+/// function. Internal: callers feed the result into reader
+/// `records_with_umi(...)` constructors.
+fn umi_extractor_for(mode: UmiMode) -> fn(&[u8]) -> Option<&[u8]> {
+    match mode {
+        UmiMode::Barcode => bismark_io::extract_barcode,
+        UmiMode::Bclconvert => bismark_io::extract_bclconvert,
+    }
+}
+
+/// Short label for the CLI flag corresponding to a UMI mode. Used to
+/// populate `UmiExtractionFailed::flag` so the error message tells the
+/// user which flag drove the failed extraction.
+fn umi_mode_flag_label(mode: UmiMode) -> &'static str {
+    match mode {
+        UmiMode::Barcode => "barcode",
+        UmiMode::Bclconvert => "bclconvert",
+    }
+}
+
+/// Borrow the record's pre-extracted UMI, or return `UmiExtractionFailed`.
+fn require_umi(
+    record: &BismarkRecord,
+    mode: UmiMode,
+) -> Result<SmallVec<[u8; 16]>, BismarkDedupError> {
+    record
+        .umi()
+        .cloned()
+        .ok_or_else(|| BismarkDedupError::UmiExtractionFailed {
+            flag: umi_mode_flag_label(mode),
+            qname: qname_lossy(record),
+        })
+}
+
+/// Compute the UMI-aware SE dedup key. Mirrors [`compute_se_key`] but
+/// adds the pre-extracted UMI to the resulting key. Errors with
+/// `UmiExtractionFailed` if the record has no UMI (faithful to Perl
+/// `deduplicate_bismark:662-663`).
+fn compute_se_umi_key(
+    record: &BismarkRecord,
+    refid_table: &[u32],
+    umi_mode: UmiMode,
+) -> Result<UmiDedupKey, BismarkDedupError> {
+    let inner = record.inner();
+    let refid =
+        inner
+            .reference_sequence_id()
+            .ok_or_else(|| BismarkDedupError::MissingReferenceId {
+                qname: qname_lossy(record),
+            })?;
+    let chr_id = *refid_table
+        .get(refid)
+        .ok_or(BismarkDedupError::MissingChrInIntern { refid })?;
+    let start = u32::try_from(record.alignment_start().ok_or_else(|| {
+        BismarkDedupError::MissingAlignmentStart {
+            qname: qname_lossy(record),
+        }
+    })?)
+    .expect("alignment_start fits in u32 per BAM spec");
+    let key_pos = if is_forward(record.record_strand()) {
+        start
+    } else {
+        u32::try_from(record.cigar().reference_end(start as usize))
+            .expect("reference_end fits in u32 per BAM spec")
+    };
+    let umi = require_umi(record, umi_mode)?;
+    Ok(UmiDedupKey::se(
+        record.record_strand(),
+        chr_id,
+        key_pos,
+        umi,
+    ))
+}
+
+/// Compute the UMI-aware PE dedup key. Mirrors [`compute_pe_key`] but
+/// adds R1's pre-extracted UMI. Per Perl
+/// `deduplicate_bismark:642-660` (`deduplicate_barcoded_rrbs`), R1's UMI
+/// is the one used for paired-end dedup — R2's qname is read after the
+/// extraction step in Perl and only contributes start/end.
+fn compute_pe_umi_key(
+    pair: &BismarkPair,
+    refid_table: &[u32],
+    umi_mode: UmiMode,
+) -> Result<UmiDedupKey, BismarkDedupError> {
+    let r1 = pair.r1();
+    let r2 = pair.r2();
+    let refid = r1.inner().reference_sequence_id().ok_or_else(|| {
+        BismarkDedupError::MissingReferenceId {
+            qname: qname_lossy(r1),
+        }
+    })?;
+    let chr_id = *refid_table
+        .get(refid)
+        .ok_or(BismarkDedupError::MissingChrInIntern { refid })?;
+    let r1_start = u32::try_from(r1.alignment_start().ok_or_else(|| {
+        BismarkDedupError::MissingAlignmentStart {
+            qname: qname_lossy(r1),
+        }
+    })?)
+    .expect("alignment_start fits in u32 per BAM spec");
+    let r2_start = u32::try_from(r2.alignment_start().ok_or_else(|| {
+        BismarkDedupError::MissingAlignmentStart {
+            qname: qname_lossy(r2),
+        }
+    })?)
+    .expect("alignment_start fits in u32 per BAM spec");
+
+    let (start, end) = if is_forward(pair.pair_strand()) {
+        let end = u32::try_from(r2.cigar().reference_end(r2_start as usize))
+            .expect("reference_end fits in u32 per BAM spec");
+        (r1_start, end)
+    } else {
+        let end = u32::try_from(r1.cigar().reference_end(r1_start as usize))
+            .expect("reference_end fits in u32 per BAM spec");
+        (r2_start, end)
+    };
+    let umi = require_umi(r1, umi_mode)?;
+    Ok(UmiDedupKey::pe(pair.pair_strand(), chr_id, start, end, umi))
+}
+
+/// Stream SE records with UMI-aware keys. Sibling of [`stream_se`].
+fn stream_se_umi<W: WriteBismark>(
+    records: impl Iterator<Item = Result<BismarkRecord, bismark_io::BismarkIoError>>,
+    refid_table: &[u32],
+    umi_mode: UmiMode,
+    state: &mut UmiDedupState,
+    writer: &mut W,
+) -> Result<(), BismarkDedupError> {
+    for record_result in records {
+        let record = record_result?;
+        let key = compute_se_umi_key(&record, refid_table, umi_mode)?;
+        if state.observe(key) {
+            writer.write_one(&record)?;
+        }
+    }
+    Ok(())
+}
+
+/// Stream PE records with UMI-aware keys. Sibling of [`stream_pe`].
+fn stream_pe_umi<W: WriteBismark>(
+    records: impl Iterator<Item = Result<BismarkRecord, bismark_io::BismarkIoError>>,
+    refid_table: &[u32],
+    umi_mode: UmiMode,
+    state: &mut UmiDedupState,
+    writer: &mut W,
+) -> Result<(), BismarkDedupError> {
+    let mut iter = records;
+    loop {
+        let r1 = match iter.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return Err(e.into()),
+            None => break,
+        };
+        let r2 = match iter.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return Err(e.into()),
+            None => {
+                return Err(BismarkDedupError::UnpairedFinalRecord {
+                    qname: qname_lossy(&r1),
+                });
+            }
+        };
+        let pair = BismarkPair::from_mates(r1, r2)?;
+        let key = compute_pe_umi_key(&pair, refid_table, umi_mode)?;
+        if state.observe(key) {
+            writer.write_one(pair.r1())?;
+            writer.write_one(pair.r2())?;
+        }
+    }
+    Ok(())
+}
+
+/// UMI-aware sibling of [`run_single`]. Reader is constructed via
+/// `records_with_umi(...)` so each record's UMI is pre-extracted at
+/// parse time; dedup keys are UMI-aware via [`UmiDedupKey`].
+///
+/// New in `bismark-dedup` v1.2.0-beta.1. Position-only callers continue
+/// to use [`run_single`] unchanged.
+pub fn run_single_umi(
+    input: &Path,
+    output: &Path,
+    cram_ref: Option<&Path>,
+    is_paired: bool,
+    file_label: String,
+    umi_mode: UmiMode,
+) -> Result<DedupReport, BismarkDedupError> {
+    let extractor = umi_extractor_for(umi_mode);
+    let mut reader = bismark_io::open_reader(input, cram_ref)?;
+    let header = reader.header().clone();
+
+    let mut records = reader.records_with_umi(extractor).peekable();
+    if records.peek().is_none() {
+        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
+    }
+
+    let intern = build_chr_intern(&header);
+    let refid_table = build_refid_table(&header, &intern);
+
+    let mut writer = bismark_io::open_writer(output, header, cram_ref)?;
+    let mut state = UmiDedupState::new();
+
+    let stream_result = if is_paired {
+        stream_pe_umi(records, &refid_table, umi_mode, &mut state, &mut writer)
+    } else {
+        stream_se_umi(records, &refid_table, umi_mode, &mut state, &mut writer)
+    };
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
+}
+
+/// UMI-aware sibling of [`run_multiple`]. New in v1.2.0-beta.1.
+pub fn run_multiple_umi(
+    inputs: &[PathBuf],
+    output: &Path,
+    cram_ref: Option<&Path>,
+    is_paired: bool,
+    file_label: String,
+    umi_mode: UmiMode,
+) -> Result<DedupReport, BismarkDedupError> {
+    if inputs.is_empty() {
+        return Err(BismarkDedupError::EmptyInput(PathBuf::new()));
+    }
+    if inputs.len() == 1 {
+        return run_single_umi(
+            &inputs[0], output, cram_ref, is_paired, file_label, umi_mode,
+        );
+    }
+
+    let first_kind = bismark_io::AlignmentKind::from_path(&inputs[0])?;
+    for path in &inputs[1..] {
+        if bismark_io::AlignmentKind::from_path(path)? != first_kind {
+            return Err(BismarkDedupError::MultipleMixedFormat);
+        }
+    }
+
+    let extractor = umi_extractor_for(umi_mode);
+
+    let readers: Vec<_> = inputs
+        .iter()
+        .map(|p| bismark_io::open_reader(p, cram_ref))
+        .collect::<Result<Vec<_>, _>>()?;
+    let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
+
+    let intern = build_chr_intern(&headers[0]);
+    for (i, header) in headers.iter().enumerate().skip(1) {
+        validate_chr_consistency(&inputs[i], header, &intern)?;
+    }
+
+    let refid_tables: Vec<Vec<u32>> = headers
+        .iter()
+        .map(|h| build_refid_table(h, &intern))
+        .collect();
+
+    let mut readers_iter = readers.into_iter();
+    let mut first_reader = readers_iter
+        .next()
+        .expect("inputs.is_empty() checked above; readers has ≥1 element");
+    let first_record: BismarkRecord = {
+        let mut peek_iter = first_reader.records_with_umi(extractor);
+        match peek_iter.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
+        }
+    };
+
+    let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
+    let mut state = UmiDedupState::new();
+
+    // Stream all inputs into a single inner block so a single `?`
+    // controls early-exit on any per-file error.
+    let stream_result: Result<(), BismarkDedupError> = (|| {
+        let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
+            .chain(first_reader.records_with_umi(extractor));
+        if is_paired {
+            stream_pe_umi(
+                combined,
+                &refid_tables[0],
+                umi_mode,
+                &mut state,
+                &mut writer,
+            )?;
+        } else {
+            stream_se_umi(
+                combined,
+                &refid_tables[0],
+                umi_mode,
+                &mut state,
+                &mut writer,
+            )?;
+        }
+        for (i_zero_based, mut reader) in readers_iter.enumerate() {
+            let i = i_zero_based + 1;
+            let records = reader.records_with_umi(extractor);
+            if is_paired {
+                stream_pe_umi(records, &refid_tables[i], umi_mode, &mut state, &mut writer)?;
+            } else {
+                stream_se_umi(records, &refid_tables[i], umi_mode, &mut state, &mut writer)?;
+            }
+        }
+        Ok(())
+    })();
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
+}
+
+/// UMI-aware sibling of [`run_single_parallel`]. BAM input + BAM output only.
+/// New in v1.2.0-beta.1.
+pub fn run_single_parallel_umi(
+    input: &Path,
+    output: &Path,
+    is_paired: bool,
+    file_label: String,
+    parallel: std::num::NonZero<usize>,
+    umi_mode: UmiMode,
+) -> Result<DedupReport, BismarkDedupError> {
+    let extractor = umi_extractor_for(umi_mode);
+    let mut reader = bismark_io::ThreadedBamReader::from_path(input, parallel)?;
+    let header = reader.header().clone();
+
+    let mut records = reader.records_with_umi(extractor).peekable();
+    if records.peek().is_none() {
+        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
+    }
+
+    let intern = build_chr_intern(&header);
+    let refid_table = build_refid_table(&header, &intern);
+
+    let mut writer = bismark_io::ThreadedBamWriter::from_path(output, header, parallel)?;
+    let mut state = UmiDedupState::new();
+
+    let stream_result = if is_paired {
+        stream_pe_umi(records, &refid_table, umi_mode, &mut state, &mut writer)
+    } else {
+        stream_se_umi(records, &refid_table, umi_mode, &mut state, &mut writer)
+    };
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
+}
+
+/// UMI-aware sibling of [`run_multiple_parallel`]. BAM input + BAM output only.
+/// New in v1.2.0-beta.1.
+pub fn run_multiple_parallel_umi(
+    inputs: &[PathBuf],
+    output: &Path,
+    is_paired: bool,
+    file_label: String,
+    parallel: std::num::NonZero<usize>,
+    umi_mode: UmiMode,
+) -> Result<DedupReport, BismarkDedupError> {
+    if inputs.is_empty() {
+        return Err(BismarkDedupError::EmptyInput(PathBuf::new()));
+    }
+    if inputs.len() == 1 {
+        return run_single_parallel_umi(
+            &inputs[0], output, is_paired, file_label, parallel, umi_mode,
+        );
+    }
+
+    for path in inputs {
+        if bismark_io::AlignmentKind::from_path(path)? != bismark_io::AlignmentKind::Bam {
+            return Err(BismarkDedupError::MultipleMixedFormat);
+        }
+    }
+
+    let extractor = umi_extractor_for(umi_mode);
+
+    let mut readers: Vec<bismark_io::ThreadedBamReader> = inputs
+        .iter()
+        .map(|p| bismark_io::ThreadedBamReader::from_path(p, parallel))
+        .collect::<Result<Vec<_>, _>>()?;
+    let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
+
+    let intern = build_chr_intern(&headers[0]);
+    for (i, header) in headers.iter().enumerate().skip(1) {
+        validate_chr_consistency(&inputs[i], header, &intern)?;
+    }
+
+    let refid_tables: Vec<Vec<u32>> = headers
+        .iter()
+        .map(|h| build_refid_table(h, &intern))
+        .collect();
+
+    let mut readers_iter = readers.drain(..);
+    let mut first_reader = readers_iter
+        .next()
+        .expect("inputs.is_empty() checked above; readers has ≥1 element");
+    let first_record: BismarkRecord = {
+        let mut peek_iter = first_reader.records_with_umi(extractor);
+        match peek_iter.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
+        }
+    };
+
+    let mut writer =
+        bismark_io::ThreadedBamWriter::from_path(output, headers[0].clone(), parallel)?;
+    let mut state = UmiDedupState::new();
+
+    let stream_result: Result<(), BismarkDedupError> = (|| {
+        let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
+            .chain(first_reader.records_with_umi(extractor));
+        if is_paired {
+            stream_pe_umi(
+                combined,
+                &refid_tables[0],
+                umi_mode,
+                &mut state,
+                &mut writer,
+            )?;
+        } else {
+            stream_se_umi(
+                combined,
+                &refid_tables[0],
+                umi_mode,
+                &mut state,
+                &mut writer,
+            )?;
+        }
+        for (i_zero_based, mut reader) in readers_iter.enumerate() {
+            let i = i_zero_based + 1;
+            let records = reader.records_with_umi(extractor);
+            if is_paired {
+                stream_pe_umi(records, &refid_tables[i], umi_mode, &mut state, &mut writer)?;
+            } else {
+                stream_se_umi(records, &refid_tables[i], umi_mode, &mut state, &mut writer)?;
+            }
+        }
+        Ok(())
+    })();
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 #[cfg(test)]

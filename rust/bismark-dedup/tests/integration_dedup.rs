@@ -1321,3 +1321,398 @@ fn parallel_4_multiple_mode_output_ends_with_bgzf_eof_marker() {
          BGZF EOF marker; got trailer: {trailer:?}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase B (v1.2): UMI-aware dedup integration tests against the 10K CI
+// fixtures committed in PR #836 (Phase 0-bis).
+//
+// Each test runs `deduplicate_bismark_rs --paired --<umi_flag>` against
+// a real-Bismark-aligned 10K-pair PE BAM whose qnames carry synthesized
+// 8-mer ACGT UMIs, and compares against the Perl
+// `deduplicate_bismark --paired --<flag>` baseline that ships alongside
+// the input. Validates V4 / V5 of PLAN §11 (the headline byte-identity
+// gates) on the small, CI-fast fixtures.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Path to the Phase 0-bis 10K UMI fixtures directory.
+fn umi_fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("data")
+}
+
+/// Read the bytes of a fixture's Perl-baseline deduplication report.
+fn read_perl_report(stem: &str) -> Vec<u8> {
+    let p = umi_fixtures_dir().join(format!("{stem}.deduplication_report.txt"));
+    std::fs::read(&p).unwrap_or_else(|e| panic!("read perl report {p:?}: {e}"))
+}
+
+/// Read the retained-qname set from the Perl-baseline deduplicated BAM.
+fn read_perl_baseline_qnames(stem: &str) -> HashSet<String> {
+    let p = umi_fixtures_dir().join(format!("{stem}.deduplicated.bam"));
+    read_qnames(&p).into_iter().collect()
+}
+
+/// Stems of the two 10K fixtures (matching the file prefixes in `tests/data/`).
+const BARCODE_STEM: &str = "synth_barcode_10k_R1_val_1_bismark_bt2_pe";
+const BCLCONVERT_STEM: &str = "synth_bclconvert_10k_R1_val_1_bismark_bt2_pe";
+
+/// V4 headline test: byte-identity vs Perl on the `--barcode` 10K fixture.
+#[test]
+fn umi_barcode_dedup_matches_perl_baseline_byte_for_byte() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let rust_out = dir.path().join(format!("{BARCODE_STEM}.deduplicated.bam"));
+    let rust_qnames: HashSet<String> = read_qnames(&rust_out).into_iter().collect();
+    let perl_qnames = read_perl_baseline_qnames(BARCODE_STEM);
+    assert_eq!(
+        rust_qnames,
+        perl_qnames,
+        "Rust --barcode retained-qname set diverges from Perl baseline \
+         on synth_barcode_10k (Phase 0-bis fixture); Rust dropped {}, Rust extra {}",
+        perl_qnames.difference(&rust_qnames).count(),
+        rust_qnames.difference(&perl_qnames).count(),
+    );
+
+    // Report byte-identity. Perl echoes `$ARGV` verbatim while Rust
+    // echoes the user-supplied path, so the two differ in the path
+    // segment of the analysed-alignments line ONLY. Reviewer B M1: the
+    // earlier strip-helper went too far and dropped the ` (UMI mode):`
+    // banner from BOTH sides, so a `(WRONG mode)` regression would
+    // still pass. This normaliser replaces the path with `<FILE>` and
+    // KEEPS the banner verbatim.
+    let rust_report = std::fs::read(
+        dir.path()
+            .join(format!("{BARCODE_STEM}.deduplication_report.txt")),
+    )
+    .unwrap();
+    let perl_report = read_perl_report(BARCODE_STEM);
+    let normalise_path_only = |bytes: &[u8]| -> String {
+        let s = String::from_utf8_lossy(bytes);
+        s.lines()
+            .map(|line| {
+                if !line.contains("alignments analysed in") {
+                    return line.to_string();
+                }
+                let in_pos = match line.find(" in ") {
+                    Some(p) => p,
+                    None => return line.to_string(),
+                };
+                // Find the banner; if missing, fall back to plain
+                // `:\t` for non-UMI lines. UMI report always has the
+                // banner, so this branch wins.
+                let banner_pos = line.find(" (UMI mode):").or_else(|| line.find(":\t"));
+                let banner_pos = match banner_pos {
+                    Some(p) => p,
+                    None => return line.to_string(),
+                };
+                let prefix = &line[..in_pos]; // "Total number of alignments analysed"
+                let suffix = &line[banner_pos..]; // " (UMI mode):\t<count>" — banner KEPT
+                format!("{prefix} in <FILE>{suffix}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let rust_normalised = normalise_path_only(&rust_report);
+    let perl_normalised = normalise_path_only(&perl_report);
+    assert_eq!(
+        rust_normalised, perl_normalised,
+        "Rust --barcode report bytes diverge from Perl baseline (path-normalised, \
+         banner kept); Rust:\n{rust_normalised}\nPerl:\n{perl_normalised}"
+    );
+    // Defense-in-depth: assert the SPACE-form banner literally appears
+    // in both reports. Guards against the normaliser ever falling
+    // through and accidentally masking a banner regression.
+    assert!(
+        rust_normalised.contains(" (UMI mode):"),
+        "Rust report missing space-form (UMI mode) banner: {rust_normalised}"
+    );
+    assert!(
+        perl_normalised.contains(" (UMI mode):"),
+        "Perl baseline missing space-form (UMI mode) banner: {perl_normalised}"
+    );
+}
+
+/// V5 headline test: byte-identity vs Perl on the `--bclconvert` 10K fixture.
+#[test]
+fn umi_bclconvert_dedup_matches_perl_baseline_byte_for_byte() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--bclconvert")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let rust_out = dir
+        .path()
+        .join(format!("{BCLCONVERT_STEM}.deduplicated.bam"));
+    let rust_qnames: HashSet<String> = read_qnames(&rust_out).into_iter().collect();
+    let perl_qnames = read_perl_baseline_qnames(BCLCONVERT_STEM);
+    assert_eq!(
+        rust_qnames,
+        perl_qnames,
+        "Rust --bclconvert retained-qname set diverges from Perl baseline \
+         on synth_bclconvert_10k; Rust dropped {}, Rust extra {}",
+        perl_qnames.difference(&rust_qnames).count(),
+        rust_qnames.difference(&perl_qnames).count(),
+    );
+}
+
+/// V6: diagnostic property — `--barcode` retains more reads than the
+/// position-only dedup path on the same input. Per Phase 0-bis the delta
+/// is 148 reads on `synth_barcode_10k`. Engaging UMI mode must therefore
+/// produce a strictly larger retained-qname set than the no-UMI run.
+#[test]
+fn umi_barcode_engages_mode_retains_more_reads_than_position_only() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
+    let dir_umi = dir.path().join("umi");
+    let dir_pos = dir.path().join("pos");
+    std::fs::create_dir_all(&dir_umi).unwrap();
+    std::fs::create_dir_all(&dir_pos).unwrap();
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(&dir_umi)
+        .arg(&input)
+        .assert()
+        .success();
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(&dir_pos)
+        .arg(&input)
+        .assert()
+        .success();
+
+    let umi_q: HashSet<String> =
+        read_qnames(&dir_umi.join(format!("{BARCODE_STEM}.deduplicated.bam")))
+            .into_iter()
+            .collect();
+    let pos_q: HashSet<String> =
+        read_qnames(&dir_pos.join(format!("{BARCODE_STEM}.deduplicated.bam")))
+            .into_iter()
+            .collect();
+
+    assert!(
+        umi_q.len() > pos_q.len(),
+        "UMI-mode should retain strictly more reads than position-only on the \
+         Phase 0-bis 10K barcode fixture (UMI: {}, position-only: {})",
+        umi_q.len(),
+        pos_q.len(),
+    );
+    // The position-only path should be a subset of the UMI-mode path:
+    // anything position-only kept, UMI-mode also keeps (UMI mode only adds
+    // discrimination, never removes).
+    let extra_in_pos: Vec<&String> = pos_q.difference(&umi_q).collect();
+    assert!(
+        extra_in_pos.is_empty(),
+        "position-only dedup must be a subset of UMI-mode dedup; found {} \
+         reads in position-only but NOT in UMI mode",
+        extra_in_pos.len(),
+    );
+}
+
+/// V9: `--parallel 4 --barcode` produces the same retained-qname set as
+/// `--parallel 1 --barcode` on the 10K barcode fixture. Parallelism must
+/// not change UMI dedup outcomes.
+#[test]
+fn umi_mode_with_parallel_4_produces_same_qname_set_as_parallel_1() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
+    let dir1 = dir.path().join("p1");
+    let dir4 = dir.path().join("p4");
+    std::fs::create_dir_all(&dir1).unwrap();
+    std::fs::create_dir_all(&dir4).unwrap();
+
+    for (parallel, out_dir) in [(1, &dir1), (4, &dir4)] {
+        Command::cargo_bin("deduplicate_bismark_rs")
+            .unwrap()
+            .arg("--paired")
+            .arg("--barcode")
+            .arg("--parallel")
+            .arg(parallel.to_string())
+            .arg("--output_dir")
+            .arg(out_dir)
+            .arg(&input)
+            .assert()
+            .success();
+    }
+
+    let q1: HashSet<String> = read_qnames(&dir1.join(format!("{BARCODE_STEM}.deduplicated.bam")))
+        .into_iter()
+        .collect();
+    let q4: HashSet<String> = read_qnames(&dir4.join(format!("{BARCODE_STEM}.deduplicated.bam")))
+        .into_iter()
+        .collect();
+    assert_eq!(
+        q1,
+        q4,
+        "--parallel 1 vs --parallel 4 retained-qname sets diverged under \
+         --barcode UMI mode (set diff size: {})",
+        q1.symmetric_difference(&q4).count(),
+    );
+}
+
+/// Per Reviewer A nit 5 / PLAN §6.3: passing both `--bclconvert` and
+/// `--barcode` should produce byte-identical output to passing
+/// `--bclconvert` alone (the "bclconvert wins" precedence at
+/// `cli.rs::Cli::validate`).
+#[test]
+fn umi_bclconvert_and_barcode_together_bclconvert_wins() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
+    let dir_bclonly = dir.path().join("bclonly");
+    let dir_both = dir.path().join("both");
+    std::fs::create_dir_all(&dir_bclonly).unwrap();
+    std::fs::create_dir_all(&dir_both).unwrap();
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--bclconvert")
+        .arg("--output_dir")
+        .arg(&dir_bclonly)
+        .arg(&input)
+        .assert()
+        .success();
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--bclconvert")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(&dir_both)
+        .arg(&input)
+        .assert()
+        .success();
+
+    let q_bclonly: HashSet<String> =
+        read_qnames(&dir_bclonly.join(format!("{BCLCONVERT_STEM}.deduplicated.bam")))
+            .into_iter()
+            .collect();
+    let q_both: HashSet<String> =
+        read_qnames(&dir_both.join(format!("{BCLCONVERT_STEM}.deduplicated.bam")))
+            .into_iter()
+            .collect();
+    assert_eq!(
+        q_bclonly, q_both,
+        "--bclconvert alone vs --bclconvert --barcode together produced \
+         divergent retained-qname sets; --bclconvert precedence broken"
+    );
+}
+
+/// Per Reviewer A nit 4 / PLAN §6.3: `--multiple` × UMI accumulates state
+/// across input files. Concatenating the same 10K input twice via
+/// `--multiple` should produce a retained-qname set whose size is between
+/// `len(single)` (perfect dedup) and `2 * len(single)` (no cross-file
+/// dedup), AND the size must match what Perl produces.
+///
+/// We can't easily run Perl in CI, so this test asserts the structural
+/// invariant: `--multiple` over [A, A] must produce the same set as
+/// `--multiple` over [A] alone (perfect cross-file dedup since the
+/// inputs are identical).
+#[test]
+fn umi_barcode_with_multiple_input_files_accumulates_state() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
+    let dir_single = dir.path().join("single");
+    let dir_double = dir.path().join("double");
+    std::fs::create_dir_all(&dir_single).unwrap();
+    std::fs::create_dir_all(&dir_double).unwrap();
+
+    // Single input via --multiple (degenerate; should match the single-file path).
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--multiple")
+        .arg("--paired")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(&dir_single)
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Same input passed twice — cross-file UMI dedup state should
+    // collapse all duplicates from the second file against the first.
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--multiple")
+        .arg("--paired")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(&dir_double)
+        .arg(&input)
+        .arg(&input)
+        .assert()
+        .success();
+
+    // The output filenames under `--multiple` use the first input's stem.
+    let out_name = format!("{BARCODE_STEM}.multiple.deduplicated.bam");
+    let q_single: HashSet<String> = read_qnames(&dir_single.join(&out_name))
+        .into_iter()
+        .collect();
+    let q_double: HashSet<String> = read_qnames(&dir_double.join(&out_name))
+        .into_iter()
+        .collect();
+    assert_eq!(
+        q_single, q_double,
+        "--multiple with [A, A] should retain the same qname set as --multiple [A] \
+         (cross-file UMI dedup state collapses the second copy entirely)"
+    );
+}
+
+/// V7: a `--barcode`-mode invocation against a BAM with qnames that
+/// have no `:` (no UMI tail) must error with `UmiExtractionFailed`,
+/// matching Perl's `Failed to extract a barcode from the read ID` at
+/// `deduplicate_bismark:662-663`.
+#[test]
+fn umi_barcode_on_record_without_umi_errors_with_extraction_failed() {
+    let dir = TempDir::new().unwrap();
+    // Build a tiny PE BAM whose qnames are plain (no `:`, no UMI).
+    let input = dir.path().join("noumis.bam");
+    let mut pairs: Vec<RecordBuf> = Vec::new();
+    for i in 0..3u64 {
+        let qname = format!("read{i}");
+        // OT pair: R1 forward, R2 same chr.
+        let r1 = build_record(&qname, b"CT", b"CT", 0x41, 0, 100 + i as usize, 50);
+        let r2 = build_record(&qname, b"GA", b"CT", 0x81, 0, 200 + i as usize, 50);
+        pairs.push(r1);
+        pairs.push(r2);
+    }
+    write_bam(&input, &pairs);
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("UMI in qname"));
+}

@@ -260,6 +260,27 @@ impl<R: BufRead> BamReader<R> {
             .record_bufs(header)
             .filter_map(filter_unmapped_then_classify)
     }
+
+    /// Iterator yielding one [`BismarkRecord`] per mapped alignment, with
+    /// the UMI pre-extracted from each record's qname using `extractor`.
+    ///
+    /// `extractor` is typically [`crate::umi::extract_barcode`] (for
+    /// `--barcode` / `--umi` mode) or [`crate::umi::extract_bclconvert`]
+    /// (for `--bclconvert` mode). Records whose qname does NOT match the
+    /// extractor's pattern still flow through with `umi == None`; the
+    /// downstream dedup pipeline emits `UmiExtractionFailed` faithful to
+    /// Perl `deduplicate_bismark:662-663`.
+    ///
+    /// Added in `bismark-io` v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
+    }
 }
 
 /// **Threaded** BAM reader that uses [`noodles_bgzf::io::MultithreadedReader`]
@@ -332,6 +353,19 @@ impl ThreadedBamReader {
             .record_bufs(header)
             .filter_map(filter_unmapped_then_classify)
     }
+
+    /// As [`Self::records`] but pre-extracts a UMI from each record's
+    /// qname using `extractor`. See [`BamReader::records_with_umi`] for
+    /// details. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
+    }
 }
 
 /// SAM reader producing [`BismarkRecord`]s.
@@ -376,6 +410,19 @@ impl<R: BufRead> SamReader<R> {
         self.inner
             .record_bufs(header)
             .filter_map(filter_unmapped_then_classify)
+    }
+
+    /// As [`Self::records`] but pre-extracts a UMI per record. See
+    /// [`BamReader::records_with_umi`] for details. Added in v1.0.0-beta.5
+    /// for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
     }
 }
 
@@ -431,6 +478,18 @@ impl<R: Read + Seek> CramReader<R> {
             .records(header)
             .filter_map(filter_unmapped_then_classify)
     }
+
+    /// As [`Self::records`] but pre-extracts a UMI per record. See
+    /// [`BamReader::records_with_umi`] for details. Added in v1.0.0-beta.5.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .records(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
+    }
 }
 
 // `build_fasta_repository` is imported at the top of this file; it lives
@@ -474,6 +533,20 @@ impl<R: BufRead, RC: Read + Seek> AnyReader<R, RC> {
             Self::Cram(r) => Box::new(r.records()),
         }
     }
+
+    /// As [`Self::records`] but pre-extracts a UMI from each record's
+    /// qname using `extractor`. See [`BamReader::records_with_umi`] for
+    /// details. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> Box<dyn Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_> {
+        match self {
+            Self::Bam(r) => Box::new(r.records_with_umi(extractor)),
+            Self::Sam(r) => Box::new(r.records_with_umi(extractor)),
+            Self::Cram(r) => Box::new(r.records_with_umi(extractor)),
+        }
+    }
 }
 
 /// Open a BAM, SAM, or CRAM file by path, dispatching on extension.
@@ -514,6 +587,26 @@ fn filter_unmapped_then_classify(
                 None // unmapped — silently drop
             } else {
                 Some(BismarkRecord::from_noodles_record(rec))
+            }
+        }
+        Err(e) => Some(Err(BismarkIoError::Io(e))),
+    }
+}
+
+/// Companion to [`filter_unmapped_then_classify`] that also pre-extracts
+/// the UMI via `extractor`. Used by `records_with_umi` on all reader
+/// variants. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+fn filter_unmapped_then_classify_with_umi(
+    item: std::io::Result<RecordBuf>,
+    extractor: fn(&[u8]) -> Option<&[u8]>,
+) -> Option<Result<BismarkRecord, BismarkIoError>> {
+    match item {
+        Ok(rec) => {
+            let flags = u16::from(rec.flags());
+            if (flags & 0x4) != 0 {
+                None
+            } else {
+                Some(BismarkRecord::from_noodles_record_with_umi(rec, extractor))
             }
         }
         Err(e) => Some(Err(BismarkIoError::Io(e))),
@@ -915,6 +1008,40 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
             1,
             "AnyReader must inherit the unmapped silent filter"
         );
+    }
+
+    // ─── Phase B (v1.2 UMI): records_with_umi() reader tests ───────────
+
+    /// SAM with one mapped record whose qname has a `--barcode`-format
+    /// UMI tail. Used to verify `records_with_umi` populates the `umi`
+    /// field at parse time.
+    const SAM_ONE_MAPPED_WITH_UMI: &[u8] = b"@HD\tVN:1.6\tSO:unsorted\n\
+@SQ\tSN:chr1\tLN:1000\n\
+read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\tXG:Z:CT\n";
+
+    #[test]
+    fn sam_records_with_umi_populates_umi_field() {
+        let mut reader = SamReader::new(Cursor::new(SAM_ONE_MAPPED_WITH_UMI)).unwrap();
+        let records: Vec<_> = reader
+            .records_with_umi(crate::umi::extract_barcode)
+            .collect();
+        assert_eq!(records.len(), 1);
+        let rec = records.into_iter().next().unwrap().unwrap();
+        assert_eq!(rec.umi().unwrap().as_slice(), b"CTCCTTAG");
+    }
+
+    #[test]
+    fn sam_records_with_umi_no_umi_in_qname_yields_none() {
+        // SAM_ONE_MAPPED's qname is `read1` (no `:`). With --barcode mode,
+        // extractor returns None → record's umi field is None → dedup
+        // pipeline will surface UmiExtractionFailed downstream.
+        let mut reader = SamReader::new(Cursor::new(SAM_ONE_MAPPED)).unwrap();
+        let records: Vec<_> = reader
+            .records_with_umi(crate::umi::extract_barcode)
+            .collect();
+        assert_eq!(records.len(), 1);
+        let rec = records.into_iter().next().unwrap().unwrap();
+        assert!(rec.umi().is_none());
     }
 
     #[test]

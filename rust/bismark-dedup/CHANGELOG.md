@@ -4,6 +4,78 @@ All notable changes to `bismark-dedup` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-beta.1] — 2026-05-25
+
+**UMI/RRBS dedup mode** (`--barcode` / `--umi` / `--bclconvert`)
+arrives. Phase B of the v1.2 UMI epic. Position-only dedup workflows
+(v1.0/v1.1) are byte-for-byte unchanged; UMI workflows engage the new
+`UmiDedupKey` + `UmiDedupState` types.
+
+### Added
+
+- CLI flags `--barcode` / `--umi` / `--bclconvert` are now real (no
+  longer return `UnsupportedFlagV1`). They engage UMI-aware dedup
+  byte-for-byte against Perl `deduplicate_bismark v0.25.1`'s
+  `deduplicate_barcoded_rrbs` codepath.
+- `UmiMode` enum (`Barcode`, `Bclconvert`) on `ResolvedConfig::umi_mode`.
+  Both flags set → `Bclconvert` wins (matches Perl's
+  `$rrbs = 1` auto-coupling at `deduplicate_bismark:1377`).
+- `UmiDedupKey` — `(strand, chr_id, start, end, umi)`. UMI storage via
+  `SmallVec<[u8; 16]>`: stack-allocated for ≤16-byte UMIs, heap
+  fallback for longer (e.g. 17-byte dual-UMI). Compile-time
+  `const _: () = assert!(size_of::<UmiDedupKey>() <= 64)` guards
+  inline-key memory growth. **Measured: `size_of::<UmiDedupKey>() = 48`
+  bytes** on aarch64-apple-darwin (4-byte fields + SmallVec header +
+  16-byte inline buffer + alignment padding). Plan §11 V3.5 satisfied.
+- `UmiDedupState` — sibling of `DedupState` with `observe()` / `count()`
+  / `removed()` / `n_positions()` / `into_report()` semantics matching
+  the position-only path 1-to-1. Reports carry the `(UMI mode)` banner
+  suffix at Perl `deduplicate_bismark:908` byte-precision.
+- Pipeline sibling functions: `pipeline::run_single_umi`,
+  `pipeline::run_multiple_umi`, `pipeline::run_single_parallel_umi`,
+  `pipeline::run_multiple_parallel_umi`. **API-evolution decision**:
+  no signature changes to v1.1's `run_*` functions; external callers
+  continue to compile against v1.2 unchanged.
+- Error variant `UmiExtractionFailed { flag, qname }` — emitted at the
+  first record whose qname does not match the chosen UMI extractor's
+  pattern. Matches Perl `deduplicate_bismark:662-663`.
+- Startup STDERR banner `\nProcessing paired-end Bismark output
+  file(s) (UMI-mode)\n` when UMI mode is engaged (hyphen-form, matches
+  Perl `deduplicate_bismark:903`). Report-file banner uses the
+  space-form `(UMI mode)` at line 908.
+- 7 new integration tests on the 10K CI fixtures (`tests/data/`)
+  committed in Phase 0-bis: byte-identity vs Perl on both
+  `synth_barcode_10k` and `synth_bclconvert_10k`, the
+  position-only-vs-UMI-mode diagnostic property,
+  `--parallel 4` × UMI byte-identity vs `--parallel 1`,
+  `--bclconvert + --barcode` precedence, `--multiple` UMI accumulation,
+  and `UmiExtractionFailed` end-to-end.
+- 9 new unit tests for `UmiDedupKey` / `UmiDedupState` /
+  `DedupReport::format` UMI banner / dual-UMI heap-fallback /
+  `Cli::validate` UMI-mode resolution.
+
+### Changed
+
+- `bismark-io` pinned to `=1.0.0-beta.5` (UMI plumbing on `BismarkRecord`).
+- `DedupReport::new()` gains a trailing `umi_mode: bool` parameter
+  (crate-private — only `*DedupState::into_report()` constructs reports).
+- `--barcode` / `--bclconvert` removed from the `UnsupportedFlagV1`
+  rejection list. The variant remains in the error enum for any future
+  deferral need.
+
+### Known limitations (deferred)
+
+- **No bcl-convert auto-detect.** v1.2 trusts the user's UMI flag
+  choice. Running `--barcode` on bcl-convert qnames silently extracts
+  the wrong tail (the i7 tail, not the UMI) and produces nonsense
+  dedup keys. Match the flag to your data. v1.3 plans a
+  sniff-first-record auto-detect equivalent to Perl's
+  `test_readIDs_for_bclconvert` at `deduplicate_bismark:164`.
+
+### Dependencies
+
+- New: `smallvec = "=1.13.2"`. Matches `bismark-io`'s pin.
+
 ## [1.1.0-beta.2] — 2026-05-25
 
 Inherits **magic-byte file-format detection** from `bismark-io`

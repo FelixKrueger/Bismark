@@ -12,10 +12,18 @@
 
 use noodles_sam::alignment::RecordBuf;
 use noodles_sam::alignment::record_buf::Cigar;
+use smallvec::SmallVec;
 
 use crate::error::BismarkIoError;
 use crate::strand::BismarkStrand;
 use crate::tags;
+
+/// Stack-allocated UMI storage. Inline capacity is 16 bytes — covers all
+/// known Bismark UMI workflows (≤16 ASCII bytes including dual-UMI `+`
+/// separators). UMIs longer than 16 bytes (notably dual-UMI of form
+/// `XXXXXXXX+YYYYYYYY` at 17 bytes) heap-allocate transparently; the
+/// dedup-key equality contract is unaffected.
+pub type Umi = SmallVec<[u8; 16]>;
 
 /// Read identity within a paired-end (or single-end) alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +68,14 @@ pub struct BismarkRecord {
     inner: RecordBuf,
     record_strand: BismarkStrand,
     read_identity: ReadIdentity,
+    /// Pre-extracted UMI (Phase B / v1.2). `None` for the v1.0/v1.1
+    /// non-UMI path — readers constructed via [`crate::BamReader::new`]
+    /// and the other no-UMI constructors set this to `None`. Set to
+    /// `Some(...)` by the `*_with_umi` reader constructors when the qname
+    /// matches the chosen extractor's pattern. UMI-aware dedup downstream
+    /// errors on `None` records in UMI mode (faithful to Perl
+    /// `deduplicate_bismark:662-663`).
+    umi: Option<Umi>,
 }
 
 impl BismarkRecord {
@@ -97,7 +113,30 @@ impl BismarkRecord {
             inner,
             record_strand,
             read_identity,
+            umi: None,
         })
+    }
+
+    /// Construct as [`Self::from_noodles_record`] AND pre-extract the UMI
+    /// from the record's qname using `extractor` (typically
+    /// [`crate::umi::extract_barcode`] or
+    /// [`crate::umi::extract_bclconvert`]).
+    ///
+    /// If `extractor` returns `Some`, the bytes are stored in the
+    /// record's `umi` field. If it returns `None`, the field is left as
+    /// `None` — the dedup pipeline downstream is responsible for emitting
+    /// `UmiExtractionFailed` when UMI mode is engaged but a record has
+    /// no UMI (faithful to Perl `deduplicate_bismark:662-663`).
+    ///
+    /// Records with no qname (`name() == None`) also get `umi: None`.
+    pub fn from_noodles_record_with_umi(
+        inner: RecordBuf,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> Result<Self, BismarkIoError> {
+        let mut rec = Self::from_noodles_record(inner)?;
+        let qname_bytes: Option<&[u8]> = rec.inner.name().map(AsRef::as_ref);
+        rec.umi = qname_bytes.and_then(extractor).map(SmallVec::from_slice);
+        Ok(rec)
     }
 
     /// Strand derived from THIS record's own `XR:Z:`/`XG:Z:` tags.
@@ -140,6 +179,20 @@ impl BismarkRecord {
     /// for reference-span, read-span, and aligned-position helpers.
     pub fn cigar(&self) -> &Cigar {
         self.inner.cigar()
+    }
+
+    /// Pre-extracted UMI (Phase B / v1.2). `None` when the reader was
+    /// constructed via a non-UMI constructor (the v1.0/v1.1 default) or
+    /// when the qname did not match the chosen UMI extractor's pattern.
+    pub fn umi(&self) -> Option<&Umi> {
+        self.umi.as_ref()
+    }
+
+    /// Set the record's UMI in place. Used by reader constructors that
+    /// pre-extract UMIs at parse time, and by test code that constructs
+    /// records manually.
+    pub fn set_umi(&mut self, umi: Option<Umi>) {
+        self.umi = umi;
     }
 }
 
@@ -287,5 +340,68 @@ mod tests {
         assert_eq!(ReadIdentity::Single.as_str(), "SE");
         assert_eq!(ReadIdentity::R1.as_str(), "R1");
         assert_eq!(ReadIdentity::R2.as_str(), "R2");
+    }
+
+    /// Synthesize a record with a qname (used by UMI tests). Returns
+    /// a noodles `RecordBuf` ready for `from_noodles_record_with_umi`.
+    fn synth_with_qname(qname: &[u8], xr: &[u8], xg: &[u8], xm: &[u8], seq: &[u8]) -> RecordBuf {
+        let mut record = synth(xr, xg, xm, seq, 0);
+        *record.name_mut() = Some(BString::from(qname.to_vec()));
+        record
+    }
+
+    #[test]
+    fn umi_field_is_none_for_default_constructor() {
+        let r = synth_with_qname(b"read:CTCCTTAG", b"CT", b"CT", b".....", b"ACGTC");
+        let bm = BismarkRecord::from_noodles_record(r).unwrap();
+        assert!(
+            bm.umi().is_none(),
+            "non-UMI constructor must leave umi as None"
+        );
+    }
+
+    #[test]
+    fn from_noodles_record_with_umi_extracts_barcode_format() {
+        let r = synth_with_qname(b"read:CTCCTTAG", b"CT", b"CT", b".....", b"ACGTC");
+        let bm =
+            BismarkRecord::from_noodles_record_with_umi(r, crate::umi::extract_barcode).unwrap();
+        let umi = bm.umi().expect("barcode extractor must populate umi");
+        assert_eq!(umi.as_slice(), b"CTCCTTAG");
+    }
+
+    #[test]
+    fn from_noodles_record_with_umi_extracts_bclconvert_format() {
+        let r = synth_with_qname(
+            b"A00001:1:HABC:1:1101:1000:2000:CAAGAG_1:N:0:AATGACGC",
+            b"CT",
+            b"CT",
+            b".....",
+            b"ACGTC",
+        );
+        let bm =
+            BismarkRecord::from_noodles_record_with_umi(r, crate::umi::extract_bclconvert).unwrap();
+        let umi = bm.umi().expect("bclconvert extractor must populate umi");
+        assert_eq!(umi.as_slice(), b"CAAGAG");
+    }
+
+    #[test]
+    fn from_noodles_record_with_umi_no_umi_in_qname_yields_none() {
+        // qname has no `:` → extractor returns None → umi field is None.
+        // (Dedup pipeline downstream is responsible for `UmiExtractionFailed`.)
+        let r = synth_with_qname(b"plain_qname_no_colon", b"CT", b"CT", b".....", b"ACGTC");
+        let bm =
+            BismarkRecord::from_noodles_record_with_umi(r, crate::umi::extract_barcode).unwrap();
+        assert!(bm.umi().is_none());
+    }
+
+    #[test]
+    fn set_umi_replaces_existing_umi() {
+        let r = synth_with_qname(b"read:OLD", b"CT", b"CT", b".....", b"ACGTC");
+        let mut bm = BismarkRecord::from_noodles_record(r).unwrap();
+        assert!(bm.umi().is_none());
+        bm.set_umi(Some(Umi::from_slice(b"NEWUMI42")));
+        assert_eq!(bm.umi().unwrap().as_slice(), b"NEWUMI42");
+        bm.set_umi(None);
+        assert!(bm.umi().is_none());
     }
 }

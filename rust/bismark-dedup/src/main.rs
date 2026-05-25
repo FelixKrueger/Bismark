@@ -51,6 +51,23 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
         std::fs::create_dir_all(&config.output_dir)?;
     }
 
+    // Phase B (v1.2): UMI-mode startup banner. Two distinct strings in
+    // Perl `deduplicate_bismark`:
+    //   line 167: warn "Deduplicating data in UMI mode\n";
+    //   line 172: warn "Deduplicating data in bcl-convert UMI mode\n";
+    // Perl picks based on `test_readIDs_for_bclconvert` auto-detect; the
+    // Rust port skips that (deferred to v1.3) and uses the user's flag.
+    // No leading `\n` — Perl's `warn` writes the string verbatim.
+    match config.umi_mode {
+        Some(bismark_dedup::cli::UmiMode::Barcode) => {
+            eprintln!("Deduplicating data in UMI mode");
+        }
+        Some(bismark_dedup::cli::UmiMode::Bclconvert) => {
+            eprintln!("Deduplicating data in bcl-convert UMI mode");
+        }
+        None => {}
+    }
+
     // Soft warning for --parallel values past the measured saturation
     // point. The Phase D oxy benchmark on 10M PE WGBS showed N=8 gave
     // zero additional speedup over N=4 (both at ~4.88× vs N=1) — the
@@ -102,22 +119,39 @@ fn process_one(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkDedup
         );
     }
 
-    let report = if use_parallel {
-        let parallel =
-            std::num::NonZero::new(config.parallel).expect("Cli::validate rejects parallel == 0");
-        eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
-        pipeline::run_single_parallel(input, &out_path, is_paired, file_label, parallel)?
-    } else {
-        pipeline::run_single(
+    let report = match (use_parallel, config.umi_mode) {
+        (true, Some(umi_mode)) => {
+            let parallel = std::num::NonZero::new(config.parallel)
+                .expect("Cli::validate rejects parallel == 0");
+            eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
+            pipeline::run_single_parallel_umi(
+                input, &out_path, is_paired, file_label, parallel, umi_mode,
+            )?
+        }
+        (true, None) => {
+            let parallel = std::num::NonZero::new(config.parallel)
+                .expect("Cli::validate rejects parallel == 0");
+            eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
+            pipeline::run_single_parallel(input, &out_path, is_paired, file_label, parallel)?
+        }
+        (false, Some(umi_mode)) => pipeline::run_single_umi(
             input,
             &out_path,
             config.cram_ref.as_deref(),
             is_paired,
             file_label,
-        )?
+            umi_mode,
+        )?,
+        (false, None) => pipeline::run_single(
+            input,
+            &out_path,
+            config.cram_ref.as_deref(),
+            is_paired,
+            file_label,
+        )?,
     };
     report.write_to(&report_path)?;
-    eprintln!("{}", report.format());
+    eprintln!("{}", report.format_stderr());
     Ok(())
 }
 
@@ -158,22 +192,50 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
         );
     }
 
-    let report = if use_parallel {
-        let parallel =
-            std::num::NonZero::new(config.parallel).expect("Cli::validate rejects parallel == 0");
-        eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
-        pipeline::run_multiple_parallel(&config.files, &out_path, is_paired, file_label, parallel)?
-    } else {
-        pipeline::run_multiple(
+    let report = match (use_parallel, config.umi_mode) {
+        (true, Some(umi_mode)) => {
+            let parallel = std::num::NonZero::new(config.parallel)
+                .expect("Cli::validate rejects parallel == 0");
+            eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
+            pipeline::run_multiple_parallel_umi(
+                &config.files,
+                &out_path,
+                is_paired,
+                file_label,
+                parallel,
+                umi_mode,
+            )?
+        }
+        (true, None) => {
+            let parallel = std::num::NonZero::new(config.parallel)
+                .expect("Cli::validate rejects parallel == 0");
+            eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
+            pipeline::run_multiple_parallel(
+                &config.files,
+                &out_path,
+                is_paired,
+                file_label,
+                parallel,
+            )?
+        }
+        (false, Some(umi_mode)) => pipeline::run_multiple_umi(
             &config.files,
             &out_path,
             config.cram_ref.as_deref(),
             is_paired,
             file_label,
-        )?
+            umi_mode,
+        )?,
+        (false, None) => pipeline::run_multiple(
+            &config.files,
+            &out_path,
+            config.cram_ref.as_deref(),
+            is_paired,
+            file_label,
+        )?,
     };
     report.write_to(&report_path)?;
-    eprintln!("{}", report.format());
+    eprintln!("{}", report.format_stderr());
     Ok(())
 }
 
