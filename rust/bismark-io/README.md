@@ -4,7 +4,7 @@ Bismark-aware BAM/SAM/CRAM I/O on top of [`noodles`](https://github.com/zaeleus/
 
 `bismark-io` is the shared library crate for [Bismark](https://github.com/FelixKrueger/Bismark)'s Rust rewrite. It wraps the `noodles` crate family to expose record types that already know about Bismark's strand classification (OT/CTOT/OB/CTOB derived from the `XR:Z:` and `XG:Z:` tags), tag-decoded accessors (`XM`, `XR`, `XG`, `MD`, `NM`), and CIGAR-aware position helpers. Every Bismark Rust binary crate (`bismark-dedup`, `bismark-extractor`, `bismark-bedgraph`, …) depends on it.
 
-**Status:** v1.0.0-beta.2 — adds `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF decode/encode (additive; existing API unchanged). Used by `bismark-dedup v1.1.0-beta.1`'s `--parallel N` flag. See [`CHANGELOG.md`](./CHANGELOG.md).
+**Status:** v1.0.0-beta.4 — adds `umi::extract_barcode` + `umi::extract_bclconvert` zero-copy UMI extractors (additive; existing API unchanged). Prior beta-line additions: beta.2 `ThreadedBamReader`/`Writer` (used by `bismark-dedup`'s `--parallel N`); beta.3 magic-byte file-format detection. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Why a Bismark wrapper around `noodles`?
 
@@ -52,6 +52,9 @@ use bismark_io::{
     open_writer, AnyWriter, BamWriter, SamWriter, CramWriter,
     // CRAM reference helper
     reconstitute_cram_reference_from_bismark_genome,
+    // UMI extractors (beta.4) — available both at the crate root via
+    // these flat re-exports and at `bismark_io::umi::*`:
+    extract_barcode, extract_bclconvert,
 };
 ```
 
@@ -229,11 +232,11 @@ The pin policy: noodles releases frequently and occasionally bumps MSRV. Exact-p
 
 ## Stability
 
-This is **v1.0.0-beta.3** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The v1.0.0-beta.3 release adds **magic-byte file-format detection** for reader-side dispatch (matching Perl Bismark's behaviour); writer-side dispatch and every other type/function signature are unchanged from v1.0.0-beta.2. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
+This is **v1.0.0-beta.4** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The v1.0.0-beta.4 release adds the **`umi::` module** with zero-copy UMI extractors for both `--barcode/--umi` (tail-of-qname) and `--bclconvert` (internal-position) formats; every other type/function signature is unchanged from v1.0.0-beta.3. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
 
 ## crates.io
 
-`bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line) is **published to crates.io**. `bismark-io = "=1.0.0-beta.2"` (BGZF-threaded readers/writers) and `bismark-io = "=1.0.0-beta.3"` (magic-byte detection) are **queued for the next publish window** — within the Bismark workspace, `bismark-dedup` already path-deps `=1.0.0-beta.3`. Once published, external consumers can pin to whichever beta matches the features they need.
+`bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line) is **published to crates.io**. `bismark-io = "=1.0.0-beta.2"` (BGZF-threaded readers/writers), `=1.0.0-beta.3` (magic-byte detection), and `=1.0.0-beta.4` (UMI extractors) are **queued for the next publish window** — within the Bismark workspace, `bismark-dedup` already path-deps `=1.0.0-beta.4`. Once published, external consumers can pin to whichever beta matches the features they need.
 
 ## License
 

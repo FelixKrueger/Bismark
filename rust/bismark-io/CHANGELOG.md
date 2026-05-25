@@ -5,6 +5,51 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.4] — 2026-05-25
+
+UMI extraction helpers for Bismark qnames, supporting Perl
+`deduplicate_bismark v0.25.1`'s `--barcode`/`--umi` and `--bclconvert`
+modes. Additive within the beta line; existing API surface unchanged.
+
+### Added
+
+- New module `bismark_io::umi` with two zero-copy public functions:
+
+  - **`extract_barcode(&[u8]) -> Option<&[u8]>`** — extracts the
+    tail-of-qname UMI per Perl regex `:([\w\+]+)$` at
+    `deduplicate_bismark:659`. Used by Perl's `--barcode`/`--umi`
+    modes.
+
+  - **`extract_bclconvert(&[u8]) -> Option<&[u8]>`** — extracts the
+    internal-position UMI in bcl-convert read ID format per Perl
+    regex `:([CAGTN\+]+)_\d:N:\d:([CAGTN\+]+)$` at
+    `deduplicate_bismark:650`. Used by Perl's `--bclconvert` mode.
+
+- 29 unit tests (12 + 17) covering every edge case enumerated in the
+  Phase A plan (empty input, no-colon, invalid chars, dual-UMI `+`
+  separator, post-`fix_IDs` format, underflow guard, mode mismatch).
+
+- 2 doc tests (one per function) with both the Perl-docs canonical
+  example AND the post-Bismark-`fix_IDs` format that `bismark-dedup`
+  will actually encounter in v1.2.
+
+### Performance
+
+- Both extractors are O(N) over the qname bytes, single-pass or
+  reverse-scan. Zero allocation: return type is `Option<&[u8]>`
+  borrowed from the input.
+- Hand-rolled byte comparison (no `regex` crate dependency added).
+  Estimated ~100 ns per call on a 100-byte qname — negligible vs
+  dedup hash work.
+
+### Phase context
+
+This release lands as part of the v1.2 UMI/RRBS epic. Phase A ships
+the extractors; the consumer-side integration (UMI-aware `DedupKey`
+and pipeline) lands in `bismark-dedup v1.2.0-beta.1`. Real-data
+byte-identity vs Perl `deduplicate_bismark v0.25.1` is validated on a
+synthesized-UMI RRBS dataset.
+
 ## [1.0.0-beta.3] — 2026-05-25
 
 Magic-byte file-format detection for reader-side dispatch. Tolerates

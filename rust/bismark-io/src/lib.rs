@@ -22,6 +22,7 @@ pub mod read;
 pub mod record;
 pub mod strand;
 pub mod tags;
+pub mod umi;
 pub mod write;
 
 pub use cigar::{AlignedPosition, AlignedPositions, CigarExt};
@@ -33,4 +34,5 @@ pub use read::{
 };
 pub use record::{BismarkRecord, ReadIdentity};
 pub use strand::BismarkStrand;
+pub use umi::{extract_barcode, extract_bclconvert};
 pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, ThreadedBamWriter, open_writer};
