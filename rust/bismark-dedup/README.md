@@ -24,8 +24,8 @@ This matches Bismark Perl `deduplicate_bismark` v0.25.1 exactly.
 cd rust/
 cargo install --path bismark-dedup
 
-# After release on crates.io (not yet published):
-# cargo install bismark-dedup
+# From crates.io once 1.1.0-beta.1 is published (1.0.0-beta.1 is already there):
+# cargo install bismark-dedup --version 1.1.0-beta.1
 ```
 
 During the Perl → Rust coexistence period, the binary installs as **`deduplicate_bismark_rs`** (with `_rs` suffix) so it can sit alongside the Perl `deduplicate_bismark` on `$PATH` without conflict.
@@ -85,7 +85,7 @@ single-threaded path is preserved.
 | `--multiple` | Treat all positional inputs as one combined sample |
 | `--barcode`, `--umi` | **Not in v1.0** — errors with v1.1 deferral message |
 | `--bclconvert` | **Not in v1.0** — errors with v1.1 deferral message |
-| `--parallel <N>` | v1.1: parallel BGZF (de)compression workers for BAM I/O (`N ≥ 1`). CRAM falls back to single-threaded with a warning. |
+| `--parallel <N>` | v1.1: parallel BGZF (de)compression workers for BAM I/O (`N ≥ 1`). CRAM falls back to single-threaded with a warning. `N > 4` emits a soft "diminishing returns" warning — measured saturation at N=4 on 10M PE WGBS. |
 | `--samtools_path <PATH>` | Accepted for compat, silently ignored (`bismark-dedup` is pure-Rust) |
 | `--representative` | Errors with Perl-verbatim joke (deprecated upstream) |
 | `-V`, `--version` | Print provenance string and exit |

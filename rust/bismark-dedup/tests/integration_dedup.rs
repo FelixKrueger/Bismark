@@ -1059,6 +1059,68 @@ fn pe_parallel_4_preserves_r1_followed_by_r2_adjacency() {
     }
 }
 
+/// `--parallel N` with N > 4 emits a soft "diminishing returns" warning
+/// once per invocation. Saturates at N=4 per the oxy benchmark — the
+/// dedup state is single-threaded, so only BGZF (de)compression scales.
+/// The warning is informational; the run still succeeds.
+#[test]
+fn parallel_above_four_emits_diminishing_returns_warning() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &ot_pair("u0", 1000, 1100));
+
+    let output = Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("8")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "exceeds the typical sweet spot (N ≤ 4)",
+        ))
+        .stderr(predicates::str::contains("--parallel 8"))
+        .get_output()
+        .clone();
+
+    // Exactly one warning line per invocation, not one per file or per
+    // record.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let warning_count = stderr
+        .lines()
+        .filter(|l| l.contains("exceeds the typical sweet spot"))
+        .count();
+    assert_eq!(
+        warning_count, 1,
+        "diminishing-returns warning must appear exactly once per invocation"
+    );
+}
+
+/// `--parallel 4` is at the sweet-spot threshold and must NOT emit the
+/// diminishing-returns warning. The boundary check is `N > 4`, not
+/// `N >= 4`.
+#[test]
+fn parallel_equal_to_four_does_not_emit_diminishing_returns_warning() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &ot_pair("u0", 1000, 1100));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--parallel")
+        .arg("4")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("exceeds the typical sweet spot").not());
+}
+
 /// `--parallel 0` is rejected at validate stage.
 #[test]
 fn parallel_zero_is_rejected_at_validate() {

@@ -55,44 +55,81 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-const DEFAULT_DATASET_DIR: &str = "/Users/fkrueger/Desktop/TrimG_Bismark_test/profiling";
-const INPUT_BAM: &str = "SRR24827378_10M_R1_val_1_bismark_bt2_pe.bam";
-const PERL_DEDUP_BAM: &str = "SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplicated.bam";
-const PERL_DEDUP_REPORT: &str = "SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplication_report.txt";
+/// A real-data dataset the byte-identity gates can run against. Each
+/// gate hard-codes which dataset it uses; the choice of physical
+/// directory is overridable via the per-dataset env var.
+struct DatasetSpec {
+    /// Short human label used in skip/diagnostic messages.
+    label: &'static str,
+    /// Env var the user sets to override the default directory path.
+    env_var: &'static str,
+    /// Default directory if the env var is unset.
+    default_dir: &'static str,
+    /// Basename of the input BAM (Bismark-aligned, not yet deduplicated).
+    input_bam: &'static str,
+    /// Basename of Perl's `deduplicate_bismark` output BAM (the byte-identity ground truth).
+    perl_dedup_bam: &'static str,
+    /// Basename of Perl's deduplication report file (also byte-identity ground truth).
+    perl_dedup_report: &'static str,
+}
 
-fn resolve_dataset_dir() -> Option<PathBuf> {
-    let dir = match std::env::var("BISMARK_REAL_DATA_DIR") {
+const DATASET_10M: DatasetSpec = DatasetSpec {
+    label: "10M_PE",
+    env_var: "BISMARK_REAL_DATA_DIR",
+    default_dir: "/Users/fkrueger/Desktop/TrimG_Bismark_test/profiling",
+    input_bam: "SRR24827378_10M_R1_val_1_bismark_bt2_pe.bam",
+    perl_dedup_bam: "SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplicated.bam",
+    perl_dedup_report: "SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplication_report.txt",
+};
+
+/// Buckberry 2023 SRR24827373 — full ~55M PE WGBS sample. Lives on oxy
+/// at `~/bismark_benchmarks/full_size/`. Adds a second hardware-
+/// scaling data point for the Phase D speedup curve (the 10M sibling
+/// validates the smaller-scale invariant).
+const DATASET_FULL: DatasetSpec = DatasetSpec {
+    label: "full_PE",
+    env_var: "BISMARK_REAL_DATA_DIR_FULL",
+    default_dir: "/Users/fkrueger/Desktop/TrimG_Bismark_test/profiling_full",
+    input_bam: "SRR24827373_GSM7445361_32F_NB3_p28_p2n2p_p10_rep1_Homo_sapiens_Bisulfite-Seq_R1_val_1_bismark_bt2_pe.bam",
+    perl_dedup_bam: "SRR24827373_GSM7445361_32F_NB3_p28_p2n2p_p10_rep1_Homo_sapiens_Bisulfite-Seq_R1_val_1_bismark_bt2_pe.deduplicated.bam",
+    perl_dedup_report: "SRR24827373_GSM7445361_32F_NB3_p28_p2n2p_p10_rep1_Homo_sapiens_Bisulfite-Seq_R1_val_1_bismark_bt2_pe.deduplication_report.txt",
+};
+
+fn resolve_dataset_dir(spec: &DatasetSpec) -> Option<PathBuf> {
+    let dir = match std::env::var(spec.env_var) {
         Ok(s) => PathBuf::from(s),
-        Err(_) => PathBuf::from(DEFAULT_DATASET_DIR),
+        Err(_) => PathBuf::from(spec.default_dir),
     };
 
-    let input = dir.join(INPUT_BAM);
-    let perl_bam = dir.join(PERL_DEDUP_BAM);
-    let perl_report = dir.join(PERL_DEDUP_REPORT);
+    let input = dir.join(spec.input_bam);
+    let perl_bam = dir.join(spec.perl_dedup_bam);
+    let perl_report = dir.join(spec.perl_dedup_report);
 
     if !input.exists() || !perl_bam.exists() || !perl_report.exists() {
         eprintln!(
-            "SKIP: real-data byte-identity test — dataset incomplete at {}\n\
+            "SKIP: real-data byte-identity test ({}) — dataset incomplete at {}\n\
              Required files:\n\
              - {}: {}\n\
              - {}: {}\n\
              - {}: {}\n\
-             Set BISMARK_REAL_DATA_DIR to override the default path.",
+             Set {} to override the default path.",
+            spec.label,
             dir.display(),
-            INPUT_BAM,
+            spec.input_bam,
             if input.exists() { "found" } else { "MISSING" },
-            PERL_DEDUP_BAM,
+            spec.perl_dedup_bam,
             if perl_bam.exists() {
                 "found"
             } else {
                 "MISSING"
             },
-            PERL_DEDUP_REPORT,
+            spec.perl_dedup_report,
             if perl_report.exists() {
                 "found"
             } else {
                 "MISSING"
             },
+            spec.env_var,
         );
         return None;
     }
@@ -126,21 +163,25 @@ fn read_qname_set(path: &Path) -> HashSet<String> {
 /// baseline** (Perl is single-threaded; the v1.1 contract is that
 /// threading doesn't change observable output).
 fn run_byte_identity_at_parallel(parallel: Option<u32>) {
-    let Some(dataset_dir) = resolve_dataset_dir() else {
+    run_byte_identity_at_parallel_for(parallel, &DATASET_10M);
+}
+
+fn run_byte_identity_at_parallel_for(parallel: Option<u32>, spec: &DatasetSpec) {
+    let Some(dataset_dir) = resolve_dataset_dir(spec) else {
         // SKIP is graceful — print-and-return-success so CI without the
         // dataset doesn't see a spurious failure.
         return;
     };
 
-    let perl_bam_path = dataset_dir.join(PERL_DEDUP_BAM);
-    let perl_report_path = dataset_dir.join(PERL_DEDUP_REPORT);
+    let perl_bam_path = dataset_dir.join(spec.perl_dedup_bam);
+    let perl_report_path = dataset_dir.join(spec.perl_dedup_report);
 
     // Output to a temp dir so we don't clobber the existing Perl baseline.
     let out_dir = TempDir::new().expect("create tmp dir");
 
     eprintln!(
         "running bismark-dedup_rs against {} (dataset dir: {}, parallel: {:?})",
-        INPUT_BAM,
+        spec.input_bam,
         dataset_dir.display(),
         parallel,
     );
@@ -155,12 +196,10 @@ fn run_byte_identity_at_parallel(parallel: Option<u32>) {
     if let Some(n) = parallel {
         cmd.arg("--parallel").arg(n.to_string());
     }
-    cmd.arg(INPUT_BAM).assert().success();
+    cmd.arg(spec.input_bam).assert().success();
 
     // 1) Retained-qname set comparison.
-    let rust_bam_path = out_dir
-        .path()
-        .join("SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplicated.bam");
+    let rust_bam_path = out_dir.path().join(spec.perl_dedup_bam);
     assert!(
         rust_bam_path.exists(),
         "Rust output BAM not produced at {}",
@@ -200,9 +239,7 @@ fn run_byte_identity_at_parallel(parallel: Option<u32>) {
     );
 
     // 2) Dedup report byte equality.
-    let rust_report_path = out_dir
-        .path()
-        .join("SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplication_report.txt");
+    let rust_report_path = out_dir.path().join(spec.perl_dedup_report);
     assert!(
         rust_report_path.exists(),
         "Rust dedup report not produced at {}",
@@ -272,4 +309,46 @@ fn byte_identity_real_data_10m_pe_wgbs() {
 #[ignore]
 fn byte_identity_real_data_10m_pe_wgbs_parallel_4() {
     run_byte_identity_at_parallel(Some(4));
+}
+
+/// v1.1 Phase D speedup-curve gate at `--parallel 2`. Same correctness
+/// invariant as the `_parallel_4` sibling: retained-qname set + report
+/// bytes equal Perl v0.25.1's single-threaded baseline.
+#[test]
+#[ignore]
+fn byte_identity_real_data_10m_pe_wgbs_parallel_2() {
+    run_byte_identity_at_parallel(Some(2));
+}
+
+/// v1.1 Phase D speedup-curve gate at `--parallel 8`. Same correctness
+/// invariant. At N=8 the speedup may flatten (or regress slightly) since
+/// the dedup state itself is single-threaded; only BGZF (de)compression
+/// parallelizes. The test asserts only byte-identity, not speedup.
+#[test]
+#[ignore]
+fn byte_identity_real_data_10m_pe_wgbs_parallel_8() {
+    run_byte_identity_at_parallel(Some(8));
+}
+
+/// v1.1 Phase D second-data-point gate at `--parallel 4` against the
+/// full SRR24827373 Buckberry 2023 PE sample (~55M reads, ~11 GB BAM).
+/// Adds a hardware-scaling data point to confirm the threaded path's
+/// byte-identity invariant holds at production scale, not just on the
+/// 10M subset.
+///
+/// Run on **oxy** (where the full sample + Perl baseline live):
+///
+/// ```sh
+/// BISMARK_REAL_DATA_DIR_FULL=<oxy-full-dataset-dir> \
+///   cargo test --release -- --ignored --exact \
+///     byte_identity_real_data_full_pe_wgbs_parallel_4
+/// ```
+///
+/// The env var is **separate** from `BISMARK_REAL_DATA_DIR` (the 10M
+/// dataset) so both datasets can be tested in one invocation without
+/// path-aliasing.
+#[test]
+#[ignore]
+fn byte_identity_real_data_full_pe_wgbs_parallel_4() {
+    run_byte_identity_at_parallel_for(Some(4), &DATASET_FULL);
 }

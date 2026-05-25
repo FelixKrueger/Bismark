@@ -50,6 +50,14 @@ keeping every v1.0 byte-identity guarantee intact.
 - **`--parallel 0`** is now an explicit `InvalidParallelValue` error at
   CLI-validate time. clap's `u32` parser previously accepted 0; the
   validate stage rejects it before any I/O begins.
+- **`--parallel N` with N > 4** emits a one-line stderr warning about
+  measured saturation past N=4 (the dedup state is single-threaded, so
+  only BGZF (de)compression scales; the Phase D oxy benchmark showed
+  N=8 = N=4 in wall-time). The run still succeeds — this is
+  informational, not a hard cap. Users on much-bigger metal who want to
+  probe the curve themselves can still pass `--parallel 16`, `--parallel
+  32`, etc., and will just see a warning that the value is past the
+  measured sweet spot.
 
 ### Byte-identity contract preserved
 
@@ -71,6 +79,70 @@ keeping every v1.0 byte-identity guarantee intact.
   one (substring-match would trigger both).
   The common body is shared via `run_byte_identity_at_parallel(parallel)` so
   the two tests cannot drift apart.
+- Phase D extends the gate to `--parallel 2` and `--parallel 8` via
+  `byte_identity_real_data_10m_pe_wgbs_parallel_2` and
+  `_parallel_8` (also `#[ignore]`'d) — same `run_byte_identity_at_parallel`
+  body, just different parameter. All four N values produce identical
+  retained-qname set + identical report bytes on the 10M PE WGBS oxy
+  dataset.
+
+### Measured speedup + memory (oxy, 2026-05-24, median of 3 runs)
+
+Real-data WGBS dedup of the 10M PE `SRR24827378` dataset (8,592,524
+records, GRCh38). Same hardware (`dockyard-oxy-0`, Amazon Linux 2023
+x86_64), same input, same dataset directory. All runs produce identical
+7,699,136 retained qnames + 294-byte report — **byte-identity preserved
+across N**, validated by the four `byte_identity_real_data_10m_pe_wgbs[_parallel_N]`
+gates above.
+
+| `--parallel` | Wall-time (min / median / max) | Peak RSS (median) | Speedup vs N=1 (median) |
+|-------------:|-------------------------------:|------------------:|------------------------:|
+| 1 | 81.39 / 81.46 / 81.77 s | 455 MB | 1.00× |
+| 2 | 30.48 / 30.54 / 30.56 s | 456 MB | **2.67×** |
+| 4 | 16.66 / 16.71 / 16.94 s | 457 MB | **4.88×** |
+| 8 | 16.57 / 16.68 / 16.89 s | 457 MB | 4.88× (saturation) |
+
+**Second data point — full PE WGBS (~55M reads, oxy, 2026-05-25, median of 3):**
+
+Same hardware, independent biological sample (`SRR24827373` Buckberry
+2023, ~11 GB BAM, 75,272,478 records). Byte-identity verified at N=4
+via `byte_identity_real_data_full_pe_wgbs_parallel_4` (`#[ignore]`'d):
+**64,636,610 retained qnames + 359-byte report — Rust `--parallel 4`
+output byte-identical to Perl v0.25.1**.
+
+| `--parallel` | Wall-time (min / median / max)  | Peak RSS (median) | Speedup vs N=1 (median) |
+|-------------:|--------------------------------:|------------------:|------------------------:|
+| 1 | 691.08 / 691.52 / 692.68 s (~11:32) | 3.40 GB | 1.00× |
+| 2 | 255.54 / 255.61 / 255.77 s (~4:16)  | 3.44 GB | **2.71×** |
+| 4 | 144.91 / 145.67 / 148.30 s (~2:26)  | 3.44 GB | **4.75×** |
+| 8 | 145.45 / 146.24 / 148.31 s (~2:26)  | 3.44 GB | 4.73× (saturation) |
+
+The 4.75× ceiling at N=4 on 55M reads is consistent with the 4.88×
+ceiling on 10M reads — the architecture limit holds across 6.6× input
+scale. N=8 vs N=4 medians are within within-run noise on both datasets
+(N=8 is 30 ms faster on 10M, 0.57 s slower on full PE; min/median/max
+ranges overlap heavily), so the practical interpretation is
+"saturated at N=4" rather than any directional regression. Peak RSS
+scales with input size (≈ 7.5× from 10M to full PE) but is essentially
+flat across N (BGZF queue overhead ≈ 30-40 MB).
+
+**Methodology:** measurements taken with `/usr/bin/time -v` wrapping the
+release-mode `deduplicate_bismark_rs` binary directly (no `cargo test`
+wrapper). The wrapper's post-dedup qname-set comparison would add ~60 s
+of constant-cost test scaffolding to every run, masking the real
+parallel speedup as a smaller ratio.
+
+**Caveat:** measured on a single host (`dockyard-oxy-0`); two independent
+input datasets (10M PE WGBS SRR24827378, full PE WGBS SRR24827373);
+single dedup workload. Absolute numbers will vary with hardware and
+input characteristics. The N=2/4/8 byte-identity claim is validated by
+the corresponding `#[ignore]`'d integration tests in
+`tests/byte_identity_real_data.rs`. Speedup ceiling at ~5× reflects
+that the dedup state itself is single-threaded; only BGZF
+(de)compression parallelizes — N=8 shows no improvement over N=4 on
+either dataset because the BGZF queue depth has saturated the I/O
+parallelism budget.
+Memory cost of threading is negligible (≤2 MB across N).
 
 ### Out of scope (still deferred)
 
@@ -137,3 +209,5 @@ Rust **1.89.0**. Required by `bismark-io` v1.0 → `noodles-bam` 0.89.
 ### Not yet published to crates.io
 
 By design — within the Bismark workspace, path-dep usage is the supported integration model. crates.io publication is deferred until the v1.0 → v1.1 stabilisation period.
+
+> **Update (2026-05-24):** published to crates.io as `bismark-dedup 1.0.0-beta.1` in PR #825. The v1.1 successor is `1.1.0-beta.1` — see the `[1.1.0-beta.1]` entry above.

@@ -66,6 +66,20 @@ Downstream consumers pinning `=1.0.0-beta.1` should bump to `=1.0.0-beta.2`
 when they want the threaded readers/writers. `bismark-dedup v1.1.0-beta.1`
 requires `=1.0.0-beta.2`.
 
+### Downstream-measured performance
+
+`bismark-dedup v1.1.0-beta.1`'s `--parallel N` path (which uses
+`ThreadedBamReader` + `ThreadedBamWriter`) is **~4.8× faster at N=4**
+than its single-threaded counterpart on real-data WGBS, with
+byte-identical output across N. Verified on two independent samples:
+**10M PE WGBS** (4.88× speedup, 455 MB RSS) and **full PE WGBS,
+SRR24827373 Buckberry 2023, 55M reads** (4.75× speedup, 3.4 GB RSS).
+The architecture ceiling holds across 6.6× input-size scaling; N=8
+saturates (no further speedup) because only BGZF (de)compression
+parallelizes — the dedup state itself is single-threaded. Memory cost
+of threading is negligible (≈30-40 MB BGZF queue overhead). See
+bismark-dedup's CHANGELOG for the full per-N curves on both datasets.
+
 ## [1.0.0-beta.1] — 2026-05-24
 
 First **public pre-release** of `bismark-io` on crates.io. Feature-complete
@@ -180,3 +194,6 @@ Rust **1.89.0**. Required by `noodles-bam` 0.89.
   least one downstream binary crate (`bismark-dedup` first) lands. crates.io
   publication is deferred to keep the publish-bump cycle in lockstep with
   binary crates.
+  > **Update (2026-05-24, Phase A of v1.1 rayon epic):** published as
+  > `1.0.0-beta.1` to crates.io. See the `[1.0.0-beta.2]` entry above for
+  > the v1.1 successor.
