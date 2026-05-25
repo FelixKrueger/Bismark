@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-# Requires Python 3.10+ (uses parenthesized `with (a, b, c, d):` syntax).
+# Compatible with Python 3.7+ (uses contextlib.ExitStack for the
+# four-handle gzip ContextManager rather than the parenthesized
+# `with (a, b, c, d):` syntax that requires 3.10). Tested against the
+# Python 3.7 in oxy's bismark-test micromamba env.
 """Synthesize UMI-bearing FASTQs from a stock paired-end FASTQ pair.
 
 This script supports Phase 0 of the bismark-dedup v1.2 UMI/RRBS epic:
@@ -49,6 +52,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gzip
 import random
 import sys
@@ -129,12 +133,15 @@ def synthesize(
     # compresslevel=6 (default gzip level, not Python gzip.open's default
     # of 9) is ~2x faster on the 10M-pair input with negligible output
     # size difference. Per round-1 code-review by both reviewers.
-    with (
-        gzip.open(in_r1, "rb") as fh_in_r1,
-        gzip.open(in_r2, "rb") as fh_in_r2,
-        gzip.open(out_r1, "wb", compresslevel=6) as fh_out_r1,
-        gzip.open(out_r2, "wb", compresslevel=6) as fh_out_r2,
-    ):
+    #
+    # Use contextlib.ExitStack rather than the parenthesized
+    # `with (a, b, c, d):` syntax (which requires Python 3.10+) so this
+    # script runs on oxy's bismark-test micromamba env (Python 3.7).
+    with contextlib.ExitStack() as stack:
+        fh_in_r1 = stack.enter_context(gzip.open(in_r1, "rb"))
+        fh_in_r2 = stack.enter_context(gzip.open(in_r2, "rb"))
+        fh_out_r1 = stack.enter_context(gzip.open(out_r1, "wb", compresslevel=6))
+        fh_out_r2 = stack.enter_context(gzip.open(out_r2, "wb", compresslevel=6))
         while True:
             if subset is not None and n_pairs >= subset:
                 break
