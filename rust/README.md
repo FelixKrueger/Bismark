@@ -39,7 +39,7 @@ cargo build --release
 
 The workspace currently contains:
 
-- **`bismark-io`** (library) at `1.0.0-beta.2` — shared BAM/SAM/CRAM I/O on noodles, with v1.1's `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF (de)compression. Published to crates.io.
-- **`bismark-dedup`** (library + `deduplicate_bismark_rs` binary) at `1.1.0-beta.1` — Rust port of Perl `deduplicate_bismark`, byte-identical to v0.25.1 on real-data WGBS (10M PE) with optional `--parallel N` BGZF threading. Published to crates.io.
+- **`bismark-io`** (library) at `1.0.0-beta.2` — shared BAM/SAM/CRAM I/O on noodles, with v1.1's `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF (de)compression. `1.0.0-beta.1` is published to crates.io; `1.0.0-beta.2` is queued for the next publish window.
+- **`bismark-dedup`** (library + `deduplicate_bismark_rs` binary) at `1.1.0-beta.1` — Rust port of Perl `deduplicate_bismark`, byte-identical to v0.25.1 on real-data WGBS (10M PE + ~55M PE) with optional `--parallel N` BGZF threading. `1.0.0-beta.1` is published to crates.io; `1.1.0-beta.1` is queued for the next publish window.
 
 Additional binary crates (`bismark-extractor`, `bismark-bedgraph`, `bismark-coverage2cytosine`, etc.) land as their Phase 1 sub-issues are implemented.

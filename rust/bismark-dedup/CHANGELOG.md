@@ -115,12 +115,14 @@ output byte-identical to Perl v0.25.1**.
 | 1 | 691.08 / 691.52 / 692.68 s (~11:32) | 3.40 GB | 1.00× |
 | 2 | 255.54 / 255.61 / 255.77 s (~4:16)  | 3.44 GB | **2.71×** |
 | 4 | 144.91 / 145.67 / 148.30 s (~2:26)  | 3.44 GB | **4.75×** |
-| 8 | 145.45 / 146.24 / 148.31 s (~2:26)  | 3.44 GB | 4.73× (slight regression) |
+| 8 | 145.45 / 146.24 / 148.31 s (~2:26)  | 3.44 GB | 4.73× (saturation) |
 
 The 4.75× ceiling at N=4 on 55M reads is consistent with the 4.88×
 ceiling on 10M reads — the architecture limit holds across 6.6× input
-scale. N=8 even shows a tiny regression (146.24 vs 145.67 s), confirming
-that "saturation" isn't an artifact of small-data noise. Peak RSS
+scale. N=8 vs N=4 medians are within within-run noise on both datasets
+(N=8 is 30 ms faster on 10M, 0.57 s slower on full PE; min/median/max
+ranges overlap heavily), so the practical interpretation is
+"saturated at N=4" rather than any directional regression. Peak RSS
 scales with input size (≈ 7.5× from 10M to full PE) but is essentially
 flat across N (BGZF queue overhead ≈ 30-40 MB).
 
@@ -130,14 +132,16 @@ wrapper). The wrapper's post-dedup qname-set comparison would add ~60 s
 of constant-cost test scaffolding to every run, masking the real
 parallel speedup as a smaller ratio.
 
-**Caveat:** measured on a single host (`dockyard-oxy-0`), single input
-dataset (10M PE WGBS), single dedup workload. Absolute numbers will
-vary with hardware and input characteristics. The N=2/4/8 byte-identity
-claim is validated by the corresponding `#[ignore]`'d integration tests
-in `tests/byte_identity_real_data.rs`. Speedup ceiling at ~5× reflects
+**Caveat:** measured on a single host (`dockyard-oxy-0`); two independent
+input datasets (10M PE WGBS SRR24827378, full PE WGBS SRR24827373);
+single dedup workload. Absolute numbers will vary with hardware and
+input characteristics. The N=2/4/8 byte-identity claim is validated by
+the corresponding `#[ignore]`'d integration tests in
+`tests/byte_identity_real_data.rs`. Speedup ceiling at ~5× reflects
 that the dedup state itself is single-threaded; only BGZF
-(de)compression parallelizes — N=8 shows no improvement over N=4
-because the BGZF queue depth has saturated the I/O parallelism budget.
+(de)compression parallelizes — N=8 shows no improvement over N=4 on
+either dataset because the BGZF queue depth has saturated the I/O
+parallelism budget.
 Memory cost of threading is negligible (≤2 MB across N).
 
 ### Out of scope (still deferred)

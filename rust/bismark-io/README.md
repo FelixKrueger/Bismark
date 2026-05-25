@@ -213,7 +213,7 @@ This is **v1.0.0-beta.2** — the public API is stable; no breaking changes are 
 
 ## crates.io
 
-Published as both `bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line, Phase A of the rayon epic) and `bismark-io = "=1.0.0-beta.2"` (the v1.1 BGZF-threaded line, Phase D of the rayon epic). Within the Bismark workspace, `bismark-dedup` pins `=1.0.0-beta.2` for the threaded BAM I/O. External consumers can pin either depending on whether they need threaded readers/writers.
+`bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line, Phase A of the rayon epic) is **published to crates.io**. `bismark-io = "=1.0.0-beta.2"` (the v1.1 BGZF-threaded line, Phase D of the rayon epic) is **queued for the next publish window** — within the Bismark workspace, `bismark-dedup` already path-deps `=1.0.0-beta.2` for the threaded BAM I/O. Once published, external consumers can pin either depending on whether they need threaded readers/writers.
 
 ## License
 
