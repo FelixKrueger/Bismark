@@ -69,12 +69,16 @@ requires `=1.0.0-beta.2`.
 ### Downstream-measured performance
 
 `bismark-dedup v1.1.0-beta.1`'s `--parallel N` path (which uses
-`ThreadedBamReader` + `ThreadedBamWriter`) is **4.88× faster at N=4**
-than its single-threaded counterpart on the 10M PE WGBS oxy benchmark,
-with byte-identical output across N (validated by the
-`byte_identity_real_data_10m_pe_wgbs[_parallel_N]` gates). Memory cost
-of threading is negligible (≤2 MB across N=1..8). See bismark-dedup's
-CHANGELOG for the full curve.
+`ThreadedBamReader` + `ThreadedBamWriter`) is **~4.8× faster at N=4**
+than its single-threaded counterpart on real-data WGBS, with
+byte-identical output across N. Verified on two independent samples:
+**10M PE WGBS** (4.88× speedup, 455 MB RSS) and **full PE WGBS,
+SRR24827373 Buckberry 2023, 55M reads** (4.75× speedup, 3.4 GB RSS).
+The architecture ceiling holds across 6.6× input-size scaling; N=8
+saturates (no further speedup) because only BGZF (de)compression
+parallelizes — the dedup state itself is single-threaded. Memory cost
+of threading is negligible (≈30-40 MB BGZF queue overhead). See
+bismark-dedup's CHANGELOG for the full per-N curves on both datasets.
 
 ## [1.0.0-beta.1] — 2026-05-24
 

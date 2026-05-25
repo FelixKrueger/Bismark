@@ -102,6 +102,28 @@ gates above.
 | 4 | 16.66 / 16.71 / 16.94 s | 457 MB | **4.88×** |
 | 8 | 16.57 / 16.68 / 16.89 s | 457 MB | 4.88× (saturation) |
 
+**Second data point — full PE WGBS (~55M reads, oxy, 2026-05-25, median of 3):**
+
+Same hardware, independent biological sample (`SRR24827373` Buckberry
+2023, ~11 GB BAM, 75,272,478 records). Byte-identity verified at N=4
+via `byte_identity_real_data_full_pe_wgbs_parallel_4` (`#[ignore]`'d):
+**64,636,610 retained qnames + 359-byte report — Rust `--parallel 4`
+output byte-identical to Perl v0.25.1**.
+
+| `--parallel` | Wall-time (min / median / max)  | Peak RSS (median) | Speedup vs N=1 (median) |
+|-------------:|--------------------------------:|------------------:|------------------------:|
+| 1 | 691.08 / 691.52 / 692.68 s (~11:32) | 3.40 GB | 1.00× |
+| 2 | 255.54 / 255.61 / 255.77 s (~4:16)  | 3.44 GB | **2.71×** |
+| 4 | 144.91 / 145.67 / 148.30 s (~2:26)  | 3.44 GB | **4.75×** |
+| 8 | 145.45 / 146.24 / 148.31 s (~2:26)  | 3.44 GB | 4.73× (slight regression) |
+
+The 4.75× ceiling at N=4 on 55M reads is consistent with the 4.88×
+ceiling on 10M reads — the architecture limit holds across 6.6× input
+scale. N=8 even shows a tiny regression (146.24 vs 145.67 s), confirming
+that "saturation" isn't an artifact of small-data noise. Peak RSS
+scales with input size (≈ 7.5× from 10M to full PE) but is essentially
+flat across N (BGZF queue overhead ≈ 30-40 MB).
+
 **Methodology:** measurements taken with `/usr/bin/time -v` wrapping the
 release-mode `deduplicate_bismark_rs` binary directly (no `cargo test`
 wrapper). The wrapper's post-dedup qname-set comparison would add ~60 s
