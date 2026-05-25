@@ -119,8 +119,65 @@ pub enum BismarkIoError {
 
     /// The given file path does not have a recognised BAM/SAM/CRAM
     /// extension.
+    ///
+    /// As of `bismark-io v1.0.0-beta.3`, this variant is emitted only by
+    /// [`crate::AlignmentKind::from_extension`] (writer-side dispatch — the
+    /// output file doesn't exist yet, so content sniffing is impossible).
+    /// Reader-side dispatch via [`crate::AlignmentKind::from_path`] sniffs
+    /// magic bytes and emits [`Self::UnrecognizedFormat`] or
+    /// [`Self::UnrecognizedBgzfPayload`] instead.
     #[error("unsupported file kind for path: {0}")]
     UnsupportedKind(PathBuf),
+
+    /// File was shorter than the minimum bytes needed for magic-byte
+    /// format detection.
+    ///
+    /// Emitted by [`crate::AlignmentKind::from_path`] when the file is
+    /// truncated below the 4 bytes needed to identify BAM/SAM/CRAM
+    /// signatures.
+    #[error("file {path} is too short to detect format ({bytes_read} bytes; need at least 4)")]
+    TooShortToDetect {
+        /// Path the caller tried to detect.
+        path: PathBuf,
+        /// Number of bytes successfully read before the file ended.
+        bytes_read: usize,
+    },
+
+    /// File's first byte matched none of `1f` (BGZF/BAM), `@` (SAM
+    /// header), or `C` (CRAM).
+    ///
+    /// Emitted by [`crate::AlignmentKind::from_path`]. Common causes:
+    /// truly unrelated file types, or headerless SAM (records only, no
+    /// `@HD`/`@SQ`/`@PG` lines).
+    #[error(
+        "file format not recognised at {path} — first byte is 0x{magic_first_byte:02x}; \
+         expected BAM (`1f 8b`), SAM (starts with `@`), or CRAM (`CRAM`). \
+         If this is a headerless SAM file (no `@HD`/`@SQ`/`@PG` line), \
+         bismark-dedup needs the standard SAM header — try `samtools view -h` first."
+    )]
+    UnrecognizedFormat {
+        /// Path the caller tried to detect.
+        path: PathBuf,
+        /// The first byte read from the file (helps the user identify the format).
+        magic_first_byte: u8,
+    },
+
+    /// File starts with BGZF magic but the decompressed payload doesn't
+    /// begin with `BAM\x01`. Common case: `.vcf.gz` or `.bcf` or any
+    /// other bgzipped non-BAM file mis-routed to a BAM-expecting caller.
+    ///
+    /// Emitted by [`crate::AlignmentKind::from_path`].
+    #[error(
+        "file {path} is bgzipped but the decompressed payload starts with \
+         {payload_head:02x?}, not `BAM\\x01` — looks like a non-BAM \
+         BGZF file (VCF, BCF, BED, …?)"
+    )]
+    UnrecognizedBgzfPayload {
+        /// Path the caller tried to detect.
+        path: PathBuf,
+        /// The first 4 bytes of the decompressed payload.
+        payload_head: [u8; 4],
+    },
 
     /// Underlying I/O failure.
     ///

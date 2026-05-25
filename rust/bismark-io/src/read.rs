@@ -61,10 +61,20 @@ pub enum AlignmentKind {
 }
 
 impl AlignmentKind {
-    /// Infer from a file path's extension. Returns
-    /// [`BismarkIoError::UnsupportedKind`] if the extension is none of
-    /// `.bam`, `.sam`, `.cram`.
-    pub fn from_path(path: &Path) -> Result<Self, BismarkIoError> {
+    /// Infer from a file path's **extension**. I/O-free.
+    ///
+    /// Returns [`BismarkIoError::UnsupportedKind`] if the extension is
+    /// none of `.bam`, `.sam`, `.cram` (case-insensitive).
+    ///
+    /// Used by [`crate::open_writer`] (where the file doesn't exist yet,
+    /// so content sniffing is impossible) and by any caller that wants
+    /// explicit extension-only dispatch. Reader-side dispatch should
+    /// prefer [`Self::from_path`] (magic-byte sniff).
+    ///
+    /// This function preserves the pre-`v1.0.0-beta.3` behaviour of
+    /// `AlignmentKind::from_path` byte-for-byte; the relocation allows
+    /// the magic-byte variant below to take the more general name.
+    pub fn from_extension(path: &Path) -> Result<Self, BismarkIoError> {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -75,6 +85,127 @@ impl AlignmentKind {
             Some("cram") => Ok(Self::Cram),
             _ => Err(BismarkIoError::UnsupportedKind(path.to_path_buf())),
         }
+    }
+
+    /// Detect the file format by reading + (for BGZF) decompressing
+    /// enough bytes to authoritatively identify BAM/SAM/CRAM. Opens the
+    /// file; for the BGZF/BAM case, decompresses the first block
+    /// (~100-700 µs, dominated by the inflate of a 32-64 KiB BGZF block)
+    /// and verifies the BAM-specific `BAM\x01` magic in the
+    /// decompressed payload.
+    ///
+    /// Returns:
+    /// - [`AlignmentKind::Bam`] if the file starts with BGZF magic AND the
+    ///   decompressed first block starts with `BAM\x01`.
+    /// - [`AlignmentKind::Sam`] if the first byte is `@` (SAM header).
+    /// - [`AlignmentKind::Cram`] if the first 4 bytes are `CRAM`.
+    /// - [`BismarkIoError::UnrecognizedFormat`] if no magic matches.
+    /// - [`BismarkIoError::UnrecognizedBgzfPayload`] if BGZF magic
+    ///   matched but the inflated payload isn't `BAM\x01`.
+    /// - [`BismarkIoError::TooShortToDetect`] if the file is too small.
+    /// - [`BismarkIoError::Io`] on a system I/O error.
+    ///
+    /// Used by [`crate::open_reader`] and any caller that wants
+    /// tolerance for mis-named files. For writer-side dispatch (where
+    /// the file doesn't exist yet) prefer [`Self::from_extension`].
+    pub fn from_path(path: &Path) -> Result<Self, BismarkIoError> {
+        let mut file = std::fs::File::open(path)?;
+        // `Read::read` is permitted to return short even when more data
+        // is available, so use the take+read_to_end loop pattern that
+        // either fills the buffer or hits real EOF.
+        let mut first_byte = Vec::with_capacity(1);
+        (&mut file).take(1).read_to_end(&mut first_byte)?;
+        if first_byte.is_empty() {
+            return Err(BismarkIoError::TooShortToDetect {
+                path: path.to_path_buf(),
+                bytes_read: 0,
+            });
+        }
+        match first_byte[0] {
+            // BGZF/BAM: gzip magic byte 1. Re-open the file fresh and
+            // let `noodles_bgzf::Reader` validate the full block, then
+            // check the payload for `BAM\x01`.
+            0x1f => detect_bgzf_payload(path),
+            // SAM header line marker.
+            b'@' => Ok(Self::Sam),
+            // CRAM file definition starts with the ASCII string `CRAM`.
+            b'C' => detect_cram_magic(&mut file, path),
+            // No recognised magic.
+            other => Err(BismarkIoError::UnrecognizedFormat {
+                path: path.to_path_buf(),
+                magic_first_byte: other,
+            }),
+        }
+    }
+}
+
+/// Open the path as a BGZF stream and read 4 bytes from the
+/// decompressed payload. If those bytes are `BAM\x01` it's a BAM file;
+/// otherwise it's some other BGZF-wrapped format (VCF, BCF, etc.) and we
+/// return [`BismarkIoError::UnrecognizedBgzfPayload`].
+///
+/// Implementation note: this helper re-opens the file fresh rather than
+/// seeking the caller's existing `File` handle back to offset 0 and
+/// wrapping it. Two reasons: (1) `noodles_bgzf::Reader::new` expects a
+/// `Read` source positioned at the start of a BGZF stream — passing a
+/// `File` whose cursor we've already advanced (even after `seek(0)`)
+/// couples error semantics across the two read attempts; (2) the second
+/// `open(2)` syscall is ~1 µs on a warm page cache, dwarfed by the
+/// inflate cost. Cleaner code wins.
+fn detect_bgzf_payload(path: &Path) -> Result<AlignmentKind, BismarkIoError> {
+    let file = std::fs::File::open(path)?;
+    let bgzf = noodles_bgzf::io::Reader::new(file);
+    // `noodles_bgzf::Reader::read` returns one BGZF block at a time per
+    // the `Read` contract — a single `read()` call may legally return
+    // fewer than 4 bytes even when more data is available. Use
+    // take+read_to_end so we loop until we have 4 bytes OR genuine EOF.
+    let mut payload_head_buf = Vec::with_capacity(4);
+    bgzf.take(4).read_to_end(&mut payload_head_buf)?;
+    if payload_head_buf.len() < 4 {
+        return Err(BismarkIoError::TooShortToDetect {
+            path: path.to_path_buf(),
+            bytes_read: payload_head_buf.len(),
+        });
+    }
+    let payload_head: [u8; 4] = payload_head_buf
+        .as_slice()
+        .try_into()
+        .expect("we just checked len == 4");
+    if &payload_head == b"BAM\x01" {
+        Ok(AlignmentKind::Bam)
+    } else {
+        Err(BismarkIoError::UnrecognizedBgzfPayload {
+            path: path.to_path_buf(),
+            payload_head,
+        })
+    }
+}
+
+/// Verify that a file whose first byte is `C` is actually CRAM (full
+/// magic `CRAM`). The caller has already consumed the first byte from
+/// `file`; this helper reads the remaining 3 bytes.
+fn detect_cram_magic(
+    file: &mut std::fs::File,
+    path: &Path,
+) -> Result<AlignmentKind, BismarkIoError> {
+    // `Read::read` may return short even with more data available; use
+    // take+read_to_end to loop until 3 bytes OR genuine EOF.
+    let mut rest_buf = Vec::with_capacity(3);
+    file.take(3).read_to_end(&mut rest_buf)?;
+    if rest_buf.len() < 3 {
+        return Err(BismarkIoError::TooShortToDetect {
+            path: path.to_path_buf(),
+            // First-byte peek (1) + however many we got here.
+            bytes_read: 1 + rest_buf.len(),
+        });
+    }
+    if rest_buf.as_slice() == b"RAM" {
+        Ok(AlignmentKind::Cram)
+    } else {
+        Err(BismarkIoError::UnrecognizedFormat {
+            path: path.to_path_buf(),
+            magic_first_byte: b'C',
+        })
     }
 }
 
@@ -412,6 +543,7 @@ mod tests {
     use noodles_sam::header::record::value::Map;
     use noodles_sam::header::record::value::map::header::Version;
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     /// Build a SAM header with the given SO value (or no SO if `so` is None).
     fn header_with_sort_order(so: Option<&[u8]>) -> Header {
@@ -424,44 +556,184 @@ mod tests {
         noodles_sam::Header::builder().set_header(hd).build()
     }
 
+    // ─────────────── from_extension (legacy extension dispatch) ───────────────
+
     #[test]
-    fn alignment_kind_from_path_bam() {
+    fn alignment_kind_from_extension_bam() {
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.bam")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.bam")).unwrap(),
             AlignmentKind::Bam
         );
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.BAM")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.BAM")).unwrap(),
             AlignmentKind::Bam
         );
     }
 
     #[test]
-    fn alignment_kind_from_path_sam() {
+    fn alignment_kind_from_extension_sam() {
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.sam")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.sam")).unwrap(),
             AlignmentKind::Sam
         );
     }
 
     #[test]
-    fn alignment_kind_from_path_cram() {
+    fn alignment_kind_from_extension_cram() {
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.cram")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.cram")).unwrap(),
             AlignmentKind::Cram
         );
     }
 
     #[test]
-    fn alignment_kind_from_path_unknown_errors() {
-        let err = AlignmentKind::from_path(Path::new("x.txt")).unwrap_err();
+    fn alignment_kind_from_extension_unknown_errors() {
+        let err = AlignmentKind::from_extension(Path::new("x.txt")).unwrap_err();
         assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
     }
 
     #[test]
-    fn alignment_kind_from_path_no_extension_errors() {
-        let err = AlignmentKind::from_path(Path::new("noext")).unwrap_err();
+    fn alignment_kind_from_extension_no_extension_errors() {
+        let err = AlignmentKind::from_extension(Path::new("noext")).unwrap_err();
         assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    }
+
+    // ─────────────── from_path (new magic-byte sniff) ───────────────
+
+    /// The fixture BAM produced by Perl Bismark is the canonical
+    /// real-data BAM for sniff verification.
+    #[test]
+    fn from_path_detects_bam_via_bgzf_payload_on_fixture() {
+        let fixture = Path::new("test_files/tiny_pe_bismark.bam");
+        assert_eq!(
+            AlignmentKind::from_path(fixture).unwrap(),
+            AlignmentKind::Bam
+        );
+    }
+
+    /// SAM bytes in a file: classification follows content, not extension.
+    /// The temp file has no specific extension (NamedTempFile gives it a
+    /// random one), but `from_path` should ignore extension and classify
+    /// by the `@HD` first-byte content.
+    #[test]
+    fn from_path_detects_sam_by_at_sign_first_byte() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"@HD\tVN:1.6\n").unwrap();
+        assert_eq!(
+            AlignmentKind::from_path(tmp.path()).unwrap(),
+            AlignmentKind::Sam
+        );
+    }
+
+    /// CRAM magic in a file with no extension at all.
+    #[test]
+    fn from_path_detects_cram_by_magic() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"CRAM\x03\x00").unwrap();
+        assert_eq!(
+            AlignmentKind::from_path(tmp.path()).unwrap(),
+            AlignmentKind::Cram
+        );
+    }
+
+    #[test]
+    fn from_path_errors_on_empty_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Empty file (NamedTempFile::new is empty by default).
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::TooShortToDetect { bytes_read: 0, .. } => {}
+            other => panic!("expected TooShortToDetect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_path_errors_on_unrecognized_first_byte() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"XXXX").unwrap();
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::UnrecognizedFormat {
+                magic_first_byte: b'X',
+                ..
+            } => {}
+            other => panic!("expected UnrecognizedFormat with byte=0x58, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_path_errors_on_missing_file() {
+        let err = AlignmentKind::from_path(Path::new("/nonexistent/path/should-not-exist.bam"))
+            .unwrap_err();
+        assert!(matches!(err, BismarkIoError::Io(_)));
+    }
+
+    #[test]
+    fn from_path_errors_on_partial_cram_magic() {
+        // 2 bytes: matches `C` first-byte dispatch, then reads 1 of the
+        // expected 3 trailing bytes before EOF. Total bytes read = 1 + 1 = 2.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"CR").unwrap();
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::TooShortToDetect { bytes_read: 2, .. } => {}
+            other => panic!("expected TooShortToDetect with bytes_read=2, got {other:?}"),
+        }
+    }
+
+    /// End-to-end test for the load-bearing case: a real BGZF stream
+    /// whose decompressed payload starts with non-BAM bytes (e.g. a
+    /// `.vcf.gz` mis-routed to a BAM-expecting caller). Synthesizes the
+    /// BGZF wrapper via `noodles_bgzf::io::Writer` so the BGZF block
+    /// structure is spec-valid.
+    #[test]
+    fn from_path_rejects_bgzf_non_bam_payload() {
+        use std::io::Write;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Build a valid BGZF stream whose payload starts with VCF magic.
+        {
+            let file = std::fs::File::create(tmp.path()).unwrap();
+            let mut bgzf = noodles_bgzf::io::Writer::new(file);
+            bgzf.write_all(b"##fileformat=VCFv4.2\n").unwrap();
+            bgzf.finish().unwrap();
+        }
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::UnrecognizedBgzfPayload { payload_head, .. } => {
+                // The first 4 decompressed bytes are `##fi`.
+                assert_eq!(
+                    &payload_head, b"##fi",
+                    "payload_head should reflect the first 4 inflated bytes"
+                );
+            }
+            other => panic!("expected UnrecognizedBgzfPayload, got {other:?}"),
+        }
+    }
+
+    /// New `UnrecognizedBgzfPayload` Display: includes path + hex head.
+    #[test]
+    fn unrecognized_bgzf_payload_display_includes_path_and_head() {
+        let err = BismarkIoError::UnrecognizedBgzfPayload {
+            path: PathBuf::from("/tmp/x.bam"),
+            payload_head: [b'V', b'C', b'F', 0x02],
+        };
+        let s = err.to_string();
+        assert!(s.contains("/tmp/x.bam"), "Display omits path: {s}");
+        assert!(s.contains("bgzipped"), "Display omits 'bgzipped': {s}");
+        assert!(s.contains("BAM"), "Display omits 'BAM' reference: {s}");
+    }
+
+    /// `UnrecognizedFormat` Display: includes the `samtools view -h` hint
+    /// so users with headerless SAM get an actionable next step.
+    #[test]
+    fn unrecognized_format_display_includes_samtools_hint() {
+        let err = BismarkIoError::UnrecognizedFormat {
+            path: PathBuf::from("/tmp/y"),
+            magic_first_byte: b'X',
+        };
+        let s = err.to_string();
+        assert!(
+            s.contains("samtools view -h"),
+            "Display omits samtools-view-h hint: {s}"
+        );
+        assert!(s.contains("0x58"), "Display omits hex first-byte: {s}");
     }
 
     #[test]
@@ -568,10 +840,13 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
 
     #[test]
     fn open_reader_cram_without_cram_ref_errors() {
-        // A .cram path with no cram_ref should fail with MissingCramReference,
-        // even before any file I/O is attempted (we check the missing-ref
-        // condition before opening the CRAM).
-        let err = expect_err(open_reader(Path::new("nonexistent.cram"), None));
+        // A CRAM-magic file with no cram_ref should fail with
+        // MissingCramReference. Since v1.0.0-beta.3 `open_reader` uses
+        // magic-byte sniff (not extension), the file must exist for the
+        // sniff to detect CRAM before the cram_ref check fires.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"CRAM\x03\x00").unwrap();
+        let err = expect_err(open_reader(tmp.path(), None));
         assert!(
             matches!(err, BismarkIoError::MissingCramReference(_)),
             "expected MissingCramReference, got {err:?}"
@@ -579,15 +854,35 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
     }
 
     #[test]
-    fn open_reader_unsupported_extension_errors() {
-        let err = expect_err(open_reader(Path::new("foo.txt"), None));
-        assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    fn open_reader_unrecognized_format_errors() {
+        // A file whose contents match no recognised magic byte:
+        // post-beta.3 this is `UnrecognizedFormat`, regardless of
+        // extension (which is no longer consulted).
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"XXXX").unwrap();
+        let err = expect_err(open_reader(tmp.path(), None));
+        assert!(
+            matches!(
+                err,
+                BismarkIoError::UnrecognizedFormat {
+                    magic_first_byte: b'X',
+                    ..
+                }
+            ),
+            "expected UnrecognizedFormat with byte=0x58, got {err:?}"
+        );
     }
 
     #[test]
-    fn open_reader_no_extension_errors() {
-        let err = expect_err(open_reader(Path::new("noext"), None));
-        assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    fn open_reader_too_short_to_detect_errors() {
+        // Empty file: too short for any magic. Post-beta.3 this is
+        // TooShortToDetect.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let err = expect_err(open_reader(tmp.path(), None));
+        assert!(
+            matches!(err, BismarkIoError::TooShortToDetect { bytes_read: 0, .. }),
+            "expected TooShortToDetect with bytes_read=0, got {err:?}"
+        );
     }
 
     #[test]

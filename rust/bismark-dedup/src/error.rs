@@ -139,3 +139,28 @@ pub enum BismarkDedupError {
     #[error("std I/O: {0}")]
     StdIo(#[from] std::io::Error),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// v1.0.0-beta.3 magic-byte detection adds new variants to
+    /// `BismarkIoError`. Verify they propagate through
+    /// `BismarkDedupError`'s `#[from] BismarkIoError` and that the
+    /// Display impl carries the inner variant's information.
+    #[test]
+    fn bismark_dedup_error_from_propagates_unrecognized_bgzf_payload() {
+        let io_err = BismarkIoError::UnrecognizedBgzfPayload {
+            path: PathBuf::from("/tmp/x.bam"),
+            payload_head: [b'V', b'C', b'F', 0x02],
+        };
+        let dedup_err: BismarkDedupError = io_err.into();
+        let s = dedup_err.to_string();
+        assert!(s.contains("/tmp/x.bam"), "Display omits inner path: {s}");
+        assert!(
+            s.contains("bgzipped"),
+            "Display omits 'bgzipped' marker: {s}"
+        );
+    }
+}
