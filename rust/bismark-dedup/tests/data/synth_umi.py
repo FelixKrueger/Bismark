@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Requires Python 3.10+ (uses parenthesized `with (a, b, c, d):` syntax).
 """Synthesize UMI-bearing FASTQs from a stock paired-end FASTQ pair.
 
 This script supports Phase 0 of the bismark-dedup v1.2 UMI/RRBS epic:
@@ -125,11 +126,14 @@ def synthesize(
     equal record counts.
     """
     n_pairs = 0
+    # compresslevel=6 (default gzip level, not Python gzip.open's default
+    # of 9) is ~2x faster on the 10M-pair input with negligible output
+    # size difference. Per round-1 code-review by both reviewers.
     with (
         gzip.open(in_r1, "rb") as fh_in_r1,
         gzip.open(in_r2, "rb") as fh_in_r2,
-        gzip.open(out_r1, "wb") as fh_out_r1,
-        gzip.open(out_r2, "wb") as fh_out_r2,
+        gzip.open(out_r1, "wb", compresslevel=6) as fh_out_r1,
+        gzip.open(out_r2, "wb", compresslevel=6) as fh_out_r2,
     ):
         while True:
             if subset is not None and n_pairs >= subset:
