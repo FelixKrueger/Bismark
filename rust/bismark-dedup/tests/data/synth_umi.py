@@ -83,21 +83,46 @@ def transform_qname(qname_line: bytes, umi: str, mode: str, mate: int) -> bytes:
             (internal-position).
         mate: 1 for R1, 2 for R2 (used by bcl-convert's
             ``_<mate>:N:0:`` segment; ignored in barcode mode).
+
+    Note on mate suffix ``/1`` / ``/2``:
+
+    SRA-deposited qnames typically carry ``/1`` or ``/2`` at the very
+    end. We **strip and drop** this suffix entirely rather than
+    preserving it, because:
+
+    1. Bismark's ``fix_IDs`` (``bismark:6235-6246``) does **not** strip
+       ``/1``/``/2`` — it only replaces whitespace with underscore.
+       (The earlier plan rev claim that Bismark strips ``/1``/``/2``
+       was incorrect; verified empirically by inspecting Bismark
+       output.) So if we preserved the suffix in the FASTQ, the BAM
+       qname would end with ``:CAGCACTT/1`` — and Perl's
+       ``--barcode`` regex ``:([\\w\\+]+)$`` matches ``\\w`` (alnum +
+       underscore) which excludes ``/``, so the regex would fail to
+       extract the UMI and Perl errors with "Failed to extract a
+       barcode".
+    2. Standard Illumina paired-end aligners (Bowtie2, BWA, …) don't
+       require ``/1``/``/2`` in the FASTQ qname for mate identification
+       — they pair by file order via the ``-1``/``-2`` arguments.
+       Dropping the suffix is safe.
+
+    The dropped suffix is not required to be recovered on the read-back
+    path: Bismark + samtools faithfully emit whatever qname they were
+    given, no /1//2 fabrication.
     """
     # Strip the trailing newline so we can append cleanly.
     raw = qname_line.rstrip(b"\n")
-    # Track the optional /1 or /2 mate indicator. SRA-deposited qnames
-    # carry it; some preprocessors strip it.
-    mate_suffix = b""
+    # Strip the optional /1 or /2 mate indicator. Per the doc-comment
+    # above, we drop it entirely (not preserve it) so the BAM qname
+    # ends cleanly at the UMI / bcl-convert tail where Perl's regexes
+    # expect to find them.
     if raw.endswith(b"/1") or raw.endswith(b"/2"):
-        mate_suffix = raw[-2:]
         raw = raw[:-2]
 
     if mode == "barcode":
-        # Append :<UMI> before the mate suffix.
-        new = raw + b":" + umi.encode("ascii") + mate_suffix
+        # Append :<UMI> at the very end (no mate suffix).
+        new = raw + b":" + umi.encode("ascii")
     elif mode == "bclconvert":
-        # Append :<UMI>_<mate>:N:0:NNNNNNNN before the mate suffix.
+        # Append :<UMI>_<mate>:N:0:NNNNNNNN at the very end (no mate suffix).
         new = (
             raw
             + b":"
@@ -105,7 +130,6 @@ def transform_qname(qname_line: bytes, umi: str, mode: str, mate: int) -> bytes:
             + b"_"
             + str(mate).encode("ascii")
             + b":N:0:NNNNNNNN"
-            + mate_suffix
         )
     else:
         raise ValueError(f"unknown mode {mode!r}")
