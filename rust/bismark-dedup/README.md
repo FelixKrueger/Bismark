@@ -83,8 +83,8 @@ single-threaded path is preserved.
 | `-o`, `--outfile <NAME>` | Custom output basename (path prefix stripped per Perl regex chain) |
 | `--output_dir <DIR>` | Output directory (created if missing) |
 | `--multiple` | Treat all positional inputs as one combined sample |
-| `--barcode`, `--umi` | **Not in v1.0** — errors with v1.1 deferral message |
-| `--bclconvert` | **Not in v1.0** — errors with v1.1 deferral message |
+| `--barcode`, `--umi` | **v1.2+**: engages UMI-aware dedup. UMI is the tail-of-qname token after the last `:` (Perl `deduplicate_bismark:659`). **Warning**: do NOT pass this on bcl-convert reads — pass `--bclconvert` instead. v1.3 will add auto-detect. |
+| `--bclconvert` | **v1.2+**: engages UMI-aware dedup with bcl-convert internal UMI format (Perl `deduplicate_bismark:650`). Wins over `--barcode/--umi` if both flags are set. |
 | `--parallel <N>` | v1.1: parallel BGZF (de)compression workers for BAM I/O (`N ≥ 1`). CRAM falls back to single-threaded with a warning. `N > 4` emits a soft "diminishing returns" warning — measured saturation at N=4 on 10M PE WGBS. |
 | `--samtools_path <PATH>` | Accepted for compat, silently ignored (`bismark-dedup` is pure-Rust) |
 | `--representative` | Errors with Perl-verbatim joke (deprecated upstream) |
@@ -131,8 +131,8 @@ single-threaded path, not merely byte-identical to itself.
 
 ## Out of scope (still deferred)
 
-- **UMI / RRBS mode** (`--barcode`, `--umi`, `--bclconvert`) — use Bismark Perl `deduplicate_bismark` for these workflows. Scheduled for a later v1.x.
-- **CRAM parallelism** — `--parallel N` is BAM-only in v1.1; CRAM input or output falls back to single-threaded with a warning.
+- **bcl-convert auto-detect** — v1.2 trusts the user's `--barcode` / `--bclconvert` choice. Running `--barcode` on bcl-convert qnames silently extracts the wrong tail (the i7 tail, not the UMI). Match the flag to your data. v1.3 plans a sniff-first-record auto-detect equivalent to Perl's `test_readIDs_for_bclconvert` (`deduplicate_bismark:164`).
+- **CRAM parallelism** — `--parallel N` is BAM-only in v1.1/v1.2; CRAM input or output falls back to single-threaded with a warning.
 - **Sorted-input auto-handling** — coordinate-sorted PE input is rejected with a clear "re-sort with `samtools sort -n` first" error message rather than auto-sorting.
 
 ## Using as a library in other tools

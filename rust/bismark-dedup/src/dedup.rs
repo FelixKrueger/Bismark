@@ -22,6 +22,7 @@
 
 use bismark_io::BismarkStrand;
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 use crate::report::DedupReport;
 
@@ -176,6 +177,173 @@ impl DedupState {
             self.count,
             self.removed,
             self.duplicate_positions.len(),
+            false, // non-UMI mode
+        )
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Phase B (v1.2 UMI epic): UMI-aware dedup key + state.
+//
+// UmiDedupKey is the UMI-mode sibling of DedupKey. The position-only
+// dedup path (DedupKey + DedupState above) is unchanged — non-UMI
+// workflows continue to use 16-byte keys with the existing
+// compile-time-asserted layout. UMI workflows use the wider UmiDedupKey
+// below. The pipeline picks the appropriate state container based on
+// CLI `--barcode` / `--bclconvert` flags.
+//
+// See PLAN.md Phase B §3.2-3.3 for the two-HashSets rationale.
+// ────────────────────────────────────────────────────────────────────────
+
+/// UMI-aware dedup key — `(strand, chr_id, start, end, umi)`.
+///
+/// Mirrors Perl `deduplicate_bismark`'s `deduplicate_barcoded_rrbs` key
+/// formula: position + UMI bytes. Two records at the same position with
+/// different UMIs are distinct (correct UMI extraction prevents
+/// over-dedup of independent template molecules that happened to land
+/// at the same chromosome coordinates).
+///
+/// UMI storage uses [`SmallVec<[u8; 16]>`] — stack-allocated for ≤16-byte
+/// UMIs (all known Bismark workflows; covers single 8-mer ACGT, 6-mer,
+/// 10-mer, and 8+8-mer dual-UMI without the `+`) with transparent heap
+/// fallback for longer UMIs (e.g. dual-UMI `XXXXXXXX+YYYYYYYY` at 17
+/// bytes).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UmiDedupKey {
+    /// Bismark strand classification. Same semantics as [`DedupKey::strand`].
+    pub strand: BismarkStrand,
+    /// Chromosome interned index. Same semantics as [`DedupKey::chr_id`].
+    pub chr_id: u32,
+    /// 1-based start position. Same semantics as [`DedupKey::start`].
+    pub start: u32,
+    /// 1-based inclusive end position. Same semantics as [`DedupKey::end`].
+    pub end: u32,
+    /// Extracted UMI bytes (from qname via the user-selected extractor).
+    /// Never empty for records that survive the dedup pipeline's UMI
+    /// extraction step — empty UMIs are caught upstream as
+    /// `UmiExtractionFailed`.
+    pub umi: SmallVec<[u8; 16]>,
+}
+
+// Cap UmiDedupKey at 64 bytes inline. Reviewer B flagged a 24-vs-32 disagreement
+// on the SmallVec size; this assertion lets the compiler enforce the
+// upper bound. If it ever fires, the size_of has crept past expectations
+// and the storage strategy needs revisiting.
+const _: () = {
+    assert!(
+        std::mem::size_of::<UmiDedupKey>() <= 64,
+        "UmiDedupKey grew past 64 bytes — review the SmallVec inline capacity \
+         and per-key memory budget in PLAN §8 before relaxing this bound",
+    );
+};
+
+impl UmiDedupKey {
+    /// Construct an SE UMI key (mirrors [`DedupKey::se`]).
+    #[must_use]
+    pub fn se(strand: BismarkStrand, chr_id: u32, key_pos: u32, umi: SmallVec<[u8; 16]>) -> Self {
+        Self {
+            strand,
+            chr_id,
+            start: key_pos,
+            end: key_pos,
+            umi,
+        }
+    }
+
+    /// Construct a PE UMI key (mirrors [`DedupKey::pe`]).
+    #[must_use]
+    pub fn pe(
+        strand: BismarkStrand,
+        chr_id: u32,
+        start: u32,
+        end: u32,
+        umi: SmallVec<[u8; 16]>,
+    ) -> Self {
+        Self {
+            strand,
+            chr_id,
+            start,
+            end,
+            umi,
+        }
+    }
+}
+
+/// UMI-aware dedup state — sibling of [`DedupState`] for UMI mode.
+///
+/// Same `observe()` semantics: returns `true` for unique records (caller
+/// should emit), `false` for duplicates. Same report shape via
+/// [`UmiDedupState::into_report`] — the only difference vs the
+/// position-only path is the `(UMI mode)` banner suffix in the report.
+#[derive(Debug, Default)]
+pub struct UmiDedupState {
+    seen: FxHashSet<UmiDedupKey>,
+    duplicate_positions: FxHashSet<UmiDedupKey>,
+    count: u64,
+    removed: u64,
+}
+
+impl UmiDedupState {
+    /// Construct an empty UMI dedup state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Pre-allocate the seen-set to `capacity` records.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            seen: FxHashSet::with_capacity_and_hasher(capacity, Default::default()),
+            duplicate_positions: FxHashSet::default(),
+            count: 0,
+            removed: 0,
+        }
+    }
+
+    /// Observe one record's UMI dedup key. Returns `true` if unique (caller
+    /// should emit), `false` if duplicate. Same Perl-`%unique_seqs` +
+    /// `%positions` semantics as [`DedupState::observe`].
+    pub fn observe(&mut self, key: UmiDedupKey) -> bool {
+        self.count += 1;
+        if self.seen.insert(key.clone()) {
+            true
+        } else {
+            self.removed += 1;
+            self.duplicate_positions.insert(key);
+            false
+        }
+    }
+
+    /// Total alignment records / pairs observed so far.
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Number of records flagged as duplicates so far.
+    #[must_use]
+    pub fn removed(&self) -> u64 {
+        self.removed
+    }
+
+    /// Number of distinct positions (UMI-aware) at which at least one
+    /// duplicate was seen.
+    #[must_use]
+    pub fn n_positions(&self) -> usize {
+        self.duplicate_positions.len()
+    }
+
+    /// Consume into a [`DedupReport`] with `umi_mode = true` (emits the
+    /// `(UMI mode)` banner suffix per `deduplicate_bismark:908`).
+    #[must_use]
+    pub fn into_report(self, file_label: String) -> DedupReport {
+        DedupReport::new(
+            file_label,
+            self.count,
+            self.removed,
+            self.duplicate_positions.len(),
+            true,
         )
     }
 }
@@ -294,5 +462,106 @@ mod tests {
         assert_eq!(key.start, 100);
         assert_eq!(key.end, 250);
         assert_eq!(key.strand, BismarkStrand::CTOT);
+    }
+
+    // ─── Phase B (v1.2 UMI epic): UmiDedupKey / UmiDedupState tests ────
+
+    fn umi(bytes: &[u8]) -> SmallVec<[u8; 16]> {
+        SmallVec::from_slice(bytes)
+    }
+
+    #[test]
+    fn umi_dedup_key_same_position_different_umi_are_distinct() {
+        // Two records at the same (strand, chr, start, end) but with
+        // different UMIs MUST be treated as unique by the seen-set. This
+        // is the entire point of UMI mode — independent template
+        // molecules that happen to land at the same coordinates should
+        // not collapse to one.
+        let mut state = UmiDedupState::new();
+        let k1 = UmiDedupKey::pe(BismarkStrand::OT, 0, 100, 200, umi(b"AAAAAAAA"));
+        let k2 = UmiDedupKey::pe(BismarkStrand::OT, 0, 100, 200, umi(b"TTTTTTTT"));
+        assert!(state.observe(k1));
+        assert!(state.observe(k2));
+        assert_eq!(state.count(), 2);
+        assert_eq!(state.removed(), 0, "different UMIs → not duplicates");
+    }
+
+    #[test]
+    fn umi_dedup_key_same_position_same_umi_is_duplicate() {
+        let mut state = UmiDedupState::new();
+        let k1 = UmiDedupKey::pe(BismarkStrand::OT, 0, 100, 200, umi(b"AAAAAAAA"));
+        let k2 = UmiDedupKey::pe(BismarkStrand::OT, 0, 100, 200, umi(b"AAAAAAAA"));
+        assert!(state.observe(k1));
+        assert!(
+            !state.observe(k2),
+            "identical UMIs at same position → duplicate"
+        );
+        assert_eq!(state.count(), 2);
+        assert_eq!(state.removed(), 1);
+        assert_eq!(state.n_positions(), 1);
+    }
+
+    #[test]
+    fn umi_dedup_state_reports_with_umi_mode_banner() {
+        // UmiDedupState::into_report() must set the umi_mode flag so the
+        // report's banner gets the `(UMI mode)` suffix (matches Perl
+        // line 908).
+        let mut state = UmiDedupState::new();
+        state.observe(UmiDedupKey::pe(
+            BismarkStrand::OT,
+            0,
+            100,
+            200,
+            umi(b"AAAAAAAA"),
+        ));
+        let report = state.into_report("/path/sample.bam".to_string());
+        let formatted = report.format();
+        assert!(
+            formatted.contains("(UMI mode):"),
+            "report must contain `(UMI mode)` banner, got: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn umi_dedup_key_dual_umi_with_plus_uses_heap_path_correctly() {
+        // Dual-UMI `XXXXXXXX+YYYYYYYY` is 17 bytes — exceeds the
+        // SmallVec inline capacity. The heap fallback must still hash +
+        // compare correctly.
+        let dual_umi: SmallVec<[u8; 16]> = SmallVec::from_slice(b"AAAAAAAA+TTTTTTTT");
+        assert_eq!(dual_umi.len(), 17);
+        assert!(dual_umi.spilled(), "17-byte UMI must spill to heap");
+        let mut state = UmiDedupState::new();
+        let k1 = UmiDedupKey::pe(BismarkStrand::OT, 0, 100, 200, dual_umi.clone());
+        let k2 = UmiDedupKey::pe(BismarkStrand::OT, 0, 100, 200, dual_umi);
+        assert!(state.observe(k1));
+        assert!(!state.observe(k2), "same dual-UMI must be a duplicate");
+    }
+
+    #[test]
+    fn umi_dedup_key_size_under_64_bytes() {
+        // The compile-time `const _` assertion guarantees this at build
+        // time. The runtime check below mostly documents the actual size
+        // for the CHANGELOG note.
+        let actual = std::mem::size_of::<UmiDedupKey>();
+        assert!(
+            actual <= 64,
+            "UmiDedupKey size {actual} > 64; the const-assert should have caught this"
+        );
+    }
+
+    #[test]
+    fn umi_dedup_state_empty_zero_counters() {
+        let state = UmiDedupState::new();
+        assert_eq!(state.count(), 0);
+        assert_eq!(state.removed(), 0);
+        assert_eq!(state.n_positions(), 0);
+    }
+
+    #[test]
+    fn umi_se_constructor_sets_end_equal_to_start() {
+        let key = UmiDedupKey::se(BismarkStrand::OT, 5, 42, umi(b"BARCODE"));
+        assert_eq!(key.start, 42);
+        assert_eq!(key.end, 42);
+        assert_eq!(key.umi.as_slice(), b"BARCODE");
     }
 }

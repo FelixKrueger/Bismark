@@ -5,6 +5,37 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.5] — 2026-05-25
+
+UMI plumbing on `BismarkRecord` for Phase B of the v1.2 UMI/RRBS epic.
+Additive only; non-UMI workflows are byte-for-byte unchanged.
+
+### Added
+
+- `BismarkRecord::umi() -> Option<&Umi>` accessor and
+  `BismarkRecord::set_umi(Option<Umi>)` setter.
+- `BismarkRecord::from_noodles_record_with_umi(inner, extractor)` —
+  constructs a record AND pre-extracts the UMI from its qname using
+  the supplied `bismark_io::umi::extract_*` function.
+- `BamReader::records_with_umi(extractor)` and the same on
+  `ThreadedBamReader`, `SamReader`, `CramReader`, `AnyReader`. Each
+  yields `BismarkRecord`s with `umi` populated at parse time.
+- New type alias `bismark_io::Umi = smallvec::SmallVec<[u8; 16]>` —
+  stack-allocated for ≤16-byte UMIs (covers all known Bismark
+  workflows including 8-mer dual-UMI without the `+`), heap fallback
+  for longer UMIs (e.g. 17-byte dual-UMI of form `XXXXXXXX+YYYYYYYY`).
+
+### Changed
+
+- `BismarkRecord` gains a private `umi: Option<Umi>` field. The struct
+  has only private fields, so this is a semver-additive change — no
+  external caller can pattern-match or struct-literal-construct.
+
+### Dependencies
+
+- New: `smallvec = "=1.13.2"` (widely used; one transitive dep).
+  Pinned exact-version per the workspace's policy.
+
 ## [1.0.0-beta.4] — 2026-05-25
 
 UMI extraction helpers for Bismark qnames, supporting Perl

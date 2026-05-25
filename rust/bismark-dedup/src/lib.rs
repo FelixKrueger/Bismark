@@ -39,7 +39,8 @@ pub mod filename;
 pub mod pipeline;
 pub mod report;
 
-pub use dedup::{DedupKey, DedupState};
+pub use cli::UmiMode;
+pub use dedup::{DedupKey, DedupState, UmiDedupKey, UmiDedupState};
 pub use error::BismarkDedupError;
 pub use report::DedupReport;
 

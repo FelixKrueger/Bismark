@@ -1,6 +1,6 @@
 [package]
 name = "bismark-dedup"
-version = "1.1.0-beta.2"
+version = "1.2.0-beta.1"
 description = "Rust port of Bismark Perl's deduplicate_bismark script"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,7 +19,7 @@ name = "deduplicate_bismark_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-io = { version = "=1.0.0-beta.4", path = "../bismark-io" }
+bismark-io = { version = "=1.0.0-beta.5", path = "../bismark-io" }
 # noodles-sam pinned to match bismark-io =1.0.0's transitive choice.
 # Needed directly for `Header` (returned by `bismark_io::open_reader`
 # via `AnyReader::header`) and for test-helper types.
@@ -29,6 +29,9 @@ rustc-hash = "=2.1.0"
 thiserror = "=2.0.0"
 anyhow = "=1.0.86"
 bstr = "=1.10.0"
+# Phase B (v1.2 UMI epic): UmiDedupKey carries the per-record UMI as a
+# stack-allocated SmallVec for ≤16-byte UMIs. Matches bismark-io's pin.
+smallvec = "=1.13.2"
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

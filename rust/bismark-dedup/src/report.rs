@@ -34,23 +34,37 @@ pub struct DedupReport {
     count: u64,
     removed: u64,
     n_positions: usize,
+    umi_mode: bool,
 }
 
 impl DedupReport {
     /// Construct a report.
     ///
     /// Crate-private intentionally: the only legitimate construction path
-    /// is via [`crate::dedup::DedupState::into_report`], which guarantees
-    /// `removed <= count` and thus prevents an underflow in
-    /// [`DedupReport::leftover`]. Callers outside this crate should use
-    /// the `DedupState` path.
+    /// is via [`crate::dedup::DedupState::into_report`] or
+    /// [`crate::dedup::UmiDedupState::into_report`], both of which
+    /// guarantee `removed <= count` (preventing an underflow in
+    /// [`DedupReport::leftover`]). Callers outside this crate should use
+    /// the `*DedupState` paths.
+    ///
+    /// `umi_mode = true` appends Perl's ` (UMI mode)` banner suffix
+    /// after the input filename in the first analysed-alignments line
+    /// (matches `deduplicate_bismark:908`). Position-only callers pass
+    /// `false`.
     #[must_use]
-    pub(crate) fn new(file_label: String, count: u64, removed: u64, n_positions: usize) -> Self {
+    pub(crate) fn new(
+        file_label: String,
+        count: u64,
+        removed: u64,
+        n_positions: usize,
+        umi_mode: bool,
+    ) -> Self {
         Self {
             file_label,
             count,
             removed,
             n_positions,
+            umi_mode,
         }
     }
 
@@ -78,11 +92,15 @@ impl DedupReport {
         self.count - self.removed
     }
 
-    /// Render the report to a `String` in Perl-byte-equal format.
+    /// Render the report to a `String` in Perl-byte-equal **report file**
+    /// format (line 908 of `deduplicate_bismark`). In UMI mode this
+    /// emits the space-form banner ` (UMI mode)`. For the STDERR
+    /// echo (which Perl emits at line 903 with the hyphen-form
+    /// `(UMI-mode)`) use [`Self::format_stderr`] instead.
     ///
-    /// See module docs for the exact format. Returns an owned `String`
-    /// so callers can write it to a file or compare against a snapshot
-    /// without intermediate allocation in the hot path.
+    /// Returns an owned `String` so callers can write it to a file or
+    /// compare against a snapshot without intermediate allocation in
+    /// the hot path.
     #[must_use]
     pub fn format(&self) -> String {
         let leftover = self.leftover();
@@ -99,10 +117,15 @@ impl DedupReport {
         // String::with_capacity for the typical-case length to avoid
         // reallocation on the hot path. ~256 bytes covers all paths.
         let mut s = String::with_capacity(256);
+        // Perl `deduplicate_bismark:908` emits the banner as:
+        //   "\nTotal number of alignments analysed in $file (UMI mode):\t$count\n"
+        // The ` (UMI mode)` suffix (space-form) is appended after the
+        // filename when UMI mode is engaged. Position-only emits no suffix.
+        let umi_suffix = if self.umi_mode { " (UMI mode)" } else { "" };
         writeln!(
             s,
-            "\nTotal number of alignments analysed in {}:\t{}",
-            self.file_label, self.count
+            "\nTotal number of alignments analysed in {}{}:\t{}",
+            self.file_label, umi_suffix, self.count
         )
         .expect("write to String never fails");
         writeln!(
@@ -124,6 +147,27 @@ impl DedupReport {
         )
         .expect("write to String never fails");
         s
+    }
+
+    /// Render the report in Perl-byte-equal **STDERR** format (line 903
+    /// of `deduplicate_bismark`). In UMI mode this emits the
+    /// **hyphen-form** banner ` (UMI-mode)` — distinct from the
+    /// space-form ` (UMI mode)` used in the report file. In non-UMI
+    /// mode it produces the same bytes as [`Self::format`].
+    ///
+    /// Per Reviewer A's C2-B finding: Perl emits the per-file summary
+    /// to STDERR with hyphen and to the report file with space; the
+    /// existing `format()` was being echoed to BOTH, so STDERR got
+    /// the wrong form.
+    #[must_use]
+    pub fn format_stderr(&self) -> String {
+        if self.umi_mode {
+            // Substitute the report-file space banner for the STDERR
+            // hyphen banner. Cheaper than re-implementing the formatter.
+            self.format().replace(" (UMI mode):", " (UMI-mode):")
+        } else {
+            self.format()
+        }
     }
 
     /// Write the rendered report to a file path.
@@ -149,13 +193,13 @@ mod tests {
 
     #[test]
     fn format_matches_perl_byte_for_byte_typical_case() {
-        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1);
+        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1, false);
         assert_eq!(r.format(), EXPECTED_TYPICAL);
     }
 
     #[test]
     fn format_uses_na_when_count_is_zero() {
-        let r = DedupReport::new("/path/empty.bam".to_string(), 0, 0, 0);
+        let r = DedupReport::new("/path/empty.bam".to_string(), 0, 0, 0, false);
         let expected = "\nTotal number of alignments analysed in /path/empty.bam:\t0\n\
             Total number duplicated alignments removed:\t0 (N/A%)\n\
             Duplicated alignments were found at:\t0 different position(s)\n\n\
@@ -165,7 +209,7 @@ mod tests {
 
     #[test]
     fn format_removed_zero_no_duplicates() {
-        let r = DedupReport::new("/path/clean.bam".to_string(), 100, 0, 0);
+        let r = DedupReport::new("/path/clean.bam".to_string(), 100, 0, 0, false);
         let expected = "\nTotal number of alignments analysed in /path/clean.bam:\t100\n\
             Total number duplicated alignments removed:\t0 (0.00%)\n\
             Duplicated alignments were found at:\t0 different position(s)\n\n\
@@ -184,6 +228,7 @@ mod tests {
             8_592_524,
             622_892,
             571_488,
+            false,
         );
         let formatted = r.format();
         assert!(
@@ -206,17 +251,61 @@ mod tests {
 
     #[test]
     fn leftover_arithmetic() {
-        let r = DedupReport::new("x".to_string(), 100, 30, 5);
+        let r = DedupReport::new("x".to_string(), 100, 30, 5, false);
         assert_eq!(r.leftover(), 70);
     }
 
     #[test]
     fn percent_rounds_to_two_decimal_places_via_sprintf_semantics() {
         // 1 dup in 3 records → 33.33333...% removed; sprintf("%.2f") → "33.33"
-        let r = DedupReport::new("x".to_string(), 3, 1, 1);
+        let r = DedupReport::new("x".to_string(), 3, 1, 1, false);
         let s = r.format();
         assert!(s.contains("(33.33%)"), "got: {s}");
         assert!(s.contains("(66.67% of total)"), "got: {s}");
+    }
+
+    /// Phase B (v1.2 UMI): byte-precision check vs Perl `(UMI mode)` banner.
+    /// Pins the EXACT bytes (space-form, line 908 of deduplicate_bismark)
+    /// so any drift fails the build.
+    #[test]
+    fn format_with_umi_mode_emits_byte_precise_banner_at_line_908() {
+        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1, true);
+        let expected = "\nTotal number of alignments analysed in /path/sample.bam (UMI mode):\t10\n\
+            Total number duplicated alignments removed:\t2 (20.00%)\n\
+            Duplicated alignments were found at:\t1 different position(s)\n\n\
+            Total count of deduplicated leftover sequences: 8 (80.00% of total)\n\n";
+        assert_eq!(r.format(), expected);
+    }
+
+    /// Per Reviewer A C2-B / Reviewer B H1: `format_stderr` in UMI mode
+    /// emits the HYPHEN-form `(UMI-mode)` banner — distinct from the
+    /// space-form used in the report file. Locks Perl line 903 vs 908.
+    #[test]
+    fn format_stderr_with_umi_mode_emits_hyphen_form_banner_at_line_903() {
+        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1, true);
+        let expected = "\nTotal number of alignments analysed in /path/sample.bam (UMI-mode):\t10\n\
+            Total number duplicated alignments removed:\t2 (20.00%)\n\
+            Duplicated alignments were found at:\t1 different position(s)\n\n\
+            Total count of deduplicated leftover sequences: 8 (80.00% of total)\n\n";
+        assert_eq!(r.format_stderr(), expected);
+    }
+
+    #[test]
+    fn format_stderr_non_umi_mode_identical_to_format() {
+        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1, false);
+        assert_eq!(r.format_stderr(), r.format());
+    }
+
+    #[test]
+    fn format_without_umi_mode_omits_banner() {
+        // Position-only path must NOT contain `(UMI mode)` — regression
+        // guard against accidentally enabling the suffix in non-UMI workflows.
+        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1, false);
+        let out = r.format();
+        assert!(
+            !out.contains("UMI mode"),
+            "non-UMI dedup report must not contain `UMI mode`, got: {out}"
+        );
     }
 
     #[test]
@@ -224,7 +313,7 @@ mod tests {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.deduplication_report.txt");
-        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1);
+        let r = DedupReport::new("/path/sample.bam".to_string(), 10, 2, 1, false);
         r.write_to(&path).unwrap();
         let read_back = std::fs::read_to_string(&path).unwrap();
         assert_eq!(read_back, EXPECTED_TYPICAL);

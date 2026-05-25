@@ -4,12 +4,24 @@
 //! parsed arguments into a [`ResolvedConfig`] and rejects unsupported /
 //! conflicting flag combinations:
 //!
-//! - `--barcode` / `--bclconvert` → [`BismarkDedupError::UnsupportedFlagV1`]
-//!   (v1.1 will add these).
+//! - `--barcode` / `--umi` → engages UMI-aware dedup (v1.2+; tail-of-qname
+//!   format).
+//! - `--bclconvert` → engages UMI-aware dedup with bcl-convert internal
+//!   UMI format. Implies `--barcode` semantically (matches Perl's
+//!   `$rrbs = 1` auto-coupling at deduplicate_bismark:1377).
 //! - `--representative` → [`BismarkDedupError::RepresentativeRemoved`]
 //!   (Bismark deprecated this upstream).
 //! - `--outfile` with multiple positional inputs but no `--multiple` →
 //!   [`BismarkDedupError::OutfileWithMultipleInputs`].
+//!
+//! ## UMI mode caveat
+//!
+//! `bismark-dedup` v1.2 trusts the user's UMI flag choice — it does NOT
+//! auto-detect qname format. Running `--barcode` on bcl-convert qnames
+//! silently extracts the wrong tail (the i7 tail, not the UMI),
+//! producing nonsense dedup keys. Match the flag to your data: if your
+//! reads come from bcl-convert, you MUST pass `--bclconvert`. (v1.3
+//! plans a sniff-first-record auto-detect; tracked.)
 //!
 //! Flags accepted for Perl compatibility but ignored:
 //! - `--parallel <N>` (silently — Perl is also silent on this flag).
@@ -70,13 +82,21 @@ pub struct Cli {
     #[arg(long = "multiple")]
     pub multiple: bool,
 
-    /// **Not supported in v1.0** — use the Perl `deduplicate_bismark` for
-    /// UMI/RRBS mode.
+    /// UMI/RRBS dedup mode: the UMI is the tail-of-qname token after the
+    /// last `:`, e.g. `MISEQ:...:CTCCTTAG` (8-mer ACGT). New in v1.2;
+    /// matches Perl `deduplicate_bismark --barcode` (line 659).
+    ///
+    /// **Warning**: this trusts the user's flag — running `--barcode` on
+    /// bcl-convert qnames silently extracts the i7 tail, NOT the UMI. If
+    /// your reads come from bcl-convert, pass `--bclconvert` instead.
     #[arg(long = "barcode", visible_alias = "umi")]
     pub barcode: bool,
 
-    /// **Not supported in v1.0** — use the Perl `deduplicate_bismark` for
-    /// bcl-convert-style internal UMIs.
+    /// bcl-convert UMI dedup mode: the UMI is at an internal position in
+    /// the qname, e.g. `A00001:...:CAAGAG_1:N:0:AATGACGC`. New in v1.2;
+    /// matches Perl `deduplicate_bismark --bclconvert` (line 650).
+    /// Engages UMI mode unconditionally (the Rust port does NOT have the
+    /// v0.25.1 released-Perl `--bclconvert`-alone-falls-through bug).
     #[arg(long = "bclconvert")]
     pub bclconvert: bool,
 
@@ -105,6 +125,20 @@ pub struct Cli {
     pub version: bool,
 }
 
+/// UMI dedup mode selected at the CLI. New in v1.2 for the v1.2 UMI/RRBS
+/// epic. `None` (in the `umi_mode` field) = position-only dedup
+/// (the v1.0/v1.1 default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UmiMode {
+    /// `--barcode` / `--umi`: UMI is the tail-of-qname token after the
+    /// last `:`. Bismark-io extractor: [`bismark_io::umi::extract_barcode`].
+    Barcode,
+    /// `--bclconvert`: UMI is at an internal position in the qname.
+    /// Bismark-io extractor: [`bismark_io::umi::extract_bclconvert`].
+    /// Wins over `--barcode` if both flags are passed.
+    Bclconvert,
+}
+
 /// The resolved, validated subset of CLI arguments passed to the
 /// pipeline. Constructed by [`Cli::validate`].
 #[derive(Debug, Clone)]
@@ -131,6 +165,9 @@ pub struct ResolvedConfig {
     /// container decode isn't BGZF-based; v1.1 falls back to
     /// single-threaded + emits a one-line stderr warning).
     pub parallel: usize,
+    /// UMI dedup mode (v1.2+). `None` = position-only (v1.0/v1.1
+    /// behaviour, no behaviour change for non-UMI callers).
+    pub umi_mode: Option<UmiMode>,
 }
 
 impl Cli {
@@ -139,12 +176,16 @@ impl Cli {
     ///
     /// Reject (in priority order):
     /// 1. `--representative` → [`BismarkDedupError::RepresentativeRemoved`]
-    /// 2. `--barcode` / `--bclconvert` → [`BismarkDedupError::UnsupportedFlagV1`]
-    /// 3. `--parallel 0` → [`BismarkDedupError::InvalidParallelValue`]
+    /// 2. `--parallel 0` → [`BismarkDedupError::InvalidParallelValue`]
     ///    (clap's `u32` parser accepts 0; explicit check needed here)
-    /// 4. Empty `files` → [`BismarkDedupError::NoInputFiles`]
-    /// 5. `--outfile` with `>1` files and no `--multiple` →
+    /// 3. Empty `files` → [`BismarkDedupError::NoInputFiles`]
+    /// 4. `--outfile` with `>1` files and no `--multiple` →
     ///    [`BismarkDedupError::OutfileWithMultipleInputs`]
+    ///
+    /// `--barcode` / `--umi` / `--bclconvert` are accepted in v1.2+ and
+    /// engage UMI-aware dedup. If both `--barcode` and `--bclconvert` are
+    /// set, `--bclconvert` wins (matches Perl's precedence at
+    /// `deduplicate_bismark:1377`).
     ///
     /// `--single` / `--paired` are mutually exclusive (enforced by clap
     /// at parse time via `conflicts_with`). Neither set → `explicit_mode = None`
@@ -152,12 +193,6 @@ impl Cli {
     pub fn validate(self) -> Result<ResolvedConfig, BismarkDedupError> {
         if self.representative {
             return Err(BismarkDedupError::RepresentativeRemoved);
-        }
-        if self.barcode {
-            return Err(BismarkDedupError::UnsupportedFlagV1 { flag: "barcode" });
-        }
-        if self.bclconvert {
-            return Err(BismarkDedupError::UnsupportedFlagV1 { flag: "bclconvert" });
         }
         if self.parallel == 0 {
             return Err(BismarkDedupError::InvalidParallelValue { value: 0 });
@@ -170,6 +205,17 @@ impl Cli {
                 n_files: self.files.len(),
             });
         }
+
+        // Resolve UMI mode (Phase B of v1.2 UMI epic):
+        //   --bclconvert wins over --barcode if both are set (matches
+        //   Perl's auto-coupling at deduplicate_bismark:1377).
+        let umi_mode = if self.bclconvert {
+            Some(UmiMode::Bclconvert)
+        } else if self.barcode {
+            Some(UmiMode::Barcode)
+        } else {
+            None
+        };
 
         let explicit_mode = match (self.single, self.paired) {
             (true, false) => Some(false),
@@ -193,6 +239,7 @@ impl Cli {
             output_dir: self.output_dir,
             multiple: self.multiple,
             parallel: self.parallel as usize,
+            umi_mode,
         })
     }
 }
@@ -248,35 +295,45 @@ mod tests {
         assert!(matches!(err, BismarkDedupError::RepresentativeRemoved));
     }
 
+    // ─── Phase B (v1.2): --barcode / --umi / --bclconvert now resolve to
+    // UmiMode rather than rejecting with UnsupportedFlagV1.
+
     #[test]
-    fn validate_rejects_barcode_with_v1_deferral() {
+    fn validate_barcode_resolves_to_umi_mode_barcode() {
         let cli = parse(&["--barcode", "sample.bam"]).unwrap();
-        let err = cli.validate().unwrap_err();
-        assert!(matches!(
-            err,
-            BismarkDedupError::UnsupportedFlagV1 { flag: "barcode" }
-        ));
+        let config = cli.validate().unwrap();
+        assert_eq!(config.umi_mode, Some(UmiMode::Barcode));
     }
 
     #[test]
-    fn validate_rejects_umi_alias_with_v1_deferral() {
+    fn validate_umi_alias_resolves_to_umi_mode_barcode() {
         // --umi is a visible_alias for --barcode.
         let cli = parse(&["--umi", "sample.bam"]).unwrap();
-        let err = cli.validate().unwrap_err();
-        assert!(matches!(
-            err,
-            BismarkDedupError::UnsupportedFlagV1 { flag: "barcode" }
-        ));
+        let config = cli.validate().unwrap();
+        assert_eq!(config.umi_mode, Some(UmiMode::Barcode));
     }
 
     #[test]
-    fn validate_rejects_bclconvert_with_v1_deferral() {
+    fn validate_bclconvert_resolves_to_umi_mode_bclconvert() {
         let cli = parse(&["--bclconvert", "sample.bam"]).unwrap();
-        let err = cli.validate().unwrap_err();
-        assert!(matches!(
-            err,
-            BismarkDedupError::UnsupportedFlagV1 { flag: "bclconvert" }
-        ));
+        let config = cli.validate().unwrap();
+        assert_eq!(config.umi_mode, Some(UmiMode::Bclconvert));
+    }
+
+    #[test]
+    fn validate_bclconvert_plus_barcode_bclconvert_wins() {
+        // Both flags set → bclconvert wins (matches Perl's auto-coupling
+        // precedence at deduplicate_bismark:1377).
+        let cli = parse(&["--bclconvert", "--barcode", "sample.bam"]).unwrap();
+        let config = cli.validate().unwrap();
+        assert_eq!(config.umi_mode, Some(UmiMode::Bclconvert));
+    }
+
+    #[test]
+    fn validate_no_umi_flag_yields_none() {
+        let cli = parse(&["sample.bam"]).unwrap();
+        let config = cli.validate().unwrap();
+        assert_eq!(config.umi_mode, None);
     }
 
     #[test]
