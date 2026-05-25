@@ -44,11 +44,11 @@ modes. Additive within the beta line; existing API surface unchanged.
 
 ### Phase context
 
-This release lands as part of the v1.2 UMI/RRBS epic (planned at
-`~/.claude/plans/05252026_bismark-dedup-umi-v1.2/EPIC.md`). Phase A
-ships the extractors; Phase B integrates them into `bismark-dedup`'s
-`DedupKey` and pipeline. Phase C real-data validates against Perl
-baselines on oxy.
+This release lands as part of the v1.2 UMI/RRBS epic. Phase A ships
+the extractors; the consumer-side integration (UMI-aware `DedupKey`
+and pipeline) lands in `bismark-dedup v1.2.0-beta.1`. Real-data
+byte-identity vs Perl `deduplicate_bismark v0.25.1` is validated on a
+synthesized-UMI RRBS dataset.
 
 ## [1.0.0-beta.3] — 2026-05-25
 

@@ -248,6 +248,16 @@ mod tests {
     }
 
     #[test]
+    fn extract_barcode_trailing_whitespace() {
+        // Whitespace (space, tab, newline) is not in [\w\+] — Reviewer B
+        // N4. A qname accidentally containing trailing whitespace should
+        // return None rather than a polluted UMI string.
+        assert_eq!(extract_barcode(b"x:UMI "), None);
+        assert_eq!(extract_barcode(b"x:UMI\n"), None);
+        assert_eq!(extract_barcode(b"x:UMI\t"), None);
+    }
+
+    #[test]
     fn extract_barcode_with_plus_dual_umi() {
         // Perl's [\w\+] allows '+' as a dual-UMI separator. The
         // Illumina dual-UMI convention writes paired barcodes as

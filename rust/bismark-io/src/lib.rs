@@ -34,4 +34,5 @@ pub use read::{
 };
 pub use record::{BismarkRecord, ReadIdentity};
 pub use strand::BismarkStrand;
+pub use umi::{extract_barcode, extract_bclconvert};
 pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, ThreadedBamWriter, open_writer};
