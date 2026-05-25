@@ -4,6 +4,24 @@ All notable changes to `bismark-dedup` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-beta.2] — 2026-05-25
+
+Inherits **magic-byte file-format detection** from `bismark-io`
+`1.0.0-beta.3`. Mis-named input files (`.bam` containing SAM,
+`.sam` containing CRAM, files with no extension at all) are now
+classified correctly by their actual content rather than rejected by
+extension. Matches Perl Bismark's behaviour.
+
+### Changed
+
+- **`bismark-io` pin bumped to `=1.0.0-beta.3`** for magic-byte
+  detection. No source-code changes in `bismark-dedup` — the
+  `AlignmentKind::from_path` signature is unchanged; new error
+  variants flow through `BismarkDedupError`'s `#[from] BismarkIoError`
+  transparently.
+- The `deduplicate_bismark_rs` binary now tolerates mis-named input
+  files via the inherited magic-byte sniff.
+
 ## [1.1.0-beta.1] — 2026-05-24
 
 First v1.1 pre-release. Adds **BGZF-threaded BAM I/O** behind `--parallel N`,

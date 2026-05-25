@@ -322,3 +322,24 @@ fn threaded_bam_reader_parallel_1_is_valid_but_overhead() {
     let count = reader.records().count();
     assert_eq!(count, 203);
 }
+
+/// v1.0.0-beta.3 integration: `open_reader` dispatches via magic-byte
+/// sniff, NOT extension. Copy the fixture BAM to a path with no
+/// extension at all and verify the records still decode correctly.
+#[test]
+fn open_reader_dispatches_via_sniff_on_extensionless_path() {
+    use bismark_io::open_reader;
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    // Overwrite the temp file (which already has some random-suffix
+    // extension) with our fixture BAM contents.
+    std::fs::copy(fixture_path(), tmp.path()).unwrap();
+
+    let mut reader = open_reader(tmp.path(), None)
+        .expect("open_reader should succeed via magic-byte sniff regardless of extension");
+    let count = reader.records().filter_map(Result::ok).count();
+    assert_eq!(
+        count, 203,
+        "extensionless fixture BAM should decode same as the .bam-named one"
+    );
+}

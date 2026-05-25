@@ -57,6 +57,26 @@ use bismark_io::{
 
 Module-level docs explain each type's contract. See `cargo doc --open --package bismark-io`.
 
+### `AlignmentKind`: format detection
+
+`AlignmentKind` exposes two dispatch functions with different I/O contracts:
+
+- **`from_extension(&Path) → Result<Self>`** — pure extension dispatch.
+  I/O-free. Used by `open_writer` (the output file doesn't exist yet,
+  so content sniffing is impossible). Errors with `UnsupportedKind`
+  for non-`.bam`/`.sam`/`.cram` extensions.
+- **`from_path(&Path) → Result<Self>`** — magic-byte sniff (added in
+  v1.0.0-beta.3). Opens the file; for BGZF, decompresses the first
+  block and verifies the `BAM\x01` payload magic. Used by `open_reader`
+  and any caller that needs tolerance for mis-named files. Errors with
+  `UnrecognizedFormat`, `UnrecognizedBgzfPayload`, or `TooShortToDetect`
+  depending on what was found.
+
+Magic-byte detection matches Perl Bismark's behaviour: a SAM file named
+`foo.bam` is classified as SAM, a `.vcf.gz` mis-routed to a BAM-expecting
+caller errors with a clear "looks like a non-BAM BGZF file" message
+rather than a confusing BAM-decoder error.
+
 ## Quick example
 
 ```rust
@@ -209,11 +229,11 @@ The pin policy: noodles releases frequently and occasionally bumps MSRV. Exact-p
 
 ## Stability
 
-This is **v1.0.0-beta.2** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The v1.0.0-beta.2 release is additive: it adds `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF (de)compression but leaves every v1.0.0-beta.1 type/function signature unchanged. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
+This is **v1.0.0-beta.3** — the public API is stable; no breaking changes are planned between `1.0.0-beta.N` and `1.0.0`. The v1.0.0-beta.3 release adds **magic-byte file-format detection** for reader-side dispatch (matching Perl Bismark's behaviour); writer-side dispatch and every other type/function signature are unchanged from v1.0.0-beta.2. The `DESIGN.md` document is the canonical contract; if a future change to `bismark-io` contradicts `DESIGN.md`, the design doc gets updated in lockstep.
 
 ## crates.io
 
-`bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line, Phase A of the rayon epic) is **published to crates.io**. `bismark-io = "=1.0.0-beta.2"` (the v1.1 BGZF-threaded line, Phase D of the rayon epic) is **queued for the next publish window** — within the Bismark workspace, `bismark-dedup` already path-deps `=1.0.0-beta.2` for the threaded BAM I/O. Once published, external consumers can pin either depending on whether they need threaded readers/writers.
+`bismark-io = "=1.0.0-beta.1"` (the v1.0 single-threaded line) is **published to crates.io**. `bismark-io = "=1.0.0-beta.2"` (BGZF-threaded readers/writers) and `bismark-io = "=1.0.0-beta.3"` (magic-byte detection) are **queued for the next publish window** — within the Bismark workspace, `bismark-dedup` already path-deps `=1.0.0-beta.3`. Once published, external consumers can pin to whichever beta matches the features they need.
 
 ## License
 

@@ -5,6 +5,58 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.3] — 2026-05-25
+
+Magic-byte file-format detection for reader-side dispatch. Tolerates
+mis-named files (`.bam` containing SAM bytes, `.sam` containing CRAM
+bytes, files with no extension at all) — matches Perl Bismark's
+behaviour. Writers continue to use extension-based dispatch (the file
+doesn't exist yet at writer-call time).
+
+### Added
+
+- **`AlignmentKind::from_extension(&Path)`** — pure extension dispatch,
+  I/O-free. Preserves the pre-`1.0.0-beta.3` behaviour of `from_path`.
+  Used by `open_writer` and any caller that explicitly wants
+  extension-only.
+- Three new `BismarkIoError` variants emitted by the new `from_path`:
+  `TooShortToDetect { path, bytes_read }`, `UnrecognizedFormat
+  { path, magic_first_byte }`, `UnrecognizedBgzfPayload { path,
+  payload_head }`.
+
+### Changed (behaviour)
+
+- **`AlignmentKind::from_path(&Path)` now opens the file**, reads + (for
+  BGZF) decompresses the first block, and dispatches based on actual
+  file content rather than file extension. A SAM file with a `.bam`
+  extension is now correctly classified as SAM (previously it would
+  have errored at parse time with a BAM-decoder error).
+- `open_reader` uses the new sniff behaviour; `open_writer` is migrated
+  to `from_extension` so its semantics are unchanged.
+- The `UnsupportedKind` variant's doc-comment is narrowed: it's now
+  emitted only by `from_extension` (writer-side). Reader-side dispatch
+  emits the new variants above instead.
+
+### Changed (error variants)
+
+- Downstream consumers that **exhaustive-match** on `BismarkIoError`
+  need a new arm for each new variant. Consumers using `#[from]`
+  propagation are unaffected.
+
+### Performance
+
+- `from_path` is no longer I/O-free. Per-call cost is ~100-700 µs
+  (dominated by the ~200-500 µs BGZF inflate of one block). For
+  hot-path callers iterating over many input files, consider caching
+  the result.
+- `from_extension` is unchanged: ~0.2 µs per call.
+
+### Pinning
+
+Downstream consumers pinning `=1.0.0-beta.2` should bump to
+`=1.0.0-beta.3` when they want magic-byte detection. `bismark-dedup
+v1.1.0-beta.2` requires `=1.0.0-beta.3`.
+
 ## [1.0.0-beta.2] — 2026-05-24
 
 Additive release adding parallel BGZF reader/writer support, used by

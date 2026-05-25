@@ -347,7 +347,11 @@ pub fn open_writer(
     header: Header,
     cram_ref: Option<&Path>,
 ) -> Result<AnyWriter<BufWriter<File>, File>, BismarkIoError> {
-    match AlignmentKind::from_path(path)? {
+    // Writers can't sniff bytes (the file doesn't exist yet), so they
+    // dispatch on the file's extension via `from_extension`. Reader-side
+    // dispatch (via `AlignmentKind::from_path`) is the magic-byte-sniff
+    // path added in `bismark-io v1.0.0-beta.3`.
+    match AlignmentKind::from_extension(path)? {
         AlignmentKind::Bam => Ok(AnyWriter::Bam(BamWriter::from_path(path, header)?)),
         AlignmentKind::Sam => Ok(AnyWriter::Sam(SamWriter::from_path(path, header)?)),
         AlignmentKind::Cram => {
