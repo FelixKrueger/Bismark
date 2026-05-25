@@ -50,6 +50,14 @@ keeping every v1.0 byte-identity guarantee intact.
 - **`--parallel 0`** is now an explicit `InvalidParallelValue` error at
   CLI-validate time. clap's `u32` parser previously accepted 0; the
   validate stage rejects it before any I/O begins.
+- **`--parallel N` with N > 4** emits a one-line stderr warning about
+  measured saturation past N=4 (the dedup state is single-threaded, so
+  only BGZF (de)compression scales; the Phase D oxy benchmark showed
+  N=8 = N=4 in wall-time). The run still succeeds — this is
+  informational, not a hard cap. Users on much-bigger metal who want to
+  probe the curve themselves can still pass `--parallel 16`, `--parallel
+  32`, etc., and will just see a warning that the value is past the
+  measured sweet spot.
 
 ### Byte-identity contract preserved
 

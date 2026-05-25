@@ -51,6 +51,24 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
         std::fs::create_dir_all(&config.output_dir)?;
     }
 
+    // Soft warning for --parallel values past the measured saturation
+    // point. The Phase D oxy benchmark on 10M PE WGBS showed N=8 gave
+    // zero additional speedup over N=4 (both at ~4.88× vs N=1) — the
+    // dedup state itself is single-threaded, so only BGZF
+    // (de)compression scales. Anything past N=4 is unlikely to help
+    // and may add scheduling overhead. We don't block: hardware and
+    // input characteristics differ and a user on much-bigger metal may
+    // legitimately want to probe past the typical sweet spot.
+    if config.parallel > 4 {
+        eprintln!(
+            "warning: --parallel {} exceeds the typical sweet spot (N ≤ 4); measured \
+             saturation at N=4 on the 10M PE WGBS benchmark (N=8 gave zero additional \
+             speedup) — additional workers will probably give diminishing or no further \
+             benefit on this BGZF-bound workload",
+            config.parallel
+        );
+    }
+
     if config.multiple {
         process_multiple(&config)?;
     } else {
