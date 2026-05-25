@@ -52,12 +52,10 @@ use bismark_io::{
     open_writer, AnyWriter, BamWriter, SamWriter, CramWriter,
     // CRAM reference helper
     reconstitute_cram_reference_from_bismark_genome,
+    // UMI extractors (beta.4) — available both at the crate root via
+    // these flat re-exports and at `bismark_io::umi::*`:
+    extract_barcode, extract_bclconvert,
 };
-
-// UMI extractors live in the `umi` submodule (beta.4):
-use bismark_io::umi;
-let umi_value = umi::extract_barcode(qname_bytes);          // tail-of-qname mode
-let umi_value = umi::extract_bclconvert(qname_bytes);       // bcl-convert internal-position mode
 ```
 
 Module-level docs explain each type's contract. See `cargo doc --open --package bismark-io`.
