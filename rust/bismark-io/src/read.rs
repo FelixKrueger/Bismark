@@ -110,9 +110,12 @@ impl AlignmentKind {
     /// the file doesn't exist yet) prefer [`Self::from_extension`].
     pub fn from_path(path: &Path) -> Result<Self, BismarkIoError> {
         let mut file = std::fs::File::open(path)?;
-        let mut first_byte = [0u8; 1];
-        let n = std::io::Read::read(&mut file, &mut first_byte)?;
-        if n == 0 {
+        // `Read::read` is permitted to return short even when more data
+        // is available, so use the take+read_to_end loop pattern that
+        // either fills the buffer or hits real EOF.
+        let mut first_byte = Vec::with_capacity(1);
+        (&mut file).take(1).read_to_end(&mut first_byte)?;
+        if first_byte.is_empty() {
             return Err(BismarkIoError::TooShortToDetect {
                 path: path.to_path_buf(),
                 bytes_read: 0,
@@ -151,15 +154,23 @@ impl AlignmentKind {
 /// inflate cost. Cleaner code wins.
 fn detect_bgzf_payload(path: &Path) -> Result<AlignmentKind, BismarkIoError> {
     let file = std::fs::File::open(path)?;
-    let mut bgzf = noodles_bgzf::io::Reader::new(file);
-    let mut payload_head = [0u8; 4];
-    let n = std::io::Read::read(&mut bgzf, &mut payload_head)?;
-    if n < 4 {
+    let bgzf = noodles_bgzf::io::Reader::new(file);
+    // `noodles_bgzf::Reader::read` returns one BGZF block at a time per
+    // the `Read` contract — a single `read()` call may legally return
+    // fewer than 4 bytes even when more data is available. Use
+    // take+read_to_end so we loop until we have 4 bytes OR genuine EOF.
+    let mut payload_head_buf = Vec::with_capacity(4);
+    bgzf.take(4).read_to_end(&mut payload_head_buf)?;
+    if payload_head_buf.len() < 4 {
         return Err(BismarkIoError::TooShortToDetect {
             path: path.to_path_buf(),
-            bytes_read: n,
+            bytes_read: payload_head_buf.len(),
         });
     }
+    let payload_head: [u8; 4] = payload_head_buf
+        .as_slice()
+        .try_into()
+        .expect("we just checked len == 4");
     if &payload_head == b"BAM\x01" {
         Ok(AlignmentKind::Bam)
     } else {
@@ -177,16 +188,18 @@ fn detect_cram_magic(
     file: &mut std::fs::File,
     path: &Path,
 ) -> Result<AlignmentKind, BismarkIoError> {
-    let mut rest = [0u8; 3];
-    let n = std::io::Read::read(file, &mut rest)?;
-    if n < 3 {
+    // `Read::read` may return short even with more data available; use
+    // take+read_to_end to loop until 3 bytes OR genuine EOF.
+    let mut rest_buf = Vec::with_capacity(3);
+    file.take(3).read_to_end(&mut rest_buf)?;
+    if rest_buf.len() < 3 {
         return Err(BismarkIoError::TooShortToDetect {
             path: path.to_path_buf(),
             // First-byte peek (1) + however many we got here.
-            bytes_read: 1 + n,
+            bytes_read: 1 + rest_buf.len(),
         });
     }
-    if &rest == b"RAM" {
+    if rest_buf.as_slice() == b"RAM" {
         Ok(AlignmentKind::Cram)
     } else {
         Err(BismarkIoError::UnrecognizedFormat {
@@ -662,6 +675,35 @@ mod tests {
         match AlignmentKind::from_path(tmp.path()).unwrap_err() {
             BismarkIoError::TooShortToDetect { bytes_read: 2, .. } => {}
             other => panic!("expected TooShortToDetect with bytes_read=2, got {other:?}"),
+        }
+    }
+
+    /// End-to-end test for the load-bearing case: a real BGZF stream
+    /// whose decompressed payload starts with non-BAM bytes (e.g. a
+    /// `.vcf.gz` mis-routed to a BAM-expecting caller). Synthesizes the
+    /// BGZF wrapper via `noodles_bgzf::io::Writer` so the BGZF block
+    /// structure is spec-valid.
+    #[test]
+    fn from_path_rejects_bgzf_non_bam_payload() {
+        use std::io::Write;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Build a valid BGZF stream whose payload starts with VCF magic.
+        {
+            let file = std::fs::File::create(tmp.path()).unwrap();
+            let mut bgzf = noodles_bgzf::io::Writer::new(file);
+            bgzf.write_all(b"##fileformat=VCFv4.2\n").unwrap();
+            bgzf.finish().unwrap();
+        }
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::UnrecognizedBgzfPayload { payload_head, .. } => {
+                // The first 4 decompressed bytes are `##fi`.
+                assert_eq!(
+                    &payload_head, b"##fi",
+                    "payload_head should reflect the first 4 inflated bytes"
+                );
+            }
+            other => panic!("expected UnrecognizedBgzfPayload, got {other:?}"),
         }
     }
 
