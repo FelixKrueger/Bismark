@@ -218,40 +218,373 @@ This is an **explicit deferral**, not a permanent choice. See §11 open question
 
 ## 7. Algorithm sketches
 
-Detailed in the Phase A/B implementation plans; placeholders here.
+Concrete pseudocode for each load-bearing routine. Implementation phases (§10) flesh these into Rust; the contract here is the algorithm shape + invariants.
 
-### 7.1 SE main loop
+### 7.1 `extract_calls` — the per-record kernel
 
-```text
-for record in reader.records():
-    let strand = record.record_strand()           // bismark-io classifies eagerly
-    let calls = extract_calls(record, ignore_5p, ignore_3p)
-    for call in calls:
-        route_to_output_file(call, strand)
-        mbias_accumulate(call, read_identity = SE)
-emit M-bias, splitting_report
-```
-
-### 7.2 PE main loop
+Iterates the XM tag in parallel with the CIGAR walker, emitting one `MethCall` per non-`.` cytosine. Skips `U`/`u` (unknown context). Applies `--ignore` (5') and `--ignore_3prime` (3') boundaries in **read coordinates** (after soft-clip).
 
 ```text
-for pair in reader.pairs():                       // BismarkPair::from_mates enforces qname-eq + R1+R2
-    let pair_strand = pair.pair_strand()
-    let r1_calls = extract_calls(pair.r1(), ignore_5p_r1, ignore_3p_r1)
-    let r2_calls = extract_calls(pair.r2(), ignore_5p_r2, ignore_3p_r2)
-    if --no_overlap:
-        r2_calls = r2_calls.filter(|c| c.ref_pos > r1_calls.last().ref_pos)
-    for call in r1_calls:
-        route_to_output_file(call, pair_strand)
-        mbias_accumulate(call, ReadIdentity::R1)
-    for call in r2_calls:
-        route_to_output_file(call, pair_strand)
-        mbias_accumulate(call, ReadIdentity::R2)
+fn extract_calls(record: &BismarkRecord, ignore_5p: u32, ignore_3p: u32) -> Vec<MethCall>:
+    let xm: &[u8] = record.xm()                   // length-parity validated at parse
+    let seq_len: u32 = xm.len() as u32
+    let aligned_start: u32 = record.alignment_start() as u32
+    let cigar: &Cigar = record.cigar()
+
+    // Read-coordinate boundaries after ignore-region clipping.
+    let lo: u32 = ignore_5p
+    let hi: u32 = seq_len.saturating_sub(ignore_3p)
+
+    let mut calls = Vec::with_capacity(xm.len() / 8)    // CpG density heuristic
+    let mut read_pos: u32 = 0                            // 0-based read coordinate
+    let mut ref_pos: u32 = aligned_start                 // 1-based ref coordinate
+
+    for op in cigar.iter():
+        match op.kind():
+            Match | SequenceMatch | SequenceMismatch:
+                // Step both read and reference 1:1.
+                for _ in 0..op.len():
+                    if read_pos >= lo && read_pos < hi {
+                        let b: u8 = xm[read_pos as usize]
+                        if let Some(call) = classify_xm_byte(b) {
+                            calls.push(MethCall { ref_pos, read_pos, context: call.context, methylated: call.methylated })
+                        }
+                    }
+                    read_pos += 1
+                    ref_pos += 1
+            Insertion:
+                read_pos += op.len()    // read consumed, ref unchanged
+            Deletion | RefSkip:
+                ref_pos += op.len()     // ref consumed, read unchanged
+            SoftClip:
+                read_pos += op.len()    // read consumed, ref unchanged
+            HardClip | Pad:
+                // Neither read nor ref consumed.
+                continue
+    calls
+
+// `classify_xm_byte` is a 256-entry lookup table built at startup; per §5.
+fn classify_xm_byte(b: u8) -> Option<XmCall>:
+    match b:
+        b'Z' => Some(XmCall { context: CpG, methylated: true }),
+        b'z' => Some(XmCall { context: CpG, methylated: false }),
+        b'X' => Some(XmCall { context: CHG, methylated: true }),
+        b'x' => Some(XmCall { context: CHG, methylated: false }),
+        b'H' => Some(XmCall { context: CHH, methylated: true }),
+        b'h' => Some(XmCall { context: CHH, methylated: false }),
+        _    => None        // `U`/`u`/`.`/anything else: silently skip
 ```
 
-### 7.3 Paired-overlap detection
+**Invariants:**
+- After the loop, `read_pos == seq_len` (CIGAR consumes the read fully).
+- `read_pos` is **post-soft-clip** because soft-clipped positions in the read are real bases that count toward `--ignore` (matches Perl line 1631-1650).
+- `ref_pos` after the loop equals `record.cigar().reference_end(aligned_start)` — pinned by `bismark-io::CigarExt` (already invariant-tested in dedup).
 
-Mirrors Perl lines 2891-2906 + 2976-2990. Use `bismark-io::CigarExt::reference_end()` to compute R1's last reference position; drop R2 calls whose reference position ≤ R1's end (forward strand) or ≥ R1's start (reverse strand).
+### 7.2 SE main loop
+
+```text
+fn extract_se(reader: AnyReader, config: &ResolvedConfig) -> Result<ExtractReport>:
+    let mut state = ExtractState::new(&config)              // FH map + M-bias [_; 2]
+    for record in reader.records():
+        let record = record?
+        let strand = record.record_strand()                 // bismark-io eager
+        let calls = extract_calls(&record, config.ignore_5p, config.ignore_3p)
+        for call in calls:
+            route_call(&mut state, &record, strand, call, ReadIdentity::Single)
+        state.report.records_processed += 1
+    state.finalize(&config)                                  // close FHs, emit M-bias + splitting_report
+```
+
+### 7.3 PE main loop
+
+```text
+fn extract_pe(reader: AnyReader, config: &ResolvedConfig) -> Result<ExtractReport>:
+    let mut state = ExtractState::new(&config)
+    let mut iter = reader.records().peekable()
+    loop:
+        let r1 = match iter.next() { Some(Ok(r)) => r, None => break, Some(Err(e)) => return Err(e) }
+        let r2 = match iter.next() { Some(Ok(r)) => r, None => return Err(UnpairedFinalRecord), Some(Err(e)) => return Err(e) }
+        let pair = BismarkPair::from_mates(r1, r2)?         // enforces qname-eq + R1+R2
+        let pair_strand = pair.pair_strand()
+
+        let r1_calls = extract_calls(pair.r1(), config.ignore_5p_r1, config.ignore_3p_r1)
+        let r2_calls_raw = extract_calls(pair.r2(), config.ignore_5p_r2, config.ignore_3p_r2)
+
+        let r2_calls = if config.no_overlap:
+            drop_overlap(r2_calls_raw, &pair, pair_strand)
+        else:
+            r2_calls_raw
+
+        for call in r1_calls:
+            route_call(&mut state, pair.r1(), pair_strand, call, ReadIdentity::R1)
+        for call in r2_calls:
+            route_call(&mut state, pair.r2(), pair_strand, call, ReadIdentity::R2)
+        state.report.pairs_processed += 1
+    state.finalize(&config)
+```
+
+### 7.4 Paired-overlap detection (`--no_overlap`)
+
+Mirrors Perl lines 2891-2906 (forward / OT-CTOB) + 2976-2990 (reverse / OB-CTOT). The decision is made at the **reference-position** level, accounting for InDels via the same CIGAR walker as `extract_calls`.
+
+```text
+fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: BismarkStrand) -> Vec<MethCall>:
+    if is_forward(pair_strand):
+        // OT / CTOB: R1 is upstream, R2 is downstream. Drop R2 calls at or before R1's reference_end.
+        let r1_ref_end: u32 = pair.r1().cigar().reference_end(pair.r1().alignment_start()? as usize) as u32
+        r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_end).collect()
+    else:
+        // OB / CTOT: R2 is upstream, R1 is downstream. Drop R2 calls at or after R1's alignment_start.
+        let r1_ref_start: u32 = pair.r1().alignment_start()? as u32
+        r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_start).collect()
+```
+
+**Edge case:** if R1 and R2 don't overlap at all (one chromosome end, mate-pair span > read length), the filter is a no-op. Perl's behaviour is identical (the comparison is always evaluated; non-overlapping pairs trivially pass).
+
+### 7.5 `route_call` — output dispatch
+
+```text
+fn route_call(state: &mut ExtractState, record: &BismarkRecord, strand: BismarkStrand,
+              call: MethCall, read_identity: ReadIdentity) -> ():
+    // 1. M-bias accumulation (unconditional unless --mbias_off).
+    if !state.mbias_off:
+        let table_idx = match read_identity:
+            R1 | Single => 0,
+            R2          => 1,
+        let pos = call.read_pos + 1     // 1-based for output
+        let tbl = &mut state.mbias[table_idx]
+        let ctx_vec = match call.context:
+            CpG => &mut tbl.cpg,
+            CHG => &mut tbl.chg,
+            CHH => &mut tbl.chh,
+        // Grow Vec lazily; Perl uses hash → dense Vec is faster + matches output format.
+        ctx_vec.resize_with(max(ctx_vec.len(), pos + 1), MbiasPos::default)
+        let bucket = &mut ctx_vec[pos as usize]
+        if call.methylated { bucket.meth += 1 } else { bucket.unmeth += 1 }
+
+    // 2. Split-file routing (skipped if --mbias_only).
+    if state.mbias_only:
+        return
+
+    let fh_key = match (state.mode, call.context, strand):
+        (Default, ctx, OT)   => (ctx, 0),
+        (Default, ctx, CTOT) => (ctx, 1),
+        (Default, ctx, CTOB) => (ctx, 2),
+        (Default, ctx, OB)   => (ctx, 3),
+        (Comprehensive, ctx, _) => (ctx, COMPREHENSIVE_IDX),
+        (MergeNonCpG, CpG, strand) => (CpG, strand_idx(strand)),
+        (MergeNonCpG, _,   strand) => (NonCpG, strand_idx(strand)),
+        (Yacht, _, _) => (Any, 0),
+        // ... (all 5 modes × all combinations)
+
+    let line = format_meth_line(record, call, strand, state.mode)
+    state.fhs[fh_key].write_all(line.as_bytes())?
+
+    // 3. Splitting-report counters.
+    state.report.calls_by_context[call.context] += 1
+    state.report.calls_by_context_meth[call.context] += if call.methylated { 1 } else { 0 }
+```
+
+`format_meth_line` produces a tab-separated row matching Perl exactly:
+
+```
+{read_id}\t{strand_char}\t{chr}\t{ref_pos}\t{xm_byte}\n
+```
+
+where `strand_char` is `+` (methylated XM uppercase) or `-` (unmethylated XM lowercase), and `xm_byte` is the literal XM character (`Z`/`z`/`X`/`x`/`H`/`h`).
+
+### 7.6 `--ignore` semantics
+
+Perl applies `--ignore`/`--ignore_3prime`/`--ignore_r2`/`--ignore_3prime_r2` in **read coordinates** (post-soft-clip) by modifying the CIGAR string before extraction (Perl lines 1630-1650, 1983-2030, 2224-2330, 2332-2455). The Rust port applies the same logic at the `extract_calls` boundary check (`if read_pos >= lo && read_pos < hi`).
+
+**Invariant:** the ignore-region check is purely a read-coordinate filter; the CIGAR walker continues normally so reference-position tracking remains correct for non-skipped calls.
+
+### 7.7 Data structures
+
+Concrete struct shapes for the load-bearing types. Field-level decisions land in Phase A.
+
+#### `MethCall`
+
+```rust
+struct MethCall {
+    ref_pos: u32,       // 1-based reference position
+    read_pos: u32,      // 0-based read position (post-CIGAR walk)
+    context: CytosineContext,    // CpG | CHG | CHH
+    methylated: bool,
+}
+```
+
+`MethCall` is `Copy` (16 bytes). Per-record extraction returns `Vec<MethCall>` which the caller drains; no heap allocation per call.
+
+#### `CytosineContext`
+
+```rust
+#[repr(u8)]
+enum CytosineContext { CpG = 0, CHG = 1, CHH = 2 }
+```
+
+`#[repr(u8)]` lets `[T; 3]` arrays index by context with `as usize`.
+
+#### `MbiasTable`
+
+```rust
+struct MbiasTable {
+    cpg: Vec<MbiasPos>,
+    chg: Vec<MbiasPos>,
+    chh: Vec<MbiasPos>,
+}
+#[derive(Default, Copy, Clone)]
+struct MbiasPos { meth: u64, unmeth: u64 }
+```
+
+Per (read-identity × context × 1-based-position). Stored as `[MbiasTable; 2]` — index 0 = R1 (or SE), index 1 = R2. Closes Alan Hoyle's bug structurally: every context-iteration site must explicitly traverse `[cpg, chg, chh]`; there's no `_ => {}` fallthrough.
+
+#### `ExtractState`
+
+```rust
+struct ExtractState {
+    mode: OutputMode,    // Default | Comprehensive | MergeNonCpG | Yacht | MbiasOnly
+    mbias_off: bool,
+    mbias_only: bool,
+    mbias: [MbiasTable; 2],
+    fhs: OutputFileMap,
+    report: SplittingReport,
+}
+```
+
+`OutputFileMap` is an enum-tagged dispatch table keyed by `(CytosineContext, StrandIdx)` in default mode, by `CytosineContext` in comprehensive, by `(CpG|NonCpG, StrandIdx)` in `--merge_non_CpG`, by a single key in `--yacht`. Implementation can use `HashMap<Key, BufWriter<File>>` (simple) or a typed enum (faster but more boilerplate).
+
+#### `ExtractParams<'a>` (the §6.3 argument struct)
+
+```rust
+struct ExtractParams<'a> {
+    record: &'a BismarkRecord,
+    refid_table: &'a [u32],
+    read_identity: ReadIdentity,
+    ignore_5p: u32,
+    ignore_3p: u32,
+    state: &'a mut ExtractState,
+    pair_strand: BismarkStrand,    // for PE; equals record.record_strand() for SE
+}
+```
+
+Replaces Alan's 14-arg `extract_calls`. Adding a new flag = adding a typed field, not appending to a positional list.
+
+## 8. Test surface
+
+Same byte-identity contract as `bismark-dedup`'s v1.0 gate.
+
+### 8.1 Unit tests
+
+Mirror dedup's per-helper structure:
+
+| Test | What |
+|------|------|
+| `extract_calls_classifies_all_six_methylation_bytes` | `Z`/`z`/`X`/`x`/`H`/`h` each produce the expected `MethCall` |
+| `extract_calls_skips_U_u_dot_and_unknown_bytes` | Non-methylation bytes do not produce calls |
+| `extract_calls_respects_ignore_5p` | `--ignore N` skips the first N read positions |
+| `extract_calls_respects_ignore_3p` | `--ignore_3prime N` skips the last N read positions |
+| `extract_calls_walks_cigar_with_indels` | `M D M` and `M I M` CIGARs produce calls at correct reference positions |
+| `extract_calls_walks_cigar_with_soft_clips` | `S M S` CIGAR: read_pos starts at 0 (after soft-clip), ref_pos starts at alignment_start |
+| `extract_calls_empty_xm_yields_empty_vec` | XM with no methylation bytes → empty `Vec<MethCall>` |
+| `drop_overlap_forward_pair_drops_r2_at_or_before_r1_end` | OT/CTOB pair, R2 calls ≤ R1's ref_end dropped |
+| `drop_overlap_reverse_pair_drops_r2_at_or_after_r1_start` | OB/CTOT pair, R2 calls ≥ R1's ref_start dropped |
+| `drop_overlap_non_overlapping_pair_is_noop` | R1 + R2 disjoint reference spans → no calls dropped |
+| `mbias_accumulate_increments_meth_for_uppercase` | Single `Z` call → `mbias[0].cpg[pos].meth == 1` |
+| `mbias_accumulate_increments_unmeth_for_lowercase` | Single `z` call → `mbias[0].cpg[pos].unmeth == 1` |
+| `mbias_accumulate_routes_r2_to_index_1` | `ReadIdentity::R2` increments `mbias[1].*` |
+| `route_call_default_mode_routes_to_strand_specific_file` | CpG + OT pair → `CpG_OT_*` file |
+| `route_call_comprehensive_mode_routes_to_context_only_file` | `--comprehensive` + CpG → `CpG_*` file (no strand suffix) |
+| `route_call_merge_non_cpg_routes_chg_chh_to_non_cpg_file` | `--merge_non_CpG` + `X` → `Non_CpG_OT_*` file |
+| `route_call_yacht_mode_routes_to_any_c_context_file` | `--yacht` → `any_C_context_*` file with read metadata |
+| `cli_validate_rejects_mbias_only_with_bedgraph` | Mutex enforcement per Perl 1037-1038 |
+| `cli_validate_rejects_mbias_only_with_cytosine_report` | (same shape) |
+| `cli_validate_rejects_mbias_only_with_mbias_off` | (same shape) |
+| `cli_validate_rejects_gazillion_with_ample_memory` | Mutex enforcement per Perl 1310-1312 |
+| `cli_validate_auto_triggers_bedgraph_when_cytosine_report_set` | `--cytosine_report` without `--bedGraph` → both engage |
+
+### 8.2 Integration tests on synthetic CHG/CHH-rich fixtures
+
+**Critical fixture design** (closes the missing-CHG/CHH bug from Alan's port):
+
+A synthetic small-genome BAM (~50-100 reads, ~5 KB BAM file, fits in `tests/data/`) that contains **measurable methylation calls in all three contexts × all four strands**. The synthetic genome must have CHG + CHH context cytosines, not just CpG.
+
+Recipe (one-time generation, committed to repo):
+
+1. Build a 10 KB synthetic FASTA with explicit CpG, CHG, and CHH motifs sprinkled throughout (e.g. `ACGT` for CpG, `ACTG` for CHG variants, `ACAA`/`ACAC`/`ACAT` for CHH variants).
+2. Generate 50 PE reads via a small Python script that places methylation calls in known positions across all four strands.
+3. Align with Bismark v0.25.1 to produce a BAM with XM tags containing `Z`/`z`/`X`/`x`/`H`/`h` at known positions.
+4. Run Perl `bismark_methylation_extractor` to produce the baseline outputs (12 split files + M-bias.txt + splitting_report.txt).
+5. Commit all artifacts (FASTA, BAM, Perl baselines) under `bismark-extractor/tests/data/`.
+
+Integration tests then run the Rust binary against the BAM and compare each output stream byte-for-byte against the committed baseline.
+
+### 8.3 Real-data byte-identity gate (10M + 55M PE WGBS)
+
+`#[ignore]`'d in `tests/byte_identity_real_data.rs`. Uses the existing baselines at `~/Desktop/TrimG_Bismark_test/profiling/` (10M PE) + `~/Desktop/TrimG_Bismark_test/profiling_full/` (55M PE) — same datasets the dedup port validated against.
+
+| Assertion | What |
+|-----------|------|
+| Each of 12 split files sorted-md5 equal | `gzcat <rust_split> \| sort \| md5 == gzcat <perl_split> \| sort \| md5` |
+| `M-bias.txt` byte equality | Includes the 6 sections (CpG/CHG/CHH × R1/R2) in the right order |
+| `_splitting_report.txt` byte equality | Parameter summary + counts |
+| `--bedGraph` chain: `.bedGraph.gz` + `.bismark.cov.gz` sorted-md5 equal | (Phase G — subprocess to Perl `bismark2bedGraph`) |
+| `--cytosine_report` chain: `CpG_report.txt.gz` sorted-md5 equal | (Phase G — subprocess to Perl `coverage2cytosine`) |
+
+### 8.4 Edge case fixtures
+
+| Fixture | What it stresses |
+|---------|------------------|
+| Read at chromosome start (`alignment_start == 1`) | Reference-position underflow guards |
+| Soft-clipped boundary (`5S95M`) | Ignore-region check uses post-soft-clip read coords |
+| Insertion in middle (`50M2I48M`) | CIGAR walker preserves ref_pos |
+| Deletion in middle (`50M2D48M`) | CIGAR walker advances ref_pos |
+| Read with `N` base | XM has `.` at that position; no call emitted |
+| `--ignore` value > seq_len | All calls filtered; loop terminates correctly |
+| Mixed SE+PE in same BAM | Currently undefined; either auto-detect per-record or reject |
+| Empty input BAM | `EmptyInput` error, no output files (matches dedup pattern) |
+| Coordinate-sorted input | Reject with the same `UnsortedInput` message as `bismark-io` already produces |
+
+## 9. Parallelism model — byte-identity invariant
+
+`--multicore N` MUST produce output byte-identical to `--multicore 1` for any N ≥ 1. The mechanism (per §6.4):
+
+### 9.1 Pipeline shape
+
+```text
+                ┌─ worker 1 ─┐
+input BAM ──▶ producer ──▶ worker 2  ──▶ output collector ──▶ write split files
+                └─ worker N ─┘                                  ┕━▶ accumulate M-bias
+```
+
+- **Producer** (single thread): drives `bismark-io::ThreadedBamReader::records()` (BGZF decompression already threaded via v1.1). Emits `(input_idx, record_or_pair)` into a bounded MPMC channel.
+- **Workers** (N rayon threads): consume the channel, run `extract_calls` + `drop_overlap` + per-record M-bias accumulation into **per-worker scratch state**. Emit `(input_idx, Vec<MethCall>, MbiasDelta)` into a second bounded MPMC channel.
+- **Output collector** (single thread): reads worker output channel, **reorders by `input_idx`** via a `BTreeMap<u64, WorkerOutput>` or sliding-window buffer, writes split files in input order, merges M-bias deltas.
+
+### 9.2 Channel sizing
+
+- **Producer→worker channel**: bounded at `N × 32` records (or pairs). Bounding back-pressures the producer if workers fall behind.
+- **Worker→collector channel**: bounded at `N × 8`. The collector is the slowest stage (it does the I/O); a smaller buffer keeps memory predictable.
+
+### 9.3 M-bias merge
+
+Each worker maintains its own `[MbiasTable; 2]`. At end-of-stream the collector receives a final `MbiasDelta` message from each worker; the deltas are summed position-wise into the global M-bias. Sum is commutative + associative → byte-identical regardless of merge order.
+
+### 9.4 Output ordering
+
+The `input_idx` is monotonically assigned by the producer per record (or per pair). The collector's `BTreeMap<u64, WorkerOutput>` ensures it emits in strict input order. Memory bound: at most `N × 32 + N × 8 = 40N` entries in flight — for N=8, ~320 records.
+
+### 9.5 Error propagation
+
+Workers return `Result<WorkerOutput, BismarkExtractorError>` via the output channel. The collector watches for the first `Err`; on receiving one, it drains remaining channel entries (to let workers terminate cleanly), then propagates the error to `main()`. Output files are unlinked on error (per Phase B's `cleanup_partial_output_on_err` pattern from dedup).
+
+### 9.6 The `--multicore 1` path
+
+When N=1 the producer + worker + collector still exist as separate threads, BUT the channels are sized at 1 and effectively become synchronous handoffs. **Byte-identity is checked at N=1 first** (the path is the reference) before any N>1 path is compared.
+
+### 9.7 Speedup expectation
+
+Per CLAUDE.md's profiling: extractor takes 12.3 min single-core, 5.4 min 4-core on 10M PE WGBS. Perl's fork+modulo achieves ~2.3× at N=4 because each fork re-decompresses the BAM. Rust's single-decompress + rayon-worker model should achieve **≥ 4× at N=4** (the BAM decompression is no longer the bottleneck). v1.1 `bismark-dedup`'s 4.88× at N=4 on the same dataset is the proven precedent; extractor should match or beat it because extraction is more CPU-heavy than dedup's hash-lookup.
 
 ## 8. Test surface
 
