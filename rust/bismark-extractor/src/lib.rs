@@ -6,15 +6,19 @@
 //!
 //! ## Status
 //!
-//! **Phase C — SE + PE extraction loops** (crate version: `1.0.0-alpha.3`).
-//! The binary runs end-to-end on Bismark BAM/SAM/CRAM input in `OutputMode::Default`
-//! at `--parallel 1`, producing the 12 strand×context split files plus
-//! `_splitting_report.txt`. SE-vs-PE auto-detect via `@PG ID:Bismark` header
+//! **Phase D — SE + PE extraction loops + M-bias.txt writer** (crate version:
+//! `1.0.0-alpha.4`). The binary runs end-to-end on Bismark BAM/SAM/CRAM
+//! input in `OutputMode::Default` at `--parallel 1`, producing the 12
+//! strand×context split files + `_splitting_report.txt` + `M-bias.txt`
+//! (unless `--mbias_off`). SE-vs-PE auto-detect via `@PG ID:Bismark` header
 //! probe (powered by `bismark_io::detect_paired_from_header`). PE adds
 //! overlap detection (`--no_overlap` default) and per-mate ignore trims
-//! (`--ignore_r2`, `--ignore_3prime_r2`). Non-default modes, `--gzip`,
-//! `--parallel > 1`, and `--bedGraph` / `--cytosine_report` still rejected
-//! with [`BismarkExtractorError::PhaseNotYetImplemented`].
+//! (`--ignore_r2`, `--ignore_3prime_r2`). The M-bias.txt writer (Phase D)
+//! consumes the `[MbiasTable; 2]` accumulator populated by Phases B + C and
+//! emits 3 sections for SE / 6 sections for PE per Perl byte-identity.
+//! Non-default output modes, `--gzip`, `--parallel > 1`, `--bedGraph` /
+//! `--cytosine_report`, and `--mbias_only` still rejected with
+//! [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! See [SPEC.md §10](../SPEC.md) for the full phase outline.
 //!
@@ -31,6 +35,8 @@
 //! - [`pipeline::extract_se`] — SE main loop (Phase B).
 //! - [`pipeline::extract_pe`] — PE main loop (Phase C).
 //! - [`overlap::drop_overlap`] — PE overlap-detection filter (Phase C).
+//! - [`mbias::MbiasTable`] — M-bias accumulator (Phase B + C).
+//! - [`mbias_writer::write_mbias_txt`] — M-bias.txt writer (Phase D).
 //!
 //! ## Binary
 //!
@@ -46,6 +52,7 @@ pub mod cli;
 pub mod error;
 pub mod header;
 pub mod mbias;
+pub mod mbias_writer;
 pub mod output;
 pub mod overlap;
 pub mod params;
@@ -57,6 +64,7 @@ pub use call::{CytosineContext, MethCall, extract_calls};
 pub use cli::{Cli, OutputMode, PairedMode, ResolvedConfig};
 pub use error::BismarkExtractorError;
 pub use mbias::{MbiasPos, MbiasTable};
+pub use mbias_writer::{derive_mbias_basename, mbias_txt_path, write_mbias_txt};
 pub use overlap::{drop_overlap, is_forward_pair_strand};
 pub use params::ExtractParams;
 pub use pipeline::{extract_pe, extract_se};

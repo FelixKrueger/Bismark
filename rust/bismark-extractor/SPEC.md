@@ -107,7 +107,7 @@ where `strand` is `+`/`-` (uppercase XM = `+`, lowercase = `-`) and `methylation
 
 | File | When | Format |
 |------|------|--------|
-| `{input_basename}M-bias.txt` | Unless `--mbias_off` | 6 sections (PE) or 3 (SE), each: header line + per-position 4-col table `position<TAB>count_meth<TAB>count_unmeth<TAB>percentage` |
+| `{input_basename}M-bias.txt` | Unless `--mbias_off` | 6 sections (PE) or 3 (SE), each: header line + per-position 5-col table `position<TAB>count methylated<TAB>count unmethylated<TAB>% methylation<TAB>coverage`. Rev 3 correction (Phase D): rev 1/2 said "4-col"; Perl `bismark_methylation_extractor:729` actually emits 5 columns (the 5th is `coverage = count_meth + count_un`). Zero-coverage rows render `% methylation` as an empty string (literal `\t\t` between unmeth and coverage). |
 | `{input_basename}M-bias_R1.png` | If `GD::Graph` installed (Perl-only) | PNG plot — **deferred in v1.0 of Rust port** |
 | `{input_basename}M-bias_R2.png` | (same) | (same) |
 
@@ -380,7 +380,7 @@ fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: Bismar
 
 **Endpoint-semantics verification deferred to Phase C** (NOT the polarity — that's locked above). At implementation time, run the overlap fixture (synthetic PE pair with known R1 ref_end and R2 calls at `r1_ref_end - 1`, `r1_ref_end`, `r1_ref_end + 1`) to confirm Perl + Rust agree at boundary positions. If a discrepancy emerges, the candidate root causes are: (a) inclusive vs exclusive interpretation of `CigarExt::reference_end` (already invariant-tested via dedup); (b) 1-based vs 0-based off-by-one in `read_pos → ref_pos` mapping for InDel-bearing reads.
 
-**Edge case:** if R1 and R2 don't overlap at all (mate-pair span > read length), the filter is a no-op — non-overlapping calls trivially pass the strict comparison.
+**Edge case (rev 3 correction, Phase C surfaced):** if R1 and R2 don't overlap at all because R2 is wholly downstream of `r1_ref_end` (typical "large insert" forward pair), **all R2 calls are dropped**, NOT preserved as a no-op. Rev 1/2 said "no-op"; that was a biological-intuition mistake. Perl `:2905-2906` uses an early-exit `return` in the per-call iteration: as soon as any R2 call has `ref_pos >= r1_ref_end`, the entire R2 processing for that pair terminates. R2 calls inside R1's span are KEPT (because they're `< r1_ref_end`); R2 calls past R1's end are dropped together. This is byte-identity-load-bearing for Phase H and verified by `drop_overlap_disjoint_pair_drops_all_r2_calls_downstream_of_r1_end` unit test.
 
 ### 7.5 `route_call` — output dispatch
 
@@ -602,7 +602,7 @@ Integration tests then run the Rust binary against the BAM and compare each outp
 | Mixed SE+PE in same BAM | Currently undefined; either auto-detect per-record or reject |
 | Empty input BAM | `EmptyInput` error, no output files (matches dedup pattern) |
 | Coordinate-sorted input | Reject with the same `UnsortedInput` message as `bismark-io` already produces |
-| **Directional library** (only OT + OB strand records — no CTOT/CTOB) | **Rev 1 addition** (Reviewers A+B): Rust output's CTOT/CTOB files MUST be empty (or absent depending on FH-creation strategy) to match Perl. Closes Alan's port's "spurious CTOT/CTOB files emitted for directional data" bug. Fixture: a known directional-library BAM (Bismark default mode); assert CTOT/CTOB split files are 0-byte (Perl) or absent (Rust if FHs lazy-created). |
+| **Directional library** (only OT + OB strand records — no CTOT/CTOB) | **Rev 3 correction (Phase B surfaced):** Rust output's CTOT/CTOB files **MUST exist on disk** with the **literal version header line as their only content** (NOT 0-byte or absent). Rev 1 said "0-byte (Perl) or absent (Rust if FHs lazy-created)"; that was wrong about Perl. Default mode: Perl `:5405-5430` opens `CpG_OT/CTOT/CTOB/OB` eagerly via `open(...) unless($mbias_only)` and immediately writes `"Bismark methylation extractor version $version\n"` via `print ... unless($no_header) unless($mbias_only)` — guarded only by those two flags, not by "any call routed here". `--merge_non_CpG` mode mirrors at `:5140-5325` (CpG + Non_CpG × 4 strands each). Phase B (rev 1) implemented eager-open with header to match Perl. Alan Hoyle's "spurious CTOT/CTOB content" bug is closed structurally by `BismarkPair::pair_strand` (per SPEC §6.1), NOT by file absence. Fixture: directional-library BAM (Bismark default mode); assert CTOT/CTOB files exist on disk with exactly the version header line and zero call rows. |
 | **Non-directional library** (all 4 strands populated) | Sibling fixture to directional; same shape but all 4 strand files non-empty. |
 | **Pair on different chromosomes** | Bismark never emits this. Defensive reject with clear error (matches `BismarkPair::from_mates` qname-equality + same-chr check if `bismark-io` enforces it; otherwise add at the extractor level). |
 | **Mixed-strand pair** (R1 OT + R2 OB) | Bismark never emits this. Defensive reject — matches `BismarkPair`'s strand-consistency check. |

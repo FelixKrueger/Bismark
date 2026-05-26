@@ -10,6 +10,7 @@ use std::path::Path;
 use crate::cli::{OutputMode, ResolvedConfig};
 use crate::error::BismarkExtractorError;
 use crate::mbias::MbiasTable;
+use crate::mbias_writer::{mbias_txt_path, write_mbias_txt};
 use crate::output::{OutputFileMap, SplittingReport, write_splitting_report};
 
 /// Aggregated mutable state threaded through `route_call`.
@@ -27,6 +28,13 @@ pub struct ExtractState {
     /// `[R1/SE, R2]` M-bias tables. Phase B only ever increments index 0;
     /// Phase C starts populating index 1 for paired-end reads.
     pub mbias: [MbiasTable; 2],
+    /// **Phase D**: `true` iff this run is paired-end. Set by the caller of
+    /// `ExtractState::new` (`extract_se` passes `false`; `extract_pe` passes
+    /// `true`). Decides whether `M-bias.txt` has 3 or 6 sections at
+    /// finalize time. NOT inferable from `mbias[1].max_position() == 0`
+    /// alone — an empty PE BAM would yield empty `mbias[1]` and get
+    /// misclassified as SE.
+    pub is_paired: bool,
     /// Eagerly-opened per-(context, strand) split files.
     pub fhs: OutputFileMap,
     /// Per-context counters for the splitting report.
@@ -43,10 +51,14 @@ impl ExtractState {
     /// Construct state for one input file. Eagerly opens all 12 split files
     /// in `config.output_dir` (writing the version header line to each
     /// unless `config.no_header`).
+    ///
+    /// `is_paired` (Phase D): caller sets `false` from `extract_se`, `true`
+    /// from `extract_pe`. Decides M-bias.txt section count (3 vs 6).
     pub fn new(
         config: &ResolvedConfig,
         input_path: &Path,
         input_basename: &str,
+        is_paired: bool,
     ) -> Result<Self, BismarkExtractorError> {
         let fhs = OutputFileMap::new(&config.output_dir, input_basename, config.no_header)?;
         let splitting_report_path = config
@@ -60,6 +72,7 @@ impl ExtractState {
             // for Phase E's route_call short-circuit pre-wiring.
             mbias_only: false,
             mbias: [MbiasTable::default(), MbiasTable::default()],
+            is_paired,
             fhs,
             report: SplittingReport::default(),
             input_path: input_path.to_path_buf(),
@@ -68,13 +81,26 @@ impl ExtractState {
         })
     }
 
-    /// Flush every split-file writer + emit the splitting report.
+    /// Flush every split-file writer + emit the splitting report + emit
+    /// M-bias.txt (unless `--mbias_off`).
     ///
-    /// **Invariant** (rev 1): `finalize` failure leaves the already-written
-    /// split files in place on disk. The caller does NOT invoke
+    /// **Order** (Phase D rev 1, Reviewer B C1 fix):
+    /// 1. `fhs.flush_all()` — buffered writes in the 12 split files
+    /// 2. `write_splitting_report` — Perl `:2463` (inline in
+    ///    `process_X_read_file`, BEFORE `produce_mbias_plots`)
+    /// 3. `write_mbias_txt` (unless `mbias_off`) — Perl `:314` (after
+    ///    `process_X_read_file` returns)
+    ///
+    /// Rev 0 of the Phase D plan had `M-bias.txt → splitting_report`; that
+    /// inverted Perl's order and would have lost the splitting-report on
+    /// a `write_mbias_txt` failure (e.g. disk-full). Real Perl writes the
+    /// report first, so the partial-failure mode preserves diagnostic info.
+    ///
+    /// **Invariant**: `finalize` failure leaves the already-written split
+    /// files in place on disk. The caller does NOT invoke
     /// `cleanup_partial_outputs` after a `finalize` failure — the records
-    /// had already been routed successfully; failure here means the report
-    /// write or final flush hit an I/O error after the data was on disk.
+    /// had already been routed successfully; failure here means the
+    /// post-loop writes hit an I/O error after the data was on disk.
     /// Matches Perl's "die after writing" semantics.
     pub fn finalize(&mut self, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
         self.fhs.flush_all()?;
@@ -85,6 +111,10 @@ impl ExtractState {
                 config,
                 &self.report,
             )?;
+        }
+        if !config.mbias_off {
+            let mbias_path = mbias_txt_path(&config.output_dir, &self.input_path);
+            write_mbias_txt(&mbias_path, &self.mbias, self.is_paired)?;
         }
         Ok(())
     }
