@@ -129,6 +129,32 @@ pub enum BismarkDedupError {
     #[error("std I/O: {0}")]
     StdIo(#[from] std::io::Error),
 
+    /// v1.2.1-beta.1: the input file's qnames look like bcl-convert format
+    /// (matches `:([CAGTN\+]+)_\d:N:\d:([CAGTN\+]+)$`) but the user passed
+    /// `--barcode` / `--umi` instead of `--bclconvert`. Running `--barcode`
+    /// against bcl-convert qnames silently extracts the i7 tail (NOT the
+    /// UMI), producing nonsense dedup keys.
+    ///
+    /// Mirrors Perl `deduplicate_bismark`'s fatal error at lines 173-178
+    /// inside the `test_readIDs_for_bclconvert` path (Perl function at
+    /// line 915-995). Issue reference:
+    /// <https://github.com/FelixKrueger/Bismark/issues/699>.
+    #[error(
+        "input file's qnames look like bcl-convert format (e.g. {qname:?}) — \
+         the data carries internal UMIs added by bcl-convert (Illumina). \
+         Running --barcode/--umi against this format silently extracts the \
+         i7 tail instead of the UMI, producing nonsense dedup keys. \
+         Solutions:\n  \
+         a) re-run with --bclconvert to use the internal UMI, OR\n  \
+         b) reform the readIDs to move UMIs to the end of the readID, OR\n  \
+         c) re-run Bismark alignment with --icpc.\n\
+         See https://github.com/FelixKrueger/Bismark/issues/699"
+    )]
+    BclconvertFormatWithBarcodeFlag {
+        /// First record's qname that matched the bcl-convert format.
+        qname: String,
+    },
+
     /// UMI mode (`--barcode` / `--umi` / `--bclconvert`) was requested but a
     /// record's qname did not match the extractor's pattern.
     ///
