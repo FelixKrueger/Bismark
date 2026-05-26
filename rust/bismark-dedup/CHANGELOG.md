@@ -54,8 +54,14 @@ hint pointing to `--bclconvert`.
 ### Cost
 
 One extra reader-open + one record read per input file when UMI mode is
-`--barcode`. Microseconds for BAM/SAM; slightly more for CRAM (FASTA
-reference repo built twice). Acceptable for the safety gain.
+`--barcode`. Microseconds for BAM/SAM. For **CRAM input + `--barcode`
+mode** the FASTA reference repository now gets built **3 times** per
+file (once for auto-detect, once for `resolve_paired_mode`, once for
+the dedup pipeline) — was 2× before this patch. CRAM users in UMI mode
+should expect ~3-5 seconds of additional FASTA-repo build time per
+input. Tracked as a v1.x optimization (unify into a single
+`examine_input` helper that returns SE/PE + bclconvert-conflict in one
+reader-open).
 
 ### Perl reference
 

@@ -1728,6 +1728,16 @@ fn umi_barcode_on_record_without_umi_errors_with_extraction_failed() {
 
 /// Positive: `--barcode` against a bcl-convert-format input triggers
 /// the safety net.
+///
+/// Pins (per Reviewer B M4 + L1):
+///   - exit code 1 specifically (not just any non-zero)
+///   - the offending qname appears in the error message
+///   - the bcl-convert hint appears
+///   - all 3 actionable solutions appear (re-run with --bclconvert,
+///     reform readIDs, re-run Bismark with --icpc)
+///   - the issue #699 link appears
+///   - the Perl-mirror narration ("Two barcodes found in read ID")
+///     appears BEFORE the error (per Reviewer B M2)
 #[test]
 fn autodetect_barcode_against_bclconvert_input_errors_with_helpful_hint() {
     let dir = TempDir::new().unwrap();
@@ -1742,8 +1752,17 @@ fn autodetect_barcode_against_bclconvert_input_errors_with_helpful_hint() {
         .arg(&input)
         .assert()
         .failure()
+        .code(1)
         .stderr(predicates::str::contains("bcl-convert format"))
-        .stderr(predicates::str::contains("--bclconvert"));
+        .stderr(predicates::str::contains("re-run with --bclconvert"))
+        .stderr(predicates::str::contains("reform the readIDs"))
+        .stderr(predicates::str::contains("re-run Bismark"))
+        .stderr(predicates::str::contains("--icpc"))
+        .stderr(predicates::str::contains("issues/699"))
+        // Perl-mirror narration before the fatal error
+        .stderr(predicates::str::contains("Two barcodes found in read ID"))
+        .stderr(predicates::str::contains("suspected bcl-convert UMI"))
+        .stderr(predicates::str::contains("suspected multiplexing index"));
 }
 
 /// Negative: `--bclconvert` on bcl-convert input is the correct flag.
@@ -1782,6 +1801,32 @@ fn autodetect_barcode_on_barcode_input_proceeds_without_conflict() {
         .assert()
         .success()
         .stderr(predicates::str::contains("Deduplicating data in UMI mode"));
+}
+
+/// Negative (Reviewer A test-gap): `--bclconvert` against barcode-format
+/// input — auto-detect is skipped (Rust gates on Some(Barcode)). Will
+/// fail later at the extractor (UmiExtractionFailed) because the
+/// bcl-convert regex doesn't match barcode-format qnames. Locks the
+/// contract that `--bclconvert` proceeds past the auto-detect gate.
+#[test]
+fn autodetect_bclconvert_on_barcode_input_skips_autodetect_fails_at_extraction() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--bclconvert") // WRONG flag for barcode-format input
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure()
+        .code(1)
+        // The auto-detect is skipped (Rust gates on --barcode only);
+        // failure happens later at UmiExtractionFailed.
+        .stderr(predicates::str::contains("Two barcodes found").not())
+        .stderr(predicates::str::contains("UMI in qname"));
 }
 
 /// Negative: position-only dedup (no UMI flag) skips the auto-detect

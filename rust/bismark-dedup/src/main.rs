@@ -56,15 +56,27 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
     //
     // Perl `test_readIDs_for_bclconvert` (deduplicate_bismark:915-995) peeks
     // the first record's qname and matches against the bcl-convert internal
-    // UMI regex. If the format matches but the user passed --barcode/--umi
-    // (not --bclconvert), Perl exits with a fatal error pointing to the
-    // bcl-convert flag (Perl lines 173-178).
+    // UMI regex. Perl gates the call on `$rrbs` (set by ANY of `--barcode`,
+    // `--umi`, OR `--bclconvert`), so Perl runs the test under all three
+    // UMI flags — including `--bclconvert`, where on barcode-format qnames
+    // Perl takes the harmless-success branch and emits the standard
+    // "UMI mode" banner (not "bcl-convert UMI mode").
     //
-    // Rust port: same flow, but the bcl-convert regex match is delegated
-    // to `bismark_io::umi::extract_bclconvert` (shipped in v1.2.0-beta.1).
-    // Runs ONLY when --barcode/--umi is the active mode — --bclconvert
-    // never has the conflict, no UMI flag means dedup doesn't engage UMI
-    // mode at all.
+    // The Rust port narrows the gate to `--barcode` / `--umi` only. Under
+    // `--bclconvert` the auto-detect is skipped; on barcode-format qnames
+    // the failure surfaces later via `UmiExtractionFailed` (the extractor
+    // can't match the bcl-convert regex against tail-only qnames). End
+    // result for the user is the same (informative error), but the STDERR
+    // sequence diverges from Perl (Rust emits "bcl-convert UMI mode"
+    // banner first, then fails; Perl would emit "UMI mode" then fail).
+    // Pure-rust strict-byte-identity on STDERR is not in scope for the
+    // v1.2.1-beta.1 patch — tracked as a v1.x polish item.
+    //
+    // The auto-detect ALSO operates on the first MAPPED record (noodles
+    // silently filters `flags & 0x4` unmapped reads), whereas Perl tests
+    // the first non-header record regardless of mapping flag. Harmless in
+    // practice (uniform qnames across all records of a Bismark BAM) but
+    // documented for future-Felix.
     if config.umi_mode == Some(bismark_dedup::cli::UmiMode::Barcode) {
         for input in &config.files {
             check_bclconvert_format_conflict(input, &config)?;
@@ -284,11 +296,55 @@ fn check_bclconvert_format_conflict(
     };
 
     if bismark_io::umi::extract_bclconvert(&first_qname).is_some() {
+        // Mirror Perl `test_readIDs_for_bclconvert` narration at
+        // `deduplicate_bismark:976-980`: emit the parsed bcl-convert
+        // barcode + i7 index to stderr BEFORE the fatal error, so
+        // users see what we found. Re-run extraction here to capture
+        // both groups (the extractor returns only group 1 normally).
+        // Captured-group regex equivalent of Perl's
+        // `/:([CAGTN\+]+)_\d:N:\d:([CAGTN\+]+)$/`.
+        let qname_str = String::from_utf8_lossy(&first_qname);
+        if let Some((bcl_umi, i7)) = parse_bclconvert_groups(&qname_str) {
+            eprintln!("\nTwo barcodes found in read ID (>>{qname_str}<<):");
+            eprintln!("Barcode 1: {bcl_umi} (suspected bcl-convert UMI)");
+            eprintln!("Barcode 2: {i7} (suspected multiplexing index)\n");
+        }
         return Err(BismarkDedupError::BclconvertFormatWithBarcodeFlag {
-            qname: String::from_utf8_lossy(&first_qname).into_owned(),
+            qname: qname_str.into_owned(),
         });
     }
     Ok(())
+}
+
+/// Parse the `:UMI_<mate>:N:<d>:<i7>` tail of a qname into the two
+/// captured groups `(bcl_umi, i7)`. Returns `None` if the qname doesn't
+/// match. Mirrors Perl's captured-group regex at
+/// `deduplicate_bismark:971` (`:([CAGTN\+]+)_\d:N:\d:([CAGTN\+]+)$`).
+fn parse_bclconvert_groups(qname: &str) -> Option<(&str, &str)> {
+    // Find `:N:<d>:` substring; the i7 is everything after it.
+    let n_idx = qname.find(":N:")?;
+    let after_n = &qname[n_idx + 3..]; // strip ":N:"
+    // Skip one digit + ":"
+    let mut chars = after_n.char_indices();
+    let (_, c) = chars.next()?;
+    if !c.is_ascii_digit() {
+        return None;
+    }
+    let (i_after_digit, c2) = chars.next()?;
+    if c2 != ':' {
+        return None;
+    }
+    let i7 = &after_n[i_after_digit + 1..];
+
+    // Now find the umi: the segment before `:N:` is `...:UMI_<mate>`
+    let before_n = &qname[..n_idx];
+    let umi_underscore = before_n.rfind('_')?;
+    let umi_colon = before_n[..umi_underscore].rfind(':')?;
+    let umi = &before_n[umi_colon + 1..umi_underscore];
+    if umi.is_empty() || i7.is_empty() {
+        return None;
+    }
+    Some((umi, i7))
 }
 
 /// Resolve the SE/PE mode: explicit flag wins, else auto-detect from the
