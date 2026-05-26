@@ -1,6 +1,6 @@
 # `bismark-extractor` — SPEC
 
-**Status:** scaffold / recon-complete. Flag inventory + structural-pitfall catalog locked from Perl source recon. Body fill-in + dual plan-review still pending.
+**Status:** rev 1. Dual plan-review complete (A + B both NEEDS-REVISIONS); all critical + important findings folded in. Re-review pending.
 
 **Owners:** issue [#798 (epic)](https://github.com/FelixKrueger/Bismark/issues/798), [#803 (this spec)](https://github.com/FelixKrueger/Bismark/issues/803).
 
@@ -26,24 +26,25 @@ Port the methylation extractor — the biggest single-tool rewrite in the Bismar
 **Out of scope for v1.0 — deferred to a later v1.x**:
 
 - M-bias PNG plot rendering (Perl uses `GD::Graph`; v1.0 emits `M-bias.txt` only; PNG can be added once the `bismark-mbias-plot` Rust dep is settled).
-- `--CX_context` cytosine-report (low-priority; Perl supports via the coverage2cytosine subprocess).
+
+**Corrected rev 1** (Reviewer B finding): `--CX_context` is **in scope** for v1.0 via subprocess pass-through to Perl `coverage2cytosine` (matches §3 row 24 + §6.6 subprocess-vs-inline plan). The rev 0 "deferred" note was inconsistent with §3 and is removed.
 
 **Subprocess vs inline `--bedGraph`/`--cytosine_report`** — see §11 open question. Default plan: subprocess to `bismark2bedGraph` / `coverage2cytosine` (matching Perl's architecture) until those crates exist as Rust binaries, at which point we switch to inline.
 
 ## 3. CLI flag inventory
 
-All 34 Perl flags catalogued from the recon pass. Citations are Perl line numbers in `bismark_methylation_extractor`.
+All 35 Perl flags catalogued from the recon pass (the original "34" miscount in rev 0 conflated `--CX` and `--CX_context` as one row; they're a flag + alias). Citations are Perl line numbers in `bismark_methylation_extractor`.
 
 | # | Flag | Aliases | Default | Behavior | Side effects / interactions | Perl ln |
 |---|------|---------|---------|----------|----------------------------|---------|
 | 1 | `--help` | `--man` | OFF | Print help and exit. | — | 959 |
 | 2 | `--paired-end` | `-p` | auto | Force PE mode. | Mutex with `-s`; auto-detect via `@PG` if neither set. | 960 |
 | 3 | `--single-end` | `-s` | auto | Force SE mode. | Mutex with `-p`. | 961 |
-| 4 | `--fasta` | — | OFF | (Legacy; accepted but unused — variable never read in 6050 LOC). | Document as accepted-no-op; emit a one-line stderr deprecation warning. | 962 |
+| 4 | `--fasta` | — | OFF | (Splitting-report-only annotation; no FASTA output produced.) When set, adds one line to `_splitting_report.txt`: `"Genomic equivalent sequences will be printed out in FastA format\n"`. | **Corrected rev 1** (Reviewer B finding): NOT a no-op — variable `$genomic_fasta` IS read at Perl line 5040. Rust port emits the same splitting-report line conditionally; no other behavior. | 962, 5040 |
 | 5 | `--ignore` | — | 0 | Trim N bp from 5' of R1 (or SE). | Requires CIGAR adjustment. | 963 |
 | 6 | `--ignore_r2` | — | 0 | Trim N bp from 5' of R2. | PE-only. | 964 |
-| 7 | `--ignore_3prime` | — | 0 | Trim N bp from 3' of R1 (or SE). | — | (epic §) |
-| 8 | `--ignore_3prime_r2` | — | 0 | Trim N bp from 3' of R2. | PE-only. | (epic §) |
+| 7 | `--ignore_3prime` | — | 0 | Trim N bp from 3' of R1 (or SE). | — | 989 |
+| 8 | `--ignore_3prime_r2` | — | 0 | Trim N bp from 3' of R2. | PE-only. | 990 |
 | 9 | `--comprehensive` | — | OFF | Merge 4 strand files per context into 1. | Drops CTOT/CTOB strand-specific files; output count: 3 (or 2 with `--merge_non_CpG`). | 965 |
 | 10 | `--report` | — | ON | Emit `_splitting_report.txt`. | Always ON; user must explicitly opt out (which Perl doesn't expose — always written). | 966 |
 | 11 | `--version` | — | OFF | Print version + exit. | — | 967 |
@@ -62,7 +63,7 @@ All 34 Perl flags catalogued from the recon pass. Citations are Perl line number
 | 24 | `--CX` | `--CX_context` | OFF | Report all C-context (not just CpG) in cytosine_report. | `--cytosine_report` only; runtime ↑↑. | 979 |
 | 25 | `--split_by_chromosome` | — | OFF | Per-chr output of cytosine_report. | `--cytosine_report` only. | 980 |
 | 26 | `--buffer_size` | — | 2G | Sort buffer for `bismark2bedGraph`. | Passed through; mutex with `--ample_memory`. | 981 |
-| 27 | `--samtools_path` | — | which samtools | Path to samtools (BAM read on Perl side). | **Accepted-no-op in Rust port** — bismark-io is pure-Rust noodles, no subprocess. | 982 |
+| 27 | `--samtools_path` | — | which samtools | Path to samtools (BAM read on Perl side). | **Accepted in Rust port, emits one-line stderr warning**: `warning: --samtools_path ignored — bismark-io uses pure-Rust noodles, no samtools subprocess`. Matches the dedup port's precedent. | 982 |
 | 28 | `--gzip` | — | OFF | Gzip-compress all split files. | Output filenames suffix `.gz`. | 983 |
 | 29 | `--mbias_only` | — | OFF | Skip all output files; emit M-bias only. | Mutex with `--bedGraph`, `--cytosine_report`, `--mbias_off` (Perl dies with error). | 984 |
 | 30 | `--mbias_off` | — | OFF | Skip M-bias computation. | Mutex with `--mbias_only`. | 985 |
@@ -74,8 +75,9 @@ All 34 Perl flags catalogued from the recon pass. Citations are Perl line number
 
 **Notes:**
 
-- Perl `GetOptions` lists 26 entries; the additional 8 in this table come from auxiliary flags surfaced by reading the help text + the flag-dispatch logic (e.g. `--cutoff`, `--counts`, `--genome_folder` are passed through subprocesses).
-- Perl's `--CX` is a real flag (alias for `--CX_context`, Perl line 979); the original epic #798 listed it under "mode flags" but it actually belongs to the cytosine-report subgroup.
+- Perl `GetOptions` block has **35 distinct entries** (Perl lines 959-993). The "26" claim in rev 0 of this SPEC was a recon undercount. Every row above corresponds to a real Perl GetOptions entry.
+- `--CX` and `--CX_context` are the same flag — Perl's GetOptions registers them as alternates. Row 24 lists both names.
+- The "Side effects" column is the byte-identity-affecting behaviour; the "Behavior" column is the user-facing semantic.
 
 ## 4. Output topology
 
@@ -138,6 +140,7 @@ The XM tag (per-base methylation call string) drives all output routing. Charact
 | `h` | CHH | unmethylated | CHH split file, `-` strand |
 | `U` / `u` | unknown context (CN or CHN) | (skipped silently — Perl 2970, 3052, 4548) | — |
 | `.` | non-cytosine base | (skipped) | — |
+| any other byte | **invalid XM character** — Perl `die`s at lines 2972 / 3054 (unless `--mbias_only`); Rust mirrors via `BismarkExtractorError::InvalidXmByte` + partial-output cleanup | propagates error to `main` | — |
 
 **Strand sub-routing** (which of the 4 strand-specific files within a context):
 
@@ -202,11 +205,22 @@ Replace Perl's fork+modulo model:
 
 **Prevents:** the gzip-decompression bottleneck identified in profiling (Perl decompresses BAM N times per N processes); byte-identity drift across `--multicore N` values.
 
-### 6.5 CIGAR reversal is the reader's responsibility
+### 6.5 XM + CIGAR orientation for `-` strand reads
 
-`bismark-io`'s `BismarkRecord::cigar()` returns the noodles `Cigar` exactly as parsed from the BAM. The extractor MUST NOT reverse the CIGAR — Perl reverses it for output formatting (Perl lines 1619-1621, 2877-2886) but that's an output-side detail. The XM tag is already stored as-aligned by Bismark itself.
+**Corrected in rev 1** (Reviewer A finding): Perl reverses **both** the XM tag (lines 1619-1621 SE, 1933-1939 PE R1, 2877-2886 PE R2, 4422-4425 yacht) AND the expanded CIGAR (lines 2877-2886) for `-` strand reads (OB / CTOT pair-strand). This is **not** "output formatting" — it's a read-orientation correction: BAM stores `-` strand reads reverse-complemented (so they align to the `+` strand), which means `XM[0]` in the BAM is the **3' end of the sequenced read**, not the 5' end. For M-bias accumulation by sequencing-cycle position, we need bytes oriented by the **5' end of the original sequenced read**.
 
-**Prevents:** the double-reversal class of bugs (read once on input, reversed on output, becomes wrong if a reviewer "fixes" the input by reversing it too).
+The original rev 0 claim that "the extractor MUST NOT reverse" was wrong — walking unreversed XM would put M-bias positions end-to-end-flipped for every `-` strand record.
+
+**v1.0 plan**: `bismark-io 1.0.0-beta.6` (additive bump in Phase A) gains a read-orientation helper. Two API options under consideration:
+
+- **(a) `BismarkRecord::xm_read_oriented() -> Vec<u8>`** — returns the orientation-corrected XM bytes (clone of `xm()` for `+` strand; reversed for `-`). Plus a parallel `cigar_read_oriented() -> Cigar` for the CIGAR walker. Simple but two new accessors.
+- **(b) `BismarkRecord::iter_aligned() -> impl Iterator<Item = (read_pos_5p, ref_pos, xm_byte)>`** — a single iterator that yields already-corrected `(read_pos_5p, ref_pos, xm_byte)` triples, hiding the reversal complexity from consumers. Cleaner consumer API; more work in bismark-io.
+
+**Recommended**: (b). The extractor's `extract_calls` already needs lockstep XM-walking-with-CIGAR; consolidating in a `bismark-io` iterator means dedup (which doesn't use XM) is unaffected and any future consumer (e.g. `bismark2bedGraph`) gets the same corrected stream for free.
+
+**Prevents:** M-bias positions flipped end-to-end on every `-` strand record — a structural byte-identity regression class.
+
+**Perl reference:** lines 1619-1621 (SE `meth_call` reverse), 2880-2882 (PE `cigar` reverse), 4422-4425 (yacht).
 
 ### 6.6 Subprocess vs inline for `--bedGraph` / `--cytosine_report`
 
@@ -263,17 +277,27 @@ fn extract_calls(record: &BismarkRecord, ignore_5p: u32, ignore_3p: u32) -> Vec<
                 continue
     calls
 
-// `classify_xm_byte` is a 256-entry lookup table built at startup; per §5.
-fn classify_xm_byte(b: u8) -> Option<XmCall>:
+// `classify_xm_byte` returns a typed result: known methylation byte,
+// known non-call byte (U/u/.), or invalid byte (error).
+//
+// **Corrected rev 1** (Reviewer B finding): Perl `die`s at lines
+// 2972 / 3054 on unrecognised XM characters (unless `--mbias_only`).
+// rev 0's "_ => None" silently-skipped everything, which would mask
+// corrupt or malformed BAMs that Perl would reject loudly.
+fn classify_xm_byte(b: u8) -> Result<XmClassification, BismarkExtractorError>:
     match b:
-        b'Z' => Some(XmCall { context: CpG, methylated: true }),
-        b'z' => Some(XmCall { context: CpG, methylated: false }),
-        b'X' => Some(XmCall { context: CHG, methylated: true }),
-        b'x' => Some(XmCall { context: CHG, methylated: false }),
-        b'H' => Some(XmCall { context: CHH, methylated: true }),
-        b'h' => Some(XmCall { context: CHH, methylated: false }),
-        _    => None        // `U`/`u`/`.`/anything else: silently skip
+        b'Z' => Ok(MethylationCall(CpG, methylated: true)),
+        b'z' => Ok(MethylationCall(CpG, methylated: false)),
+        b'X' => Ok(MethylationCall(CHG, methylated: true)),
+        b'x' => Ok(MethylationCall(CHG, methylated: false)),
+        b'H' => Ok(MethylationCall(CHH, methylated: true)),
+        b'h' => Ok(MethylationCall(CHH, methylated: false)),
+        b'U' | b'u' => Ok(SkipUnknownContext),       // Perl: silently skipped
+        b'.' => Ok(SkipNonCytosine),                  // Perl: silently skipped
+        other => Err(BismarkExtractorError::InvalidXmByte { byte: other, ... }),  // Perl: die
 ```
+
+The `extract_calls` caller propagates `InvalidXmByte` via `?`; the pipeline's `cleanup_partial_output_on_err` (per Phase B dedup precedent) unlinks any partial output before the error reaches `main`. Matches Perl's "die before writing more" semantics (Perl lines 2972, 3054).
 
 **Invariants:**
 - After the loop, `read_pos == seq_len` (CIGAR consumes the read fully).
@@ -327,17 +351,39 @@ fn extract_pe(reader: AnyReader, config: &ResolvedConfig) -> Result<ExtractRepor
 
 Mirrors Perl lines 2891-2906 (forward / OT-CTOB) + 2976-2990 (reverse / OB-CTOT). The decision is made at the **reference-position** level, accounting for InDels via the same CIGAR walker as `extract_calls`.
 
+**Corrected in rev 1** (Reviewer A finding): the comparison uses `<=` / `>=` (inclusive), not `<` / `>` (strict). `r1_ref_end` from `CigarExt::reference_end` is the 1-based inclusive last reference position (matches Perl's `$start + MDN_count - 1`); calls AT that position must be dropped (R2 overlapping R1's last base is still overlap).
+
 ```text
 fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: BismarkStrand) -> Vec<MethCall>:
     if is_forward(pair_strand):
-        // OT / CTOB: R1 is upstream, R2 is downstream. Drop R2 calls at or before R1's reference_end.
+        // OT / CTOB: R1 is upstream, R2 is downstream. Drop R2 calls at OR BEFORE R1's
+        // reference_end (inclusive). Perl line 2905 uses `>=`.
         let r1_ref_end: u32 = pair.r1().cigar().reference_end(pair.r1().alignment_start()? as usize) as u32
         r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_end).collect()
     else:
-        // OB / CTOT: R2 is upstream, R1 is downstream. Drop R2 calls at or after R1's alignment_start.
+        // OB / CTOT: R2 is upstream, R1 is downstream. Drop R2 calls at OR AFTER R1's
+        // alignment_start (inclusive). Perl uses `<=` here.
         let r1_ref_start: u32 = pair.r1().alignment_start()? as u32
         r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_start).collect()
 ```
+
+Wait — re-read carefully. The Perl `>=` test at line 2905 is **`if (R2_pos >= R1_end) { skip }`** — meaning skip R2 calls whose position is AT or AFTER R1's end. So the KEEP filter is `R2_pos < R1_end` (strict less than). Rust filter: `c.ref_pos < r1_ref_end` (keep) ≡ skip `c.ref_pos >= r1_ref_end`. So actually the SPEC's original `c.ref_pos > r1_ref_end` (strict) was wrong — should be `>=`. Wait but we're writing the KEEP predicate. Let me restate:
+
+```text
+fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: BismarkStrand) -> Vec<MethCall>:
+    if is_forward(pair_strand):
+        // OT / CTOB: KEEP R2 calls strictly downstream of R1's reference_end.
+        // Perl's skip-test at line 2905: `if (R2_pos >= R1_end) { return }`. Inverse keep: `<`.
+        let r1_ref_end: u32 = pair.r1().cigar().reference_end(pair.r1().alignment_start()? as usize) as u32
+        r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_end).collect()
+    else:
+        // OB / CTOT: KEEP R2 calls strictly upstream of R1's alignment_start.
+        // Perl's skip-test (line 2989, '-' strand): `if (R2_pos <= R1_start) { return }`. Inverse keep: `>`.
+        let r1_ref_start: u32 = pair.r1().alignment_start()? as u32
+        r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_start).collect()
+```
+
+Hmm, this is getting confused. **TODO for Phase C implementation**: write the comparator predicates against the actual Perl source byte-for-byte. The SPEC narrative above documents the intent (drop overlapping calls including the boundary position) but the exact `<`/`<=`/`>`/`>=` polarity needs to be re-verified at implementation time against Perl lines 2891-2906 and 2976-2990. This is a **Phase C blocker** — implementation must check against both the Perl source and a known overlap fixture before merge.
 
 **Edge case:** if R1 and R2 don't overlap at all (one chromosome end, mate-pair span > read length), the filter is a no-op. Perl's behaviour is identical (the comparison is always evaluated; non-overlapping pairs trivially pass).
 
@@ -452,7 +498,9 @@ struct ExtractState {
 }
 ```
 
-`OutputFileMap` is an enum-tagged dispatch table keyed by `(CytosineContext, StrandIdx)` in default mode, by `CytosineContext` in comprehensive, by `(CpG|NonCpG, StrandIdx)` in `--merge_non_CpG`, by a single key in `--yacht`. Implementation can use `HashMap<Key, BufWriter<File>>` (simple) or a typed enum (faster but more boilerplate).
+`OutputFileMap` is an enum-tagged dispatch table keyed by `(CytosineContext, StrandIdx)` in default mode, by `CytosineContext` in comprehensive, by `(CpG|NonCpG, StrandIdx)` in `--merge_non_CpG`, by a single key in `--yacht`. Implementation: `HashMap<Key, BufWriter<File>>` (simple) or a typed enum (faster but more boilerplate).
+
+**Buffering policy** (Rev 1 addition — Reviewer B finding): each entry in `OutputFileMap` wraps its `File` (or `flate2::write::GzEncoder<File>` for `--gzip`) in an 8-KiB `BufWriter`. The buffer is flushed by `Drop` at writer-close time (i.e. when `ExtractState` is dropped after `finalize()`). For `--gzip` paths, the `GzEncoder` itself buffers internally; the outer `BufWriter` minimizes per-call write syscalls. Phase B implements + tests the per-record write path; Phase E adds the gzip variant.
 
 #### `ExtractParams<'a>` (the §6.3 argument struct)
 
@@ -493,6 +541,14 @@ Mirror dedup's per-helper structure:
 | `mbias_accumulate_increments_meth_for_uppercase` | Single `Z` call → `mbias[0].cpg[pos].meth == 1` |
 | `mbias_accumulate_increments_unmeth_for_lowercase` | Single `z` call → `mbias[0].cpg[pos].unmeth == 1` |
 | `mbias_accumulate_routes_r2_to_index_1` | `ReadIdentity::R2` increments `mbias[1].*` |
+| **`mbias_accumulate_routes_to_chg_table_for_X_byte`** | `X` call → `mbias[0].chg[pos].meth == 1`. **Rev 1 addition** (Reviewers A+B): closes Alan's missing-CHG bug at the unit-test level. |
+| **`mbias_accumulate_routes_to_chg_table_for_x_byte`** | `x` call → `mbias[0].chg[pos].unmeth == 1`. Same rationale. |
+| **`mbias_accumulate_routes_to_chh_table_for_H_byte`** | `H` call → `mbias[0].chh[pos].meth == 1`. Closes Alan's missing-CHH bug. |
+| **`mbias_accumulate_routes_to_chh_table_for_h_byte`** | `h` call → `mbias[0].chh[pos].unmeth == 1`. Same rationale. |
+| **`mbias_writer_emits_six_sections_for_pe`** | After all 3-contexts × 2-read-identities calls processed, `M-bias.txt` contains all 6 section headers in the right order (CpG R1, CHG R1, CHH R1, CpG R2, CHG R2, CHH R2). |
+| **`mbias_writer_emits_three_sections_for_se`** | SE input → 3 section headers, no R2 sections. |
+| **`extract_calls_rejects_invalid_xm_byte_with_error`** | XM containing `Q` (invalid) → `BismarkExtractorError::InvalidXmByte`. Locks Perl's `die` semantics (lines 2972, 3054). |
+| **`collector_reorders_worker_output_under_skew`** | Simulate 4 workers emitting `(input_idx, payload)` out of order; assert collector emits in strict input_idx order. **Rev 1 addition** (Reviewer B): unit-tests the §9.4 `BTreeMap<u64, WorkerOutput>` invariant. |
 | `route_call_default_mode_routes_to_strand_specific_file` | CpG + OT pair → `CpG_OT_*` file |
 | `route_call_comprehensive_mode_routes_to_context_only_file` | `--comprehensive` + CpG → `CpG_*` file (no strand suffix) |
 | `route_call_merge_non_cpg_routes_chg_chh_to_non_cpg_file` | `--merge_non_CpG` + `X` → `Non_CpG_OT_*` file |
@@ -523,13 +579,17 @@ Integration tests then run the Rust binary against the BAM and compare each outp
 
 `#[ignore]`'d in `tests/byte_identity_real_data.rs`. Uses the existing baselines at `~/Desktop/TrimG_Bismark_test/profiling/` (10M PE) + `~/Desktop/TrimG_Bismark_test/profiling_full/` (55M PE) — same datasets the dedup port validated against.
 
-| Assertion | What |
-|-----------|------|
-| Each of 12 split files sorted-md5 equal | `gzcat <rust_split> \| sort \| md5 == gzcat <perl_split> \| sort \| md5` |
-| `M-bias.txt` byte equality | Includes the 6 sections (CpG/CHG/CHH × R1/R2) in the right order |
-| `_splitting_report.txt` byte equality | Parameter summary + counts |
-| `--bedGraph` chain: `.bedGraph.gz` + `.bismark.cov.gz` sorted-md5 equal | (Phase G — subprocess to Perl `bismark2bedGraph`) |
-| `--cytosine_report` chain: `CpG_report.txt.gz` sorted-md5 equal | (Phase G — subprocess to Perl `coverage2cytosine`) |
+**Corrected rev 1** (Reviewers A + B both flagged): each split file gets BOTH an unsorted byte-equality assertion AND a sorted-md5 smoke check. The sorted-md5 alone would hide line-reordering bugs (e.g. rayon worker output emitted out of input order, the XM-reversal bug producing the right calls in the wrong order, or Alan's strand-routing bug producing CTOT/CTOB files for directional data that happen to sort-equal to empty Perl baselines).
+
+| Assertion | What | Rationale |
+|-----------|------|-----------|
+| Each of 12 split files **unsorted byte equality** at `--multicore 1` | `cmp <rust_split> <perl_split>` (or `gzcmp` for `.gz`) | The byte-identity contract. Catches reordering, drift, and content bugs. |
+| Each of 12 split files **sorted-md5 equality** at `--multicore 4` | `gzcat <rust_split> \| sort \| md5 == gzcat <perl_split> \| sort \| md5` | The multicore path may reorder; sorted-md5 is the order-invariant content check. |
+| `M-bias.txt` byte equality | Includes the 6 sections (CpG/CHG/CHH × R1/R2) in the right order | Catches section-ordering bugs AND the missing-CHG/CHH bug (Alan's port produced only CpG sections). |
+| `_splitting_report.txt` byte equality | Parameter summary + counts; expect-`--fasta`-line if flag set (per §3 row 4 correction). | — |
+| **`--multicore 4` byte-identity vs `--multicore 1` Rust output** | Run Rust extractor at N=1 and N=4 on same input; compare each split file with `cmp` (unsorted). | The locked invariant from §9 — "any N produces byte-identical output to N=1." This is the strongest test of the parallelism design. |
+| `--bedGraph` chain: `.bedGraph.gz` + `.bismark.cov.gz` sorted-md5 equal | (Phase G — subprocess to Perl `bismark2bedGraph`) | Sorted because Perl's bedGraph generates a sort step internally. |
+| `--cytosine_report` chain: `CpG_report.txt.gz` sorted-md5 equal | (Phase G — subprocess to Perl `coverage2cytosine`) | Same. |
 
 ### 8.4 Edge case fixtures
 
@@ -544,6 +604,11 @@ Integration tests then run the Rust binary against the BAM and compare each outp
 | Mixed SE+PE in same BAM | Currently undefined; either auto-detect per-record or reject |
 | Empty input BAM | `EmptyInput` error, no output files (matches dedup pattern) |
 | Coordinate-sorted input | Reject with the same `UnsortedInput` message as `bismark-io` already produces |
+| **Directional library** (only OT + OB strand records — no CTOT/CTOB) | **Rev 1 addition** (Reviewers A+B): Rust output's CTOT/CTOB files MUST be empty (or absent depending on FH-creation strategy) to match Perl. Closes Alan's port's "spurious CTOT/CTOB files emitted for directional data" bug. Fixture: a known directional-library BAM (Bismark default mode); assert CTOT/CTOB split files are 0-byte (Perl) or absent (Rust if FHs lazy-created). |
+| **Non-directional library** (all 4 strands populated) | Sibling fixture to directional; same shape but all 4 strand files non-empty. |
+| **Pair on different chromosomes** | Bismark never emits this. Defensive reject with clear error (matches `BismarkPair::from_mates` qname-equality + same-chr check if `bismark-io` enforces it; otherwise add at the extractor level). |
+| **Mixed-strand pair** (R1 OT + R2 OB) | Bismark never emits this. Defensive reject — matches `BismarkPair`'s strand-consistency check. |
+| **Invalid XM byte** (e.g. `Q` in the methylation-call string) | Per §5: `BismarkExtractorError::InvalidXmByte` + partial-output cleanup. Matches Perl `die` (lines 2972, 3054). |
 
 ## 9. Parallelism model — byte-identity invariant
 
@@ -586,47 +651,6 @@ When N=1 the producer + worker + collector still exist as separate threads, BUT 
 
 Per CLAUDE.md's profiling: extractor takes 12.3 min single-core, 5.4 min 4-core on 10M PE WGBS. Perl's fork+modulo achieves ~2.3× at N=4 because each fork re-decompresses the BAM. Rust's single-decompress + rayon-worker model should achieve **≥ 4× at N=4** (the BAM decompression is no longer the bottleneck). v1.1 `bismark-dedup`'s 4.88× at N=4 on the same dataset is the proven precedent; extractor should match or beat it because extraction is more CPU-heavy than dedup's hash-lookup.
 
-## 8. Test surface
-
-Same byte-identity contract as `bismark-dedup`'s v1.0 gate.
-
-### 8.1 Unit tests
-
-- **XM routing**: every (XM byte × strand) → expected output file mapping.
-- **CIGAR-aware ignore**: `--ignore N` correctly skips the first N read positions across `M`/`I`/`D`/`S` CIGAR ops.
-- **Overlap detection**: synthetic pairs with known overlap → `--no_overlap` drops the right calls.
-- **M-bias accumulation**: per (context × read-identity × position) increments match expected.
-- **`--comprehensive` / `--merge_non_CpG` / `--yacht`** flag-matrix output-file counts.
-
-### 8.2 Integration tests (10K CI fixtures)
-
-- Synthetic small-genome BAMs with **measurable CHG and CHH signal** (not just CpG-rich). Closes Alan's missing-CHG/CHH bug at the CI level.
-- Byte-identity vs Perl on each split file + `M-bias.txt` + `_splitting_report.txt`.
-
-### 8.3 Real-data byte-identity gate (10M PE WGBS + 55M full sample)
-
-`#[ignore]`'d in `tests/byte_identity_real_data.rs`. Compares Rust output to the existing Perl baseline at `~/Desktop/TrimG_Bismark_test/profiling/` (already on disk per session memory). Five separate assertions:
-
-1. Each of the 12 split files (sorted-md5 equality).
-2. `M-bias.txt` (byte equality, 6 sections).
-3. `_splitting_report.txt` (byte equality).
-4. Optional `--bedGraph` chain: `.bedGraph.gz` + `.bismark.cov.gz` (sorted-md5).
-5. Optional `--cytosine_report` chain: `CpG_report.txt.gz` (sorted-md5).
-
-## 9. Parallelism model — byte-identity invariant
-
-`--multicore N` MUST produce output byte-identical to `--multicore 1` for any N ≥ 1.
-
-**Mechanism** (per §6.4):
-
-1. Main thread reads input BAM via `ThreadedBamReader` (BGZF decompression already threaded — leverages v1.1 work).
-2. Records (or pairs) flow into a bounded MPMC channel.
-3. Rayon worker pool consumes the channel, computes per-record `Vec<MethCall>` + per-record M-bias deltas.
-4. Worker results flow into an output channel, **tagged with input-order index**.
-5. A single output-collector thread reorders by index and writes split files + accumulates M-bias.
-
-The output channel + reordering step is the byte-identity guard — output appears in input order regardless of which worker finished first.
-
 ## 10. Phases (implementation outline)
 
 Mirrors `bismark-dedup`'s phased cadence (A → G; merge each to `rust/iron-chancellor` separately).
@@ -651,7 +675,10 @@ Total: ~4,000 LOC Rust to port ~6,050 LOC Perl. Compression ratio matches dedup'
 | Critical | Subprocess-vs-inline for `--bedGraph` / `--cytosine_report` in v1.0? | **Subprocess** (matches Perl's architecture; faithful). Inline migration is a v1.x concern once bismark-bedgraph + bismark-coverage2cytosine ship. |
 | Open | `--fasta` flag — keep accepted-no-op or reject? | Keep accepted-no-op with a one-line stderr deprecation warning. |
 | Open | `--samtools_path` flag — accept-no-op like dedup, or reject? | Accept-no-op (matches dedup precedent). |
-| Open | `--genome_folder` Perl default is hardcoded mouse genome — keep, change, or reject? | Reject without explicit value when `--cytosine_report` is set (the Perl default is mouse-team-specific and would be misleading for general users). |
+| Open | `--genome_folder` Perl default is hardcoded mouse genome — keep, change, or reject? | **Reject** without explicit value when `--cytosine_report` is set (the Perl default is mouse-team-specific and would mis-target the genome silently). Error message: `--cytosine_report requires --genome_folder <PATH-TO-BISMARK-GENOME-DIR>; the Perl default mouse path is not honoured in the Rust port`. |
+| Resolved | Output buffering policy | `BufWriter<File>` (8 KiB) for plain output; `BufWriter<GzEncoder<File>>` for `--gzip` (resolved in §7.7 rev 1 addition). |
+| Resolved | `--samtools_path` accepted-no-op silent or with warning | **Emits stderr warning** (resolved in §3 row 27 rev 1; matches dedup precedent). |
+| Resolved | `--CX_context` scope | **In scope for v1.0** via subprocess pass-through to `coverage2cytosine` (resolved in §2 rev 1). |
 | Open | M-bias PNG plot rendering in v1.0 — port or defer? | **Defer** — `M-bias.txt` is the canonical output; PNG is a convenience and `GD::Graph` doesn't have a clean Rust equivalent yet. Emit a one-line stderr note that PNG plots require Perl Bismark for now. |
 | Open | Auto-detection of SE vs PE — use bismark-dedup's `@PG ID:Bismark` walker, or extractor-specific? | Reuse `bismark-dedup`'s pattern (extract it to `bismark-io` if not already there). |
 | Open | CHANGELOG strategy: one entry per phase, or one entry at v1.0 release? | One entry at v1.0 with a sub-list of per-phase additions. Phase-internal CHANGELOG churn isn't user-facing. |
@@ -681,3 +708,20 @@ Each maps to a §6 design choice that prevents the class of bug.
 ## 14. Revision history
 
 - **rev 0** (2026-05-26): scaffold + recon-complete. Flag inventory + output topology + structural design choices locked. Body algorithm sketches placeholder; full SPEC fill-in is the next task (`spec(extractor)` #71 in local task list, GitHub #803).
+- **rev 1** (2026-05-26): body fill-in (§7 algorithm sketches, §7.7 data structures, §8 test surface, §9 parallelism), then dual plan-review (A + B both NEEDS-REVISIONS) findings folded in. Specifically:
+  - **§6.5 corrected** — Perl reverses XM AND CIGAR for `-` strand reads (lines 1619-1621, 2877-2886). Plan: `bismark-io 1.0.0-beta.6` adds `iter_aligned()` adapter (option b). Rev 0's "extractor MUST NOT reverse" was wrong.
+  - **§7.1 corrected** — invalid XM byte produces `BismarkExtractorError::InvalidXmByte` (mirrors Perl `die`, lines 2972/3054), not silent skip.
+  - **§7.4** — overlap comparator polarity noted as Phase C verification blocker (Perl `>=` on line 2905, `<=` on line 2989); strict-`<`/`>` written for now but TBD against actual Perl.
+  - **§3 row 4 corrected** — `--fasta` is NOT unused; `$genomic_fasta` is read at Perl line 5040 (writes one splitting-report line). Rust port mirrors.
+  - **§3** — `--ignore_3prime`/`--ignore_3prime_r2` citations updated from `(epic §)` to Perl lines 989/990.
+  - **§3** — flag count corrected from 34 to 35 (rev 0's "26 + 8 reconciliation" was bogus; GetOptions has 35 distinct entries).
+  - **§3 row 27** — `--samtools_path` accepted-with-stderr-warning (matches dedup precedent), not silent no-op.
+  - **§2** — `--CX_context` IS in scope (subprocess pass-through to coverage2cytosine); contradiction with §3 row 24 resolved.
+  - **§5** — added "invalid XM byte" row to the byte-routing table.
+  - **§7.7** — buffering policy added (`BufWriter<File>` 8 KiB; `BufWriter<GzEncoder<File>>` for `--gzip`).
+  - **§8.1** — added 8 new unit tests: 4 CHG/CHH M-bias routing tests (close Alan's missing-CHG/CHH bug at unit level), 2 M-bias writer section-emission tests, 1 invalid-XM-byte error test, 1 collector-reorder-under-skew test.
+  - **§8.3** — strengthened byte-identity gate: each split file gets unsorted byte-equality at N=1 (catches reordering) AND sorted-md5 at N=4 (order-invariant content check). Added an explicit "N=4 byte-identical to N=1" assertion. Closes the sorted-md5-hides-reordering weakness.
+  - **§8.4** — added 5 new edge cases: directional library (CTOT/CTOB empty), non-directional library, cross-chr pair, mixed-strand pair, invalid XM byte.
+  - **§11** — `--genome_folder` default-mouse-path policy resolved (reject without explicit value). 3 previously-open items resolved (buffering, samtools_path, CX_context).
+  - **Stripped duplicate §8 + §9** that lingered from the scaffold→body-fillin transition.
+- Both review reports on file: `SPEC_REVIEW_A.md`, `SPEC_REVIEW_B.md`.
