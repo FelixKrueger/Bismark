@@ -629,6 +629,72 @@ fn check_not_coordinate_sorted(header: &Header) -> Result<(), BismarkIoError> {
     Ok(())
 }
 
+/// Auto-detect library mode (single-end vs paired-end) from a Bismark
+/// BAM header.
+///
+/// Walks the `@PG` lines, finds the Bismark-aligner entry (ID starting
+/// with `Bismark`), and inspects its command line for `-1`/`--1` AND
+/// `-2`/`--2` arguments (which Bismark only passes in paired-end mode).
+///
+/// Returns:
+/// - `Some(true)` — PE (Bismark @PG found with both `-1`/`--1` and `-2`/`--2`)
+/// - `Some(false)` — SE (Bismark @PG found, missing one or both of those)
+/// - `None` — no Bismark @PG line in the header; caller must error out
+///   (typically by demanding the user pass `--single`/`--paired` explicitly).
+///
+/// Mirrors Perl `deduplicate_bismark` lines 90–116. Promoted from
+/// `bismark-dedup/src/pipeline.rs:137` in `bismark-io 1.0.0-beta.7` to share
+/// the same header-detection logic with `bismark-extractor`.
+#[must_use]
+pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
+    // Serialize the header to its on-disk SAM text representation and
+    // search for the Bismark @PG line. This is robust to noodles API
+    // shape changes across versions (the SAM text format is the stable
+    // contract here, not the in-memory `Programs` type).
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut writer = noodles_sam::io::Writer::new(&mut buf);
+        if writer.write_header(header).is_err() {
+            return None;
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    for line in text.lines() {
+        // SAM header @PG line format: `@PG\tID:<id>\t...\tCL:<args>...`
+        // The `ID:Bismark` substring identifies the Bismark @PG.
+        if !line.starts_with("@PG") || !line.contains("ID:Bismark") {
+            continue;
+        }
+        // Look for -1/--1 AND -2/--2 in the command-line args. Bismark's
+        // PE invocation always has both; SE has neither.
+        // We accept space-separated, tab-separated, or end-of-line
+        // boundaries to be robust to argument quoting differences.
+        let has_1 = arg_present(line, "-1") || arg_present(line, "--1");
+        let has_2 = arg_present(line, "-2") || arg_present(line, "--2");
+        return Some(has_1 && has_2);
+    }
+    None
+}
+
+/// True if `arg` appears as a standalone token in `text`, delimited by
+/// whitespace or tab on **both** sides.
+///
+/// Matches Perl's `/\s+--?1\s+/` semantics: a `-1` at the very end of the
+/// line (without trailing whitespace) is NOT considered present, even
+/// though Bismark in practice always appends a path after `-1`/`-2`.
+/// Being strict here matches Perl exactly — important for byte-identity
+/// when the same input is run through both implementations.
+fn arg_present(text: &str, arg: &str) -> bool {
+    let arg_space = format!(" {arg} ");
+    let arg_tab_left = format!("\t{arg} ");
+    let arg_tab_right = format!(" {arg}\t");
+    let arg_tab_both = format!("\t{arg}\t");
+    text.contains(&arg_space)
+        || text.contains(&arg_tab_left)
+        || text.contains(&arg_tab_right)
+        || text.contains(&arg_tab_both)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1057,5 +1123,72 @@ read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\
             "expected MissingFastaIndex (the .fai sidecar of the nonexistent ref \
              doesn't exist), got {err:?}"
         );
+    }
+
+    // ─── detect_paired_from_header tests (promoted from bismark-dedup in v1.0.0-beta.7) ───
+
+    use noodles_sam::header::record::value::map::Program;
+
+    /// Build a SAM header with a `@PG` line whose ID and CL fields are as
+    /// given. CL is set as-is (verbatim) so tests can construct PE vs SE
+    /// arg patterns.
+    fn header_with_pg(id: &str, cl: Option<&str>) -> Header {
+        let mut builder = Header::builder();
+        let mut prog = Map::<Program>::default();
+        if let Some(cl_text) = cl {
+            use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+            prog.other_fields_mut()
+                .insert(COMMAND_LINE, BString::from(cl_text.as_bytes().to_vec()));
+        }
+        builder = builder.add_program(BString::from(id.as_bytes().to_vec()), prog);
+        builder.build()
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_some_true_for_pe_bismark_pg() {
+        let header = header_with_pg(
+            "Bismark",
+            Some("bismark --genome /path/genome -1 R1.fq.gz -2 R2.fq.gz"),
+        );
+        assert_eq!(detect_paired_from_header(&header), Some(true));
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_some_false_for_se_bismark_pg() {
+        let header = header_with_pg("Bismark", Some("bismark --genome /path/genome reads.fq.gz"));
+        assert_eq!(detect_paired_from_header(&header), Some(false));
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_none_when_no_bismark_pg() {
+        let header = header_with_pg("bowtie2", Some("bowtie2 -x index -U reads.fq.gz"));
+        assert_eq!(detect_paired_from_header(&header), None);
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_none_for_empty_header() {
+        let header = Header::default();
+        assert_eq!(detect_paired_from_header(&header), None);
+    }
+
+    #[test]
+    fn detect_paired_from_header_accepts_double_dash_form() {
+        // Bismark also accepts `--1` / `--2` (long form).
+        let header = header_with_pg("Bismark_v0.25.1", Some("bismark --1 R1.fq --2 R2.fq"));
+        assert_eq!(detect_paired_from_header(&header), Some(true));
+    }
+
+    #[test]
+    fn arg_present_strict_boundary_check() {
+        // Token must have whitespace/tab on both sides — `-1` at end-of-line
+        // (no trailing space) is NOT considered present. Matches Perl's
+        // `/\s+--?1\s+/` strict semantics.
+        assert!(arg_present("foo -1 bar", "-1"));
+        assert!(arg_present("foo\t-1\tbar", "-1"));
+        assert!(arg_present("foo -1\tbar", "-1"));
+        assert!(arg_present("foo\t-1 bar", "-1"));
+        assert!(!arg_present("foo -1", "-1"));
+        assert!(!arg_present("-1 bar", "-1"));
+        assert!(!arg_present("foo--1 bar", "-1")); // no preceding boundary
     }
 }

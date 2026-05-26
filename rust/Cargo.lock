@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-extractor"
-version = "1.0.0-alpha.2"
+version = "1.0.0-alpha.3"
 dependencies = [
  "assert_cmd",
  "bismark-io",
@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-io"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 dependencies = [
  "bstr",
  "noodles-bam",
