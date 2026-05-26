@@ -1,12 +1,13 @@
 //! Binary entry point for `bismark-methylation-extractor-rs`.
 //!
-//! Phase A: parses CLI, validates flags, prints provenance on `--version`.
-//! NO extraction logic — that's Phase B onward. A run that passes
-//! validation currently prints a one-line note + exits 0 (placeholder
-//! pipeline call site).
+//! Phase B (rev 1): dispatches on the resolved config — SE + default mode +
+//! parallel=1 + no gzip + no bedGraph/cytosine_report + single input file
+//! routes to [`bismark_extractor::extract_se`]. Every other configuration
+//! returns a [`BismarkExtractorError::PhaseNotYetImplemented`] naming the
+//! deferring phase.
 //!
 //! Exit codes:
-//! - `0` — success (currently: validation passes + placeholder exit)
+//! - `0` — success
 //! - `1` — any [`BismarkExtractorError`]
 //! - `2` — clap parse error (clap convention)
 
@@ -14,9 +15,9 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use bismark_extractor::cli::Cli;
+use bismark_extractor::cli::{Cli, OutputMode, PairedMode};
 use bismark_extractor::error::BismarkExtractorError;
-use bismark_extractor::version_string;
+use bismark_extractor::{extract_se, version_string};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -38,17 +39,69 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
-    let _config = cli.validate()?;
+    let config = cli.validate()?;
 
-    // Phase A placeholder: validation passed, but no pipeline exists yet.
-    // Phase B lands the SE extraction loop and wires it here. For now,
-    // explicitly tell the user the binary is not yet feature-complete.
-    eprintln!(
-        "note: bismark-methylation-extractor-rs is in Phase A (scaffold + CLI). \
-         Extraction pipeline lands in Phase B (SE) through G (subprocess chain). \
-         For production use, run Perl `bismark_methylation_extractor` until \
-         Phase H (byte-identity gate) is reached. See \
-         <https://github.com/FelixKrueger/Bismark/issues/798> for status."
-    );
-    Ok(())
+    // Phase B dispatches on the supported subset. Anything outside the
+    // subset is rejected with `PhaseNotYetImplemented` naming the phase
+    // that will land it. This avoids silent acceptance of half-implemented
+    // code paths.
+
+    // Multiple input files: deferred (would mirror dedup's --multiple).
+    if config.files.len() != 1 {
+        return Err(BismarkExtractorError::PhaseNotYetImplemented {
+            feature: format!(
+                "multiple input files ({} given); v1.x feature",
+                config.files.len()
+            ),
+        });
+    }
+
+    // Paired-end: Phase C.
+    if config.paired_mode == PairedMode::PairedEnd {
+        return Err(BismarkExtractorError::PhaseNotYetImplemented {
+            feature: "paired-end extraction; arrives in Phase C".to_string(),
+        });
+    }
+
+    // Non-default output modes: Phase E.
+    if config.output_mode != OutputMode::Default {
+        return Err(BismarkExtractorError::PhaseNotYetImplemented {
+            feature: format!(
+                "output mode {:?}; --comprehensive / --merge_non_CpG / --yacht / \
+                 --mbias_only arrive in Phase E",
+                config.output_mode
+            ),
+        });
+    }
+
+    // Gzip-compressed output: Phase E.
+    if config.gzip {
+        return Err(BismarkExtractorError::PhaseNotYetImplemented {
+            feature: "--gzip; arrives in Phase E".to_string(),
+        });
+    }
+
+    // Multicore: Phase F.
+    if config.parallel != 1 {
+        return Err(BismarkExtractorError::PhaseNotYetImplemented {
+            feature: format!(
+                "--parallel {} (only --parallel 1 supported); multicore arrives in Phase F",
+                config.parallel
+            ),
+        });
+    }
+
+    // Downstream subprocess chain: Phase G.
+    if config.bedgraph || config.cytosine_report {
+        return Err(BismarkExtractorError::PhaseNotYetImplemented {
+            feature: "--bedGraph / --cytosine_report subprocess chain; arrives in Phase G"
+                .to_string(),
+        });
+    }
+
+    // Supported subset: SE (or AutoDetect treated as SE; per-record PAIRED-flag
+    // check inside the loop catches PE BAMs). Default mode. Single core.
+    // Plain (uncompressed) output. No subprocess chain.
+    let input = config.files[0].clone();
+    extract_se(&input, &config)
 }

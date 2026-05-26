@@ -115,11 +115,14 @@ dependencies = [
 
 [[package]]
 name = "bismark-extractor"
-version = "1.0.0-alpha.1"
+version = "1.0.0-alpha.2"
 dependencies = [
  "assert_cmd",
  "bismark-io",
+ "bstr",
  "clap",
+ "noodles-core 0.20.0",
+ "noodles-sam",
  "predicates",
  "tempfile",
  "thiserror",
