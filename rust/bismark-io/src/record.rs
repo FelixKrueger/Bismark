@@ -248,12 +248,31 @@ impl BismarkRecord {
     /// walk + one Vec allocation. For 100-bp reads with 95 aligned
     /// positions, that's ~95 × 12 bytes ≈ 1.1 KiB per record.
     ///
+    /// **Insertion-position semantic divergence vs Perl** (documented for
+    /// future readers): Perl `bismark_methylation_extractor` emits XM
+    /// entries at insertion positions with `xm_byte == b'.'` and the
+    /// preceding match's `ref_pos`. This Rust iterator **skips** them
+    /// (via `CigarExt::aligned_positions().filter_map(|ap| ap.ref_offset?)`).
+    /// Behaviorally identical for the bismark-extractor's M-bias use
+    /// case (Perl's `.` at insertions is filtered by `classify_xm_byte`
+    /// before counting), but consumers emitting raw XM bytes per read
+    /// position (e.g. yacht-mode any_C_context output) should consult
+    /// the XM tag directly rather than this iterator.
+    ///
     /// Added in `bismark-io 1.0.0-beta.6` (issue #843, SPEC §6.5).
     pub fn iter_aligned(&self) -> std::vec::IntoIter<AlignedXmCall> {
         let is_forward = matches!(self.record_strand, BismarkStrand::OT | BismarkStrand::CTOB);
         let xm = self.xm();
         let seq_len = xm.len() as u32;
-        let alignment_start = self.alignment_start().unwrap_or(1) as u32;
+        // `from_noodles_record` doesn't validate alignment_start (unmapped
+        // records are filtered upstream at the reader-iterator layer per
+        // `read.rs::filter_unmapped_then_classify`). A mapped record without
+        // alignment_start is a structural invariant violation — `expect`
+        // surfaces it loudly rather than silently producing wrong ref_pos.
+        let alignment_start = self.alignment_start().expect(
+            "iter_aligned: record has no alignment_start; reader-iterator \
+             should have filtered this as unmapped (flags & 0x4)",
+        ) as u32;
 
         // Walk the CIGAR producing one AlignedPosition per read base.
         // Filter to positions that have a `ref_offset` (matches; skips
@@ -715,6 +734,68 @@ mod tests {
         assert_eq!(calls[4].read_pos_5p, 4);
         assert_eq!(calls[0].ref_pos, 100);
         assert_eq!(calls[4].ref_pos, 104);
+    }
+
+    /// PE-pair coverage (both reviewers' Medium finding): R2 of an OT
+    /// pair has `record_strand == CTOT` (per-record XR/XG classification:
+    /// XR=GA XG=CT for the reverse-complemented mate). `iter_aligned`
+    /// must reverse the R2 walk so M-bias positions count from the
+    /// sequenced 5' of the R2 read. Mirrors Perl's per-mate reversal at
+    /// `bismark_methylation_extractor:1933-1939` (PE R1) +
+    /// `:2877-2886` (PE R2).
+    ///
+    /// Note: this is structurally the same fixture as
+    /// `iter_aligned_ctot_strand_is_reverse_orientation` (single record
+    /// with CTOT classification) — the per-record orientation is what
+    /// matters; `BismarkRecord` doesn't carry pair context. This test
+    /// adds the FLAG bits (0x81 = R2 + paired) so future readers see
+    /// the PE-pair context explicitly.
+    #[test]
+    fn iter_aligned_pe_r2_of_ot_pair_is_reverse_orientation() {
+        // R2 of OT pair: XR=GA XG=CT → record_strand=CTOT (reverse).
+        // FLAG 0x81 = R2 + paired.
+        let mut record = RecordBuf::default();
+        *record.flags_mut() = noodles_sam::alignment::record::Flags::from(0x81);
+        *record.sequence_mut() = Sequence::from(b"ACGTC".to_vec());
+        *record.alignment_start_mut() = Some(Position::try_from(200).unwrap());
+        *record.cigar_mut() = Cigar::from(vec![Op::new(Kind::Match, 5)]);
+        record.data_mut().insert(
+            Tag::from(*b"XR"),
+            Value::String(BString::from(b"GA".to_vec())),
+        );
+        record.data_mut().insert(
+            Tag::from(*b"XG"),
+            Value::String(BString::from(b"CT".to_vec())),
+        );
+        record.data_mut().insert(
+            Tag::from(*b"XM"),
+            Value::String(BString::from(b"Z.x.H".to_vec())),
+        );
+        let bm = BismarkRecord::from_noodles_record(record).unwrap();
+        assert_eq!(bm.record_strand(), BismarkStrand::CTOT);
+        assert_eq!(bm.read_identity(), ReadIdentity::R2);
+
+        let calls: Vec<_> = bm.iter_aligned().collect();
+        assert_eq!(calls.len(), 5);
+        // Reverse-strand: first emitted is bam_read_pos=4 → read_pos_5p=0,
+        // ref_pos=204, xm='H'. Last emitted is bam_read_pos=0 →
+        // read_pos_5p=4, ref_pos=200, xm='Z'.
+        assert_eq!(
+            calls[0],
+            AlignedXmCall {
+                read_pos_5p: 0,
+                ref_pos: 204,
+                xm_byte: b'H'
+            }
+        );
+        assert_eq!(
+            calls[4],
+            AlignedXmCall {
+                read_pos_5p: 4,
+                ref_pos: 200,
+                xm_byte: b'Z'
+            }
+        );
     }
 
     #[test]
