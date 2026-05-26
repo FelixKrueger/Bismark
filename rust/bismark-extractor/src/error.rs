@@ -48,6 +48,24 @@ pub enum BismarkExtractorError {
     )]
     GazillionWithAmpleMemory,
 
+    /// Explicit `--buffer_size` is mutex with `--ample_memory`. Mirrors
+    /// Perl `bismark_methylation_extractor:1295` (`unless($sort_size)`
+    /// — Perl only fires this `die` when the user explicitly set
+    /// `--buffer_size`; the implicit "2G" default doesn't trip it).
+    /// The Rust port preserves this explicit-vs-default distinction by
+    /// making `buffer_size: Option<String>` (None = default).
+    #[error(
+        "explicit --buffer_size and --ample_memory are mutually exclusive \
+         (--ample_memory uses an in-memory sort path; --buffer_size only \
+         applies to the UNIX-sort path)"
+    )]
+    BufferSizeWithAmpleMemory,
+
+    /// `--include_overlap` is paired-end only. Mirrors Perl
+    /// `bismark_methylation_extractor:1217`.
+    #[error("--include_overlap requires --paired-end (no R2 to include in SE mode)")]
+    IncludeOverlapRequiresPairedEnd,
+
     /// `--cytosine_report` requires `--genome_folder <PATH-TO-BISMARK-GENOME-DIR>`.
     /// Locked in SPEC §11 (rev 2): the Perl default is a hardcoded mouse
     /// path; the Rust port rejects without explicit value to avoid silent

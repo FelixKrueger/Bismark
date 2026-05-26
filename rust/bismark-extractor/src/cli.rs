@@ -150,9 +150,12 @@ pub struct Cli {
     pub ucsc: bool,
 
     /// Sort-buffer size for the UNIX-sort step in `bismark2bedGraph`.
-    /// Mutex with --ample_memory.
-    #[arg(long = "buffer_size", default_value = "2G")]
-    pub buffer_size: String,
+    /// Mutex with --ample_memory when **explicitly set** (Perl line 1295
+    /// checks `unless($sort_size)`, so the implicit default "2G" doesn't
+    /// trip the mutex). Optional here to preserve explicit-vs-default
+    /// distinction.
+    #[arg(long = "buffer_size")]
+    pub buffer_size: Option<String>,
 
     /// Disable per-chromosome pre-split (filehandle-limit workaround for
     /// genomes with thousands of contigs). Forces single-file sort path
@@ -300,8 +303,10 @@ pub struct ResolvedConfig {
     pub split_by_chromosome: bool,
     /// UCSC-compatible bedGraph (--bedGraph only).
     pub ucsc: bool,
-    /// Sort buffer size string (passed to bismark2bedGraph).
-    pub buffer_size: String,
+    /// Sort buffer size string (passed to bismark2bedGraph). `None` if
+    /// the user didn't pass `--buffer_size`; the subprocess will use
+    /// `bismark2bedGraph`'s own default ("2G" per Perl).
+    pub buffer_size: Option<String>,
     /// Gazillion-contigs mode (mutex with ample_memory).
     pub gazillion: bool,
     /// In-memory sort path (mutex with gazillion).
@@ -339,6 +344,19 @@ impl Cli {
         // Memory strategy mutex (Perl 1310-1312).
         if self.gazillion && self.ample_memory {
             return Err(BismarkExtractorError::GazillionWithAmpleMemory);
+        }
+
+        // Explicit --buffer_size × --ample_memory mutex (Perl 1295).
+        // Reviewer A Medium #1: only fires on EXPLICIT --buffer_size, not
+        // on the implicit default. `Option<String>` captures this.
+        if self.buffer_size.is_some() && self.ample_memory {
+            return Err(BismarkExtractorError::BufferSizeWithAmpleMemory);
+        }
+
+        // --include_overlap is PE-only (Perl 1217).
+        // Reviewer A Medium #2.
+        if self.include_overlap && !self.paired_end {
+            return Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd);
         }
 
         // --yacht constraints (Perl 1328-1336).
@@ -385,9 +403,12 @@ impl Cli {
             }
         }
 
-        // --genome_folder existence (fail fast — defer .fai check to Phase G).
+        // --genome_folder must be an existing directory (fail fast — defer
+        // .fai check to Phase G). Reviewer B Medium: was `exists()` which
+        // also accepted files. Tightened to `is_dir()` — the genome folder
+        // is expected to contain Bismark-prepared FASTA + .fai indexes.
         if let Some(gf) = &self.genome_folder
-            && !gf.exists()
+            && !gf.is_dir()
         {
             return Err(BismarkExtractorError::GenomeFolderNotFound(gf.clone()));
         }
@@ -663,6 +684,89 @@ mod tests {
         assert!(matches!(
             cli.validate(),
             Err(BismarkExtractorError::InputFileNotFound(_))
+        ));
+    }
+
+    /// Reviewer A Medium #1: explicit `--buffer_size 4G` combined with
+    /// `--ample_memory` should fatal-error, mirroring Perl line 1295's
+    /// `die unless($sort_size)` semantics.
+    #[test]
+    fn validate_rejects_explicit_buffer_size_with_ample_memory() {
+        let f = temp_input();
+        let cli = parse(&[
+            "--buffer_size",
+            "4G",
+            "--ample_memory",
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(BismarkExtractorError::BufferSizeWithAmpleMemory)
+        ));
+    }
+
+    /// Reviewer A Medium #1 (negative case): `--ample_memory` ALONE
+    /// (no explicit `--buffer_size`) is fine. The default 2G doesn't
+    /// trip the explicit-vs-default mutex.
+    #[test]
+    fn validate_ample_memory_alone_passes() {
+        let f = temp_input();
+        let config = parse(&["--ample_memory", f.path().to_str().unwrap()])
+            .unwrap()
+            .validate()
+            .unwrap();
+        assert!(config.ample_memory);
+        assert!(config.buffer_size.is_none());
+    }
+
+    /// Reviewer A Medium #2: `--include_overlap` without `--paired-end`
+    /// rejects (Perl line 1217).
+    #[test]
+    fn validate_rejects_include_overlap_without_paired_end() {
+        let f = temp_input();
+        let cli = parse(&["--include_overlap", f.path().to_str().unwrap()]).unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd)
+        ));
+    }
+
+    /// Reviewer B Medium: `--genome_folder /path/to/regular-file` should
+    /// reject. Previously `gf.exists()` returned true for files; tightened
+    /// to `gf.is_dir()`.
+    #[test]
+    fn validate_rejects_genome_folder_that_is_a_file_not_a_dir() {
+        let f = temp_input();
+        // Use the input file's path as the (deliberately wrong) genome folder.
+        let cli = parse(&[
+            "--cytosine_report",
+            "--genome_folder",
+            f.path().to_str().unwrap(),
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(BismarkExtractorError::GenomeFolderNotFound(_))
+        ));
+    }
+
+    /// Reviewer A Low (test gap): `--genome_folder` pointing at a
+    /// nonexistent path also rejects.
+    #[test]
+    fn validate_rejects_genome_folder_that_does_not_exist() {
+        let f = temp_input();
+        let cli = parse(&[
+            "--cytosine_report",
+            "--genome_folder",
+            "/tmp/definitely_not_a_real_genome_path_98765",
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(BismarkExtractorError::GenomeFolderNotFound(_))
         ));
     }
 

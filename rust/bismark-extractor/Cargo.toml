@@ -22,7 +22,6 @@ path = "src/main.rs"
 bismark-io = { version = "=1.0.0-beta.6", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
-anyhow = "=1.0.86"
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"
