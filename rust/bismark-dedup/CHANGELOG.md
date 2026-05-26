@@ -76,6 +76,51 @@ arrives. Phase B of the v1.2 UMI epic. Position-only dedup workflows
 
 - New: `smallvec = "=1.13.2"`. Matches `bismark-io`'s pin.
 
+### Validation (Phase C V10 — production-scale byte-identity)
+
+Real-data byte-identity confirmed against Perl `deduplicate_bismark v0.25.1`
+on the full Olecka 2024 SRR24766921 RRBS sample (oxy host, BamReader
+with `--parallel 4`):
+
+| Mode | Retained qnames (Rust = Perl) | Report bytes |
+|------|------------------------------|--------------|
+| `--barcode` (single-threaded) | 6,524,173 | 299 |
+| `--barcode --parallel 4` | 6,524,173 | 299 |
+| `--bclconvert` (single-threaded) | 6,538,044 | 304 |
+| `--bclconvert --parallel 4` | 6,538,044 | 304 |
+
+Tests live in `bismark-dedup/tests/byte_identity_real_data.rs` as
+`#[ignore]`'d gates. Run on oxy via `cargo test --release --test
+byte_identity_real_data -- --ignored --exact byte_identity_real_data_umi_*`
+(see Phase C PR #839 for the run recipe).
+
+Both retained-qname sets and report bytes match Perl baselines
+exactly. `--parallel 4` produces identical output to the
+single-threaded path, confirming the BGZF-threaded UMI path's
+byte-identity invariant at production scale (~6.5M retained pairs).
+
+### Performance (BGZF thread scaling, oxy)
+
+Wall-clock + peak RSS for both UMI modes against the production-scale
+Phase 0 baselines on oxy (~951 MB input BAM per mode):
+
+| Mode | `--parallel 1` (wall) | `--parallel 4` (wall) | Speedup | Peak RSS |
+|------|----------------------|----------------------|---------|----------|
+| `--barcode` | 1:02.63 (62.6s) | 0:13.37 (13.4s) | **4.68×** | ~608 MB |
+| `--bclconvert` | 1:02.90 (62.9s) | 0:13.59 (13.6s) | **4.63×** | ~608 MB |
+
+In line with v1.1's measured 4.88× speedup on the larger 10M PE WGBS
+dataset — BGZF-threading speedup scales similarly across UMI vs
+non-UMI workloads. Peak RSS is essentially identical between
+single-threaded and `--parallel 4`, confirming the threaded path
+doesn't multiply dedup-state memory; only BGZF block buffers grow.
+
+A Perl-baseline measurement on the same oxy host is queued (network
+hiccup interrupted the run); will be added as a follow-up CHANGELOG
+note. The byte-identity tests already cite the production-scale
+correctness signal; the Perl-vs-Rust wall-time comparison is
+informational.
+
 ## [1.1.0-beta.2] — 2026-05-25
 
 Inherits **magic-byte file-format detection** from `bismark-io`
