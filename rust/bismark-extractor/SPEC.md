@@ -1,6 +1,6 @@
 # `bismark-extractor` — SPEC
 
-**Status:** rev 1. Dual plan-review complete (A + B both NEEDS-REVISIONS); all critical + important findings folded in. Re-review pending.
+**Status:** rev 2. Dual plan-re-review complete (A: APPROVE-WITH-NITS; B: NEEDS-REVISIONS minor — editorial); all editorial findings folded in. Architecture locked. Ready for implementation Phase A.
 
 **Owners:** issue [#798 (epic)](https://github.com/FelixKrueger/Bismark/issues/798), [#803 (this spec)](https://github.com/FelixKrueger/Bismark/issues/803).
 
@@ -16,7 +16,7 @@ Port the methylation extractor — the biggest single-tool rewrite in the Bismar
 
 **In scope** (full v1.2 release surface):
 
-- All 34 Perl CLI flags (per §3 inventory), including the parallelism flag.
+- All 35 Perl CLI flags (per §3 inventory), including the parallelism flag.
 - All 12 strand-specific split files (CpG × {OT, CTOT, CTOB, OB} + CHG × 4 + CHH × 4); the reductions via `--comprehensive` (3 files), `--merge_non_CpG` (8 or 2 files), `--yacht` (1 file).
 - `M-bias.txt` with 6 sections (3 contexts × 2 read identities for PE) or 3 (SE).
 - `_splitting_report.txt` with per-context counts + parameter summary.
@@ -63,7 +63,7 @@ All 35 Perl flags catalogued from the recon pass (the original "34" miscount in 
 | 24 | `--CX` | `--CX_context` | OFF | Report all C-context (not just CpG) in cytosine_report. | `--cytosine_report` only; runtime ↑↑. | 979 |
 | 25 | `--split_by_chromosome` | — | OFF | Per-chr output of cytosine_report. | `--cytosine_report` only. | 980 |
 | 26 | `--buffer_size` | — | 2G | Sort buffer for `bismark2bedGraph`. | Passed through; mutex with `--ample_memory`. | 981 |
-| 27 | `--samtools_path` | — | which samtools | Path to samtools (BAM read on Perl side). | **Accepted in Rust port, emits one-line stderr warning**: `warning: --samtools_path ignored — bismark-io uses pure-Rust noodles, no samtools subprocess`. Matches the dedup port's precedent. | 982 |
+| 27 | `--samtools_path` | — | which samtools | Path to samtools (BAM read on Perl side). | **Accepted silently in Rust port** — bismark-io uses pure-Rust noodles, no samtools subprocess. Rev 2 correction (Reviewer B NB1): dedup actually accepts silently at `cli.rs:228-230` (no warning); the rev 1 claim of "stderr warning matches dedup precedent" was factually inverted. Adding stderr warnings to both crates is tracked as a v1.x UX item. | 982 |
 | 28 | `--gzip` | — | OFF | Gzip-compress all split files. | Output filenames suffix `.gz`. | 983 |
 | 29 | `--mbias_only` | — | OFF | Skip all output files; emit M-bias only. | Mutex with `--bedGraph`, `--cytosine_report`, `--mbias_off` (Perl dies with error). | 984 |
 | 30 | `--mbias_off` | — | OFF | Skip M-bias computation. | Mutex with `--mbias_only`. | 985 |
@@ -238,8 +238,15 @@ Concrete pseudocode for each load-bearing routine. Implementation phases (§10) 
 
 Iterates the XM tag in parallel with the CIGAR walker, emitting one `MethCall` per non-`.` cytosine. Skips `U`/`u` (unknown context). Applies `--ignore` (5') and `--ignore_3prime` (3') boundaries in **read coordinates** (after soft-clip).
 
+**Rev 2 note** (Reviewer A finding #2): the pseudocode below uses raw `record.xm()` + `record.cigar()` for illustrative clarity. The actual Phase B implementation **delegates to `bismark-io 1.0.0-beta.6`'s `BismarkRecord::iter_aligned()`** (locked in §6.5) which yields already-5'-oriented `(read_pos_5p, ref_pos, xm_byte)` triples — for `+` strand reads the iterator equals the BAM-stored order; for `-` strand it's the orientation-corrected reversal. Walking unreversed XM here (with the BAM-stored CIGAR) would put M-bias positions end-to-end-flipped on every `-` strand record. The illustrative pseudocode is byte-identical to `iter_aligned()`'s output for `+` strand reads only.
+
 ```text
 fn extract_calls(record: &BismarkRecord, ignore_5p: u32, ignore_3p: u32) -> Vec<MethCall>:
+    // ── Phase B implementation ──
+    // Real code: `for (read_pos, ref_pos, xm_byte) in record.iter_aligned()`
+    // The block below is the equivalent expansion for + strand reads; - strand
+    // reads need the iterator (bismark-io v1.0.0-beta.6) to keep M-bias
+    // positions oriented by the 5' end of the sequenced read.
     let xm: &[u8] = record.xm()                   // length-parity validated at parse
     let seq_len: u32 = xm.len() as u32
     let aligned_start: u32 = record.alignment_start() as u32
@@ -353,39 +360,27 @@ Mirrors Perl lines 2891-2906 (forward / OT-CTOB) + 2976-2990 (reverse / OB-CTOT)
 
 **Corrected in rev 1** (Reviewer A finding): the comparison uses `<=` / `>=` (inclusive), not `<` / `>` (strict). `r1_ref_end` from `CigarExt::reference_end` is the 1-based inclusive last reference position (matches Perl's `$start + MDN_count - 1`); calls AT that position must be dropped (R2 overlapping R1's last base is still overlap).
 
-```text
-fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: BismarkStrand) -> Vec<MethCall>:
-    if is_forward(pair_strand):
-        // OT / CTOB: R1 is upstream, R2 is downstream. Drop R2 calls at OR BEFORE R1's
-        // reference_end (inclusive). Perl line 2905 uses `>=`.
-        let r1_ref_end: u32 = pair.r1().cigar().reference_end(pair.r1().alignment_start()? as usize) as u32
-        r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_end).collect()
-    else:
-        // OB / CTOT: R2 is upstream, R1 is downstream. Drop R2 calls at OR AFTER R1's
-        // alignment_start (inclusive). Perl uses `<=` here.
-        let r1_ref_start: u32 = pair.r1().alignment_start()? as u32
-        r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_start).collect()
-```
-
-Wait — re-read carefully. The Perl `>=` test at line 2905 is **`if (R2_pos >= R1_end) { skip }`** — meaning skip R2 calls whose position is AT or AFTER R1's end. So the KEEP filter is `R2_pos < R1_end` (strict less than). Rust filter: `c.ref_pos < r1_ref_end` (keep) ≡ skip `c.ref_pos >= r1_ref_end`. So actually the SPEC's original `c.ref_pos > r1_ref_end` (strict) was wrong — should be `>=`. Wait but we're writing the KEEP predicate. Let me restate:
+**Polarity locked in rev 2** (both reviewers verified against Perl 2905 + 2989): Perl writes the *skip* predicate; we write the *keep* predicate, which is the inverse. Perl's skip is **inclusive** (`>=` / `<=` against `r1_ref_end` / `r1_ref_start`), so the keep predicate is **strict** (`<` / `>`).
 
 ```text
 fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: BismarkStrand) -> Vec<MethCall>:
     if is_forward(pair_strand):
-        // OT / CTOB: KEEP R2 calls strictly downstream of R1's reference_end.
-        // Perl's skip-test at line 2905: `if (R2_pos >= R1_end) { return }`. Inverse keep: `<`.
+        // OT / CTOB pair: R1 is upstream, R2 is downstream.
+        // Perl 2905 skip predicate: `if R2_pos >= r1_ref_end { return }`.
+        // Keep predicate (inverse): `R2_pos < r1_ref_end`. Strict `<`.
         let r1_ref_end: u32 = pair.r1().cigar().reference_end(pair.r1().alignment_start()? as usize) as u32
-        r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_end).collect()
+        r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_end).collect()
     else:
-        // OB / CTOT: KEEP R2 calls strictly upstream of R1's alignment_start.
-        // Perl's skip-test (line 2989, '-' strand): `if (R2_pos <= R1_start) { return }`. Inverse keep: `>`.
+        // OB / CTOT pair: R2 is upstream, R1 is downstream.
+        // Perl 2989 skip predicate: `if R2_pos <= r1_ref_start { return }`.
+        // Keep predicate (inverse): `R2_pos > r1_ref_start`. Strict `>`.
         let r1_ref_start: u32 = pair.r1().alignment_start()? as u32
-        r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_start).collect()
+        r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_start).collect()
 ```
 
-Hmm, this is getting confused. **TODO for Phase C implementation**: write the comparator predicates against the actual Perl source byte-for-byte. The SPEC narrative above documents the intent (drop overlapping calls including the boundary position) but the exact `<`/`<=`/`>`/`>=` polarity needs to be re-verified at implementation time against Perl lines 2891-2906 and 2976-2990. This is a **Phase C blocker** — implementation must check against both the Perl source and a known overlap fixture before merge.
+**Endpoint-semantics verification deferred to Phase C** (NOT the polarity — that's locked above). At implementation time, run the overlap fixture (synthetic PE pair with known R1 ref_end and R2 calls at `r1_ref_end - 1`, `r1_ref_end`, `r1_ref_end + 1`) to confirm Perl + Rust agree at boundary positions. If a discrepancy emerges, the candidate root causes are: (a) inclusive vs exclusive interpretation of `CigarExt::reference_end` (already invariant-tested via dedup); (b) 1-based vs 0-based off-by-one in `read_pos → ref_pos` mapping for InDel-bearing reads.
 
-**Edge case:** if R1 and R2 don't overlap at all (one chromosome end, mate-pair span > read length), the filter is a no-op. Perl's behaviour is identical (the comparison is always evaluated; non-overlapping pairs trivially pass).
+**Edge case:** if R1 and R2 don't overlap at all (mate-pair span > read length), the filter is a no-op — non-overlapping calls trivially pass the strict comparison.
 
 ### 7.5 `route_call` — output dispatch
 
@@ -454,7 +449,9 @@ Concrete struct shapes for the load-bearing types. Field-level decisions land in
 ```rust
 struct MethCall {
     ref_pos: u32,       // 1-based reference position
-    read_pos: u32,      // 0-based read position (post-CIGAR walk)
+    read_pos: u32,      // 0-based read position from the 5' end of the
+                        // sequenced read (NOT the BAM-stored orientation;
+                        // see §6.5). Populated by `iter_aligned()`.
     context: CytosineContext,    // CpG | CHG | CHH
     methylated: bool,
 }
@@ -548,6 +545,7 @@ Mirror dedup's per-helper structure:
 | **`mbias_writer_emits_six_sections_for_pe`** | After all 3-contexts × 2-read-identities calls processed, `M-bias.txt` contains all 6 section headers in the right order (CpG R1, CHG R1, CHH R1, CpG R2, CHG R2, CHH R2). |
 | **`mbias_writer_emits_three_sections_for_se`** | SE input → 3 section headers, no R2 sections. |
 | **`extract_calls_rejects_invalid_xm_byte_with_error`** | XM containing `Q` (invalid) → `BismarkExtractorError::InvalidXmByte`. Locks Perl's `die` semantics (lines 2972, 3054). |
+| **`extract_calls_under_mbias_only_skips_invalid_xm_byte_silently`** | Rev 2 addition (Reviewer A nit): Perl's die-on-invalid-XM is conditional — `die "..." unless($mbias_only)`. Under `--mbias_only` mode, invalid XM bytes are silently skipped. Rust mirrors. |
 | **`collector_reorders_worker_output_under_skew`** | Simulate 4 workers emitting `(input_idx, payload)` out of order; assert collector emits in strict input_idx order. **Rev 1 addition** (Reviewer B): unit-tests the §9.4 `BTreeMap<u64, WorkerOutput>` invariant. |
 | `route_call_default_mode_routes_to_strand_specific_file` | CpG + OT pair → `CpG_OT_*` file |
 | `route_call_comprehensive_mode_routes_to_context_only_file` | `--comprehensive` + CpG → `CpG_*` file (no strand suffix) |
@@ -657,7 +655,7 @@ Mirrors `bismark-dedup`'s phased cadence (A → G; merge each to `rust/iron-chan
 
 | Phase | Scope | Estimated PR size |
 |-------|-------|-------------------|
-| **A** | Workspace scaffold + CLI + argument structs + flag-validation. Crate boots, `--help` prints all 34 flags. | ~500 LOC |
+| **A** | Workspace scaffold + CLI + argument structs + flag-validation. Crate boots, `--help` prints all 35 flags. | ~500 LOC |
 | **B** | Core SE extraction loop + XM routing + output-file map + splitting_report skeleton. | ~800 LOC |
 | **C** | PE extraction + overlap handling + `--ignore_r2` / `--ignore_3prime_r2`. | ~600 LOC |
 | **D** | M-bias accumulation per (context × read_identity) + `M-bias.txt` writer. | ~500 LOC |
@@ -677,7 +675,7 @@ Total: ~4,000 LOC Rust to port ~6,050 LOC Perl. Compression ratio matches dedup'
 | Open | `--samtools_path` flag — accept-no-op like dedup, or reject? | Accept-no-op (matches dedup precedent). |
 | Open | `--genome_folder` Perl default is hardcoded mouse genome — keep, change, or reject? | **Reject** without explicit value when `--cytosine_report` is set (the Perl default is mouse-team-specific and would mis-target the genome silently). Error message: `--cytosine_report requires --genome_folder <PATH-TO-BISMARK-GENOME-DIR>; the Perl default mouse path is not honoured in the Rust port`. |
 | Resolved | Output buffering policy | `BufWriter<File>` (8 KiB) for plain output; `BufWriter<GzEncoder<File>>` for `--gzip` (resolved in §7.7 rev 1 addition). |
-| Resolved | `--samtools_path` accepted-no-op silent or with warning | **Emits stderr warning** (resolved in §3 row 27 rev 1; matches dedup precedent). |
+| Resolved | `--samtools_path` accepted-no-op silent or with warning | **Silently accepted** (rev 2 correction; matches the actual dedup precedent at `cli.rs:228-230`). Adding stderr warnings to both crates tracked as v1.x UX. |
 | Resolved | `--CX_context` scope | **In scope for v1.0** via subprocess pass-through to `coverage2cytosine` (resolved in §2 rev 1). |
 | Open | M-bias PNG plot rendering in v1.0 — port or defer? | **Defer** — `M-bias.txt` is the canonical output; PNG is a convenience and `GD::Graph` doesn't have a clean Rust equivalent yet. Emit a one-line stderr note that PNG plots require Perl Bismark for now. |
 | Open | Auto-detection of SE vs PE — use bismark-dedup's `@PG ID:Bismark` walker, or extractor-specific? | Reuse `bismark-dedup`'s pattern (extract it to `bismark-io` if not already there). |
@@ -692,7 +690,7 @@ Each maps to a §6 design choice that prevents the class of bug.
 | Global `%fhs` filehandle map mutated across extraction loop | Perl 30, 294-304 | Rust: per-phase `ExtractState` struct; FH map owned + dropped at writer-close time. |
 | Multicore parent+child sharing `%fhs` post-fork | Perl 1464-1510 | Rust rayon avoids fork entirely; workers have isolated state. |
 | Read-identity threading via inline parameter check | Perl 2821-2822, 4349 | `ReadIdentity` is a typed enum (`bismark-io::ReadIdentity`); extraction functions take it as an explicit arg. |
-| CIGAR string reversal for `-` strand (risk of double-reverse) | Perl 1619-1621, 1933-1939, 2877-2886, 4422-4425 | §6.5: extractor MUST NOT reverse; reversal is reader-side. |
+| XM tag + CIGAR reversal for `-` strand (read-orientation correction, not output formatting) | Perl 1619-1621, 1933-1939, 2877-2886, 4422-4425 | §6.5 (rev 1): `bismark-io 1.0.0-beta.6` adds `iter_aligned()` adapter that yields 5'-oriented `(read_pos, ref_pos, xm_byte)` triples. Extractor consumes the iterator; orientation correction is hidden in `bismark-io`. Closes both rev 0 reviewers' XM-reversal finding. |
 | Overlap detection InDel-aware position offset | Perl 2891-2906, 1944-1977 | Use `bismark-io::CigarExt::reference_end()` (already InDel-aware via the existing CIGAR walker). |
 | Subprocess error propagation (bismark2bedGraph / coverage2cytosine) | Perl 377, 424 | Wrap subprocess calls in `std::process::Command::output()`; capture stderr + bubble as `BismarkExtractorError::SubprocessFailed`. |
 | Per-process splitting reports merged at end | Perl 307-312, 1439 | Rayon model produces a single per-run report from the main thread — no merge step needed. |
@@ -725,3 +723,12 @@ Each maps to a §6 design choice that prevents the class of bug.
   - **§11** — `--genome_folder` default-mouse-path policy resolved (reject without explicit value). 3 previously-open items resolved (buffering, samtools_path, CX_context).
   - **Stripped duplicate §8 + §9** that lingered from the scaffold→body-fillin transition.
 - Both review reports on file: `SPEC_REVIEW_A.md`, `SPEC_REVIEW_B.md`.
+- **rev 2** (2026-05-26): dual plan-re-review on rev 1. A: APPROVE-WITH-NITS. B: NEEDS-REVISIONS (minor — editorial). Both reviewers independently flagged 3 editorial drifts; B uniquely found one factual-inversion. All addressed:
+  - **§12 row 4 stale text fixed** (A finding #1 + B NB3): replaced the rev 0 "extractor MUST NOT reverse" claim with the rev 1 §6.5 `iter_aligned()` plan. Closes the rev 1 self-inconsistency.
+  - **§7.4 overlap-comparator muddle stripped** (A #3 + B NB2): removed the "Wait — re-read carefully" + "Hmm, this is getting confused" scratch-pad blocks. Polarity locked: Perl's *skip* predicate is inclusive (`>=` / `<=`); the Rust *keep* predicate is the strict inverse (`<` / `>`). Phase C verification deferred ONLY for endpoint-semantics, not polarity.
+  - **§7.1 pseudocode** now opens with a rev 2 note marking the inline CIGAR walk as illustrative; Phase B's actual implementation delegates to `bismark-io 1.0.0-beta.6`'s `iter_aligned()` (locked in §6.5). Closes A finding #2.
+  - **§3 row 27 `--samtools_path` rationale corrected** (B NB1): rev 1's "matches dedup precedent" claim for stderr-warning was factually inverted — dedup actually accepts silently at `cli.rs:228-230`. SPEC now matches the actual precedent (silent acceptance). Adding stderr warnings to both crates tracked as v1.x UX item.
+  - **34 vs 35 flag count drift** (A #4 + B NB4): §2 line 19 and Phase A table now say 35. (§3 + §14 already had 35 in rev 1.)
+  - **§7.7 `MethCall.read_pos` comment clarified** (A #5): now explicitly states "from the 5' end of the sequenced read; NOT the BAM-stored orientation; populated by `iter_aligned()`."
+  - **§8.1 added 1 unit test** (A #6): `extract_calls_under_mbias_only_skips_invalid_xm_byte_silently` — locks Perl's conditional die (`die "..." unless($mbias_only)`).
+- Both rev 2 review reports on file: `SPEC_REVIEW_A_rev1.md`, `SPEC_REVIEW_B_rev1.md`.
