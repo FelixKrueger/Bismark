@@ -6,13 +6,15 @@
 //!
 //! ## Status
 //!
-//! **Phase B — SE extraction loop** (crate version: `1.0.0-alpha.2`).
-//! The binary now runs end-to-end on SE Bismark BAM/SAM/CRAM input in
-//! `OutputMode::Default` at `--parallel 1`, producing the 12 strand×context
-//! split files (eagerly opened with the Perl version header line) plus
-//! `_splitting_report.txt`. PE, non-default modes, `--gzip`, `--parallel > 1`,
-//! and the `--bedGraph` / `--cytosine_report` subprocess chain are rejected
-//! at the resolved-config boundary with [`BismarkExtractorError::PhaseNotYetImplemented`].
+//! **Phase C — SE + PE extraction loops** (crate version: `1.0.0-alpha.3`).
+//! The binary runs end-to-end on Bismark BAM/SAM/CRAM input in `OutputMode::Default`
+//! at `--parallel 1`, producing the 12 strand×context split files plus
+//! `_splitting_report.txt`. SE-vs-PE auto-detect via `@PG ID:Bismark` header
+//! probe (powered by `bismark_io::detect_paired_from_header`). PE adds
+//! overlap detection (`--no_overlap` default) and per-mate ignore trims
+//! (`--ignore_r2`, `--ignore_3prime_r2`). Non-default modes, `--gzip`,
+//! `--parallel > 1`, and `--bedGraph` / `--cytosine_report` still rejected
+//! with [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! See [SPEC.md §10](../SPEC.md) for the full phase outline.
 //!
@@ -23,10 +25,12 @@
 //!   [`cli::OutputMode`] and [`cli::PairedMode`].
 //! - [`error::BismarkExtractorError`] — typed errors raised at validation
 //!   and the extraction-pipeline boundary.
-//! - [`params::ExtractParams`] — scaffold for Phase C/D/E parameter
-//!   structs; not yet used in Phase B.
-//! - [`call::extract_calls`] — Phase B kernel.
-//! - [`pipeline::extract_se`] — Phase B SE main loop.
+//! - [`params::ExtractParams`] — scaffold for later-phase parameter
+//!   structs; not yet used.
+//! - [`call::extract_calls`] — kernel (Phase B).
+//! - [`pipeline::extract_se`] — SE main loop (Phase B).
+//! - [`pipeline::extract_pe`] — PE main loop (Phase C).
+//! - [`overlap::drop_overlap`] — PE overlap-detection filter (Phase C).
 //!
 //! ## Binary
 //!
@@ -43,6 +47,7 @@ pub mod error;
 pub mod header;
 pub mod mbias;
 pub mod output;
+pub mod overlap;
 pub mod params;
 pub mod pipeline;
 pub mod route;
@@ -52,8 +57,9 @@ pub use call::{CytosineContext, MethCall, extract_calls};
 pub use cli::{Cli, OutputMode, PairedMode, ResolvedConfig};
 pub use error::BismarkExtractorError;
 pub use mbias::{MbiasPos, MbiasTable};
+pub use overlap::{drop_overlap, is_forward_pair_strand};
 pub use params::ExtractParams;
-pub use pipeline::extract_se;
+pub use pipeline::{extract_pe, extract_se};
 
 /// Returns a TG-style provenance string for the binary's `--version` output.
 ///

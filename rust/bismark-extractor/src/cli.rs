@@ -442,7 +442,14 @@ impl Cli {
         // Derived: no_overlap. PE default is ON; --include_overlap overrides.
         // SE doesn't have R2, so the field is meaningless there (kept as
         // false for SE).
-        let no_overlap = if paired_mode == PairedMode::PairedEnd {
+        //
+        // Phase C rev 1 fix (Reviewer A §1.1 Critical): include AutoDetect
+        // in the "set to !include_overlap" branch. Rev 0's `== PairedEnd`
+        // left AutoDetect at false, so a Phase C dispatch that auto-detects
+        // PE would silently leak R2 overlap calls. The fix makes any non-SE
+        // path inherit the PE default; SE actual extraction ignores the
+        // field (no overlap concept).
+        let no_overlap = if paired_mode != PairedMode::SingleEnd {
             !self.include_overlap
         } else {
             false

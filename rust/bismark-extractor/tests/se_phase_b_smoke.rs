@@ -244,7 +244,9 @@ fn smoke_se_directional_produces_all_12_files_and_report() {
     // Splitting report must exist + parse.
     let report = fs::read_to_string(output_dir.join("se_smoke_splitting_report.txt")).unwrap();
     assert!(report.contains("Bismark methylation extractor version v0.25.1"));
-    assert!(report.contains("Processed 5 reads in total"));
+    // Phase C writer fix: literal is "Processed N lines in total" per Perl 2479.
+    // (For SE: lines == records == reads, so the "lines" terminology applies.)
+    assert!(report.contains("Processed 5 lines in total"));
     assert!(report.contains("Total number of C's analysed:"));
     assert!(report.contains("Total methylated C's in CpG context:"));
     assert!(report.contains("Total methylated C's in CHG context:"));
@@ -322,6 +324,6 @@ fn smoke_se_empty_bam_writes_only_header_files() {
 
     // Splitting report exists with 0 records.
     let report = fs::read_to_string(output_dir.join("empty_splitting_report.txt")).unwrap();
-    assert!(report.contains("Processed 0 reads in total"));
+    assert!(report.contains("Processed 0 lines in total"));
     assert!(report.contains("Total methylated C's in CpG context:\t0"));
 }

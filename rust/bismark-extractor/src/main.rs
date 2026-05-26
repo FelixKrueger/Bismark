@@ -1,10 +1,15 @@
 //! Binary entry point for `bismark-methylation-extractor-rs`.
 //!
-//! Phase B (rev 1): dispatches on the resolved config — SE + default mode +
-//! parallel=1 + no gzip + no bedGraph/cytosine_report + single input file
-//! routes to [`bismark_extractor::extract_se`]. Every other configuration
-//! returns a [`BismarkExtractorError::PhaseNotYetImplemented`] naming the
-//! deferring phase.
+//! Phase C (rev 1): dispatches on the resolved config —
+//! - `SingleEnd` → [`bismark_extractor::extract_se`].
+//! - `PairedEnd` → [`bismark_extractor::extract_pe`].
+//! - `AutoDetect` → header-probe via `bismark_io::detect_paired_from_header`
+//!   to pick `extract_se` / `extract_pe`. Errors with `AutoDetectFailed`
+//!   if the BAM has no `@PG ID:Bismark*` line.
+//!
+//! Non-default output modes, `--gzip`, `--parallel > 1`, `--bedGraph` /
+//! `--cytosine_report`, and multiple input files are still rejected with
+//! [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! Exit codes:
 //! - `0` — success
@@ -17,7 +22,8 @@ use clap::Parser;
 
 use bismark_extractor::cli::{Cli, OutputMode, PairedMode};
 use bismark_extractor::error::BismarkExtractorError;
-use bismark_extractor::{extract_se, version_string};
+use bismark_extractor::{extract_pe, extract_se, version_string};
+use bismark_io::{detect_paired_from_header, open_reader};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -53,13 +59,6 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
                 "multiple input files ({} given); v1.x feature",
                 config.files.len()
             ),
-        });
-    }
-
-    // Paired-end: Phase C.
-    if config.paired_mode == PairedMode::PairedEnd {
-        return Err(BismarkExtractorError::PhaseNotYetImplemented {
-            feature: "paired-end extraction; arrives in Phase C".to_string(),
         });
     }
 
@@ -99,9 +98,35 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
         });
     }
 
-    // Supported subset: SE (or AutoDetect treated as SE; per-record PAIRED-flag
-    // check inside the loop catches PE BAMs). Default mode. Single core.
-    // Plain (uncompressed) output. No subprocess chain.
+    // Supported subset: SE OR PE in default mode at parallel=1, plain output,
+    // no subprocess chain. PairedMode dispatch:
+    //   - SingleEnd → extract_se.
+    //   - PairedEnd → extract_pe.
+    //   - AutoDetect → probe the SAM header's @PG ID:Bismark line; dispatch.
     let input = config.files[0].clone();
-    extract_se(&input, &config)
+    match config.paired_mode {
+        PairedMode::SingleEnd => extract_se(&input, &config),
+        PairedMode::PairedEnd => extract_pe(&input, &config),
+        PairedMode::AutoDetect => {
+            // Open reader once for header inspection. The reader is dropped
+            // before the chosen extract_se / extract_pe re-opens the file —
+            // ~50 ms overhead per run, OS caches the BAM header bytes.
+            let probe = open_reader(&input, /*cram_ref=*/ None)?;
+            let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
+                BismarkExtractorError::AutoDetectFailed {
+                    message: format!(
+                        "no `@PG` line with `ID:Bismark*` found in {}'s header; \
+                         pass `--single-end` or `--paired-end` explicitly",
+                        input.display()
+                    ),
+                }
+            })?;
+            drop(probe);
+            if is_paired {
+                extract_pe(&input, &config)
+            } else {
+                extract_se(&input, &config)
+            }
+        }
+    }
 }

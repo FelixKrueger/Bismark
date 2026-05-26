@@ -1,7 +1,7 @@
 [package]
 name = "bismark-extractor"
-version = "1.0.0-alpha.2"
-description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase B: SE extraction)"
+version = "1.0.0-alpha.3"
+description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase C: SE + PE extraction)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ name = "bismark-methylation-extractor-rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-io = { version = "=1.0.0-beta.6", path = "../bismark-io" }
+bismark-io = { version = "=1.0.0-beta.7", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
 # noodles-sam pinned to match bismark-io's transitive choice (matches dedup precedent).
