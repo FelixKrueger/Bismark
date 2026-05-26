@@ -5,6 +5,68 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.6] — 2026-05-26
+
+**Read-orientation `iter_aligned()` adapter** on `BismarkRecord` for the
+upcoming bismark-extractor port (epic #798). Resolves
+[#843](https://github.com/FelixKrueger/Bismark/issues/843).
+
+Additive only — non-extractor workflows continue to use `xm()` +
+`cigar()` directly. The new iterator hides the
+`-`-strand-reverse-complement orientation correction needed for M-bias
+accumulation by sequencing-cycle position.
+
+### Added
+
+- New struct `AlignedXmCall { read_pos_5p: u32, ref_pos: u32, xm_byte: u8 }`
+  in `record.rs`. Re-exported at the crate root.
+- New method `BismarkRecord::iter_aligned() -> std::vec::IntoIter<AlignedXmCall>`.
+  For each XM byte that aligns to a reference position (skipping
+  insertions and soft-clips), yields a triple with the read coordinate
+  oriented by the **5' end of the sequenced read**:
+  - **`+` strand records (OT / CTOB)**: forward iteration; `read_pos_5p == BAM read_pos`.
+  - **`-` strand records (OB / CTOT)**: reverse iteration; `read_pos_5p == seq_len - 1 - BAM read_pos`.
+
+  Internally: one CIGAR walk via `CigarExt::aligned_positions` + one
+  `Vec<AlignedXmCall>` allocation per record (~1.1 KiB for 100-bp reads
+  with 95 aligned positions). Materializes before yielding to keep the
+  type signature clean (`std::vec::IntoIter`).
+- 8 unit tests covering:
+  - Forward strand (OT) 5M CIGAR — identity.
+  - Reverse strand (OB) 5M CIGAR — reversal + remapping.
+  - Forward + insertion (skips insertion positions, ref_pos correct).
+  - Forward + deletion (advances ref_pos correctly).
+  - Forward + soft-clip (skips clipped positions).
+  - Reverse + soft-clip (orient + clip together).
+  - CTOB strand — forward orientation (closes the OT/CTOB grouping).
+  - CTOT strand — reverse orientation (closes the OB/CTOT grouping).
+
+### Why
+
+`bismark_methylation_extractor` (Perl, line 1619-1621 SE + 2877-2886 PE)
+reverses both the XM string AND the expanded CIGAR for `-` strand reads
+because BAM stores reverse-complemented reads aligned to the `+` strand.
+Walking BAM-stored XM with BAM-stored CIGAR for `-` strand records puts
+M-bias positions end-to-end-flipped on every reverse-strand call. This
+iterator centralizes the orientation correction in `bismark-io` so the
+extractor (and any future consumer doing per-cycle XM analysis)
+inherits the corrected stream.
+
+### Compatibility
+
+- bismark-dedup's `=1.0.0-beta.5` path-dep pin needs updating to `=1.0.0-beta.6`
+  to compile (workspace constraint), but bismark-dedup's source is unchanged
+  and its own version stays at `1.2.x-beta.y`.
+- No existing API touched. `xm()`, `cigar()`, `record_strand()`, etc.
+  still return the same BAM-stored bytes/types.
+
+### Perl reference
+
+- `bismark_methylation_extractor:1619-1621` (SE `meth_call` reverse)
+- `:1933-1939` (PE R1)
+- `:2877-2886` (PE R2 + CIGAR reverse)
+- `:4422-4425` (yacht)
+
 ## [1.0.0-beta.5] — 2026-05-25
 
 UMI plumbing on `BismarkRecord` for Phase B of the v1.2 UMI/RRBS epic.

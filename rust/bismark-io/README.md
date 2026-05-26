@@ -4,7 +4,7 @@ Bismark-aware BAM/SAM/CRAM I/O on top of [`noodles`](https://github.com/zaeleus/
 
 `bismark-io` is the shared library crate for [Bismark](https://github.com/FelixKrueger/Bismark)'s Rust rewrite. It wraps the `noodles` crate family to expose record types that already know about Bismark's strand classification (OT/CTOT/OB/CTOB derived from the `XR:Z:` and `XG:Z:` tags), tag-decoded accessors (`XM`, `XR`, `XG`, `MD`, `NM`), and CIGAR-aware position helpers. Every Bismark Rust binary crate (`bismark-dedup`, `bismark-extractor`, `bismark-bedgraph`, …) depends on it.
 
-**Status:** v1.0.0-beta.5 — `BismarkRecord` gains an optional `umi` field and `*_with_umi` reader constructors that pre-extract UMIs at parse time (additive; non-UMI workflows byte-for-byte unchanged). Prior beta-line additions: beta.2 `ThreadedBamReader`/`Writer` (used by `bismark-dedup`'s `--parallel N`); beta.3 magic-byte file-format detection; beta.4 `umi::extract_barcode` + `umi::extract_bclconvert` zero-copy extractors. See [`CHANGELOG.md`](./CHANGELOG.md).
+**Status:** v1.0.0-beta.6 — `BismarkRecord::iter_aligned()` yields read-orientation-corrected `AlignedXmCall { read_pos_5p, ref_pos, xm_byte }` triples for consumers doing per-cycle XM analysis (e.g. bismark-extractor's M-bias accumulation). Hides the `-`-strand-reverse-complement orientation correction in bismark-io. Additive; non-extractor workflows unchanged. Prior beta-line additions: beta.2 `ThreadedBamReader`/`Writer`; beta.3 magic-byte file-format detection; beta.4 `umi::extract_barcode` + `umi::extract_bclconvert`; beta.5 `BismarkRecord.umi` field + `*_with_umi` reader constructors. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Why a Bismark wrapper around `noodles`?
 
