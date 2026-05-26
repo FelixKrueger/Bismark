@@ -51,13 +51,22 @@ fn representative_flag_errors_with_perl_verbatim_joke() {
 /// Phase B (v1.2): `--barcode` engages UMI mode. The startup banner
 /// matches Perl `deduplicate_bismark:167` byte-for-byte. (The previous
 /// banner string was fabricated; dual code review C2/H1 caught it.)
+///
+/// Uses the Phase 0-bis 10K barcode fixture so the auto-detect (v1.2.1)
+/// passes through and the banner can be observed.
 #[test]
 fn barcode_flag_emits_perl_line_167_startup_banner() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/synth_barcode_10k_R1_val_1_bismark_bt2_pe.bam");
+    let tmp = tempfile::tempdir().unwrap();
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
-    cmd.arg("--barcode")
-        .arg("dummy.bam")
+    cmd.arg("--paired")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(tmp.path())
+        .arg(&fixture)
         .assert()
-        .failure()
+        .success()
         .stderr(predicates::str::contains("Deduplicating data in UMI mode"));
 }
 
@@ -66,11 +75,17 @@ fn barcode_flag_emits_perl_line_167_startup_banner() {
 /// `deduplicate_bismark:172` byte-for-byte.
 #[test]
 fn bclconvert_flag_emits_perl_line_172_startup_banner() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/synth_bclconvert_10k_R1_val_1_bismark_bt2_pe.bam");
+    let tmp = tempfile::tempdir().unwrap();
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
-    cmd.arg("--bclconvert")
-        .arg("dummy.bam")
+    cmd.arg("--paired")
+        .arg("--bclconvert")
+        .arg("--output_dir")
+        .arg(tmp.path())
+        .arg(&fixture)
         .assert()
-        .failure()
+        .success()
         .stderr(predicates::str::contains(
             "Deduplicating data in bcl-convert UMI mode",
         ));
@@ -80,10 +95,19 @@ fn bclconvert_flag_emits_perl_line_172_startup_banner() {
 /// either UMI startup banner. Locks the conditional emission in `main.rs`.
 #[test]
 fn non_umi_invocation_does_not_emit_umi_startup_banner() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/synth_barcode_10k_R1_val_1_bismark_bt2_pe.bam");
+    let tmp = tempfile::tempdir().unwrap();
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
-    cmd.arg("dummy.bam").assert().failure().stderr(
-        predicates::str::contains("Deduplicating data in UMI mode")
-            .not()
-            .and(predicates::str::contains("Deduplicating data in bcl-convert UMI mode").not()),
-    );
+    cmd.arg("--paired")
+        .arg("--output_dir")
+        .arg(tmp.path())
+        .arg(&fixture)
+        .assert()
+        .success()
+        .stderr(
+            predicates::str::contains("Deduplicating data in UMI mode")
+                .not()
+                .and(predicates::str::contains("Deduplicating data in bcl-convert UMI mode").not()),
+        );
 }

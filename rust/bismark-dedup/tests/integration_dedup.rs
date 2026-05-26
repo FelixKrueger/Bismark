@@ -1716,3 +1716,90 @@ fn umi_barcode_on_record_without_umi_errors_with_extraction_failed() {
         .failure()
         .stderr(predicates::str::contains("UMI in qname"));
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// v1.2.1-beta.1: bcl-convert format auto-detect (#842).
+//
+// Closes the v1.2 deferral: when the user passes --barcode/--umi but the
+// input BAM's first record has a bcl-convert-format qname, fatal-error
+// with a clear hint pointing to --bclconvert. Mirrors Perl
+// `test_readIDs_for_bclconvert` at `deduplicate_bismark:915-995`.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Positive: `--barcode` against a bcl-convert-format input triggers
+/// the safety net.
+#[test]
+fn autodetect_barcode_against_bclconvert_input_errors_with_helpful_hint() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--barcode") // WRONG flag for bcl-convert format input
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("bcl-convert format"))
+        .stderr(predicates::str::contains("--bclconvert"));
+}
+
+/// Negative: `--bclconvert` on bcl-convert input is the correct flag.
+/// No false positive.
+#[test]
+fn autodetect_bclconvert_on_bclconvert_input_proceeds_without_conflict() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--bclconvert") // CORRECT flag
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("bcl-convert UMI mode"));
+}
+
+/// Negative: `--barcode` on non-bclconvert input is fine. No false
+/// positive. Uses the synth_barcode 10K fixture (tail-of-qname UMIs).
+#[test]
+fn autodetect_barcode_on_barcode_input_proceeds_without_conflict() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--barcode") // CORRECT flag for barcode-format input
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Deduplicating data in UMI mode"));
+}
+
+/// Negative: position-only dedup (no UMI flag) skips the auto-detect
+/// entirely — even on bcl-convert-format qnames it just proceeds.
+/// Matches Perl: `test_readIDs_for_bclconvert` only runs if `$rrbs` set.
+#[test]
+fn autodetect_skipped_when_no_umi_flag_even_on_bclconvert_input() {
+    let dir = TempDir::new().unwrap();
+    let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        // no --barcode, no --bclconvert — position-only dedup
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("bcl-convert format").not());
+}

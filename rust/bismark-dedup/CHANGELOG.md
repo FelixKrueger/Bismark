@@ -4,6 +4,65 @@ All notable changes to `bismark-dedup` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1-beta.1] — 2026-05-26
+
+**bcl-convert qname auto-detect** — closes the v1.2 deferral noted in #792's
+closing comment + the [1.2.0-beta.1] "Known limitations" section. Resolves
+[#842](https://github.com/FelixKrueger/Bismark/issues/842).
+
+Closes a real UX footgun: running `--barcode` / `--umi` against a BAM whose
+qnames are in bcl-convert format (e.g. `A00001:...:CAAGAG_1:N:0:AATGACGC`)
+would silently extract the i7 tail (NOT the UMI), producing nonsense dedup
+keys and massively inflated duplicate counts. Now fatal-errors with a clear
+hint pointing to `--bclconvert`.
+
+### Added
+
+- `BismarkDedupError::BclconvertFormatWithBarcodeFlag { qname }` variant in
+  `error.rs`. Error message includes the offending qname + three Solutions
+  (re-run with `--bclconvert`, reform readIDs, re-run Bismark with `--icpc`)
+  + a link to [issue #699](https://github.com/FelixKrueger/Bismark/issues/699).
+- Private `check_bclconvert_format_conflict(input, config)` helper in
+  `main.rs`: peeks the first record's qname via a brief reader-open and
+  tests against `bismark_io::umi::extract_bclconvert`. Runs ONLY when the
+  active mode is `--barcode`/`--umi` (not `--bclconvert` and not
+  position-only), matching Perl's `$rrbs` gate at `deduplicate_bismark:164`.
+- 4 integration tests in `tests/integration_dedup.rs`:
+  - `autodetect_barcode_against_bclconvert_input_errors_with_helpful_hint`
+  - `autodetect_bclconvert_on_bclconvert_input_proceeds_without_conflict`
+  - `autodetect_barcode_on_barcode_input_proceeds_without_conflict`
+  - `autodetect_skipped_when_no_umi_flag_even_on_bclconvert_input`
+
+### Changed
+
+- 3 existing sanity tests (`barcode_flag_emits_perl_line_167_startup_banner`,
+  `bclconvert_flag_emits_perl_line_172_startup_banner`,
+  `non_umi_invocation_does_not_emit_umi_startup_banner`) now use the
+  Phase 0-bis 10K CI fixtures instead of `dummy.bam` — the auto-detect now
+  runs before the banner (matching Perl's ordering), so the sanity tests
+  needed a real input.
+
+### Behavior
+
+| Mode | Input qname format | Outcome |
+|------|--------------------|---------|
+| `--barcode` / `--umi` | tail-of-qname (`...:CAGCACTT`) | proceed (no conflict) |
+| `--barcode` / `--umi` | **bcl-convert** (`...:CAAGAG_1:N:0:AATGACGC`) | **fatal error** with `--bclconvert` hint |
+| `--bclconvert` | any format | proceed (`--bclconvert` always engages bcl-convert UMI mode) |
+| no UMI flag | any format | proceed (position-only dedup; no auto-detect) |
+
+### Cost
+
+One extra reader-open + one record read per input file when UMI mode is
+`--barcode`. Microseconds for BAM/SAM; slightly more for CRAM (FASTA
+reference repo built twice). Acceptable for the safety gain.
+
+### Perl reference
+
+- `deduplicate_bismark:164` (the gated call)
+- `deduplicate_bismark:915-995` (`sub test_readIDs_for_bclconvert`)
+- `deduplicate_bismark:173-178` (the fatal-error branch)
+
 ## [1.2.0-beta.1] — 2026-05-25
 
 **UMI/RRBS dedup mode** (`--barcode` / `--umi` / `--bclconvert`)

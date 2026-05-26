@@ -51,12 +51,30 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
         std::fs::create_dir_all(&config.output_dir)?;
     }
 
+    // v1.2.1-beta.1: bcl-convert auto-detect (closes #842, resolves the
+    // v1.2 deferral noted in #792's closing comment).
+    //
+    // Perl `test_readIDs_for_bclconvert` (deduplicate_bismark:915-995) peeks
+    // the first record's qname and matches against the bcl-convert internal
+    // UMI regex. If the format matches but the user passed --barcode/--umi
+    // (not --bclconvert), Perl exits with a fatal error pointing to the
+    // bcl-convert flag (Perl lines 173-178).
+    //
+    // Rust port: same flow, but the bcl-convert regex match is delegated
+    // to `bismark_io::umi::extract_bclconvert` (shipped in v1.2.0-beta.1).
+    // Runs ONLY when --barcode/--umi is the active mode — --bclconvert
+    // never has the conflict, no UMI flag means dedup doesn't engage UMI
+    // mode at all.
+    if config.umi_mode == Some(bismark_dedup::cli::UmiMode::Barcode) {
+        for input in &config.files {
+            check_bclconvert_format_conflict(input, &config)?;
+        }
+    }
+
     // Phase B (v1.2): UMI-mode startup banner. Two distinct strings in
     // Perl `deduplicate_bismark`:
     //   line 167: warn "Deduplicating data in UMI mode\n";
     //   line 172: warn "Deduplicating data in bcl-convert UMI mode\n";
-    // Perl picks based on `test_readIDs_for_bclconvert` auto-detect; the
-    // Rust port skips that (deferred to v1.3) and uses the user's flag.
     // No leading `\n` — Perl's `warn` writes the string verbatim.
     match config.umi_mode {
         Some(bismark_dedup::cli::UmiMode::Barcode) => {
@@ -236,6 +254,40 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
     };
     report.write_to(&report_path)?;
     eprintln!("{}", report.format_stderr());
+    Ok(())
+}
+
+/// v1.2.1-beta.1: peek the first record's qname and reject if it looks
+/// like bcl-convert format while the user is in `--barcode`/`--umi` mode.
+/// Closes #842; mirrors Perl `test_readIDs_for_bclconvert`
+/// (`deduplicate_bismark:915-995`).
+///
+/// Cost: one extra reader-open + one record read per input file. Cheap
+/// for BAM (microseconds) and SAM; slightly more for CRAM (needs the
+/// FASTA reference repository built twice). Acceptable for the safety
+/// gain.
+fn check_bclconvert_format_conflict(
+    input: &Path,
+    config: &ResolvedConfig,
+) -> Result<(), BismarkDedupError> {
+    let mut reader = bismark_io::open_reader(input, config.cram_ref.as_deref())?;
+    // We only need the first record's qname — peek and discard.
+    let first_record = reader.records().next();
+    let first_qname: Vec<u8> = match first_record {
+        Some(Ok(rec)) => rec
+            .inner()
+            .name()
+            .map(|n| AsRef::<[u8]>::as_ref(n).to_vec())
+            .unwrap_or_default(),
+        Some(Err(e)) => return Err(e.into()),
+        None => return Ok(()), // Empty input — let downstream EmptyInput fire.
+    };
+
+    if bismark_io::umi::extract_bclconvert(&first_qname).is_some() {
+        return Err(BismarkDedupError::BclconvertFormatWithBarcodeFlag {
+            qname: String::from_utf8_lossy(&first_qname).into_owned(),
+        });
+    }
     Ok(())
 }
 
