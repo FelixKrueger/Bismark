@@ -643,8 +643,11 @@ fn process_se(
         });
     }
 
-    // Records processed: +1 per SE record (matches Phase B).
+    // SE: records_processed and call_strings_processed both increment by 1
+    // per record (Perl `sequences_count` == `methylation_call_strings` for
+    // SE). Phase C.2 (#864) addition for the second counter.
     report.records_processed = report.records_processed.saturating_add(1);
+    report.call_strings_processed = report.call_strings_processed.saturating_add(1);
 
     Ok(routed_calls)
 }
@@ -767,7 +770,20 @@ fn process_pe(
     }
 
     // Records processed: +2 per PE pair (matches Phase C / Perl :2451).
-    report.records_processed = report.records_processed.saturating_add(2);
+    // Phase C.2 (#864): split counters per Perl semantics:
+    //   - `records_processed += 1` per pair → matches Perl
+    //     `$counting{sequences_count}` (line 2459), which drives the
+    //     report line 2482 "Processed N lines in total" with N = pair
+    //     count for PE.
+    //   - `call_strings_processed += 2` per pair → matches Perl
+    //     `$methylation_call_strings_processed += 2` (line 2451), which
+    //     drives report line 2483 "Total number of methylation call
+    //     strings processed: 2N".
+    // Pre-C.2 incorrectly used `records_processed += 2` citing Perl line
+    // 2451; the citation was for the wrong counter. Same fix applied at
+    // `pipeline.rs:275-276` for the legacy single-threaded PE path.
+    report.records_processed = report.records_processed.saturating_add(1);
+    report.call_strings_processed = report.call_strings_processed.saturating_add(2);
 
     Ok(routed_calls)
 }

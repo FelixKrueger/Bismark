@@ -42,14 +42,35 @@ pub const SPLIT_FILE_HEADER: &str = "Bismark methylation extractor version v0.25
 /// once profiling under multicore is available (Phase E plan §9.2 #2).
 type BoxedWriter = BufWriter<Box<dyn Write + Send>>;
 
+/// Per-handle entry in [`OutputFileMap::files`].
+///
+/// Phase B opened files eagerly + carried `(path, writer)` as a tuple.
+/// **Phase C.2 (#865)** adds `records_written: u64` so
+/// [`OutputFileMap::finalize_with_empty_sweep`] can unlink per-strand
+/// files that received only the version-banner header line (typical for
+/// CTOT/CTOB strands in a directional library).
+///
+/// **Constraint**: `records_written` is bumped iff a call row is written
+/// (via [`OutputFileMap::write_call`]'s successful exit path). Any future
+/// writer that adds non-call non-header bytes to the file MUST also bump
+/// this counter, or the empty-sweep will incorrectly classify the file
+/// as empty and unlink it. SPEC §8.3 documents this invariant.
+struct OutputFileEntry {
+    path: PathBuf,
+    writer: BoxedWriter,
+    records_written: u64,
+}
+
 /// Eagerly-opened per-(mode-key) split files.
 ///
 /// Rev 1 layout (Phase B): one map keyed by `OutputKey` storing both the
 /// path (for cleanup) and an 8-KiB `BufWriter<File>`. Phase E widens the
 /// value type's inner writer to `Box<dyn Write + Send>` so the same
 /// `write_call` body handles plain and gzipped output through one code-path.
+/// **Phase C.2 (#865)**: value type changed from `(PathBuf, BoxedWriter)`
+/// to [`OutputFileEntry`] (adds `records_written` for the empty-file sweep).
 pub struct OutputFileMap {
-    files: HashMap<OutputKey, (PathBuf, BoxedWriter)>,
+    files: HashMap<OutputKey, OutputFileEntry>,
     /// Resolved output mode — used by `write_call` to pick the per-mode
     /// key from `(context, strand)` and to dispatch yacht's 8-col row
     /// format.
@@ -79,8 +100,7 @@ impl OutputFileMap {
         std::fs::create_dir_all(output_dir)?;
 
         let keys = mode_keys(mode, input_basename, gzip);
-        let mut files: HashMap<OutputKey, (PathBuf, BoxedWriter)> =
-            HashMap::with_capacity(keys.len());
+        let mut files: HashMap<OutputKey, OutputFileEntry> = HashMap::with_capacity(keys.len());
 
         for (key, filename) in keys {
             let path = output_dir.join(filename);
@@ -88,7 +108,14 @@ impl OutputFileMap {
             if !no_header {
                 writer.write_all(SPLIT_FILE_HEADER.as_bytes())?;
             }
-            files.insert(key, (path, writer));
+            files.insert(
+                key,
+                OutputFileEntry {
+                    path,
+                    writer,
+                    records_written: 0,
+                },
+            );
         }
 
         Ok(OutputFileMap { files, mode })
@@ -139,7 +166,7 @@ impl OutputFileMap {
             Some(k) => k,
             None => return Ok(()),
         };
-        let (_, writer) =
+        let entry =
             self.files
                 .get_mut(&key)
                 .ok_or_else(|| BismarkExtractorError::InternalError {
@@ -152,7 +179,7 @@ impl OutputFileMap {
 
         if self.mode == OutputMode::Yacht {
             write_yacht_row(
-                writer,
+                &mut entry.writer,
                 record_name,
                 chr,
                 &call,
@@ -163,17 +190,25 @@ impl OutputFileMap {
         } else {
             // 5-col format (Phase B byte-identity locked).
             let meth_char: u8 = if call.methylated { b'+' } else { b'-' };
-            writer.write_all(record_name)?;
-            writer.write_all(b"\t")?;
-            writer.write_all(&[meth_char])?;
-            writer.write_all(b"\t")?;
-            writer.write_all(chr.as_bytes())?;
-            writer.write_all(b"\t")?;
-            writer.write_all(call.ref_pos.to_string().as_bytes())?;
-            writer.write_all(b"\t")?;
-            writer.write_all(&[call.xm_byte])?;
-            writer.write_all(b"\n")?;
+            entry.writer.write_all(record_name)?;
+            entry.writer.write_all(b"\t")?;
+            entry.writer.write_all(&[meth_char])?;
+            entry.writer.write_all(b"\t")?;
+            entry.writer.write_all(chr.as_bytes())?;
+            entry.writer.write_all(b"\t")?;
+            entry
+                .writer
+                .write_all(call.ref_pos.to_string().as_bytes())?;
+            entry.writer.write_all(b"\t")?;
+            entry.writer.write_all(&[call.xm_byte])?;
+            entry.writer.write_all(b"\n")?;
         }
+        // Phase C.2 (#865): bump records_written AFTER all writes succeed.
+        // Per plan §5.3 step 2 + R4: partial-write failures (any of the
+        // write_all `?`s above) propagate out before the counter bumps, so
+        // we never over-count. The empty-sweep uses this counter to
+        // decide whether to unlink the file at finalize time.
+        entry.records_written = entry.records_written.saturating_add(1);
         Ok(())
     }
 
@@ -187,9 +222,71 @@ impl OutputFileMap {
     /// drops (which happens at `cleanup_all` time, or at struct-drop time
     /// for the normal exit path).
     pub fn flush_all(&mut self) -> Result<(), std::io::Error> {
-        for (_, writer) in self.files.values_mut() {
-            writer.flush()?;
+        for entry in self.files.values_mut() {
+            entry.writer.flush()?;
         }
+        Ok(())
+    }
+
+    /// Sweep empty per-strand output files at flush time, matching Perl's
+    /// end-of-run `was empty -> deleted` behaviour (closes #865).
+    ///
+    /// For each entry: drop the writer (closes the `File` + flushes the
+    /// `GzEncoder` trailer if applicable — `flush_all` does NOT write
+    /// the gzip trailer, only `drop` does); if `records_written == 0`,
+    /// unlink the file and emit `{filename} was empty ->\tdeleted` to
+    /// **STDERR** via `eprintln!`. Otherwise emit `{filename} contains
+    /// data ->\tkept`. Two trailing `eprintln!()` calls mirror Perl line
+    /// 625's `warn "\n\n"`.
+    ///
+    /// Empties the internal map (the sweep is the terminal lifecycle
+    /// method for `OutputFileMap`); subsequent `write_call` invocations
+    /// would fall through to the `missing key` `InternalError` path.
+    ///
+    /// **STDERR vs STDOUT**: matches Perl `:607` + `:615` which use `warn`
+    /// (stderr). Earlier rev-0 of this plan routed to stdout citing
+    /// "matches Perl exactly" — that was wrong; corrected in rev 1 per
+    /// dual plan-review C3.
+    ///
+    /// # Errors
+    ///
+    /// `std::io::Error` on the first `remove_file` failure. Subsequent
+    /// entries are skipped (the map's drain consumed them; partial
+    /// state is acceptable since this runs on the success path only).
+    pub fn finalize_with_empty_sweep(&mut self) -> Result<(), std::io::Error> {
+        let entries: Vec<_> = self.files.drain().collect();
+        for (
+            _,
+            OutputFileEntry {
+                path,
+                writer,
+                records_written,
+            },
+        ) in entries
+        {
+            // Explicit drop closes the writer AND flushes the gzip trailer
+            // for gzipped writers (which `flush_all` doesn't — gzip trailer
+            // emission is tied to GzEncoder's Drop impl, not its flush).
+            // For kept files this is the seal-the-trailer point.
+            drop(writer);
+            // Phase C.2 code-review B H1: emit the FULL path (matches
+            // Perl `:607, :615` which use `$sorting_files[$index]` =
+            // `$output_dir . $filename`). Earlier rev emitted just the
+            // bare basename via `path.file_name()`.
+            let path_str = path.display();
+            if records_written == 0 {
+                std::fs::remove_file(&path)?;
+                eprintln!("{path_str} was empty ->\tdeleted");
+            } else {
+                eprintln!("{path_str} contains data ->\tkept");
+            }
+        }
+        // Perl line 625: `warn "\n\n";` — two trailing blank lines on
+        // stderr to mark the end of the sweep block. Mirroring for
+        // consistency with downstream tooling that visually parses the
+        // captured stderr.
+        eprintln!();
+        eprintln!();
         Ok(())
     }
 
@@ -205,7 +302,15 @@ impl OutputFileMap {
     pub fn cleanup_all(&mut self) {
         // Drain into a vec to avoid double-borrow.
         let entries: Vec<_> = self.files.drain().collect();
-        for (_, (path, writer)) in entries {
+        for (
+            _,
+            OutputFileEntry {
+                path,
+                writer,
+                records_written: _,
+            },
+        ) in entries
+        {
             // Explicitly close the writer (and the inner GzEncoder, if any)
             // BEFORE calling `remove_file`. A named `let` binding (even
             // underscore-prefixed) lives to the end of the loop iteration,
@@ -244,9 +349,24 @@ fn open_writer(path: &Path, gzip: bool) -> Result<BoxedWriter, std::io::Error> {
 /// `_splitting_report.txt` content at finalize time.
 #[derive(Debug, Default)]
 pub struct SplittingReport {
-    /// Total records iterated (SE: one per record; PE: two per pair —
-    /// matches Perl `bismark_methylation_extractor:2451`).
+    /// SE: number of records iterated. PE: number of PAIRS iterated (NOT
+    /// 2×pairs). Matches Perl `bismark_methylation_extractor:2459` /
+    /// `$counting{sequences_count}` which is incremented once per outer-
+    /// loop iteration.
+    ///
+    /// **Phase C.2 (#864) correction:** rev 0 of Phase B added 2 per pair
+    /// citing Perl line 2451, but `2451` is the `methylation_call_strings`
+    /// counter, not `sequences_count`. C.2 splits the two counters
+    /// (`records_processed` = pairs for PE; `call_strings_processed` =
+    /// 2×pairs) and fixes pipeline.rs:254 + parallel.rs:770.
     pub records_processed: u64,
+    /// SE: equals `records_processed`. PE: 2×pairs (one per XM string
+    /// processed). Matches Perl `bismark_methylation_extractor:2451` /
+    /// `$counting{methylation_call_strings}`.
+    ///
+    /// **Phase C.2 (#864) addition:** drives the Perl line 2483 report
+    /// row `"Total number of methylation call strings processed: N"`.
+    pub call_strings_processed: u64,
     /// Total methylation calls (`Z`+`z`+`X`+`x`+`H`+`h`).
     pub calls_total: u64,
     /// `Z`.
@@ -285,6 +405,9 @@ impl SplittingReport {
         self.records_processed = self
             .records_processed
             .saturating_add(other.records_processed);
+        self.call_strings_processed = self
+            .call_strings_processed
+            .saturating_add(other.call_strings_processed);
         self.calls_total = self.calls_total.saturating_add(other.calls_total);
         self.calls_cpg_meth = self.calls_cpg_meth.saturating_add(other.calls_cpg_meth);
         self.calls_cpg_unmeth = self.calls_cpg_unmeth.saturating_add(other.calls_cpg_unmeth);
@@ -295,92 +418,310 @@ impl SplittingReport {
     }
 }
 
-/// Write `{output_dir}/{basename}_splitting_report.txt`.
+/// True for output modes that emit `Output specified: comprehensive` in
+/// the splitting report (Perl `$full == 1`). Perl sets `$full=1` for:
+///   - `--comprehensive` (`OutputMode::Comprehensive`)
+///   - `--comprehensive --merge_non_CpG` (`OutputMode::ComprehensiveMergeNonCpG`)
+///   - `--yacht` (Perl `:1331`)
 ///
-/// Phase B emits a Perl-shaped report; byte-equality is a Phase H concern.
-/// The shape mirrors Perl's section ordering:
-///   - parameter-summary block (input file, optional `--fasta` annotation,
-///     etc.)
-///   - per-context counts
-///   - per-context methylation percentages
+/// **Phase C.2 code-review B C1 fix:** centralises the predicate so all
+/// three call sites (Output-specified, merge-note, percentage-block)
+/// stay in sync. Pre-fix, `Yacht` was missing from the comprehensive
+/// match, causing the report to emit "strand-specific (default)" for
+/// `--yacht` which diverges from Perl's "comprehensive".
+fn emits_comprehensive(mode: OutputMode) -> bool {
+    matches!(
+        mode,
+        OutputMode::Comprehensive | OutputMode::ComprehensiveMergeNonCpG | OutputMode::Yacht
+    )
+}
+
+/// True for output modes that emit the `Methylation in CHG and CHH
+/// context will be merged …` report note AND collapse the percentage
+/// block from 3 lines (CpG/CHG/CHH) to 2 (CpG/Non-CpG). Perl
+/// `$merge_non_CpG == 1`. Set for:
+///   - `--merge_non_CpG` (`OutputMode::MergeNonCpG`)
+///   - `--comprehensive --merge_non_CpG` (`OutputMode::ComprehensiveMergeNonCpG`)
+///   - `--yacht` (Perl `:1333`)
+///
+/// **Phase C.2 code-review B C1 fix.**
+fn merges_non_cpg(mode: OutputMode) -> bool {
+    matches!(
+        mode,
+        OutputMode::MergeNonCpG | OutputMode::ComprehensiveMergeNonCpG | OutputMode::Yacht
+    )
+}
+
+/// Write one percentage row matching Perl's per-context format.
+///
+/// **Phase C.2 (#864) addition.** If `meth + unmeth == 0`, writes the
+/// zero-denominator fallback string (Perl `:2528` / `:2548` / `:2556` /
+/// `:2537`). Trailing newline count is `\n` for non-last rows; `\n\n\n`
+/// for the LAST row (CHH in default 3-context output, or Non-CpG in
+/// `--merge_non_CpG` mode). The triple-newline matches Perl `:2553` /
+/// `:2534` / `:2556` / `:2537` which bake `\n\n\n` directly into the
+/// last-line format string.
+///
+/// Uses `write_all` (not `writeln!`) so the per-Perl-line trailing-newline
+/// count is auditable inline with the format string — see SPEC §8.3 and
+/// Phase C.2 plan §A13.
+fn write_percent_or_fallback(
+    w: &mut impl Write,
+    ctx_label: &str,
+    meth: u64,
+    unmeth: u64,
+    is_last: bool,
+) -> Result<(), std::io::Error> {
+    let trailing: &[u8] = if is_last { b"\n\n\n" } else { b"\n" };
+    let total = meth.saturating_add(unmeth);
+    if total == 0 {
+        w.write_all(b"Can't determine percentage of methylated Cs in ")?;
+        w.write_all(ctx_label.as_bytes())?;
+        w.write_all(b" context if value was 0")?;
+        w.write_all(trailing)?;
+    } else {
+        let pct = (meth as f64) * 100.0 / (total as f64);
+        w.write_all(b"C methylated in ")?;
+        w.write_all(ctx_label.as_bytes())?;
+        w.write_all(b" context:\t")?;
+        let pct_str = format!("{pct:.1}");
+        w.write_all(pct_str.as_bytes())?;
+        w.write_all(b"%")?;
+        w.write_all(trailing)?;
+    }
+    Ok(())
+}
+
+/// Write `{output_dir}/{basename}_splitting_report.txt` in the exact format
+/// produced by Perl `bismark_methylation_extractor` v0.25.1.
+///
+/// **Phase C.2 rewrite (closes #864).** Mirrors Perl lines 4995-5047
+/// (header block) + 2482-2556 (body block) byte-for-byte. Conditional
+/// emission of `Ignoring …`, `Output specified: …`, `No overlapping
+/// methylation calls specified`, `Genomic equivalent sequences …`, and
+/// `Methylation in CHG and CHH context …` lines mirrors Perl semantics.
+///
+/// `is_paired` is the **resolved** SE-vs-PE boolean (from
+/// `ExtractState::is_paired`), NOT `config.paired_mode` (which can be
+/// `AutoDetect` even after the dispatch picked one).
+///
+/// Uses `write_all(b"\n")` instead of `writeln!` for byte-identity on
+/// Windows — see Phase C.2 plan §A13.
+///
+/// # Errors
+///
+/// `std::io::Error` on file creation, write, or flush failure.
+#[allow(clippy::write_with_newline)]
+// Clippy suggests `writeln!` for `write!(... "...\n", ...)` patterns.
+// We deliberately reject that lint here for **byte-count auditability**
+// against the Perl reference (Phase C.2 plan §A13 / SPEC §8.3 byte-
+// identity invariant). The Perl source has multiple trailing-newline
+// patterns per line (`\n` for most, `\n\n` for spacer lines, `\n\n\n`
+// for the last percentage line); keeping the `\n` counts visually
+// inline with the format string makes the per-Perl-line correspondence
+// easy to audit. `writeln!` would hide those counts, requiring readers
+// to mentally insert one `\n` per macro call and reconstruct the byte-
+// sequence from prose. Note: `writeln!` does NOT emit CRLF on Windows
+// — Rust's `std::fs::File` is binary-mode by default. Clarification
+// added per code-review B M1.
 pub fn write_splitting_report(
     path: &Path,
     input_path: &Path,
     config: &ResolvedConfig,
+    is_paired: bool,
     report: &SplittingReport,
 ) -> Result<(), std::io::Error> {
     let mut w = BufWriter::with_capacity(8 * 1024, File::create(path)?);
 
-    // Header / parameter summary
-    writeln!(
-        w,
-        "Bismark methylation extractor version {}",
-        BISMARK_VERSION
-    )?;
-    writeln!(w)?;
-    writeln!(w, "Input file: {}", input_path.display())?;
-    writeln!(w, "Output directory: {}", config.output_dir.display())?;
+    // Step 2: bare basename (Perl :4995 — `print REPORT "$output_filename\n\n";`
+    // where $output_filename is the input file basename without dir).
+    let basename = input_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| input_path.display().to_string());
+    w.write_all(basename.as_bytes())?;
+    w.write_all(b"\n")?;
+    // Step 3: blank line.
+    w.write_all(b"\n")?;
 
-    // --fasta annotation line (SPEC §3 row 4, Perl line 5040)
+    // Step 4-6: parameter block (Perl :4996-5004).
+    w.write_all(b"Parameters used to extract methylation information:\n")?;
+    w.write_all(b"Bismark Extractor Version: ")?;
+    w.write_all(BISMARK_VERSION.as_bytes())?;
+    w.write_all(b"\n")?;
+    if is_paired {
+        w.write_all(b"Bismark result file: paired-end (SAM format)\n")?;
+    } else {
+        w.write_all(b"Bismark result file: single-end (SAM format)\n")?;
+    }
+
+    // Step 7: conditional `Ignoring …` lines (Perl :5006-5028). SE vs PE
+    // branches; emit only when the corresponding field is non-zero.
+    if is_paired {
+        if config.ignore_5p_r1 > 0 {
+            write!(w, "Ignoring first {} bp of Read 1\n", config.ignore_5p_r1)?;
+        }
+        if config.ignore_5p_r2 > 0 {
+            write!(w, "Ignoring first {} bp of Read 2\n", config.ignore_5p_r2)?;
+        }
+        if config.ignore_3p_r1 > 0 {
+            write!(w, "Ignoring last {} bp of Read 1\n", config.ignore_3p_r1)?;
+        }
+        if config.ignore_3p_r2 > 0 {
+            write!(w, "Ignoring last {} bp of Read 2\n", config.ignore_3p_r2)?;
+        }
+    } else {
+        if config.ignore_5p_r1 > 0 {
+            write!(w, "Ignoring first {} bp\n", config.ignore_5p_r1)?;
+        }
+        if config.ignore_3p_r1 > 0 {
+            write!(w, "Ignoring last {} bp\n", config.ignore_3p_r1)?;
+        }
+    }
+
+    // Step 8: Output specified (Perl :5030-5034). `$full` controls the
+    // emission; Perl `:1331` sets `$full=1` for --yacht so Yacht emits
+    // `comprehensive` here too. Centralised via [`emits_comprehensive`]
+    // (per code-review B C1 — `Yacht` was previously missing from this
+    // arm, causing three byte-divergences in --yacht mode).
+    if emits_comprehensive(config.output_mode) {
+        w.write_all(b"Output specified: comprehensive\n")?;
+    } else {
+        w.write_all(b"Output specified: strand-specific (default)\n")?;
+    }
+
+    // Step 9: no_overlap line — matches Perl :5037 `if ($no_overlap)`.
+    // Plan rev 1 I9: simplified to just check config.no_overlap (Perl's
+    // SE branch never sets it, so the check is naturally SE-safe).
+    if config.no_overlap {
+        w.write_all(b"No overlapping methylation calls specified\n")?;
+    }
+
+    // Step 10: fasta annotation (Perl :5040).
     if config.fasta_annotation {
-        writeln!(
-            w,
-            "Genomic equivalent sequences will be printed out in FastA format"
+        w.write_all(b"Genomic equivalent sequences will be printed out in FastA format\n")?;
+    }
+
+    // Step 11: merge_non_CpG note (Perl :5043). Yacht sets
+    // `$merge_non_CpG=1` at Perl `:1333` so it emits this note too —
+    // [`merges_non_cpg`] centralises the predicate.
+    if merges_non_cpg(config.output_mode) {
+        w.write_all(
+            b"Methylation in CHG and CHH context will be merged into \"non-CpG context\" output\n",
         )?;
     }
 
-    // Trim settings.
-    writeln!(w, "--ignore: {}", config.ignore_5p_r1)?;
-    writeln!(w, "--ignore_3prime: {}", config.ignore_3p_r1)?;
+    // Step 12: header→body gap. Perl :5047 emits `\n` (close header);
+    // Perl :2482 emits leading `\n` of body. Combined: two blank lines
+    // visible (3 consecutive \n bytes total: prev-line \n + 5047 \n +
+    // 2482 leading \n). Write the two extras here. Phase C.2 plan rev 1
+    // Critical C2 fix.
+    w.write_all(b"\n\n")?;
 
-    writeln!(w)?;
-    // Perl `bismark_methylation_extractor:2479` writes "Processed N lines in total"
-    // (where N is the BAM-line count — SE: records, PE: 2×pairs). Phase C bug-fix.
-    writeln!(w, "Processed {} lines in total", report.records_processed)?;
-    writeln!(w)?;
+    // Step 13: Perl :2482 `"\nProcessed $sequences_count lines in total\n"`
+    // (the leading \n is included in step 12 above; here just the line).
+    write!(w, "Processed {} lines in total\n", report.records_processed)?;
 
-    writeln!(w, "Total number of C's analysed:\t{}", report.calls_total)?;
-    writeln!(w)?;
-
-    writeln!(
+    // Step 14: Perl :2483 has trailing \n\n. The second \n becomes the
+    // blank line before the "Final Cytosine Methylation Report" header.
+    write!(
         w,
-        "Total methylated C's in CpG context:\t{}",
+        "Total number of methylation call strings processed: {}\n\n",
+        report.call_strings_processed
+    )?;
+
+    // Step 15-16: section header (Perl :2510).
+    w.write_all(b"Final Cytosine Methylation Report\n")?;
+    w.write_all(b"=================================\n")?; // 33 `=`
+
+    // Step 17: total C's (Perl :2513 trailing \n\n).
+    write!(
+        w,
+        "Total number of C's analysed:\t{}\n\n",
+        report.calls_total
+    )?;
+
+    // Step 18: methylated trio (Perl :2515-2517). Last line ends \n\n.
+    write!(
+        w,
+        "Total methylated C's in CpG context:\t{}\n",
         report.calls_cpg_meth
     )?;
-    writeln!(
+    write!(
         w,
-        "Total unmethylated C's in CpG context:\t{}",
-        report.calls_cpg_unmeth
-    )?;
-    writeln!(
-        w,
-        "Total methylated C's in CHG context:\t{}",
+        "Total methylated C's in CHG context:\t{}\n",
         report.calls_chg_meth
     )?;
-    writeln!(
+    write!(
         w,
-        "Total unmethylated C's in CHG context:\t{}",
-        report.calls_chg_unmeth
-    )?;
-    writeln!(
-        w,
-        "Total methylated C's in CHH context:\t{}",
+        "Total methylated C's in CHH context:\t{}\n\n",
         report.calls_chh_meth
     )?;
-    writeln!(
+
+    // Step 19: unmethylated trio (Perl :2519-2521). NOTE phrasing change:
+    // "Total C to T conversions in {ctx} context:" not "Total unmethylated".
+    write!(
         w,
-        "Total unmethylated C's in CHH context:\t{}",
+        "Total C to T conversions in CpG context:\t{}\n",
+        report.calls_cpg_unmeth
+    )?;
+    write!(
+        w,
+        "Total C to T conversions in CHG context:\t{}\n",
+        report.calls_chg_unmeth
+    )?;
+    write!(
+        w,
+        "Total C to T conversions in CHH context:\t{}\n\n",
         report.calls_chh_unmeth
     )?;
-    writeln!(w)?;
 
-    let pct_cpg = SplittingReport::percent_meth(report.calls_cpg_meth, report.calls_cpg_unmeth);
-    let pct_chg = SplittingReport::percent_meth(report.calls_chg_meth, report.calls_chg_unmeth);
-    let pct_chh = SplittingReport::percent_meth(report.calls_chh_meth, report.calls_chh_unmeth);
-    writeln!(w, "C methylated in CpG context:\t{:.2}%", pct_cpg)?;
-    writeln!(w, "C methylated in CHG context:\t{:.2}%", pct_chg)?;
-    writeln!(w, "C methylated in CHH context:\t{:.2}%", pct_chh)?;
+    // Step 20: percentage block via write_percent_or_fallback. Branches:
+    //   Default / Comprehensive: 3 lines (CpG/CHG/CHH; CHH is last).
+    //   MergeNonCpG / ComprehensiveMergeNonCpG / Yacht: 2 lines
+    //     (CpG/Non-CpG; Non-CpG is last) — Yacht sets `$merge_non_CpG=1`
+    //     at Perl `:1333` so its percentage block collapses to two
+    //     contexts (per code-review B C1).
+    if merges_non_cpg(config.output_mode) {
+        // Perl :2525-2528: CpG percent (\n only).
+        write_percent_or_fallback(
+            &mut w,
+            "CpG",
+            report.calls_cpg_meth,
+            report.calls_cpg_unmeth,
+            /*is_last=*/ false,
+        )?;
+        // Perl :2534-2537: Non-CpG combined (\n\n\n trailing, is_last=true).
+        let non_cpg_meth = report.calls_chg_meth.saturating_add(report.calls_chh_meth);
+        let non_cpg_unmeth = report
+            .calls_chg_unmeth
+            .saturating_add(report.calls_chh_unmeth);
+        write_percent_or_fallback(&mut w, "non-CpG", non_cpg_meth, non_cpg_unmeth, true)?;
+    } else {
+        write_percent_or_fallback(
+            &mut w,
+            "CpG",
+            report.calls_cpg_meth,
+            report.calls_cpg_unmeth,
+            false,
+        )?;
+        write_percent_or_fallback(
+            &mut w,
+            "CHG",
+            report.calls_chg_meth,
+            report.calls_chg_unmeth,
+            false,
+        )?;
+        write_percent_or_fallback(
+            &mut w,
+            "CHH",
+            report.calls_chh_meth,
+            report.calls_chh_unmeth,
+            /*is_last=*/ true,
+        )?;
+    }
 
+    // Step 21: flush.
     w.flush()?;
     Ok(())
 }
@@ -390,9 +731,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn write_percent_or_fallback_cpg_not_last_emits_single_newline() {
+        // Phase C.2 (#864) regression guard: CpG percentage line (when not
+        // the last context) ends with `\n`, not `\n\n\n`. Mirrors Perl
+        // line 2525 / 2545.
+        let mut buf = Vec::new();
+        write_percent_or_fallback(&mut buf, "CpG", 50, 50, /*is_last=*/ false).unwrap();
+        assert_eq!(buf, b"C methylated in CpG context:\t50.0%\n");
+    }
+
+    #[test]
+    fn write_percent_or_fallback_chh_last_emits_triple_newline() {
+        // Phase C.2 (#864) regression guard for Critical C1: CHH percentage
+        // (last context in default 3-context output) ends with `\n\n\n`
+        // baked INTO the line itself (matches Perl line 2553 format string).
+        let mut buf = Vec::new();
+        write_percent_or_fallback(&mut buf, "CHH", 1, 99, /*is_last=*/ true).unwrap();
+        assert_eq!(buf, b"C methylated in CHH context:\t1.0%\n\n\n");
+    }
+
+    #[test]
+    fn write_percent_or_fallback_zero_denom_cpg_emits_perl_fallback_string() {
+        // Perl line 2528: `Can't determine percentage of methylated Cs in
+        // CpG context if value was 0\n` (single \n for non-last CpG).
+        let mut buf = Vec::new();
+        write_percent_or_fallback(&mut buf, "CpG", 0, 0, /*is_last=*/ false).unwrap();
+        assert_eq!(
+            buf,
+            b"Can't determine percentage of methylated Cs in CpG context if value was 0\n"
+        );
+    }
+
+    #[test]
+    fn write_percent_or_fallback_zero_denom_chh_last_emits_triple_newline() {
+        // Perl line 2556: same fallback string but with `\n\n\n` trailing
+        // for the LAST context (3-context CHH or merge_non_CpG Non-CpG).
+        let mut buf = Vec::new();
+        write_percent_or_fallback(&mut buf, "CHH", 0, 0, /*is_last=*/ true).unwrap();
+        assert_eq!(
+            buf,
+            b"Can't determine percentage of methylated Cs in CHH context if value was 0\n\n\n"
+        );
+    }
+
+    #[test]
+    fn write_percent_or_fallback_uses_one_decimal_precision() {
+        // Phase C.2 (#864): Perl `sprintf("%.1f", ...)` → 1 decimal place
+        // (e.g. `12.5%`, not `12.50%`). Plan A5 / I2 documented the
+        // banker's-rounding caveat for exact half-decimals.
+        let mut buf = Vec::new();
+        // 5/40 = 12.5 (representable exactly in f64; both rounding modes
+        // produce 12.5).
+        write_percent_or_fallback(&mut buf, "CpG", 5, 35, false).unwrap();
+        assert_eq!(buf, b"C methylated in CpG context:\t12.5%\n");
+    }
+
+    #[test]
     fn splitting_report_add_is_commutative() {
         let a = SplittingReport {
             records_processed: 100,
+            call_strings_processed: 200, // PE: 2× pairs
             calls_total: 500,
             calls_cpg_meth: 30,
             calls_cpg_unmeth: 70,
@@ -403,6 +801,7 @@ mod tests {
         };
         let b = SplittingReport {
             records_processed: 250,
+            call_strings_processed: 500,
             calls_total: 1250,
             calls_cpg_meth: 100,
             calls_cpg_unmeth: 150,
@@ -414,6 +813,7 @@ mod tests {
         // a + b
         let mut a_into_b = SplittingReport {
             records_processed: b.records_processed,
+            call_strings_processed: b.call_strings_processed,
             calls_total: b.calls_total,
             calls_cpg_meth: b.calls_cpg_meth,
             calls_cpg_unmeth: b.calls_cpg_unmeth,
@@ -426,6 +826,7 @@ mod tests {
         // b + a
         let mut b_into_a = SplittingReport {
             records_processed: a.records_processed,
+            call_strings_processed: a.call_strings_processed,
             calls_total: a.calls_total,
             calls_cpg_meth: a.calls_cpg_meth,
             calls_cpg_unmeth: a.calls_cpg_unmeth,
@@ -437,6 +838,10 @@ mod tests {
         b_into_a.add(&b);
 
         assert_eq!(a_into_b.records_processed, b_into_a.records_processed);
+        assert_eq!(
+            a_into_b.call_strings_processed,
+            b_into_a.call_strings_processed
+        );
         assert_eq!(a_into_b.calls_total, b_into_a.calls_total);
         assert_eq!(a_into_b.calls_cpg_meth, b_into_a.calls_cpg_meth);
         assert_eq!(a_into_b.calls_cpg_unmeth, b_into_a.calls_cpg_unmeth);
@@ -446,6 +851,7 @@ mod tests {
         assert_eq!(a_into_b.calls_chh_unmeth, b_into_a.calls_chh_unmeth);
         // Sanity sums:
         assert_eq!(a_into_b.records_processed, 350);
+        assert_eq!(a_into_b.call_strings_processed, 700);
         assert_eq!(a_into_b.calls_total, 1750);
     }
 }

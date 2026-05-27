@@ -160,7 +160,11 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
                 return Err(err);
             }
         }
+        // SE: records_processed and call_strings_processed both increment
+        // by 1 per record (Perl `sequences_count` == `methylation_call_strings`
+        // for SE input). Phase C.2 (#864) addition.
         state.report.records_processed = state.report.records_processed.saturating_add(1);
+        state.report.call_strings_processed = state.report.call_strings_processed.saturating_add(1);
     }
 
     // Post-loop: no `cleanup_partial_outputs` on finalize failure — the data
@@ -183,12 +187,26 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
 /// `record_strand`), NOT each mate's `record_strand`. This closes the
 /// "one pair split across multiple files" bug class structurally.
 ///
-/// # Splitting-report counter
+/// # Splitting-report counters
 ///
-/// Increments `state.report.records_processed` by **2 per pair** to match
-/// Perl `bismark_methylation_extractor:2451` (`$methylation_call_strings_processed += 2`)
-/// and the line-2479 report literal `"Processed N lines in total"`. The
-/// counter name `records_processed` reflects lines-in-BAM, not pair-count.
+/// **Phase C.2 correction (#864):** increments two counters per pair:
+///
+/// - `records_processed += 1` per pair — matches Perl
+///   `bismark_methylation_extractor:2459` / `$counting{sequences_count}`
+///   which drives the line-2482 report literal
+///   `"Processed N lines in total"`. For PE, N = pair count, NOT 2×pairs.
+///
+/// - `call_strings_processed += 2` per pair — matches Perl
+///   `bismark_methylation_extractor:2451`
+///   (`$methylation_call_strings_processed += 2`) which drives the
+///   line-2483 report literal `"Total number of methylation call strings
+///   processed: 2N"`.
+///
+/// Rev 0 of Phase B (and rev 1 carried it forward) added 2 per pair to
+/// `records_processed` citing Perl line 2451, but `:2451` is the
+/// `methylation_call_strings` counter, not `sequences_count`. Phase C.2
+/// splits the two counters and fixes both increment sites here AND in
+/// `parallel.rs::worker_loop`.
 ///
 /// # Errors
 ///
@@ -249,9 +267,13 @@ pub fn extract_pe(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
             return Err(e);
         }
 
-        // Two BAM lines processed per iteration (rev 1 Reviewer A §1.5 /
-        // Reviewer B L1: Perl line 2451 increments by 2 per pair).
-        state.report.records_processed = state.report.records_processed.saturating_add(2);
+        // Phase C.2 (#864): two split counters.
+        // - records_processed += 1 per pair (Perl :2459, `sequences_count`)
+        //   drives "Processed N lines in total" with N = pair count.
+        // - call_strings_processed += 2 per pair (Perl :2451) drives
+        //   "Total number of methylation call strings processed: 2N".
+        state.report.records_processed = state.report.records_processed.saturating_add(1);
+        state.report.call_strings_processed = state.report.call_strings_processed.saturating_add(2);
     }
 
     state.finalize(config)?;

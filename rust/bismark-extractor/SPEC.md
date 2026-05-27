@@ -654,17 +654,29 @@ Integration tests then run the Rust binary against the BAM and compare each outp
 
 `#[ignore]`'d in `tests/byte_identity_real_data.rs`. Uses the existing baselines at `~/Desktop/TrimG_Bismark_test/profiling/` (10M PE) + `~/Desktop/TrimG_Bismark_test/profiling_full/` (55M PE) — same datasets the dedup port validated against.
 
+**Byte-identity invariant (rev 3, post-#863 closure 2026-05-27).** "Rust output is byte-identical to Perl" means:
+
+1. Per-file line counts equal Perl's, file-by-file.
+2. Sorted-content MD5 equals Perl's on every data file (`{ctx}_{strand}_{basename}.txt`). Line ordering may differ — Rust emits in BAM-input order via the BTreeMap collector; Perl's `--multicore N` emits in fork-modulo-then-concatenate order which itself depends on N.
+3. `*_splitting_report.txt` is raw-byte-identical to Perl.
+4. `*.M-bias.txt` is raw-byte-identical to Perl.
+5. File-set is identical: Perl's `was empty -> deleted` sweep is mirrored (#865), so the set of files present in the output directory is identical to Perl's.
+6. Self-determinism: for any fixed input and CLI flag set, two consecutive Rust runs produce raw-byte-identical output. This is a *stronger* invariant than (2) since Perl does not provide self-determinism — Perl's output depends on `--multicore N`. Rust's BTreeMap-ordered collector preserves BAM-input order under any `--parallel N`.
+
+The line-ordering relaxation in (2) is per #863's won't-fix decision (rev 1 plan §2.5). The §9 header invariant (`--multicore N` produces output byte-identical to `--multicore 1`) is preserved — that is Rust-vs-Rust N-invariance, distinct from this Rust-vs-Perl invariant.
+
 **Corrected rev 1** (Reviewers A + B both flagged): each split file gets BOTH an unsorted byte-equality assertion AND a sorted-md5 smoke check. The sorted-md5 alone would hide line-reordering bugs (e.g. rayon worker output emitted out of input order, the XM-reversal bug producing the right calls in the wrong order, or Alan's strand-routing bug producing CTOT/CTOB files for directional data that happen to sort-equal to empty Perl baselines).
 
 | Assertion | What | Rationale |
 |-----------|------|-----------|
-| Each of 12 split files **unsorted byte equality** at `--multicore 1` | `cmp <rust_split> <perl_split>` (or `gzcmp` for `.gz`) | The byte-identity contract. Catches reordering, drift, and content bugs. |
-| Each of 12 split files **sorted-md5 equality** at `--multicore 4` | `gzcat <rust_split> \| sort \| md5 == gzcat <perl_split> \| sort \| md5` | The multicore path may reorder; sorted-md5 is the order-invariant content check. |
+| Each of 12 split files **sorted-content equality** vs Perl `--multicore N` | `sort <rust_split> \| md5sum == sort <perl_split> \| md5sum`. Strict `cmp` retained as a secondary informational check; raw bytes may differ by record ordering only. | **Rev 3 (post-#863):** Rust emits BAM-input order; Perl multicore is fork+modulo (N-dependent). Sorted-content equality is the line-ordering-invariant content check. Catches drift, content bugs, and strand-routing bugs. Does NOT catch worker reordering — covered by §9 N-invariance below. |
 | `M-bias.txt` byte equality | Includes the 6 sections (CpG/CHG/CHH × R1/R2) in the right order | Catches section-ordering bugs AND the missing-CHG/CHH bug (Alan's port produced only CpG sections). |
 | `_splitting_report.txt` byte equality | Parameter summary + counts; expect-`--fasta`-line if flag set (per §3 row 4 correction). | — |
-| **`--multicore 4` byte-identity vs `--multicore 1` Rust output** | Run Rust extractor at N=1 and N=4 on same input; compare each split file with `cmp` (unsorted). | The locked invariant from §9 — "any N produces byte-identical output to N=1." This is the strongest test of the parallelism design. |
+| **`--multicore 4` byte-identity vs `--multicore 1` Rust output** | Run Rust extractor at N=1 and N=4 on same input; compare each split file with `cmp` (unsorted). | The locked invariant from §9 — "any N produces byte-identical output to N=1." This is the strongest test of the parallelism design AND covers the worker-reorder regression the rev-2 sorted-md5-only check could have hidden. |
 | `--bedGraph` chain: `.bedGraph.gz` + `.bismark.cov.gz` sorted-md5 equal | (Phase G — subprocess to Perl `bismark2bedGraph`) | Sorted because Perl's bedGraph generates a sort step internally. |
 | `--cytosine_report` chain: `CpG_report.txt.gz` sorted-md5 equal | (Phase G — subprocess to Perl `coverage2cytosine`) | Same. |
+
+**File-set match (rev 3, #865 added).** Perl's `was empty -> deleted` sweep is mirrored at the end of every extractor run. For a directional library in default mode this means 6 files exist post-run (OT/OB × CpG/CHG/CHH), not 12. Rust's `OutputFileMap::finalize_with_empty_sweep` mirrors this exactly, including the per-file STDERR log lines `{filename} contains data ->\tkept` / `{filename} was empty ->\tdeleted`.
 
 ### 8.4 Edge case fixtures
 
@@ -679,7 +691,7 @@ Integration tests then run the Rust binary against the BAM and compare each outp
 | Mixed SE+PE in same BAM | Currently undefined; either auto-detect per-record or reject |
 | Empty input BAM | `EmptyInput` error, no output files (matches dedup pattern) |
 | Coordinate-sorted input | Reject with the same `UnsortedInput` message as `bismark-io` already produces |
-| **Directional library** (only OT + OB strand records — no CTOT/CTOB) | **Rev 3 correction (Phase B surfaced):** Rust output's CTOT/CTOB files **MUST exist on disk** with the **literal version header line as their only content** (NOT 0-byte or absent). Rev 1 said "0-byte (Perl) or absent (Rust if FHs lazy-created)"; that was wrong about Perl. Default mode: Perl `:5405-5430` opens `CpG_OT/CTOT/CTOB/OB` eagerly via `open(...) unless($mbias_only)` and immediately writes `"Bismark methylation extractor version $version\n"` via `print ... unless($no_header) unless($mbias_only)` — guarded only by those two flags, not by "any call routed here". `--merge_non_CpG` mode mirrors at `:5140-5325` (CpG + Non_CpG × 4 strands each). Phase B (rev 1) implemented eager-open with header to match Perl. Alan Hoyle's "spurious CTOT/CTOB content" bug is closed structurally by `BismarkPair::pair_strand` (per SPEC §6.1), NOT by file absence. Fixture: directional-library BAM (Bismark default mode); assert CTOT/CTOB files exist on disk with exactly the version header line and zero call rows. |
+| **Directional library** (only OT + OB strand records — no CTOT/CTOB) | **Rev 4 (post-#865, 2026-05-27):** for a directional library in default mode, 6 strand-context files exist post-finalize (OT/OB × CpG/CHG/CHH); the 6 CTOT/CTOB files are eager-opened and receive the version header at `OutputFileMap::new` time, then unlinked by `OutputFileMap::finalize_with_empty_sweep` because `records_written == 0`. STDERR emits `{path} was empty ->\tdeleted` for each unlinked file (matches Perl `:607/615` `warn`). **Pre-#865 contract** (rev 3, Phase B): files remained on disk with header-only content to match Perl's pre-sweep state — that contract no longer holds; Perl invokes its `delete_unused_files` sweep at `:319 unless ($mbias_only)`, which Rust now mirrors via `finalize_with_empty_sweep`. Alan Hoyle's "spurious CTOT/CTOB content" bug remains closed structurally by `BismarkPair::pair_strand` (per SPEC §6.1). Fixture: directional-library BAM (Bismark default mode); assert OT/OB files contain data, CTOT/CTOB files do NOT exist on disk, and the stderr capture includes the matching `was empty -> deleted` lines. |
 | **Non-directional library** (all 4 strands populated) | Sibling fixture to directional; same shape but all 4 strand files non-empty. |
 | **Pair on different chromosomes** | Bismark never emits this. Defensive reject with clear error (matches `BismarkPair::from_mates` qname-equality + same-chr check if `bismark-io` enforces it; otherwise add at the extractor level). |
 | **Mixed-strand pair** (R1 OT + R2 OB) | Bismark never emits this. Defensive reject — matches `BismarkPair`'s strand-consistency check. |

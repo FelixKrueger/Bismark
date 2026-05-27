@@ -189,24 +189,66 @@ if [[ -n "$NAME_DIFF" ]]; then
   echo "" >> "$SUMMARY"
 fi
 
-# Per-file byte compare (intersection only)
+# Phase C.2 (#863 won't-fix): per-file byte compare with file-type dispatch:
+#   *_splitting_report.txt + *.M-bias.txt → strict cmp (Perl-byte-identity)
+#   *.gz                                  → zcat | sort | md5sum (data files
+#                                            may differ by record ordering;
+#                                            Rust BAM-order ≠ Perl multicore
+#                                            fork+modulo order, both correct
+#                                            but different layouts)
+#   *  (plain data files)                 → sort | md5sum (same)
+# Per SPEC §8.3 rev 3 "byte-identity invariant" definition (post-#863):
+# splitting-report + M-bias are STRICT raw-byte; data files accept sorted-
+# content equivalence (line ordering may differ but content matches).
+SORTED=0    # count of files that matched sorted-content (≈ verdict)
 for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
   TOTAL=$((TOTAL + 1))
   if cmp -s "$PERL_OUT/$f" "$RUST_OUT/$f"; then
     echo "  ✓ $f — byte-identical ($(wc -c < "$PERL_OUT/$f") bytes)" >> "$SUMMARY"
   else
-    DIFFS=$((DIFFS + 1))
-    SIZE_P=$(wc -c < "$PERL_OUT/$f")
-    SIZE_R=$(wc -c < "$RUST_OUT/$f")
-    FIRST_DIFF=$(cmp "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -1 || true)
-    echo "  ✗ $f DIFFERS — perl=${SIZE_P}B rust=${SIZE_R}B ($FIRST_DIFF)" >> "$SUMMARY"
+    case "$f" in
+      *_splitting_report.txt|*.M-bias.txt)
+        # Strict raw-byte match required for these. (#864 closes report;
+        # M-bias was already byte-identical post-Phase C.1.)
+        DIFFS=$((DIFFS + 1))
+        SIZE_P=$(wc -c < "$PERL_OUT/$f")
+        SIZE_R=$(wc -c < "$RUST_OUT/$f")
+        FIRST_DIFF=$(cmp "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -1 || true)
+        echo "  ✗ $f DIFFERS — perl=${SIZE_P}B rust=${SIZE_R}B ($FIRST_DIFF)" >> "$SUMMARY"
+        ;;
+      *.gz)
+        # Decompress before sort (sorting raw gzip bytes is meaningless).
+        PMD=$(zcat "$PERL_OUT/$f" | LC_ALL=C sort | md5sum | cut -d' ' -f1)
+        RMD=$(zcat "$RUST_OUT/$f" | LC_ALL=C sort | md5sum | cut -d' ' -f1)
+        if [[ "$PMD" == "$RMD" ]]; then
+          SORTED=$((SORTED + 1))
+          echo "  ≈ $f — gzip-sorted-equivalent (raw differs by ordering only; md5 $PMD)" >> "$SUMMARY"
+        else
+          DIFFS=$((DIFFS + 1))
+          echo "  ✗ $f DIFFERS — gzip-sorted mismatch (perl=$PMD rust=$RMD)" >> "$SUMMARY"
+        fi
+        ;;
+      *)
+        # Plain data file: accept sorted-content equivalence.
+        PMD=$(LC_ALL=C sort "$PERL_OUT/$f" | md5sum | cut -d' ' -f1)
+        RMD=$(LC_ALL=C sort "$RUST_OUT/$f" | md5sum | cut -d' ' -f1)
+        if [[ "$PMD" == "$RMD" ]]; then
+          SORTED=$((SORTED + 1))
+          echo "  ≈ $f — sorted-equivalent (raw differs by ordering only; md5 $PMD)" >> "$SUMMARY"
+        else
+          DIFFS=$((DIFFS + 1))
+          echo "  ✗ $f DIFFERS — sorted mismatch (perl=$PMD rust=$RMD)" >> "$SUMMARY"
+        fi
+        ;;
+    esac
   fi
 done
 
 echo "" >> "$SUMMARY"
 echo "── Result ──" >> "$SUMMARY"
+RAW=$((TOTAL - DIFFS - SORTED))
 if [[ "$DIFFS" -eq 0 && -z "$NAME_DIFF" ]]; then
-  echo "PASS: all $TOTAL files byte-identical" >> "$SUMMARY"
+  echo "PASS: all $TOTAL files match ($RAW raw-identical + $SORTED sorted-equivalent)" >> "$SUMMARY"
 else
   echo "FAIL: $DIFFS of $TOTAL files differ${NAME_DIFF:+; file-name set mismatch}" >> "$SUMMARY"
 fi

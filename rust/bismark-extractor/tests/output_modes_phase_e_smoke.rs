@@ -245,10 +245,19 @@ fn smoke_merge_non_cpg_emits_8_files_with_chg_chh_in_non_cpg() {
         .success();
 
     let names = dir_entries_sorted(&out);
+    // Phase C.2 (#865): empty CTOT/CTOB files are swept at flush time
+    // (matches Perl). SE-directional data populates only OT/OB strands.
     for class in ["CpG", "Non_CpG"] {
-        for strand in ["OT", "CTOT", "CTOB", "OB"] {
+        for strand in ["OT", "OB"] {
             let expected = format!("{class}_{strand}_se.txt");
             assert!(names.contains(&expected), "missing {expected}");
+        }
+        for strand in ["CTOT", "CTOB"] {
+            let unexpected = format!("{class}_{strand}_se.txt");
+            assert!(
+                !names.contains(&unexpected),
+                "{unexpected} should be swept (empty in SE-directional)"
+            );
         }
     }
     // CHG calls land in Non_CpG_OT (not CHG_OT — that file doesn't exist).
@@ -394,7 +403,9 @@ fn smoke_mbias_only_invalid_xm_byte_silently_skipped() {
     // M-bias.txt exists; splitting report counts include Z and z but skip Q.
     let report = fs::read_to_string(out.join("bad_splitting_report.txt")).unwrap();
     assert!(report.contains("Total methylated C's in CpG context:\t1"));
-    assert!(report.contains("Total unmethylated C's in CpG context:\t1"));
+    // Phase C.2 (#864): unmethylated phrasing now matches Perl's
+    // `Total C to T conversions in {ctx} context:`.
+    assert!(report.contains("Total C to T conversions in CpG context:\t1"));
 }
 
 /// Counter-equivalence: `--mbias_only` and Default mode must produce
@@ -478,17 +489,42 @@ fn smoke_gzip_default_emits_12_gz_files_with_byte_identical_decompression() {
         .assert()
         .success();
 
-    for ctx in ["CpG", "CHG", "CHH"] {
-        for strand in ["OT", "CTOT", "CTOB", "OB"] {
-            let plain =
-                fs::read_to_string(plain_out.join(format!("{ctx}_{strand}_se.txt"))).unwrap();
-            let gz_content = read_gz(&gz_out.join(format!("{ctx}_{strand}_se.txt.gz")));
-            assert_eq!(
-                plain, gz_content,
-                "{ctx}_{strand}: gz output must decompress to byte-identical plain output"
-            );
-        }
+    // Phase C.2 (#865): empty files are swept at flush time. For this
+    // SE-directional fixture (3 OT records: CpG, CHG, CHH calls), only
+    // the three OT files contain data; all other 9 strand-context
+    // combinations are empty and swept. Compare files that exist in
+    // BOTH plain_out and gz_out and verify byte-identical decompression.
+    let plain_files: std::collections::BTreeSet<String> = fs::read_dir(&plain_out)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter(|n| {
+            n.ends_with(".txt") && !n.contains("_splitting_report") && !n.contains("M-bias")
+        })
+        .collect();
+    let gz_files: std::collections::BTreeSet<String> = fs::read_dir(&gz_out)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter(|n| n.ends_with(".txt.gz"))
+        .map(|n| n.trim_end_matches(".gz").to_string())
+        .collect();
+    assert_eq!(
+        plain_files, gz_files,
+        "plain and gz output file-sets must match after C.2 empty-sweep"
+    );
+    for fname in &plain_files {
+        let plain = fs::read_to_string(plain_out.join(fname)).unwrap();
+        let gz_content = read_gz(&gz_out.join(format!("{fname}.gz")));
+        assert_eq!(
+            plain, gz_content,
+            "{fname}: gz output must decompress to byte-identical plain output"
+        );
     }
+    assert!(
+        !plain_files.is_empty(),
+        "at least the populated OT files should survive the sweep"
+    );
 }
 
 #[test]
@@ -605,9 +641,11 @@ fn smoke_yacht_empty_bam_emits_header_only_file() {
         .assert()
         .success();
 
-    let yacht_file = fs::read_to_string(out.join("any_C_context_empty.txt")).unwrap();
-    assert_eq!(
-        yacht_file,
-        "Bismark methylation extractor version v0.25.1\n"
+    // Phase C.2 (#865): empty Yacht file is swept at flush time (matches
+    // Perl's `was empty -> deleted` sweep). Empty BAM → zero records
+    // written to the single any_C_context file → file is unlinked.
+    assert!(
+        !out.join("any_C_context_empty.txt").exists(),
+        "empty Yacht output file should be swept"
     );
 }

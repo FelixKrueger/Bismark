@@ -178,45 +178,23 @@ fn smoke_se_directional_produces_all_12_files_and_report() {
         .assert()
         .success();
 
-    // All 12 split files must exist on disk.
-    let expected_files = [
-        "CpG_OT_se_smoke.txt",
-        "CpG_CTOT_se_smoke.txt",
-        "CpG_CTOB_se_smoke.txt",
-        "CpG_OB_se_smoke.txt",
-        "CHG_OT_se_smoke.txt",
-        "CHG_CTOT_se_smoke.txt",
-        "CHG_CTOB_se_smoke.txt",
-        "CHG_OB_se_smoke.txt",
-        "CHH_OT_se_smoke.txt",
-        "CHH_CTOT_se_smoke.txt",
-        "CHH_CTOB_se_smoke.txt",
-        "CHH_OB_se_smoke.txt",
-    ];
-    for name in expected_files {
-        let p = output_dir.join(name);
-        assert!(p.exists(), "expected output file: {}", p.display());
+    // OT files for CpG / CHG / CHH each get at least one OT call.
+    for ctx in ["CpG", "CHG", "CHH"] {
+        let p = output_dir.join(format!("{ctx}_OT_se_smoke.txt"));
         let content = fs::read_to_string(&p).unwrap();
         let first_line = content.lines().next().unwrap_or("");
         assert_eq!(
             first_line, "Bismark methylation extractor version v0.25.1",
-            "header drift in {}",
-            name
+            "header drift in {ctx}_OT_se_smoke.txt"
         );
-    }
-
-    // OT files for CpG / CHG / CHH should each have content beyond the
-    // header (the 3 OT records routed at least one call to each).
-    for ctx in ["CpG", "CHG", "CHH"] {
-        let p = output_dir.join(format!("{ctx}_OT_se_smoke.txt"));
-        let content = fs::read_to_string(&p).unwrap();
         assert!(
             content.lines().count() >= 2,
             "{ctx}_OT should have header + at least one call line; got:\n{content}"
         );
     }
 
-    // OB files: CpG_OB and CHH_OB should have calls; CHG_OB should be header-only.
+    // OB files: CpG_OB and CHH_OB should have calls (from read_OB_1 +
+    // read_OB_2). CHG_OB has no calls in this fixture → swept.
     let cpg_ob = fs::read_to_string(output_dir.join("CpG_OB_se_smoke.txt")).unwrap();
     assert!(
         cpg_ob.lines().count() >= 2,
@@ -228,25 +206,34 @@ fn smoke_se_directional_produces_all_12_files_and_report() {
         "CHH_OB should have a call from read_OB_2; got:\n{chh_ob}"
     );
 
-    // CTOT/CTOB files should be header-only (directional library: no
-    // records on those strands).
+    // Phase C.2 (#865): CTOT/CTOB × 3 contexts (6 files) AND CHG_OB are
+    // all empty for this directional SE fixture → swept at flush time.
     for ctx in ["CpG", "CHG", "CHH"] {
         for strand in ["CTOT", "CTOB"] {
             let p = output_dir.join(format!("{ctx}_{strand}_se_smoke.txt"));
-            let content = fs::read_to_string(&p).unwrap();
-            assert_eq!(
-                content, "Bismark methylation extractor version v0.25.1\n",
-                "directional library: {ctx}_{strand} must be header-only; got:\n{content}"
+            assert!(
+                !p.exists(),
+                "directional library: {ctx}_{strand} should be swept (empty)"
             );
         }
     }
+    assert!(
+        !output_dir.join("CHG_OB_se_smoke.txt").exists(),
+        "CHG_OB should be swept (no CHG calls on OB strand in this fixture)"
+    );
 
     // Splitting report must exist + parse.
+    // Phase C.2 (#864): line 1 of the report is the BAM basename (matches
+    // Perl), not the version banner. The version is on line 4 with the
+    // phrasing "Bismark Extractor Version: v0.25.1".
     let report = fs::read_to_string(output_dir.join("se_smoke_splitting_report.txt")).unwrap();
-    assert!(report.contains("Bismark methylation extractor version v0.25.1"));
-    // Phase C writer fix: literal is "Processed N lines in total" per Perl 2479.
-    // (For SE: lines == records == reads, so the "lines" terminology applies.)
+    assert!(
+        report.contains("Bismark Extractor Version: v0.25.1"),
+        "expected Perl-format version line; got:\n{report}"
+    );
+    // For SE: records_processed == call_strings_processed == sequence count.
     assert!(report.contains("Processed 5 lines in total"));
+    assert!(report.contains("Total number of methylation call strings processed: 5"));
     assert!(report.contains("Total number of C's analysed:"));
     assert!(report.contains("Total methylated C's in CpG context:"));
     assert!(report.contains("Total methylated C's in CHG context:"));
@@ -310,15 +297,20 @@ fn smoke_se_empty_bam_writes_only_header_files() {
         .assert()
         .success();
 
-    // All 12 files exist with only the header line.
+    // Phase C.2 (#865): empty BAM → no records routed → every per-strand
+    // file is empty after the run → all 12 are swept at finalize time.
+    // Only the splitting-report and M-bias.txt survive.
     let dir_entries: Vec<_> = fs::read_dir(&output_dir).unwrap().collect();
-    // 12 split files + 1 splitting report + 1 M-bias.txt (Phase D writer)
-    assert_eq!(dir_entries.len(), 14);
+    assert_eq!(
+        dir_entries.len(),
+        2,
+        "empty BAM: only splitting-report + M-bias.txt survive after C.2 sweep"
+    );
+    // Phase C.2 (#865): all 12 per-strand files swept after empty-BAM run.
     for ctx in ["CpG", "CHG", "CHH"] {
         for strand in ["OT", "CTOT", "CTOB", "OB"] {
             let p = output_dir.join(format!("{ctx}_{strand}_empty.txt"));
-            let content = fs::read_to_string(&p).unwrap();
-            assert_eq!(content, "Bismark methylation extractor version v0.25.1\n");
+            assert!(!p.exists(), "{ctx}_{strand}: empty file should be swept");
         }
     }
 
