@@ -2,14 +2,15 @@
 //! split-file write.
 //!
 //! Phase B locked the ordering (M-bias → counters → `mbias_only` short-
-//! circuit → write). Phase E adds two things:
-//!   1. Yacht-mode col-6 / col-7 derivation (strand-conditional polarity
-//!      per Perl `:4350, 4382, 4422-4447`) — computed once per call only
-//!      when `state.mode == Yacht`, otherwise the writer gets `(0, 0)`
-//!      sentinels it ignores.
-//!   2. Threading the resolved [`OutputMode`] through to `write_call` via
-//!      the `OutputFileMap::mode` field (no change to `route_call`'s
-//!      signature; the mode lives on the writer struct).
+//! circuit → write). Phase E added yacht-mode col-6 / col-7 derivation
+//! (strand-conditional polarity per Perl `:4350, 4382, 4422-4447`).
+//!
+//! Phase F (rev 1) factors the yacht-polarity computation out into the
+//! `pub(crate) compute_yacht_columns` helper so Phase F's worker loop can
+//! reuse it without duplicating the strand-match logic. The legacy
+//! `route_call` (used by the single-threaded `extract_se` / `extract_pe`
+//! paths kept as the byte-identity reference) continues to consume the
+//! same helper.
 
 use bismark_io::CigarExt;
 use bismark_io::{BismarkRecord, BismarkStrand, ReadIdentity};
@@ -18,6 +19,54 @@ use crate::call::{CytosineContext, MethCall};
 use crate::cli::OutputMode;
 use crate::error::BismarkExtractorError;
 use crate::state::ExtractState;
+
+/// Compute yacht-mode col-6 / col-7 (strand-conditional polarity per Perl
+/// `:4350, 4382, 4422-4447`).
+///
+/// Returns `(0, 0)` for non-yacht modes — caller treats as sentinel.
+///
+/// Forward-class (OT / CTOB): emits `(alignment_start, reference_end)`.
+/// Reverse-class (OB / CTOT): emits `(reference_end, alignment_start)`
+/// — Perl swaps the semantic meaning of `$start` / `$end` for `-` reads.
+///
+/// # Errors
+///
+/// `InternalError` if `record.alignment_start()` is None (unmapped record
+/// reached this code path — bismark-io should have filtered) or if
+/// either `alignment_start` or `reference_end` overflows `u32` (defensive
+/// — human/mouse coordinates fit comfortably).
+pub(crate) fn compute_yacht_columns(
+    mode: OutputMode,
+    record: &BismarkRecord,
+    strand: BismarkStrand,
+) -> Result<(u32, u32), BismarkExtractorError> {
+    if mode != OutputMode::Yacht {
+        return Ok((0, 0));
+    }
+    let alignment_start_pos =
+        record
+            .inner()
+            .alignment_start()
+            .ok_or_else(|| BismarkExtractorError::InternalError {
+                message: "yacht record missing alignment_start; bismark-io should have \
+                          filtered this as unmapped (FLAG & 0x4)"
+                    .to_string(),
+            })?;
+    let alignment_start_usize: usize = alignment_start_pos.get();
+    let alignment_start: u32 =
+        u32::try_from(alignment_start_usize).map_err(|_| BismarkExtractorError::InternalError {
+            message: format!("yacht alignment_start {alignment_start_usize} overflows u32"),
+        })?;
+    let ref_end_usize: usize = record.cigar().reference_end(alignment_start_usize);
+    let ref_end: u32 =
+        u32::try_from(ref_end_usize).map_err(|_| BismarkExtractorError::InternalError {
+            message: format!("yacht reference_end {ref_end_usize} overflows u32"),
+        })?;
+    Ok(match strand {
+        BismarkStrand::OT | BismarkStrand::CTOB => (alignment_start, ref_end),
+        BismarkStrand::OB | BismarkStrand::CTOT => (ref_end, alignment_start),
+    })
+}
 
 /// Route one extracted call.
 ///
@@ -75,43 +124,9 @@ pub fn route_call(
         return Ok(());
     }
 
-    // ── 4. Yacht col-6 / col-7 derivation (Phase E Critical-1 fix). ──
-    //
-    // Forward-class (OT, CTOB): col-6 = alignment_start, col-7 = reference_end.
-    // Reverse-class (OB, CTOT): col-6 = reference_end, col-7 = alignment_start
-    // (Perl swaps the semantic meaning of `$start` / `$end` for `-` reads;
-    // see Perl :4350, 4382, 4422-4447). Non-yacht modes get (0, 0)
-    // sentinels — `write_call` ignores them.
-    let (yacht_col6, yacht_col7) = if state.mode == OutputMode::Yacht {
-        let alignment_start_pos = record.inner().alignment_start().ok_or_else(|| {
-            BismarkExtractorError::InternalError {
-                message: "yacht record missing alignment_start; bismark-io should have \
-                          filtered this as unmapped (FLAG & 0x4)"
-                    .to_string(),
-            }
-        })?;
-        // noodles Position is 1-based; usize() returns the raw 1-based value.
-        let alignment_start_usize: usize = alignment_start_pos.get();
-        let alignment_start: u32 = u32::try_from(alignment_start_usize).map_err(|_| {
-            BismarkExtractorError::InternalError {
-                message: format!(
-                    "yacht alignment_start {} overflows u32",
-                    alignment_start_usize
-                ),
-            }
-        })?;
-        let ref_end_usize: usize = record.cigar().reference_end(alignment_start_usize);
-        let ref_end: u32 =
-            u32::try_from(ref_end_usize).map_err(|_| BismarkExtractorError::InternalError {
-                message: format!("yacht reference_end {} overflows u32", ref_end_usize),
-            })?;
-        match strand {
-            BismarkStrand::OT | BismarkStrand::CTOB => (alignment_start, ref_end),
-            BismarkStrand::OB | BismarkStrand::CTOT => (ref_end, alignment_start),
-        }
-    } else {
-        (0, 0)
-    };
+    // ── 4. Yacht col-6 / col-7 derivation (factored to compute_yacht_columns
+    //       in Phase F rev 1 for reuse by the parallel worker). ──
+    let (yacht_col6, yacht_col7) = compute_yacht_columns(state.mode, record, strand)?;
 
     // ── 5. Split-file write ──
     let qname: &[u8] = match record.inner().name() {

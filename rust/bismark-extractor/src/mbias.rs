@@ -70,6 +70,34 @@ impl MbiasTable {
         }
     }
 
+    /// Sum `other` position-wise into `self`. Commutative and associative
+    /// (each per-position count is a `u64::saturating_add` sum, which is
+    /// commutative + associative unless saturation is hit — for M-bias
+    /// counts on a single run, totals fit far below `u64::MAX`).
+    ///
+    /// Used by Phase F's collector to merge per-worker M-bias deltas at
+    /// end-of-stream. Order of merge is irrelevant → byte-identical
+    /// `M-bias.txt` regardless of N workers.
+    pub fn add(&mut self, other: &Self) {
+        Self::add_one(&mut self.cpg, &other.cpg);
+        Self::add_one(&mut self.chg, &other.chg);
+        Self::add_one(&mut self.chh, &other.chh);
+    }
+
+    /// Helper: sum `src` position-wise into `dst`, growing `dst` if needed.
+    /// When `dst.len() > src.len()`, the surplus `dst` entries are left
+    /// unchanged (zip stops at the shorter iterator) — correct because
+    /// those positions only had `dst`'s contribution.
+    fn add_one(dst: &mut Vec<MbiasPos>, src: &[MbiasPos]) {
+        if dst.len() < src.len() {
+            dst.resize(src.len(), MbiasPos::default());
+        }
+        for (s, o) in dst.iter_mut().zip(src.iter()) {
+            s.meth = s.meth.saturating_add(o.meth);
+            s.unmeth = s.unmeth.saturating_add(o.unmeth);
+        }
+    }
+
     /// Highest 1-based position observed across all three context vectors.
     ///
     /// Returns `0` if all vecs are empty (writer interprets as "emit
@@ -88,5 +116,111 @@ impl MbiasTable {
         let m2 = self.chg.len().saturating_sub(1) as u32;
         let m3 = self.chh.len().saturating_sub(1) as u32;
         m1.max(m2).max(m3)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a small MbiasTable with one CpG meth at position 1 and one
+    /// CHG unmeth at position 2. Compact constructor for the merge tests.
+    fn synth(cpg_meth_at_1: u64, chg_unmeth_at_2: u64, chh_meth_at_3: u64) -> MbiasTable {
+        let mut t = MbiasTable::default();
+        for _ in 0..cpg_meth_at_1 {
+            t.accumulate(CytosineContext::CpG, 1, true);
+        }
+        for _ in 0..chg_unmeth_at_2 {
+            t.accumulate(CytosineContext::CHG, 2, false);
+        }
+        for _ in 0..chh_meth_at_3 {
+            t.accumulate(CytosineContext::CHH, 3, true);
+        }
+        t
+    }
+
+    #[test]
+    fn mbias_table_add_is_commutative() {
+        let a_into_b = {
+            let mut a = synth(3, 5, 7);
+            let b = synth(11, 13, 17);
+            a.add(&b);
+            a
+        };
+        let b_into_a = {
+            let mut b = synth(11, 13, 17);
+            let a = synth(3, 5, 7);
+            b.add(&a);
+            b
+        };
+        assert_eq!(a_into_b.cpg, b_into_a.cpg);
+        assert_eq!(a_into_b.chg, b_into_a.chg);
+        assert_eq!(a_into_b.chh, b_into_a.chh);
+    }
+
+    #[test]
+    fn mbias_table_add_is_associative() {
+        // (a + b) + c
+        let left = {
+            let mut a = synth(2, 4, 6);
+            let b = synth(8, 10, 12);
+            let c = synth(14, 16, 18);
+            a.add(&b);
+            a.add(&c);
+            a
+        };
+        // a + (b + c)
+        let right = {
+            let mut a = synth(2, 4, 6);
+            let mut bc = synth(8, 10, 12);
+            let c = synth(14, 16, 18);
+            bc.add(&c);
+            a.add(&bc);
+            a
+        };
+        assert_eq!(left.cpg, right.cpg);
+        assert_eq!(left.chg, right.chg);
+        assert_eq!(left.chh, right.chh);
+    }
+
+    #[test]
+    fn mbias_table_add_grows_when_other_larger() {
+        let mut small = MbiasTable::default();
+        small.accumulate(CytosineContext::CpG, 5, true);
+
+        let mut large = MbiasTable::default();
+        large.accumulate(CytosineContext::CpG, 100, true);
+
+        // Merging the large into the small should grow small.cpg to length 101.
+        small.add(&large);
+        assert_eq!(small.cpg.len(), 101);
+        // Position 5 still has the original small contribution (1 meth).
+        assert_eq!(small.cpg[5].meth, 1);
+        // Position 100 picked up large's contribution (1 meth).
+        assert_eq!(small.cpg[100].meth, 1);
+        // Positions in between (6..100) are zero-default — nothing happened there.
+        for pos in 6..100 {
+            assert_eq!(small.cpg[pos].meth, 0);
+            assert_eq!(small.cpg[pos].unmeth, 0);
+        }
+    }
+
+    #[test]
+    fn mbias_table_add_self_larger_keeps_tail() {
+        let mut large = MbiasTable::default();
+        large.accumulate(CytosineContext::CpG, 100, true);
+        large.accumulate(CytosineContext::CpG, 50, false);
+
+        let mut small = MbiasTable::default();
+        small.accumulate(CytosineContext::CpG, 50, true);
+
+        // Merging the smaller into the larger should keep large.cpg.len() == 101.
+        large.add(&small);
+        assert_eq!(large.cpg.len(), 101);
+        // Position 100 unchanged from large's original contribution.
+        assert_eq!(large.cpg[100].meth, 1);
+        // Position 50 has BOTH large's unmeth + small's meth.
+        assert_eq!(large.cpg[50].meth, 1);
+        assert_eq!(large.cpg[50].unmeth, 1);
     }
 }

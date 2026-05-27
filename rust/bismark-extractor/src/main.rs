@@ -25,7 +25,7 @@ use clap::Parser;
 
 use bismark_extractor::cli::{Cli, PairedMode};
 use bismark_extractor::error::BismarkExtractorError;
-use bismark_extractor::{extract_pe, extract_se, version_string};
+use bismark_extractor::{extract_pe_parallel, extract_se_parallel, version_string};
 use bismark_io::{detect_paired_from_header, open_reader};
 
 fn main() -> ExitCode {
@@ -65,16 +65,9 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
         });
     }
 
-    // Phase E (this build): all 6 output modes + --gzip are supported.
-    // Multicore: Phase F.
-    if config.parallel != 1 {
-        return Err(BismarkExtractorError::PhaseNotYetImplemented {
-            feature: format!(
-                "--parallel {} (only --parallel 1 supported); multicore arrives in Phase F",
-                config.parallel
-            ),
-        });
-    }
+    // Phase F (this build): all 6 output modes + --gzip + --multicore N are
+    // supported. The parallel pipeline is byte-identical to N=1 for any N
+    // by construction (per SPEC §9 + PHASE_F_PLAN.md).
 
     // Downstream subprocess chain: Phase G.
     if config.bedgraph || config.cytosine_report {
@@ -84,19 +77,23 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
         });
     }
 
-    // Supported subset: SE OR PE in default mode at parallel=1, plain output,
-    // no subprocess chain. PairedMode dispatch:
-    //   - SingleEnd → extract_se.
-    //   - PairedEnd → extract_pe.
+    // Phase F dispatch (parallel pipeline; --parallel N for any N >= 1).
+    // PairedMode dispatch:
+    //   - SingleEnd → extract_se_parallel.
+    //   - PairedEnd → extract_pe_parallel.
     //   - AutoDetect → probe the SAM header's @PG ID:Bismark line; dispatch.
+    //
+    // The legacy single-threaded `extract_se` / `extract_pe` remain available
+    // via `bismark_extractor::{extract_se, extract_pe}` as the byte-identity
+    // reference for the test suite (see lib.rs invariant comment).
     let input = config.files[0].clone();
     match config.paired_mode {
-        PairedMode::SingleEnd => extract_se(&input, &config),
-        PairedMode::PairedEnd => extract_pe(&input, &config),
+        PairedMode::SingleEnd => extract_se_parallel(&input, &config),
+        PairedMode::PairedEnd => extract_pe_parallel(&input, &config),
         PairedMode::AutoDetect => {
             // Open reader once for header inspection. The reader is dropped
-            // before the chosen extract_se / extract_pe re-opens the file —
-            // ~50 ms overhead per run, OS caches the BAM header bytes.
+            // before extract_*_parallel re-opens the file — ~50 ms overhead
+            // per run, OS caches the BAM header bytes.
             let probe = open_reader(&input, /*cram_ref=*/ None)?;
             let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
                 BismarkExtractorError::AutoDetectFailed {
@@ -109,9 +106,9 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
             })?;
             drop(probe);
             if is_paired {
-                extract_pe(&input, &config)
+                extract_pe_parallel(&input, &config)
             } else {
-                extract_se(&input, &config)
+                extract_se_parallel(&input, &config)
             }
         }
     }
