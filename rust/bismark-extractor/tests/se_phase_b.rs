@@ -1029,8 +1029,12 @@ fn main_rejects_multiple_input_files() {
         .stderr(predicates::str::contains("multiple input files"));
 }
 
+/// Phase F (per plan §7.1): `--parallel N` is no longer phase-gated. The
+/// run still fails because `tempbam()` writes junk content, but the
+/// failure text must NOT mention the previous "--parallel N (only
+/// --parallel 1 supported)" Phase F gate string.
 #[test]
-fn main_rejects_multicore_with_phase_error() {
+fn main_accepts_multicore_no_longer_rejected() {
     let bam = tempbam();
     let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
     cmd.arg(bam.path())
@@ -1038,7 +1042,7 @@ fn main_rejects_multicore_with_phase_error() {
         .arg("4")
         .assert()
         .failure()
-        .stderr(predicates::str::contains("--parallel 4"));
+        .stderr(predicates::str::contains("only --parallel 1 supported").not());
 }
 
 /// Phase E (rev 1, per plan §7.1): `--gzip` is no longer phase-gated.

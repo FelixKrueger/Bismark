@@ -275,6 +275,24 @@ impl SplittingReport {
             (meth as f64) * 100.0 / (total as f64)
         }
     }
+
+    /// Sum `other` field-wise into `self`. Commutative and associative
+    /// (every field is a `u64::saturating_add` sum). Used by Phase F's
+    /// collector to merge per-worker `SplittingReport` deltas at
+    /// end-of-stream — rev 1 reuses the live type instead of a separate
+    /// `SplittingReportDelta` per Reviewer A C2 / Reviewer B G4.
+    pub fn add(&mut self, other: &Self) {
+        self.records_processed = self
+            .records_processed
+            .saturating_add(other.records_processed);
+        self.calls_total = self.calls_total.saturating_add(other.calls_total);
+        self.calls_cpg_meth = self.calls_cpg_meth.saturating_add(other.calls_cpg_meth);
+        self.calls_cpg_unmeth = self.calls_cpg_unmeth.saturating_add(other.calls_cpg_unmeth);
+        self.calls_chg_meth = self.calls_chg_meth.saturating_add(other.calls_chg_meth);
+        self.calls_chg_unmeth = self.calls_chg_unmeth.saturating_add(other.calls_chg_unmeth);
+        self.calls_chh_meth = self.calls_chh_meth.saturating_add(other.calls_chh_meth);
+        self.calls_chh_unmeth = self.calls_chh_unmeth.saturating_add(other.calls_chh_unmeth);
+    }
 }
 
 /// Write `{output_dir}/{basename}_splitting_report.txt`.
@@ -365,4 +383,69 @@ pub fn write_splitting_report(
 
     w.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splitting_report_add_is_commutative() {
+        let a = SplittingReport {
+            records_processed: 100,
+            calls_total: 500,
+            calls_cpg_meth: 30,
+            calls_cpg_unmeth: 70,
+            calls_chg_meth: 50,
+            calls_chg_unmeth: 100,
+            calls_chh_meth: 80,
+            calls_chh_unmeth: 170,
+        };
+        let b = SplittingReport {
+            records_processed: 250,
+            calls_total: 1250,
+            calls_cpg_meth: 100,
+            calls_cpg_unmeth: 150,
+            calls_chg_meth: 200,
+            calls_chg_unmeth: 250,
+            calls_chh_meth: 220,
+            calls_chh_unmeth: 330,
+        };
+        // a + b
+        let mut a_into_b = SplittingReport {
+            records_processed: b.records_processed,
+            calls_total: b.calls_total,
+            calls_cpg_meth: b.calls_cpg_meth,
+            calls_cpg_unmeth: b.calls_cpg_unmeth,
+            calls_chg_meth: b.calls_chg_meth,
+            calls_chg_unmeth: b.calls_chg_unmeth,
+            calls_chh_meth: b.calls_chh_meth,
+            calls_chh_unmeth: b.calls_chh_unmeth,
+        };
+        a_into_b.add(&a);
+        // b + a
+        let mut b_into_a = SplittingReport {
+            records_processed: a.records_processed,
+            calls_total: a.calls_total,
+            calls_cpg_meth: a.calls_cpg_meth,
+            calls_cpg_unmeth: a.calls_cpg_unmeth,
+            calls_chg_meth: a.calls_chg_meth,
+            calls_chg_unmeth: a.calls_chg_unmeth,
+            calls_chh_meth: a.calls_chh_meth,
+            calls_chh_unmeth: a.calls_chh_unmeth,
+        };
+        b_into_a.add(&b);
+
+        assert_eq!(a_into_b.records_processed, b_into_a.records_processed);
+        assert_eq!(a_into_b.calls_total, b_into_a.calls_total);
+        assert_eq!(a_into_b.calls_cpg_meth, b_into_a.calls_cpg_meth);
+        assert_eq!(a_into_b.calls_cpg_unmeth, b_into_a.calls_cpg_unmeth);
+        assert_eq!(a_into_b.calls_chg_meth, b_into_a.calls_chg_meth);
+        assert_eq!(a_into_b.calls_chg_unmeth, b_into_a.calls_chg_unmeth);
+        assert_eq!(a_into_b.calls_chh_meth, b_into_a.calls_chh_meth);
+        assert_eq!(a_into_b.calls_chh_unmeth, b_into_a.calls_chh_unmeth);
+        // Sanity sums:
+        assert_eq!(a_into_b.records_processed, 350);
+        assert_eq!(a_into_b.calls_total, 1750);
+    }
 }

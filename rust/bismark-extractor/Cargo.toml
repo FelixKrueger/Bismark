@@ -1,7 +1,7 @@
 [package]
 name = "bismark-extractor"
-version = "1.0.0-alpha.5"
-description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase E: + non-Default output modes + --gzip + --mbias_only)"
+version = "1.0.0-alpha.6"
+description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase F: + rayon --multicore N)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,6 +30,14 @@ noodles-sam = "=0.85.0"
 # `cargo tree -p bismark-extractor | grep flate2`. The Phase E plan's
 # preliminary "=1.0.34" guess was outdated; rev 1 verification step caught it.
 flate2 = "=1.1.9"
+# Phase F: bounded MPMC channels for producer→worker (N×32) and
+# worker→collector (N×8). Pin verified via cargo tree.
+crossbeam-channel = "=0.5.15"
+# (rayon was added then dropped during Phase F implementation. Reason:
+# `rayon::ThreadPool::scope()` consumes one pool thread for its closure,
+# deadlocking at N=1 with our producer/worker/collector pattern. Switched
+# to `std::thread::spawn` for workers; rayon was no longer referenced
+# anywhere, so the dep was removed in the post-implementation review pass.)
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

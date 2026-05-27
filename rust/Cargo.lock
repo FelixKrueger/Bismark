@@ -115,12 +115,13 @@ dependencies = [
 
 [[package]]
 name = "bismark-extractor"
-version = "1.0.0-alpha.5"
+version = "1.0.0-alpha.6"
 dependencies = [
  "assert_cmd",
  "bismark-io",
  "bstr",
  "clap",
+ "crossbeam-channel",
  "flate2",
  "noodles-core 0.20.0",
  "noodles-sam",

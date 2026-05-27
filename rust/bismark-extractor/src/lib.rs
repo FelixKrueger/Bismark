@@ -63,6 +63,7 @@ pub mod mbias_writer;
 pub mod output;
 pub mod output_mode;
 pub mod overlap;
+pub mod parallel;
 pub mod params;
 pub mod pipeline;
 pub mod route;
@@ -77,7 +78,12 @@ pub use output_mode::{
     CpGOrNonCpG, OutputKey, mode_keys, orient_byte, route_to_key, write_yacht_row,
 };
 pub use overlap::{drop_overlap, is_forward_pair_strand};
+pub use parallel::{extract_pe_parallel, extract_se_parallel};
 pub use params::ExtractParams;
+// PHASE F INVARIANT: the legacy single-threaded `extract_se` / `extract_pe`
+// remain re-exported because they're the byte-identity reference for
+// `extract_se_parallel` / `extract_pe_parallel` tests. Do NOT delete them
+// without replacing the byte-identity oracle.
 pub use pipeline::{extract_pe, extract_se};
 
 /// Returns a TG-style provenance string for the binary's `--version` output.
