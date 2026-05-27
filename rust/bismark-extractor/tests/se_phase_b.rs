@@ -643,7 +643,8 @@ fn test_config(output_dir: &std::path::Path) -> ResolvedConfig {
 fn route_call_default_mode_routes_to_strand_specific_file() {
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(dir.path());
-    let mut state = ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x").unwrap();
+    let mut state =
+        ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x", false).unwrap();
     let record = helpers::ot_record(b"Z....", b"ACGTC");
     let call = MethCall {
         ref_pos: 100,
@@ -678,7 +679,8 @@ fn route_single_record_with_mixed_contexts_routes_to_one_strand_directory() {
     // any CTOT/CTOB/OB file.
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(dir.path());
-    let mut state = ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x").unwrap();
+    let mut state =
+        ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x", false).unwrap();
     let record = helpers::ot_record(b"ZXH..", b"ACGTC");
 
     for call in extract_calls(&record, 0, 0).unwrap() {
@@ -727,7 +729,8 @@ fn route_call_increments_counter_before_mbias_only_short_circuit() {
     // verify counters still tick.
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(dir.path());
-    let mut state = ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x").unwrap();
+    let mut state =
+        ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x", false).unwrap();
     state.mbias_only = true; // force the short-circuit branch
     let record = helpers::ot_record(b"Z....", b"ACGTC");
     let call = MethCall {
@@ -762,7 +765,8 @@ fn route_call_increments_counter_before_mbias_only_short_circuit() {
 fn route_call_r2_goes_to_mbias_index_1() {
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(dir.path());
-    let mut state = ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x").unwrap();
+    let mut state =
+        ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x", false).unwrap();
     let record = helpers::ot_record(b"Z....", b"ACGTC");
     let call = MethCall {
         ref_pos: 100,
@@ -792,7 +796,7 @@ fn route_call_r2_goes_to_mbias_index_1() {
 fn mbias_R2_index_ready() {
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(dir.path());
-    let state = ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x").unwrap();
+    let state = ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x", false).unwrap();
     // mbias is [MbiasTable; 2] — both indices exist after construction.
     assert_eq!(state.mbias[0].cpg.len(), 0);
     assert_eq!(state.mbias[1].cpg.len(), 0);

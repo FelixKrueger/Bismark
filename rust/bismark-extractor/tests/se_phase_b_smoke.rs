@@ -312,8 +312,8 @@ fn smoke_se_empty_bam_writes_only_header_files() {
 
     // All 12 files exist with only the header line.
     let dir_entries: Vec<_> = fs::read_dir(&output_dir).unwrap().collect();
-    // 12 split files + 1 splitting report
-    assert_eq!(dir_entries.len(), 13);
+    // 12 split files + 1 splitting report + 1 M-bias.txt (Phase D writer)
+    assert_eq!(dir_entries.len(), 14);
     for ctx in ["CpG", "CHG", "CHH"] {
         for strand in ["OT", "CTOT", "CTOB", "OB"] {
             let p = output_dir.join(format!("{ctx}_{strand}_empty.txt"));

@@ -37,6 +37,13 @@ use crate::state::ExtractState;
 /// transformed (Perl wouldn't either — `s/bam$/txt/` doesn't match `.gz`).
 /// `foo.BAM` (uppercase) is left as `foo.BAM` (Perl regex is case-sensitive).
 ///
+/// **Distinct from [`crate::mbias_writer::derive_mbias_basename`]** (Phase D):
+/// that helper strips `bam`/`sam`/`cram`/`txt`/`gz` WITHOUT the leading dot,
+/// preserving the trailing `.` for M-bias.txt filenames. This one strips
+/// `.bam`/`.sam`/`.cram` WITH the dot for split-file basenames. The
+/// divergence mirrors Perl's distinct regex chains for the two filename
+/// styles.
+///
 /// # Panics
 ///
 /// Panics if `path` has no filename component — caller guarantees a real
@@ -71,7 +78,7 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
     let chr_table = build_chr_name_table(reader.header())?;
 
     let input_basename = derive_basename(input);
-    let mut state = ExtractState::new(config, input, &input_basename)?;
+    let mut state = ExtractState::new(config, input, &input_basename, /*is_paired=*/ false)?;
 
     for record_result in reader.records() {
         let record = match record_result {
@@ -192,7 +199,7 @@ pub fn extract_pe(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
     let chr_table = build_chr_name_table(reader.header())?;
 
     let input_basename = derive_basename(input);
-    let mut state = ExtractState::new(config, input, &input_basename)?;
+    let mut state = ExtractState::new(config, input, &input_basename, /*is_paired=*/ true)?;
 
     let mut records = reader.records();
     loop {

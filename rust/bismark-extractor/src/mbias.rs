@@ -40,7 +40,19 @@ impl MbiasTable {
     ///
     /// Grows the underlying `Vec` lazily; no preallocation needed because
     /// reads have bounded length (~150 bp typical, ~300 bp max).
+    ///
+    /// # Invariant
+    ///
+    /// `position_1based` must be `>= 1`. The M-bias.txt writer (Phase D)
+    /// iterates `1..=max_position`, skipping slot 0. If a future kernel
+    /// change ever passes `0`, the slot-0 data would be silently dropped
+    /// from the M-bias.txt output. The `debug_assert!` below surfaces
+    /// the regression at unit-test time; zero cost in release builds.
     pub fn accumulate(&mut self, context: CytosineContext, position_1based: u32, methylated: bool) {
+        debug_assert!(
+            position_1based >= 1,
+            "MbiasTable::accumulate: position must be 1-based (>= 1), got {position_1based}"
+        );
         let vec = match context {
             CytosineContext::CpG => &mut self.cpg,
             CytosineContext::CHG => &mut self.chg,
@@ -56,5 +68,25 @@ impl MbiasTable {
         } else {
             bucket.unmeth = bucket.unmeth.saturating_add(1);
         }
+    }
+
+    /// Highest 1-based position observed across all three context vectors.
+    ///
+    /// Returns `0` if all vecs are empty (writer interprets as "emit
+    /// headers only, no per-position rows"). Also returns `0` if the only
+    /// allocated slot is slot 0 (which is never written to in practice;
+    /// see [`accumulate`] invariant).
+    ///
+    /// Per SPEC §4.2 / Perl `bismark_methylation_extractor:647-661`: the
+    /// writer iterates `1..=max_position` for every context, even if
+    /// that context's own vec is shorter than `max_position` (yields
+    /// zero-row entries).
+    ///
+    /// [`accumulate`]: Self::accumulate
+    pub fn max_position(&self) -> u32 {
+        let m1 = self.cpg.len().saturating_sub(1) as u32;
+        let m2 = self.chg.len().saturating_sub(1) as u32;
+        let m3 = self.chh.len().saturating_sub(1) as u32;
+        m1.max(m2).max(m3)
     }
 }
