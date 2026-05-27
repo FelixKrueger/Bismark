@@ -810,7 +810,9 @@ fn parallel_mbias_only_invalid_xm_silently_skipped_at_n4() {
     // Splitting-report should show 1 meth (Z) + 1 unmeth (z) — the Q is skipped.
     let report = fs::read_to_string(out_dir.join("bad_splitting_report.txt")).unwrap();
     assert!(report.contains("Total methylated C's in CpG context:\t1"));
-    assert!(report.contains("Total unmethylated C's in CpG context:\t1"));
+    // Phase C.2 (#864): unmethylated phrasing now matches Perl's
+    // `Total C to T conversions in {ctx} context:`.
+    assert!(report.contains("Total C to T conversions in CpG context:\t1"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -838,12 +840,17 @@ fn parallel_empty_bam_at_n4_produces_header_only_files() {
     )
     .unwrap();
 
-    // All 12 split files exist with only the version-header line.
+    // Phase C.2 (#865): empty BAM → no records routed → every per-strand
+    // file is empty after the run → all 12 are swept (unlinked) at
+    // finalize time. Only the splitting-report and M-bias.txt survive.
     for ctx in ["CpG", "CHG", "CHH"] {
         for strand in ["OT", "CTOT", "CTOB", "OB"] {
-            let content =
-                fs::read_to_string(out_dir.join(format!("{ctx}_{strand}_empty.txt"))).unwrap();
-            assert_eq!(content, "Bismark methylation extractor version v0.25.1\n");
+            let path = out_dir.join(format!("{ctx}_{strand}_empty.txt"));
+            assert!(
+                !path.exists(),
+                "{}: empty per-strand file should be swept",
+                path.display()
+            );
         }
     }
     // Splitting report shows 0 records.

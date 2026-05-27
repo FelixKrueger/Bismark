@@ -725,6 +725,7 @@ fn splitting_report_emits_per_context_counts() {
     });
     let report = SplittingReport {
         records_processed: 100,
+        call_strings_processed: 100, // SE: equal to records
         calls_total: 600,
         calls_cpg_meth: 50,
         calls_cpg_unmeth: 50,
@@ -733,14 +734,19 @@ fn splitting_report_emits_per_context_counts() {
         calls_chh_meth: 0,
         calls_chh_unmeth: 400,
     };
-    write_splitting_report(&report_path, &input_path, &config, &report).unwrap();
+    // Phase C.2 (#864): added `is_paired: bool` argument (SE here).
+    write_splitting_report(&report_path, &input_path, &config, false, &report).unwrap();
     let content = fs::read_to_string(&report_path).unwrap();
     assert!(content.contains("Processed 100 lines in total"));
     assert!(content.contains("Total methylated C's in CpG context:\t50"));
-    assert!(content.contains("Total unmethylated C's in CHH context:\t400"));
-    assert!(content.contains("C methylated in CpG context:\t50.00%"));
-    assert!(content.contains("C methylated in CHG context:\t100.00%"));
-    assert!(content.contains("C methylated in CHH context:\t0.00%"));
+    // Phase C.2 (#864): unmethylated phrasing changed from
+    // `Total unmethylated C's in {ctx}` to Perl's
+    // `Total C to T conversions in {ctx} context:`.
+    assert!(content.contains("Total C to T conversions in CHH context:\t400"));
+    // Phase C.2 (#864): percentages use 1 decimal, matching Perl's `%.1f`.
+    assert!(content.contains("C methylated in CpG context:\t50.0%"));
+    assert!(content.contains("C methylated in CHG context:\t100.0%"));
+    assert!(content.contains("C methylated in CHH context:\t0.0%"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────

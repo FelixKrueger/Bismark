@@ -152,37 +152,30 @@ fn smoke_pe_auto_detect_produces_all_12_files_and_report() {
         .success();
 
     // All 12 split files must exist with the Perl version header on line 1.
-    let expected_files = [
-        "CpG_OT_pe_smoke.txt",
-        "CpG_CTOT_pe_smoke.txt",
-        "CpG_CTOB_pe_smoke.txt",
-        "CpG_OB_pe_smoke.txt",
-        "CHG_OT_pe_smoke.txt",
-        "CHG_CTOT_pe_smoke.txt",
-        "CHG_CTOB_pe_smoke.txt",
-        "CHG_OB_pe_smoke.txt",
-        "CHH_OT_pe_smoke.txt",
-        "CHH_CTOT_pe_smoke.txt",
-        "CHH_CTOB_pe_smoke.txt",
-        "CHH_OB_pe_smoke.txt",
-    ];
-    for name in expected_files {
-        let p = output_dir.join(name);
-        assert!(p.exists(), "expected: {}", p.display());
-        let content = fs::read_to_string(&p).unwrap();
-        let first_line = content.lines().next().unwrap_or("");
-        assert_eq!(
-            first_line, "Bismark methylation extractor version v0.25.1",
-            "header drift in {}",
-            name
-        );
-    }
+    // Phase C.2 (#865): all empty per-strand files are swept at flush.
+    // For this fixture (10 OT pairs, all R1+R2 calls in CpG context),
+    // only CpG_OT survives; the other 11 are empty → swept.
+    let p = output_dir.join("CpG_OT_pe_smoke.txt");
+    assert!(p.exists(), "expected: {}", p.display());
+    let content = fs::read_to_string(&p).unwrap();
+    let first_line = content.lines().next().unwrap_or("");
+    assert_eq!(
+        first_line, "Bismark methylation extractor version v0.25.1",
+        "header drift in CpG_OT_pe_smoke.txt"
+    );
 
-    // Splitting report: "Processed 20 lines in total" (10 pairs × 2 lines).
+    // Phase C.2 (#864): splitting report counts PAIRS (sequences_count),
+    // not 2×pairs. 10 pairs → "Processed 10 lines in total". The 2×pairs
+    // count appears separately as "Total number of methylation call
+    // strings processed: 20" (Perl line 2483).
     let report = fs::read_to_string(output_dir.join("pe_smoke_splitting_report.txt")).unwrap();
     assert!(
-        report.contains("Processed 20 lines in total"),
-        "PE pair-line counting (10 pairs × 2): expected '20 lines'; got:\n{report}"
+        report.contains("Processed 10 lines in total"),
+        "PE pair-counting: expected '10 lines'; got:\n{report}"
+    );
+    assert!(
+        report.contains("Total number of methylation call strings processed: 20"),
+        "PE call-strings counter = 2×pairs; got:\n{report}"
     );
 
     // C.1 (#862) — post-fix expected: 10 R1 calls + 10 R2 calls = 20 lines.
@@ -192,23 +185,25 @@ fn smoke_pe_auto_detect_produces_all_12_files_and_report() {
     // BAM-pos 4 (the 'z' in "....z"), ref_pos = r2_start + 4 = r1_start + 9.
     // Post-C.1 strict-`>` keep predicate: r2_pos (r1_start+9) > r1_ref_end
     // (r1_start+4) → KEPT. So 10 R1 calls + 10 R2 calls = 20 lines.
-    // Exercises the post-fix "kept" path (the pre-C.1 fixture passed only
-    // by boundary coincidence with R2 lining up at exactly r1_ref_end).
-    let cpg_ot = fs::read_to_string(output_dir.join("CpG_OT_pe_smoke.txt")).unwrap();
-    let cpg_ot_call_lines = cpg_ot.lines().count() - 1;
+    let cpg_ot_call_lines = content.lines().count() - 1;
     assert_eq!(
         cpg_ot_call_lines, 20,
-        "CpG_OT should have 10 R1 + 10 R2 call lines (R2 in unique region kept); got:\n{cpg_ot}"
+        "CpG_OT should have 10 R1 + 10 R2 call lines (R2 in unique region kept); got:\n{content}"
     );
 
-    // CTOT / CTOB files: header-only for directional library.
+    // Phase C.2 (#865): CTOT/CTOB AND CHG/CHH × all-strands files are all
+    // empty for this fixture → swept. Verify absence (not header-only).
     for ctx in ["CpG", "CHG", "CHH"] {
-        for strand in ["CTOT", "CTOB"] {
+        for strand in ["OT", "CTOT", "CTOB", "OB"] {
+            if ctx == "CpG" && strand == "OT" {
+                continue; // the one populated file
+            }
             let p = output_dir.join(format!("{ctx}_{strand}_pe_smoke.txt"));
-            let content = fs::read_to_string(&p).unwrap();
-            assert_eq!(
-                content, "Bismark methylation extractor version v0.25.1\n",
-                "directional library: {ctx}_{strand} must be header-only"
+            assert!(
+                !p.exists(),
+                "{}_{}: empty file should be swept (no calls in this context/strand)",
+                ctx,
+                strand
             );
         }
     }
@@ -231,5 +226,6 @@ fn smoke_pe_explicit_paired_end_flag_works() {
         .success();
 
     let report = fs::read_to_string(output_dir.join("pe_explicit_splitting_report.txt")).unwrap();
-    assert!(report.contains("Processed 20 lines in total"));
+    // Phase C.2 (#864): PE sequences_count = pair count (10 pairs).
+    assert!(report.contains("Processed 10 lines in total"));
 }

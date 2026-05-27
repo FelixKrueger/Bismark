@@ -109,12 +109,32 @@ impl ExtractState {
     /// post-loop writes hit an I/O error after the data was on disk.
     /// Matches Perl's "die after writing" semantics.
     pub fn finalize(&mut self, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
+        // Order (Phase D rev 1 + Phase C.2 #865):
+        //   1. flush_all  — buffered writes hit disk
+        //   2. finalize_with_empty_sweep — unlink empty per-strand files
+        //      (matches Perl's `was empty -> deleted` sweep). MUST run
+        //      AFTER flush so the records_written counter reflects all
+        //      successful writes, and BEFORE write_splitting_report so
+        //      the sweep's stderr log lines appear before any subsequent
+        //      output.
+        //   3. write_splitting_report
+        //   4. write_mbias_txt (unless --mbias_off)
         self.fhs.flush_all()?;
+        // Phase C.2 code-review B H2: gate the sweep on `!mbias_only` to
+        // mirror Perl `:319 unless ($mbias_only) { delete_unused_files; }`.
+        // In MbiasOnly the OutputFileMap is already empty (mode_keys()
+        // returns Vec::new()) so the loop would no-op, but the sweep
+        // emits two trailing `eprintln!()` blank lines unconditionally
+        // — Perl emits nothing in this case. Guard at the call site.
+        if !self.mbias_only {
+            self.fhs.finalize_with_empty_sweep()?;
+        }
         if self.emit_splitting_report {
             write_splitting_report(
                 &self.splitting_report_path,
                 &self.input_path,
                 config,
+                self.is_paired,
                 &self.report,
             )?;
         }

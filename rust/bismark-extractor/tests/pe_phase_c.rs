@@ -796,17 +796,30 @@ mod pe_e2e {
         );
         let outdir = work.path().join("out");
         run_binary(&bam_path, &outdir, &[]);
-        // Report should say "Processed 4 lines in total" (2 pairs × 2 lines).
+        // Phase C.2 (#864): report counts PAIRS for PE (matches Perl
+        // `sequences_count`, line 2482). 2 pairs → "Processed 2 lines"
+        // (rev 0 of Phase B incorrectly counted 2×pairs; C.2 fixed both
+        // increment sites in pipeline.rs + parallel.rs).
         let report = fs::read_to_string(outdir.join("two_pairs_splitting_report.txt")).unwrap();
         assert!(
-            report.contains("Processed 4 lines in total"),
-            "report should reflect line-count, not pair-count; got:\n{report}"
+            report.contains("Processed 2 lines in total"),
+            "report should reflect pair-count for PE; got:\n{report}"
+        );
+        // The 2×pairs count lives in the new line 2483 counter.
+        assert!(
+            report.contains("Total number of methylation call strings processed: 4"),
+            "call_strings_processed = 2×pairs for PE; got:\n{report}"
         );
     }
 
-    /// Closes plan §7.1 row "pe_splitting_report_counts_lines_not_pairs".
+    /// Plan §7.1 row "pe_splitting_report_counts_lines_not_pairs" — name
+    /// preserved for traceability, but **Phase C.2 (#864) inverted the
+    /// semantic**: Perl `sequences_count` (line 2459, drives report line
+    /// 2482) counts PAIRS for PE, not lines. The line-count goes into the
+    /// new `Total number of methylation call strings processed` counter
+    /// (Perl line 2483).
     #[test]
-    fn pe_splitting_report_counts_lines_not_pairs() {
+    fn pe_splitting_report_counts_pairs_in_main_line_post_c2() {
         let work = tempfile::tempdir().unwrap();
         let bam_path: PathBuf = work.path().join("ten_pairs.bam");
         let mut records = Vec::with_capacity(20);
@@ -826,8 +839,12 @@ mod pe_e2e {
         run_binary(&bam_path, &outdir, &[]);
         let report = fs::read_to_string(outdir.join("ten_pairs_splitting_report.txt")).unwrap();
         assert!(
-            report.contains("Processed 20 lines in total"),
-            "10 pairs × 2 = 20 lines; got:\n{report}"
+            report.contains("Processed 10 lines in total"),
+            "10 pairs → 10 sequences_count; got:\n{report}"
+        );
+        assert!(
+            report.contains("Total number of methylation call strings processed: 20"),
+            "10 pairs × 2 = 20 call strings; got:\n{report}"
         );
     }
 
@@ -851,11 +868,16 @@ mod pe_e2e {
         run_binary(&bam_path, &outdir, &["--include_overlap"]);
 
         let cpg_ot = fs::read_to_string(outdir.join("CpG_OT_alan.txt")).unwrap();
-        let cpg_ctot = fs::read_to_string(outdir.join("CpG_CTOT_alan.txt")).unwrap();
         // Two call lines in CpG_OT (one from R1, one from R2's call routed
-        // to pair-strand). Only the header line in CpG_CTOT.
+        // to pair-strand).
         let ot_call_lines = cpg_ot.lines().count() - 1; // minus header line
-        let ctot_call_lines = cpg_ctot.lines().count() - 1;
+        // Phase C.2 (#865): empty CpG_CTOT file is swept at flush time
+        // (matches Perl). Verify absence instead of reading content.
+        assert!(
+            !outdir.join("CpG_CTOT_alan.txt").exists(),
+            "CpG_CTOT_alan.txt should be swept (empty — no calls routed there)"
+        );
+        let ctot_call_lines: usize = 0;
         assert_eq!(ot_call_lines, 2, "both calls in CpG_OT (pair-strand)");
         assert_eq!(
             ctot_call_lines, 0,
@@ -1065,16 +1087,16 @@ mod pe_e2e {
         // Both calls land in CpG_CTOT, not in CpG_OT (R2's record_strand)
         // and not in CpG_CTOB (irrelevant strand).
         let cpg_ctot = fs::read_to_string(outdir.join("CpG_CTOT_ctot.txt")).unwrap();
-        let cpg_ot = fs::read_to_string(outdir.join("CpG_OT_ctot.txt")).unwrap();
         let ctot_call_lines = cpg_ctot.lines().count() - 1;
-        let ot_call_lines = cpg_ot.lines().count() - 1;
+        // Phase C.2 (#865): empty CpG_OT file is swept (no calls routed
+        // there for a CTOT pair). Verify absence instead of reading.
+        assert!(
+            !outdir.join("CpG_OT_ctot.txt").exists(),
+            "CpG_OT_ctot.txt should be swept (empty — R2's record_strand is OT but pair-strand routing puts calls in CpG_CTOT)"
+        );
         assert_eq!(
             ctot_call_lines, 2,
             "both R1 + R2 calls route to CpG_CTOT (pair-strand)"
-        );
-        assert_eq!(
-            ot_call_lines, 0,
-            "no calls in CpG_OT (R2's record_strand is OT but pair-strand wins)"
         );
     }
 
@@ -1094,9 +1116,14 @@ mod pe_e2e {
         run_binary(&bam_path, &outdir, &["--include_overlap"]);
 
         let cpg_ctob = fs::read_to_string(outdir.join("CpG_CTOB_ctob.txt")).unwrap();
-        let cpg_ob = fs::read_to_string(outdir.join("CpG_OB_ctob.txt")).unwrap();
         let ctob_call_lines = cpg_ctob.lines().count() - 1;
-        let ob_call_lines = cpg_ob.lines().count() - 1;
+        // Phase C.2 (#865): empty CpG_OB file is swept (no calls routed
+        // there for a CTOB pair).
+        assert!(
+            !outdir.join("CpG_OB_ctob.txt").exists(),
+            "CpG_OB_ctob.txt should be swept (empty — pair-strand routing puts calls in CpG_CTOB)"
+        );
+        let ob_call_lines: usize = 0;
         assert_eq!(
             ctob_call_lines, 2,
             "both R1 + R2 calls route to CpG_CTOB (pair-strand)"
@@ -1292,14 +1319,17 @@ mod pe_e2e {
         let outdir = work.path().join("out");
         run_binary(&bam_path, &outdir, &[]);
 
-        // All 12 files exist with only the header line.
+        // Phase C.2 (#865): empty PE BAM → no records routed → all 12
+        // per-strand files are empty after the run → all 12 are swept
+        // (unlinked) at finalize time. Only the splitting-report and
+        // M-bias.txt survive.
         for ctx in ["CpG", "CHG", "CHH"] {
             for strand in ["OT", "CTOT", "CTOB", "OB"] {
                 let p = outdir.join(format!("{ctx}_{strand}_empty_pe.txt"));
-                let content = fs::read_to_string(&p).unwrap();
-                assert_eq!(
-                    content, "Bismark methylation extractor version v0.25.1\n",
-                    "{ctx}_{strand} should be header-only for empty PE BAM"
+                assert!(
+                    !p.exists(),
+                    "{}: empty per-strand file should be swept",
+                    p.display()
                 );
             }
         }
@@ -1393,9 +1423,11 @@ mod auto_detect {
             .arg(&outdir)
             .assert()
             .success();
-        // PE counter should fire (2 lines per pair).
+        // Phase C.2 (#864): PE counter is now per-pair, not per-line.
+        // 1 pair → "Processed 1 lines in total" (sequences_count semantic
+        // matches Perl :2459).
         let report = fs::read_to_string(outdir.join("auto_pe_splitting_report.txt")).unwrap();
-        assert!(report.contains("Processed 2 lines in total"));
+        assert!(report.contains("Processed 1 lines in total"));
     }
 
     #[test]
