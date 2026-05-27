@@ -89,9 +89,9 @@ What gets written, when, where, in what format. All filenames use `{input_basena
 |-----------|--------------|--------------------|---------------------|
 | (default, PE) | 12 | `{prefix}_{context}_{strand}.txt[.gz]` | `CpG_OT_{input}.txt[.gz]` |
 | (default, SE) | 6 | (same) | (same — but only OT/OB populated for directional Bismark; CTOT/CTOB drained empty) |
-| `--comprehensive` | 3 | `{prefix}_{context}.txt[.gz]` | `CpG_{input}.txt[.gz]` |
+| `--comprehensive` | 3 | `{context}_context_{input}.txt[.gz]` | `CpG_context_{input}.txt[.gz]` (Phase E rev 4 correction per Perl `:5333`) |
 | `--merge_non_CpG` | 8 | `{prefix}_{context_class}_{strand}.txt[.gz]` (CpG ×4 + Non_CpG ×4) | `Non_CpG_OT_{input}.txt[.gz]` |
-| `--comprehensive --merge_non_CpG` | 2 | `{prefix}_{context_class}.txt[.gz]` | `Non_CpG_{input}.txt[.gz]` |
+| `--comprehensive --merge_non_CpG` | 2 | `{context_class}_context_{input}.txt[.gz]` | `Non_CpG_context_{input}.txt[.gz]` (Phase E rev 4 correction per Perl `:5085, :5109`) |
 | `--yacht` | 1 | `any_C_context_{input}.txt[.gz]` | (SE-only) |
 | `--mbias_only` | 0 | — | — |
 

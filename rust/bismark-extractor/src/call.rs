@@ -116,15 +116,27 @@ fn render_qname(record: &BismarkRecord) -> String {
 /// records `read_pos_5p` counts from the sequenced 5' end while `record.xm()`
 /// is BAM-stored, so the indices disagree by `seq_len - 1 - read_pos`.
 ///
+/// # `mbias_only_silence` (Phase E)
+///
+/// When `true`, the kernel silently skips bytes that would otherwise
+/// raise [`BismarkExtractorError::InvalidXmByte`] — mirroring Perl
+/// `bismark_methylation_extractor:2972, 3054` (`die "unrecognised char"
+/// unless ($mbias_only)`). Other classification outcomes (`U`/`u`/`.`)
+/// continue to take the existing `Skip*` arms regardless of this flag.
+/// The catch-arm is narrowed to specifically `InvalidXmByte` so any future
+/// error variants in [`classify_xm_byte`] still propagate even under
+/// `mbias_only_silence`.
+///
 /// # Errors
 ///
 /// `BismarkExtractorError::InvalidXmByte` on any byte outside
-/// `Z`/`z`/`X`/`x`/`H`/`h`/`U`/`u`/`.`. Phase E will add an `mbias_only`
-/// silencing path.
+/// `Z`/`z`/`X`/`x`/`H`/`h`/`U`/`u`/`.` **unless** `mbias_only_silence`
+/// is set.
 pub fn extract_calls(
     record: &BismarkRecord,
     ignore_5p: u32,
     ignore_3p: u32,
+    mbias_only_silence: bool,
 ) -> Result<Vec<MethCall>, BismarkExtractorError> {
     // XM length equals the read sequence length (parity check in
     // `from_noodles_record`). Use this to compute the 3'-side ignore
@@ -153,8 +165,13 @@ pub fn extract_calls(
 
         // Use `aligned.xm_byte`; NEVER re-index `record.xm()[read_pos_5p]`.
         // The iterator carries the orientation-corrected byte.
-        match classify_xm_byte(aligned.xm_byte, aligned.ref_pos, &read_id)? {
-            XmClassification::Call(context, methylated) => {
+        //
+        // Phase E: narrow the silence path to specifically `InvalidXmByte`
+        // (mirrors Perl `:2972/3054 die "..." unless ($mbias_only)`).
+        // Any future error variants from `classify_xm_byte` continue to
+        // propagate even under `mbias_only_silence`.
+        match classify_xm_byte(aligned.xm_byte, aligned.ref_pos, &read_id) {
+            Ok(XmClassification::Call(context, methylated)) => {
                 calls.push(MethCall {
                     ref_pos: aligned.ref_pos,
                     read_pos: aligned.read_pos_5p,
@@ -163,7 +180,12 @@ pub fn extract_calls(
                     xm_byte: aligned.xm_byte,
                 });
             }
-            XmClassification::SkipUnknownContext | XmClassification::SkipNonCytosine => {}
+            Ok(XmClassification::SkipUnknownContext | XmClassification::SkipNonCytosine) => {}
+            Err(BismarkExtractorError::InvalidXmByte { .. }) if mbias_only_silence => {
+                // Skip the offending byte — matches Perl's silent-skip
+                // branch under --mbias_only.
+            }
+            Err(e) => return Err(e),
         }
     }
 

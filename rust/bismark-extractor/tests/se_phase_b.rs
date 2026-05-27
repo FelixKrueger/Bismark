@@ -17,7 +17,7 @@ use std::io::Read;
 
 use assert_cmd::Command;
 use bismark_extractor::call::{CytosineContext, MethCall, classify_xm_byte, extract_calls};
-use bismark_extractor::cli::{Cli, ResolvedConfig};
+use bismark_extractor::cli::{Cli, OutputMode, ResolvedConfig};
 use bismark_extractor::error::BismarkExtractorError;
 use bismark_extractor::header::build_chr_name_table;
 use bismark_extractor::mbias::{MbiasPos, MbiasTable};
@@ -198,7 +198,7 @@ fn classify_xm_byte_rejects_invalid() {
 fn extract_calls_classifies_all_six_methylation_bytes() {
     // 6-base read on OT strand with all 6 methylation bytes in order.
     let record = helpers::ot_record(b"ZzXxHh", b"ACGTAC");
-    let calls = extract_calls(&record, 0, 0).unwrap();
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
     assert_eq!(calls.len(), 6);
     assert_eq!(calls[0].xm_byte, b'Z');
     assert_eq!(calls[0].context, CytosineContext::CpG);
@@ -211,7 +211,10 @@ fn extract_calls_classifies_all_six_methylation_bytes() {
 #[test]
 fn extract_calls_respects_ignore_5p() {
     let record = helpers::ot_record(b"ZzXxHh", b"ACGTAC");
-    let calls = extract_calls(&record, /*ignore_5p=*/ 3, 0).unwrap();
+    let calls = extract_calls(
+        &record, /*ignore_5p=*/ 3, 0, /*mbias_only_silence=*/ false,
+    )
+    .unwrap();
     // First 3 positions skipped → 3 calls remain (positions 3,4,5)
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[0].read_pos, 3);
@@ -221,7 +224,10 @@ fn extract_calls_respects_ignore_5p() {
 #[test]
 fn extract_calls_respects_ignore_3p() {
     let record = helpers::ot_record(b"ZzXxHh", b"ACGTAC");
-    let calls = extract_calls(&record, 0, /*ignore_3p=*/ 3).unwrap();
+    let calls = extract_calls(
+        &record, 0, /*ignore_3p=*/ 3, /*mbias_only_silence=*/ false,
+    )
+    .unwrap();
     // Last 3 positions skipped → 3 calls remain (positions 0,1,2)
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[2].read_pos, 2);
@@ -243,7 +249,7 @@ fn extract_calls_walks_cigar_with_indels() {
         b"r",
         0,
     );
-    let calls = extract_calls(&record, 0, 0).unwrap();
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
     assert_eq!(calls.len(), 10);
     assert_eq!(calls[4].ref_pos, 104);
     // Position 5 of the read jumps to ref_pos 107 (deletion-skip).
@@ -268,7 +274,7 @@ fn extract_calls_walks_cigar_with_soft_clips() {
         b"r",
         0,
     );
-    let calls = extract_calls(&record, 0, 0).unwrap();
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
     // 8 aligned positions emitted (soft-clip filtered by iter_aligned).
     assert_eq!(calls.len(), 8);
     // First emitted call's read_pos == 2, NOT 0 (rev 1 correction).
@@ -279,7 +285,7 @@ fn extract_calls_walks_cigar_with_soft_clips() {
 #[test]
 fn extract_calls_empty_xm_yields_empty_vec() {
     let record = helpers::ot_record(b"......", b"ACGTAC");
-    let calls = extract_calls(&record, 0, 0).unwrap();
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
     assert!(calls.is_empty());
 }
 
@@ -293,7 +299,7 @@ fn extract_calls_minus_strand_orients_5prime() {
     // Fixture: XM `....Z` (BAM-stored position 4 = 'Z'). On OB strand the
     // first emitted call should have read_pos_5p=0 with xm_byte='Z'.
     let record = helpers::ob_record(b"....Z", b"ACGTC");
-    let calls = extract_calls(&record, 0, 0).unwrap();
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
     assert_eq!(calls.len(), 1, "only one methylation byte in fixture");
     assert_eq!(calls[0].read_pos, 0, "5'-end of sequenced read");
     assert_eq!(calls[0].xm_byte, b'Z');
@@ -308,7 +314,7 @@ fn extract_calls_minus_strand_orients_both_calls() {
     // (Non-call bytes skipped.) Two calls expected: at read_pos_5p=3 (h, CHH-unmeth)
     // and read_pos_5p=4 (Z, CpG-meth).
     let record = helpers::ob_record(b"Zh...", b"ACGTC");
-    let calls = extract_calls(&record, 0, 0).unwrap();
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
     assert_eq!(calls.len(), 2);
     // First call in 5'-order corresponds to BAM-stored position 1 ('h').
     assert_eq!(calls[0].read_pos, 3);
@@ -325,7 +331,7 @@ fn extract_calls_minus_strand_orients_both_calls() {
 #[test]
 fn extract_calls_rejects_invalid_xm_byte_with_error() {
     let record = helpers::ot_record(b"ZzQXx.", b"ACGTAC");
-    let err = extract_calls(&record, 0, 0).unwrap_err();
+    let err = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap_err();
     match err {
         BismarkExtractorError::InvalidXmByte {
             byte, byte_char, ..
@@ -340,8 +346,58 @@ fn extract_calls_rejects_invalid_xm_byte_with_error() {
 #[test]
 fn extract_calls_ignore_larger_than_seq_returns_empty() {
     let record = helpers::ot_record(b"ZzXxHh", b"ACGTAC");
-    let calls = extract_calls(&record, 100, 0).unwrap();
+    let calls = extract_calls(&record, 100, 0, /*mbias_only_silence=*/ false).unwrap();
     assert!(calls.is_empty());
+}
+
+// ─── Phase E: mbias_only_silence kernel-level behaviour ─────────────
+
+/// Phase E rev 1: `mbias_only_silence=true` silently skips invalid XM
+/// bytes, mirroring Perl `:2972/3054 die "..." unless ($mbias_only)`.
+/// Calls before and after the bad byte must still be preserved.
+#[test]
+fn extract_calls_mbias_only_silence_skips_invalid_xm_byte() {
+    // XM: Z (valid), Q (invalid), z (valid). With silence=true, Q is skipped
+    // but Z and z are still emitted.
+    let record = helpers::ot_record(b"ZQz", b"ACG");
+    let calls = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ true).unwrap();
+    // Q is skipped; Z and z are emitted.
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].xm_byte, b'Z');
+    assert_eq!(calls[1].xm_byte, b'z');
+}
+
+/// Phase E rev 1 (narrowed catch-arm): `mbias_only_silence=true` does NOT
+/// alter the `Skip*` paths for `.`, `u`, `U` — those continue to take the
+/// `Ok(XmClassification::Skip*)` arms regardless. Verifies the silencing
+/// scope is exactly `InvalidXmByte`, not "any error or skip".
+#[test]
+fn extract_calls_mbias_only_silence_preserves_dot_and_u_paths() {
+    // XM bytes: Z (call), . (Skip), u (Skip), z (call).
+    let record = helpers::ot_record(b"Z.uz", b"ACGT");
+    let with_silence = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ true).unwrap();
+    let without_silence = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap();
+    // The two runs must produce identical results because the silence flag
+    // only changes the InvalidXmByte-error path, and there are no invalid
+    // bytes here.
+    assert_eq!(
+        with_silence.len(),
+        without_silence.len(),
+        "skip paths must be unaffected by mbias_only_silence"
+    );
+    assert_eq!(with_silence.len(), 2);
+}
+
+/// Phase E rev 1: with `mbias_only_silence=false`, invalid XM bytes
+/// continue to raise `InvalidXmByte` (Phase B byte-identity).
+#[test]
+fn extract_calls_mbias_only_silence_false_still_errors_on_invalid_xm_byte() {
+    let record = helpers::ot_record(b"ZQ", b"AC");
+    let err = extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap_err();
+    assert!(matches!(
+        err,
+        BismarkExtractorError::InvalidXmByte { byte: b'Q', .. }
+    ));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -401,7 +457,14 @@ fn mbias_accumulate_routes_to_chh_for_h() {
 #[test]
 fn output_file_map_eagerly_creates_all_strand_files_for_default_mode() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(dir.path(), "myinput", /*no_header=*/ false).unwrap();
+    let _map = OutputFileMap::new(
+        dir.path(),
+        "myinput",
+        /*no_header=*/ false,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     drop(_map); // flush BufWriters via Drop
 
     let expected = [
@@ -429,7 +492,14 @@ fn output_file_map_eagerly_creates_all_strand_files_for_default_mode() {
 #[test]
 fn output_file_map_omits_header_when_no_header_true() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(dir.path(), "x", /*no_header=*/ true).unwrap();
+    let _map = OutputFileMap::new(
+        dir.path(),
+        "x",
+        /*no_header=*/ true,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     drop(_map);
     let path = dir.path().join("CpG_OT_x.txt");
     let content = fs::read_to_string(&path).unwrap();
@@ -450,7 +520,14 @@ fn output_file_header_matches_perl_format() {
 
     // And verify it actually reaches disk.
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(dir.path(), "x", false).unwrap();
+    let _map = OutputFileMap::new(
+        dir.path(),
+        "x",
+        false,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     drop(_map);
     let mut content = String::new();
     fs::File::open(dir.path().join("CpG_OT_x.txt"))
@@ -465,7 +542,14 @@ fn output_file_map_creates_output_dir_if_missing() {
     let parent = tempfile::tempdir().unwrap();
     let nested = parent.path().join("does/not/exist/yet");
     assert!(!nested.exists());
-    let _map = OutputFileMap::new(&nested, "x", false).unwrap();
+    let _map = OutputFileMap::new(
+        &nested,
+        "x",
+        false,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     assert!(
         nested.exists(),
         "OutputFileMap::new should create output_dir"
@@ -476,7 +560,14 @@ fn output_file_map_creates_output_dir_if_missing() {
 #[test]
 fn output_file_map_write_call_appends_after_header() {
     let dir = tempfile::tempdir().unwrap();
-    let mut map = OutputFileMap::new(dir.path(), "x", false).unwrap();
+    let mut map = OutputFileMap::new(
+        dir.path(),
+        "x",
+        false,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     let call = MethCall {
         ref_pos: 200,
         read_pos: 5,
@@ -484,8 +575,15 @@ fn output_file_map_write_call_appends_after_header() {
         methylated: true,
         xm_byte: b'Z',
     };
-    map.write_call(b"read1", "chr1", call, BismarkStrand::OT)
-        .unwrap();
+    map.write_call(
+        b"read1",
+        "chr1",
+        call,
+        BismarkStrand::OT,
+        /*yacht_col6=*/ 0,
+        /*yacht_col7=*/ 0,
+    )
+    .unwrap();
     map.flush_all().unwrap();
     drop(map);
     let content = fs::read_to_string(dir.path().join("CpG_OT_x.txt")).unwrap();
@@ -496,7 +594,14 @@ fn output_file_map_write_call_appends_after_header() {
 #[test]
 fn format_meth_line_exact_bytes_for_unmethylated() {
     let dir = tempfile::tempdir().unwrap();
-    let mut map = OutputFileMap::new(dir.path(), "x", /*no_header=*/ true).unwrap();
+    let mut map = OutputFileMap::new(
+        dir.path(),
+        "x",
+        /*no_header=*/ true,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     let call = MethCall {
         ref_pos: 42,
         read_pos: 0,
@@ -504,8 +609,15 @@ fn format_meth_line_exact_bytes_for_unmethylated() {
         methylated: false,
         xm_byte: b'h',
     };
-    map.write_call(b"r1", "1", call, BismarkStrand::CTOT)
-        .unwrap();
+    map.write_call(
+        b"r1",
+        "1",
+        call,
+        BismarkStrand::CTOT,
+        /*yacht_col6=*/ 0,
+        /*yacht_col7=*/ 0,
+    )
+    .unwrap();
     map.flush_all().unwrap();
     drop(map);
     let content = fs::read_to_string(dir.path().join("CHH_CTOT_x.txt")).unwrap();
@@ -515,7 +627,14 @@ fn format_meth_line_exact_bytes_for_unmethylated() {
 #[test]
 fn cleanup_partial_outputs_removes_all_12_files() {
     let dir = tempfile::tempdir().unwrap();
-    let mut map = OutputFileMap::new(dir.path(), "x", false).unwrap();
+    let mut map = OutputFileMap::new(
+        dir.path(),
+        "x",
+        false,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
     // Confirm 12 files exist pre-cleanup.
     let count_before = fs::read_dir(dir.path()).unwrap().count();
     assert_eq!(count_before, 12);
@@ -535,7 +654,14 @@ fn cleanup_partial_outputs_continues_past_one_failure() {
     // `cleanup_all` should iterate past that error and successfully remove
     // the remaining 11.
     let dir = tempfile::tempdir().unwrap();
-    let mut map = OutputFileMap::new(dir.path(), "x", false).unwrap();
+    let mut map = OutputFileMap::new(
+        dir.path(),
+        "x",
+        false,
+        OutputMode::Default,
+        /*gzip=*/ false,
+    )
+    .unwrap();
 
     // Pre-delete CpG_CTOT (a directional-library "always 0-byte" file).
     let pre_deleted = dir.path().join("CpG_CTOT_x.txt");
@@ -683,7 +809,7 @@ fn route_single_record_with_mixed_contexts_routes_to_one_strand_directory() {
         ExtractState::new(&config, std::path::Path::new("/tmp/x.bam"), "x", false).unwrap();
     let record = helpers::ot_record(b"ZXH..", b"ACGTC");
 
-    for call in extract_calls(&record, 0, 0).unwrap() {
+    for call in extract_calls(&record, 0, 0, /*mbias_only_silence=*/ false).unwrap() {
         route_call(
             &mut state,
             &record,
@@ -915,26 +1041,70 @@ fn main_rejects_multicore_with_phase_error() {
         .stderr(predicates::str::contains("--parallel 4"));
 }
 
+/// Phase E (rev 1, per plan §7.1): `--gzip` is no longer phase-gated.
+/// The run still fails because `tempbam()` writes junk content, but the
+/// failure text must NOT mention "Phase E" — that'd indicate the gate
+/// is still in place.
 #[test]
-fn main_rejects_gzip_with_phase_error() {
+fn main_accepts_gzip_no_longer_rejected() {
     let bam = tempbam();
     let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
     cmd.arg(bam.path())
         .arg("--gzip")
         .assert()
         .failure()
-        .stderr(predicates::str::contains("--gzip; arrives in Phase E"));
+        .stderr(predicates::str::contains("--gzip; arrives in Phase E").not());
 }
 
+/// Phase E (rev 1): `--comprehensive` is no longer phase-gated. Asserts
+/// the failure (driven by junk-BAM content) does NOT carry the Phase E
+/// rejection string.
 #[test]
-fn main_rejects_comprehensive_with_phase_error() {
+fn main_accepts_comprehensive_no_longer_rejected() {
     let bam = tempbam();
     let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
     cmd.arg(bam.path())
         .arg("--comprehensive")
         .assert()
         .failure()
-        .stderr(predicates::str::contains("Phase E"));
+        .stderr(predicates::str::contains("output mode Comprehensive").not());
+}
+
+/// Phase E (rev 1): `--merge_non_CpG` is no longer phase-gated.
+#[test]
+fn main_accepts_merge_non_cpg_no_longer_rejected() {
+    let bam = tempbam();
+    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    cmd.arg(bam.path())
+        .arg("--merge_non_CpG")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("output mode MergeNonCpG").not());
+}
+
+/// Phase E (rev 1): `--yacht` is no longer phase-gated (still SE-only
+/// per Phase A `Cli::validate`).
+#[test]
+fn main_accepts_yacht_no_longer_rejected() {
+    let bam = tempbam();
+    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    cmd.arg(bam.path())
+        .arg("--yacht")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("output mode Yacht").not());
+}
+
+/// Phase E (rev 1): `--mbias_only` is no longer phase-gated.
+#[test]
+fn main_accepts_mbias_only_no_longer_rejected() {
+    let bam = tempbam();
+    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    cmd.arg(bam.path())
+        .arg("--mbias_only")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("output mode MbiasOnly").not());
 }
 
 #[test]

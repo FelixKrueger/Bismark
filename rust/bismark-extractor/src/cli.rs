@@ -317,6 +317,21 @@ pub struct ResolvedConfig {
     pub parallel: usize,
 }
 
+impl ResolvedConfig {
+    /// True when `--mbias_only` is in effect: skip per-context file writes
+    /// and silence `InvalidXmByte` errors. `M-bias.txt` +
+    /// `_splitting_report.txt` are still produced.
+    ///
+    /// Centralised predicate (Phase E rev 1, Reviewer B Important-1):
+    /// every site that needs to test for mbias-only (`ExtractState::new`,
+    /// `OutputFileMap::new` via mode dispatch, `pipeline.rs::extract_se/pe`'s
+    /// `mbias_only_silence` derivation) calls this one method so the three
+    /// derivations can't drift.
+    pub fn is_mbias_only(&self) -> bool {
+        self.output_mode == OutputMode::MbiasOnly
+    }
+}
+
 impl Cli {
     /// Validate CLI args + reject documented mutex/precondition violations.
     ///
