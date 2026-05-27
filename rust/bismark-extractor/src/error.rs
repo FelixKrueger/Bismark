@@ -1,10 +1,13 @@
 //! Typed errors for `bismark-extractor`.
 //!
-//! Phase A: errors produced at the CLI-validation boundary. Phase B+
-//! will add pipeline/extraction errors via `#[from] BismarkIoError`
-//! (same pattern as `bismark-dedup`'s `BismarkDedupError`).
+//! Phase A: errors produced at the CLI-validation boundary.
+//! Phase B (rev 1): adds pipeline/extraction errors — `PhaseNotYetImplemented`,
+//! `InvalidXmByte`, `IoWrite`, `BismarkIo`, `InternalError`,
+//! `NonAsciiChromosomeName`.
 
 use std::path::PathBuf;
+
+use bismark_io::BismarkIoError;
 
 /// All errors raised by `bismark-extractor` at validation time. Pipeline
 /// + extraction errors land in subsequent phases.
@@ -125,4 +128,60 @@ pub enum BismarkExtractorError {
     /// subprocess.
     #[error("--genome_folder path does not exist: {0}")]
     GenomeFolderNotFound(PathBuf),
+
+    // ─── Phase B (rev 1) additions ─────────────────────────────────────
+    /// Feature gated behind a later phase. Phase B uses this to reject
+    /// configurations outside the supported subset (PE, multicore,
+    /// non-default mode, gzip, bedGraph, cytosine_report, multiple input
+    /// files).
+    #[error("not yet implemented in this build: {feature}")]
+    PhaseNotYetImplemented {
+        /// Human-readable description of the unsupported feature, naming
+        /// the phase that will land it.
+        feature: String,
+    },
+
+    /// Invalid XM tag byte at a given reference position. Mirrors Perl's
+    /// `die` at lines 2972 / 3054.
+    #[error("invalid XM byte 0x{byte:02x} ({byte_char:?}) in read {read_id} at ref_pos {ref_pos}")]
+    InvalidXmByte {
+        /// Offending byte value.
+        byte: u8,
+        /// Same byte rendered as a `char` (ASCII for any plausible XM).
+        byte_char: char,
+        /// 1-based reference position the byte was extracted from.
+        ref_pos: u32,
+        /// QNAME of the offending read (debug aid).
+        read_id: String,
+    },
+
+    /// Wrap `std::io::Error` for write-side failures (split files +
+    /// splitting report + `create_dir_all`).
+    #[error("output write failed: {0}")]
+    IoWrite(#[from] std::io::Error),
+
+    /// Wrap `bismark_io::BismarkIoError` from reader paths.
+    #[error(transparent)]
+    BismarkIo(#[from] BismarkIoError),
+
+    /// Invariant violation that "should never fire" (e.g. refid out of
+    /// range vs header). Surfaces loudly rather than panicking.
+    #[error("internal invariant violated: {message}")]
+    InternalError {
+        /// Diagnostic message.
+        message: String,
+    },
+
+    /// Chromosome name in @SQ contains non-ASCII bytes. Bismark output
+    /// filenames + bedGraph/cytosine_report subprocesses require ASCII
+    /// chr names.
+    #[error(
+        "chromosome name in @SQ header contains non-ASCII bytes: {name}. \
+         Bismark output filenames + bedGraph/cytosine_report subprocesses \
+         require ASCII chr names."
+    )]
+    NonAsciiChromosomeName {
+        /// Offending chr name (lossy-rendered for the error message).
+        name: String,
+    },
 }

@@ -5,7 +5,6 @@
 //! + `--version` matches the provenance regex.
 
 use assert_cmd::Command;
-use predicates::prelude::*; // PredicateBooleanExt for `.and()`
 use predicates::str::is_match;
 
 #[test]
@@ -95,18 +94,7 @@ fn help_text_lists_all_35_flags() {
     }
 }
 
-/// Placeholder note from main.rs should appear when a real input is
-/// passed (validation passes but no pipeline exists yet).
-#[test]
-fn phase_a_placeholder_note_emitted_on_valid_invocation() {
-    // Create a temp file so the validate(..InputFileNotFound..) branch
-    // doesn't fire.
-    let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
-    std::fs::write(tmp.path(), b"x").unwrap();
-
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
-    cmd.arg(tmp.path()).assert().success().stderr(
-        predicates::str::contains("Phase A (scaffold + CLI)")
-            .and(predicates::str::contains("issues/798")),
-    );
-}
+// Phase A's `phase_a_placeholder_note_emitted_on_valid_invocation` test
+// was removed in Phase B — the placeholder stderr note no longer exists
+// because `main.rs::run` now dispatches to the real `extract_se` pipeline.
+// Phase B's end-to-end smoke test lives at `tests/se_phase_b_smoke.rs`.

@@ -6,24 +6,27 @@
 //!
 //! ## Status
 //!
-//! **Phase A — workspace scaffold + CLI** (this crate version: `1.0.0-alpha.1`).
-//! The binary boots, `--help` prints all 35 flags, `--version` emits a
-//! provenance string, and `Cli::validate()` rejects every documented flag
-//! mutex from SPEC §11 + Perl source. No extraction logic yet — that's
-//! Phase B (SE loop) through G (subprocess chain).
+//! **Phase B — SE extraction loop** (crate version: `1.0.0-alpha.2`).
+//! The binary now runs end-to-end on SE Bismark BAM/SAM/CRAM input in
+//! `OutputMode::Default` at `--parallel 1`, producing the 12 strand×context
+//! split files (eagerly opened with the Perl version header line) plus
+//! `_splitting_report.txt`. PE, non-default modes, `--gzip`, `--parallel > 1`,
+//! and the `--bedGraph` / `--cytosine_report` subprocess chain are rejected
+//! at the resolved-config boundary with [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! See [SPEC.md §10](../SPEC.md) for the full phase outline.
 //!
-//! ## Library surface (Phase A)
+//! ## Library surface
 //!
 //! - [`cli::Cli`] — clap-derived parser matching all 35 Perl flags.
 //! - [`cli::ResolvedConfig`] — validated subset of CLI args + derived
 //!   [`cli::OutputMode`] and [`cli::PairedMode`].
 //! - [`error::BismarkExtractorError`] — typed errors raised at validation
-//!   + (later) the extraction-pipeline boundary.
-//! - [`params::ExtractParams`] — Phase-B-onwards argument struct (typed
-//!   replacement for the 14-arg `extract_calls` signature seen in the
-//!   prior-art Rust port). Phase A defines the shape; Phase B populates.
+//!   and the extraction-pipeline boundary.
+//! - [`params::ExtractParams`] — scaffold for Phase C/D/E parameter
+//!   structs; not yet used in Phase B.
+//! - [`call::extract_calls`] — Phase B kernel.
+//! - [`pipeline::extract_se`] — Phase B SE main loop.
 //!
 //! ## Binary
 //!
@@ -34,13 +37,23 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod call;
 pub mod cli;
 pub mod error;
+pub mod header;
+pub mod mbias;
+pub mod output;
 pub mod params;
+pub mod pipeline;
+pub mod route;
+pub mod state;
 
+pub use call::{CytosineContext, MethCall, extract_calls};
 pub use cli::{Cli, OutputMode, PairedMode, ResolvedConfig};
 pub use error::BismarkExtractorError;
+pub use mbias::{MbiasPos, MbiasTable};
 pub use params::ExtractParams;
+pub use pipeline::extract_se;
 
 /// Returns a TG-style provenance string for the binary's `--version` output.
 ///
