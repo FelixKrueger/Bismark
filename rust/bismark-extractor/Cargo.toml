@@ -1,7 +1,7 @@
 [package]
 name = "bismark-extractor"
-version = "1.0.0-alpha.6"
-description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase F: + rayon --multicore N)"
+version = "1.0.0-alpha.7"
+description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase C.1: drop_overlap polarity fix #862)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

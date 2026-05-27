@@ -89,18 +89,26 @@ fn synth_record(
 }
 
 /// 10 OT pairs at evenly-spaced positions. R1 has a CpG-meth call near 5';
-/// R2 has a CpG-unmeth call (which will be dropped by drop_overlap if it
-/// lands past r1_ref_end — but we space pairs so most R2 calls survive).
+/// R2 has a CpG-unmeth call positioned PAST R1's end so the post-C.1 strict-`>`
+/// keep predicate retains it (exercises the post-fix "kept" path rather than
+/// passing by boundary coincidence).
+///
+/// Pre-C.1 fixture had `r2_start = r1_start` (full overlap), R2's call
+/// landing at r2_start + 4 = r1_ref_end (boundary), which the buggy `<` and
+/// the corrected `>` both happened to drop — making the smoke pass by
+/// coincidence with a stale rationale. C.1 reworks to space R2 PAST R1.
 fn write_pe_directional_bam(path: &std::path::Path) {
     let header = header_with_bismark_pe_pg();
     let mut writer = BamWriter::from_path(path, header).unwrap();
     for i in 0..10 {
         let qname = format!("pair_{i}");
         let r1_start = 100 + i * 200;
-        // R2 starts so its 5'-oriented call (BAM-pos 4 reversed → ref_pos =
-        // r2_start + 4) lands INSIDE R1's span (< r1_start + 5 = r1_ref_end).
-        // Easiest: place R2 fully inside R1's span.
-        let r2_start = r1_start; // overlap fully
+        // R2 starts 5bp past R1's end (R1 spans [r1_start, r1_start+4], so
+        // r2_start = r1_start + 5 puts R2 immediately past R1). R2's 5'-
+        // oriented call (BAM-pos 4 reversed → ref_pos = r2_start + 4
+        // = r1_start + 9) is strictly > r1_ref_end (= r1_start + 4),
+        // so the post-C.1 strict-`>` keep predicate retains it.
+        let r2_start = r1_start + 5;
         let r1 = synth_record(
             qname.as_bytes(),
             b"CT",
@@ -177,19 +185,20 @@ fn smoke_pe_auto_detect_produces_all_12_files_and_report() {
         "PE pair-line counting (10 pairs × 2): expected '20 lines'; got:\n{report}"
     );
 
-    // CpG_OT should have exactly 10 R1 call lines beyond the header.
-    // R2 calls are dropped by overlap detection (rev 2 tightening per
-    // Reviewer B L1): R1 5M at r1_start → r1_ref_end = r1_start + 4. R2's
-    // reversed iter_aligned 5'-oriented call at read_pos_5p=0 maps to
-    // BAM-pos 4 (the 'z' in "....z"), ref_pos = r2_start + 4 = r1_start + 4
-    // = r1_ref_end. Strict-`<` keep predicate (r2_pos < r1_ref_end) fails
-    // for r2_pos == r1_ref_end → dropped. So all 10 R2 calls drop; only
-    // 10 R1 calls land. Pins the overlap polarity at smoke level.
+    // C.1 (#862) — post-fix expected: 10 R1 calls + 10 R2 calls = 20 lines.
+    // R1 5M at r1_start → r1_ref_end = r1_start + 4 (= r1_start + 5 - 1).
+    // R2 5M at r2_start = r1_start + 5 (immediately past R1's end).
+    // R2's reversed iter_aligned 5'-oriented call at read_pos_5p=0 maps to
+    // BAM-pos 4 (the 'z' in "....z"), ref_pos = r2_start + 4 = r1_start + 9.
+    // Post-C.1 strict-`>` keep predicate: r2_pos (r1_start+9) > r1_ref_end
+    // (r1_start+4) → KEPT. So 10 R1 calls + 10 R2 calls = 20 lines.
+    // Exercises the post-fix "kept" path (the pre-C.1 fixture passed only
+    // by boundary coincidence with R2 lining up at exactly r1_ref_end).
     let cpg_ot = fs::read_to_string(output_dir.join("CpG_OT_pe_smoke.txt")).unwrap();
     let cpg_ot_call_lines = cpg_ot.lines().count() - 1;
     assert_eq!(
-        cpg_ot_call_lines, 10,
-        "CpG_OT should have exactly 10 R1 call lines (R2 calls dropped by overlap); got:\n{cpg_ot}"
+        cpg_ot_call_lines, 20,
+        "CpG_OT should have 10 R1 + 10 R2 call lines (R2 in unique region kept); got:\n{cpg_ot}"
     );
 
     // CTOT / CTOB files: header-only for directional library.

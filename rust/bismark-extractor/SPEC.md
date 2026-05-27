@@ -356,31 +356,99 @@ fn extract_pe(reader: AnyReader, config: &ResolvedConfig) -> Result<ExtractRepor
 
 ### 7.4 Paired-overlap detection (`--no_overlap`)
 
-Mirrors Perl lines 2891-2906 (forward / OT-CTOB) + 2976-2990 (reverse / OB-CTOT). The decision is made at the **reference-position** level, accounting for InDels via the same CIGAR walker as `extract_calls`.
+**Rev 3 (2026-05-27, Phase C.1, closes #862).** Rev 2 misread Perl by overlooking the `$start_read_2 += $MDN_count_2 - 1` pre-mutation at `bismark_methylation_extractor:2401` (and the symmetric R1 transformation at line 2416 for OB pairs). The cited predicates at lines 2905/2989 were byte-identical to the default-branch predicates at 3744-3747/3825-3828, so the rev-2 citation was a documentation defect; the substantive bug was the missed coordinate transformation. The result was a polarity-reversed `drop_overlap` that kept the overlap region and dropped R2's unique region — the biological opposite of `--no_overlap`'s intent (*"only methylation calls of read 1 are kept for overlapping regions"* per Perl POD line 5860+). Surfaced by the Phase H partial harness on 10M PE WGBS (1.87× call-count gap vs Perl).
 
-**Corrected in rev 1** (Reviewer A finding): the comparison uses `<=` / `>=` (inclusive), not `<` / `>` (strict). `r1_ref_end` from `CigarExt::reference_end` is the 1-based inclusive last reference position (matches Perl's `$start + MDN_count - 1`); calls AT that position must be dropped (R2 overlapping R1's last base is still overlap).
+#### Coordinate pre-mutations in Perl
 
-**Polarity locked in rev 2** (both reviewers verified against Perl 2905 + 2989): Perl writes the *skip* predicate; we write the *keep* predicate, which is the inverse. Perl's skip is **inclusive** (`>=` / `<=` against `r1_ref_end` / `r1_ref_start`), so the keep predicate is **strict** (`<` / `>`).
+The Perl extractor mutates the per-mate start positions BEFORE dispatching to `print_individual_C_methylation_states_paired_end_files`. The mutation is what makes the predicates behave biologically correctly.
 
-```text
-fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair, pair_strand: BismarkStrand) -> Vec<MethCall>:
-    if is_forward(pair_strand):
-        // OT / CTOB pair: R1 is upstream, R2 is downstream.
-        // Perl 2905 skip predicate: `if R2_pos >= r1_ref_end { return }`.
-        // Keep predicate (inverse): `R2_pos < r1_ref_end`. Strict `<`.
-        let r1_ref_end: u32 = pair.r1().cigar().reference_end(pair.r1().alignment_start()? as usize) as u32
-        r2_calls.into_iter().filter(|c| c.ref_pos < r1_ref_end).collect()
-    else:
-        // OB / CTOT pair: R2 is upstream, R1 is downstream.
-        // Perl 2989 skip predicate: `if R2_pos <= r1_ref_start { return }`.
-        // Keep predicate (inverse): `R2_pos > r1_ref_start`. Strict `>`.
-        let r1_ref_start: u32 = pair.r1().alignment_start()? as u32
-        r2_calls.into_iter().filter(|c| c.ref_pos > r1_ref_start).collect()
+**OT/CTOB pair** (`$strand eq '+'`, lines 2398-2402):
+
+```perl
+$end_read_1 = $start_read_1 + $MDN_count_1 - 1;  # R1's rightmost ref pos
+$start_read_2 += $MDN_count_2 - 1;               # R2's rightmost ref pos
 ```
 
-**Endpoint-semantics verification deferred to Phase C** (NOT the polarity — that's locked above). At implementation time, run the overlap fixture (synthetic PE pair with known R1 ref_end and R2 calls at `r1_ref_end - 1`, `r1_ref_end`, `r1_ref_end + 1`) to confirm Perl + Rust agree at boundary positions. If a discrepancy emerges, the candidate root causes are: (a) inclusive vs exclusive interpretation of `CigarExt::reference_end` (already invariant-tested via dedup); (b) 1-based vs 0-based off-by-one in `read_pos → ref_pos` mapping for InDel-bearing reads.
+R2 is then dispatched with `$strand='-'` (line 2440); the predicate uses `$start - $index` arithmetic, so iteration walks R2 from rightmost downward.
 
-**Edge case (rev 3 correction, Phase C surfaced):** if R1 and R2 don't overlap at all because R2 is wholly downstream of `r1_ref_end` (typical "large insert" forward pair), **all R2 calls are dropped**, NOT preserved as a no-op. Rev 1/2 said "no-op"; that was a biological-intuition mistake. Perl `:2905-2906` uses an early-exit `return` in the per-call iteration: as soon as any R2 call has `ref_pos >= r1_ref_end`, the entire R2 processing for that pair terminates. R2 calls inside R1's span are KEPT (because they're `< r1_ref_end`); R2 calls past R1's end are dropped together. This is byte-identity-load-bearing for Phase H and verified by `drop_overlap_disjoint_pair_drops_all_r2_calls_downstream_of_r1_end` unit test.
+**OB/CTOT pair** (`$strand eq '-'`, lines 2414-2416):
+
+```perl
+$end_read_1 = $start_read_1;                     # R1's ORIGINAL leftmost
+$start_read_1 += $MDN_count_1 - 1;               # R1's rightmost (line 2416 — AFTER 2415)
+```
+
+The order at 2415-2416 is load-bearing: `$end_read_1` captures R1's *original* leftmost BEFORE `$start_read_1` is mutated. R2 is dispatched with `$strand='+'` (line 2448) with its natural leftmost start; iteration walks R2 from leftmost upward.
+
+#### R2 predicates — DEFAULT 4-CONTEXT STRAND-SPECIFIC OUTPUT
+
+The path the Phase H harness exercises (`--mode default`, no `--comprehensive`, no `--merge_non_CpG`). Inside `print_individual_C_methylation_states_paired_end_files`, the `elsif ($no_overlap)` branch, the `else` arm of `if ($full)`:
+
+**OB/CTOT R2** (lines 3744-3747, `$strand='+'` branch):
+
+```perl
+if ($start+$index+$pos_offset >= $end_read_1) {
+    return;
+}
+```
+
+Substituting: `$start` = R2's leftmost; `$end_read_1` = R1's leftmost (per line 2415). Drop predicate: `r2_pos >= r1_ref_start`. **Keep predicate (strict inverse): `r2_pos < r1_ref_start`.**
+
+**OT/CTOB R2** (lines 3825-3828, `$strand='-'` branch):
+
+```perl
+if ($start-$index+$pos_offset <= $end_read_1) {
+    return;
+}
+```
+
+Substituting: `$start` = R2's rightmost (per line 2401); `$end_read_1` = R1's rightmost. Drop predicate: `r2_pos <= r1_ref_end`. **Keep predicate (strict inverse): `r2_pos > r1_ref_end`.**
+
+The **same predicates also appear in three other Perl branches** (byte-identical predicate text, byte-identical semantics):
+- `--comprehensive` 3-context output (`if ($full)`): lines 3576 (OB R2) + 3657 (OT R2).
+- `--merge_non_CpG` 2-context output (`if ($merge_non_CpG)`): lines 2905 (OB R2) + 2987 (OT R2).
+- `--comprehensive --merge_non_CpG`: another mirror around line 4065.
+
+The default-branch citations above are load-bearing for documentation; the polarity fix applies regardless of which branch the user invokes.
+
+#### Rust implementation
+
+```text
+fn drop_overlap(r2_calls: Vec<MethCall>, pair: &BismarkPair) -> Vec<MethCall>:
+    if is_forward(pair.pair_strand()):
+        // OT / CTOB pair: R1 is upstream, R2 is downstream.
+        // Perl 3826 drop predicate (post-transformation): `if r2_pos <= r1_ref_end { return }`.
+        // Keep predicate (strict inverse): `r2_pos > r1_ref_end`.
+        let r1_ref_end: u32 = pair.r1().cigar().reference_end(r1_start) as u32
+        r2_calls.retain(|c| c.ref_pos > r1_ref_end)
+    else:
+        // OB / CTOT pair: R2 is upstream, R1 is downstream.
+        // Perl 3745 drop predicate (post-transformation): `if r2_pos >= r1_ref_start { return }`.
+        // Keep predicate (strict inverse): `r2_pos < r1_ref_start`.
+        let r1_ref_start: u32 = r1_start as u32
+        r2_calls.retain(|c| c.ref_pos < r1_ref_start)
+```
+
+#### Boundary semantics
+
+Perl's drop predicates are **inclusive** (`<=` / `>=`); the Rust keep predicates are **strict** (`>` / `<`) — the correct logical inverse. R2 calls AT the boundary (`r2_pos == r1_ref_end` for OT, `r2_pos == r1_ref_start` for OB) are DROPPED, matching Perl.
+
+#### Monotonicity equivalence (`Vec::retain` ≡ Perl early-return)
+
+Perl's iteration uses early-return: `for $index (...) { ... if drop_predicate { return; } emit_call; }`. Rust uses `Vec::retain`, a set-based filter. These produce the same set because R2's iteration sequence is **monotonic** in `ref_pos`:
+
+- **OT R2** (`$strand='-'`, `$start - $index` arithmetic): strictly **decreasing**.
+- **OB R2** (`$strand='+'`, `$start + $index` arithmetic): strictly **increasing**.
+
+Both directions are monotonic, inherited from SAM CIGAR semantics. `Vec::retain` therefore emits the same set Perl's early-return emits, for any well-formed CIGAR.
+
+#### Edge case: non-overlapping pair
+
+If R1 and R2 don't overlap at all because R2 is wholly downstream (OT) or wholly upstream (OB) of R1, **all R2 calls are KEPT** — R2 has no overlap to dedup against. Verified by the `drop_overlap_disjoint_forward_pair_keeps_all_r2_calls` and `drop_overlap_real_data_fr_pair_with_gap_keeps_all_r2_calls` unit tests, plus the Phase H harness on real WGBS data (read `.9` of the 10M PE BAM is exactly this geometry).
+
+#### Pre-existing divergence: `=`/`X` CIGAR ops
+
+`CigarExt::reference_span()` counts `=` (sequence match) and `X` (sequence mismatch) CIGAR ops, but Perl's `$MDN_count` does NOT (it only counts `M`, `D`, `N`). For Bismark-aligned BAMs this divergence is dormant (Bowtie2 emits only `M`), but a foreign tool that emits extended CIGAR ops would produce a different `r1_ref_end` between Rust and Perl. Pre-existing divergence; NOT in #862's fix scope. Flagged here so it's not a future surprise.
 
 ### 7.5 `route_call` — output dispatch
 
@@ -532,9 +600,18 @@ Mirror dedup's per-helper structure:
 | `extract_calls_walks_cigar_with_indels` | `M D M` and `M I M` CIGARs produce calls at correct reference positions |
 | `extract_calls_walks_cigar_with_soft_clips` | `S M S` CIGAR: read_pos starts at 0 (after soft-clip), ref_pos starts at alignment_start |
 | `extract_calls_empty_xm_yields_empty_vec` | XM with no methylation bytes → empty `Vec<MethCall>` |
-| `drop_overlap_forward_pair_drops_r2_at_or_before_r1_end` | OT/CTOB pair, R2 calls ≤ R1's ref_end dropped |
-| `drop_overlap_reverse_pair_drops_r2_at_or_after_r1_start` | OB/CTOT pair, R2 calls ≥ R1's ref_start dropped |
-| `drop_overlap_non_overlapping_pair_is_noop` | R1 + R2 disjoint reference spans → no calls dropped |
+| `drop_overlap_forward_pair_drops_r2_at_or_before_r1_end` | OT/CTOB pair, R2 calls `≤ r1_ref_end` dropped (the overlap region); kept calls are strictly `> r1_ref_end` (R2's unique downstream region). **Polarity corrected in C.1.** |
+| `drop_overlap_reverse_pair_drops_r2_at_or_after_r1_start` | OB/CTOT pair, R2 calls `≥ r1_ref_start` dropped (the overlap region); kept calls are strictly `< r1_ref_start` (R2's unique upstream region). **Polarity corrected in C.1.** |
+| `drop_overlap_disjoint_forward_pair_keeps_all_r2_calls` | OT pair with R2 wholly downstream of R1 → **all R2 calls KEPT** (R2 has no overlap to dedup against). **C.1 — rev 2 SPEC claimed the opposite, was wrong.** |
+| `drop_overlap_fully_overlapping_pair_drops_all_r2_calls` | OT pair with R2 ⊆ R1 span → all R2 calls dropped (entire R2 is overlap). **C.1.** |
+| `drop_overlap_real_data_fr_pair_with_gap_keeps_all_r2_calls` | Mirrors real-data read `.9` geometry (10M PE BAM): R1=[100,163] (64M) + R2=[171,235] (65M), 7bp gap. All R2 calls in unique region kept. **C.1 regression guard for #862.** |
+| `drop_overlap_partial_overlap_reverse_pair` | OB partial overlap: R2 upstream + R1 downstream + overlap in between. R2 unique-region calls kept; overlap-region calls dropped. **C.1.** |
+| `drop_overlap_r1_with_n_skip_op` | R1 CIGAR `50M1000N50M` (spliced BS-RNA-seq): `r1_ref_end = start + 1100 - 1`. Confirms `N` op is included in reference span (matches Perl's `$MDN_count`). **C.1.** |
+| `drop_overlap_r1_with_5prime_soft_clip` | R1 CIGAR `10S100M`: `r1_ref_start` excludes soft-clip; `r1_ref_end = start + 100 - 1`. **C.1 defensive guard.** |
+| `drop_overlap_r1_with_3prime_soft_clip` | R1 CIGAR `100M10S`: 3'-soft-clip excluded from reference span. Symmetric to 5'-soft-clip test. **C.1 defensive guard.** |
+| `drop_overlap_with_r1_indel_uses_reference_end` | R1 CIGAR `50M2D50M` → reference_span = 102, r1_ref_end = 201. R2 calls at 200/201/202 → keep only 202 (strictly past r1_ref_end). Confirms `D` op is counted in reference span. |
+| `drop_overlap_with_r1_end_deletion` | R1 CIGAR `49M2D1M` (deletion near 3' end) → r1_ref_end = 151. R2 calls at 150/151/152 → keep only 152. Boundary-adjacent deletion case. |
+| `drop_overlap_with_r1_insertion_shifts_read_pos_only` | R1 CIGAR `50M2I50M` → reference_span = 100, r1_ref_end = 199. R2 calls at 198/199/200 → keep only 200. Confirms `I` op is NOT counted in reference span (consumes read only). |
 | `mbias_accumulate_increments_meth_for_uppercase` | Single `Z` call → `mbias[0].cpg[pos].meth == 1` |
 | `mbias_accumulate_increments_unmeth_for_lowercase` | Single `z` call → `mbias[0].cpg[pos].unmeth == 1` |
 | `mbias_accumulate_routes_r2_to_index_1` | `ReadIdentity::R2` increments `mbias[1].*` |

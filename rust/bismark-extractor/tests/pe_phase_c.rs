@@ -285,10 +285,11 @@ fn is_forward_pair_strand_matches_perl_classification() {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn drop_overlap_forward_pair_drops_r2_at_or_after_r1_end() {
-    // OT pair, R1 50M at chrX:100 → r1_ref_end == 149 (100 + 50 - 1).
-    // R2 calls at 148, 149, 150: skip predicate `r2_pos >= 149` (inclusive)
-    // → drop 149, 150. Keep predicate `r2_pos < 149` (strict) → keep 148.
+fn drop_overlap_forward_pair_drops_r2_at_or_before_r1_end() {
+    // C.1 polarity fix (#862): OT pair, R1 50M at chrX:100 → r1_ref_end == 149.
+    // R2 calls at 148, 149, 150. Perl drop predicate (post-transformation, line
+    // 3826): `r2_pos <= 149` (inclusive) → drop 148, 149. Rust keep predicate
+    // (strict inverse): `r2_pos > 149` → keep 150 (R2's unique downstream region).
     let pair = helpers::ot_pair(
         b"..........".repeat(5).as_slice(),
         100,
@@ -303,14 +304,15 @@ fn drop_overlap_forward_pair_drops_r2_at_or_after_r1_end() {
     ]);
     let kept = drop_overlap(r2_calls, &pair).unwrap();
     assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].ref_pos, 148);
+    assert_eq!(kept[0].ref_pos, 150);
 }
 
 #[test]
-fn drop_overlap_reverse_pair_drops_r2_at_or_before_r1_start() {
-    // OB pair, R1 50M at chrX:200 → r1_ref_start == 200.
-    // R2 calls at 199, 200, 201: skip predicate `r2_pos <= 200` (inclusive)
-    // → drop 199, 200. Keep predicate `r2_pos > 200` (strict) → keep 201.
+fn drop_overlap_reverse_pair_drops_r2_at_or_after_r1_start() {
+    // C.1 polarity fix (#862): OB pair, R1 50M at chrX:200 → r1_ref_start == 200.
+    // R2 calls at 199, 200, 201. Perl drop predicate (post-transformation, line
+    // 3745): `r2_pos >= 200` (inclusive) → drop 200, 201. Rust keep predicate
+    // (strict inverse): `r2_pos < 200` → keep 199 (R2's unique upstream region).
     let pair = helpers::ob_pair(
         b"..........".repeat(5).as_slice(),
         200,
@@ -325,21 +327,22 @@ fn drop_overlap_reverse_pair_drops_r2_at_or_before_r1_start() {
     ]);
     let kept = drop_overlap(r2_calls, &pair).unwrap();
     assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].ref_pos, 201);
+    assert_eq!(kept[0].ref_pos, 199);
 }
 
 #[test]
-fn drop_overlap_disjoint_pair_drops_all_r2_calls_downstream_of_r1_end() {
-    // Forward (OT) pair, R1 50M at 100 → r1_ref_end == 149. R2 starts at
-    // 300 (insert > 2×read_length, biologically disjoint). All R2 calls are
-    // at ref_pos >= 300 → all >= 149 (r1_ref_end). Strict-`<` keep predicate
-    // drops them ALL.
+fn drop_overlap_disjoint_forward_pair_keeps_all_r2_calls() {
+    // C.1 polarity fix (#862): Forward (OT) pair, R1 50M at 100 → r1_ref_end
+    // == 149. R2 starts at 300 (insert > 2×read_length, biologically
+    // disjoint). All R2 calls are at ref_pos >= 300 → all > 149 (r1_ref_end).
+    // Strict-`>` keep predicate KEEPS them ALL.
     //
-    // **This contradicts the SPEC §7.4 "no-op" edge-case prose** — Perl
-    // `bismark_methylation_extractor:2905` uses early-exit (`return`) which
-    // also drops downstream R2 calls. Phase H byte-identity gates this
-    // against Perl real-data output. The SPEC prose was a biological-
-    // intuition mistake; this test pins the actual algorithm.
+    // **Rev 2 SPEC §7.4 incorrectly claimed all R2 dropped here** — that was
+    // the bug. Per Perl source (line 3826), the drop predicate is
+    // `r2_pos <= r1_ref_end`; for an R2 wholly downstream of R1, no R2 pos
+    // satisfies the drop predicate so Perl `return` never fires and all R2
+    // calls are emitted. C.1 corrects this; matches Perl real-data output
+    // (read `.9` of the 10M PE BAM is exactly this geometry).
     let pair = helpers::ot_pair(
         b"..........".repeat(5).as_slice(),
         100,
@@ -353,15 +356,26 @@ fn drop_overlap_disjoint_pair_drops_all_r2_calls_downstream_of_r1_end() {
         (340, CytosineContext::CpG, true),
     ]);
     let kept = drop_overlap(r2_calls, &pair).unwrap();
-    assert_eq!(kept.len(), 0, "all R2 calls dropped (all >= r1_ref_end)");
+    assert_eq!(
+        kept.len(),
+        3,
+        "all R2 calls kept (all > r1_ref_end; no overlap to dedup)"
+    );
+    assert_eq!(kept[0].ref_pos, 300);
+    assert_eq!(kept[1].ref_pos, 310);
+    assert_eq!(kept[2].ref_pos, 340);
 }
 
 #[test]
-fn drop_overlap_fully_overlapping_pair_keeps_calls_inside_r1_span() {
-    // Forward (OT) pair, R1 50M at 100 → r1_ref_end == 149. R2 also at 100
-    // (innie with small insert) → R2 calls at 105, 120, 148 are all < 149
-    // → strict-`<` keep predicate KEEPS them. (Counter-intuitive against
-    // "drop overlap" intent, but matches Perl's polarity.)
+fn drop_overlap_fully_overlapping_pair_drops_all_r2_calls() {
+    // C.1 polarity fix (#862): Forward (OT) pair, R1 50M at 100 → r1_ref_end
+    // == 149. R2 also at 100 (innie with small insert) → R2 calls at 105,
+    // 120, 148 are all <= 149 (in R1's span). Strict-`>` keep predicate DROPS
+    // them all. R2 has no unique region in this fully-overlapping geometry.
+    //
+    // This is the correct biological interpretation of `--no_overlap`:
+    // "avoid scoring overlapping methylation calls twice" — for fully
+    // overlapping pairs, ALL R2 calls are redundant with R1.
     let pair = helpers::ot_pair(
         b"..........".repeat(5).as_slice(),
         100,
@@ -377,15 +391,16 @@ fn drop_overlap_fully_overlapping_pair_keeps_calls_inside_r1_span() {
     let kept = drop_overlap(r2_calls, &pair).unwrap();
     assert_eq!(
         kept.len(),
-        3,
-        "all calls inside R1 span kept (< r1_ref_end)"
+        0,
+        "all R2 calls dropped (all <= r1_ref_end, in overlap region)"
     );
 }
 
 #[test]
 fn drop_overlap_with_r1_indel_uses_reference_end() {
-    // R1 `50M2D50M` at 100 → reference_span = 102, reference_end = 201.
-    // R2 calls at 200, 201, 202 → keep 200 (< 201); drop 201, 202.
+    // C.1 polarity fix (#862): R1 `50M2D50M` at 100 → reference_span = 102,
+    // reference_end = 201. R2 calls at 200, 201, 202. Strict-`>` keep
+    // predicate → drop 200, 201 (≤ 201); keep 202 (> 201, R2's unique region).
     use noodles_sam::alignment::record::cigar::op::Kind;
     let pair = helpers::ot_pair_with_r1_cigar(
         b"..........".repeat(10).as_slice(),
@@ -402,14 +417,14 @@ fn drop_overlap_with_r1_indel_uses_reference_end() {
     ]);
     let kept = drop_overlap(r2_calls, &pair).unwrap();
     assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].ref_pos, 200);
+    assert_eq!(kept[0].ref_pos, 202);
 }
 
 #[test]
 fn drop_overlap_with_r1_end_deletion() {
-    // Rev 1 (Reviewer A §2.5): R1 `49M2D1M` at 100. CIGAR consumes 50 read
-    // bases + 52 reference positions, so reference_end == 151.
-    // R2 calls at 150, 151, 152 → keep 150; drop 151, 152.
+    // C.1 polarity fix (#862): R1 `49M2D1M` at 100. CIGAR consumes 50 read
+    // bases + 52 reference positions, so reference_end == 151. R2 calls at
+    // 150, 151, 152. Strict-`>` keep → drop 150, 151 (≤ 151); keep 152.
     use noodles_sam::alignment::record::cigar::op::Kind;
     let pair = helpers::ot_pair_with_r1_cigar(
         b"..........".repeat(5).as_slice(),
@@ -426,49 +441,20 @@ fn drop_overlap_with_r1_end_deletion() {
     ]);
     let kept = drop_overlap(r2_calls, &pair).unwrap();
     assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].ref_pos, 150);
+    assert_eq!(kept[0].ref_pos, 152);
 }
 
 #[test]
 fn drop_overlap_with_r1_insertion_shifts_read_pos_only() {
-    // Rev 1 (Reviewer A §2.5): R1 `50M2I50M` at 100. Insertion consumes
-    // read but not reference → reference_span == 100, reference_end == 199.
-    // R2 calls at 198, 199, 200 → keep 198; drop 199, 200.
+    // R1 `50M2I50M` at 100. Insertion consumes read (2 bases) but not
+    // reference → R1 reads 102 bases, reference span = 100, reference_end
+    // = 199. XM length must equal SEQ length = 102 (sum of read-consuming
+    // CIGAR ops). R2 calls at 198, 199, 200 — C.1 polarity fix (#862)
+    // keeps strict `>` 199 → drop 198, 199 (≤ 199); keep 200.
     use noodles_sam::alignment::record::cigar::op::Kind;
+    let r1_xm = vec![b'.'; 102]; // 50M + 2I + 50M consumes 102 read bases
     let pair = helpers::ot_pair_with_r1_cigar(
-        b"..........".repeat(10).as_slice(), // R1 XM has 100 bases (50M + 2I + 50M)
-        100,
-        &[(Kind::Match, 50), (Kind::Insertion, 2), (Kind::Match, 50)],
-        b".....",
-        150,
-        b"q_ins",
-    );
-    // Wait — `ot_pair_with_r1_cigar` passes the XM verbatim and assigns
-    // seq = b'A' × xm.len(). But the CIGAR consumes 100 read bases.
-    // r1_xm has 102 bases (the repeated `..........` × 10 makes 100, but
-    // we repeated 10 times of length 10... that's 100). Good, but XR/XG
-    // length parity needs 102 read bases. Let me fix this by building
-    // a properly-sized fixture.
-    //
-    // Actually `synth_with_r1_cigar` sets seq = vec![b'A'; xm.len()] which
-    // matches xm.len() — and bismark-io's parity check is XM.len() == seq.len(),
-    // both fine.
-    //
-    // The CIGAR consumes 50+2+50 = 102 read bases. So XM must be 102 long.
-    // Above I have `b"..........".repeat(10)` which is 100. Insufficient.
-    //
-    // Rebuild with correct length below.
-    let _ = pair; // discard the wrong-length fixture
-    let pair = helpers::ot_pair_with_r1_cigar(
-        b".........."
-            .repeat(10)
-            .as_slice()
-            .to_vec()
-            .iter()
-            .copied()
-            .chain(b"..".iter().copied())
-            .collect::<Vec<u8>>()
-            .as_slice(),
+        &r1_xm,
         100,
         &[(Kind::Match, 50), (Kind::Insertion, 2), (Kind::Match, 50)],
         b".....",
@@ -480,9 +466,168 @@ fn drop_overlap_with_r1_insertion_shifts_read_pos_only() {
         (199, CytosineContext::CpG, true),
         (200, CytosineContext::CpG, true),
     ]);
+    // C.1 polarity fix (#862): R1 `50M2I50M` at 100 → reference_end = 199.
+    // Strict-`>` keep → drop 198, 199 (≤ 199); keep 200 (R2's unique region).
     let kept = drop_overlap(r2_calls, &pair).unwrap();
     assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].ref_pos, 198);
+    assert_eq!(kept[0].ref_pos, 200);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2b. C.1 regression-guard fixtures (added with #862 polarity fix)
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_overlap_real_data_fr_pair_with_gap_keeps_all_r2_calls() {
+    // C.1 regression guard (#862) — mirrors read `.9` of the 10M PE BAM that
+    // surfaced the polarity bug. R1 64M at 100 → r1_ref_end = 163. R2 65M at
+    // 171 → R2 spans [171, 235], with a 7bp gap between R1's end and R2's
+    // start. Non-overlapping geometry: all R2 calls must be kept (R2 has no
+    // overlap to dedup against).
+    //
+    // Pre-C.1: Rust dropped all R2 calls because predicate was `r2_pos < 163`.
+    // Post-C.1: Rust keeps all R2 calls because predicate is `r2_pos > 163`.
+    let r1_xm = vec![b'.'; 64];
+    let r2_xm = vec![b'.'; 65];
+    let pair = helpers::ot_pair(&r1_xm, 100, &r2_xm, 171, b"q_realdata9");
+    let r2_calls = helpers::calls_at(&[
+        (175, CytosineContext::CpG, true),
+        (200, CytosineContext::CpG, false),
+        (220, CytosineContext::CHG, true),
+        (235, CytosineContext::CHH, false),
+    ]);
+    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    assert_eq!(
+        kept.len(),
+        4,
+        "all R2 unique-region calls kept (gap of 7bp between r1_ref_end=163 and r2_start=171)"
+    );
+    assert_eq!(kept[0].ref_pos, 175);
+    assert_eq!(kept[1].ref_pos, 200);
+    assert_eq!(kept[2].ref_pos, 220);
+    assert_eq!(kept[3].ref_pos, 235);
+}
+
+#[test]
+fn drop_overlap_partial_overlap_reverse_pair() {
+    // C.1 (#862): OB partial overlap fixture. R2=[150, 213] (64M) is
+    // upstream; R1=[200, 263] (64M) is downstream; overlap = [200, 213].
+    // r1_ref_start = 200. R2 calls at 195, 199, 200, 201.
+    // Strict-`<` keep predicate: keep r2_pos < 200 → keep [195, 199];
+    // drop [200, 201] (both ≥ r1_ref_start, in the overlap region).
+    let r1_xm = vec![b'.'; 64];
+    let r2_xm = vec![b'.'; 64];
+    let pair = helpers::ob_pair(&r1_xm, 200, &r2_xm, 150, b"q_ob_partial");
+    let r2_calls = helpers::calls_at(&[
+        (195, CytosineContext::CpG, true),
+        (199, CytosineContext::CpG, true),
+        (200, CytosineContext::CpG, true),
+        (201, CytosineContext::CpG, true),
+    ]);
+    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    assert_eq!(kept.len(), 2);
+    assert_eq!(kept[0].ref_pos, 195, "R2 unique upstream call kept");
+    assert_eq!(
+        kept[1].ref_pos, 199,
+        "R2 unique upstream call kept (boundary -1)"
+    );
+    assert!(
+        !kept.iter().any(|c| c.ref_pos == 200),
+        "boundary call at r1_ref_start dropped"
+    );
+    assert!(
+        !kept.iter().any(|c| c.ref_pos == 201),
+        "R2 overlap-region call dropped"
+    );
+}
+
+#[test]
+fn drop_overlap_r1_with_n_skip_op() {
+    // C.1 (#862): R1 with `N` skip CIGAR (spliced bisulfite-RNA-seq).
+    // R1 CIGAR `50M1000N50M` at 100 — read consumes 100 bases; reference
+    // span = 50 + 1000 + 50 = 1100; r1_ref_end = 100 + 1100 - 1 = 1199.
+    // Confirms `N` op is counted in reference_span (matches Perl's $MDN_count).
+    // R2 calls at 1198, 1199, 1200 → strict-`>` keep predicate → keep 1200.
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    let r1_xm = vec![b'.'; 100]; // 50M + 50M consumed read = 100; N does not consume read
+    let pair = helpers::ot_pair_with_r1_cigar(
+        &r1_xm,
+        100,
+        &[(Kind::Match, 50), (Kind::Skip, 1000), (Kind::Match, 50)],
+        b".....",
+        1300, // R2 far past R1; we only care about R2 calls placed manually
+        b"q_n_skip",
+    );
+    let r2_calls = helpers::calls_at(&[
+        (1198, CytosineContext::CpG, true),
+        (1199, CytosineContext::CpG, true),
+        (1200, CytosineContext::CpG, true),
+    ]);
+    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        kept[0].ref_pos, 1200,
+        "only call strictly past r1_ref_end=1199 kept"
+    );
+}
+
+#[test]
+fn drop_overlap_r1_with_5prime_soft_clip() {
+    // C.1 (#862, defensive guard per Reviewer A I4 + Reviewer B I2):
+    // R1 CIGAR `10S100M` at 100 — soft-clip excluded from reference span.
+    // alignment_start = 100 (BAM POS, the leftmost MAPPED base);
+    // reference_span = 100; r1_ref_end = 100 + 100 - 1 = 199.
+    // R2 calls at 198, 199, 200 → strict-`>` keep → keep 200 only.
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    let r1_xm = vec![b'.'; 110]; // 10S + 100M consumed read = 110
+    let pair = helpers::ot_pair_with_r1_cigar(
+        &r1_xm,
+        100,
+        &[(Kind::SoftClip, 10), (Kind::Match, 100)],
+        b".....",
+        150,
+        b"q_5p_softclip",
+    );
+    let r2_calls = helpers::calls_at(&[
+        (198, CytosineContext::CpG, true),
+        (199, CytosineContext::CpG, true),
+        (200, CytosineContext::CpG, true),
+    ]);
+    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        kept[0].ref_pos, 200,
+        "soft-clip excluded from reference_span; only call > 199 kept"
+    );
+}
+
+#[test]
+fn drop_overlap_r1_with_3prime_soft_clip() {
+    // C.1 (#862, defensive guard): R1 CIGAR `100M10S` at 100 — 3'-soft-clip
+    // excluded from reference span. r1_ref_end = 100 + 100 - 1 = 199.
+    // R2 calls at 198, 199, 200 → strict-`>` keep → keep 200 only.
+    // Symmetric to the 5'-soft-clip test.
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    let r1_xm = vec![b'.'; 110];
+    let pair = helpers::ot_pair_with_r1_cigar(
+        &r1_xm,
+        100,
+        &[(Kind::Match, 100), (Kind::SoftClip, 10)],
+        b".....",
+        150,
+        b"q_3p_softclip",
+    );
+    let r2_calls = helpers::calls_at(&[
+        (198, CytosineContext::CpG, true),
+        (199, CytosineContext::CpG, true),
+        (200, CytosineContext::CpG, true),
+    ]);
+    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        kept[0].ref_pos, 200,
+        "3' soft-clip excluded from reference_span; only call > 199 kept"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -749,20 +894,20 @@ mod pe_e2e {
     }
 
     #[test]
-    fn extract_pe_with_no_overlap_drops_r2_calls_past_r1_end() {
-        // Renamed from "drops R2 overlap calls" — Perl's strict-`<` polarity
-        // (Perl `bismark_methylation_extractor:2905` forward / `:2989` reverse)
-        // keeps R2 calls INSIDE R1's span and drops R2 calls AT OR AFTER
-        // R1's end. (Counter-intuitive against "drop overlap" intent; see
-        // `drop_overlap_fully_overlapping_pair_keeps_calls_inside_r1_span`
-        // for the unit-level fixture.)
+    fn extract_pe_with_no_overlap_drops_r2_overlap_keeps_unique() {
+        // C.1 polarity fix (#862): renamed and re-asserted. The correct
+        // Perl semantic (line 3826 drop predicate, post-coordinate-mutation:
+        // `r2_pos <= r1_ref_end`) drops R2 calls IN the overlap region and
+        // keeps R2 calls past R1's end (R2's unique downstream region).
+        // Matches the documented `--no_overlap` intent: *"only methylation
+        // calls of read 1 are kept for overlapping regions"*.
         //
         // R1 `Z....` 5M at 100 → r1_ref_end = 104. R2 `.Z.zZ` 5M at 102
         // (R2 is `-`-strand CTOT — iter_aligned reverses, so 5'-oriented
-        // calls have ref_pos values 106, 105, 103). Strict-`<` keep:
-        // - 106 >= 104 → drop
-        // - 105 >= 104 → drop
-        // - 103 < 104 → keep
+        // calls have ref_pos values 106, 105, 103). Strict-`>` keep:
+        // - 106 > 104 → keep
+        // - 105 > 104 → keep
+        // - 103 <= 104 → drop (in overlap region with R1)
         let work = tempfile::tempdir().unwrap();
         let bam_path: PathBuf = work.path().join("overlap_drop.bam");
         let pair = helpers::ot_pair(b"Z....", 100, b".Z.zZ", 102, b"ovl2");
@@ -773,16 +918,16 @@ mod pe_e2e {
         let cpg_ot = fs::read_to_string(outdir.join("CpG_OT_overlap_drop.txt")).unwrap();
         assert!(cpg_ot.contains("\t100\t"), "R1 call kept");
         assert!(
-            cpg_ot.contains("\t103\t"),
-            "R2 call inside R1 span (103 < 104) kept"
+            !cpg_ot.contains("\t103\t"),
+            "R2 call in overlap (103 <= r1_ref_end=104) dropped"
         );
         assert!(
-            !cpg_ot.contains("\t105\t"),
-            "R2 call past r1_ref_end (105 >= 104) dropped"
+            cpg_ot.contains("\t105\t"),
+            "R2 call past r1_ref_end (105 > 104) kept — R2 unique region"
         );
         assert!(
-            !cpg_ot.contains("\t106\t"),
-            "R2 call past r1_ref_end (106 >= 104) dropped"
+            cpg_ot.contains("\t106\t"),
+            "R2 call past r1_ref_end (106 > 104) kept — R2 unique region"
         );
     }
 
@@ -905,14 +1050,17 @@ mod pe_e2e {
     fn extract_pe_routes_ctot_pair_strand_correctly() {
         let work = tempfile::tempdir().unwrap();
         let bam_path: PathBuf = work.path().join("ctot.bam");
-        // CTOT is reverse class — R2 is upstream. Place R2 at 200 (which is
-        // upstream of R1 at 230). With --no_overlap, R1 calls keep predicate
-        // `r2_pos > r1_ref_start=230` would drop the upstream R2 calls.
-        // Use --include_overlap so both R1 and R2 calls land regardless.
+        // CTOT is reverse class — R2 is upstream. R2 5M at 200 spans
+        // [200, 204]; R1 5M at 230 → r1_ref_start = 230. Post-C.1 keep
+        // predicate `r2_pos < r1_ref_start` keeps all R2 calls (R2 is
+        // entirely in its upstream-unique region, no overlap with R1).
+        // Runs with default `--no_overlap` — this test is load-bearing on
+        // the corrected CTOT polarity (was using `--include_overlap` pre-C.1
+        // with a comment that described the OLD buggy polarity).
         let pair = helpers::ctot_pair(b"Z....", 230, b"....Z", 200, b"ctot_pair");
         write_pe_bam(&bam_path, vec![pair.r1().clone(), pair.r2().clone()]);
         let outdir = work.path().join("out");
-        run_binary(&bam_path, &outdir, &["--include_overlap"]);
+        run_binary(&bam_path, &outdir, &[]);
 
         // Both calls land in CpG_CTOT, not in CpG_OT (R2's record_strand)
         // and not in CpG_CTOB (irrelevant strand).
