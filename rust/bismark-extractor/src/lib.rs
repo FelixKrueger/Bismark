@@ -6,19 +6,26 @@
 //!
 //! ## Status
 //!
-//! **Phase D — SE + PE extraction loops + M-bias.txt writer** (crate version:
-//! `1.0.0-alpha.4`). The binary runs end-to-end on Bismark BAM/SAM/CRAM
-//! input in `OutputMode::Default` at `--parallel 1`, producing the 12
-//! strand×context split files + `_splitting_report.txt` + `M-bias.txt`
-//! (unless `--mbias_off`). SE-vs-PE auto-detect via `@PG ID:Bismark` header
-//! probe (powered by `bismark_io::detect_paired_from_header`). PE adds
-//! overlap detection (`--no_overlap` default) and per-mate ignore trims
-//! (`--ignore_r2`, `--ignore_3prime_r2`). The M-bias.txt writer (Phase D)
-//! consumes the `[MbiasTable; 2]` accumulator populated by Phases B + C and
-//! emits 3 sections for SE / 6 sections for PE per Perl byte-identity.
-//! Non-default output modes, `--gzip`, `--parallel > 1`, `--bedGraph` /
-//! `--cytosine_report`, and `--mbias_only` still rejected with
-//! [`BismarkExtractorError::PhaseNotYetImplemented`].
+//! **Phase E — non-Default output modes + `--gzip` + `--mbias_only`** (crate
+//! version: `1.0.0-alpha.5`). The binary runs end-to-end on Bismark
+//! BAM/SAM/CRAM input at `--parallel 1` across the full output-shape
+//! surface:
+//!   - `Default` (12 strand×context files),
+//!   - `Comprehensive` (3 per-context files with `_context_` infix),
+//!   - `MergeNonCpG` (8 files: CpG×4 + Non_CpG×4 strands),
+//!   - `ComprehensiveMergeNonCpG` (2 files),
+//!   - `Yacht` (1 file `any_C_context_*` with 8-col rows; SE-only),
+//!   - `MbiasOnly` (0 split files; M-bias.txt + splitting-report only).
+//!
+//! `--gzip` wraps every per-mode split file in a `flate2::write::GzEncoder`
+//! and appends `.gz` to filenames. `--mbias_only` silently skips
+//! `InvalidXmByte` errors (per Perl `:2972/3054`).
+//!
+//! SE + PE both run end-to-end, with SE-vs-PE auto-detect via
+//! `@PG ID:Bismark` header probe. M-bias.txt + `_splitting_report.txt`
+//! emit per Phase D's byte-identity contract. `--multicore` (Phase F),
+//! `--bedGraph` / `--cytosine_report` (Phase G), and multiple input files
+//! still rejected with [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! See [SPEC.md §10](../SPEC.md) for the full phase outline.
 //!
@@ -54,6 +61,7 @@ pub mod header;
 pub mod mbias;
 pub mod mbias_writer;
 pub mod output;
+pub mod output_mode;
 pub mod overlap;
 pub mod params;
 pub mod pipeline;
@@ -65,6 +73,9 @@ pub use cli::{Cli, OutputMode, PairedMode, ResolvedConfig};
 pub use error::BismarkExtractorError;
 pub use mbias::{MbiasPos, MbiasTable};
 pub use mbias_writer::{derive_mbias_basename, mbias_txt_path, write_mbias_txt};
+pub use output_mode::{
+    CpGOrNonCpG, OutputKey, mode_keys, orient_byte, route_to_key, write_yacht_row,
+};
 pub use overlap::{drop_overlap, is_forward_pair_strand};
 pub use params::ExtractParams;
 pub use pipeline::{extract_pe, extract_se};

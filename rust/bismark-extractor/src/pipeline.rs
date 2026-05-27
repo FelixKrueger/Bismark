@@ -137,7 +137,12 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
         let strand = record.record_strand();
         let read_identity = ReadIdentity::from_flags(flags_bits);
 
-        let calls = match extract_calls(&record, config.ignore_5p_r1, config.ignore_3p_r1) {
+        let calls = match extract_calls(
+            &record,
+            config.ignore_5p_r1,
+            config.ignore_3p_r1,
+            config.is_mbias_only(),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 state.cleanup_partial_outputs();
@@ -309,8 +314,19 @@ fn handle_one_pair(
 
     let pair_strand = pair.pair_strand();
 
-    let r1_calls = extract_calls(pair.r1(), config.ignore_5p_r1, config.ignore_3p_r1)?;
-    let r2_calls_raw = extract_calls(pair.r2(), config.ignore_5p_r2, config.ignore_3p_r2)?;
+    let mbias_only_silence = config.is_mbias_only();
+    let r1_calls = extract_calls(
+        pair.r1(),
+        config.ignore_5p_r1,
+        config.ignore_3p_r1,
+        mbias_only_silence,
+    )?;
+    let r2_calls_raw = extract_calls(
+        pair.r2(),
+        config.ignore_5p_r2,
+        config.ignore_3p_r2,
+        mbias_only_silence,
+    )?;
 
     let r2_calls = if config.no_overlap {
         drop_overlap(r2_calls_raw, pair)?

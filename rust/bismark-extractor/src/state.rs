@@ -15,10 +15,9 @@ use crate::output::{OutputFileMap, SplittingReport, write_splitting_report};
 
 /// Aggregated mutable state threaded through `route_call`.
 pub struct ExtractState {
-    /// Resolved output mode. Phase B always sees `Default` (main dispatch
-    /// rejects others); Phase E reads this field to pick between
-    /// `Comprehensive` / `MergeNonCpG` / `Yacht` / `MbiasOnly` routing.
-    #[allow(dead_code)]
+    /// Resolved output mode. Read by `route_call` to drive yacht col-6/col-7
+    /// computation and (via `OutputFileMap::mode`) to pick the right
+    /// per-mode key for write dispatch.
     pub mode: OutputMode,
     /// `--mbias_off` — skip M-bias accumulation entirely.
     pub mbias_off: bool,
@@ -60,17 +59,24 @@ impl ExtractState {
         input_basename: &str,
         is_paired: bool,
     ) -> Result<Self, BismarkExtractorError> {
-        let fhs = OutputFileMap::new(&config.output_dir, input_basename, config.no_header)?;
+        let fhs = OutputFileMap::new(
+            &config.output_dir,
+            input_basename,
+            config.no_header,
+            config.output_mode,
+            config.gzip,
+        )?;
         let splitting_report_path = config
             .output_dir
             .join(format!("{input_basename}_splitting_report.txt"));
         Ok(Self {
             mode: config.output_mode,
             mbias_off: config.mbias_off,
-            // Phase B never reaches `extract_se` with mbias_only set
-            // (main.rs::run rejects), but ExtractState carries the field
-            // for Phase E's route_call short-circuit pre-wiring.
-            mbias_only: false,
+            // Phase E: derive `mbias_only` from the centralised predicate
+            // on `ResolvedConfig` so the three derivation sites
+            // (ExtractState, OutputFileMap, pipeline.rs) all read the same
+            // source of truth.
+            mbias_only: config.is_mbias_only(),
             mbias: [MbiasTable::default(), MbiasTable::default()],
             is_paired,
             fhs,

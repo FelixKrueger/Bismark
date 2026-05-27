@@ -1,14 +1,17 @@
 //! Binary entry point for `bismark-methylation-extractor-rs`.
 //!
-//! Phase C (rev 1): dispatches on the resolved config —
+//! Dispatches on the resolved config —
 //! - `SingleEnd` → [`bismark_extractor::extract_se`].
 //! - `PairedEnd` → [`bismark_extractor::extract_pe`].
 //! - `AutoDetect` → header-probe via `bismark_io::detect_paired_from_header`
 //!   to pick `extract_se` / `extract_pe`. Errors with `AutoDetectFailed`
 //!   if the BAM has no `@PG ID:Bismark*` line.
 //!
-//! Non-default output modes, `--gzip`, `--parallel > 1`, `--bedGraph` /
-//! `--cytosine_report`, and multiple input files are still rejected with
+//! Phase E (this build) supports all 6 output modes
+//! (`Default` / `Comprehensive` / `MergeNonCpG` /
+//! `ComprehensiveMergeNonCpG` / `Yacht` / `MbiasOnly`) plus `--gzip`.
+//! `--parallel > 1` (Phase F), `--bedGraph` / `--cytosine_report` (Phase G),
+//! and multiple input files are still rejected with
 //! [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! Exit codes:
@@ -20,7 +23,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use bismark_extractor::cli::{Cli, OutputMode, PairedMode};
+use bismark_extractor::cli::{Cli, PairedMode};
 use bismark_extractor::error::BismarkExtractorError;
 use bismark_extractor::{extract_pe, extract_se, version_string};
 use bismark_io::{detect_paired_from_header, open_reader};
@@ -62,24 +65,7 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
         });
     }
 
-    // Non-default output modes: Phase E.
-    if config.output_mode != OutputMode::Default {
-        return Err(BismarkExtractorError::PhaseNotYetImplemented {
-            feature: format!(
-                "output mode {:?}; --comprehensive / --merge_non_CpG / --yacht / \
-                 --mbias_only arrive in Phase E",
-                config.output_mode
-            ),
-        });
-    }
-
-    // Gzip-compressed output: Phase E.
-    if config.gzip {
-        return Err(BismarkExtractorError::PhaseNotYetImplemented {
-            feature: "--gzip; arrives in Phase E".to_string(),
-        });
-    }
-
+    // Phase E (this build): all 6 output modes + --gzip are supported.
     // Multicore: Phase F.
     if config.parallel != 1 {
         return Err(BismarkExtractorError::PhaseNotYetImplemented {
