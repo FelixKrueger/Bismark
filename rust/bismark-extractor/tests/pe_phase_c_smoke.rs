@@ -1,0 +1,226 @@
+//! End-to-end Phase C smoke test.
+//!
+//! Builds a synthetic PE BAM in-test (no Perl toolchain required), runs the
+//! `bismark-methylation-extractor-rs` binary on it, and asserts:
+//! - exit code 0,
+//! - all 12 split files present,
+//! - splitting report contains "Processed N lines in total" matching the
+//!   2N (lines) accounting (Perl line 2479 literal),
+//! - CTOT/CTOB files header-only (directional library),
+//! - at least one OT-pair-strand call line on disk.
+//!
+//! Per plan rev 1 (Reviewer B I5 from Phase B): byte-equality vs Perl
+//! baseline is Phase H. Phase C's smoke gates "binary runs end-to-end on
+//! PE input via auto-detect" — a wide bug-class catcher without toolchain
+//! dependency.
+
+use std::fs;
+use std::path::PathBuf;
+
+use assert_cmd::Command;
+use bismark_io::{BamWriter, BismarkRecord};
+use bstr::BString;
+use noodles_core::Position;
+use noodles_sam::Header;
+use noodles_sam::alignment::record::Flags;
+use noodles_sam::alignment::record::cigar::Op;
+use noodles_sam::alignment::record::cigar::op::Kind;
+use noodles_sam::alignment::record::data::field::Tag;
+use noodles_sam::alignment::record_buf::data::field::Value;
+use noodles_sam::alignment::record_buf::{Cigar, RecordBuf, Sequence};
+use noodles_sam::header::record::value::Map;
+use noodles_sam::header::record::value::map::header::Version;
+use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+use noodles_sam::header::record::value::map::{Program, ReferenceSequence};
+use std::num::NonZeroUsize;
+
+/// Build a SAM header with a Bismark @PG line so auto-detect routes the
+/// binary to `extract_pe` without explicit `--paired-end`.
+fn header_with_bismark_pe_pg() -> Header {
+    let mut hd = Map::<noodles_sam::header::record::value::map::Header>::new(Version::new(1, 6));
+    hd.other_fields_mut().insert(
+        noodles_sam::header::record::value::map::header::tag::SORT_ORDER,
+        BString::from(b"unsorted".to_vec()),
+    );
+    let mut prog = Map::<Program>::default();
+    prog.other_fields_mut().insert(
+        COMMAND_LINE,
+        BString::from(b"bismark --genome /path/genome -1 R1.fq.gz -2 R2.fq.gz".to_vec()),
+    );
+    let mut header = Header::builder()
+        .set_header(hd)
+        .add_program(BString::from(b"Bismark".to_vec()), prog)
+        .build();
+    header.reference_sequences_mut().insert(
+        BString::from(b"chr1".to_vec()),
+        Map::<ReferenceSequence>::new(NonZeroUsize::new(10_000).unwrap()),
+    );
+    header
+}
+
+#[allow(clippy::too_many_arguments)]
+fn synth_record(
+    qname: &[u8],
+    xr: &[u8],
+    xg: &[u8],
+    xm: &[u8],
+    seq: &[u8],
+    alignment_start: usize,
+    flags: u16,
+    refid: usize,
+) -> BismarkRecord {
+    let mut record = RecordBuf::default();
+    *record.flags_mut() = Flags::from(flags);
+    *record.sequence_mut() = Sequence::from(seq.to_vec());
+    *record.alignment_start_mut() = Some(Position::try_from(alignment_start).unwrap());
+    *record.reference_sequence_id_mut() = Some(refid);
+    *record.cigar_mut() = Cigar::from(vec![Op::new(Kind::Match, xm.len())]);
+    *record.name_mut() = Some(BString::from(qname.to_vec()));
+    record
+        .data_mut()
+        .insert(Tag::from(*b"XR"), Value::String(BString::from(xr.to_vec())));
+    record
+        .data_mut()
+        .insert(Tag::from(*b"XG"), Value::String(BString::from(xg.to_vec())));
+    record
+        .data_mut()
+        .insert(Tag::from(*b"XM"), Value::String(BString::from(xm.to_vec())));
+    BismarkRecord::from_noodles_record(record).expect("synth_record produces a valid BismarkRecord")
+}
+
+/// 10 OT pairs at evenly-spaced positions. R1 has a CpG-meth call near 5';
+/// R2 has a CpG-unmeth call (which will be dropped by drop_overlap if it
+/// lands past r1_ref_end — but we space pairs so most R2 calls survive).
+fn write_pe_directional_bam(path: &std::path::Path) {
+    let header = header_with_bismark_pe_pg();
+    let mut writer = BamWriter::from_path(path, header).unwrap();
+    for i in 0..10 {
+        let qname = format!("pair_{i}");
+        let r1_start = 100 + i * 200;
+        // R2 starts so its 5'-oriented call (BAM-pos 4 reversed → ref_pos =
+        // r2_start + 4) lands INSIDE R1's span (< r1_start + 5 = r1_ref_end).
+        // Easiest: place R2 fully inside R1's span.
+        let r2_start = r1_start; // overlap fully
+        let r1 = synth_record(
+            qname.as_bytes(),
+            b"CT",
+            b"CT",
+            b"Z....",
+            b"ACGTC",
+            r1_start,
+            0x41, // paired + first
+            0,
+        );
+        let r2 = synth_record(
+            qname.as_bytes(),
+            b"GA",
+            b"CT",
+            b"....z",
+            b"ACGTC",
+            r2_start,
+            0x81, // paired + last
+            0,
+        );
+        writer.write_record(&r1).unwrap();
+        writer.write_record(&r2).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+#[test]
+fn smoke_pe_auto_detect_produces_all_12_files_and_report() {
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path: PathBuf = workdir.path().join("pe_smoke.bam");
+    write_pe_directional_bam(&bam_path);
+
+    let output_dir = workdir.path().join("out");
+
+    // No --single-end / --paired-end → AutoDetect via @PG ID:Bismark.
+    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    cmd.arg(&bam_path)
+        .arg("--output_dir")
+        .arg(&output_dir)
+        .assert()
+        .success();
+
+    // All 12 split files must exist with the Perl version header on line 1.
+    let expected_files = [
+        "CpG_OT_pe_smoke.txt",
+        "CpG_CTOT_pe_smoke.txt",
+        "CpG_CTOB_pe_smoke.txt",
+        "CpG_OB_pe_smoke.txt",
+        "CHG_OT_pe_smoke.txt",
+        "CHG_CTOT_pe_smoke.txt",
+        "CHG_CTOB_pe_smoke.txt",
+        "CHG_OB_pe_smoke.txt",
+        "CHH_OT_pe_smoke.txt",
+        "CHH_CTOT_pe_smoke.txt",
+        "CHH_CTOB_pe_smoke.txt",
+        "CHH_OB_pe_smoke.txt",
+    ];
+    for name in expected_files {
+        let p = output_dir.join(name);
+        assert!(p.exists(), "expected: {}", p.display());
+        let content = fs::read_to_string(&p).unwrap();
+        let first_line = content.lines().next().unwrap_or("");
+        assert_eq!(
+            first_line, "Bismark methylation extractor version v0.25.1",
+            "header drift in {}",
+            name
+        );
+    }
+
+    // Splitting report: "Processed 20 lines in total" (10 pairs × 2 lines).
+    let report = fs::read_to_string(output_dir.join("pe_smoke_splitting_report.txt")).unwrap();
+    assert!(
+        report.contains("Processed 20 lines in total"),
+        "PE pair-line counting (10 pairs × 2): expected '20 lines'; got:\n{report}"
+    );
+
+    // CpG_OT should have exactly 10 R1 call lines beyond the header.
+    // R2 calls are dropped by overlap detection (rev 2 tightening per
+    // Reviewer B L1): R1 5M at r1_start → r1_ref_end = r1_start + 4. R2's
+    // reversed iter_aligned 5'-oriented call at read_pos_5p=0 maps to
+    // BAM-pos 4 (the 'z' in "....z"), ref_pos = r2_start + 4 = r1_start + 4
+    // = r1_ref_end. Strict-`<` keep predicate (r2_pos < r1_ref_end) fails
+    // for r2_pos == r1_ref_end → dropped. So all 10 R2 calls drop; only
+    // 10 R1 calls land. Pins the overlap polarity at smoke level.
+    let cpg_ot = fs::read_to_string(output_dir.join("CpG_OT_pe_smoke.txt")).unwrap();
+    let cpg_ot_call_lines = cpg_ot.lines().count() - 1;
+    assert_eq!(
+        cpg_ot_call_lines, 10,
+        "CpG_OT should have exactly 10 R1 call lines (R2 calls dropped by overlap); got:\n{cpg_ot}"
+    );
+
+    // CTOT / CTOB files: header-only for directional library.
+    for ctx in ["CpG", "CHG", "CHH"] {
+        for strand in ["CTOT", "CTOB"] {
+            let p = output_dir.join(format!("{ctx}_{strand}_pe_smoke.txt"));
+            let content = fs::read_to_string(&p).unwrap();
+            assert_eq!(
+                content, "Bismark methylation extractor version v0.25.1\n",
+                "directional library: {ctx}_{strand} must be header-only"
+            );
+        }
+    }
+}
+
+#[test]
+fn smoke_pe_explicit_paired_end_flag_works() {
+    // Same fixture but pass --paired-end explicitly (bypasses auto-detect).
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path: PathBuf = workdir.path().join("pe_explicit.bam");
+    write_pe_directional_bam(&bam_path);
+
+    let output_dir = workdir.path().join("out");
+    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    cmd.arg(&bam_path)
+        .arg("--paired-end")
+        .arg("--output_dir")
+        .arg(&output_dir)
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(output_dir.join("pe_explicit_splitting_report.txt")).unwrap();
+    assert!(report.contains("Processed 20 lines in total"));
+}

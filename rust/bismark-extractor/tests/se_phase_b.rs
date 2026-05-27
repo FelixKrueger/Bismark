@@ -29,6 +29,7 @@ use bismark_extractor::route::route_call;
 use bismark_extractor::state::ExtractState;
 use bismark_io::{BismarkStrand, ReadIdentity};
 use clap::Parser;
+use predicates::prelude::PredicateBooleanExt;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Test helpers — synthetic BismarkRecord construction
@@ -608,7 +609,7 @@ fn splitting_report_emits_per_context_counts() {
     };
     write_splitting_report(&report_path, &input_path, &config, &report).unwrap();
     let content = fs::read_to_string(&report_path).unwrap();
-    assert!(content.contains("Processed 100 reads in total"));
+    assert!(content.contains("Processed 100 lines in total"));
     assert!(content.contains("Total methylated C's in CpG context:\t50"));
     assert!(content.contains("Total unmethylated C's in CHH context:\t400"));
     assert!(content.contains("C methylated in CpG context:\t50.00%"));
@@ -872,16 +873,18 @@ fn tempbam() -> tempfile::NamedTempFile {
 }
 
 #[test]
-fn main_rejects_paired_end_with_phase_error() {
+fn main_paired_end_no_longer_rejected_phase_c() {
+    // Phase C update: `--paired-end` now dispatches to extract_pe instead of
+    // returning `PhaseNotYetImplemented`. The tempfile isn't a valid BAM so
+    // the call fails at the bismark-io reader stage (NOT at the phase-gate).
+    // We assert the error message does NOT contain Phase B's old gate text.
     let bam = tempbam();
     let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
     cmd.arg(bam.path())
         .arg("--paired-end")
         .assert()
         .failure()
-        .stderr(predicates::str::contains(
-            "paired-end extraction; arrives in Phase C",
-        ));
+        .stderr(predicates::str::contains("paired-end extraction; arrives in Phase C").not());
 }
 
 #[test]

@@ -184,4 +184,43 @@ pub enum BismarkExtractorError {
         /// Offending chr name (lossy-rendered for the error message).
         name: String,
     },
+
+    // ─── Phase C (PE extraction) additions ─────────────────────────────
+    /// PE input had an odd number of records — the final R1 has no R2 mate.
+    /// PE BAM must contain pairs of adjacent R1/R2 records (QNAME-grouped).
+    #[error(
+        "unpaired final record in PE BAM: qname={qname:?}; PE input must contain \
+         pairs of adjacent R1/R2 records (was the file truncated, or sort broken?)"
+    )]
+    UnpairedFinalRecord {
+        /// QNAME of the orphan R1 (or `None` if the record had no name).
+        qname: Option<String>,
+    },
+
+    /// R1 and R2 of a PE pair aligned to different chromosomes. Bismark
+    /// never produces this; defensive guard against tooling corruption.
+    ///
+    /// Named for parity with `BismarkIoError::MateMismatch` and
+    /// `ReadIdentityMismatch` (Phase C rev 1 rename from rev 0's
+    /// `CrossChromosomePair`).
+    #[error(
+        "PE pair {qname} has R1 and R2 on different chromosomes \
+         (R1=refid {r1_refid}, R2=refid {r2_refid}); Bismark does not emit cross-chr pairs"
+    )]
+    MateChromosomeMismatch {
+        /// Pair QNAME (shared by R1 and R2 per `BismarkPair`'s qname-eq guarantee).
+        qname: String,
+        /// R1 reference ID.
+        r1_refid: usize,
+        /// R2 reference ID.
+        r2_refid: usize,
+    },
+
+    /// `--paired-end` / `--single-end` auto-detect failed because the input's
+    /// SAM header does not contain a recognised Bismark `@PG` line.
+    #[error("library-mode auto-detection failed: {message}")]
+    AutoDetectFailed {
+        /// Diagnostic message naming the next user step.
+        message: String,
+    },
 }

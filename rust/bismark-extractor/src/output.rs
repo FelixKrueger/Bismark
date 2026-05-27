@@ -265,7 +265,9 @@ pub fn write_splitting_report(
     writeln!(w, "--ignore_3prime: {}", config.ignore_3p_r1)?;
 
     writeln!(w)?;
-    writeln!(w, "Processed {} reads in total", report.records_processed)?;
+    // Perl `bismark_methylation_extractor:2479` writes "Processed N lines in total"
+    // (where N is the BAM-line count — SE: records, PE: 2×pairs). Phase C bug-fix.
+    writeln!(w, "Processed {} lines in total", report.records_processed)?;
     writeln!(w)?;
 
     writeln!(w, "Total number of C's analysed:\t{}", report.calls_total)?;

@@ -30,7 +30,8 @@ pub use cram_ref::reconstitute_cram_reference_from_bismark_genome;
 pub use error::BismarkIoError;
 pub use pair::BismarkPair;
 pub use read::{
-    AlignmentKind, AnyReader, BamReader, CramReader, SamReader, ThreadedBamReader, open_reader,
+    AlignmentKind, AnyReader, BamReader, CramReader, SamReader, ThreadedBamReader,
+    detect_paired_from_header, open_reader,
 };
 pub use record::{AlignedXmCall, BismarkRecord, ReadIdentity, Umi};
 pub use strand::BismarkStrand;
