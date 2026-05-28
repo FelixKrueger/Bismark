@@ -7,6 +7,7 @@
 //! `pos.saturating_sub(1)` off-by-one that affected the prior-art Rust
 //! port (97-position drift in the 10M PE audit).
 
+use noodles_sam::alignment::record::cigar::Op;
 use noodles_sam::alignment::record::cigar::op::Kind;
 use noodles_sam::alignment::record_buf::Cigar;
 
@@ -49,6 +50,67 @@ pub trait CigarExt {
     /// - `D`, `N`: no item (those ops consume reference only, not read).
     /// - `H`, `P`: skipped (consume neither read nor reference).
     fn aligned_positions(&self) -> AlignedPositions<'_>;
+
+    /// Return a new `Cigar` with `n_read_positions` of read-consuming ops
+    /// trimmed from one end. Reference-only ops (`D`, `N`) and zero-cost
+    /// ops (`H`, `P`) ADJACENT TO THE TRIMMED BOUNDARY are absorbed for
+    /// free during the same sweep — mirrors Perl
+    /// `bismark_methylation_extractor:1760-1764` `while ($op eq 'D' or eq 'N')`
+    /// loops that fire inside each pop/shift iteration. D/N ops that sit
+    /// "between" read-consuming ops in the middle of the CIGAR are
+    /// preserved.
+    ///
+    /// - `from_left == false`: trim from the CIGAR's RIGHT side. Mirrors
+    ///   Perl `pop @comp_cigar` for forward-strand R1 under `--ignore_3prime`.
+    /// - `from_left == true`: trim from the CIGAR's LEFT side. Mirrors Perl
+    ///   `shift @comp_cigar` for reverse-strand R1 under `--ignore_3prime`.
+    ///
+    /// Read-consuming ops: `M`, `I`, `S`, `=`, `X`. Reference-consuming ops:
+    /// `M`, `D`, `N`, `=`, `X`. `H` and `P` consume neither and are ignored.
+    ///
+    /// **D/N ops in the middle of the CIGAR are NEVER stripped** — only ops
+    /// that become adjacent to the trimmed boundary after the read-consuming
+    /// trim completes. See test `trim_3p_middle_D_is_NOT_stripped`.
+    ///
+    /// Edge cases:
+    /// - `n_read_positions == 0` returns the CIGAR unchanged (no-op fast-path).
+    /// - `n_read_positions >= read_span()` returns an empty `Cigar`.
+    ///
+    /// Added for #879 (Phase H sub-gate 1 PE: `drop_overlap` must mirror
+    /// Perl's `$end_read_1` recompute after `--ignore_3prime` CIGAR
+    /// adjustment at Perl L1726-1782 + L2400-2425).
+    fn trim_3p_read_positions(
+        &self,
+        n_read_positions: u32,
+        from_left: bool,
+    ) -> noodles_sam::alignment::record_buf::Cigar;
+
+    /// 1-based inclusive last reference position covered by the alignment
+    /// AFTER trimming `n_read_positions` from the read's 3' end via the
+    /// CIGAR's RIGHT side. Use for forward-strand R1 under `--ignore_3prime`.
+    ///
+    /// Equivalent to `self.trim_3p_read_positions(n, false).reference_end(start)`.
+    /// Returns `start` when the trimmed CIGAR has zero reference span
+    /// (matching the existing `reference_end` empty-CIGAR convention).
+    ///
+    /// Added for #879.
+    fn reference_end_after_3p_trim(&self, start: usize, n_read_positions: u32) -> usize;
+
+    /// 1-based reference position where the alignment begins AFTER trimming
+    /// `n_read_positions` from the read's 3' end via the CIGAR's LEFT side.
+    /// Use for reverse-strand R1 under `--ignore_3prime`.
+    ///
+    /// Computed as `start + (original_ref_span - trimmed_ref_span)`. This is
+    /// algebraically equivalent to Perl `bismark_methylation_extractor:1803`'s
+    /// composite shift `$start += $ignore_3prime + $D_count + $N_count - $I_count`
+    /// (both reduce to "ref positions in the trimmed-off prefix").
+    ///
+    /// Returns `start` unchanged when `n_read_positions == 0` OR when the
+    /// trimmed prefix consumes no reference (e.g., trim into a soft-clip
+    /// prefix).
+    ///
+    /// Added for #879.
+    fn reference_start_after_3p_trim(&self, start: usize, n_read_positions: u32) -> usize;
 }
 
 /// One aligned position from [`CigarExt::aligned_positions`].
@@ -188,6 +250,158 @@ impl CigarExt for Cigar {
 
     fn aligned_positions(&self) -> AlignedPositions<'_> {
         AlignedPositions::new(self)
+    }
+
+    fn trim_3p_read_positions(&self, n_read_positions: u32, from_left: bool) -> Cigar {
+        // No-op fast-path. Returning a clone keeps callers from depending
+        // on identity semantics; the allocation cost is irrelevant since
+        // this branch is hit on every default-cell record.
+        if n_read_positions == 0 {
+            return Cigar::from(self.as_ref().to_vec());
+        }
+
+        // Walk ops in trim-direction, accumulating dropped read-positions
+        // until we've consumed `n_read_positions`. Then strip any adjacent
+        // D/N ops at the trimmed boundary (Perl L1760-1764).
+        let ops: Vec<Op> = self.as_ref().to_vec();
+        let n = n_read_positions as usize;
+
+        // `kept_indices_range` is the [start, end) into the original ops
+        // vec that survives the trim. The trimmed boundary is at either
+        // end depending on `from_left`.
+        let (kept_start, kept_end, boundary_remaining) = if from_left {
+            walk_trim_from_left(&ops, n)
+        } else {
+            walk_trim_from_right(&ops, n)
+        };
+
+        // Build the trimmed vec. If the boundary op was partially
+        // consumed, emit it with reduced length.
+        let mut trimmed: Vec<Op> = Vec::with_capacity(kept_end.saturating_sub(kept_start) + 1);
+        if from_left {
+            if let Some((kind, len)) = boundary_remaining {
+                trimmed.push(Op::new(kind, len));
+            }
+            trimmed.extend_from_slice(&ops[kept_start..kept_end]);
+        } else {
+            trimmed.extend_from_slice(&ops[kept_start..kept_end]);
+            if let Some((kind, len)) = boundary_remaining {
+                trimmed.push(Op::new(kind, len));
+            }
+        }
+        Cigar::from(trimmed)
+    }
+
+    fn reference_end_after_3p_trim(&self, start: usize, n_read_positions: u32) -> usize {
+        self.trim_3p_read_positions(n_read_positions, false)
+            .reference_end(start)
+    }
+
+    fn reference_start_after_3p_trim(&self, start: usize, n_read_positions: u32) -> usize {
+        if n_read_positions == 0 {
+            return start;
+        }
+        let original_ref_span = self.reference_span();
+        let trimmed = self.trim_3p_read_positions(n_read_positions, true);
+        let trimmed_ref_span = trimmed.reference_span();
+        start + (original_ref_span - trimmed_ref_span)
+    }
+}
+
+/// Walk the ops vec backward (right-side trim) consuming `n` read
+/// positions. D/N ops adjacent to the trimmed boundary are absorbed for
+/// free during this single sweep — they get walked past without
+/// decrementing the read-position counter, mirroring Perl L1760-1764's
+/// `while ($op eq 'D' or eq 'N')` inner loops INSIDE the same pop
+/// iteration. D/N ops in the middle of the CIGAR (not adjacent to the
+/// trimmed boundary) are NEVER consumed by this loop because Phase 1's
+/// "drop entries past the read-consuming op" stops as soon as it lands
+/// on (and consumes) a read-consuming op.
+///
+/// Returns `(kept_start, kept_end, boundary_remaining)` where
+/// `boundary_remaining = Some((kind, partial_len))` if a single op at
+/// the boundary was partially consumed and needs to be re-emitted with
+/// reduced length.
+fn walk_trim_from_right(ops: &[Op], n: usize) -> (usize, usize, Option<(Kind, usize)>) {
+    let mut remaining = n;
+    let mut kept_end = ops.len();
+    let mut boundary_remaining: Option<(Kind, usize)> = None;
+
+    while remaining > 0 && kept_end > 0 {
+        let op = &ops[kept_end - 1];
+        let op_read_consumes = read_consumes(op.kind());
+        if op_read_consumes == 0 {
+            // D/N/H/P — these don't consume read positions. In Perl's
+            // expanded comp_cigar these would be popped INSIDE the same
+            // iteration's `while ($op eq 'D' or eq 'N')` loop without
+            // decrementing the iteration counter. Equivalent: walk past
+            // them for free here.
+            //
+            // This branch fires ONLY when D/N/H/P sit adjacent to the
+            // trimmed end (we walk past them looking for a read-consuming
+            // op). Once we land on a read-consuming op and finish
+            // consuming `remaining`, the loop exits — D/N ops further
+            // in (the middle of the CIGAR) are NEVER touched.
+            kept_end -= 1;
+            continue;
+        }
+        let op_len = op.len();
+        if op_len <= remaining {
+            // Whole op consumed.
+            remaining -= op_len;
+            kept_end -= 1;
+        } else {
+            // Partial op: emit the surviving prefix.
+            let surviving_len = op_len - remaining;
+            remaining = 0;
+            boundary_remaining = Some((op.kind(), surviving_len));
+            kept_end -= 1;
+        }
+    }
+
+    (0, kept_end, boundary_remaining)
+}
+
+/// Mirror of [`walk_trim_from_right`] for the left-side trim (forward
+/// walk from start). Same D/N-absorption semantics: D/N at the leading
+/// boundary get walked past for free; D/N in the middle are preserved.
+fn walk_trim_from_left(ops: &[Op], n: usize) -> (usize, usize, Option<(Kind, usize)>) {
+    let mut remaining = n;
+    let mut kept_start = 0;
+    let mut boundary_remaining: Option<(Kind, usize)> = None;
+
+    while remaining > 0 && kept_start < ops.len() {
+        let op = &ops[kept_start];
+        let op_read_consumes = read_consumes(op.kind());
+        if op_read_consumes == 0 {
+            kept_start += 1;
+            continue;
+        }
+        let op_len = op.len();
+        if op_len <= remaining {
+            remaining -= op_len;
+            kept_start += 1;
+        } else {
+            let surviving_len = op_len - remaining;
+            remaining = 0;
+            boundary_remaining = Some((op.kind(), surviving_len));
+            kept_start += 1;
+        }
+    }
+
+    (kept_start, ops.len(), boundary_remaining)
+}
+
+/// 1 if the op consumes a read base per call, 0 otherwise. M/I/S/=/X
+/// consume; D/N/H/P don't.
+fn read_consumes(kind: Kind) -> usize {
+    match kind {
+        Kind::Match
+        | Kind::Insertion
+        | Kind::SoftClip
+        | Kind::SequenceMatch
+        | Kind::SequenceMismatch => 1,
+        _ => 0,
     }
 }
 
@@ -383,7 +597,11 @@ mod tests {
     // Helper: round-trip a Cigar through a Vec<(Kind, usize)> shape so test
     // assertions stay readable.
     fn ops_of(cigar: &Cigar) -> Vec<(Kind, usize)> {
-        cigar.as_ref().iter().map(|op| (op.kind(), op.len())).collect()
+        cigar
+            .as_ref()
+            .iter()
+            .map(|op| (op.kind(), op.len()))
+            .collect()
     }
 
     #[test]
@@ -466,6 +684,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(non_snake_case)]
     fn trim_3p_middle_D_is_NOT_stripped() {
         // Reviewer A R2 negative-regression guard: 90M5D5M, trim 5 from right.
         // The 5M at the trailing end clips. The 5D in the MIDDLE must NOT be
@@ -473,7 +692,10 @@ mod tests {
         // per Perl L1760-1764. Result: 90M5D.
         let c = cigar_from_ops(&[(Kind::Match, 90), (Kind::Deletion, 5), (Kind::Match, 5)]);
         let trimmed = c.trim_3p_read_positions(5, false);
-        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 90), (Kind::Deletion, 5)]);
+        assert_eq!(
+            ops_of(&trimmed),
+            vec![(Kind::Match, 90), (Kind::Deletion, 5)]
+        );
     }
 
     #[test]
@@ -492,11 +714,7 @@ mod tests {
     fn reference_end_after_3p_trim_zero_is_existing_reference_end() {
         // With n=0, the helper returns the same value as the existing
         // reference_end. Regression guard for default-cell behavior.
-        let c = cigar_from_ops(&[
-            (Kind::Match, 50),
-            (Kind::Deletion, 5),
-            (Kind::Match, 50),
-        ]);
+        let c = cigar_from_ops(&[(Kind::Match, 50), (Kind::Deletion, 5), (Kind::Match, 50)]);
         assert_eq!(c.reference_end_after_3p_trim(100, 0), c.reference_end(100));
     }
 
@@ -524,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(non_snake_case)]
     fn reference_start_after_3p_trim_with_leading_D() {
         // C3 regression guard for OB composite shift.
         // 5D90M, start=100, n=5 from left:
