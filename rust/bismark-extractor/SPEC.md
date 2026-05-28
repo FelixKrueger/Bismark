@@ -733,6 +733,36 @@ The line-ordering relaxation in (2) is per #863's won't-fix decision (rev 1 plan
 
 **File-set match (rev 3, #865 added).** Perl's `was empty -> deleted` sweep is mirrored at the end of every extractor run. For a directional library in default mode this means 6 files exist post-run (OT/OB × CpG/CHG/CHH), not 12. Rust's `OutputFileMap::finalize_with_empty_sweep` mirrors this exactly, including the per-file STDERR log lines `{filename} contains data ->\tkept` / `{filename} was empty ->\tdeleted`.
 
+#### Phase H matrix (rev 4, post-Phase-H sub-issues filed 2026-05-28)
+
+Phase H sub-gate 1 verifies the byte-identity invariant above across a **representative matrix** of CLI flag combinations, on real WGBS data, on colossal. The matrix is run twice per release: once for SE (#871) and once for PE (#872), with parallel drivers.
+
+**SE matrix** (closes #871) — driver `scripts/phase_h_se_matrix.sh` over 5 cells × `--parallel {1, 4}` = 10 invocations per binary:
+
+| Cell | Description | `--ignore` | `--ignore_3prime` |
+|---|---|---|---|
+| D | Default; M-bias = 5712 B regression guard | 0 | 0 |
+| 5p | 5' trim isolated | 5 | 0 |
+| 3p | 3' trim isolated | 0 | 5 |
+| 5p+3p | Both trims combined | 5 | 5 |
+| edge_clip | `--ignore` exceeds typical read length (asserts §7.6 boundary handles `lo > hi`) | 250 | 0 |
+
+**PE matrix** (closes #872) — driver `scripts/phase_h_pe_matrix.sh` over 5 cells × `--parallel {1, 4}` mirroring SE structure but with PE-specific dimensions (R1+R2 ignore flags, `--no_overlap`/`--include_overlap`). See PHASE_H_PE_PLAN.md.
+
+**Cross-N byte-identity assertion (row 4 above)** is checked per ignore-pair in the matrix: Rust-N=1 ≡ Rust-N=4 raw-byte for every output file. This directly tests SPEC §9 N-invariance contract and replaces the weaker self-determinism check (Rust-vs-Rust at same N) that earlier drafts proposed.
+
+**Pre-flight Perl version assertion**: matrix driver hard-fails unless `bismark_methylation_extractor --version` reports `Bismark Extractor Version: v0.25.1`. The locked 5712 B M-bias baseline assumes v0.25.1; silent baseline invalidation from `bioinf` env updates is therefore impossible.
+
+**Matrix exit-code mapping** (4-way):
+- `0` — all cells PASS byte-identity + cross-N PASS + Rust scaling ≥ §9.7's 4× target.
+- `1` — any cell FAIL or cross-N FAIL or (D, N=1) M-bias drift from 5712 B baseline. **Blocks v1.0 release tag.**
+- `2` — pre-flight USAGE-ERROR (BAM missing, Perl version mismatch, OUT dir non-empty, nproc-exceed, etc.).
+- `3` — byte-identity PASS but Rust scaling < 4× target. **Does NOT block v1.0 tag**; file separate `perf(extractor):` sub-issue.
+
+**Test machine + data**: colossal (per memory `reference_colossal_access.md`, post-oxy-migration 2026-05-28). 10M SE BAM at `/weka/projects/bioinf/Data/Felix/bismark_benchmarks/10M_SE/` (verify exact subpath on first session). LC_ALL=C required for stable UNIX-sort ordering inside subprocesses.
+
+**Release gate**: matrix PASS for BOTH #871 (SE) and #872 (PE) is required before tagging `bismark-extractor-v1.0` per `RELEASE_CHECKLIST.md` (top-level).
+
 ### 8.4 Edge case fixtures
 
 | Fixture | What it stresses |
@@ -793,6 +823,8 @@ When N=1 the producer + worker + collector still exist as separate threads, BUT 
 
 Per CLAUDE.md's profiling: extractor takes 12.3 min single-core, 5.4 min 4-core on 10M PE WGBS. Perl's fork+modulo achieves ~2.3× at N=4 because each fork re-decompresses the BAM. Rust's single-decompress + rayon-worker model should achieve **≥ 4× at N=4** (the BAM decompression is no longer the bottleneck). v1.1 `bismark-dedup`'s 4.88× at N=4 on the same dataset is the proven precedent; extractor should match or beat it because extraction is more CPU-heavy than dedup's hash-lookup.
 
+**Measured via Phase H** (rev 4, 2026-05-28): the SE matrix driver (`scripts/phase_h_se_matrix.sh`, #871) and PE matrix driver (`scripts/phase_h_pe_matrix.sh`, #872) capture per-cell wall-clock for both Perl and Rust at `--parallel {1, 4}` and emit a markdown speedup table per run (`<OUT>/speedup_table.md`). Rust scaling at N=4 is the SPEC §9.7 target check; sub-target-miss is reported as exit code 3 (informational FAIL) and does NOT block the v1.0 release tag — file a separate `perf(extractor):` sub-issue per the §8.3 Phase H matrix exit-code mapping. Phase H's primary gate is byte-identity; speedup is co-measured but advisory.
+
 ## 10. Phases (implementation outline)
 
 Mirrors `bismark-dedup`'s phased cadence (A → G; merge each to `rust/iron-chancellor` separately).
@@ -806,7 +838,9 @@ Mirrors `bismark-dedup`'s phased cadence (A → G; merge each to `rust/iron-chan
 | **E** | `--comprehensive` / `--merge_non_CpG` / `--yacht` output mode dispatch + `--gzip`. | ~400 LOC |
 | **F** | Rayon-based `--multicore N` (byte-identical invariant). | ~700 LOC |
 | **G** | `--bedGraph` + `--cytosine_report` subprocess chain (subprocess-to-Perl per §6.6; tee+ring-buffer stderr handling; BISMARK_BIN-first strict discovery; trailing-dot filename quirk). | ~1330 LOC actual (was ~400 estimated; growth is almost entirely test surface: argv-builder goldens, RealRunner fake-shell tests, drain-thread-deadlock test, BISMARK_BIN edge cases). Closes #868. |
-| **H** | Real-data byte-identity gate (10M PE WGBS + 55M full) + CHANGELOG + version tag. | ~200 LOC test |
+| **H (sub-gate 1, SE)** | SE byte-identity + speedup matrix harness (5 cells × `--parallel {1, 4}` × cross-N N-invariance check). Driver `scripts/phase_h_se_matrix.sh`. Gates v1.0 release tag for SE-mode streams. Closes #871. | ~485 LOC bash + checklist + SPEC (no Rust code) |
+| **H (sub-gate 1, PE)** | PE byte-identity + speedup matrix harness (5 cells mirroring SE structure × `--parallel {1, 4}` + R1/R2 ignore flags + `--no_overlap`/`--include_overlap`). Driver `scripts/phase_h_pe_matrix.sh`. Gates v1.0 release tag for PE-mode streams. Closes #872. | ~300 LOC est. (separate PR) |
+| **H (sub-gate 2)** | bedGraph / coverage / cytosine_report byte-identity vs Rust `bismark-bedgraph`. Blocked on epic #797 (Rust `bismark-bedgraph` crate). v1.x scope; tag ships at `bismark-extractor-v1.x` when sub-gate 2 lands. | TBD |
 
 Total: ~4,000 LOC Rust to port ~6,050 LOC Perl. Compression ratio matches dedup's 35-40% (Rust's type system + bismark-io leverage shrink the line count).
 
