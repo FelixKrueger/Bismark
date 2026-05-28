@@ -1,29 +1,43 @@
 #!/usr/bin/env bash
 #
-# oxy_phase_h_smoke.sh — partial Phase H byte-identity smoke against real WGBS data.
+# phase_h_smoke.sh — Phase H per-cell byte-identity smoke against real WGBS data.
 #
 # Runs both the Perl `bismark_methylation_extractor` and the Rust
 # `bismark-methylation-extractor-rs` on the same BAM input, then compares
-# every output file byte-for-byte. Also measures wall-clock for both
-# runs to validate SPEC §9.7's ≥ 4× speedup target at N=4.
+# every output file. Also measures wall-clock for both runs to validate
+# SPEC §9.7's ≥ 4× speedup target at N=4.
 #
-# **Scope (Phase F + flavour A):** validates the file set the Rust binary
-# currently produces — 12 strand×context split files (or fewer per
-# --comprehensive / --merge_non_CpG), M-bias.txt, _splitting_report.txt.
-# Does NOT validate bedGraph / cytosine_report output (those subprocess
-# chains arrive in Phase G; the full Phase H gate runs after G).
+# **Post-colossal-migration (2026-05-28):** machine-agnostic via BAM-path
+# argv. Renamed from `oxy_phase_h_smoke.sh` per Phase H sub-issue #871 +
+# the memory `reference_colossal_access.md`.
+#
+# **Phase H matrix driver usage:** invoke via `scripts/phase_h_se_matrix.sh`
+# (for #871) or `scripts/phase_h_pe_matrix.sh` (for #872, future). Standalone
+# invocation also supported.
+#
+# **Scope:** validates the extractor's own output streams — 12 strand×context
+# split files (or fewer per --comprehensive / --merge_non_CpG; 6 for
+# directional SE post-Phase C.2 empty-sweep), M-bias.txt, _splitting_report.txt.
+# Does NOT validate bedGraph / cytosine_report output (subprocess-to-Perl
+# in Phase G; Phase H sub-gate 2 covers those, blocked on epic #797).
 #
 # Usage:
-#   ./scripts/oxy_phase_h_smoke.sh <BAM> [--parallel N] [--mode MODE] [--out DIR]
+#   ./scripts/phase_h_smoke.sh <BAM> [--parallel N] [--mode MODE] [--out DIR] \
+#       [--extra-rust "<flags>"] [--extra-perl "<flags>"]
 #
-# Defaults: --parallel 4, --mode default (no extra flags), --out ./oxy_phase_h_out
+# Defaults: --parallel 4, --mode default, --out ./phase_h_out
 #
 # MODE values:
-#   default                 — no extra flags (12 split files)
+#   default                 — no extra flags (12 split files for PE; 6 for SE post-sweep)
 #   comprehensive           — --comprehensive (3 files)
 #   merge_non_CpG           — --merge_non_CpG (8 files)
 #   comprehensive_merge     — --comprehensive --merge_non_CpG (2 files)
-#   gzip                    — --gzip (12 .gz files)
+#   gzip                    — --gzip (12 .gz files for PE; 6 for SE)
+#
+# --extra-rust / --extra-perl: arbitrary additional flags appended to the
+# respective binary's argv. Parsed as bash arrays (read -r -a); pass-through
+# is verbatim. The matrix drivers use these to inject per-cell --ignore /
+# --ignore_3prime / --ignore_r2 / --include_overlap etc.
 #
 # Auto-detects --paired-end from the @PG header (matches Perl behaviour).
 #
@@ -34,10 +48,12 @@
 # Output:
 #   $OUT/perl/              — Perl output
 #   $OUT/rust/              — Rust output
-#   $OUT/diff_summary.txt   — per-file diff results + speedup metric
+#   $OUT/diff_summary.txt   — per-file diff results + wall-clock metrics
+#                             (Perl: <int>s / Rust: <int>s lines parseable by
+#                             the matrix drivers)
 #
 # Exit codes:
-#   0  — all output files byte-identical
+#   0  — all output files byte-identical (or sorted-equivalent per SPEC §8.3 rev 3)
 #   1  — at least one file differs OR a binary crashed
 #   2  — usage error
 
@@ -48,7 +64,9 @@ set -euo pipefail
 BAM=""
 PARALLEL=4
 MODE=default
-OUT_DIR="./oxy_phase_h_out"
+OUT_DIR="./phase_h_out"
+EXTRA_RUST_STR=""
+EXTRA_PERL_STR=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -58,6 +76,10 @@ while [[ $# -gt 0 ]]; do
       MODE="$2"; shift 2 ;;
     --out)
       OUT_DIR="$2"; shift 2 ;;
+    --extra-rust)
+      EXTRA_RUST_STR="$2"; shift 2 ;;
+    --extra-perl)
+      EXTRA_PERL_STR="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^$/p' "$0"; exit 0 ;;
     *)
@@ -67,6 +89,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Phase H rev 1 I6: parse --extra-* as bash arrays via `read -r -a`. This
+# preserves space-separated tokens correctly regardless of the parent shell's
+# IFS setting (see memory feedback_bash_ifs_word_splitting). Pass-through is
+# verbatim via "${EXTRA_RUST[@]}" / "${EXTRA_PERL[@]}" at the invocation site.
+EXTRA_RUST=()
+EXTRA_PERL=()
+if [[ -n "$EXTRA_RUST_STR" ]]; then
+  read -r -a EXTRA_RUST <<< "$EXTRA_RUST_STR"
+fi
+if [[ -n "$EXTRA_PERL_STR" ]]; then
+  read -r -a EXTRA_PERL <<< "$EXTRA_PERL_STR"
+fi
 
 if [[ -z "$BAM" ]]; then
   echo "usage: $0 <BAM> [--parallel N] [--mode MODE] [--out DIR]" >&2
@@ -128,26 +163,28 @@ fi
 
 # ─── Run Perl ─────────────────────────────────────────────────────────
 
-echo "==> running Perl bismark_methylation_extractor (multicore=$PARALLEL, mode=$MODE)..." >&2
+echo "==> running Perl bismark_methylation_extractor (multicore=$PARALLEL, mode=$MODE${EXTRA_PERL_STR:+, extra-perl=\"$EXTRA_PERL_STR\"})..." >&2
 PERL_START=$(date +%s)
 "$PERL_BIN" \
   --output "$PERL_OUT" \
   --multicore "$PARALLEL" \
   ${PE_FLAG:+$PE_FLAG} \
-  "${EXTRA_FLAGS[@]}" \
+  ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
+  ${EXTRA_PERL[@]+"${EXTRA_PERL[@]}"} \
   "$BAM" 2>&1 | tail -3 || { echo "Perl run failed" >&2; exit 1; }
 PERL_END=$(date +%s)
 PERL_ELAPSED=$((PERL_END - PERL_START))
 
 # ─── Run Rust ─────────────────────────────────────────────────────────
 
-echo "==> running bismark-methylation-extractor-rs (parallel=$PARALLEL, mode=$MODE)..." >&2
+echo "==> running bismark-methylation-extractor-rs (parallel=$PARALLEL, mode=$MODE${EXTRA_RUST_STR:+, extra-rust=\"$EXTRA_RUST_STR\"})..." >&2
 RUST_START=$(date +%s)
 "$RUST_BIN" \
   --output_dir "$RUST_OUT" \
   --parallel "$PARALLEL" \
   ${PE_FLAG:+$PE_FLAG} \
-  "${EXTRA_FLAGS[@]}" \
+  ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
+  ${EXTRA_RUST[@]+"${EXTRA_RUST[@]}"} \
   "$BAM" 2>&1 | tail -3 || { echo "Rust run failed" >&2; exit 1; }
 RUST_END=$(date +%s)
 RUST_ELAPSED=$((RUST_END - RUST_START))
@@ -156,14 +193,29 @@ RUST_ELAPSED=$((RUST_END - RUST_START))
 
 SUMMARY="$OUT_DIR/diff_summary.txt"
 {
-  echo "Phase H byte-identity smoke — partial (Phase F + flavour A)"
+  echo "Phase H byte-identity smoke — per-cell harness"
   echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "BAM: $BAM"
   echo "Mode: $MODE"
   echo "Parallel: $PARALLEL"
+  # Phase H rev 1 I6: persist the verbatim extra-flag strings for the
+  # matrix driver's audit log.
+  echo "Extra-rust: ${EXTRA_RUST_STR:-(none)}"
+  echo "Extra-perl: ${EXTRA_PERL_STR:-(none)}"
+  # Phase H rev 1 §5.3: emit "Library: SE|PE" annotation so the matrix
+  # driver can apply mode-specific kept-file expectations (6 for
+  # directional SE, 12 for PE per Phase C.2 empty-sweep contract).
+  if [[ -n "$PE_FLAG" ]]; then
+    echo "Library: PE"
+  else
+    echo "Library: SE"
+  fi
   echo "PE flag: ${PE_FLAG:-(none — SE auto-detected)}"
   echo ""
   echo "── Wall-clock ──"
+  # Phase H rev 1 I2: format is anchored "^Perl: <int>s$" / "^Rust: <int>s$"
+  # — matrix driver parses via `grep -E '^(Perl|Rust): ([0-9]+)s$'`. Do
+  # NOT add suffix punctuation or units other than 's'.
   echo "Perl: ${PERL_ELAPSED}s"
   echo "Rust: ${RUST_ELAPSED}s"
   if [[ "$RUST_ELAPSED" -gt 0 ]]; then
