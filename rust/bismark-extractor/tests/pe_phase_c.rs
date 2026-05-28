@@ -1485,3 +1485,161 @@ mod auto_detect {
             ));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 7. #879 — drop_overlap respects --ignore_3prime on R1
+// ─────────────────────────────────────────────────────────────────────────
+mod ignore_3prime_879 {
+    use super::helpers;
+    use bismark_extractor::call::{CytosineContext, MethCall};
+    use bismark_extractor::overlap::drop_overlap;
+
+    // ─── #879 — drop_overlap respects --ignore_3prime on R1 ────────────
+    //
+    // These tests guard the new `ignore_3p_r1` argument to `drop_overlap`.
+    // The bug: pre-#879, drop_overlap used R1's un-clipped CIGAR end as
+    // the boundary, so R2 calls that should be kept (because R1's
+    // effective end shifted INWARD by `--ignore_3prime N`) were dropped
+    // instead. Fix: use the CIGAR-trim primitive (added in bismark-io)
+    // to compute the trimmed R1 boundary.
+
+    /// Forward pair (OT/CTOB): R1 upstream, R2 downstream. R1 CIGAR=100M
+    /// at start=100 → un-clipped r1_ref_end=199, trimmed r1_ref_end=194
+    /// with ignore_3p_r1=5. R2 calls at ref_pos 195, 197, 200:
+    /// - Without fix (ignore_3p_r1=0, boundary 199): keep only 200.
+    /// - With fix (ignore_3p_r1=5, boundary 194): keep 195, 197, 200.
+    #[test]
+    fn drop_overlap_with_ignore_3p_r1_forward_pair() {
+        let pair = helpers::ot_pair(b"ZZZ", 100, b"ZZZ", 195, b"pair1");
+        let r2_calls = vec![
+            MethCall {
+                ref_pos: 195,
+                read_pos: 0,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 197,
+                read_pos: 2,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 200,
+                read_pos: 5,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+        ];
+        let kept = drop_overlap(r2_calls, &pair, /*ignore_3p_r1=*/ 5).unwrap();
+        let positions: Vec<u32> = kept.iter().map(|c| c.ref_pos).collect();
+        assert_eq!(positions, vec![195, 197, 200]);
+    }
+
+    /// Reverse pair (OB/CTOT): R2 upstream, R1 downstream. R1 CIGAR=100M
+    /// at start=100 → un-clipped r1_ref_start=100, trimmed
+    /// r1_ref_start=105 with ignore_3p_r1=5 (R1's 3'-end on OB = CIGAR
+    /// left side; the 5-base clip removes 5M from prefix, ref_start
+    /// shifts to 105).
+    /// R2 calls at ref_pos 99, 103, 107:
+    /// - Without fix (ignore_3p_r1=0, boundary 100): keep only 99.
+    /// - With fix (ignore_3p_r1=5, boundary 105): keep 99, 103.
+    #[test]
+    fn drop_overlap_with_ignore_3p_r1_reverse_pair() {
+        let pair = helpers::ob_pair(b"ZZZ", 100, b"ZZZ", 95, b"pair2");
+        let r2_calls = vec![
+            MethCall {
+                ref_pos: 99,
+                read_pos: 0,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 103,
+                read_pos: 4,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 107,
+                read_pos: 8,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+        ];
+        let kept = drop_overlap(r2_calls, &pair, /*ignore_3p_r1=*/ 5).unwrap();
+        let positions: Vec<u32> = kept.iter().map(|c| c.ref_pos).collect();
+        assert_eq!(positions, vec![99, 103]);
+    }
+
+    /// Regression guard for default-cell behavior: with `ignore_3p_r1=0`,
+    /// `drop_overlap` must behave byte-identically to the pre-#879
+    /// signature. Same fixture as `drop_overlap_with_ignore_3p_r1_forward_pair`
+    /// but ignore_3p_r1=0 → un-clipped boundary 199 → keep only ref_pos
+    /// 200.
+    #[test]
+    fn drop_overlap_ignore_3p_r1_zero_is_no_op() {
+        let pair = helpers::ot_pair(b"ZZZ", 100, b"ZZZ", 195, b"pair3");
+        let r2_calls = vec![
+            MethCall {
+                ref_pos: 195,
+                read_pos: 0,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 197,
+                read_pos: 2,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 200,
+                read_pos: 5,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+        ];
+        let kept = drop_overlap(r2_calls, &pair, /*ignore_3p_r1=*/ 0).unwrap();
+        let positions: Vec<u32> = kept.iter().map(|c| c.ref_pos).collect();
+        assert_eq!(positions, vec![200]);
+    }
+
+    /// Boundary regression guard (Reviewer B R2 I3): assert strict-`>`
+    /// semantics of the OT predicate are preserved through the fix.
+    /// R1 CIGAR=100M at start=100 → with ignore_3p_r1=5, boundary=194.
+    /// R2 calls at ref_pos 194 (drop) and 195 (keep) — exactly bracketing
+    /// the clipped boundary.
+    #[test]
+    fn drop_overlap_with_ignore_3p_r1_at_boundary() {
+        let pair = helpers::ot_pair(b"ZZ", 100, b"ZZ", 194, b"pair4");
+        let r2_calls = vec![
+            MethCall {
+                ref_pos: 194, // == boundary → drop (predicate is strict `>`)
+                read_pos: 0,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+            MethCall {
+                ref_pos: 195, // > boundary → keep
+                read_pos: 1,
+                context: CytosineContext::CpG,
+                methylated: true,
+                xm_byte: b'Z',
+            },
+        ];
+        let kept = drop_overlap(r2_calls, &pair, /*ignore_3p_r1=*/ 5).unwrap();
+        let positions: Vec<u32> = kept.iter().map(|c| c.ref_pos).collect();
+        assert_eq!(positions, vec![195]);
+    }
+}
