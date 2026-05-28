@@ -29,14 +29,31 @@ pub enum CytosineContext {
 pub struct MethCall {
     /// 1-based reference position. From `AlignedXmCall::ref_pos`.
     pub ref_pos: u32,
-    /// 0-based read position from the **5' end of the sequenced read**.
-    /// **Includes soft-clipped positions in the count** (rev 1 correction
-    /// per Reviewer B I1) — `iter_aligned` inherits `CigarExt::aligned_positions`'s
-    /// `read_pos` which increments through soft-clip ops; the filter drops
-    /// emission for soft-clip positions but does not renumber the remaining
-    /// ones. For a `+`-strand `5S95M` record the first emitted call has
-    /// `read_pos == 5`. Matches Perl `substr(meth_call, ignore)` indexing
-    /// over the full XM tag length.
+    /// 0-based read position relative to the **first un-clipped base after
+    /// `--ignore` trimming**. Soft-clip positions are counted in
+    /// `aligned.read_pos_5p` (`iter_aligned` inherits
+    /// `CigarExt::aligned_positions`'s read_pos which increments through
+    /// soft-clip ops), but the per-call rebase at the construction site
+    /// (`extract_calls`'s `MethCall::new` below) subtracts `ignore_5p` so
+    /// the first call reported to downstream consumers always lands at
+    /// `read_pos == 0`.
+    ///
+    /// Examples:
+    /// - `+`-strand `6M` record, `--ignore 0`: first call has `read_pos == 0`.
+    /// - `+`-strand `6M` record, `--ignore 2`: first call has `read_pos == 0`
+    ///   (the filter at L162 drops positions 0,1; the call at absolute
+    ///   position 2 rebases to 0).
+    /// - `+`-strand `5S6M` record, `--ignore 0`: first call has `read_pos == 5`
+    ///   (soft-clip counted, ignore_5p does not subtract).
+    /// - `+`-strand `5S6M` record, `--ignore 7`: first call has `read_pos == 0`
+    ///   (filter drops soft-clip positions 0-4 and match position 5,6;
+    ///   first surviving call at absolute position 7 rebases to 0).
+    ///
+    /// Matches Perl's `substr($meth_call, $ignore, ...)` rebasing at
+    /// `bismark_methylation_extractor:1627` — Perl trims the meth_call
+    /// string in-place; Rust trims the position via subtraction. Closes
+    /// #876 Bug B (rev 0 emitted absolute positions, causing M-bias.txt to
+    /// zero-pad slots 1..ignore_5p instead of starting data at slot 1).
     pub read_pos: u32,
     /// CpG / CHG / CHH.
     pub context: CytosineContext,
@@ -172,9 +189,19 @@ pub fn extract_calls(
         // propagate even under `mbias_only_silence`.
         match classify_xm_byte(aligned.xm_byte, aligned.ref_pos, &read_id) {
             Ok(XmClassification::Call(context, methylated)) => {
+                // #876 Bug B fix: rebase to "0-based-after-clip" semantic so
+                // downstream M-bias accumulators (route.rs:95 + parallel.rs:
+                // 625/729/752) land the first surviving call in slot 1.
+                // Matches Perl `substr($meth_call, $ignore, ...)` at :1627.
+                //
+                // The `saturating_sub` is defense-in-depth: the filter at
+                // L162 above already guarantees `aligned.read_pos_5p >= lo`
+                // where `lo = ignore_5p`, so the subtraction can never wrap.
+                // Keeping `saturating_sub` (vs plain `-`) prevents future
+                // refactors of the filter from introducing UB.
                 calls.push(MethCall {
                     ref_pos: aligned.ref_pos,
-                    read_pos: aligned.read_pos_5p,
+                    read_pos: aligned.read_pos_5p.saturating_sub(ignore_5p),
                     context,
                     methylated,
                     xm_byte: aligned.xm_byte,

@@ -215,9 +215,14 @@ fn extract_calls_respects_ignore_5p() {
         &record, /*ignore_5p=*/ 3, 0, /*mbias_only_silence=*/ false,
     )
     .unwrap();
-    // First 3 positions skipped → 3 calls remain (positions 3,4,5)
+    // First 3 positions skipped → 3 calls remain (absolute positions 3,4,5
+    // rebased to 0,1,2 per #876 Bug B fix at call.rs:177).
     assert_eq!(calls.len(), 3);
-    assert_eq!(calls[0].read_pos, 3);
+    assert_eq!(
+        calls[0].read_pos, 0,
+        "first surviving call must rebase to 0 (not absolute 3) — \
+         matches Perl substr($meth_call, $ignore) at :1627"
+    );
     assert_eq!(calls[0].xm_byte, b'x');
 }
 
