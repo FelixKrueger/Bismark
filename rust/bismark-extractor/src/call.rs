@@ -33,9 +33,9 @@ pub struct MethCall {
     /// `--ignore` trimming**. Soft-clip positions are counted in
     /// `aligned.read_pos_5p` (`iter_aligned` inherits
     /// `CigarExt::aligned_positions`'s read_pos which increments through
-    /// soft-clip ops), but the per-call rebase at the construction site
-    /// (`extract_calls`'s `MethCall::new` below) subtracts `ignore_5p` so
-    /// the first call reported to downstream consumers always lands at
+    /// soft-clip ops), but the per-call rebase at the `MethCall` struct
+    /// literal in [`extract_calls`] subtracts `ignore_5p` so the first
+    /// call reported to downstream consumers always lands at
     /// `read_pos == 0`.
     ///
     /// Examples:
@@ -340,6 +340,11 @@ mod tests {
         let calls = extract_calls(&record, /*ignore_5p=*/ 7, /*ignore_3p=*/ 0, false)
             .expect("extract_calls");
         let positions: Vec<u32> = calls.iter().map(|c| c.read_pos).collect();
+        assert_eq!(
+            calls.len(),
+            4,
+            "must emit exactly 4 calls after 5S soft-clip + 2-base extra ignore"
+        );
         assert_eq!(
             positions,
             vec![0, 1, 2, 3],
