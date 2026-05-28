@@ -44,6 +44,12 @@ pub struct ExtractState {
     splitting_report_path: std::path::PathBuf,
     /// Whether to emit the splitting report at finalize time.
     emit_splitting_report: bool,
+    // Phase G rev 2 (code-review A L1 fix): `input_basename: String` field
+    // removed. It stored the `.bam`/`.sam`/`.cram`-stripped basename, which
+    // the Phase G chain needs in its RAW form — using the stripped value
+    // produced `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`.
+    // Phase G now derives the raw filename from `self.input_path.file_name()`
+    // via [`derive_raw_filename_for_phase_g`] at the chain-dispatch site.
 }
 
 impl ExtractState {
@@ -126,9 +132,19 @@ impl ExtractState {
         // returns Vec::new()) so the loop would no-op, but the sweep
         // emits two trailing `eprintln!()` blank lines unconditionally
         // — Perl emits nothing in this case. Guard at the call site.
-        if !self.mbias_only {
-            self.fhs.finalize_with_empty_sweep()?;
-        }
+        //
+        // Phase G (rev 1 I10): finalize_with_empty_sweep now returns a
+        // FinalizationReport. We retain it across the gap between sweep
+        // and Phase G chain dispatch so the kept paths can be fed to
+        // bismark2bedGraph as its positional argv tail. Under
+        // `--mbias_only`, the OutputFileMap is already empty, so the
+        // kept set is empty by construction — we still build an empty
+        // FinalizationReport for uniformity.
+        let finalization = if !self.mbias_only {
+            self.fhs.finalize_with_empty_sweep()?
+        } else {
+            crate::output::FinalizationReport::default()
+        };
         if self.emit_splitting_report {
             write_splitting_report(
                 &self.splitting_report_path,
@@ -142,6 +158,32 @@ impl ExtractState {
             let mbias_path = mbias_txt_path(&config.output_dir, &self.input_path);
             write_mbias_txt(&mbias_path, &self.mbias, self.is_paired)?;
         }
+
+        // Phase G subprocess chain (gated on `config.bedgraph`, which is
+        // true iff the user set --bedGraph or --cytosine_report — c2c
+        // auto-triggers bedgraph at `cli.rs:455`). Runs AFTER M-bias write
+        // so the user has already seen "M-bias.txt written" before the
+        // subprocess progress messages start streaming.
+        //
+        // **Phase G rev 2 (code-review A L1 fix)**: pass the RAW input
+        // filename (un-stripped), NOT `self.input_basename` (which
+        // `pipeline::derive_basename` already stripped of `.bam`/`.sam`/
+        // `.cram`). `subprocess::derive_bedgraph_filename` mirrors Perl
+        // `:325-330` which only path-splits + strips literal `gz`/`sam`/
+        // `bam`/`txt` — feeding it the already-stripped basename would
+        // produce `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`,
+        // breaking Phase H byte-identity on every real `.bam` input.
+        if config.bedgraph {
+            let raw_filename = derive_raw_filename_for_phase_g(&self.input_path);
+            crate::subprocess::run_phase_g_chain(
+                config,
+                &raw_filename,
+                &config.output_dir,
+                &finalization.kept,
+                &crate::subprocess::RealRunner,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -150,5 +192,73 @@ impl ExtractState {
     /// failure doesn't prevent the others.
     pub fn cleanup_partial_outputs(&mut self) {
         self.fhs.cleanup_all();
+    }
+}
+
+/// Extract the RAW input filename (un-stripped) for Phase G's filename
+/// derivation. Mirrors Perl `bismark_methylation_extractor:325` which does
+/// `my $out = (split (/\//, $filename))[-1];` — i.e. path-split only, no
+/// extension stripping. The subsequent `s/gz$//`, `s/sam$//`, `s/bam$//`,
+/// `s/txt$//` pipeline lives in [`crate::subprocess::derive_bedgraph_filename`].
+///
+/// **Phase G rev 2 (code-review A L1 fix)**: separated from
+/// [`crate::pipeline::derive_basename`] because that function strips
+/// `.bam`/`.sam`/`.cram` (used by the split-file naming + splitting-report
+/// path) which would double-strip when fed to `derive_bedgraph_filename`.
+///
+/// Returns the file_name() component of `input_path`. Falls back to the
+/// full lossy path string if `input_path` has no filename component
+/// (defensive — CLI validation guarantees a real file).
+fn derive_raw_filename_for_phase_g(input_path: &std::path::Path) -> String {
+    input_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| input_path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Phase G rev 2 (code-review A L1 regression guard): verify that the
+    /// helper that produces Phase G's input filename returns the RAW
+    /// filename (un-stripped), so that
+    /// `subprocess::derive_bedgraph_filename` sees the full extension and
+    /// produces a Perl-byte-identical bedGraph filename.
+    #[test]
+    fn derive_raw_filename_for_phase_g_preserves_bam_extension() {
+        assert_eq!(
+            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.bam")),
+            "foo.bam"
+        );
+    }
+
+    #[test]
+    fn derive_raw_filename_for_phase_g_preserves_real_bismark_pe_filename() {
+        // The byte-identity-critical case: chained extensions on real
+        // Bismark output names.
+        assert_eq!(
+            derive_raw_filename_for_phase_g(Path::new(
+                "/path/to/sample.fastq_bismark_bt2_pe.deduplicated.bam"
+            )),
+            "sample.fastq_bismark_bt2_pe.deduplicated.bam"
+        );
+    }
+
+    #[test]
+    fn derive_raw_filename_for_phase_g_preserves_cram_extension() {
+        assert_eq!(
+            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.cram")),
+            "foo.cram"
+        );
+    }
+
+    #[test]
+    fn derive_raw_filename_for_phase_g_preserves_chained_bam_gz_extension() {
+        assert_eq!(
+            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.bam.gz")),
+            "foo.bam.gz"
+        );
     }
 }

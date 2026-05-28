@@ -42,6 +42,24 @@ pub const SPLIT_FILE_HEADER: &str = "Bismark methylation extractor version v0.25
 /// once profiling under multicore is available (Phase E plan §9.2 #2).
 type BoxedWriter = BufWriter<Box<dyn Write + Send>>;
 
+/// Result of [`OutputFileMap::finalize_with_empty_sweep`]. Lists every
+/// file the sweep retained on disk (`kept`) vs unlinked (`swept`) as
+/// absolute paths. **Phase G (rev 1 I10)**: the kept list feeds the
+/// `bismark2bedGraph` subprocess as its positional argv tail; the swept
+/// list is used by Phase H's harness to assert the file-set-match
+/// contract vs Perl's `was empty -> deleted` sweep.
+///
+/// `kept` is sorted lexicographically so the argv ordering passed to
+/// `bismark2bedGraph` is deterministic across runs (rev 1 I7 — the
+/// underlying HashMap iteration order is not).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct FinalizationReport {
+    /// Absolute paths of files retained (records_written > 0).
+    pub kept: Vec<PathBuf>,
+    /// Absolute paths of files unlinked (records_written == 0).
+    pub swept: Vec<PathBuf>,
+}
+
 /// Per-handle entry in [`OutputFileMap::files`].
 ///
 /// Phase B opened files eagerly + carried `(path, writer)` as a tuple.
@@ -250,11 +268,22 @@ impl OutputFileMap {
     ///
     /// # Errors
     ///
-    /// `std::io::Error` on the first `remove_file` failure. Subsequent
-    /// entries are skipped (the map's drain consumed them; partial
-    /// state is acceptable since this runs on the success path only).
-    pub fn finalize_with_empty_sweep(&mut self) -> Result<(), std::io::Error> {
+    /// **Phase G rev 2 (code-review B H2 fix)**: per-file `remove_file`
+    /// failures are now logged-and-skipped rather than aborting the
+    /// loop. Previously the function returned on the first error,
+    /// dropping subsequent unlinks AND skipping the post-sweep
+    /// splitting-report + M-bias + Phase G chain writes. Now the loop
+    /// always runs to completion; a failed unlink emits an
+    /// `eprintln!("warning: …")` line and the file is still recorded as
+    /// `swept` (the intent was to drop it; the partial result on disk
+    /// reflects a transient FS issue, not a logical-state divergence).
+    /// Returns `Ok` regardless; the function's signature retains
+    /// `Result<_, io::Error>` for forward-compat with any future
+    /// non-`remove_file` IO needs.
+    pub fn finalize_with_empty_sweep(&mut self) -> Result<FinalizationReport, std::io::Error> {
         let entries: Vec<_> = self.files.drain().collect();
+        let mut kept: Vec<PathBuf> = Vec::new();
+        let mut swept: Vec<PathBuf> = Vec::new();
         for (
             _,
             OutputFileEntry {
@@ -269,16 +298,29 @@ impl OutputFileMap {
             // emission is tied to GzEncoder's Drop impl, not its flush).
             // For kept files this is the seal-the-trailer point.
             drop(writer);
+            // Phase G (rev 1 C4): canonicalize BEFORE potential removal so
+            // the swept list still gets an absolute path. canonicalize
+            // requires the file to exist; falling back to the as-is path
+            // covers the (defensive) case where the file disappeared
+            // between drop and stat.
+            let abs_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
             // Phase C.2 code-review B H1: emit the FULL path (matches
             // Perl `:607, :615` which use `$sorting_files[$index]` =
-            // `$output_dir . $filename`). Earlier rev emitted just the
-            // bare basename via `path.file_name()`.
-            let path_str = path.display();
+            // `$output_dir . $filename`). We display the canonical path
+            // post-Phase-G so log lines match the argv passed downstream.
+            let path_str = abs_path.display();
             if records_written == 0 {
-                std::fs::remove_file(&path)?;
+                // Phase G rev 2 (code-review B H2): log-and-continue on
+                // unlink failure so subsequent files still get processed
+                // and post-sweep work runs.
+                if let Err(e) = std::fs::remove_file(&path) {
+                    eprintln!("warning: failed to remove empty output file {path_str}: {e}");
+                }
                 eprintln!("{path_str} was empty ->\tdeleted");
+                swept.push(abs_path);
             } else {
                 eprintln!("{path_str} contains data ->\tkept");
+                kept.push(abs_path);
             }
         }
         // Perl line 625: `warn "\n\n";` — two trailing blank lines on
@@ -287,7 +329,12 @@ impl OutputFileMap {
         // captured stderr.
         eprintln!();
         eprintln!();
-        Ok(())
+        // Phase G (rev 1 I7): sort kept lexicographically so the argv
+        // positional tail passed to bismark2bedGraph is deterministic
+        // across runs (underlying HashMap iteration order is not).
+        kept.sort();
+        swept.sort();
+        Ok(FinalizationReport { kept, swept })
     }
 
     /// Drop all writers + best-effort remove every file. Called from

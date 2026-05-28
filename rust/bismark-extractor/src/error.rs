@@ -223,4 +223,56 @@ pub enum BismarkExtractorError {
         /// Diagnostic message naming the next user step.
         message: String,
     },
+
+    // ─── Phase G (subprocess chain) additions ───────────────────────────────
+    /// One of the Phase G subprocesses (`bismark2bedGraph` /
+    /// `coverage2cytosine`) exited with a non-zero status. `stderr_tail` is
+    /// the trailing ≤ 64 KiB of the subprocess's stderr captured via the
+    /// tee drain thread; the full stream was already written live to the
+    /// parent's stderr during execution, so this is for downstream-tooling
+    /// error context (where the user may only see the bubbled error).
+    /// Stored as `Vec<u8>` to remain byte-safe under non-UTF-8 subprocess
+    /// output (rev 1 C5); `Display` renders via `String::from_utf8_lossy`.
+    #[error(
+        "subprocess `{tool}` exited with status {exit_status}: \
+         stderr tail (last {tail_len} bytes, UTF-8 lossy):\n{stderr_tail_str}",
+        tail_len = stderr_tail.len(),
+        stderr_tail_str = String::from_utf8_lossy(stderr_tail)
+    )]
+    SubprocessFailed {
+        /// Which subprocess (Bismark2BedGraph or Coverage2Cytosine).
+        tool: crate::subprocess::SubprocessTool,
+        /// Exit status reported by the OS.
+        exit_status: std::process::ExitStatus,
+        /// Trailing ≤ 64 KiB of stderr; byte-safe.
+        stderr_tail: Vec<u8>,
+    },
+
+    /// Could not locate a Phase G subprocess binary. `BISMARK_BIN` (when
+    /// set) is checked strictly — no fallback to PATH or `current_exe()`'s
+    /// parent. Set `BISMARK_BIN=/path/to/Bismark/` to lock the tool source,
+    /// or install Bismark and ensure the subprocess is on PATH.
+    #[error(
+        "could not locate `{tool}`: searched {searched_paths:?}. \
+         Install Bismark and ensure `{tool}` is on PATH, or set \
+         `BISMARK_BIN=/path/to/Bismark/` to lock the tool source."
+    )]
+    SubprocessNotFound {
+        /// Which subprocess.
+        tool: crate::subprocess::SubprocessTool,
+        /// All paths attempted, in the order tried.
+        searched_paths: Vec<std::path::PathBuf>,
+    },
+
+    /// Subprocess spawn (`Command::spawn`) failed at the OS level. Typically
+    /// permission denied on the discovered binary, or the binary disappeared
+    /// between discovery and spawn.
+    #[error("failed to spawn `{tool}`: {source}")]
+    SubprocessSpawnFailed {
+        /// Which subprocess.
+        tool: crate::subprocess::SubprocessTool,
+        /// Underlying I/O error from `Command::spawn` or `child.wait`.
+        #[source]
+        source: std::io::Error,
+    },
 }
