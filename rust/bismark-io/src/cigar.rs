@@ -293,6 +293,13 @@ impl CigarExt for Cigar {
     }
 
     fn reference_end_after_3p_trim(&self, start: usize, n_read_positions: u32) -> usize {
+        // Short-circuit on the default-cell path (n=0) to skip the
+        // primitive's `Cigar::from(ops.to_vec())` allocation. Mirrors
+        // the sibling `reference_start_after_3p_trim`'s n=0 guard.
+        // Convergent code-review finding (#880).
+        if n_read_positions == 0 {
+            return self.reference_end(start);
+        }
         self.trim_3p_read_positions(n_read_positions, false)
             .reference_end(start)
     }
