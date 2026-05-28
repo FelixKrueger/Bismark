@@ -387,8 +387,19 @@ ROW_COUNT_DETAIL=""
 count_mbias_rows() {
   local f="$1"
   if [[ ! -f "$f" ]]; then echo "0"; return; fi
-  # Data rows start with `<position>\t` where position is a digit
-  grep -cE '^[0-9]+	' "$f" 2>/dev/null || echo "0"
+  # Data rows start with `<position>\t` where position is a digit.
+  # Back-port from PE driver #874 rev-3 absorption (consensus code-review
+  # finding B-H1 ≡ A-M1): use awk instead of `grep -cE ... || echo "0"`.
+  # The grep pattern fail-opens: grep -c prints "0" AND exits 1 when 0
+  # matches, triggering the || echo "0" fallback. Result is two lines
+  # "0\n0" — downstream integer compare `[[ N -ge D ]]` hits "bad math
+  # expression" (swallowed by 2>/dev/null inside if-test), the violation
+  # goes unrecorded, PASS_FLAG stays 1, and the matrix emits a false PASS.
+  # Latent on the canonical 10M SE BAM (D cell always has rows) but real
+  # fail-open in a check whose entire purpose (rev 3 absorption) is
+  # fail-closed. The awk form emits a single integer (including 0) on
+  # stdout, exits 0, and parses cleanly.
+  awk '/^[0-9]+\t/ { c++ } END { print c+0 }' "$f"
 }
 
 get_cell_mbias_file() {
