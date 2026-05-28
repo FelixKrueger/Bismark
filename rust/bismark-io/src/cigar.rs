@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn trim_3p_with_trailing_deletion_strips_D() {
+    fn trim_3p_with_trailing_deletion_strips_d() {
         // C1 regression guard: 90M5D, trim 5 from right.
         // The 5 read-positions of M are removed PLUS the now-trailing 5D is
         // stripped per Perl L1760-1764 `while ($op eq 'D')` loop.
@@ -653,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn trim_3p_with_trailing_skip_strips_N() {
+    fn trim_3p_with_trailing_skip_strips_n() {
         // C1 regression guard: 90M5N, trim 5 from right.
         // Same as the trailing-D case but with Skip (N) ops.
         let c = cigar_from_ops(&[(Kind::Match, 90), (Kind::Skip, 5)]);
@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn trim_3p_with_leading_deletion_strips_D_when_from_left() {
+    fn trim_3p_with_leading_deletion_strips_d_when_from_left() {
         // C3 regression guard: 5D90M, trim 5 from left.
         // The 5 read-positions of M (from the front of the M block) are
         // removed PLUS the now-leading 5D is stripped (Perl reverse-strand
@@ -691,8 +691,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn trim_3p_middle_D_is_NOT_stripped() {
+    fn trim_3p_middle_d_is_not_stripped() {
         // Reviewer A R2 negative-regression guard: 90M5D5M, trim 5 from right.
         // The 5M at the trailing end clips. The 5D in the MIDDLE must NOT be
         // stripped — only adjacent-to-trimmed-boundary D/N ops are stripped
@@ -749,8 +748,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn reference_start_after_3p_trim_with_leading_D() {
+    fn reference_start_after_3p_trim_with_leading_d() {
         // C3 regression guard for OB composite shift.
         // 5D90M, start=100, n=5 from left:
         //   - 5 M clipped (read positions)
