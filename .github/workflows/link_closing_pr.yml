@@ -1,0 +1,49 @@
+name: Link Closing PR
+
+# When a PR is merged, populate the "Closing PR" custom field on the
+# FelixKrueger Project #1 for both the PR and the issue(s) it closes.
+#
+# Why: GitHub's built-in "Linked pull requests" project field only auto-
+# populates on merges into the repository's DEFAULT branch. The Bismark Rust
+# rewrite merges into `rust/iron-chancellor` (an integration branch), so the
+# auto-link never fires. This workflow populates a custom Text field
+# ("Closing PR") instead, which surfaces on the project board.
+#
+# Prerequisite: a repository secret `PROJECT_TOKEN` containing a Personal
+# Access Token (classic with `project` + `repo` scopes, OR fine-grained with
+# Projects (read/write) + Issues (read) + Pull requests (read)). The default
+# GITHUB_TOKEN does NOT have project scope and cannot be used.
+#
+# The script `scripts/link_closing_pr.py` does the actual work; this
+# workflow is a thin trigger wrapper.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  link-closing-pr:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/link_closing_pr.py
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Populate Closing PR field
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PROJECT_TOKEN secret is not configured; skipping project-board cross-link."
+            echo "Set up a PAT with project + repo scopes as repo secret PROJECT_TOKEN to enable."
+            exit 0
+          fi
+          python3 scripts/link_closing_pr.py ${{ github.event.pull_request.number }}
