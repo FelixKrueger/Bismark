@@ -776,6 +776,7 @@ pub fn write_splitting_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::PairedMode;
 
     #[test]
     fn write_percent_or_fallback_cpg_not_last_emits_single_newline() {
@@ -900,5 +901,116 @@ mod tests {
         assert_eq!(a_into_b.records_processed, 350);
         assert_eq!(a_into_b.call_strings_processed, 700);
         assert_eq!(a_into_b.calls_total, 1750);
+    }
+
+    // ─── #876 Bug A regression guards: SE splitting_report omits overlap line ──
+    //
+    // Background: `config.no_overlap` is resolved at CLI-time to `!include_overlap`
+    // whenever `paired_mode != SingleEnd` (cli.rs:467-471), which catches the
+    // AutoDetect case. The BAM may later be detected as SE; at that point the
+    // resolved `no_overlap=true` flag is stale for the SE case. The writer
+    // must gate on the post-detection `is_paired` flag, not on `no_overlap` alone.
+    //
+    // Perl reference: bismark_methylation_extractor:931 declares `$no_overlap`;
+    // assignments only at :1219/1224 inside the PE branch (L1215-1224). All
+    // other 7 references are reads/pass-throughs. SE → `$no_overlap` stays
+    // undef → falsy → line 5037 emission skipped.
+
+    fn default_config_for_splitting_report(paired_mode: PairedMode, no_overlap: bool) -> ResolvedConfig {
+        ResolvedConfig {
+            files: vec![PathBuf::from("sample.bam")],
+            paired_mode,
+            output_mode: OutputMode::Default,
+            ignore_5p_r1: 0,
+            ignore_3p_r1: 0,
+            ignore_5p_r2: 0,
+            ignore_3p_r2: 0,
+            no_overlap,
+            output_dir: PathBuf::from("/tmp"),
+            no_header: false,
+            gzip: false,
+            emit_splitting_report: true,
+            fasta_annotation: false,
+            mbias_off: false,
+            bedgraph: false,
+            cytosine_report: false,
+            cutoff: 1,
+            remove_spaces: false,
+            counts: true,
+            zero_based: false,
+            cx_context: false,
+            split_by_chromosome: false,
+            ucsc: false,
+            buffer_size: None,
+            gazillion: false,
+            ample_memory: false,
+            genome_folder: None,
+            parallel: 1,
+        }
+    }
+
+    fn write_and_read_splitting_report(config: &ResolvedConfig, is_paired: bool) -> String {
+        let tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        let report = SplittingReport::default();
+        write_splitting_report(
+            tmp.path(),
+            &PathBuf::from("sample.bam"),
+            config,
+            is_paired,
+            &report,
+        )
+        .expect("write splitting report");
+        std::fs::read_to_string(tmp.path()).expect("read splitting report")
+    }
+
+    #[test]
+    fn splitting_report_omits_overlap_line_in_se_mode() {
+        // Plain SE: paired_mode=SingleEnd, no_overlap=false (resolver default
+        // for SingleEnd per cli.rs:469). Writer must NOT emit overlap line.
+        let cfg = default_config_for_splitting_report(PairedMode::SingleEnd, false);
+        let body = write_and_read_splitting_report(&cfg, /*is_paired=*/ false);
+        assert!(
+            !body.contains("No overlapping methylation calls specified"),
+            "SE splitting_report must not contain the overlap line; got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn splitting_report_omits_overlap_line_for_autodetect_se() {
+        // The actual bug-triggering state from #876: CLI is invoked WITHOUT
+        // -s/-p, so paired_mode resolves to AutoDetect. cli.rs:467 then sets
+        // no_overlap = !include_overlap = true. BAM is later detected as SE
+        // (is_paired=false at write time). Writer must STILL omit the line.
+        let cfg = default_config_for_splitting_report(PairedMode::AutoDetect, true);
+        let body = write_and_read_splitting_report(&cfg, /*is_paired=*/ false);
+        assert!(
+            !body.contains("No overlapping methylation calls specified"),
+            "AutoDetect-then-SE splitting_report must not contain the overlap line; got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn splitting_report_includes_overlap_line_for_pe_default() {
+        // PE without --include_overlap (the normal PE case). Resolver sets
+        // no_overlap=true. BAM is PE (is_paired=true). Writer MUST emit the
+        // line (matches Perl L5037 PE-branch behaviour).
+        let cfg = default_config_for_splitting_report(PairedMode::PairedEnd, true);
+        let body = write_and_read_splitting_report(&cfg, /*is_paired=*/ true);
+        assert!(
+            body.contains("No overlapping methylation calls specified"),
+            "PE-default splitting_report must contain the overlap line; got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn splitting_report_omits_overlap_line_for_pe_with_include_overlap() {
+        // PE with --include_overlap → resolver sets no_overlap=false. Writer
+        // must omit the line (matches Perl L5037 `if ($no_overlap)` false).
+        let cfg = default_config_for_splitting_report(PairedMode::PairedEnd, false);
+        let body = write_and_read_splitting_report(&cfg, /*is_paired=*/ true);
+        assert!(
+            !body.contains("No overlapping methylation calls specified"),
+            "PE --include_overlap splitting_report must not contain the overlap line; got:\n{body}"
+        );
     }
 }

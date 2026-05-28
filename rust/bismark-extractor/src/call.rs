@@ -191,3 +191,127 @@ pub fn extract_calls(
 
     Ok(calls)
 }
+
+#[cfg(test)]
+mod tests {
+    //! #876 Bug B regression guards for `MethCall.read_pos` rebasing.
+    //!
+    //! The fix at line 177 transforms `read_pos = aligned.read_pos_5p` →
+    //! `read_pos = aligned.read_pos_5p.saturating_sub(ignore_5p)`. This is the
+    //! Choice 2 fix (plan rev 1): rebase at the source so all 4 M-bias
+    //! accumulator consumers (route.rs:95 + parallel.rs:625/729/752) inherit
+    //! the correct slot mapping for free. See plan §3 for full context.
+
+    use super::*;
+    use bstr::BString;
+    use noodles_sam::alignment::record::cigar::Op;
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    use noodles_sam::alignment::record_buf::{Cigar, RecordBuf, Sequence};
+
+    /// Build a minimal `+`-strand `BismarkRecord` with the given XM string,
+    /// `{n_soft}S{n_match}M` CIGAR, and `XG:Z:CT` (forward strand).
+    /// Quality scores are filled with `30u8` matching seq length.
+    fn synth_se_record(xm: &[u8], n_soft: usize, n_match: usize) -> BismarkRecord {
+        assert_eq!(
+            xm.len(),
+            n_soft + n_match,
+            "XM length must match CIGAR length (soft + match)"
+        );
+        let seq_len = n_soft + n_match;
+        let mut record = RecordBuf::default();
+        *record.name_mut() = Some(BString::from(b"read1".to_vec()));
+        *record.flags_mut() = noodles_sam::alignment::record::Flags::from(0u16);
+        *record.reference_sequence_id_mut() = Some(0);
+        *record.alignment_start_mut() =
+            Some(noodles_core::Position::try_from(10).unwrap());
+        // sequence: arbitrary but length must match. Use 'A' for all bases.
+        *record.sequence_mut() = Sequence::from(vec![b'A'; seq_len]);
+        *record.quality_scores_mut() =
+            noodles_sam::alignment::record_buf::QualityScores::from(vec![30u8; seq_len]);
+        // CIGAR: {n_soft}S{n_match}M (skipped if n_soft == 0).
+        let mut ops: Vec<Op> = Vec::new();
+        if n_soft > 0 {
+            ops.push(Op::new(Kind::SoftClip, n_soft));
+        }
+        if n_match > 0 {
+            ops.push(Op::new(Kind::Match, n_match));
+        }
+        *record.cigar_mut() = Cigar::from(ops);
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XM"), Value::String(BString::from(xm.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XR"), Value::String(BString::from(b"CT".to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XG"), Value::String(BString::from(b"CT".to_vec())));
+        BismarkRecord::from_noodles_record(record).expect("synth BismarkRecord")
+    }
+
+    #[test]
+    fn extract_calls_rebases_read_pos_after_ignore_5p() {
+        // Setup: 6M CIGAR (no soft-clip), XM "zXhZxH" → 6 methylation calls
+        // at absolute read positions 0..=5. With ignore_5p=2:
+        // - Filter at L162 drops positions 0, 1 (read_pos_5p < lo=2)
+        // - Surviving positions: 2, 3, 4, 5 (absolute)
+        // - Bug B fix: rebase to 0, 1, 2, 3 (subtract ignore_5p=2)
+        //
+        // Without the fix, MethCall.read_pos would be [2, 3, 4, 5] (absolute).
+        // With the fix, MethCall.read_pos is [0, 1, 2, 3] (rebased).
+        let record = synth_se_record(b"zXhZxH", 0, 6);
+        let calls = extract_calls(&record, /*ignore_5p=*/ 2, /*ignore_3p=*/ 0, false)
+            .expect("extract_calls");
+        let positions: Vec<u32> = calls.iter().map(|c| c.read_pos).collect();
+        assert_eq!(
+            positions,
+            vec![0, 1, 2, 3],
+            "after ignore_5p=2, positions must be rebased to 0..3 (not the absolute 2..5)"
+        );
+        // Defensive: also verify no extra calls leaked through the filter.
+        assert_eq!(calls.len(), 4, "must emit exactly 4 calls after 2-base ignore");
+    }
+
+    #[test]
+    fn extract_calls_ignore_5p_zero_is_identity() {
+        // Default-cell regression guard: with ignore_5p=0, read_pos values
+        // must equal the absolute aligned.read_pos_5p (i.e., 0, 1, 2, 3, 4, 5
+        // for a 6M record). The saturating_sub(0) must be a no-op.
+        let record = synth_se_record(b"zXhZxH", 0, 6);
+        let calls = extract_calls(&record, /*ignore_5p=*/ 0, /*ignore_3p=*/ 0, false)
+            .expect("extract_calls");
+        let positions: Vec<u32> = calls.iter().map(|c| c.read_pos).collect();
+        assert_eq!(
+            positions,
+            vec![0, 1, 2, 3, 4, 5],
+            "ignore_5p=0 must leave read_pos unchanged (identity transform)"
+        );
+        assert_eq!(calls.len(), 6, "must emit all 6 calls with no ignore");
+    }
+
+    #[test]
+    fn extract_calls_rebase_combined_with_soft_clip() {
+        // 5S6M CIGAR + XM "....zXhZxH" (5 soft-clip dots + 6 real calls).
+        // iter_aligned filters out soft-clip positions (no XM emission for
+        // soft-clip per bismark-io semantics), so the emitted aligned values
+        // have read_pos_5p starting at 5 (post-soft-clip 5'-oriented).
+        //
+        // With ignore_5p=7 (skips 2 of the 6 match positions):
+        // - Filter drops aligned.read_pos_5p < 7 → drops positions 5, 6
+        // - Surviving: 7, 8, 9, 10 (absolute) → 4 calls
+        // - Fix rebases to: 0, 1, 2, 3 (subtract ignore_5p=7)
+        //
+        // This proves the rebase is correct EVEN when soft-clip + ignore stack.
+        let record = synth_se_record(b".....zXhZxH", 5, 6);
+        let calls = extract_calls(&record, /*ignore_5p=*/ 7, /*ignore_3p=*/ 0, false)
+            .expect("extract_calls");
+        let positions: Vec<u32> = calls.iter().map(|c| c.read_pos).collect();
+        assert_eq!(
+            positions,
+            vec![0, 1, 2, 3],
+            "after 5S soft-clip + ignore_5p=7, rebased positions must be 0..3"
+        );
+    }
+}
