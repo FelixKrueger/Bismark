@@ -638,9 +638,18 @@ pub fn write_splitting_report(
     }
 
     // Step 9: no_overlap line — matches Perl :5037 `if ($no_overlap)`.
-    // Plan rev 1 I9: simplified to just check config.no_overlap (Perl's
-    // SE branch never sets it, so the check is naturally SE-safe).
-    if config.no_overlap {
+    // Perl's SE branch leaves `$no_overlap` undef (declared at :931, only
+    // assigned in the PE branch at :1219/1224) → falsy → line skipped.
+    //
+    // Rust's resolver at cli.rs:467-471 sets `config.no_overlap = !include_overlap`
+    // whenever `paired_mode != SingleEnd` (including `AutoDetect` — the Phase
+    // C rev 1 broadening that catches the AutoDetect-then-PE leak). For an
+    // AutoDetect-then-SE path the flag stays `true` even though the BAM is SE,
+    // so we MUST gate on the post-detection `is_paired` boolean here, not on
+    // `config.no_overlap` alone. (#876 Bug A regression: rev 0 of this code
+    // gated only on `config.no_overlap`, causing every SE splitting_report on
+    // the colossal 10M matrix to emit a spurious +43-byte overlap line.)
+    if is_paired && config.no_overlap {
         w.write_all(b"No overlapping methylation calls specified\n")?;
     }
 
