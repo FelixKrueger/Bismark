@@ -747,7 +747,29 @@ Phase H sub-gate 1 verifies the byte-identity invariant above across a **represe
 | 5p+3p | Both trims combined | 5 | 5 |
 | edge_clip | `--ignore` exceeds typical read length (asserts §7.6 boundary handles `lo > hi`) | 250 | 0 |
 
-**PE matrix** (closes #872) — driver `scripts/phase_h_pe_matrix.sh` over 5 cells × `--parallel {1, 4}` mirroring SE structure but with PE-specific dimensions (R1+R2 ignore flags, `--no_overlap`/`--include_overlap`). See PHASE_H_PE_PLAN.md.
+**PE matrix** (closes #872) — driver `scripts/phase_h_pe_matrix.sh` over 5 cells × `--parallel {1, 4}` = 10 invocations per binary, mirroring SE structure but with PE-specific dimensions (R1+R2 ignore flags, `--no_overlap`/`--include_overlap`):
+
+| Cell | Description | `--extra-rust` / `--extra-perl` |
+|---|---|---|
+| D | Default; M-bias = 11,443 B regression guard at (D, N=1) (Phase C.1 polarity guard) | (empty) |
+| r1_5p | R1 5' trim isolated | `--ignore 5` |
+| r2_5p | R2 5' trim isolated (PE-specific axis SE doesn't have) | `--ignore_r2 5` |
+| r1r2_3p | Both 3' trims combined | `--ignore_3prime 5 --ignore_3prime_r2 5` |
+| overlap | `--include_overlap` overrides default `--no_overlap`; PE-specific Phase C.1 polarity-direction guard | `--include_overlap` |
+
+**PE-specific assertions** (additional to the byte-identity invariant above):
+
+- **Pre-flight overlap-fraction gate**: `samtools view -c -f 0x2 <BAM>` ≥ 80% of total reads. Rejects pre-flight (exit 2) if not met — protects against silent differential mis-fire on non-canonical BAMs (e.g., exome panels with mate-pair-disjoint reads).
+- **Pre-flight PE-ness assertion**: `samtools view -H <BAM> | grep -qE '^@PG.*ID:Bismark.*[[:space:]]-1[[:space:]]'` (mirrors `phase_h_smoke.sh:159` detection regex). Rejects SE BAMs at pre-flight.
+- **Mixed-metric differential check at N=1** (the `overlap` cell's `--include_overlap` adds counts at existing M-bias positions rather than new rows — row count is unchanged; count-sum strictly increases):
+  - `r1_5p` / `r2_5p` / `r1r2_3p`: M-bias data row count < D by ≥1 row (SE-symmetric — `--ignore N` removes positions monotonically).
+  - `overlap`: M-bias data **count-sum** (`sum(methylated + unmethylated)` across all R2 data rows) > D's same metric by ≥ 5%.
+- **Differential check is fail-closed**: `ROW_COUNT_OK=0` initial; flipped to 1 only on positive completion of all four differential assertions AND all 5 cells' M-bias files present + readable. Missing/unreadable file → forced FAIL. The asymmetric `>` direction in the `overlap` cell otherwise reintroduces a fail-open class bug SE's all-`<D` directions don't have.
+- **Differential FAIL produces a distinct verdict line** separate from byte-identity FAIL (release engineer can disambiguate "byte-identity holds + differential fires" from "real byte-identity break"; exit code still 1).
+- **Splitting-report 875 B absolute size lock NOT used**: the splitting report contains the input filename in its first line; absolute byte count is path-length sensitive. Per-cell Perl-vs-Rust strict-byte-cmp catches Phase C.2 format regressions symmetrically without fragility.
+- **Input BAM MD5 recorded in `<OUT>/speedup_table.md` + `<OUT>/matrix_verdict.txt`** as a fixture-drift detector.
+
+See `plans/05262026_bismark-extractor/PHASE_H_PE_PLAN.md` for the full per-cell contract, cross-N + differential mechanism, exit-code mapping, and the rev-1 absorption of dual plan-review findings (1 Critical + 9 Important + 8 Optional folded).
 
 **Cross-N byte-identity assertion (row 4 above)** is checked per ignore-pair in the matrix: Rust-N=1 ≡ Rust-N=4 raw-byte for every output file. This directly tests SPEC §9 N-invariance contract and replaces the weaker self-determinism check (Rust-vs-Rust at same N) that earlier drafts proposed.
 
@@ -839,7 +861,7 @@ Mirrors `bismark-dedup`'s phased cadence (A → G; merge each to `rust/iron-chan
 | **F** | Rayon-based `--multicore N` (byte-identical invariant). | ~700 LOC |
 | **G** | `--bedGraph` + `--cytosine_report` subprocess chain (subprocess-to-Perl per §6.6; tee+ring-buffer stderr handling; BISMARK_BIN-first strict discovery; trailing-dot filename quirk). | ~1330 LOC actual (was ~400 estimated; growth is almost entirely test surface: argv-builder goldens, RealRunner fake-shell tests, drain-thread-deadlock test, BISMARK_BIN edge cases). Closes #868. |
 | **H (sub-gate 1, SE)** | SE byte-identity + speedup matrix harness (5 cells × `--parallel {1, 4}` × cross-N N-invariance check). Driver `scripts/phase_h_se_matrix.sh`. Gates v1.0 release tag for SE-mode streams. Closes #871. | ~485 LOC bash + checklist + SPEC (no Rust code) |
-| **H (sub-gate 1, PE)** | PE byte-identity + speedup matrix harness (5 cells mirroring SE structure × `--parallel {1, 4}` + R1/R2 ignore flags + `--no_overlap`/`--include_overlap`). Driver `scripts/phase_h_pe_matrix.sh`. Gates v1.0 release tag for PE-mode streams. Closes #872. | ~300 LOC est. (separate PR) |
+| **H (sub-gate 1, PE)** | PE byte-identity + speedup matrix harness (5 cells mirroring SE structure × `--parallel {1, 4}` + R1/R2 ignore flags + `--no_overlap`/`--include_overlap`). Driver `scripts/phase_h_pe_matrix.sh` + RELEASE_CHECKLIST PE section populated + SPEC §8.3 PE subsection. Mixed-metric differential (row count for `<D` cells; count-sum for `overlap`); pre-flight overlap-fraction ≥ 80% gate + samtools-direct PE-ness assertion. Gates v1.0 release tag for PE-mode streams. Closes #872. | ~830 LOC bash + checklist + SPEC (no Rust code; absorbs rev 1's 1 Critical + 9 Important review findings) |
 | **H (sub-gate 2)** | bedGraph / coverage / cytosine_report byte-identity vs Rust `bismark-bedgraph`. Blocked on epic #797 (Rust `bismark-bedgraph` crate). v1.x scope; tag ships at `bismark-extractor-v1.x` when sub-gate 2 lands. | TBD |
 
 Total: ~4,000 LOC Rust to port ~6,050 LOC Perl. Compression ratio matches dedup's 35-40% (Rust's type system + bismark-io leverage shrink the line count).
