@@ -68,6 +68,7 @@ pub mod params;
 pub mod pipeline;
 pub mod route;
 pub mod state;
+pub mod subprocess;
 
 pub use call::{CytosineContext, MethCall, extract_calls};
 pub use cli::{Cli, OutputMode, PairedMode, ResolvedConfig};

@@ -222,13 +222,68 @@ The original rev 0 claim that "the extractor MUST NOT reverse" was wrong — wal
 
 **Perl reference:** lines 1619-1621 (SE `meth_call` reverse), 2880-2882 (PE `cigar` reverse), 4422-4425 (yacht).
 
-### 6.6 Subprocess vs inline for `--bedGraph` / `--cytosine_report`
+### 6.6 Subprocess chain for `--bedGraph` / `--cytosine_report` (rev 3, post-Phase G)
 
-**v1.0 plan: subprocess** to Perl `bismark2bedGraph` / `coverage2cytosine`. Faithful to Perl's architecture; cheap to ship.
+**v1.0: subprocess** to Perl `bismark2bedGraph` / `coverage2cytosine`. Implemented in `src/subprocess.rs` (Phase G, `1.0.0-alpha.9`). Faithful to Perl's architecture; cheap to ship.
 
-**v1.x evolution:** once the Rust `bismark-bedgraph` and `bismark-coverage2cytosine` crates land (epics #797 and a future one), switch the extractor's `--bedGraph` flag to call the Rust binaries inline (or via Rust library API).
+**v1.x evolution:** once the Rust `bismark-bedgraph` and `bismark-coverage2cytosine` crates land (epics #797 and a future one), switch the extractor's `--bedGraph` flag to call the Rust binaries inline.
 
-This is an **explicit deferral**, not a permanent choice. See §11 open question.
+#### Subprocess invocation matrix (Phase G)
+
+Argv is built by `build_bismark2bedgraph_argv` / `build_coverage2cytosine_argv` to match Perl `bismark_methylation_extractor:323-428` for the **flag block** (everything before the positional tail) modulo **long-form flag expansion** documented below. Perl uses GetOptions prefix abbreviation when forwarding (`--remove`, `--zero`); the Rust port writes the long forms (`--remove_spaces`, `--zero_based`) for auditability — the subprocess GetOptions resolves both to the same flag.
+
+**Positional tail order is intentionally NOT a byte-identity contract** (rev 2, post-Phase-G code-review B H1): Rust emits kept split files sorted lexicographically (`FinalizationReport.kept` is sorted before being fed to `bismark2bedGraph` for run-to-run determinism); Perl's `@sorting_files` order depends on `keys %fhs` hash-iteration order which is randomised per Perl run and therefore differs between Perl invocations too. `bismark2bedGraph` performs its own internal UNIX-sort of the input lines before emitting bedGraph + coverage, so positional argv order does NOT affect output bytes — making the positional-tail order an implementation detail rather than a byte-identity invariant.
+
+| Extractor flag | Perl pushes | Subprocess GetOptions | Rust pushes |
+|---|---|---|---|
+| `--remove_spaces` | `--remove` | `"remove_spaces"` | `--remove_spaces` |
+| `--zero_based` | `--zero` | `"zero_based"` | `--zero_based` |
+| `--cutoff N` | `--cutoff N` | `"cutoff=i"` | `--cutoff N` |
+| `--CX_context` | `--CX_context` | `"CX|CX_context"` | `--CX_context` |
+| `--gazillion` | `--gazillion` | `"gazillion|scaffolds"` | `--gazillion` |
+| `--ample_memory` | `--ample_memory` | `"ample_memory"` | `--ample_memory` |
+| `--buffer_size SIZE` | `--buffer_size $sort_size` (default `"2G"`) | `"buffer_size=s"` | `--buffer_size <SIZE>` (`"2G"` default — rev 1 I5) |
+| `--ucsc` | `--ucsc` | `"ucsc"` | `--ucsc` |
+| `--no_header` | `--no_header` | `"no_header"` | `--no_header` (b2bg only) |
+| `--gzip` (c2c only) | `--gzip` | `"gzip"` | `--gzip` (c2c only) |
+| `--split_by_chromosome` (c2c only) | `--split_by_chromosome` | `"split_by_chromosome"` | `--split_by_chromosome` |
+| `--genome_folder PATH` (c2c only) | `--genome '$genome_folder'` | `"g|genome_folder=s"` | `--genome <PATH>` |
+
+`coverage2cytosine` also gets **`--parent_dir = --dir`** (Perl `:404`; Phase G rev 1 I13).
+
+**`--counts` is NEVER forwarded.** Perl `:362-364` comments out the push; the Rust port mirrors.
+**`--gzip` is NEVER forwarded to bismark2bedGraph.** b2bg has no `--gzip` flag (`bismark2bedGraph:637-651`); its `.bismark.cov.gz` output is always gzipped by extension-sniff.
+
+#### Filename derivation (Phase G rev 1 C3 — trailing-dot quirk)
+
+Perl `:325-330` strips the **literal** trailing letters `gz`, `sam`, `bam`, `txt` (no leading dot anchor). Chained extensions therefore preserve a trailing dot.
+
+| Input basename | bedGraph filename | Coverage filename | Cytosine report (CpG default) |
+|---|---|---|---|
+| `foo.bam` | `foo.bedGraph` | `foo.bismark.cov.gz` | `foo.CpG_report.txt` |
+| `foo.bam.gz` | **`foo.bam.bedGraph`** | **`foo.bam.bismark.cov.gz`** | **`foo.bam.CpG_report.txt`** |
+| `foo` (no ext) | **`foobedGraph`** | `foobismark.cov.gz` | `foo.CpG_report.txt` (after stripping `bedGraph` from `foobedGraph` → `foo`) |
+| `sample.fastq_bismark_bt2_pe.deduplicated.bam` | `sample.fastq_bismark_bt2_pe.deduplicated.bedGraph` | `sample.fastq_bismark_bt2_pe.deduplicated.bismark.cov.gz` | `sample.fastq_bismark_bt2_pe.deduplicated.CpG_report.txt` |
+
+The trailing-dot preservation is load-bearing for Phase H byte-identity on inputs with chained extensions (which all real Bismark outputs have, e.g. `.fastq_bismark_bt2_pe.deduplicated.bam`).
+
+#### Stderr handling (Phase G rev 1 — TEE)
+
+Subprocess stderr is **tee'd**: spawned with `Stdio::piped()`, a drain thread reads each line via `read_until(b'\n', &mut Vec<u8>)` (byte-safe; non-UTF-8 OK), writes each line live to the parent's `io::stderr()`, AND appends to a bounded 64 KiB `VecDeque<u8>` ring buffer. The drain thread is **spawned BEFORE** `child.wait()` (prevents pipe-buffer-full deadlock on >64 KiB stderr bursts) and **always joined** before returning (prevents stderr_tail race + thread leak). On non-zero exit, the ring buffer snapshot is attached to `BismarkExtractorError::SubprocessFailed` as `stderr_tail: Vec<u8>`.
+
+#### Subprocess discovery (Phase G rev 1 — BISMARK_BIN-first, strict)
+
+1. **`BISMARK_BIN` env var** (strict if set and non-empty): `$BISMARK_BIN/<tool>` must exist and be executable, else `SubprocessNotFound`. **No fallback.** Empty string treated as "unset".
+2. `PATH` via the `which` crate.
+3. `current_exe()` parent. The `BISMARK_TEST_CURRENT_EXE_DIR` env var overrides for tests (always-on, not cfg-gated, since integration tests don't inherit the lib's cfg(test)).
+
+#### Locale dependency (Phase G rev 1 I8)
+
+`bismark2bedGraph` invokes UNIX `sort` internally, which is locale-sensitive. For Phase H byte-identity, the harness MUST pin `LC_ALL=C` for both Perl and Rust runs (POSIX collation order is the only one guaranteed-stable across systems). Rust does NOT override the user's locale; matches Perl.
+
+#### Deliberately-omitted `coverage2cytosine` flags
+
+c2c accepts `--merge_CpGs`, `--GC_context`/`--GC`, `--nome-seq`, `--ffs`, `--discordance_filter`, `--drach`/`--m6A`, `--threshold`/`--coverage_threshold` that are NOT exposed by the Perl extractor either — mirror by NOT forwarding. Documented here to pre-empt "why doesn't the Rust port pass --nome-seq?" questions.
 
 ## 7. Algorithm sketches
 
@@ -750,7 +805,7 @@ Mirrors `bismark-dedup`'s phased cadence (A → G; merge each to `rust/iron-chan
 | **D** | M-bias accumulation per (context × read_identity) + `M-bias.txt` writer. | ~500 LOC |
 | **E** | `--comprehensive` / `--merge_non_CpG` / `--yacht` output mode dispatch + `--gzip`. | ~400 LOC |
 | **F** | Rayon-based `--multicore N` (byte-identical invariant). | ~700 LOC |
-| **G** | `--bedGraph` + `--cytosine_report` subprocess chain (with future inline-evolution scaffolding). | ~400 LOC |
+| **G** | `--bedGraph` + `--cytosine_report` subprocess chain (subprocess-to-Perl per §6.6; tee+ring-buffer stderr handling; BISMARK_BIN-first strict discovery; trailing-dot filename quirk). | ~1330 LOC actual (was ~400 estimated; growth is almost entirely test surface: argv-builder goldens, RealRunner fake-shell tests, drain-thread-deadlock test, BISMARK_BIN edge cases). Closes #868. |
 | **H** | Real-data byte-identity gate (10M PE WGBS + 55M full) + CHANGELOG + version tag. | ~200 LOC test |
 
 Total: ~4,000 LOC Rust to port ~6,050 LOC Perl. Compression ratio matches dedup's 35-40% (Rust's type system + bismark-io leverage shrink the line count).
@@ -759,7 +814,7 @@ Total: ~4,000 LOC Rust to port ~6,050 LOC Perl. Compression ratio matches dedup'
 
 | Priority | Question | Default plan |
 |----------|----------|--------------|
-| Critical | Subprocess-vs-inline for `--bedGraph` / `--cytosine_report` in v1.0? | **Subprocess** (matches Perl's architecture; faithful). Inline migration is a v1.x concern once bismark-bedgraph + bismark-coverage2cytosine ship. |
+| Resolved | Subprocess-vs-inline for `--bedGraph` / `--cytosine_report` in v1.0? | **Subprocess** — implemented in `src/subprocess.rs` (Phase G, `1.0.0-alpha.9`). Inline migration deferred to v1.x once bismark-bedgraph + bismark-coverage2cytosine ship. See §6.6 matrix. |
 | Open | `--fasta` flag — keep accepted-no-op or reject? | Keep accepted-no-op with a one-line stderr deprecation warning. |
 | Open | `--samtools_path` flag — accept-no-op like dedup, or reject? | Accept-no-op (matches dedup precedent). |
 | Open | `--genome_folder` Perl default is hardcoded mouse genome — keep, change, or reject? | **Reject** without explicit value when `--cytosine_report` is set (the Perl default is mouse-team-specific and would mis-target the genome silently). Error message: `--cytosine_report requires --genome_folder <PATH-TO-BISMARK-GENOME-DIR>; the Perl default mouse path is not honoured in the Rust port`. |
@@ -781,7 +836,7 @@ Each maps to a §6 design choice that prevents the class of bug.
 | Read-identity threading via inline parameter check | Perl 2821-2822, 4349 | `ReadIdentity` is a typed enum (`bismark-io::ReadIdentity`); extraction functions take it as an explicit arg. |
 | XM tag + CIGAR reversal for `-` strand (read-orientation correction, not output formatting) | Perl 1619-1621, 1933-1939, 2877-2886, 4422-4425 | §6.5 (rev 1): `bismark-io 1.0.0-beta.6` adds `iter_aligned()` adapter that yields 5'-oriented `(read_pos, ref_pos, xm_byte)` triples. Extractor consumes the iterator; orientation correction is hidden in `bismark-io`. Closes both rev 0 reviewers' XM-reversal finding. |
 | Overlap detection InDel-aware position offset | Perl 2891-2906, 1944-1977 | Use `bismark-io::CigarExt::reference_end()` (already InDel-aware via the existing CIGAR walker). |
-| Subprocess error propagation (bismark2bedGraph / coverage2cytosine) | Perl 377, 424 | Wrap subprocess calls in `std::process::Command::output()`; capture stderr + bubble as `BismarkExtractorError::SubprocessFailed`. |
+| Subprocess error propagation (bismark2bedGraph / coverage2cytosine) | Perl 377, 424 | **Phase G impl**: `Command::spawn()` with `Stdio::piped()` stderr + drain thread that tees live to parent's stderr and retains the trailing 64 KiB in a `VecDeque<u8>` ring buffer. Drain spawned BEFORE `child.wait()` (no pipe-deadlock); always joined before return. Non-zero exit → `BismarkExtractorError::SubprocessFailed { tool, exit_status, stderr_tail: Vec<u8> }`. Missing tool → `SubprocessNotFound { tool, searched_paths }`. Spawn failure → `SubprocessSpawnFailed { tool, source: io::Error }`. `read_until(b'\n', &mut Vec<u8>)` is used (byte-safe on non-UTF-8 stderr). |
 | Per-process splitting reports merged at end | Perl 307-312, 1439 | Rayon model produces a single per-run report from the main thread — no merge step needed. |
 
 ## 13. References

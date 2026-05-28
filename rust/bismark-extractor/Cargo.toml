@@ -1,7 +1,7 @@
 [package]
 name = "bismark-extractor"
-version = "1.0.0-alpha.8"
-description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase C.2: splitting-report format alignment + empty-file deletion)"
+version = "1.0.0-alpha.9"
+description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase G: bedGraph + cytosine_report subprocess chain)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -33,6 +33,9 @@ flate2 = "=1.1.9"
 # Phase F: bounded MPMC channels for producer→worker (N×32) and
 # worker→collector (N×8). Pin verified via cargo tree.
 crossbeam-channel = "=0.5.15"
+# Phase G: PATH-based subprocess discovery for bismark2bedGraph + coverage2cytosine.
+# Cross-platform PATH lookup; honours BISMARK_BIN env override per SPEC §6.6.
+which = "=7.0.3"
 # (rayon was added then dropped during Phase F implementation. Reason:
 # `rayon::ThreadPool::scope()` consumes one pool thread for its closure,
 # deadlocking at N=1 with our producer/worker/collector pattern. Switched
