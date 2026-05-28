@@ -302,7 +302,7 @@ fn drop_overlap_forward_pair_drops_r2_at_or_before_r1_end() {
         (149, CytosineContext::CpG, true),
         (150, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].ref_pos, 150);
 }
@@ -325,7 +325,7 @@ fn drop_overlap_reverse_pair_drops_r2_at_or_after_r1_start() {
         (200, CytosineContext::CpG, true),
         (201, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].ref_pos, 199);
 }
@@ -355,7 +355,7 @@ fn drop_overlap_disjoint_forward_pair_keeps_all_r2_calls() {
         (310, CytosineContext::CpG, true),
         (340, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(
         kept.len(),
         3,
@@ -388,7 +388,7 @@ fn drop_overlap_fully_overlapping_pair_drops_all_r2_calls() {
         (120, CytosineContext::CHG, true),
         (148, CytosineContext::CHH, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(
         kept.len(),
         0,
@@ -415,7 +415,7 @@ fn drop_overlap_with_r1_indel_uses_reference_end() {
         (201, CytosineContext::CpG, true),
         (202, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].ref_pos, 202);
 }
@@ -439,7 +439,7 @@ fn drop_overlap_with_r1_end_deletion() {
         (151, CytosineContext::CpG, true),
         (152, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].ref_pos, 152);
 }
@@ -468,7 +468,7 @@ fn drop_overlap_with_r1_insertion_shifts_read_pos_only() {
     ]);
     // C.1 polarity fix (#862): R1 `50M2I50M` at 100 → reference_end = 199.
     // Strict-`>` keep → drop 198, 199 (≤ 199); keep 200 (R2's unique region).
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].ref_pos, 200);
 }
@@ -496,7 +496,7 @@ fn drop_overlap_real_data_fr_pair_with_gap_keeps_all_r2_calls() {
         (220, CytosineContext::CHG, true),
         (235, CytosineContext::CHH, false),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(
         kept.len(),
         4,
@@ -524,7 +524,7 @@ fn drop_overlap_partial_overlap_reverse_pair() {
         (200, CytosineContext::CpG, true),
         (201, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 2);
     assert_eq!(kept[0].ref_pos, 195, "R2 unique upstream call kept");
     assert_eq!(
@@ -563,7 +563,7 @@ fn drop_overlap_r1_with_n_skip_op() {
         (1199, CytosineContext::CpG, true),
         (1200, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(
         kept[0].ref_pos, 1200,
@@ -593,7 +593,7 @@ fn drop_overlap_r1_with_5prime_soft_clip() {
         (199, CytosineContext::CpG, true),
         (200, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(
         kept[0].ref_pos, 200,
@@ -622,7 +622,7 @@ fn drop_overlap_r1_with_3prime_soft_clip() {
         (199, CytosineContext::CpG, true),
         (200, CytosineContext::CpG, true),
     ]);
-    let kept = drop_overlap(r2_calls, &pair).unwrap();
+    let kept = drop_overlap(r2_calls, &pair, 0).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(
         kept[0].ref_pos, 200,
@@ -1510,7 +1510,12 @@ mod ignore_3prime_879 {
     /// - With fix (ignore_3p_r1=5, boundary 194): keep 195, 197, 200.
     #[test]
     fn drop_overlap_with_ignore_3p_r1_forward_pair() {
-        let pair = helpers::ot_pair(b"ZZZ", 100, b"ZZZ", 195, b"pair1");
+        // 100-char XM → R1 CIGAR = 100M; ot_pair's synth builds the CIGAR
+        // from XM length so we need the full ~100bp R1 to assert against
+        // r1_ref_end = 199 (un-clipped) / 194 (clipped n=5).
+        let xm100 = vec![b'Z'; 100];
+        let r2xm = vec![b'Z'; 100];
+        let pair = helpers::ot_pair(&xm100, 100, &r2xm, 195, b"pair1");
         let r2_calls = vec![
             MethCall {
                 ref_pos: 195,
@@ -1549,7 +1554,9 @@ mod ignore_3prime_879 {
     /// - With fix (ignore_3p_r1=5, boundary 105): keep 99, 103.
     #[test]
     fn drop_overlap_with_ignore_3p_r1_reverse_pair() {
-        let pair = helpers::ob_pair(b"ZZZ", 100, b"ZZZ", 95, b"pair2");
+        let xm100 = vec![b'Z'; 100];
+        let r2xm = vec![b'Z'; 100];
+        let pair = helpers::ob_pair(&xm100, 100, &r2xm, 95, b"pair2");
         let r2_calls = vec![
             MethCall {
                 ref_pos: 99,
@@ -1585,7 +1592,9 @@ mod ignore_3prime_879 {
     /// 200.
     #[test]
     fn drop_overlap_ignore_3p_r1_zero_is_no_op() {
-        let pair = helpers::ot_pair(b"ZZZ", 100, b"ZZZ", 195, b"pair3");
+        let xm100 = vec![b'Z'; 100];
+        let r2xm = vec![b'Z'; 100];
+        let pair = helpers::ot_pair(&xm100, 100, &r2xm, 195, b"pair3");
         let r2_calls = vec![
             MethCall {
                 ref_pos: 195,
@@ -1621,7 +1630,9 @@ mod ignore_3prime_879 {
     /// the clipped boundary.
     #[test]
     fn drop_overlap_with_ignore_3p_r1_at_boundary() {
-        let pair = helpers::ot_pair(b"ZZ", 100, b"ZZ", 194, b"pair4");
+        let xm100 = vec![b'Z'; 100];
+        let r2xm = vec![b'Z'; 100];
+        let pair = helpers::ot_pair(&xm100, 100, &r2xm, 194, b"pair4");
         let r2_calls = vec![
             MethCall {
                 ref_pos: 194, // == boundary → drop (predicate is strict `>`)

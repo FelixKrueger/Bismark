@@ -83,6 +83,7 @@ use crate::error::BismarkExtractorError;
 pub fn drop_overlap(
     mut r2_calls: Vec<MethCall>,
     pair: &BismarkPair,
+    ignore_3p_r1: u32,
 ) -> Result<Vec<MethCall>, BismarkExtractorError> {
     let r1_start =
         pair.r1()
@@ -98,14 +99,35 @@ pub fn drop_overlap(
         // Perl 3826 drop predicate (post-transformation): `if r2_pos <= r1_ref_end { return; }`.
         // Keep predicate (strict inverse): `r2_pos > r1_ref_end`.
         // (Pre-C.1 had the polarity reversed — see SPEC §7.4 rev 3.)
-        let r1_ref_end = pair.r1().cigar().reference_end(r1_start) as u32;
+        //
+        // #879 fix: when `--ignore_3prime N` is set, Perl L1726-1782 adjusts
+        // R1's CIGAR by popping the last N read-positions (plus any adjacent
+        // D/N) BEFORE computing `$end_read_1`. Use `reference_end_after_3p_trim`
+        // which encapsulates that adjustment via the bismark-io CIGAR-trim
+        // primitive. With `ignore_3p_r1 == 0` the helper is a no-op fast-path
+        // — no perf regression on the default cell.
+        let r1_ref_end = pair
+            .r1()
+            .cigar()
+            .reference_end_after_3p_trim(r1_start, ignore_3p_r1) as u32;
         r2_calls.retain(|c| c.ref_pos > r1_ref_end);
     } else {
         // OB/CTOT pair: R2 is upstream, R1 is downstream.
         // Perl 3745 drop predicate (post-transformation): `if r2_pos >= r1_ref_start { return; }`.
         // Keep predicate (strict inverse): `r2_pos < r1_ref_start`.
         // (Pre-C.1 had the polarity reversed — see SPEC §7.4 rev 3.)
-        let r1_ref_start = r1_start as u32;
+        //
+        // #879 fix: when `--ignore_3prime N` is set on OB R1, Perl L1781-1789
+        // adjusts R1's CIGAR by shifting the first N read-positions from the
+        // LEFT (with adjacent-D/N absorption) and then `$start_read_1`
+        // advances by the ref-positions consumed in the trimmed prefix
+        // (Perl L1803's composite shift formula). Use
+        // `reference_start_after_3p_trim` which computes the same shift via
+        // `original_ref_span - trimmed_ref_span`.
+        let r1_ref_start =
+            pair.r1()
+                .cigar()
+                .reference_start_after_3p_trim(r1_start, ignore_3p_r1) as u32;
         r2_calls.retain(|c| c.ref_pos < r1_ref_start);
     }
     Ok(r2_calls)

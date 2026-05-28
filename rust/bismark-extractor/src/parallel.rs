@@ -708,7 +708,7 @@ fn process_pe(
         mbias_only_silence,
     )?;
     let r2_calls = if config.no_overlap {
-        drop_overlap(r2_calls_raw, pair)?
+        drop_overlap(r2_calls_raw, pair, config.ignore_3p_r1)?
     } else {
         r2_calls_raw
     };
