@@ -370,4 +370,180 @@ mod tests {
         let c = cigar_from_ops(&[]);
         assert_eq!(c.aligned_positions().count(), 0);
     }
+
+    // ─── #879 — CIGAR-trim primitive + ref-boundary helpers ──────────────
+    //
+    // These tests guard `trim_3p_read_positions` and the two thin caller
+    // helpers (`reference_end_after_3p_trim`, `reference_start_after_3p_trim`)
+    // that drop_overlap uses to mirror Perl's `--ignore_3prime` CIGAR
+    // adjustment at bismark_methylation_extractor:1726-1782. See plan
+    // file plans/05262026_bismark-extractor/BUG_879_FIXES_PLAN.md for
+    // context + the two rounds of dual plan-review.
+
+    // Helper: round-trip a Cigar through a Vec<(Kind, usize)> shape so test
+    // assertions stay readable.
+    fn ops_of(cigar: &Cigar) -> Vec<(Kind, usize)> {
+        cigar.as_ref().iter().map(|op| (op.kind(), op.len())).collect()
+    }
+
+    #[test]
+    fn trim_3p_zero_is_identity_right() {
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        let trimmed = c.trim_3p_read_positions(0, false);
+        assert_eq!(ops_of(&trimmed), ops_of(&c));
+    }
+
+    #[test]
+    fn trim_3p_zero_is_identity_left() {
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        let trimmed = c.trim_3p_read_positions(0, true);
+        assert_eq!(ops_of(&trimmed), ops_of(&c));
+    }
+
+    #[test]
+    fn trim_3p_simple_match_right() {
+        // 100M trim 5 from right → 95M
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        let trimmed = c.trim_3p_read_positions(5, false);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 95)]);
+    }
+
+    #[test]
+    fn trim_3p_simple_match_left() {
+        // 100M trim 5 from left → 95M
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        let trimmed = c.trim_3p_read_positions(5, true);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 95)]);
+    }
+
+    #[test]
+    fn trim_3p_with_trailing_deletion_strips_D() {
+        // C1 regression guard: 90M5D, trim 5 from right.
+        // The 5 read-positions of M are removed PLUS the now-trailing 5D is
+        // stripped per Perl L1760-1764 `while ($op eq 'D')` loop.
+        // Result: 85M.
+        let c = cigar_from_ops(&[(Kind::Match, 90), (Kind::Deletion, 5)]);
+        let trimmed = c.trim_3p_read_positions(5, false);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 85)]);
+    }
+
+    #[test]
+    fn trim_3p_with_trailing_skip_strips_N() {
+        // C1 regression guard: 90M5N, trim 5 from right.
+        // Same as the trailing-D case but with Skip (N) ops.
+        let c = cigar_from_ops(&[(Kind::Match, 90), (Kind::Skip, 5)]);
+        let trimmed = c.trim_3p_read_positions(5, false);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 85)]);
+    }
+
+    #[test]
+    fn trim_3p_with_leading_deletion_strips_D_when_from_left() {
+        // C3 regression guard: 5D90M, trim 5 from left.
+        // The 5 read-positions of M (from the front of the M block) are
+        // removed PLUS the now-leading 5D is stripped (Perl reverse-strand
+        // `shift @comp_cigar` + adjacent-D strip).
+        // Result: 85M.
+        let c = cigar_from_ops(&[(Kind::Deletion, 5), (Kind::Match, 90)]);
+        let trimmed = c.trim_3p_read_positions(5, true);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 85)]);
+    }
+
+    #[test]
+    fn trim_3p_clipping_into_insertion_no_ref_impact() {
+        // 95M5I trim 5 from right → 95M (the 5 read positions of I are
+        // removed; I doesn't consume ref so reference_end is unchanged).
+        let c = cigar_from_ops(&[(Kind::Match, 95), (Kind::Insertion, 5)]);
+        let trimmed = c.trim_3p_read_positions(5, false);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 95)]);
+    }
+
+    #[test]
+    fn trim_3p_full_clip_returns_empty_cigar() {
+        // 100M trim 100 from right → empty Cigar.
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        let trimmed = c.trim_3p_read_positions(100, false);
+        assert_eq!(ops_of(&trimmed), vec![]);
+    }
+
+    #[test]
+    fn trim_3p_middle_D_is_NOT_stripped() {
+        // Reviewer A R2 negative-regression guard: 90M5D5M, trim 5 from right.
+        // The 5M at the trailing end clips. The 5D in the MIDDLE must NOT be
+        // stripped — only adjacent-to-trimmed-boundary D/N ops are stripped
+        // per Perl L1760-1764. Result: 90M5D.
+        let c = cigar_from_ops(&[(Kind::Match, 90), (Kind::Deletion, 5), (Kind::Match, 5)]);
+        let trimmed = c.trim_3p_read_positions(5, false);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 90), (Kind::Deletion, 5)]);
+    }
+
+    #[test]
+    fn trim_3p_left_with_soft_clip_prefix() {
+        // Reviewer B R2 OB-soft-clip guard: 5S95M, trim 5 from left.
+        // The 5 read-positions of S are removed. S doesn't consume ref so
+        // the trimmed CIGAR's ref_span (95) == original ref_span (95);
+        // reference_start_after_3p_trim(start, 5) therefore returns start
+        // unchanged. This is the OB R1 BAM-5'-with-soft-clip edge case.
+        let c = cigar_from_ops(&[(Kind::SoftClip, 5), (Kind::Match, 95)]);
+        let trimmed = c.trim_3p_read_positions(5, true);
+        assert_eq!(ops_of(&trimmed), vec![(Kind::Match, 95)]);
+    }
+
+    #[test]
+    fn reference_end_after_3p_trim_zero_is_existing_reference_end() {
+        // With n=0, the helper returns the same value as the existing
+        // reference_end. Regression guard for default-cell behavior.
+        let c = cigar_from_ops(&[
+            (Kind::Match, 50),
+            (Kind::Deletion, 5),
+            (Kind::Match, 50),
+        ]);
+        assert_eq!(c.reference_end_after_3p_trim(100, 0), c.reference_end(100));
+    }
+
+    #[test]
+    fn reference_end_after_3p_trim_simple() {
+        // 100M from start=100, n=5: trimmed to 95M, reference_end = 194
+        // (vs un-clipped 199).
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        assert_eq!(c.reference_end_after_3p_trim(100, 5), 194);
+    }
+
+    #[test]
+    fn reference_start_after_3p_trim_zero_is_start() {
+        // With n=0, no shift applied; helper returns start unchanged.
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        assert_eq!(c.reference_start_after_3p_trim(100, 0), 100);
+    }
+
+    #[test]
+    fn reference_start_after_3p_trim_simple() {
+        // 100M, start=100, n=5 from left: 5 ref positions consumed from
+        // prefix → start shifts to 105.
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        assert_eq!(c.reference_start_after_3p_trim(100, 5), 105);
+    }
+
+    #[test]
+    fn reference_start_after_3p_trim_with_leading_D() {
+        // C3 regression guard for OB composite shift.
+        // 5D90M, start=100, n=5 from left:
+        //   - 5 M clipped (read positions)
+        //   - 5 D adjacent stripped (ref-consuming)
+        //   → trimmed CIGAR is 85M with ref_span 85
+        //   → shift = 95 (original) - 85 (trimmed) = 10
+        //   → result = 100 + 10 = 110
+        // Equivalent to Perl L1803 `$start += $ignore_3prime + $D_count
+        // + $N_count - $I_count` = 5 + 5 + 0 - 0 = 10.
+        let c = cigar_from_ops(&[(Kind::Deletion, 5), (Kind::Match, 90)]);
+        assert_eq!(c.reference_start_after_3p_trim(100, 5), 110);
+    }
+
+    #[test]
+    fn reference_end_after_3p_trim_full_clip_returns_start() {
+        // C2 regression guard: full-clip returns `start` (matching the
+        // existing reference_end_with_empty_cigar_returns_start convention
+        // at cigar.rs:276-278). 100M, start=100, n=100 → returns 100.
+        let c = cigar_from_ops(&[(Kind::Match, 100)]);
+        assert_eq!(c.reference_end_after_3p_trim(100, 100), 100);
+    }
 }
