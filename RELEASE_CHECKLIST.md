@@ -135,13 +135,81 @@ Recording:
 
 ### PE matrix (closes #872)
 
-**TODO — to be populated by #872's PR.** Until #872 lands, this section
-is a stub. v1.0 tag is blocked on #872 implementation + PE matrix PASS.
+```bash
+# Confirm the 10M PE BAM path on colossal first:
+ls /weka/projects/bioinf/Data/Felix/bismark_benchmarks/10M_PE/
+# Expected: SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplicated.bam (mirroring
+# oxy layout; verify on first colossal session and update this checklist +
+# plan if path differs).
 
-When #872 lands, the section will mirror the SE block above with:
-- `bash scripts/phase_h_pe_matrix.sh <PE_BAM> --out ~/phase_h_pe_release/`
-- Verify steps for the 5 PE cells (D, R1-5', R2-5', R1+R2-3', include_overlap)
-- Comment on #798 with "PE matrix: PASS at <date>"
+# Pre-flight: the driver computes the BAM MD5 (~5-10 s for 1.2 GB) +
+# samtools view -c (~30 s) for the overlap-fraction gate. Total pre-flight
+# ~1 min; matrix proper takes 1.5-4 h (rev 1 A-O2 honest range).
+bash scripts/phase_h_pe_matrix.sh \
+  /weka/projects/bioinf/Data/Felix/bismark_benchmarks/10M_PE/SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplicated.bam \
+  --out ~/phase_h_pe_release/   # use a fresh dir, NOT clobbering a prior run
+```
+
+Verify:
+
+- [ ] Exit code 0 (PASS) or 3 (perf-miss-only — v1.0 may ship at exit 3 per
+      PHASE_H_PE_PLAN §1; Phase C.2 era measured 0.9× on default PE, so
+      first colossal run may legitimately land on exit 3). Exit 1 blocks v1.0;
+      exit 2 is pre-flight (fix env + re-run).
+- [ ] `~/phase_h_pe_release/matrix_verdict.txt` reports PASS aggregates.
+- [ ] `~/phase_h_pe_release/cell_p1_D/diff_summary.txt` confirms:
+      - `*_splitting_report.txt` cmp PASS per-cell (rev 1 A-I5 dropped the
+        absolute 875 B size lock; per-cell Perl-vs-Rust byte-cmp is the
+        Phase C.2 format regression guard).
+      - `*.M-bias.txt` cmp PASS at byte size **11,443** (the locked Phase C.1
+        polarity regression-guard baseline).
+- [ ] `~/phase_h_pe_release/cross_n_summary.txt` shows PASS for all 5
+      CELL_IDs (Rust-N=1 ≡ Rust-N=4 raw-byte; SPEC §8.3 row 4). Cross-N
+      runs unconditionally per cell even if byte-identity FAILed (rev 1
+      B-Imp-4 — preserves diagnostic signal).
+- [ ] `~/phase_h_pe_release/speedup_table.md` shows the **Rust/Perl** column
+      (NOT Perl/Rust — column header semantics matter for release-engineer
+      reading; mirrors SE rev 3 B-L1 fix). Rust-scaling-at-N=4 ≥ 4×
+      preferred but exit 3 acceptable for v1.0.
+- [ ] `~/phase_h_pe_release/speedup_table.md` "Mixed-metric differential"
+      section reports PASS:
+      - `r1_5p` / `r2_5p` / `r1r2_3p`: M-bias data row count strictly < D
+        (`--ignore N` removes positions monotonically).
+      - `overlap`: M-bias count-sum (methylated + unmethylated) strictly > D
+        by ≥5% (rev 1 A-O3 — `--include_overlap` accumulates counts at
+        existing positions; row count is unchanged because M-bias positions
+        are read-relative; count-sum strictly increases).
+- [ ] `~/phase_h_pe_release/speedup_table.md` "Properly-paired fraction"
+      header ≥ 80% (rev 1 A-I1 pre-flight gate already enforced this; this
+      verify confirms the recorded value).
+- [ ] `~/phase_h_pe_release/speedup_table.md` "Input BAM MD5" matches the
+      planner's reference (rev 1 B-Opt-4 fixture-drift detector). On first
+      colossal session, record the MD5; mismatch on later runs signals
+      silent BAM swap-in.
+
+Recording:
+
+- [ ] Comment on epic #798 with the speedup_table.md content + "PE matrix:
+      PASS at <date>" (or "PE matrix: PASS + perf-miss at <date>" with the
+      perf sub-issue link if exit 3).
+
+### Escalation: colossal-vs-planner baseline drift (rev 1 A-I4)
+
+If the PE matrix exits 1 with `M-bias baseline 11,443 B drift (or missing
+file) at (D, N=1) cell` BUT `cell_p1_D/diff_summary.txt` shows per-cell
+Perl-vs-Rust byte-cmp PASS:
+
+1. This is BAM/env mismatch, NOT a Rust regression. Confirm via per-cell
+   byte-cmp PASS.
+2. Verify the BAM MD5 in `speedup_table.md` differs from the planner's
+   reference (or document a new locked BAM if intentional).
+3. Verify the prior 11,443 B baseline was a transcription error: search
+   git log + memory for the original oxy measurement.
+4. If verification confirms the colossal value is correct: file a rev-2
+   baseline-update PR replacing 11,443 B with the new value in BOTH
+   `scripts/phase_h_pe_matrix.sh` AND SPEC §8.3.
+5. Re-run matrix on a fresh `--out` dir. Do NOT bypass the gate without
+   the baseline-update PR.
 
 ### v1.0 tag steps
 
