@@ -251,8 +251,7 @@ mod tests {
         *record.name_mut() = Some(BString::from(b"read1".to_vec()));
         *record.flags_mut() = noodles_sam::alignment::record::Flags::from(0u16);
         *record.reference_sequence_id_mut() = Some(0);
-        *record.alignment_start_mut() =
-            Some(noodles_core::Position::try_from(10).unwrap());
+        *record.alignment_start_mut() = Some(noodles_core::Position::try_from(10).unwrap());
         // sequence: arbitrary but length must match. Use 'A' for all bases.
         *record.sequence_mut() = Sequence::from(vec![b'A'; seq_len]);
         *record.quality_scores_mut() =
@@ -269,12 +268,14 @@ mod tests {
         record
             .data_mut()
             .insert(Tag::from(*b"XM"), Value::String(BString::from(xm.to_vec())));
-        record
-            .data_mut()
-            .insert(Tag::from(*b"XR"), Value::String(BString::from(b"CT".to_vec())));
-        record
-            .data_mut()
-            .insert(Tag::from(*b"XG"), Value::String(BString::from(b"CT".to_vec())));
+        record.data_mut().insert(
+            Tag::from(*b"XR"),
+            Value::String(BString::from(b"CT".to_vec())),
+        );
+        record.data_mut().insert(
+            Tag::from(*b"XG"),
+            Value::String(BString::from(b"CT".to_vec())),
+        );
         BismarkRecord::from_noodles_record(record).expect("synth BismarkRecord")
     }
 
@@ -298,7 +299,11 @@ mod tests {
             "after ignore_5p=2, positions must be rebased to 0..3 (not the absolute 2..5)"
         );
         // Defensive: also verify no extra calls leaked through the filter.
-        assert_eq!(calls.len(), 4, "must emit exactly 4 calls after 2-base ignore");
+        assert_eq!(
+            calls.len(),
+            4,
+            "must emit exactly 4 calls after 2-base ignore"
+        );
     }
 
     #[test]

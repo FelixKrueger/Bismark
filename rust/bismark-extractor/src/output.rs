@@ -925,7 +925,10 @@ mod tests {
     // other 7 references are reads/pass-throughs. SE → `$no_overlap` stays
     // undef → falsy → line 5037 emission skipped.
 
-    fn default_config_for_splitting_report(paired_mode: PairedMode, no_overlap: bool) -> ResolvedConfig {
+    fn default_config_for_splitting_report(
+        paired_mode: PairedMode,
+        no_overlap: bool,
+    ) -> ResolvedConfig {
         ResolvedConfig {
             files: vec![PathBuf::from("sample.bam")],
             paired_mode,
