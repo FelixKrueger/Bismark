@@ -185,7 +185,9 @@ impl ExtractState {
                 &raw_filename,
                 &config.output_dir,
                 &finalization.kept,
-                &crate::subprocess::RealRunner { quiet: config.quiet },
+                &crate::subprocess::RealRunner {
+                    quiet: config.quiet,
+                },
             )?;
         }
 

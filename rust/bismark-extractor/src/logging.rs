@@ -142,13 +142,20 @@ fn filter_header_text(text: &str, include_sq: bool) -> Vec<String> {
 /// Parameter-summary block (Perl `bismark_methylation_extractor:54`-style).
 #[must_use]
 pub fn parameters_text(config: &ResolvedConfig, is_paired: bool) -> String {
-    let lib = if is_paired { "paired-end" } else { "single-end" };
+    let lib = if is_paired {
+        "paired-end"
+    } else {
+        "single-end"
+    };
     let mut s = String::new();
     s.push_str(&format!("Treating file(s) as {lib} data\n\n"));
     s.push_str("Summarising Bismark methylation extractor parameters:\n");
     s.push_str("=======================================================\n");
     s.push_str(&format!("Bismark {lib} format specified\n"));
-    s.push_str(&format!("Number of parallel workers: {}\n", config.parallel.max(1)));
+    s.push_str(&format!(
+        "Number of parallel workers: {}\n",
+        config.parallel.max(1)
+    ));
     s.push_str(&format!(
         "Output will be written to: {}\n",
         config.output_dir.display()
