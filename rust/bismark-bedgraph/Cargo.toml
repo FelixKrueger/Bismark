@@ -23,7 +23,14 @@ thiserror = "=2.0.0"
 # Plain/gzipped text I/O — bismark2bedGraph reads the extractor's
 # per-context call files and writes gzipped bedGraph + coverage. No BAM,
 # so no bismark-io / noodles dependency (SPEC §5).
-flate2 = "=1.1.9"
+#
+# Backend: `zlib-rs` (pure-Rust port of zlib-ng) instead of the default
+# `miniz_oxide` — markedly faster DEFLATE on the two large output streams,
+# with NO C/cmake build dependency. Decompressed-content identity (SPEC D1)
+# is independent of the compression backend, so this is a safe perf-only
+# change. Follow-up to the PR #893 real-data walk, where miniz_oxide made
+# the port ~0.4–0.5× Perl's speed (byte-identical but slower).
+flate2 = { version = "=1.1.9", default-features = false, features = ["zlib-rs"] }
 # Faster HashMap for the (chr,pos) aggregation map; lowers the per-entry
 # constant for the large --CX case (SPEC §1.1 D3 / I3).
 rustc-hash = "=2.1.0"
