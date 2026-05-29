@@ -108,6 +108,26 @@ pub enum BismarkC2cError {
         /// Its length in bp.
         len: usize,
     },
+
+    /// The coverage file contained no data lines. Mirrors Perl's
+    /// "No last chromosome was defined" die (`:472-474`) — raised before any
+    /// uncovered-chromosome pass, even when `--coverage_threshold == 0`.
+    #[error(
+        "no data found in the coverage file — something went wrong reading it (wrong path, or a gzipped file given without a .gz extension?)"
+    )]
+    EmptyCoverageInput,
+
+    /// A coverage line could not be parsed (fewer than 6 tab fields, or a
+    /// non-numeric position/count). Accepted divergence from Perl's lenient
+    /// numeric coercion (Phase-B review B-I1) — cannot occur on real
+    /// `bismark2bedGraph` output.
+    #[error(
+        "malformed coverage line {line_no} (expected: <chr>\\t<start>\\t<end>\\t<pct>\\t<meth>\\t<unmeth>)"
+    )]
+    MalformedCovLine {
+        /// 1-based line number in the coverage file.
+        line_no: usize,
+    },
 }
 
 #[cfg(test)]

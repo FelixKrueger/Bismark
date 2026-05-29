@@ -6,32 +6,48 @@
 //! epic #797) that unblocks the extractor's Phase H sub-gate 2 byte-identity
 //! gate. The binary is installed as `coverage2cytosine_rs`.
 //!
-//! See `plans/05292026_bismark-coverage2cytosine/SPEC.md` (rev 2) for the
+//! See `plans/05292026_bismark-coverage2cytosine/SPEC.md` (rev 3) for the
 //! design contract and the byte-identity-vs-Perl-v0.25.1 discipline.
 //!
 //! ## Status
 //!
-//! **Phase A** — scaffold + CLI/validation + genome reader. Public surface:
+//! **Phase B** — core genome-wide report (CpG / `--CX`, `--zero_based`,
+//! `--coverage_threshold`, cytosine-context summary), PLAIN output. Builds on
+//! Phase A (CLI/validation + genome reader). Public surface:
 //!
 //! - [`cli::Cli`] / [`cli::ResolvedConfig`] — clap parser + validated config.
-//! - [`genome::Genome`] — whole-genome FASTA reader (uppercased, Perl-quirk
-//!   faithful: `Mus_musculus.NCBIM37.fa` skip, four-suffix glob priority,
-//!   duplicate-name + malformed-file detection, `u32` length guard).
+//! - [`genome::Genome`] — whole-genome FASTA reader.
+//! - [`run`] — load the genome + generate the genome-wide report + summary.
 //! - [`error::BismarkC2cError`] — typed errors.
 //!
-//! The genome-wide report algorithm, `--gzip`/`--split_by_chromosome`,
-//! `--merge_CpGs`, and the real-data byte-identity gate land in Phases B–E.
+//! `--gzip`/`--split_by_chromosome`, `--merge_CpGs`, and the real-data
+//! byte-identity gate land in Phases C–E.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod cli;
+pub mod cov;
 pub mod error;
 pub mod genome;
+pub mod report;
+pub mod summary;
 
 pub use cli::{Cli, ResolvedConfig};
 pub use error::BismarkC2cError;
 pub use genome::Genome;
+
+/// Run the genome-wide cytosine report: load the genome into memory, then
+/// stream the coverage file and emit the report + cytosine-context summary
+/// (Phase B; plain output). Mirrors Perl `coverage2cytosine`'s top-level flow.
+pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
+    let genome = Genome::load(&config.genome_folder)?;
+    eprintln!(
+        "Stored sequence information of {} chromosomes/scaffolds in total",
+        genome.len()
+    );
+    report::run_report(config, &genome)
+}
 
 /// TG-style provenance string for the binary's `--version` output.
 ///
