@@ -1,8 +1,8 @@
 # EPIC — `bismark-coverage2cytosine` (Rust port of Perl `coverage2cytosine`)
 
-**Status:** rev 0 (phases confirmed by Felix 2026-05-29). Awaiting per-phase plans + dual plan-review before implementation.
+**Status:** rev 1 (2026-05-29). Phase A **shipped** (committed; board #891 → In Progress); phases B–E pending. Tracking issue: [#891](https://github.com/FelixKrueger/Bismark/issues/891).
 
-**Design contract:** [`SPEC.md`](./SPEC.md) (rev 1) — read it first. This epic is the lean coordination layer; the SPEC holds the byte-identity algorithm detail.
+**Design contract:** [`SPEC.md`](./SPEC.md) (rev 3) — read it first. This epic is the lean coordination layer; the SPEC holds the byte-identity algorithm detail.
 
 **Branch / worktree:** `rust/coverage2cytosine` in the isolated worktree `/Users/fkrueger/Github/Bismark-c2c` (off `origin/rust/iron-chancellor` @ 8a2a147). New crate `bismark-coverage2cytosine` in the `rust/` workspace.
 
@@ -69,5 +69,6 @@ Strictly sequential A→B→C→D→E (each merges to `rust/coverage2cytosine`; 
 
 - Design contract: [`SPEC.md`](./SPEC.md). Progress: [`PROGRESS.md`](./PROGRESS.md).
 - Perl source: `coverage2cytosine` (v0.25.1) at the Bismark repo root.
+- Tracking issue: [#891](https://github.com/FelixKrueger/Bismark/issues/891) (board: Bismark Rust rewrite → In Progress).
 - Sibling epic: #797 `bismark-bedgraph` (upstream producer; parallel session on `rust/bismark-bedgraph`).
 - Memory: [[project_coverage2cytosine_port]], [[project_phase_h_byte_identity_ordering]], [[reference_colossal_access]], [[project_rust_rewrite]].

@@ -2,7 +2,7 @@
 
 **Status:** rev 2 (manual-review questions resolved; Phase-A dual plan-review synced). Grounded against Perl `coverage2cytosine` v0.25.1 (2,321 LOC) + the established `bismark-io` / `bismark-extractor` / `bismark-dedup` Rust patterns. Phases A–E confirmed; Phase A PLAN at rev 1 (dual-reviewed, APPROVE-WITH-CHANGES folded). NOT yet approved for implementation (awaiting Felix's trigger).
 
-**Owners:** epic _(to be filed)_, this SPEC _(GitHub issue to be filed)_. Part of Phase H sub-gate 2 of the Bismark Rust port (the cytosine-report producer downstream of `bismark2bedGraph`).
+**Owners:** epic [#891](https://github.com/FelixKrueger/Bismark/issues/891). Part of Phase H sub-gate 2 of the Bismark Rust port (the cytosine-report producer downstream of `bismark2bedGraph`).
 
 **Target:** Perl `coverage2cytosine` (v0.25.1) at the Bismark repo root. **Byte-identical to Perl v0.25.1** for every output stream in the v1.0 scope (see §2).
 
