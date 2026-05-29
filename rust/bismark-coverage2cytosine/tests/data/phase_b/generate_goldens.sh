@@ -20,3 +20,8 @@ mv zero.CpG_report.txt zero.report.golden
 mv zero.cytosine_context_summary.txt zero.summary.golden
 mv thr.CpG_report.txt thr.report.golden
 mv thr.cytosine_context_summary.txt thr.summary.golden
+
+# ── Phase C goldens (whole-directory) ──
+rm -rf phase_c && mkdir -p phase_c/split phase_c/split_thr
+perl "$C2C" -o split -g genome --dir phase_c/split --split_by_chromosome in.cov >/dev/null 2>&1
+perl "$C2C" -o split -g genome --dir phase_c/split_thr --split_by_chromosome --coverage_threshold 5 in.cov >/dev/null 2>&1

@@ -104,7 +104,12 @@ pub struct Cli {
 pub struct ResolvedConfig {
     /// The positional coverage infile.
     pub cov_infile: PathBuf,
-    /// Output basename with the context-appropriate report suffix stripped.
+    /// The **verbatim** `-o` value (un-stripped). Used for `--split_by_chromosome`
+    /// filenames, where Perl appends `.chr{NAME}` before the suffix strip (which
+    /// then no-ops) — so a suffixed `-o` doubles its suffix. (Phase C / C1.)
+    pub output_raw: String,
+    /// Output basename with the context-appropriate report suffix stripped
+    /// (non-split filenames).
     pub output_stem: String,
     /// Output directory as a path *prefix* (empty string = cwd-relative;
     /// matches Perl's `"${output_dir}${file}"` concatenation).
@@ -192,6 +197,7 @@ impl Cli {
         } else {
             ".CpG_report.txt"
         };
+        let output_raw = output.clone(); // verbatim -o, for split filenames (C1)
         let output_stem = output
             .strip_suffix(suffix)
             .unwrap_or(output.as_str())
@@ -206,6 +212,7 @@ impl Cli {
 
         Ok(ResolvedConfig {
             cov_infile,
+            output_raw,
             output_stem,
             output_dir,
             parent_dir,

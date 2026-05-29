@@ -15,14 +15,57 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufWriter, Write};
+use std::path::{Path, PathBuf};
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
 
 use crate::cli::ResolvedConfig;
 use crate::cov;
 use crate::error::BismarkC2cError;
 use crate::genome::Genome;
 use crate::summary::ContextSummary;
+
+/// Output sink for a report file — plain or gzip, with an explicit `finish()`
+/// (Phase C). The context summary is never routed through this (always plain).
+enum ReportWriter {
+    Plain(BufWriter<File>),
+    Gz(GzEncoder<BufWriter<File>>),
+}
+
+impl ReportWriter {
+    /// Create (truncating) the file at `path`; wrap in a gzip encoder when
+    /// `gzip`. Truncation is load-bearing for `--split_by_chromosome`'s
+    /// reopen-on-every-transition semantics.
+    fn create(path: &Path, gzip: bool) -> Result<Self, BismarkC2cError> {
+        let bw = BufWriter::new(File::create(path)?);
+        Ok(if gzip {
+            ReportWriter::Gz(GzEncoder::new(bw, Compression::default()))
+        } else {
+            ReportWriter::Plain(bw)
+        })
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        match self {
+            ReportWriter::Plain(w) => w.write_all(buf),
+            ReportWriter::Gz(w) => w.write_all(buf),
+        }
+    }
+
+    /// Flush/finish the underlying stream. For gzip this writes the trailer —
+    /// called even on a zero-write encoder (→ a valid empty-gzip stream).
+    fn finish(self) -> Result<(), BismarkC2cError> {
+        match self {
+            ReportWriter::Plain(mut w) => w.flush()?,
+            ReportWriter::Gz(w) => {
+                w.finish()?;
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Cytosine context.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -176,21 +219,22 @@ pub(crate) fn emit_position(
     out.push(b'\n');
 }
 
-/// Walk one chromosome's genome sequence and write its report lines. A cov
-/// chromosome absent from the genome emits nothing (Perl's empty `while`-walk).
-fn flush_chromosome(
+/// Build one chromosome's report lines (the Phase-B kernel walk). A cov
+/// chromosome absent from the genome yields no bytes (Perl's empty `while`-walk).
+/// The caller routes the bytes to the single shared writer (non-split) or a
+/// per-chromosome writer (split).
+fn chromosome_report_bytes(
     name: &[u8],
     genome: &Genome,
     buffer: &HashMap<u32, (u32, u32)>,
     config: &ResolvedConfig,
     accumulate_summary: bool,
     summary: &mut ContextSummary,
-    w: &mut dyn Write,
-) -> Result<(), BismarkC2cError> {
-    let Some(seq) = genome.get(name) else {
-        return Ok(());
-    };
+) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
+    let Some(seq) = genome.get(name) else {
+        return out;
+    };
     for i in 0..seq.len() {
         if seq[i] == b'C' || seq[i] == b'G' {
             emit_position(
@@ -207,21 +251,34 @@ fn flush_chromosome(
             );
         }
     }
-    w.write_all(&out)?;
-    Ok(())
+    out
 }
 
-/// Generate the genome-wide cytosine report + context summary (Phase B, plain).
+/// Generate the genome-wide cytosine report(s) + context summary. Dispatches
+/// to the single-file path (default; gz-wrapped under `--gzip`) or the
+/// per-chromosome path (`--split_by_chromosome`).
 pub fn run_report(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
     // Create the output directory if a non-empty prefix was given (Perl mkdir).
     if !config.output_dir.is_empty() {
         std::fs::create_dir_all(&config.output_dir)?;
     }
-
     let mut reader = cov::open_cov(&config.cov_infile)?;
-    let mut report_w = open_report_writer(config)?;
     let mut summary = ContextSummary::new();
+    if config.split_by_chromosome {
+        run_split(config, genome, reader.as_mut(), &mut summary)
+    } else {
+        run_single(config, genome, reader.as_mut(), &mut summary)
+    }
+}
 
+/// Single-file report (default / `--gzip`): one writer for the whole genome.
+fn run_single(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    reader: &mut dyn BufRead,
+    summary: &mut ContextSummary,
+) -> Result<(), BismarkC2cError> {
+    let mut report_w = ReportWriter::create(&report_path(config, None), config.gzip)?;
     let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     let mut cur_chr: Option<Vec<u8>> = None;
     let mut buffer: HashMap<u32, (u32, u32)> = HashMap::new();
@@ -230,112 +287,189 @@ pub fn run_report(config: &ResolvedConfig, genome: &Genome) -> Result<(), Bismar
 
     loop {
         line.clear();
-        let n = reader.read_until(b'\n', &mut line)?;
-        if n == 0 {
+        if reader.read_until(b'\n', &mut line)? == 0 {
             break;
         }
         line_no += 1;
         let Some((chr, start, meth, nonmeth)) = cov::parse_cov_line(&line, line_no)? else {
-            continue; // blank line
+            continue;
         };
-        // Flush on every chromosome transition (NOT suppressed by `seen` — a
-        // non-contiguous chr re-flushes + re-emits, matching Perl :227).
         if cur_chr.as_deref() != Some(chr.as_slice()) {
             if let Some(prev) = cur_chr.take() {
-                flush_chromosome(
-                    &prev,
-                    genome,
-                    &buffer,
-                    config,
-                    true,
-                    &mut summary,
-                    &mut report_w,
-                )?;
+                let bytes = chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
+                report_w.write_all(&bytes)?;
             }
             buffer.clear();
-            // Seed the fresh buffer with the triggering line (Perl :453-455).
             seen.insert(chr.clone());
             cur_chr = Some(chr);
         }
-        buffer.insert(start, (meth, nonmeth)); // last-write-wins on a dup pos
+        buffer.insert(start, (meth, nonmeth));
     }
-
-    // Flush the final chromosome; empty input → error before the uncovered pass.
     match cur_chr.take() {
         None => return Err(BismarkC2cError::EmptyCoverageInput),
         Some(prev) => {
-            flush_chromosome(
-                &prev,
-                genome,
-                &buffer,
-                config,
-                true,
-                &mut summary,
-                &mut report_w,
-            )?;
+            let bytes = chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
+            report_w.write_all(&bytes)?;
         }
     }
-
-    // Uncovered chromosomes: only when threshold == 0 (Perl :714), bytewise
-    // sorted, all 0,0 coverage, no summary accumulation.
     if config.threshold == 0 {
         let empty: HashMap<u32, (u32, u32)> = HashMap::new();
         for name in genome.names_sorted() {
             if !seen.contains(name) {
-                flush_chromosome(
-                    name,
-                    genome,
-                    &empty,
-                    config,
-                    false,
-                    &mut summary,
-                    &mut report_w,
-                )?;
+                let bytes = chromosome_report_bytes(name, genome, &empty, config, false, summary);
+                report_w.write_all(&bytes)?;
             }
         }
     }
-    report_w.flush()?;
+    report_w.finish()?;
 
-    // Context summary (always written, uncompressed).
-    let mut summary_w = open_summary_writer(config)?;
-    summary.write_to(&mut summary_w)?;
-    summary_w.flush()?;
-
+    // Context summary — always plain (never gzipped).
+    let mut sw = BufWriter::new(File::create(summary_path(config, None))?);
+    summary.write_to(&mut sw)?;
+    sw.flush()?;
     Ok(())
 }
 
-// ── Filename derivation + writer seam (Phase C wraps these for gzip/per-chr) ──
+/// Per-chromosome report (`--split_by_chromosome`): a fresh truncating writer
+/// per chromosome (incl. re-appearance), and the Perl context-summary quirk —
+/// every chr gets an (empty) summary file, the full summary lands only in the
+/// LAST chromosome reopened.
+fn run_split(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    reader: &mut dyn BufRead,
+    summary: &mut ContextSummary,
+) -> Result<(), BismarkC2cError> {
+    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    let mut cur_chr: Option<Vec<u8>> = None;
+    let mut buffer: HashMap<u32, (u32, u32)> = HashMap::new();
+    let mut line: Vec<u8> = Vec::new();
+    let mut line_no = 0usize;
 
-fn report_filename(stem: &str, cx_context: bool) -> String {
-    if cx_context {
-        format!("{stem}.CX_report.txt")
-    } else {
-        format!("{stem}.CpG_report.txt")
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+        line_no += 1;
+        let Some((chr, start, meth, nonmeth)) = cov::parse_cov_line(&line, line_no)? else {
+            continue;
+        };
+        if cur_chr.as_deref() != Some(chr.as_slice()) {
+            if let Some(prev) = cur_chr.take() {
+                // A non-final covered chr: flush it (creates its report + empty
+                // summary file). It is never the last chr reopened (the final
+                // cur_chr is flushed after the loop), so its summary path is
+                // discarded — the full summary goes to a later chr.
+                flush_split_chromosome(&prev, genome, &buffer, config, true, summary)?;
+            }
+            buffer.clear();
+            seen.insert(chr.clone());
+            cur_chr = Some(chr);
+        }
+        buffer.insert(start, (meth, nonmeth));
     }
+    // The final cov chromosome is flushed here (never in the loop); empty input
+    // → error before the uncovered pass. This is the first definite value of
+    // `last_summary_path` (a `PathBuf`, not an `Option` — there is always ≥1 chr).
+    let mut last_summary_path = match cur_chr.take() {
+        None => return Err(BismarkC2cError::EmptyCoverageInput),
+        Some(prev) => flush_split_chromosome(&prev, genome, &buffer, config, true, summary)?,
+    };
+    if config.threshold == 0 {
+        let empty: HashMap<u32, (u32, u32)> = HashMap::new();
+        for name in genome.names_sorted() {
+            if !seen.contains(name) {
+                last_summary_path =
+                    flush_split_chromosome(name, genome, &empty, config, false, summary)?;
+            }
+        }
+    }
+
+    // Full summary → only the LAST chromosome reopened (others stay empty).
+    let mut sw = BufWriter::new(File::create(&last_summary_path)?);
+    summary.write_to(&mut sw)?;
+    sw.flush()?;
+    Ok(())
 }
 
-fn summary_filename(stem: &str) -> String {
-    format!("{stem}.cytosine_context_summary.txt")
+/// Split-mode per-chromosome flush: walk the chromosome, open a **fresh,
+/// truncating** per-chr report writer (no caching — a re-appearance truncates),
+/// write + finish; then create/truncate an empty per-chr summary file. Returns
+/// that summary path so the caller can route the full summary to the last one.
+fn flush_split_chromosome(
+    name: &[u8],
+    genome: &Genome,
+    buffer: &HashMap<u32, (u32, u32)>,
+    config: &ResolvedConfig,
+    accumulate_summary: bool,
+    summary: &mut ContextSummary,
+) -> Result<PathBuf, BismarkC2cError> {
+    let bytes = chromosome_report_bytes(name, genome, buffer, config, accumulate_summary, summary);
+    let mut w = ReportWriter::create(&report_path(config, Some(name)), config.gzip)?;
+    w.write_all(&bytes)?;
+    w.finish()?; // zero-emit chr: empty file (plain) / valid empty-gzip stream
+    let summary_path = summary_path(config, Some(name));
+    File::create(&summary_path)?; // empty (truncate) — Perl reopens '>' per chr
+    Ok(summary_path)
 }
 
-/// `{output_dir}{filename}` — `output_dir` is a path *prefix* (`""` = cwd, else
-/// ends with `/`), matching Perl's `"${output_dir}${file}"` concatenation.
-fn output_path(config: &ResolvedConfig, filename: &str) -> PathBuf {
-    PathBuf::from(format!("{}{}", config.output_dir, filename))
+// ── Filename derivation (Perl handle_filehandles:99-117) ────────────────────
+
+/// Report filename. Split (`chr = Some`) uses the **raw `-o`** + literal `.chr`
+/// infix with **no** suffix strip (Perl appends `.chr` before the strip, which
+/// then no-ops — so a suffixed `-o` doubles the suffix). Non-split uses the
+/// stripped stem. `.gz` appended under `--gzip`.
+fn report_name(
+    output_raw: &str,
+    output_stem: &str,
+    chr: Option<&[u8]>,
+    cx: bool,
+    gz: bool,
+) -> String {
+    let base = match chr {
+        Some(name) => format!("{output_raw}.chr{}", String::from_utf8_lossy(name)),
+        None => output_stem.to_string(),
+    };
+    let suffix = if cx {
+        ".CX_report.txt"
+    } else {
+        ".CpG_report.txt"
+    };
+    let gzs = if gz { ".gz" } else { "" };
+    format!("{base}{suffix}{gzs}")
 }
 
-/// Open the report writer. Phase B: `BufWriter<File>`. **Seam for Phase C**
-/// (gzip wrapping + per-chromosome multiplexing).
-fn open_report_writer(config: &ResolvedConfig) -> Result<Box<dyn Write>, BismarkC2cError> {
-    let fname = report_filename(&config.output_stem, config.cx_context);
-    let file = File::create(output_path(config, &fname))?;
-    Ok(Box::new(BufWriter::new(file)))
+/// Context-summary filename (never gzipped). Same base as the report.
+fn summary_name(output_raw: &str, output_stem: &str, chr: Option<&[u8]>) -> String {
+    let base = match chr {
+        Some(name) => format!("{output_raw}.chr{}", String::from_utf8_lossy(name)),
+        None => output_stem.to_string(),
+    };
+    format!("{base}.cytosine_context_summary.txt")
 }
 
-fn open_summary_writer(config: &ResolvedConfig) -> Result<Box<dyn Write>, BismarkC2cError> {
-    let fname = summary_filename(&config.output_stem);
-    let file = File::create(output_path(config, &fname))?;
-    Ok(Box::new(BufWriter::new(file)))
+/// `{output_dir}{name}` — `output_dir` is a path prefix (`""` = cwd, else ends `/`).
+fn report_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
+    PathBuf::from(format!(
+        "{}{}",
+        config.output_dir,
+        report_name(
+            &config.output_raw,
+            &config.output_stem,
+            chr,
+            config.cx_context,
+            config.gzip
+        )
+    ))
+}
+
+fn summary_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
+    PathBuf::from(format!(
+        "{}{}",
+        config.output_dir,
+        summary_name(&config.output_raw, &config.output_stem, chr)
+    ))
 }
 
 #[cfg(test)]
@@ -450,12 +584,81 @@ mod tests {
         assert!(got.ends_with('\n'));
     }
 
-    // ── Task 7: filename derivation ──
+    // ── Phase C: filename derivation (raw-`-o` split + gz suffix) ──
 
     #[test]
     fn filename_derivation() {
-        assert_eq!(report_filename("foo", false), "foo.CpG_report.txt");
-        assert_eq!(report_filename("foo", true), "foo.CX_report.txt");
-        assert_eq!(summary_filename("foo"), "foo.cytosine_context_summary.txt");
+        // non-split: stripped stem.
+        assert_eq!(
+            report_name("foo", "foo", None, false, false),
+            "foo.CpG_report.txt"
+        );
+        assert_eq!(
+            report_name("foo", "foo", None, true, true),
+            "foo.CX_report.txt.gz"
+        );
+        assert_eq!(
+            summary_name("foo", "foo", None),
+            "foo.cytosine_context_summary.txt"
+        );
+        // split: RAW `-o` + literal `.chr` infix, NO strip.
+        assert_eq!(
+            report_name("split", "split", Some(b"chr1"), false, false),
+            "split.chrchr1.CpG_report.txt"
+        );
+        assert_eq!(
+            report_name("split", "split", Some(b"chr1"), true, true),
+            "split.chrchr1.CX_report.txt.gz"
+        );
+        // suffixed `-o` split → doubled suffix (C1, the extractor path).
+        assert_eq!(
+            report_name("foo.CpG_report.txt", "foo", Some(b"chr1"), false, false),
+            "foo.CpG_report.txt.chrchr1.CpG_report.txt"
+        );
+        assert_eq!(
+            summary_name("split", "split", Some(b"chr1")),
+            "split.chrchr1.cytosine_context_summary.txt"
+        );
+    }
+
+    // ── Phase C: ReportWriter (plain / gz / empty-gz stream) ──
+
+    #[test]
+    fn report_writer_plain_round_trip() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("a.txt");
+        let mut w = ReportWriter::create(&p, false).unwrap();
+        w.write_all(b"hello\n").unwrap();
+        w.finish().unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"hello\n");
+    }
+
+    #[test]
+    fn report_writer_gz_round_trip() {
+        use std::io::Read;
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("a.gz");
+        let mut w = ReportWriter::create(&p, true).unwrap();
+        w.write_all(b"hello\n").unwrap();
+        w.finish().unwrap();
+        let mut d = flate2::read::MultiGzDecoder::new(std::fs::File::open(&p).unwrap());
+        let mut s = Vec::new();
+        d.read_to_end(&mut s).unwrap();
+        assert_eq!(s, b"hello\n");
+    }
+
+    #[test]
+    fn report_writer_gz_empty_is_valid_stream() {
+        use std::io::Read;
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("e.gz");
+        let w = ReportWriter::create(&p, true).unwrap();
+        w.finish().unwrap(); // no writes → valid empty-gzip stream
+        let bytes = std::fs::read(&p).unwrap();
+        assert!(bytes.len() >= 18 && bytes[0] == 0x1f && bytes[1] == 0x8b);
+        let mut d = flate2::read::MultiGzDecoder::new(&bytes[..]);
+        let mut s = Vec::new();
+        d.read_to_end(&mut s).unwrap();
+        assert!(s.is_empty());
     }
 }

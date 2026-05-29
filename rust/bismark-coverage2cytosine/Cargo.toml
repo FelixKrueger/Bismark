@@ -33,3 +33,6 @@ predicates = "=3.1.2"
 tempfile = "=3.10.1"
 # BGZF fixture writer for the .fa.gz BGZF test (genome.rs V12b).
 noodles-bgzf = "=0.47.0"
+# NOTE: the Phase C golden tests decompress the binary's `--gzip` output via
+# flate2 — but flate2 is already a regular dependency (used by report.rs), and
+# integration tests can use the package's regular deps, so no dev-dep is needed.

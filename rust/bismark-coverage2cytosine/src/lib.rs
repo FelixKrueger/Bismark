@@ -11,17 +11,19 @@
 //!
 //! ## Status
 //!
-//! **Phase B** — core genome-wide report (CpG / `--CX`, `--zero_based`,
-//! `--coverage_threshold`, cytosine-context summary), PLAIN output. Builds on
-//! Phase A (CLI/validation + genome reader). Public surface:
+//! **Phase C** — genome-wide report with `--gzip` + `--split_by_chromosome`,
+//! on top of the Phase B core (CpG / `--CX`, `--zero_based`,
+//! `--coverage_threshold`, cytosine-context summary) and Phase A (CLI/validation
+//! + genome reader). Public surface:
 //!
 //! - [`cli::Cli`] / [`cli::ResolvedConfig`] — clap parser + validated config.
 //! - [`genome::Genome`] — whole-genome FASTA reader.
-//! - [`run`] — load the genome + generate the genome-wide report + summary.
+//! - [`run`] — load the genome + generate the report(s) + summary (single or
+//!   per-chromosome; plain or gzip).
 //! - [`error::BismarkC2cError`] — typed errors.
 //!
-//! `--gzip`/`--split_by_chromosome`, `--merge_CpGs`, and the real-data
-//! byte-identity gate land in Phases C–E.
+//! `--merge_CpGs` (Phase D) and the real-data byte-identity gate (Phase E)
+//! land next.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
