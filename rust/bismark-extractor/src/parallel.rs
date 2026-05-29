@@ -8,20 +8,24 @@
 //!                 └─ worker N ─┘             (main thread)
 //! ```
 //!
-//! - **Producer** (single thread): drives `open_reader().records()`, assigns
-//!   monotonic `input_idx`, sends `WorkerInput::Se | Pe | Err` into a
-//!   bounded MPMC channel (N×32). For PE the producer also pairs adjacent
-//!   records via `BismarkPair::from_mates`.
-//! - **Workers** (N rayon threads): receive records/pairs, run
+//! - **Producer** (single thread): drives `open_reader().records()`,
+//!   accumulates `WorkerInputItem::Se | Pe | Err` into batches of up to
+//!   `BATCH_SIZE` (#884 R1), tags each batch with a monotonic `batch_seq`, and
+//!   sends one `InputBatch` per batch into a bounded MPMC channel. For PE the
+//!   producer also pairs adjacent records via `BismarkPair::from_mates`.
+//! - **Workers** (N std::thread threads): receive a whole `InputBatch`, run
 //!   `extract_calls` + `drop_overlap` + per-worker M-bias/counter
-//!   accumulation, emit `WorkerOutput::Ok | Err` into a second bounded
-//!   channel (N×8). Workers detect end-of-stream via channel-disconnect
-//!   (`Err(RecvError)`) — no sentinel messages.
+//!   accumulation for each item (one `WorkerOutputItem::Ok | Err` per input
+//!   item — never short-circuiting), emit one `WorkerOutput::Batch` into a
+//!   second bounded channel. Workers detect end-of-stream via channel-
+//!   disconnect (`Err(RecvError)`) → emit `FinalDelta` — no sentinel messages.
 //! - **Collector** (main thread): owns `ExtractState`. Reorders worker
-//!   output by `input_idx` via a `BTreeMap` to emit in strict input
-//!   order — this guarantees byte-identity to the legacy single-threaded
-//!   path. Sums per-worker M-bias / SplittingReport deltas at end-of-stream.
-//!   Deterministic Err selection: lowest `input_idx` wins.
+//!   output by `batch_seq` via a `BTreeMap` and emits each batch's items in
+//!   `Vec` order — globally a `(batch_seq, within_idx)` total order isomorphic
+//!   to the old per-record `input_idx`, so byte-identity to the legacy
+//!   single-threaded path is preserved. Sums per-worker M-bias / SplittingReport
+//!   deltas at end-of-stream. Deterministic Err selection: lowest
+//!   `(batch_seq, within_idx)` wins.
 //!
 //! # Byte-identity invariant
 //!
@@ -29,12 +33,15 @@
 //! on the same input. This is the load-bearing test surface for Phase H.
 //! The mechanisms that hold this invariant:
 //!
-//! 1. **Input ordering**: producer assigns `input_idx` monotonically; collector
-//!    emits in strict `input_idx` order via `BTreeMap`.
+//! 1. **Input ordering**: producer fills batches in strict input order with a
+//!    monotonic `batch_seq`; collector emits in `batch_seq` order via `BTreeMap`,
+//!    items within a batch in `Vec` order. `(batch_seq, within_idx)` is
+//!    order-isomorphic to the old per-record `input_idx` (#884 R1: batching
+//!    changes only the reorder *granularity*, not the order).
 //! 2. **M-bias merge**: `MbiasTable::add` is commutative + associative.
 //! 3. **Counter merge**: `SplittingReport::add` is commutative + associative.
-//! 4. **Err selection**: collector picks the lowest-`input_idx` Err, so
-//!    stderr is byte-identical even on multi-error inputs.
+//! 4. **Err selection**: collector picks the lowest-`(batch_seq, within_idx)`
+//!    Err, so stderr is byte-identical even on multi-error inputs.
 //! 5. **Single-writer-per-file**: the collector is single-threaded; each
 //!    output file is touched by only one writer. Gzip footers land in a
 //!    contiguous stream per file.
@@ -79,56 +86,73 @@ use crate::state::ExtractState;
 
 // ─── Channel message types ───────────────────────────────────────────────────
 
-/// Producer → worker channel message. EOS is signaled by the producer
-/// dropping its sender (channel-disconnect-as-EOS, plan rev 1) — no
+/// #884 R1: number of records (SE) / pairs (PE) accumulated per channel
+/// message. Borrowed from TG-OE's proven FASTQ-batching pattern. This is a
+/// **coordination / throughput knob, NOT a correctness one**: output bytes are
+/// independent of the value because the collector emits batches in `batch_seq`
+/// order and records within a batch in `Vec` order — together a total order
+/// isomorphic to the old per-record `input_idx` order. Tunable; 4096 is a safe
+/// default. NOTE (rev 1 reviewers): TG-OE batches a single FASTQ stream, so the
+/// *pattern* transfers, not its exact per-batch memory profile — our payload is
+/// a `Vec<RoutedCall>` fanning to ≤12 output files.
+pub(crate) const BATCH_SIZE: usize = 4096;
+
+/// One unit of producer→worker work: a single SE record, a single PE pair, or
+/// a producer-side error that keeps its input slot. EOS is signaled by the
+/// producer dropping its sender (channel-disconnect-as-EOS, plan rev 1) — no
 /// sentinel variant needed.
-pub(crate) enum WorkerInput {
-    /// Single-end record at `input_idx`. Worker resolves the chromosome
-    /// name via the shared `chr_table` keyed by `chr_id`.
-    Se {
-        input_idx: u64,
-        record: BismarkRecord,
-        chr_id: u32,
-    },
-    /// Paired-end pair at `input_idx` (one idx per pair). Pair is already
-    /// validated by `BismarkPair::from_mates` (qname-eq + R1/R2 identity).
-    /// `Box` keeps the `WorkerInput` enum size proportional to the smallest
-    /// variant (clippy::large_enum_variant); BismarkPair is ~2× BismarkRecord.
-    Pe {
-        input_idx: u64,
-        pair: Box<BismarkPair>,
-        chr_id: u32,
-    },
-    /// Error encountered by the producer (read error, pairing error, etc.).
-    /// `input_idx` is the index of the message where the error occurred —
-    /// used by the collector for deterministic Err selection.
-    Err {
-        input_idx: u64,
-        error: BismarkExtractorError,
-    },
+pub(crate) enum WorkerInputItem {
+    /// Single-end record. Worker resolves the chromosome name via the shared
+    /// `chr_table` keyed by `chr_id`.
+    Se { record: BismarkRecord, chr_id: u32 },
+    /// Paired-end pair (one item per pair). Pair is already validated by
+    /// `BismarkPair::from_mates` (qname-eq + R1/R2 identity). `Box` keeps the
+    /// enum size proportional to the smallest variant
+    /// (clippy::large_enum_variant); BismarkPair is ~2× BismarkRecord.
+    Pe { pair: Box<BismarkPair>, chr_id: u32 },
+    /// Error encountered by the producer (read error, unpaired final record,
+    /// pairing error, refid overflow / missing). Carried as a per-item result
+    /// so it keeps its within-batch slot for deterministic Err selection.
+    Err { error: BismarkExtractorError },
+}
+
+/// Producer → worker channel message: a batch of up to [`BATCH_SIZE`] items,
+/// tagged with a monotonic `batch_seq`. The collector reorders by `batch_seq`.
+pub(crate) struct InputBatch {
+    pub batch_seq: u64,
+    pub items: Vec<WorkerInputItem>,
+}
+
+/// Per-item worker result. The worker emits **exactly one** of these per input
+/// item (`results.len() == items.len()`) — it never short-circuits a batch, so
+/// within-batch indices line up 1:1 between input and output (the invariant
+/// that makes `(batch_seq, within_idx)` order-isomorphic to the old
+/// `input_idx`).
+pub(crate) enum WorkerOutputItem {
+    /// Result of processing one `WorkerInputItem::Se` or `::Pe`.
+    /// `routed_calls` is empty under `--mbias_only` (worker still accumulates
+    /// M-bias + counters locally but doesn't ship calls).
+    Ok { routed_calls: Vec<RoutedCall> },
+    /// Error during extraction (`InvalidXmByte`, `drop_overlap` failure, etc.)
+    /// OR a forwarded `WorkerInputItem::Err`. The collector selects the
+    /// lowest-`(batch_seq, within_idx)` Err for stable stderr.
+    Err { error: BismarkExtractorError },
 }
 
 /// Worker → collector channel message.
 pub(crate) enum WorkerOutput {
-    /// Result of processing one `WorkerInput::Se` or `WorkerInput::Pe`.
-    /// `routed_calls` is empty under `--mbias_only` (worker still
-    /// accumulates M-bias + counters locally but doesn't ship calls).
-    Ok {
-        input_idx: u64,
-        routed_calls: Vec<RoutedCall>,
+    /// Results for one [`InputBatch`], tagged with the same `batch_seq`.
+    /// `results[k]` corresponds to `items[k]` (1:1, in order).
+    Batch {
+        batch_seq: u64,
+        results: Vec<WorkerOutputItem>,
     },
     /// Sent exactly once by each worker at exit (after `recv()` returns
     /// `Err(Disconnected)`). Carries this worker's accumulated counters.
+    /// Semantics UNCHANGED from the per-record design.
     FinalDelta {
         mbias: [MbiasTable; 2],
         report: SplittingReport,
-    },
-    /// Error during extraction (`InvalidXmByte`, `drop_overlap` failure,
-    /// etc.) OR a forwarded `WorkerInput::Err`. `input_idx` lets the
-    /// collector pick the lowest-idx Err for stable stderr.
-    Err {
-        input_idx: u64,
-        error: BismarkExtractorError,
     },
 }
 
@@ -198,9 +222,16 @@ fn run_pipeline(
     let input_basename = derive_basename(input);
     let mut state = ExtractState::new(config, input, &input_basename, is_paired)?;
 
-    // Bounded channels per SPEC §9.2.
-    let (tx_input, rx_input) = bounded::<WorkerInput>(n_workers * 32);
-    let (tx_output, rx_output) = bounded::<WorkerOutput>(n_workers * 8);
+    // Bounded channels per SPEC §9.2. #884 R1: capacities are now in **batches**
+    // (each ≤ BATCH_SIZE records), not records. The pre-batching depths
+    // (input n*32, output n*8) measured records, so with 4096-record batches
+    // they would buffer ~131k/~33k records per worker — far more than needed.
+    // Retuned to small batch counts (n*4 each): at N=8 that bounds in-flight
+    // input to ≈ 8*4*4096 ≈ 131k records and output similarly, while keeping
+    // the N=1 no-deadlock property (capacity ≥ 1; topology unchanged —
+    // dedicated producer + std::thread workers + collector on main).
+    let (tx_input, rx_input) = bounded::<InputBatch>(n_workers * 4);
+    let (tx_output, rx_output) = bounded::<WorkerOutput>(n_workers * 4);
 
     // Spawn N worker threads via std::thread::spawn (NOT rayon — see
     // module docs: rayon::ThreadPool::scope() deadlocks at N=1 because
@@ -318,21 +349,31 @@ fn run_pipeline(
 
 // ─── Producer ────────────────────────────────────────────────────────────────
 
-/// Producer loop: drive the reader's `records()` iterator, assign monotonic
-/// `input_idx`, send to workers. EOS is signaled by dropping `tx_input`
-/// (happens automatically when this function returns).
+/// Producer loop: drive the reader's `records()` iterator, accumulate
+/// [`WorkerInputItem`]s into batches of up to [`BATCH_SIZE`] (in strict input
+/// order, tagged with a monotonic `batch_seq`), and send one [`InputBatch`] per
+/// full batch. The partial final batch is flushed at clean EOF. EOS is signaled
+/// by dropping `tx_input` (happens automatically when this function returns).
+///
+/// #884 R1 error handling (rev 1, both reviewers Critical): on any producer-side
+/// error the `Err` item is appended to the CURRENT (partial) batch and that
+/// batch is flushed before the producer returns — so the good lower-index items
+/// already buffered in the partial batch still ship (today they are emitted
+/// before the producer short-circuits; dropping them would break byte-identity
+/// on error inputs). The producer still `return`s after the first error.
 fn producer_loop(
     mut reader: bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>,
     is_paired: bool,
-    tx_input: Sender<WorkerInput>,
+    tx_input: Sender<InputBatch>,
     logger: crate::logging::Logger,
 ) {
-    let mut next_idx: u64 = 0;
     // `lines_read` counts every SAM record consumed (one per `records_iter.next()`
     // that yields a record): +1 per SE record, +2 per PE pair (R1 then R2). This
     // matches Perl's read-side `$line_count` (warned every 500k at
     // `bismark_methylation_extractor:1553`) byte-for-byte. Single producer
-    // thread → plain local counter, no atomic. (#882)
+    // thread → plain local counter, no atomic. (#882) The tick stays
+    // per-SAM-record-read regardless of batch boundaries — moving it per-batch
+    // would change the stderr cadence and break byte-identity.
     let mut lines_read: u64 = 0;
     fn tick(logger: &crate::logging::Logger, lines_read: &mut u64) {
         *lines_read += 1;
@@ -340,16 +381,35 @@ fn producer_loop(
             logger.progress(*lines_read);
         }
     }
+
+    // Batch accumulation state. `batch_seq` is the monotonic reorder key; item k
+    // of batch s corresponds to the old `input_idx = s*BATCH_SIZE + k`.
+    let mut batch_seq: u64 = 0;
+    let mut items: Vec<WorkerInputItem> = Vec::with_capacity(BATCH_SIZE);
+
+    // Send the current batch (taking ownership of `items`, leaving a fresh
+    // empty Vec) under the current `batch_seq`. Returns `false` if the channel
+    // is gone. Does NOT bump `batch_seq` — terminal (error/EOF) flushes are
+    // immediately followed by `return`, so bumping there would be a dead store
+    // (clippy -D warnings). The two mid-loop full-batch flushes that continue
+    // the loop bump `batch_seq` explicitly at their call site.
+    macro_rules! flush_batch {
+        () => {{
+            let batch = InputBatch {
+                batch_seq,
+                items: std::mem::take(&mut items),
+            };
+            tx_input.send(batch).is_ok()
+        }};
+    }
+
     let mut records_iter = reader.records();
 
     if !is_paired {
-        // SE: one record per channel message.
+        // SE: one item per record.
         loop {
-            let input_idx = next_idx;
-            let record_result = records_iter.next();
-            match record_result {
+            match records_iter.next() {
                 Some(Ok(record)) => {
-                    next_idx += 1;
                     tick(&logger, &mut lines_read); // +1 SAM line (#882)
                     // Resolve reference_sequence_id → u32 with defensive
                     // try_from (Reviewer B.H1: `as u32` would silently
@@ -360,49 +420,55 @@ fn producer_loop(
                         .reference_sequence_id()
                         .map(u32::try_from)
                         .transpose();
-                    let msg = match chr_id_result {
-                        Ok(Some(chr_id)) => WorkerInput::Se {
-                            input_idx,
-                            record,
-                            chr_id,
-                        },
-                        Ok(None) => WorkerInput::Err {
-                            input_idx,
-                            error: BismarkExtractorError::InternalError {
-                                message: "mapped record has no reference_sequence_id; \
-                                          bismark-io::records should have filtered this \
-                                          as unmapped (FLAG & 0x4)"
-                                    .to_string(),
-                            },
-                        },
-                        Err(_) => WorkerInput::Err {
-                            input_idx,
-                            error: BismarkExtractorError::InternalError {
-                                message: "reference_sequence_id overflows u32 \
-                                          (>= 2^32 contigs in header)"
-                                    .to_string(),
-                            },
-                        },
-                    };
-                    if tx_input.send(msg).is_err() {
-                        // All workers gone — nothing more to do.
-                        return;
+                    match chr_id_result {
+                        Ok(Some(chr_id)) => {
+                            items.push(WorkerInputItem::Se { record, chr_id });
+                        }
+                        Ok(None) => {
+                            // Producer-side error: append to current partial
+                            // batch, flush it, then stop.
+                            items.push(WorkerInputItem::Err {
+                                error: BismarkExtractorError::InternalError {
+                                    message: "mapped record has no reference_sequence_id; \
+                                              bismark-io::records should have filtered this \
+                                              as unmapped (FLAG & 0x4)"
+                                        .to_string(),
+                                },
+                            });
+                            let _ = flush_batch!();
+                            return;
+                        }
+                        Err(_) => {
+                            items.push(WorkerInputItem::Err {
+                                error: BismarkExtractorError::InternalError {
+                                    message: "reference_sequence_id overflows u32 \
+                                              (>= 2^32 contigs in header)"
+                                        .to_string(),
+                                },
+                            });
+                            let _ = flush_batch!();
+                            return;
+                        }
+                    }
+                    if items.len() >= BATCH_SIZE {
+                        if !flush_batch!() {
+                            return; // all workers gone
+                        }
+                        batch_seq += 1; // mid-loop flush continues → next seq
                     }
                 }
                 Some(Err(e)) => {
-                    let _ = tx_input.send(WorkerInput::Err {
-                        input_idx,
-                        error: e.into(),
-                    });
+                    items.push(WorkerInputItem::Err { error: e.into() });
+                    let _ = flush_batch!();
                     return;
                 }
                 None => break, // clean EOF
             }
         }
     } else {
-        // PE: take adjacent records, pair them on the producer thread.
+        // PE: take adjacent records, pair them on the producer thread; one item
+        // per pair.
         loop {
-            let input_idx = next_idx;
             // R1
             let r1 = match records_iter.next() {
                 Some(Ok(r)) => {
@@ -410,10 +476,8 @@ fn producer_loop(
                     r
                 }
                 Some(Err(e)) => {
-                    let _ = tx_input.send(WorkerInput::Err {
-                        input_idx,
-                        error: e.into(),
-                    });
+                    items.push(WorkerInputItem::Err { error: e.into() });
+                    let _ = flush_batch!();
                     return;
                 }
                 None => break, // clean EOF
@@ -425,10 +489,8 @@ fn producer_loop(
                     r
                 }
                 Some(Err(e)) => {
-                    let _ = tx_input.send(WorkerInput::Err {
-                        input_idx,
-                        error: e.into(),
-                    });
+                    items.push(WorkerInputItem::Err { error: e.into() });
+                    let _ = flush_batch!();
                     return;
                 }
                 None => {
@@ -436,22 +498,19 @@ fn producer_loop(
                         .inner()
                         .name()
                         .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned());
-                    let _ = tx_input.send(WorkerInput::Err {
-                        input_idx,
+                    items.push(WorkerInputItem::Err {
                         error: BismarkExtractorError::UnpairedFinalRecord { qname },
                     });
+                    let _ = flush_batch!();
                     return;
                 }
             };
-            next_idx += 1;
             // Pair-formation
             let pair = match BismarkPair::from_mates(r1, r2) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = tx_input.send(WorkerInput::Err {
-                        input_idx,
-                        error: e.into(),
-                    });
+                    items.push(WorkerInputItem::Err { error: e.into() });
+                    let _ = flush_batch!();
                     return;
                 }
             };
@@ -460,36 +519,42 @@ fn producer_loop(
                 Some(r) => match u32::try_from(r) {
                     Ok(v) => v,
                     Err(_) => {
-                        let _ = tx_input.send(WorkerInput::Err {
-                            input_idx,
+                        items.push(WorkerInputItem::Err {
                             error: BismarkExtractorError::InternalError {
                                 message: format!("PE R1 reference_sequence_id {r} overflows u32"),
                             },
                         });
+                        let _ = flush_batch!();
                         return;
                     }
                 },
                 None => {
-                    let _ = tx_input.send(WorkerInput::Err {
-                        input_idx,
+                    items.push(WorkerInputItem::Err {
                         error: BismarkExtractorError::InternalError {
                             message: "PE R1 missing reference_sequence_id".to_string(),
                         },
                     });
+                    let _ = flush_batch!();
                     return;
                 }
             };
-            if tx_input
-                .send(WorkerInput::Pe {
-                    input_idx,
-                    pair: Box::new(pair),
-                    chr_id,
-                })
-                .is_err()
-            {
-                return;
+            items.push(WorkerInputItem::Pe {
+                pair: Box::new(pair),
+                chr_id,
+            });
+            if items.len() >= BATCH_SIZE {
+                if !flush_batch!() {
+                    return; // all workers gone
+                }
+                batch_seq += 1; // mid-loop flush continues → next seq
             }
         }
+    }
+
+    // Flush the partial final batch at clean EOF (skip an empty trailing batch —
+    // empty input produces zero batches, matching N=1's header-only finalize).
+    if !items.is_empty() {
+        let _ = flush_batch!();
     }
     // tx_input drops as this function returns → channel disconnects → workers exit.
     drop(tx_input);
@@ -497,11 +562,17 @@ fn producer_loop(
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
-/// Worker loop: process WorkerInput messages, accumulate per-worker
-/// M-bias + counters, emit WorkerOutput. Exits on channel-disconnect EOS
-/// by emitting a FinalDelta.
+/// Worker loop: process [`InputBatch`] messages, accumulate per-worker
+/// M-bias + counters, emit one [`WorkerOutput::Batch`] per input batch. Exits
+/// on channel-disconnect EOS by emitting a `FinalDelta`.
+///
+/// #884 R1: a batch is processed as a whole — for each item the worker produces
+/// exactly one [`WorkerOutputItem`] (`results.len() == items.len()`), **never
+/// short-circuiting on a per-item Err**. This 1:1 correspondence keeps
+/// within-batch indices aligned input↔output, the invariant behind byte-identity
+/// (lowest-`(batch_seq, within_idx)` Err == lowest old `input_idx`).
 fn worker_loop(
-    rx_input: Receiver<WorkerInput>,
+    rx_input: Receiver<InputBatch>,
     tx_output: Sender<WorkerOutput>,
     config: ResolvedConfig,
     chr_table: Arc<[String]>,
@@ -525,63 +596,48 @@ fn worker_loop(
 
     loop {
         match rx_input.recv() {
-            Ok(WorkerInput::Se {
-                input_idx,
-                record,
-                chr_id,
-            }) => {
-                let result = process_se(
-                    &record,
-                    chr_id,
-                    &chr_table,
-                    &config,
-                    mbias_only,
-                    mbias_only,
-                    &mut mbias,
-                    &mut report,
-                );
-                let msg = match result {
-                    Ok(routed_calls) => WorkerOutput::Ok {
-                        input_idx,
-                        routed_calls,
-                    },
-                    Err(error) => WorkerOutput::Err { input_idx, error },
-                };
-                if tx_output.send(msg).is_err() {
-                    return;
+            Ok(InputBatch { batch_seq, items }) => {
+                let mut results: Vec<WorkerOutputItem> = Vec::with_capacity(items.len());
+                for item in items {
+                    let result_item = match item {
+                        WorkerInputItem::Se { record, chr_id } => {
+                            match process_se(
+                                &record,
+                                chr_id,
+                                &chr_table,
+                                &config,
+                                mbias_only,
+                                mbias_only,
+                                &mut mbias,
+                                &mut report,
+                            ) {
+                                Ok(routed_calls) => WorkerOutputItem::Ok { routed_calls },
+                                Err(error) => WorkerOutputItem::Err { error },
+                            }
+                        }
+                        WorkerInputItem::Pe { pair, chr_id } => {
+                            match process_pe(
+                                &pair,
+                                chr_id,
+                                &chr_table,
+                                &config,
+                                mbias_only,
+                                mbias_only,
+                                &mut mbias,
+                                &mut report,
+                            ) {
+                                Ok(routed_calls) => WorkerOutputItem::Ok { routed_calls },
+                                Err(error) => WorkerOutputItem::Err { error },
+                            }
+                        }
+                        // Forward a producer-side error; never short-circuit the
+                        // batch (preserves within-batch index alignment).
+                        WorkerInputItem::Err { error } => WorkerOutputItem::Err { error },
+                    };
+                    results.push(result_item);
                 }
-            }
-            Ok(WorkerInput::Pe {
-                input_idx,
-                pair,
-                chr_id,
-            }) => {
-                let result = process_pe(
-                    &pair,
-                    chr_id,
-                    &chr_table,
-                    &config,
-                    mbias_only,
-                    mbias_only,
-                    &mut mbias,
-                    &mut report,
-                );
-                let msg = match result {
-                    Ok(routed_calls) => WorkerOutput::Ok {
-                        input_idx,
-                        routed_calls,
-                    },
-                    Err(error) => WorkerOutput::Err { input_idx, error },
-                };
-                if tx_output.send(msg).is_err() {
-                    return;
-                }
-            }
-            Ok(WorkerInput::Err { input_idx, error }) => {
-                // Forward error; continue draining channel (don't short-circuit)
-                // so byte-identity for collector's Err selection is preserved.
                 if tx_output
-                    .send(WorkerOutput::Err { input_idx, error })
+                    .send(WorkerOutput::Batch { batch_seq, results })
                     .is_err()
                 {
                     return;
@@ -869,8 +925,10 @@ pub(crate) struct CollectorOutcome {
     /// before the channel disconnected. Equals `n_workers` on a clean
     /// shutdown; less means at least one worker exited without notifying.
     pub finaldeltas_received: usize,
-    /// First (by lowest `input_idx`) Err the collector saw, if any. Excludes
-    /// the synthetic "missing FinalDelta" error — that decision is the
+    /// First (by lowest `(batch_seq, within_idx)`) Err the collector saw, if
+    /// any. That tuple order is isomorphic to the old `input_idx` order, so the
+    /// selected Err — hence stderr — is byte-identical to the per-record path.
+    /// Excludes the synthetic "missing FinalDelta" error — that decision is the
     /// caller's because they can see worker panic info too.
     pub best_err: Option<BismarkExtractorError>,
 }
@@ -888,28 +946,43 @@ fn collector_loop(
     chr_table: &Arc<[String]>,
     n_workers: usize,
 ) -> CollectorOutcome {
-    let mut reorder_buf: BTreeMap<u64, Vec<RoutedCall>> = BTreeMap::new();
-    let mut next_emit_idx: u64 = 0;
+    // #884 R1: reorder by `batch_seq`. Each entry is a whole batch's worth of
+    // per-item results; within a batch we emit in `Vec` order. `(batch_seq,
+    // within_idx)` is the global ordering token (isomorphic to old `input_idx`).
+    let mut reorder_buf: BTreeMap<u64, Vec<WorkerOutputItem>> = BTreeMap::new();
+    let mut next_emit_seq: u64 = 0;
     let mut finaldeltas_received: usize = 0;
-    let mut best_err: Option<(u64, BismarkExtractorError)> = None;
+    let mut best_err: Option<((u64, usize), BismarkExtractorError)> = None;
 
     loop {
         match rx_output.recv() {
-            Ok(WorkerOutput::Ok {
-                input_idx,
-                routed_calls,
-            }) => {
-                reorder_buf.insert(input_idx, routed_calls);
-                // Drain in-order entries from the front of the buffer.
-                while let Some(calls) = reorder_buf.remove(&next_emit_idx) {
-                    for routed in &calls {
-                        if let Err(e) = write_routed_call(state, routed, chr_table) {
-                            // Stash the write error with the current emit idx.
-                            update_best_err(&mut best_err, next_emit_idx, e);
-                            // Continue draining — don't break the loop.
+            Ok(WorkerOutput::Batch { batch_seq, results }) => {
+                reorder_buf.insert(batch_seq, results);
+                // Drain in-order batches from the front of the buffer.
+                while let Some(items) = reorder_buf.remove(&next_emit_seq) {
+                    for (within_idx, item) in items.into_iter().enumerate() {
+                        match item {
+                            WorkerOutputItem::Ok { routed_calls } => {
+                                for routed in &routed_calls {
+                                    if let Err(e) = write_routed_call(state, routed, chr_table) {
+                                        // Stash the write error keyed by its
+                                        // global position; continue draining.
+                                        update_best_err(
+                                            &mut best_err,
+                                            (next_emit_seq, within_idx),
+                                            e,
+                                        );
+                                    }
+                                }
+                            }
+                            WorkerOutputItem::Err { error } => {
+                                // Err item keeps its slot; feed to selection,
+                                // do not write. (Producer- or worker-side.)
+                                update_best_err(&mut best_err, (next_emit_seq, within_idx), error);
+                            }
                         }
                     }
-                    next_emit_idx += 1;
+                    next_emit_seq += 1;
                 }
             }
             Ok(WorkerOutput::FinalDelta { mbias, report }) => {
@@ -925,9 +998,6 @@ fn collector_loop(
                     // All workers have emitted FinalDelta. We're done.
                     break;
                 }
-            }
-            Ok(WorkerOutput::Err { input_idx, error }) => {
-                update_best_err(&mut best_err, input_idx, error);
             }
             Err(RecvError) => {
                 // Channel disconnected before we got all FinalDeltas — some
@@ -946,19 +1016,21 @@ fn collector_loop(
     }
 }
 
-/// Update `best_err` to keep the lowest-`input_idx` Err seen so far.
-/// Deterministic across worker arrival order → byte-identical stderr.
+/// Update `best_err` to keep the lowest-`(batch_seq, within_idx)` Err seen so
+/// far. The tuple's derived lexicographic `Ord` is isomorphic to the old
+/// `input_idx` order, so "lowest wins" reproduces today's lowest-`input_idx`
+/// choice. Deterministic across worker arrival order → byte-identical stderr.
 fn update_best_err(
-    best: &mut Option<(u64, BismarkExtractorError)>,
-    candidate_idx: u64,
+    best: &mut Option<((u64, usize), BismarkExtractorError)>,
+    candidate_key: (u64, usize),
     candidate_err: BismarkExtractorError,
 ) {
     match best {
-        None => *best = Some((candidate_idx, candidate_err)),
-        Some((existing_idx, _)) if candidate_idx < *existing_idx => {
-            *best = Some((candidate_idx, candidate_err));
+        None => *best = Some((candidate_key, candidate_err)),
+        Some((existing_key, _)) if candidate_key < *existing_key => {
+            *best = Some((candidate_key, candidate_err));
         }
-        Some(_) => {} // keep existing (smaller-or-equal idx)
+        Some(_) => {} // keep existing (smaller-or-equal key)
     }
 }
 
@@ -999,53 +1071,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_best_err_picks_lowest_input_idx() {
-        let mut best: Option<(u64, BismarkExtractorError)> = None;
+    fn update_best_err_picks_lowest_global_key() {
+        let mut best: Option<((u64, usize), BismarkExtractorError)> = None;
 
-        // First error: input_idx=5
+        // First error: (batch 1, idx 0)
         update_best_err(
             &mut best,
-            5,
+            (1, 0),
             BismarkExtractorError::InternalError {
-                message: "idx 5".to_string(),
+                message: "b1i0".to_string(),
             },
         );
-        assert_eq!(best.as_ref().unwrap().0, 5);
+        assert_eq!(best.as_ref().unwrap().0, (1, 0));
 
-        // Second error: input_idx=3 — should replace (lower wins).
+        // Second error: (batch 0, idx 2) — earlier batch wins even though its
+        // within-idx is larger (lexicographic: batch_seq dominates).
         update_best_err(
             &mut best,
-            3,
+            (0, 2),
             BismarkExtractorError::InternalError {
-                message: "idx 3".to_string(),
+                message: "b0i2".to_string(),
             },
         );
-        assert_eq!(best.as_ref().unwrap().0, 3);
+        assert_eq!(best.as_ref().unwrap().0, (0, 2));
 
-        // Third error: input_idx=7 — should NOT replace (higher).
+        // Third error: (batch 0, idx 5) — same batch, higher idx → NOT replace.
         update_best_err(
             &mut best,
-            7,
+            (0, 5),
             BismarkExtractorError::InternalError {
-                message: "idx 7".to_string(),
+                message: "b0i5".to_string(),
             },
         );
-        assert_eq!(best.as_ref().unwrap().0, 3); // unchanged
+        assert_eq!(best.as_ref().unwrap().0, (0, 2)); // unchanged
+
+        // Fourth error: (batch 0, idx 1) — same batch, lower idx → replace.
+        update_best_err(
+            &mut best,
+            (0, 1),
+            BismarkExtractorError::InternalError {
+                message: "b0i1".to_string(),
+            },
+        );
+        assert_eq!(best.as_ref().unwrap().0, (0, 1));
     }
 
     #[test]
-    fn update_best_err_equal_idx_keeps_existing() {
-        let mut best: Option<(u64, BismarkExtractorError)> = None;
+    fn update_best_err_equal_key_keeps_existing() {
+        let mut best: Option<((u64, usize), BismarkExtractorError)> = None;
         update_best_err(
             &mut best,
-            5,
+            (5, 3),
             BismarkExtractorError::InternalError {
                 message: "first".to_string(),
             },
         );
         update_best_err(
             &mut best,
-            5,
+            (5, 3),
             BismarkExtractorError::InternalError {
                 message: "second".to_string(),
             },
@@ -1093,8 +1176,8 @@ mod tests {
         let n_workers = 4;
         let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
 
-        let (tx_input, rx_input) = crossbeam_channel::bounded::<WorkerInput>(n_workers * 32);
-        let (tx_output, rx_output) = crossbeam_channel::bounded::<WorkerOutput>(n_workers * 8);
+        let (tx_input, rx_input) = crossbeam_channel::bounded::<InputBatch>(n_workers * 4);
+        let (tx_output, rx_output) = crossbeam_channel::bounded::<WorkerOutput>(n_workers * 4);
 
         // Spawn N workers (real worker_loop).
         let mut worker_handles = Vec::new();
@@ -1152,5 +1235,116 @@ mod tests {
             h.join()
                 .expect("worker should exit cleanly via channel disconnect");
         }
+    }
+
+    /// #884 R1 (plan §7, rev-1 Critical C1/C4): a producer-side `Err`
+    /// encountered mid-batch must flush the CURRENT partial batch with its
+    /// already-accumulated good lower-index items — the `Err` keeps its slot at
+    /// the end, and the worker preserves both order and the 1:1
+    /// `results.len() == items.len()` invariant. This guards byte-identity on
+    /// error inputs: the good lower-index items that today get written before
+    /// the producer short-circuits must still ship.
+    ///
+    /// We exercise the worker directly with a hand-built partial batch
+    /// (`[Err, Err, Err]`-shaped via producer-side errors are awkward to forge
+    /// from real records, so we use the always-available `WorkerInputItem::Err`
+    /// forwarding path which models exactly the producer→worker contract for
+    /// producer-side errors) interleaved with no real records — the key
+    /// properties under test are *order preservation* and *slot retention*,
+    /// both of which are record-independent.
+    #[test]
+    fn worker_preserves_order_and_keeps_err_slots_in_partial_batch() {
+        use crate::cli::Cli;
+        use clap::Parser;
+
+        let tmpfile = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        std::fs::write(tmpfile.path(), b"x").unwrap();
+        let input_path = tmpfile.path().to_str().unwrap().to_string();
+        let cli = Cli::try_parse_from(
+            [
+                "bismark-methylation-extractor-rs",
+                "--single-end",
+                &input_path,
+            ]
+            .iter()
+            .copied(),
+        )
+        .unwrap();
+        let config = cli.validate().unwrap();
+        let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
+
+        let (tx_input, rx_input) = crossbeam_channel::bounded::<InputBatch>(4);
+        let (tx_output, rx_output) = crossbeam_channel::bounded::<WorkerOutput>(4);
+
+        // A partial batch carrying three producer-side errors at distinct
+        // within-batch slots (mirrors a producer that buffered items then hit
+        // an error and flushed the partial batch).
+        let items = vec![
+            WorkerInputItem::Err {
+                error: BismarkExtractorError::InternalError {
+                    message: "slot0".to_string(),
+                },
+            },
+            WorkerInputItem::Err {
+                error: BismarkExtractorError::InternalError {
+                    message: "slot1".to_string(),
+                },
+            },
+            WorkerInputItem::Err {
+                error: BismarkExtractorError::InternalError {
+                    message: "slot2".to_string(),
+                },
+            },
+        ];
+        let n_items = items.len();
+        tx_input
+            .send(InputBatch {
+                batch_seq: 7,
+                items,
+            })
+            .unwrap();
+        drop(tx_input); // disconnect → worker emits its Batch then FinalDelta
+
+        let cfg = config.clone();
+        let ct = Arc::clone(&chr_table);
+        let worker = std::thread::spawn(move || {
+            worker_loop(rx_input, tx_output, cfg, ct);
+        });
+
+        // First message must be the Batch with results preserving order +
+        // every Err keeping its slot (results.len() == items.len()).
+        match rx_output.recv().unwrap() {
+            WorkerOutput::Batch { batch_seq, results } => {
+                assert_eq!(batch_seq, 7);
+                assert_eq!(
+                    results.len(),
+                    n_items,
+                    "results.len() must equal items.len() (1:1 slot mapping)"
+                );
+                for (idx, item) in results.iter().enumerate() {
+                    match item {
+                        WorkerOutputItem::Err {
+                            error: BismarkExtractorError::InternalError { message },
+                        } => {
+                            assert_eq!(
+                                message,
+                                &format!("slot{idx}"),
+                                "Err at within-idx {idx} must keep its original slot/order"
+                            );
+                        }
+                        _ => panic!("expected forwarded Err at within-idx {idx}"),
+                    }
+                }
+            }
+            _ => panic!("expected WorkerOutput::Batch first"),
+        }
+
+        // Then the FinalDelta at EOS.
+        match rx_output.recv().unwrap() {
+            WorkerOutput::FinalDelta { .. } => {}
+            _ => panic!("expected WorkerOutput::FinalDelta at EOS"),
+        }
+
+        worker.join().expect("worker should exit cleanly");
     }
 }
