@@ -424,6 +424,79 @@ fn legacy_vs_parallel_n4_se_default_byte_identical() {
     assert_dirs_byte_identical(&legacy_dir, &parallel_dir, "legacy", "parallel-n4");
 }
 
+/// #878 Test 4 — single-threaded `extract_se` vs parallel `extract_se_parallel`
+/// produce identical output (incl. `M-bias.txt`) under a NON-ZERO `--ignore`.
+///
+/// Structural guard for the dual-driver back-port trap: a rebase that landed in
+/// one driver but not the other would diverge here. Existing `legacy_vs_parallel_*`
+/// tests run `--ignore 0`, which never exercises the rebase.
+///
+/// NOTE (dual-review I-4): this guards driver **divergence**, NOT revert — both
+/// drivers share the rebase, so it stays green on a revert (Tests 1–3 cover
+/// absolute correctness). `--ignore 2` (< the 5-bp fixture reads) is mandatory:
+/// `--ignore 5` would trip the `lo>=hi` early-out (`call.rs:166`) → empty output
+/// → vacuously identical (dual-review C1). The non-emptiness assertion locks that out.
+#[test]
+fn se_driver_vs_parallel_driver_m_bias_equality() {
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path = workdir.path().join("se.bam");
+    write_se_directional_bam(&bam_path);
+    let bam_s = bam_path.to_str().unwrap();
+
+    let single_dir = workdir.path().join("single");
+    let parallel_dir = workdir.path().join("parallel_n4");
+    extract_se(
+        &bam_path,
+        &resolved_config(&[
+            "--single-end",
+            "--ignore",
+            "2",
+            "--output_dir",
+            single_dir.to_str().unwrap(),
+            bam_s,
+        ]),
+    )
+    .unwrap();
+    extract_se_parallel(
+        &bam_path,
+        &resolved_config(&[
+            "--single-end",
+            "--ignore",
+            "2",
+            "--parallel",
+            "4",
+            "--output_dir",
+            parallel_dir.to_str().unwrap(),
+            bam_s,
+        ]),
+    )
+    .unwrap();
+
+    // Non-emptiness guard (dual-review C1): --ignore must leave surviving calls,
+    // else both dirs are empty and the equality below is vacuous.
+    let mut call_lines = 0usize;
+    for entry in fs::read_dir(&single_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if (name.starts_with("CpG_") || name.starts_with("CHG_") || name.starts_with("CHH_"))
+            && name.ends_with(".txt")
+        {
+            for line in fs::read_to_string(entry.path()).unwrap().lines() {
+                if !line.is_empty() && !line.starts_with("Bismark") {
+                    call_lines += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        call_lines > 0,
+        "--ignore 2 must leave surviving methylation calls (guards the C1 vacuous-pass no-op)"
+    );
+
+    // M-bias.txt + all split/report files identical across the two drivers.
+    assert_dirs_byte_identical(&single_dir, &parallel_dir, "single", "parallel-n4");
+}
+
 #[test]
 fn legacy_vs_parallel_n4_pe_default_byte_identical() {
     let workdir = tempfile::tempdir().unwrap();
