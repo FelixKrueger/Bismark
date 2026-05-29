@@ -177,6 +177,18 @@ The `edge_clip` cell remains incomplete (Perl-side hang per #876 Finding #3 — 
 9. **`parallel_pe_worker_m_bias_uses_r2_ignore_for_r2`** (in `parallel.rs` test module, NEW): construct `process_pe` with `ignore_r1 = 3, ignore_r2 = 7` → assert R1 calls land in `mbias[0]` slot 1+ and R2 calls land in `mbias[1]` slot 1+, NOT swapped. Reviewer A §1 final note: prevents future "passed wrong ignore field to wrong identity" bugs.
 10. **`se_driver_vs_parallel_driver_m_bias_equality`** (in `parallel.rs` test module or top-level integration test, NEW per Reviewer A I2 / Reviewer B C1): dispatch identical synthetic input through `pipeline::extract_se` (single-threaded) and `parallel::process_se` (parallel worker) with `--ignore 5` → assert M-bias accumulators are byte-equal. **This is the structural regression guard for the dual-driver/dual-dispatch trap class** ([[feedback-dual-driver-back-port]] extended scope).
 
+> **✅ Tests #8–#10 LANDED via #878 (2026-05-29).** The three deferred
+> parallel-worker regression guards shipped as:
+> - #8 → `parallel_se_worker_m_bias_rebased` (`parallel.rs`)
+> - #9 → `parallel_pe_worker_m_bias_uses_r2_ignore_for_r2` (`parallel.rs`)
+> - #10 → `se_driver_vs_parallel_driver_m_bias_equality` (`tests/parallel_phase_f.rs`),
+>   using **`--ignore 2`** NOT the `--ignore 5` sketched above — the 5-bp fixtures
+>   trip the `lo>=hi` early-out (`call.rs:166`) → vacuous empty-output pass (caught
+>   in the #878 dual plan-review, C1).
+> #878 also added an OB/`-`-strand kernel guard (`extract_calls_ob_strand_rebases_read_pos_after_ignore_5p`, `call.rs`),
+> closing the OT-only gap Reviewer B flagged. All three FAIL on reverting the
+> `call.rs:204` rebase (revert-smoke verified). Detail: `TESTS_878_PLAN.md`.
+
 ### Integration check on colossal (manual, not added to in-repo CI)
 
 11. Re-run `scripts/phase_h_se_matrix.sh /weka/.../10M_SE/...bam --out ~/phase_h_se_release_fix876/` on a **fresh** `--out` dir (do NOT clobber `~/phase_h_se_release/` evidence per RELEASE_CHECKLIST escalation §1). Expect: exit 0 (PASS) or exit 3 (perf-miss-only). All 8 non-edge_clip cells should now PASS byte-identity.

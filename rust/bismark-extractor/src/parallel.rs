@@ -1141,6 +1141,185 @@ mod tests {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // #878 Tests 2–3: parallel worker M-bias accumulator slots are rebased.
+    // Guards parallel.rs:711 (SE → mbias[0]), :815 (PE R1 → mbias[0]),
+    // :838 (PE R2 → mbias[1], using ignore_r2). pos_1based = read_pos + 1, so
+    // a rebased first call lands at slot 1; reverting call.rs:204 shifts it to
+    // slot ignore+1. These call the private process_se/process_pe directly.
+    // ─────────────────────────────────────────────────────────────────────
+    use bstr::BString;
+    use noodles_core::Position;
+    use noodles_sam::alignment::record::Flags;
+    use noodles_sam::alignment::record::cigar::Op;
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    use noodles_sam::alignment::record_buf::{Cigar, RecordBuf, Sequence};
+
+    /// Minimal single-`M` `BismarkRecord` (mirrors `tests/parallel_phase_f.rs::synth_record`).
+    fn synth_rec(
+        qname: &[u8],
+        xr: &[u8],
+        xg: &[u8],
+        xm: &[u8],
+        start: usize,
+        flags: u16,
+    ) -> BismarkRecord {
+        let mut record = RecordBuf::default();
+        *record.flags_mut() = Flags::from(flags);
+        *record.sequence_mut() = Sequence::from(vec![b'A'; xm.len()]);
+        *record.alignment_start_mut() = Some(Position::try_from(start).unwrap());
+        *record.reference_sequence_id_mut() = Some(0);
+        *record.cigar_mut() = Cigar::from(vec![Op::new(Kind::Match, xm.len())]);
+        *record.name_mut() = Some(BString::from(qname.to_vec()));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XR"), Value::String(BString::from(xr.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XG"), Value::String(BString::from(xg.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XM"), Value::String(BString::from(xm.to_vec())));
+        BismarkRecord::from_noodles_record(record).expect("synth BismarkRecord")
+    }
+
+    /// Build a `ResolvedConfig` from CLI args (idiom from `parallel.rs:1173/1263`).
+    /// Needs a real `.bam` path arg for the parser; `process_*` never reads it.
+    fn config_with(extra: &[&str]) -> ResolvedConfig {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        std::fs::write(tmp.path(), b"x").unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let mut args = vec!["bismark-methylation-extractor-rs"];
+        args.extend(extra.iter().copied());
+        args.push(&path);
+        let cfg = Cli::try_parse_from(&args).unwrap().validate().unwrap();
+        drop(tmp);
+        cfg
+    }
+
+    /// Sum of all (meth+unmeth) counts across the 3 contexts of one table.
+    fn mbias_total(t: &MbiasTable) -> u64 {
+        t.cpg
+            .iter()
+            .chain(&t.chg)
+            .chain(&t.chh)
+            .map(|p| p.meth + p.unmeth)
+            .sum()
+    }
+
+    /// #878 Test 2 — SE worker M-bias slots are rebased (`parallel.rs:711`).
+    #[test]
+    fn parallel_se_worker_m_bias_rebased() {
+        // OT 6bp: '.'@0,1,2 ; Z(CpG,meth)@3 ; x(CHG,unmeth)@4 ; h(CHH,unmeth)@5.
+        let rec = synth_rec(b"r", b"CT", b"CT", b"...Zxh", 100, 0);
+        let config = config_with(&["--single-end", "--ignore", "3", "--mbias_only"]);
+        let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
+        let mut mbias = [MbiasTable::default(), MbiasTable::default()];
+        let mut report = SplittingReport::default();
+        process_se(
+            &rec,
+            0,
+            &chr_table,
+            &config,
+            true,
+            true,
+            &mut mbias,
+            &mut report,
+        )
+        .expect("process_se");
+
+        // Rebased: read_pos 0,1,2 → 1-based slots 1,2,3 (reverted would be 4,5,6).
+        assert_eq!(mbias[0].cpg[1].meth, 1, "CpG meth at rebased slot 1");
+        assert_eq!(mbias[0].chg[2].unmeth, 1, "CHG unmeth at rebased slot 2");
+        assert_eq!(mbias[0].chh[3].unmeth, 1, "CHH unmeth at rebased slot 3");
+        // The absolute (reverted) slots must be empty.
+        assert_eq!(
+            mbias[0].cpg.get(4).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "no CpG at absolute slot 4"
+        );
+        assert_eq!(
+            mbias[0].chg.get(5).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "no CHG at absolute slot 5"
+        );
+        assert_eq!(
+            mbias[0].chh.get(6).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "no CHH at absolute slot 6"
+        );
+        // SE → nothing in the R2 table.
+        assert_eq!(mbias_total(&mbias[1]), 0, "SE leaves mbias[1] empty");
+    }
+
+    /// #878 Test 3 — PE worker uses `--ignore_r2` for R2 + the R2 table
+    /// (`parallel.rs:838`); `--ignore` for R1 (`:815`). R2 of an OT pair is
+    /// CTOT (`-`-strand, reversed: read_pos_5p = seq_len-1-BAM), so its call
+    /// is placed at BAM index `seq_len-1-ignore_r2`. R1/R2 are non-overlapping
+    /// so `drop_overlap` keeps R2.
+    #[test]
+    fn parallel_pe_worker_m_bias_uses_r2_ignore_for_r2() {
+        // R1: OT (CT,CT) '+'-strand, 6bp, CpG 'Z'@BAM3 → read_pos_5p=3;
+        //     --ignore 3 → rebased 0 → mbias[0].cpg slot 1.
+        let r1 = synth_rec(b"pair", b"CT", b"CT", b"...Z..", 100, 0x41);
+        // R2: CTOT (GA,CT) '-'-strand reversed, 9bp, CpG 'Z'@BAM1 →
+        //     read_pos_5p = 9-1-1 = 7; --ignore_r2 7 → rebased 0 → mbias[1].cpg slot 1.
+        //     start=200 (non-overlapping with R1@100) so drop_overlap keeps it.
+        let r2 = synth_rec(b"pair", b"GA", b"CT", b".Z.......", 200, 0x81);
+        let pair = BismarkPair::from_mates(r1, r2).expect("valid OT pair");
+
+        let config = config_with(&["-p", "--ignore", "3", "--ignore_r2", "7", "--mbias_only"]);
+        let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
+        let mut mbias = [MbiasTable::default(), MbiasTable::default()];
+        let mut report = SplittingReport::default();
+        process_pe(
+            &pair,
+            0,
+            &chr_table,
+            &config,
+            true,
+            true,
+            &mut mbias,
+            &mut report,
+        )
+        .expect("process_pe");
+
+        // R1 → mbias[0] slot 1 (rebased by --ignore 3); R2 → mbias[1] slot 1 (by --ignore_r2 7).
+        assert_eq!(
+            mbias[0].cpg[1].meth, 1,
+            "R1 CpG meth at mbias[0] rebased slot 1"
+        );
+        assert_eq!(
+            mbias[1].cpg[1].meth, 1,
+            "R2 CpG meth at mbias[1] rebased slot 1"
+        );
+        // Absolute (reverted) slots empty; no cross-table leakage.
+        assert_eq!(
+            mbias[0].cpg.get(4).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "R1 not at absolute slot 4"
+        );
+        assert_eq!(
+            mbias[1].cpg.get(8).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "R2 not at absolute slot 8"
+        );
+        assert_eq!(
+            mbias_total(&mbias[0]),
+            1,
+            "mbias[0] holds exactly R1's call"
+        );
+        assert_eq!(
+            mbias_total(&mbias[1]),
+            1,
+            "mbias[1] holds exactly R2's call"
+        );
+    }
+
     /// Plan rev 1 §7.1 + Reviewer A & B both flagged: prove that a
     /// producer panic does NOT deadlock workers. With channel-disconnect-
     /// as-EOS, when the producer's thread closure panics, its `tx_input`
