@@ -105,7 +105,7 @@ Perl parses `($chr,$start,$end,undef,$meth,$nonmeth) = split /\t/` (`:209`) — 
 |------|------|-------|--------|
 | `{stem}.CpG_report.txt[.gz]` | default (CpG-only) | `--gzip` | 7-col cytosine report (§6) |
 | `{stem}.CX_report.txt[.gz]` | `--CX` | `--gzip` | 7-col cytosine report (all contexts) |
-| `{stem}.CpG_report.txt.chr<NAME>[.gz]` etc. | `--split_by_chromosome` | `--gzip` | per-chromosome report (`.chr<NAME>` infix per `:101`) |
+| `{raw-o}.chr<NAME>.CpG_report.txt[.gz]` etc. | `--split_by_chromosome` | `--gzip` | per-chromosome report. **rev 3 (Phase-C verified):** the `.chr<NAME>` infix is appended to the **raw `-o`** *before* the suffix strip (Perl `:99-101`), which then no-ops — so a **suffixed** `-o` (the extractor path) **doubles** the suffix: `foo.CpG_report.txt` → `foo.CpG_report.txt.chrchr1.CpG_report.txt`. The per-chr context-summary files are all empty except the **last-processed** chromosome's (full). See `phase-c-gzip-split/PLAN.md`. |
 | `{stem}.cytosine_context_summary.txt` | **always** | **never** | 6-col context summary (§8) |
 | `{stem}.merged_CpG_evidence.cov[.gz]` | `--merge_CpGs` | `--gzip` | 6-col pooled-strand cov (§9) |
 | `{stem}.discordant_CpG_evidence.cov[.gz]` | `--merge_CpGs --discordance_filter` | `--gzip` | 6-col discordant cov (§9) |
@@ -233,7 +233,7 @@ A new `genome.rs` in this crate, built on `noodles-fasta` (like `cram_ref.rs`) b
 Covered-chromosome output order = cov-file appearance order (§7.5). The **insertion-ordered structure applies to the Phase-B "covered-chromosome appearance list"** (e.g. a `Vec<Vec<u8>>` built as cov-file chromosomes are first seen, or `indexmap::IndexMap`) — **NOT** to the genome sequence map, which is a plain `HashMap` whose order never reaches output (see §11). **Never `BTreeMap`** for the covered list. The uncovered set is emitted in a separately bytewise-sorted pass (`Genome::names_sorted()`). (Same byte-identity trap as #797, but scoped to the covered list.)
 
 ### 10.5 Output writers — `BufWriter`, optionally gzip
-`BufWriter<File>` for plain; `BufWriter<GzEncoder<File>>` for `--gzip` (the §10 extractor precedent; `flate2` already pinned in the workspace). The context summary is **never** gzipped. For `--split_by_chromosome`, writers are opened/closed per chromosome (Perl `handle_filehandles` reopen at `:457-466`); reproduce the filename `.chr<NAME>` infix derivation (`:99-102`).
+`BufWriter<File>` for plain; **`GzEncoder<BufWriter<File>>`** for `--gzip` (rev 3 Phase-C correction — the encoder wraps a buffered file writer; `flate2` is a regular dep). The context summary is **never** gzipped. For `--split_by_chromosome`, a fresh **truncating** writer is opened per chromosome on every transition (Perl `handle_filehandles` reopen at `:457-466` — a re-appearing chr's file is truncated, keeping only the last segment); filename `.chr<NAME>` infix per §5 (raw-`-o`, suffix-doubling). gzip byte-identity is asserted **after decompression** (the gzip container is impl-dependent).
 
 ### 10.6 Typed errors via `thiserror`
 `BismarkC2cError` enum (mirrors `bismark-dedup::error`): `MissingOutput`, `MissingGenomeFolder`, `NoGenomeFasta`, `DuplicateChromosomeName`, `EmptyCoverageInput`, `MergeCpGSanityViolation { … }`, `UnsupportedFlag { flag }` (the v1.x rejections), `Io(#[from])`. Partial outputs cleaned up on error (the dedup `cleanup_partial_output_on_err` pattern).

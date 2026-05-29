@@ -13,7 +13,7 @@
 |---|-------|------|--------|
 | A | Scaffold + CLI + genome reader | `phase-a-scaffold-cli-genome/` | ✅ Complete |
 | B | Core genome-wide report | `phase-b-core-report/` | ✅ Complete |
-| C | `--gzip` + `--split_by_chromosome` | `phase-c-gzip-split/` | 📋 Planned |
+| C | `--gzip` + `--split_by_chromosome` | `phase-c-gzip-split/` | ✅ Complete |
 | D | `--merge_CpGs` (+ `--discordance`) | `phase-d-merge-cpgs/` | 📋 Planned |
 | E | Real-data byte-identity gate (colossal) | `phase-e-byte-identity-gate/` | 📋 Planned |
 
@@ -27,4 +27,7 @@
 - **2026-05-29** — Phase A committed (`1f382e7` code, `4fea2be` docs, `c3876d2` issue-link), pushed; epic **#891** filed + on board (In Progress / 2-Next / L); **PR [#892](https://github.com/FelixKrueger/Bismark/pull/892)** opened vs `rust/iron-chancellor`.
 - **2026-05-29** — Phase B `PLAN.md` written (rev 0) + dual plan-review (`PLAN_REVIEW_A/B.md`, both APPROVE-WITH-CHANGES; single-kernel + coordinate arithmetic + `%.2f` parity verified correct by both). Folded → **rev 1**: 1 Critical (C1 non-contiguous re-flush, plan-clarity) + Important (fresh-buffer seeding, CRLF/malformed parse policy, dup/blank-line, names_sorted≡%processed doc) + 9 test rows (V16–V24).
 - **2026-05-29** — `IMPL.md` (TDD, 26-item checklist → 9 tasks) + **Phase B implemented**: `src/{cov,report,summary}.rs` + run wiring. 67 tests pass (incl. byte-identity goldens for {CpG, --CX, --zero_based, --threshold} vs Perl v0.25.1, generated locally); clippy clean.
-- **2026-05-29** — Dual code-review (`CODE_REVIEW_A/B.md`, both **APPROVE**, no Critical/High; both cross-checked binary vs live Perl → byte-identical) + plan-manager (`COVERAGE.md`, INCOMPLETE = test-coverage gaps only). Closed all gaps (V10/V21/V22/V23 discriminating tests + B-M1 raw-byte compare): **71 tests pass**, clippy clean. **✅ Phase B COMPLETE.** Next: commit + push onto PR #892; then Phase C (--gzip + --split_by_chromosome).
+- **2026-05-29** — Dual code-review (`CODE_REVIEW_A/B.md`, both **APPROVE**, no Critical/High; both cross-checked binary vs live Perl → byte-identical) + plan-manager (`COVERAGE.md`, INCOMPLETE = test-coverage gaps only). Closed all gaps (V10/V21/V22/V23 discriminating tests + B-M1 raw-byte compare): **71 tests pass**, clippy clean. **✅ Phase B COMPLETE**; committed + pushed (PR #892); epic #891 Phase B checked.
+- **2026-05-29** — Phase C `PLAN.md` (rev 0) + dual plan-review (`PLAN_REVIEW_A/B.md`, both APPROVE-WITH-CHANGES; both verified vs live Perl; gzip half confirmed correct). Folded → **rev 1**: 2 Criticals (A: split filename uses RAW `-o` → new `ResolvedConfig.output_raw`, the doubled-suffix extractor path; B: split truncate-on-reopen) + Important (threshold>0 split file-set, V8 non-split-summary diff) + §10 Q1/Q2 resolved + V12–V14.
+- **2026-05-29** — `IMPL.md` (TDD, 17-item checklist → 8 tasks) + **Phase C implemented**: `ReportWriter{Plain,Gz}` + split/non-split `run_report` + raw-`-o` filename derivation. 81 tests pass; clippy clean.
+- **2026-05-29** — Dual code-review (`CODE_REVIEW_A/B.md`, both **APPROVE**, no Critical/High; both cross-checked binary vs live Perl → byte-identical, Phase B preserved) + plan-manager (`COVERAGE.md`, **verdict COMPLETE**, 8/8 tasks + V1–V14). Applied Low polish (removed redundant flate2 dev-dep, `--CX --gzip` summary assertion, stale-docstring + SPEC §5/§10.5 sync): **81 tests pass**, clippy clean. **✅ Phase C COMPLETE.** Next: commit + push onto PR #892; then Phase D (--merge_CpGs).
