@@ -116,6 +116,42 @@ fn write_se_directional_bam(path: &Path) {
     writer.finish().unwrap();
 }
 
+/// SE BAM with `n` records — used to cross the parallel pipeline's
+/// `BATCH_SIZE` (4096) boundary so the multi-batch path (full-flush +
+/// `batch_seq` increment + multi-entry `BTreeMap` reorder) is exercised. The
+/// small fixtures above are all ≤6 records → a single partial batch at
+/// `batch_seq=0`, leaving the multi-batch path (which runs on the real
+/// 15.4M-record workload + the Phase H gate) untested (#884 R1 code-review:
+/// both reviewers flagged this gap). Cycles 4 context/strand patterns so the
+/// output spans multiple split files.
+fn write_se_large_bam(path: &Path, n: usize) {
+    let header = header_with_chr1();
+    let mut writer = BamWriter::from_path(path, header).unwrap();
+    let pats: [(&[u8], &[u8], &[u8]); 4] = [
+        (b"CT", b"CT", b"Zz..."),
+        (b"CT", b"CT", b"..X.x"),
+        (b"CT", b"GA", b"H.h.."),
+        (b"CT", b"GA", b"Z..h."),
+    ];
+    for i in 0..n {
+        let (xr, xg, xm) = pats[i % pats.len()];
+        let qname = format!("r{i}");
+        let pos = 100 + (i % 400);
+        writer
+            .write_record(&synth_record(
+                qname.as_bytes(),
+                xr,
+                xg,
+                xm,
+                b"ACGTC",
+                pos,
+                0,
+            ))
+            .unwrap();
+    }
+    writer.finish().unwrap();
+}
+
 /// PE-directional BAM (R1+R2 pairs). Adjacent records form a pair.
 fn write_pe_directional_bam(path: &Path) {
     let header = header_with_chr1();
@@ -454,6 +490,42 @@ fn parallel_se_byte_identical_across_n_1_2_4_8() {
         }
 
         // Compare N=1 vs each of N=2/4/8.
+        let ref_dir = dirs[0].1.clone();
+        for (n, dir) in &dirs[1..] {
+            assert_dirs_byte_identical(&ref_dir, dir, "n1", &format!("n{n}"));
+        }
+    });
+}
+
+/// Crosses `BATCH_SIZE` (4096): 8199 records = two full batches + a 7-record
+/// partial, forcing the full-flush + `batch_seq` increment + multi-entry
+/// `BTreeMap` reorder paths that the ≤6-record fixtures never reach (#884 R1).
+/// Guards the multi-batch byte-identity the real workload + Phase H rely on.
+#[test]
+fn parallel_se_byte_identical_across_batch_boundary() {
+    with_timeout("parallel_se_byte_identical_across_batch_boundary", || {
+        let workdir = tempfile::tempdir().unwrap();
+        let bam_path = workdir.path().join("large.bam");
+        write_se_large_bam(&bam_path, 8199); // > 2 * BATCH_SIZE (4096)
+        let bam_s = bam_path.to_str().unwrap().to_string();
+
+        let mut dirs = Vec::new();
+        for n in [1u32, 4, 8] {
+            let dir = workdir.path().join(format!("n{n}"));
+            extract_se_parallel(
+                &bam_path,
+                &resolved_config(&[
+                    "--single-end",
+                    "--parallel",
+                    &n.to_string(),
+                    "--output_dir",
+                    dir.to_str().unwrap(),
+                    &bam_s,
+                ]),
+            )
+            .unwrap();
+            dirs.push((n, dir));
+        }
         let ref_dir = dirs[0].1.clone();
         for (n, dir) in &dirs[1..] {
             assert_dirs_byte_identical(&ref_dir, dir, "n1", &format!("n{n}"));
