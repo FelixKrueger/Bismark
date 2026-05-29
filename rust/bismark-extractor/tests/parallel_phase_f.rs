@@ -798,6 +798,103 @@ fn parallel_gzip_n4_decompresses_identical_to_legacy_plain() {
     }
 }
 
+/// #884 R2 regression guard: gzp's `ParCompress<Gzip>` must keep emitting a
+/// **single-member** gzip even when the input spans multiple `BATCH_SIZE`
+/// (4096) batches, and the decompressed content must be byte-identical across
+/// `--parallel` 1 vs 4 and to the plain (non-gzip) peer.
+///
+/// 8199 records = two full batches + a 7-record partial, so gzp stitches
+/// several internal sync-flushed DEFLATE blocks into one gzip stream.
+/// `decompress_gz` uses a single-member `GzDecoder`: if a future gzp change
+/// (or a switch to its `Mgzip`/`Bgzf` formats) emitted multi-member output,
+/// the decode would truncate at member 0 and the `== plain` assertion would
+/// fail. Decompressed *byte* identity (not merely sorted-equivalence) holds
+/// because the collector concatenates per-batch output strictly in
+/// `batch_seq` order, so the stream matches N=1's exactly (dual plan-review
+/// C2). Complements the small-fixture single-batch test above.
+#[test]
+fn parallel_gzip_multibatch_decompresses_identical_across_n_and_to_plain() {
+    with_timeout(
+        "parallel_gzip_multibatch_decompresses_identical_across_n_and_to_plain",
+        || {
+            let workdir = tempfile::tempdir().unwrap();
+            let bam_path = workdir.path().join("large.bam");
+            write_se_large_bam(&bam_path, 8199); // > 2 * BATCH_SIZE (4096)
+            let bam_s = bam_path.to_str().unwrap().to_string();
+
+            // Reference: plain (non-gzip) single-threaded output.
+            let plain_dir = workdir.path().join("plain");
+            extract_se(
+                &bam_path,
+                &resolved_config(&[
+                    "--single-end",
+                    "--output_dir",
+                    plain_dir.to_str().unwrap(),
+                    &bam_s,
+                ]),
+            )
+            .unwrap();
+
+            // Gzipped at N=1 and N=4.
+            let mut gz_dirs = Vec::new();
+            for n in [1u32, 4] {
+                let dir = workdir.path().join(format!("gz_n{n}"));
+                extract_se_parallel(
+                    &bam_path,
+                    &resolved_config(&[
+                        "--single-end",
+                        "--gzip",
+                        "--parallel",
+                        &n.to_string(),
+                        "--output_dir",
+                        dir.to_str().unwrap(),
+                        &bam_s,
+                    ]),
+                )
+                .unwrap();
+                gz_dirs.push((n, dir));
+            }
+            let gz_n1_dir = gz_dirs[0].1.clone();
+
+            for (n, dir) in &gz_dirs {
+                for entry in fs::read_dir(dir).unwrap() {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if let Some(stem) = name.strip_suffix(".gz") {
+                        // Single-member decode of a multi-block stream → full
+                        // plain content. Truncation here = a multi-member regression.
+                        let decoded = decompress_gz(&entry.path());
+                        let plain = fs::read(plain_dir.join(stem)).unwrap();
+                        assert_eq!(
+                            decoded, plain,
+                            "gz {name} at n{n} decompressed differs from plain peer \
+                             (truncation here would mean gzp regressed to multi-member)"
+                        );
+                        // Cross-N decompressed-byte identity.
+                        let decoded_n1 = decompress_gz(&gz_n1_dir.join(&name));
+                        assert_eq!(
+                            decoded, decoded_n1,
+                            "gz {name} decompressed differs between n1 and n{n}"
+                        );
+                    } else if name.ends_with("_splitting_report.txt") {
+                        assert_eq!(
+                            normalize_report(&fs::read(entry.path()).unwrap()),
+                            normalize_report(&fs::read(plain_dir.join(&name)).unwrap()),
+                            "non-gz splitting report {name} at n{n} differs"
+                        );
+                    } else {
+                        assert_eq!(
+                            fs::read(entry.path()).unwrap(),
+                            fs::read(plain_dir.join(&name)).unwrap(),
+                            "non-gz file {name} at n{n} differs from plain"
+                        );
+                    }
+                }
+            }
+        },
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // 4. ERROR PROPAGATION at N=4
 // ═══════════════════════════════════════════════════════════════════════
