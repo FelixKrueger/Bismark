@@ -152,6 +152,8 @@ fn base_config() -> ResolvedConfig {
         ample_memory: false,
         genome_folder: None,
         parallel: 1,
+        quiet: false,
+        verbose: false,
     }
 }
 

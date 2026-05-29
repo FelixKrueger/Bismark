@@ -280,7 +280,10 @@ impl OutputFileMap {
     /// Returns `Ok` regardless; the function's signature retains
     /// `Result<_, io::Error>` for forward-compat with any future
     /// non-`remove_file` IO needs.
-    pub fn finalize_with_empty_sweep(&mut self) -> Result<FinalizationReport, std::io::Error> {
+    pub fn finalize_with_empty_sweep(
+        &mut self,
+        logger: crate::logging::Logger,
+    ) -> Result<FinalizationReport, std::io::Error> {
         let entries: Vec<_> = self.files.drain().collect();
         let mut kept: Vec<PathBuf> = Vec::new();
         let mut swept: Vec<PathBuf> = Vec::new();
@@ -314,12 +317,13 @@ impl OutputFileMap {
                 // unlink failure so subsequent files still get processed
                 // and post-sweep work runs.
                 if let Err(e) = std::fs::remove_file(&path) {
+                    // Genuine warning — never gated by --quiet.
                     eprintln!("warning: failed to remove empty output file {path_str}: {e}");
                 }
-                eprintln!("{path_str} was empty ->\tdeleted");
+                logger.note(&format!("{path_str} was empty ->\tdeleted"));
                 swept.push(abs_path);
             } else {
-                eprintln!("{path_str} contains data ->\tkept");
+                logger.note(&format!("{path_str} contains data ->\tkept"));
                 kept.push(abs_path);
             }
         }
@@ -327,8 +331,8 @@ impl OutputFileMap {
         // stderr to mark the end of the sweep block. Mirroring for
         // consistency with downstream tooling that visually parses the
         // captured stderr.
-        eprintln!();
-        eprintln!();
+        logger.note("");
+        logger.note("");
         // Phase G (rev 1 I7): sort kept lexicographically so the argv
         // positional tail passed to bismark2bedGraph is deterministic
         // across runs (underlying HashMap iteration order is not).
@@ -958,6 +962,8 @@ mod tests {
             ample_memory: false,
             genome_folder: None,
             parallel: 1,
+            quiet: false,
+            verbose: false,
         }
     }
 

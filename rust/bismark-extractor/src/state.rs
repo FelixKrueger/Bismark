@@ -125,6 +125,7 @@ impl ExtractState {
         //      output.
         //   3. write_splitting_report
         //   4. write_mbias_txt (unless --mbias_off)
+        let logger = crate::logging::Logger::from_config(config);
         self.fhs.flush_all()?;
         // Phase C.2 code-review B H2: gate the sweep on `!mbias_only` to
         // mirror Perl `:319 unless ($mbias_only) { delete_unused_files; }`.
@@ -141,7 +142,7 @@ impl ExtractState {
         // kept set is empty by construction — we still build an empty
         // FinalizationReport for uniformity.
         let finalization = if !self.mbias_only {
-            self.fhs.finalize_with_empty_sweep()?
+            self.fhs.finalize_with_empty_sweep(logger)?
         } else {
             crate::output::FinalizationReport::default()
         };
@@ -154,6 +155,10 @@ impl ExtractState {
                 &self.report,
             )?;
         }
+        // Console final methylation summary (#882) — mirror of the
+        // splitting-report numbers, Perl `warn`'d at :2480-:2521. Emitted
+        // regardless of `--report` (Perl always warns it); gated by --quiet.
+        logger.final_summary(&self.report);
         if !config.mbias_off {
             let mbias_path = mbias_txt_path(&config.output_dir, &self.input_path);
             write_mbias_txt(&mbias_path, &self.mbias, self.is_paired)?;
@@ -180,7 +185,9 @@ impl ExtractState {
                 &raw_filename,
                 &config.output_dir,
                 &finalization.kept,
-                &crate::subprocess::RealRunner,
+                &crate::subprocess::RealRunner {
+                    quiet: config.quiet,
+                },
             )?;
         }
 

@@ -186,6 +186,15 @@ fn run_pipeline(
     let reader = open_reader(input, /*cram_ref=*/ None)?;
     let chr_table: Arc<[String]> = Arc::from(build_chr_name_table(reader.header())?);
 
+    // Console diagnostics (#882) — emit once on the main thread while we still
+    // hold the reader (it is moved into the producer below). All to stderr,
+    // gated by --quiet. The final methylation summary is emitted later, inside
+    // `state.finalize`, where the SplittingReport counts are finalized.
+    let logger = crate::logging::Logger::from_config(config);
+    logger.banner();
+    logger.parameters(config, is_paired);
+    logger.header_provenance(reader.header());
+
     let input_basename = derive_basename(input);
     let mut state = ExtractState::new(config, input, &input_basename, is_paired)?;
 
@@ -222,7 +231,7 @@ fn run_pipeline(
     let producer_handle = std::thread::Builder::new()
         .name("bismark-extractor-producer".to_string())
         .spawn(move || {
-            producer_loop(reader, is_paired, producer_tx_input);
+            producer_loop(reader, is_paired, producer_tx_input, logger);
         })
         .map_err(|e| BismarkExtractorError::InternalError {
             message: format!("failed to spawn producer thread: {e}"),
@@ -316,8 +325,21 @@ fn producer_loop(
     mut reader: bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>,
     is_paired: bool,
     tx_input: Sender<WorkerInput>,
+    logger: crate::logging::Logger,
 ) {
     let mut next_idx: u64 = 0;
+    // `lines_read` counts every SAM record consumed (one per `records_iter.next()`
+    // that yields a record): +1 per SE record, +2 per PE pair (R1 then R2). This
+    // matches Perl's read-side `$line_count` (warned every 500k at
+    // `bismark_methylation_extractor:1553`) byte-for-byte. Single producer
+    // thread → plain local counter, no atomic. (#882)
+    let mut lines_read: u64 = 0;
+    fn tick(logger: &crate::logging::Logger, lines_read: &mut u64) {
+        *lines_read += 1;
+        if (*lines_read).is_multiple_of(500_000) {
+            logger.progress(*lines_read);
+        }
+    }
     let mut records_iter = reader.records();
 
     if !is_paired {
@@ -328,6 +350,7 @@ fn producer_loop(
             match record_result {
                 Some(Ok(record)) => {
                     next_idx += 1;
+                    tick(&logger, &mut lines_read); // +1 SAM line (#882)
                     // Resolve reference_sequence_id → u32 with defensive
                     // try_from (Reviewer B.H1: `as u32` would silently
                     // truncate above 2^32 contigs; matches the precedent
@@ -382,7 +405,10 @@ fn producer_loop(
             let input_idx = next_idx;
             // R1
             let r1 = match records_iter.next() {
-                Some(Ok(r)) => r,
+                Some(Ok(r)) => {
+                    tick(&logger, &mut lines_read); // +1 SAM line (R1) (#882)
+                    r
+                }
                 Some(Err(e)) => {
                     let _ = tx_input.send(WorkerInput::Err {
                         input_idx,
@@ -394,7 +420,10 @@ fn producer_loop(
             };
             // R2
             let r2 = match records_iter.next() {
-                Some(Ok(r)) => r,
+                Some(Ok(r)) => {
+                    tick(&logger, &mut lines_read); // +1 SAM line (R2) (#882)
+                    r
+                }
                 Some(Err(e)) => {
                     let _ = tx_input.send(WorkerInput::Err {
                         input_idx,

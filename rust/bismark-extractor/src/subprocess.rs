@@ -398,7 +398,10 @@ pub trait BismarkSubprocessRunner {
 /// deadlock on >64 KiB stderr bursts); reads via `read_until(b'\n', ...)`
 /// (byte-safe; doesn't require UTF-8 stderr); always joins the drain thread
 /// before returning (prevents stderr-tail races + thread leaks).
-pub struct RealRunner;
+pub struct RealRunner {
+    /// Suppress the pre-spawn audit line under `--quiet` (#882).
+    pub quiet: bool,
+}
 
 impl BismarkSubprocessRunner for RealRunner {
     fn run(
@@ -407,15 +410,17 @@ impl BismarkSubprocessRunner for RealRunner {
         program: &Path,
         argv: &[OsString],
     ) -> Result<RunOutcome, BismarkExtractorError> {
-        // Pre-spawn audit eprintln (rev 1 O2). Always-on; cheap.
-        eprintln!(
-            "[bismark-extractor] spawning: {} {}",
-            program.display(),
-            argv.iter()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        // Pre-spawn audit line (rev 1 O2). Informational → gated by --quiet (#882).
+        if !self.quiet {
+            eprintln!(
+                "[bismark-extractor] spawning: {} {}",
+                program.display(),
+                argv.iter()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
 
         let mut child = Command::new(program)
             .args(argv)
@@ -602,6 +607,8 @@ mod tests {
             ample_memory: false,
             genome_folder: None,
             parallel: 1,
+            quiet: false,
+            verbose: false,
         }
     }
 

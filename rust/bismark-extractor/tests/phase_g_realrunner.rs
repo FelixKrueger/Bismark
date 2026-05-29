@@ -29,7 +29,7 @@ fn fixture_path(name: &str) -> PathBuf {
 fn realrunner_invokes_subprocess_and_returns_ok_on_zero_exit() {
     let prog = fixture_path("fake_bismark2bedgraph_success.sh");
     let argv: Vec<OsString> = vec!["--cutoff".into(), "1".into()];
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &argv)
         .expect("zero-exit fixture should succeed");
     assert!(outcome.exit_status.success(), "success fixture must exit 0");
@@ -40,7 +40,7 @@ fn realrunner_returns_subprocess_failed_on_nonzero_exit() {
     // Failure case: the subprocess exits 7. We see Ok(RunOutcome) with a
     // non-success exit_status (the orchestrator converts to SubprocessFailed).
     let prog = fixture_path("fake_bismark2bedgraph_failure.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &[])
         .expect("RealRunner.run itself succeeds even on non-zero child exit");
     assert!(
@@ -62,7 +62,7 @@ fn realrunner_subprocess_failed_carries_correct_tool_variant() {
     // exit → SubprocessFailed { tool: ... }. We assert the tool field
     // matches the SubprocessTool we passed in.
     let prog = fixture_path("fake_bismark2bedgraph_failure.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Coverage2Cytosine, &prog, &[])
         .expect("run() returns Ok even on non-zero child exit");
     // Simulate the orchestrator's error conversion:
@@ -83,7 +83,7 @@ fn realrunner_subprocess_failed_carries_correct_tool_variant() {
 fn realrunner_high_volume_stderr_stays_bounded_in_ring_buffer() {
     // Fixture writes ~1 MiB of stderr. The ring buffer caps at 64 KiB.
     let prog = fixture_path("fake_bismark2bedgraph_high_stderr.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &[])
         .expect("high-stderr fixture should exit cleanly");
     assert!(outcome.exit_status.success());
@@ -114,7 +114,7 @@ fn realrunner_128kib_stderr_burst_does_not_deadlock() {
     // awkward); if it ever hangs, the test runner's --timeout will catch
     // it. In practice this completes in <100 ms.
     let prog = fixture_path("fake_bismark2bedgraph_burst_then_exit.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &[])
         .expect("burst fixture should report exit status");
     assert!(
@@ -139,7 +139,7 @@ fn realrunner_drain_handles_non_utf8_stderr_bytes() {
     // read_line (which errors on non-UTF-8). Must succeed even when the
     // subprocess writes invalid UTF-8 sequences.
     let prog = fixture_path("fake_bismark2bedgraph_non_utf8_stderr.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &[])
         .expect("non-UTF-8 stderr must NOT crash the drain thread");
     assert!(outcome.exit_status.success());
@@ -159,7 +159,7 @@ fn realrunner_subprocess_spawn_failed_when_program_does_not_exist() {
     // defensive test for the spawn-time path. Passing a non-existent
     // program directly to RealRunner exercises SubprocessSpawnFailed.
     let prog = Path::new("/nonexistent/path/to/fake_b2bg_98765");
-    let err = RealRunner
+    let err = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, prog, &[])
         .expect_err("spawn of nonexistent binary should fail");
     assert!(matches!(
@@ -179,7 +179,7 @@ fn realrunner_drain_thread_joined_on_ok_path() {
     // completion before run() returned). If the drain were unjoined, the
     // ring buffer snapshot could be empty.
     let prog = fixture_path("fake_bismark2bedgraph_success.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &[])
         .expect("success fixture");
     assert!(outcome.exit_status.success());
@@ -196,7 +196,7 @@ fn realrunner_drain_thread_joined_on_err_path() {
     // Mirror test for the non-zero-exit path: stderr_tail should also be
     // populated (the drain joined before run() returned its result).
     let prog = fixture_path("fake_bismark2bedgraph_failure.sh");
-    let outcome = RealRunner
+    let outcome = RealRunner { quiet: false }
         .run(SubprocessTool::Bismark2BedGraph, &prog, &[])
         .expect("run() returns Ok regardless of child exit code");
     assert!(
