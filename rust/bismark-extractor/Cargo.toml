@@ -21,6 +21,12 @@ path = "src/main.rs"
 [dependencies]
 bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
+# Multithreaded allocator (#884). The default system allocator's arena locks
+# were the dominant cost of the extractor's parallel pipeline: 4-8 worker
+# threads blocked in malloc/free on per-record allocations, causing N>1 to run
+# ~2x SLOWER than N=1 (measured: default N=4 155.8s -> 23.5s with mimalloc;
+# anti-scaling eliminated). Allocator-only — output is byte-identical.
+mimalloc = { version = "=0.1.52", default-features = false }
 thiserror = "=2.0.0"
 # noodles-sam pinned to match bismark-io's transitive choice (matches dedup precedent).
 # Used for `Header` in the chr-name lookup table builder (header.rs) and in tests.
