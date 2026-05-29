@@ -46,43 +46,44 @@ pub struct Cli {
     #[arg(long = "dir")]
     pub dir: Option<PathBuf>,
 
-    /// Treat the first line of each input as a version header to skip / not.
+    /// Inputs have no version-header line — do not drop the first line of
+    /// each file (default: the first line is treated as a header and skipped).
     #[arg(long = "no_header")]
     pub no_header: bool,
 
-    /// Minimum total coverage at a position before it is emitted (default 1).
-    /// `allow_hyphen_values` lets a negative value parse (Perl `GetOptions
-    /// cutoff=i` accepts negatives) so the `> 0` check produces our
-    /// [`BismarkBedgraphError::BadCutoff`] rather than a clap usage error.
+    /// Minimum read coverage before a position is reported (default: 1).
+    // allow_hyphen_values: Perl `GetOptions cutoff=i` accepts negatives, so a
+    // value like `-3` reaches our `> 0` check (a clear error) instead of being
+    // rejected by clap as an unknown flag.
     #[arg(long = "cutoff", allow_hyphen_values = true)]
     pub cutoff: Option<i64>,
 
-    /// Replace whitespace in the read-id field with `_` (Perl sort-safety).
-    /// **No effect on output** here — the read-id field is unused.
+    /// Replace whitespace in read IDs with underscores (accepted for Perl
+    /// compatibility; has no effect on the output).
     #[arg(long = "remove_spaces")]
     pub remove_spaces: bool,
 
-    /// Include per-position counts in the coverage file (always on; accepted
-    /// for Perl compatibility, ignored).
+    /// Include per-position methylation counts in the coverage file
+    /// (always on; accepted for Perl compatibility).
     #[arg(long = "counts")]
     pub counts: bool,
 
-    /// Use ALL cytosine contexts, not just CpG (uses every input file).
+    /// Process all cytosine contexts (CpG, CHG, CHH), not just CpG.
     #[arg(long = "CX", visible_alias = "CX_context")]
     pub cx: bool,
 
-    /// UNIX-sort buffer size (Perl). Accepted + format-validated for CLI
-    /// parity, then **ignored** (in-memory aggregation, SPEC D3).
+    /// Sort buffer size (accepted for Perl compatibility; an in-memory sort
+    /// is always used).
     #[arg(long = "buffer_size")]
     pub buffer_size: Option<String>,
 
-    /// Many-scaffold workaround (Perl). **Accepted-but-ignored** no-op —
-    /// the in-memory aggregator has no open-filehandle limit (SPEC D2).
+    /// Many-scaffold workaround (accepted for Perl compatibility; unnecessary
+    /// here — the in-memory aggregator has no open-filehandle limit).
     #[arg(long = "gazillion", visible_alias = "scaffolds")]
     pub gazillion: bool,
 
-    /// In-RAM array sort (Perl). **Accepted-but-ignored** — we always
-    /// aggregate in memory (SPEC D3).
+    /// In-memory array sort (accepted for Perl compatibility; an in-memory
+    /// sort is always used).
     #[arg(long = "ample_memory")]
     pub ample_memory: bool,
 
