@@ -1,0 +1,34 @@
+[package]
+name = "bismark-bedgraph"
+version = "1.0.0-beta.1"
+description = "Rust port of Bismark Perl's bismark2bedGraph script"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["bisulfite", "methylation", "bismark", "bedgraph", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark2bedGraph_rs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.0"
+# Plain/gzipped text I/O — bismark2bedGraph reads the extractor's
+# per-context call files and writes gzipped bedGraph + coverage. No BAM,
+# so no bismark-io / noodles dependency (SPEC §5).
+flate2 = "=1.1.9"
+# Faster HashMap for the (chr,pos) aggregation map; lowers the per-entry
+# constant for the large --CX case (SPEC §1.1 D3 / I3).
+rustc-hash = "=2.1.0"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"

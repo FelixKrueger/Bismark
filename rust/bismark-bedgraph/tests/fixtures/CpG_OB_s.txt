@@ -1,0 +1,5 @@
+Bismark methylation extractor version v0.25.1
+r	+	MT	50	Z
+r	-	MT	50	z
+r	-	MT	50	z
+r	-	1	30	z
