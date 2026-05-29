@@ -28,6 +28,12 @@ use bismark_extractor::error::BismarkExtractorError;
 use bismark_extractor::{extract_pe_parallel, extract_se_parallel, version_string};
 use bismark_io::{detect_paired_from_header, open_reader};
 
+// SPIKE (#884, throwaway): mimalloc as the global allocator to test whether the
+// N>1 anti-scaling is malloc-arena contention (top showed --parallel 8 at
+// ~364% CPU = blocking-bound). Remove if it doesn't help.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
