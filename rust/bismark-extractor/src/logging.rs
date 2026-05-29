@@ -12,7 +12,7 @@
 //! `--quiet` gate and the formatting are unit-testable without capturing
 //! a real stderr.
 
-use crate::cli::ResolvedConfig;
+use crate::cli::{PairedMode, ResolvedConfig};
 use crate::output::SplittingReport;
 use noodles_sam::Header;
 use std::io::Write;
@@ -147,8 +147,14 @@ pub fn parameters_text(config: &ResolvedConfig, is_paired: bool) -> String {
     } else {
         "single-end"
     };
+    // Mode-detection source (Perl `:1172`/`:1177` parenthetical): AutoDetect
+    // resolved from the @PG line, vs explicitly forced with -s/-p.
+    let source = match config.paired_mode {
+        PairedMode::AutoDetect => "auto-detected from @PG line",
+        PairedMode::SingleEnd | PairedMode::PairedEnd => "specified via -s/-p",
+    };
     let mut s = String::new();
-    s.push_str(&format!("Treating file(s) as {lib} data\n\n"));
+    s.push_str(&format!("Treating file(s) as {lib} data ({source})\n\n"));
     s.push_str("Summarising Bismark methylation extractor parameters:\n");
     s.push_str("=======================================================\n");
     s.push_str(&format!("Bismark {lib} format specified\n"));
