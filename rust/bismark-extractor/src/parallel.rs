@@ -70,7 +70,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use bismark_io::{BismarkPair, BismarkRecord, BismarkStrand, open_reader};
+use bismark_io::{
+    AlignmentKind, BismarkIoError, BismarkPair, BismarkRecord, BismarkStrand, ThreadedBamReader,
+    open_reader,
+};
 use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 
 use crate::call::{CytosineContext, MethCall, extract_calls};
@@ -207,7 +210,25 @@ fn run_pipeline(
 
     // Open the reader on the main thread to get the header (for chr_table)
     // before we hand the reader off to the producer thread.
-    let reader = open_reader(input, /*cram_ref=*/ None)?;
+    //
+    // #884 R3: for BAM at N≥2, decode BGZF blocks in parallel via
+    // ThreadedBamReader. Once mimalloc removed the allocator contention, the
+    // single producer's serial BGZF decode became the throughput cap (workers
+    // starve → flat scaling). Parallel decode feeds them faster. SAM/CRAM and
+    // N=1 keep the single-threaded reader (MultithreadedReader has fixed
+    // per-call overhead — 0.69× at worker_count=1 in the spike).
+    // `ThreadedBamReader::from_path` enforces the SAME coordinate-sort rejection
+    // as `open_reader` (bismark BAMs are read-ordered; coord-sorted breaks the
+    // PE adjacent-pairing assumption), so behaviour is unchanged.
+    let is_bam = matches!(AlignmentKind::from_path(input)?, AlignmentKind::Bam);
+    let reader = if n_workers >= 2 && is_bam {
+        ProducerReader::Threaded(ThreadedBamReader::from_path(
+            input,
+            std::num::NonZeroUsize::new(n_workers).expect("n_workers >= 2 in this branch"),
+        )?)
+    } else {
+        ProducerReader::Any(open_reader(input, /*cram_ref=*/ None)?)
+    };
     let chr_table: Arc<[String]> = Arc::from(build_chr_name_table(reader.header())?);
 
     // Console diagnostics (#882) — emit once on the main thread while we still
@@ -361,8 +382,34 @@ fn run_pipeline(
 /// already buffered in the partial batch still ship (today they are emitted
 /// before the producer short-circuits; dropping them would break byte-identity
 /// on error inputs). The producer still `return`s after the first error.
+/// Producer-side reader (#884 R3): either the single-threaded [`AnyReader`]
+/// (SAM/CRAM, or BAM at `--parallel 1`) or the parallel-BGZF
+/// [`ThreadedBamReader`] (BAM at N≥2). Both expose `header()` + `records()`
+/// yielding the same `Result<BismarkRecord, _>`; this enum lets `producer_loop`
+/// own and drive either without changing its body.
+enum ProducerReader {
+    Any(bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>),
+    Threaded(ThreadedBamReader),
+}
+
+impl ProducerReader {
+    fn header(&self) -> &noodles_sam::Header {
+        match self {
+            ProducerReader::Any(r) => r.header(),
+            ProducerReader::Threaded(r) => r.header(),
+        }
+    }
+
+    fn records(&mut self) -> Box<dyn Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_> {
+        match self {
+            ProducerReader::Any(r) => Box::new(r.records()),
+            ProducerReader::Threaded(r) => Box::new(r.records()),
+        }
+    }
+}
+
 fn producer_loop(
-    mut reader: bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>,
+    mut reader: ProducerReader,
     is_paired: bool,
     tx_input: Sender<InputBatch>,
     logger: crate::logging::Logger,
