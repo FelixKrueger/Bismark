@@ -58,6 +58,7 @@ pub mod call;
 pub mod cli;
 pub mod error;
 pub mod header;
+pub mod logging;
 pub mod mbias;
 pub mod mbias_writer;
 pub mod output;

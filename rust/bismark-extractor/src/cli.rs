@@ -201,6 +201,19 @@ pub struct Cli {
     #[arg(long = "mbias_off")]
     pub mbias_off: bool,
 
+    // ─── Console diagnostics (#882) ───
+    /// Suppress the informational stderr log (banner, mode, parameter summary,
+    /// header provenance, progress counter, final summary, kept/deleted).
+    /// Genuine warnings + errors still print. Default off (verbose like Perl).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Also print the `@SQ` reference dictionary in the header provenance
+    /// (long-only; `@HD`/`@PG` are shown regardless). Off by default — the
+    /// per-contig dump is noise on large genomes.
+    #[arg(long = "verbose")]
+    pub verbose: bool,
+
     // ─── Compat / silent-accept flags (SPEC §3 row 27) ───
     /// Path to a samtools binary. Silently accepted in the Rust port —
     /// bismark-io uses pure-Rust noodles; no samtools subprocess is
@@ -315,6 +328,10 @@ pub struct ResolvedConfig {
     pub genome_folder: Option<PathBuf>,
     /// Rayon worker thread count (Phase F).
     pub parallel: usize,
+    /// Suppress informational stderr log (#882). Errors/warnings still print.
+    pub quiet: bool,
+    /// Include `@SQ` lines in header provenance (#882).
+    pub verbose: bool,
 }
 
 impl ResolvedConfig {
@@ -503,6 +520,8 @@ impl Cli {
             ample_memory: self.ample_memory,
             genome_folder: self.genome_folder,
             parallel: self.parallel as usize,
+            quiet: self.quiet,
+            verbose: self.verbose,
         })
     }
 }
