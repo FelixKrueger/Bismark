@@ -28,9 +28,14 @@ use bismark_extractor::error::BismarkExtractorError;
 use bismark_extractor::{extract_pe_parallel, extract_se_parallel, version_string};
 use bismark_io::{detect_paired_from_header, open_reader};
 
-// SPIKE (#884, throwaway): mimalloc as the global allocator to test whether the
-// N>1 anti-scaling is malloc-arena contention (top showed --parallel 8 at
-// ~364% CPU = blocking-bound). Remove if it doesn't help.
+// Multithreaded global allocator (#884). The parallel pipeline's worker threads
+// allocate heavily per record (record parsing, call Vecs, batch Vecs); under the
+// default system allocator they blocked on arena locks, making `--parallel N>1`
+// run ~2x SLOWER than N=1 (`top` showed only ~364% CPU at `--parallel 8` — i.e.
+// blocking-bound, not CPU-bound). mimalloc removes that contention: default N=4
+// dropped 155.8s -> 23.5s and the anti-scaling vanished. Allocator choice does
+// not affect computed output — byte-identity to the system allocator holds
+// (guarded by the `parallel_phase_f` N≡1 tests + the Phase H matrix).
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
