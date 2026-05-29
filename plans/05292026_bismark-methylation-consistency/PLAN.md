@@ -205,3 +205,14 @@ Reports: `CODE_REVIEW_A.md`, `CODE_REVIEW_B.md`, `COVERAGE.md`. **plan-manager v
 - **Strict-record divergence (Reviewer B, High):** behavior is intentional (rev-1 locked: keep `BismarkRecord`) but was untested and the SPEC wording was imprecise. SPEC §4.1 tightened to state the *fatal-abort* semantics exactly; added `malformed_record_missing_xr_is_fatal` test pinning it.
 - **Coverage gaps (plan-manager PARTIAL):** added `multiple_input_files_each_get_own_outputs`, `pe_odd_trailing_r1_is_dropped_uncounted`, and `truncated_bam_is_fatal` tests. Integration tests now **20** (all green); lib unit tests 48.
 - Low findings (u32 counters unreachable-overflow, 6-line SO-check duplication, usage-string rename, unmapped-only-input disposition) reviewed and accepted as-is / null on genuine Bismark data.
+
+### Phase D — real-data byte-identity gate (colossal, 2026-05-29): ✅ PASSED
+Ran Perl `methylation_consistency` vs the release Rust binary (built from this branch on `dockyard-colossal-0`) on the real 10M Bismark BAMs at `/weka/projects/bioinf/Data/Felix/bismark_benchmarks/`, each in an isolated work dir (input symlinked so outputs land in the work dir, never the shared data). Comparison: `_consistency_report.txt` byte-diff + per-bucket `samtools view` record-md5 (header omitted → samtools `@PG` provenance correctly excluded; empty buckets → empty record stream both sides).
+
+| Case | Input | Records | Report | Buckets | Perl / Rust |
+|---|---|---|---|---|---|
+| SE | `directional_10M…bt2.bam` (621M) | 8,501,508 | IDENTICAL | all 3 record-md5 match | 16s / 6s |
+| SE `--chh` | same | 8,501,508 | IDENTICAL | all 3 match (all_unmeth = 7.31M recs) | 40s / 40s |
+| PE | `directional_10M…bt2_pe.bam` (1.3G) | 8,542,385 pairs | IDENTICAL | all 3 match | 32s / 15s |
+
+The bucket md5s are **non-empty and match** Perl exactly → genuine record-level byte-identity at scale, confirming noodles preserves records faithfully (the reviewers' tag-order/round-trip concern is a non-issue on real data). Rust ~2–2.7× faster on SE/PE. **The byte-identity acceptance gate (SPEC §7) is met.** Still open before the epic is fully Done: PR #896 merge, and the `docs(methcons)` CHANGELOG/mkdocs entry + CI diff-vs-Perl job (#796).
