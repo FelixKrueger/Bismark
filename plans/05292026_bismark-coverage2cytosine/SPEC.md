@@ -95,6 +95,7 @@ Perl parses `($chr,$start,$end,undef,$meth,$nonmeth) = split /\t/` (`:209`) — 
 
 - `.gz` detection is by literal filename suffix `gz$` (`:186`); `.gz` ⇒ decompress (`flate2`), else read plain.
 - The coverage file is assumed **sorted by chromosome then position** (it is, by `bismark2bedGraph` construction). The report walks the *genome*, not the cov file, so within-chromosome cov order does not affect report-line order — but **chromosome appearance order in the cov file DOES** drive covered-chromosome output order (§7.5).
+- **Parse policy (rev 3, Phase-B review):** lines are processed per-chromosome, flushed on each `chr`-transition (driven solely by the transition — a **non-contiguous** chr re-flushes + re-emits, matching Perl `:227`); duplicate positions are last-write-wins (Perl `%chr` overwrite `:224`); a trailing `\r` is stripped (CRLF) and blank lines skipped; `start`/`meth`/`nonmeth` are strict `u32` (a non-numeric field → `MalformedCovLine` error — an **accepted divergence** from Perl's lenient `"abc"`→0 coercion, which cannot occur on real `bismark2bedGraph` output). See `phase-b-core-report/PLAN.md` §3.1.
 
 ## 5. Output topology
 
