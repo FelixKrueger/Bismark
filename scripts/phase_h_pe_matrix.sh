@@ -33,10 +33,11 @@
 #
 # Mixed-metric differential at N=1 (rev 1 A-O3):
 #   - r1_5p / r2_5p / r1r2_3p: M-bias data row count < D by ≥1 row (SE-symmetric).
-#   - overlap: M-bias data COUNT-SUM (methylated + unmethylated) > D + 5%.
+#   - overlap: M-bias data COUNT-SUM (methylated + unmethylated) strictly > D.
 #     Rationale: --include_overlap accumulates counts at existing M-bias positions
 #     (positions are read-relative) rather than adding new rows. Row count is
-#     unchanged; count-sum strictly increases.
+#     unchanged; count-sum strictly increases (magnitude is per-library, so the
+#     invariant is monotonic > D, not a fixed % floor — rev 2).
 #
 # Exit codes:
 #   0  — all cells PASS byte-identity + cross-N PASS + differential PASS + Rust scaling ≥ SPEC §9.7's 4×
@@ -411,7 +412,7 @@ fi
 
 # Rev 1 (A-O3 mixed-metric differential; B-Imp-1 fail-closed init).
 # - r1_5p / r2_5p / r1r2_3p: row count < D (SE-symmetric)
-# - overlap: count-sum > D + 5% (PE-specific; --include_overlap accumulates counts at existing positions)
+# - overlap: count-sum strictly > D (PE-specific; --include_overlap accumulates counts at existing positions; rev 2 dropped the +5% floor)
 #
 # ROW_COUNT_OK initialized to 0 (fail-closed; rev 1 B-Imp-1). Flipped to 1
 # only on positive completion of all four assertions AND all 5 cells'
@@ -498,12 +499,21 @@ if [[ "$BASELINE_GATE_APPLIES" -eq 1 ]]; then
       PASS_FLAG=0
       ROW_COUNT_DETAIL="$ROW_COUNT_DETAIL [FAIL: differential r1r2_3p rows=$R1R2_3P_ROWS not < D=$D_ROWS]"
     fi
-    # overlap count-sum > D + 5% (rev 1 A-O3)
+    # overlap count-sum strictly > D (rev 2, 2026-05-29: dropped the +5% floor).
+    # The magnitude of the --include_overlap bump scales with the mate-overlap-
+    # base fraction (insert size vs read length) — a per-library property, not a
+    # fixed constant. On SRR24827378_10M the real bump is +2.28% (byte-identical
+    # Perl≡Rust), which the old ≥5% floor wrongly FAILed. The only always-true
+    # invariant is monotonic increase; the 80%-properly-paired pre-flight gate
+    # ensures overlap is meaningful. See plans/05262026_bismark-extractor/
+    # MATRIX_REV2_OVERLAP_DIFFERENTIAL_PLAN.md + evidence dir on colossal.
+    # `-le` fails on count-sum == D intentionally: properly-paired (FLAG 0x2)
+    # does NOT imply mate overlap, but zero net overlap on a WGBS library means
+    # --include_overlap was a no-op = a genuine regression worth failing on.
     if [[ -n "$OVERLAP_COUNTS" && -n "$D_COUNTS" && "$D_COUNTS" -gt 0 ]]; then
-      OVERLAP_THRESHOLD=$(( D_COUNTS * 105 / 100 ))
-      if [[ "$OVERLAP_COUNTS" -le "$OVERLAP_THRESHOLD" ]]; then
+      if [[ "$OVERLAP_COUNTS" -le "$D_COUNTS" ]]; then
         PASS_FLAG=0
-        ROW_COUNT_DETAIL="$ROW_COUNT_DETAIL [FAIL: differential overlap count-sum=$OVERLAP_COUNTS not > D=$D_COUNTS + 5% threshold=$OVERLAP_THRESHOLD]"
+        ROW_COUNT_DETAIL="$ROW_COUNT_DETAIL [FAIL: differential overlap count-sum=$OVERLAP_COUNTS not > D=$D_COUNTS]"
       fi
     else
       PASS_FLAG=0
@@ -696,7 +706,7 @@ fi
   echo ""
   echo "Cells:"
   echo "  - r1_5p / r2_5p / r1r2_3p: M-bias row count strictly < D (--ignore removes positions)"
-  echo "  - overlap: M-bias count-sum (methylated + unmethylated) strictly > D by ≥5%"
+  echo "  - overlap: M-bias count-sum (methylated + unmethylated) strictly > D"
   echo "    (--include_overlap accumulates counts at existing positions; rows unchanged)"
   echo ""
   if [[ "$BASELINE_GATE_APPLIES" -eq 0 ]]; then
@@ -770,7 +780,7 @@ elif [[ "$BASELINE_GATE_APPLIES" -eq 1 && "$MBIAS_BASELINE_OK" -eq 0 ]]; then
 elif [[ "$BASELINE_GATE_APPLIES" -eq 1 && "$ROW_COUNT_OK" -eq 0 ]]; then
   EXIT=1
   # Rev 1 B-Imp-5: distinct verdict line for differential FAIL (disambiguates from byte-identity FAIL).
-  REASON="FAIL: differential check violated (mixed-metric: row-count for <D cells, count-sum>D+5% for overlap) — see Differential detail above"
+  REASON="FAIL: differential check violated (mixed-metric: row-count for <D cells, count-sum>D for overlap) — see Differential detail above"
 elif [[ "$PERF_TARGET_MET" -eq 0 ]]; then
   EXIT=3
   REASON="WARN: byte-identity PASSED but Rust scaling missed §9.7's 4× target (v1.0 may ship at exit 3)"

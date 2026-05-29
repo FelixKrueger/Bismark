@@ -176,9 +176,11 @@ Verify:
       - `r1_5p` / `r2_5p` / `r1r2_3p`: M-bias data row count strictly < D
         (`--ignore N` removes positions monotonically).
       - `overlap`: M-bias count-sum (methylated + unmethylated) strictly > D
-        by ≥5% (rev 1 A-O3 — `--include_overlap` accumulates counts at
+        (rev 1 A-O3 — `--include_overlap` accumulates counts at
         existing positions; row count is unchanged because M-bias positions
-        are read-relative; count-sum strictly increases).
+        are read-relative; count-sum strictly increases. rev 2 2026-05-29
+        dropped the `≥5%` floor — the bump magnitude is a per-library
+        mate-overlap-base property, not a fixed constant).
 - [ ] `~/phase_h_pe_release/speedup_table.md` "Properly-paired fraction"
       header ≥ 80% (rev 1 A-I1 pre-flight gate already enforced this; this
       verify confirms the recorded value).
