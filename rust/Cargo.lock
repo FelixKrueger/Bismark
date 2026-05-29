@@ -151,6 +151,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bismark-methylation-consistency"
+version = "1.0.0-beta.1"
+dependencies = [
+ "assert_cmd",
+ "bismark-io",
+ "bstr",
+ "clap",
+ "noodles-bam",
+ "noodles-core 0.20.0",
+ "noodles-sam",
+ "predicates",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

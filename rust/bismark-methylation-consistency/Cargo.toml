@@ -1,0 +1,42 @@
+[package]
+name = "bismark-methylation-consistency"
+version = "1.0.0-beta.1"
+description = "Rust port of Bismark Perl's methylation_consistency script — splits a Bismark BAM by read-level methylation consistency"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "consistency", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "methylation_consistency_rs"
+path = "src/main.rs"
+
+[dependencies]
+bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+clap = { version = "=4.5.30", features = ["derive"] }
+# noodles-sam pinned to match bismark-io's transitive choice (dedup/extractor
+# precedent). Needed directly for `Header` (returned by the reader's
+# `header()`) and for the @HD SO:coordinate PE sort guard.
+noodles-sam = "=0.85.0"
+thiserror = "=2.0.0"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
+# Synthetic record/header construction in integration + unit tests.
+bstr = "=1.10.0"
+noodles-core = "=0.20.0"
+# Integration tests build input BAMs directly via the raw noodles writer so
+# they can inject arbitrary (incl. malformed, e.g. XM-less) records that the
+# higher-level bismark_io::BamWriter would refuse to construct. Pinned to
+# match bismark-io's transitive choice. (noodles-sam is already a normal
+# dependency, so it's available to tests without re-listing.)
+noodles-bam = "=0.89.0"
