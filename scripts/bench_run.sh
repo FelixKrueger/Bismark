@@ -125,7 +125,9 @@ for rep in $(seq 1 "$REPS"); do
   echo "$TOOL,$DATASET,$MODE,$PARALLEL,$rep,${wall_s:-NA},${cores:-NA},${rss:-NA},$peak_threads,$peak_fds,$ec" >> "$CSV"
   echo "  $TOOL $MODE p$PARALLEL rep$rep: wall=${wall_s}s cores=${cores} rss=${rss}KB threads=${peak_threads} fds=${peak_fds} exit=$ec" >&2
 
-  # Keep outputs only for rep1 (for inspection); purge the rest to save disk.
-  [[ "$rep" -ne 1 ]] && rm -rf "$run_out"
+  # Perf outputs are disposable (metrics are in the CSV; correctness is proven by
+  # Phase 1 byte-identity). Purge on SUCCESS to bound disk — full-WGBS gzip output is
+  # many GB and the campaign runs dozens of configs. Keep on FAILURE for triage (.stderr).
+  [[ "$ec" -eq 0 ]] && rm -rf "$run_out"
 done
 exit $ANY_FAIL

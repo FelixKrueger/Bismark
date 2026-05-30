@@ -51,13 +51,15 @@ stage_local(){
   if [[ ! -f "$dst" ]]; then log "staging $name (cp -L from S3)…"; cp -L "$src" "$dst" || { log "stage FAILED: $name"; return 1; }; fi
   samtools view "$dst" 2>/dev/null | head -1 >/dev/null || true   # warm-up read
   if [[ "$dedup" == "se" ]]; then
-    local dd="$STAGE/${name%.bam}.deduplicated.bam"
+    local raw="$dst" dd="$STAGE/${name%.bam}.deduplicated.bam"
     if [[ ! -f "$dd" ]]; then
       log "deduplicating SE $name for PE-parity…"
-      "$DEDUP_BIN" -s --output_dir "$STAGE" "$dst" >>"$LOG" 2>&1 || { log "SE dedup FAILED"; return 1; }
+      "$DEDUP_BIN" -s --output_dir "$STAGE" "$raw" >>"$LOG" 2>&1 || { log "SE dedup FAILED"; return 1; }
     fi
     # deduplicate_bismark names it <base>.deduplicated.bam
     dst="$(ls "$STAGE"/*deduplicated.bam 2>/dev/null | grep -i "${name%.bam}" | head -1 || echo "$dd")"
+    # reclaim ~5G: the raw SE BAM is unused once the dedup'd copy exists
+    [[ -f "$dst" && "$dst" != "$raw" ]] && rm -f "$raw"
   fi
   echo "$dst"
 }
@@ -84,7 +86,7 @@ done
 # ── GATE ───────────────────────────────────────────────────────────────────
 if [[ "$SKIP_GATE" -eq 0 ]]; then
   log "=== GATE (waiting for oxy idle) ==="
-  "$SCRIPT_DIR/oxy_idle_gate.sh" || { log "idle-gate timed out — aborting"; exit 1; }
+  "$SCRIPT_DIR/oxy_idle_gate.sh" --timeout 28800 --poll 300 || { log "idle-gate timed out (8h) — aborting"; exit 1; }
 fi
 
 # ── PHASE 1: byte-identity (HARD GATE) ──────────────────────────────────────
