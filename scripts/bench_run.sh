@@ -50,9 +50,12 @@ if [[ -L "$BAM" ]]; then echo "ERROR: $BAM is a symlink — stage it to local di
 [[ -f "$BAM" ]] || { echo "ERROR: BAM not found: $BAM" >&2; exit 2; }
 
 # Free-space precheck (gzip mode writes ~12 large .gz; Rust panics on ENOSPC).
-AVAIL_GB=$(( $(df -Pk "$OUT_DIR" 2>/dev/null | awk 'NR==2{print $4}') / 1024 / 1024 ))
-if [[ "$MODE" == "gzip" && "$AVAIL_GB" -lt "$MIN_FREE_GB" ]]; then
-  echo "ERROR: only ${AVAIL_GB}GB free in $OUT_DIR; need >= ${MIN_FREE_GB}GB for gzip mode" >&2; exit 2
+AVAIL_K=$(df -Pk "$OUT_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+if [[ "$MODE" == "gzip" && -n "$AVAIL_K" ]]; then   # skip the check only if df gave nothing (don't false-block)
+  AVAIL_GB=$(( AVAIL_K / 1024 / 1024 ))
+  if [[ "$AVAIL_GB" -lt "$MIN_FREE_GB" ]]; then
+    echo "ERROR: only ${AVAIL_GB}GB free in $OUT_DIR; need >= ${MIN_FREE_GB}GB for gzip mode" >&2; exit 2
+  fi
 fi
 
 # PE auto-detect (matches phase_h_smoke.sh / Perl behaviour).
@@ -106,7 +109,7 @@ for rep in $(seq 1 "$REPS"); do
       sleep 0.2
     done
   fi
-  wait "$tpid"; ec=$?
+  ec=0; wait "$tpid" || ec=$?   # capture child exit WITHOUT set -e aborting (panic-as-failure)
 
   # Parse GNU time -v.
   wall=$(awk -F': ' '/Elapsed \(wall clock\)/{print $2}' "$tf" | tr -d ' ')

@@ -35,7 +35,9 @@ export RUST_BIN="${RUST_BIN:-$HOME/Github/Bismark/rust/target/release/bismark-me
 export PERL_BIN="${PERL_BIN:-$HOME/micromamba/envs/bismark-test/bin/bismark_methylation_extractor}"
 DEDUP_BIN="${DEDUP_BIN:-$HOME/micromamba/envs/bismark-test/bin/deduplicate_bismark}"
 
-log(){ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
+# NOTE: log to STDERR — stage_local() returns its path on stdout via command
+# substitution, and a log line on stdout would pollute that captured path.
+log(){ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG" >&2; }
 
 # ── Dataset source BAMs (S3 symlinks). label : src : layout : dedup ──────
 FS="$HOME/bismark_benchmarks/full_size"
@@ -67,8 +69,10 @@ stage_local(){
 # ── have_config: skip if CSV already has >=reps rows for tool/dataset/mode/parallel ─
 have_config(){ local t="$1" d="$2" m="$3" p="$4" r="$5"
   [[ -f "$CSV" ]] || return 1
+  # Count only SUCCESSFUL reps (exit col 11 == 0) — a failed config must NOT be
+  # treated as done (else resume skips it and its failed rows pollute medians).
   local c; c=$(awk -F, -v t="$t" -v d="$d" -v m="$m" -v p="$p" \
-       '$1==t&&$2==d&&$3==m&&$4==p{n++} END{print n+0}' "$CSV")
+       '$1==t&&$2==d&&$3==m&&$4==p&&$11==0{n++} END{print n+0}' "$CSV")
   [[ "$c" -ge "$r" ]]
 }
 
@@ -94,14 +98,20 @@ log "=== PHASE 1: byte-identity ==="
 declare -A DS_BAM=( [wgbs_pe]="$WGBS_PE" [wgbs_se]="$WGBS_SE" [rrbs_pe]="$RRBS_PE" )
 declare -A DS_MODES=( [wgbs_pe]="gzip plain" [wgbs_se]="gzip" [rrbs_pe]="gzip" )
 for ds in wgbs_pe wgbs_se rrbs_pe; do
-  if ! "$SCRIPT_DIR/byteid_run.sh" "${DS_BAM[$ds]}" --dataset "$ds" --out "$OUT_DIR/byteid" \
+  # Resumable: skip the (multi-hour, Perl-serial) byteid if a prior run already PASSED.
+  if grep -q "^BYTEID PASS" "$OUT_DIR/byteid/byteid_${ds}.status" 2>/dev/null; then
+    log "byteid $ds already PASSED (resume) — skipping"
+  elif ! "$SCRIPT_DIR/byteid_run.sh" "${DS_BAM[$ds]}" --dataset "$ds" --out "$OUT_DIR/byteid" \
         --modes "${DS_MODES[$ds]}" --sweep "1 2 4 8 16"; then
     log "BYTEID FAIL for $ds — HARD GATE: stopping campaign. Triage $OUT_DIR/byteid/byteid_${ds}.status"
     exit 1
   fi
-  # Reuse the Phase-1 Perl --multicore 1 wall as the serial perf anchor.
-  ps=$(grep -E '^Perl: [0-9]+s$' "$OUT_DIR/byteid/parity_${ds}_gzip/diff_summary.txt" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
-  [[ -n "$ps" ]] && echo "perl,$ds,gzip,1,1,$ps,NA,NA,NA,NA,0" >> "$CSV" && log "Perl serial anchor $ds: ${ps}s (reused from byteid)"
+  # Reuse the Phase-1 Perl --multicore 1 wall as the serial perf anchor — once
+  # (have_config guards against a duplicate row on resume).
+  if ! have_config perl "$ds" gzip 1 1; then
+    ps=$(grep -E '^Perl: [0-9]+s$' "$OUT_DIR/byteid/parity_${ds}_gzip/diff_summary.txt" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+    [[ -n "$ps" ]] && echo "perl,$ds,gzip,1,1,$ps,NA,NA,NA,NA,0" >> "$CSV" && log "Perl serial anchor $ds: ${ps}s (reused from byteid)"
+  fi
 done
 log "PHASE 1 PASS — all datasets parity + worker-invariant"
 
@@ -145,7 +155,14 @@ FINDINGS="$OUT_DIR/FINDINGS.md"
   awk -F, 'NR>1&&$5==1{printf "%-28s p%-3s %-10s cores=%-5s rss=%-9s threads=%-4s fds=%-4s exit=%s\n",$1" "$2,$4,$3,$7,$8,$9,$10,$11}' "$CSV" | sort
   echo '```'
   echo ""
-  echo "_Note: cores=(user+sys)/real is deflated in gzip mode by write-back — treat gzip-mode cores as a floor; the ~3-core headline is from mbias_only/plain. Default-gzip fds should confirm ~12 open .gz files._"
+  echo "_Note: cores=(user+sys)/real is deflated in gzip mode by write-back — treat gzip-mode cores as a floor; the ~3-core headline is from mbias_only/plain. Default-gzip fds should confirm ~12 open .gz files (peak_fds = 12 outputs + ~5 stdio/input)._"
+  echo ""
+  echo "## Failed configs (exit != 0) — degraded-night check"
+  echo "If any rows appear below, the run was degraded — those configs FAILED and their"
+  echo "timing is absent/invalid. Triage \`$OUT_DIR/perf/*/.stderr\` for the matching config."
+  echo '```'
+  nfail=$(awk -F, 'NR>1&&$11!=0{print; c++} END{exit (c>0)?0:1}' "$CSV") && echo "$nfail" || echo "(none — all configs exited 0)"
+  echo '```'
 } > "$FINDINGS"
 log "wrote $FINDINGS"
 log "=== DONE ==="

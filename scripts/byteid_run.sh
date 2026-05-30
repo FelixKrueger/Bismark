@@ -50,10 +50,12 @@ fi
 
 # ── (1) Rust-vs-Perl parity, per mode, at --parallel 1 ──────────────────
 for mode in $MODES; do
+  # phase_h_smoke.sh has no "plain" mode; its no-extra-flags mode is "default" (= plain .txt).
+  smoke_mode="$mode"; [[ "$mode" == "plain" ]] && smoke_mode="default"
   echo "==> [$DATASET] Rust-vs-Perl parity: mode=$mode (--parallel 1)" | tee -a "$STATUS"
   smoke_out="$OUT_DIR/parity_${DATASET}_${mode}"
   if RUST_BIN="$RUST_BIN" "$SCRIPT_DIR/phase_h_smoke.sh" "$BAM" \
-        --parallel 1 --mode "$mode" --out "$smoke_out" >>"$STATUS" 2>&1; then
+        --parallel 1 --mode "$smoke_mode" --out "$smoke_out" >>"$STATUS" 2>&1; then
     echo "  PARITY PASS: $DATASET $mode" | tee -a "$STATUS"
   else
     echo "  PARITY FAIL: $DATASET $mode (see $smoke_out/diff_summary.txt)" | tee -a "$STATUS"
@@ -65,15 +67,17 @@ done
 echo "==> [$DATASET] Rust-vs-Rust worker-invariance: --parallel { $SWEEP }" | tee -a "$STATUS"
 sweep_base="$OUT_DIR/sweep_${DATASET}"
 declare -A REF_MD5=()  # per-file md5 from N=1
-first_n=""
+first_n=""; ref_count=0
 for n in $SWEEP; do
   d="$sweep_base/p${n}"; rm -rf "$d"; mkdir -p "$d"
   "$RUST_BIN" --output_dir "$d" --parallel "$n" ${PE_FLAG:+$PE_FLAG} --gzip "$BAM" \
       >"$d/.stdout" 2>"$d/.stderr" || { echo "  RUST RUN FAIL at --parallel $n" | tee -a "$STATUS"; FAIL=1; continue; }
   # md5 each per-context output (sorted content; .gz via zcat). Skip reports/M-bias.
+  this_count=0
   while IFS= read -r f; do
     base=$(basename "$f")
     case "$base" in *_splitting_report.txt|*.M-bias.txt|*.png) continue ;; esac
+    this_count=$((this_count + 1))
     if [[ "$base" == *.gz ]]; then md=$(zcat "$f" | LC_ALL=C sort | md5sum | cut -d' ' -f1)
     else md=$(LC_ALL=C sort "$f" | md5sum | cut -d' ' -f1); fi
     if [[ -z "$first_n" ]]; then REF_MD5["$base"]="$md"
@@ -81,8 +85,13 @@ for n in $SWEEP; do
       echo "  INVARIANCE FAIL: $base differs at --parallel $n (n1=${REF_MD5[$base]:-MISSING} n${n}=$md)" | tee -a "$STATUS"; FAIL=1
     fi
   done < <(find "$d" -maxdepth 1 -type f \( -name '*.txt.gz' -o -name '*.txt' \) )
-  [[ -z "$first_n" ]] && first_n="$n"
-  echo "  --parallel $n: $( [[ "$n" == "$first_n" ]] && echo 'reference captured' || echo 'compared to N=1' )" | tee -a "$STATUS"
+  # File-SET check: a file present at N=1 but dropped at higher N (or vice versa) is
+  # invisible to the per-file md5 loop above — guard it with a count comparison.
+  if [[ -z "$first_n" ]]; then first_n="$n"; ref_count="$this_count"
+  elif [[ "$this_count" -ne "$ref_count" ]]; then
+    echo "  INVARIANCE FAIL: $this_count context files at --parallel $n != $ref_count at N=1 (file added/dropped)" | tee -a "$STATUS"; FAIL=1
+  fi
+  echo "  --parallel $n: $( [[ "$n" == "$first_n" ]] && echo "reference captured ($ref_count files)" || echo "compared to N=1 ($this_count files)" )" | tee -a "$STATUS"
   # keep only N=1 outputs for inspection
   [[ "$n" != "$first_n" ]] && rm -rf "$d"
 done
