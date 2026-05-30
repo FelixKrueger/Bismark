@@ -49,6 +49,11 @@ RRBS_PE_SRC="$RR/SRR24766921_GSM7433369_Colon_3_Months_Rep1_1_val_1_bismark_bt2_
 # stage_local <src> <dest_basename> [dedup:se|none] → echoes the staged local path
 stage_local(){
   local src="$1" name="$2" dedup="${3:-none}" dst="$STAGE/$2"
+  # Resume fast-path: if the FINAL artifact already exists (dedup'd for SE), reuse it —
+  # avoids re-cp'ing ~16G from S3 (and the raw SE is deleted post-dedup, so its absence
+  # must NOT trigger a re-stage).
+  local final="$dst"; [[ "$dedup" == "se" ]] && final="$STAGE/${name%.bam}.deduplicated.bam"
+  if [[ -f "$final" ]]; then echo "$final"; return 0; fi
   if [[ ! -e "$src" ]]; then log "MISSING source: $src"; return 1; fi
   if [[ ! -f "$dst" ]]; then log "staging $name (cp -L from S3)…"; cp -L "$src" "$dst" || { log "stage FAILED: $name"; return 1; }; fi
   samtools view "$dst" 2>/dev/null | head -1 >/dev/null || true   # warm-up read
