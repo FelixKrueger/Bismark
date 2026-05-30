@@ -2,7 +2,7 @@
 
 **Type:** Epic (5 phases) · **Branch/worktree:** `rust/coverage2cytosine` @ `../Bismark-c2c`
 **Epic:** [`EPIC.md`](./EPIC.md) · **Design contract:** [`SPEC.md`](./SPEC.md)
-**Last updated:** 2026-05-29
+**Last updated:** 2026-05-30
 
 ## Status legend
 📋 Planned → 📝 Planning → 🚧 Implementing → ✅ Complete · ⏸️ Deferred · ❌ Excluded
@@ -14,7 +14,7 @@
 | A | Scaffold + CLI + genome reader | `phase-a-scaffold-cli-genome/` | ✅ Complete |
 | B | Core genome-wide report | `phase-b-core-report/` | ✅ Complete |
 | C | `--gzip` + `--split_by_chromosome` | `phase-c-gzip-split/` | ✅ Complete |
-| D | `--merge_CpGs` (+ `--discordance`) | `phase-d-merge-cpgs/` | 📋 Planned |
+| D | `--merge_CpGs` (+ `--discordance`) | `phase-d-merge-cpgs/` | ✅ Complete |
 | E | Real-data byte-identity gate (colossal) | `phase-e-byte-identity-gate/` | 📋 Planned |
 
 ## History
@@ -30,4 +30,7 @@
 - **2026-05-29** — Dual code-review (`CODE_REVIEW_A/B.md`, both **APPROVE**, no Critical/High; both cross-checked binary vs live Perl → byte-identical) + plan-manager (`COVERAGE.md`, INCOMPLETE = test-coverage gaps only). Closed all gaps (V10/V21/V22/V23 discriminating tests + B-M1 raw-byte compare): **71 tests pass**, clippy clean. **✅ Phase B COMPLETE**; committed + pushed (PR #892); epic #891 Phase B checked.
 - **2026-05-29** — Phase C `PLAN.md` (rev 0) + dual plan-review (`PLAN_REVIEW_A/B.md`, both APPROVE-WITH-CHANGES; both verified vs live Perl; gzip half confirmed correct). Folded → **rev 1**: 2 Criticals (A: split filename uses RAW `-o` → new `ResolvedConfig.output_raw`, the doubled-suffix extractor path; B: split truncate-on-reopen) + Important (threshold>0 split file-set, V8 non-split-summary diff) + §10 Q1/Q2 resolved + V12–V14.
 - **2026-05-29** — `IMPL.md` (TDD, 17-item checklist → 8 tasks) + **Phase C implemented**: `ReportWriter{Plain,Gz}` + split/non-split `run_report` + raw-`-o` filename derivation. 81 tests pass; clippy clean.
-- **2026-05-29** — Dual code-review (`CODE_REVIEW_A/B.md`, both **APPROVE**, no Critical/High; both cross-checked binary vs live Perl → byte-identical, Phase B preserved) + plan-manager (`COVERAGE.md`, **verdict COMPLETE**, 8/8 tasks + V1–V14). Applied Low polish (removed redundant flate2 dev-dep, `--CX --gzip` summary assertion, stale-docstring + SPEC §5/§10.5 sync): **81 tests pass**, clippy clean. **✅ Phase C COMPLETE.** Next: commit + push onto PR #892; then Phase D (--merge_CpGs).
+- **2026-05-29** — Dual code-review (`CODE_REVIEW_A/B.md`, both **APPROVE**, no Critical/High; both cross-checked binary vs live Perl → byte-identical, Phase B preserved) + plan-manager (`COVERAGE.md`, **verdict COMPLETE**, 8/8 tasks + V1–V14). Applied Low polish; **81 tests pass**, clippy clean. **✅ Phase C COMPLETE** — committed (`b49a009`/`0eff604`) + pushed; epic #891 Phase C checked + 3/5 progress comment.
+- **2026-05-30** — Phase D `PLAN.md` (rev 0) + dual plan-review (`PLAN_REVIEW_A/B.md`, both APPROVE-WITH-CHANGES; both verified vs live Perl; core algorithm confirmed faithful). Folded → **rev 1**: 2 Criticals (C1a rounded-`%.6f` discordance comparison; C1b EOF-mid-resync `die` → no-panic/no-cleanup/stream-write) + Important (pub(crate) visibility promotion, V8 ≥3-bp-scaffold resync-test fix, EOF-bounded read-ahead) + Q1 resolved + V12–V14.
+- **2026-05-30** — `IMPL.md` (TDD, 16-item checklist → 9 tasks) + **Phase D implemented**: `merge.rs` post-pass + `report.rs` pub(crate) promotion + `MergeCpgSanityViolation`. **92 tests pass** (incl. byte-identity goldens for merge/gzip/zero_based/discordance-gross/**discordance-boundary**/resync-slide/EOF-die vs Perl v0.25.1); clippy clean. Next: dual code-review + plan-manager.
+- **2026-05-30** — Dual code-review (`CODE_REVIEW_reviewer-A/B.md`, both **APPROVE**, zero Critical/Important; both byte-diffed the binary vs live Perl on 36+ adversarial fixtures) + plan-manager (`COVERAGE.md`, **verdict COMPLETE**, 42 items). Folded the agreed advisory gaps: appended a Phase-D block to `generate_goldens.sh` (full golden provenance — regen reproduced all 8 pre-existing goldens byte-for-byte) + added dedicated tests **V2** (merged/discordant filename), **V6** (both-measured gate pools the unmeasured partner), **V8a** (same-chr chr-start resync branch), **V10** (sanity-assert desync arms), **V14** (multi-chromosome merged golden) + fixed the stale IMPL `≥7`-fields note. All new tests passed first run against the existing code (no behavioural change). **97 tests pass** (64 unit + 11 B + 7 C + 10 D + 5 sanity), fmt + clippy `-D warnings` clean. **✅ Phase D COMPLETE** — awaiting commit + push (PR #892).

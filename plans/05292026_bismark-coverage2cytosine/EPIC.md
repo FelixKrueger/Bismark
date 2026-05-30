@@ -43,7 +43,7 @@ Strictly sequential A→B→C→D→E (each merges to `rust/coverage2cytosine`; 
 | A | Scaffold + CLI + genome reader | `phase-a-scaffold-cli-genome/PLAN.md` | — |
 | B | Core genome-wide report | `phase-b-core-report/PLAN.md` | #A |
 | C | `--gzip` + `--split_by_chromosome` | `phase-c-gzip-split/PLAN.md` | #B |
-| D | `--merge_CpGs` (+ `--discordance`) | `phase-d-merge-cpgs/PLAN.md` _(to be written)_ | #B (#C if gzip-merge) |
+| D | `--merge_CpGs` (+ `--discordance`) | `phase-d-merge-cpgs/PLAN.md` | #B (#C if gzip-merge) |
 | E | Real-data byte-identity gate | `phase-e-byte-identity-gate/PLAN.md` _(to be written)_ | #B, #C, #D |
 
 ## 5. Shared assumptions (apply across all phases)
