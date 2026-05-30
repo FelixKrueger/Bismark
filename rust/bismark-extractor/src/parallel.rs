@@ -107,7 +107,7 @@ pub(crate) const BATCH_SIZE: usize = 4096;
 /// decode is the pipeline's ~19 s ceiling — the extract workers sit idle behind
 /// it (CPU probe: ~2.8 cores used regardless of `--parallel`). An oxy trial
 /// (10M PE) measured **2 decode threads as the sweet spot**: `--mbias_only`
-/// 18.3→13.0 s, plain `.txt` ~20→~17.9 s; 3–4 threads add nothing (even regress).
+/// 18.8→12.3 s, plain `.txt` 20.0→17.6 s; 3–4 threads add nothing (even regress).
 /// Fixing it at 2 (vs tying to `--parallel`) lets the common `--parallel 1`
 /// default benefit — same rationale shape as `output.rs::GZIP_COMPRESS_THREADS`.
 /// Applies to BAM only (BGZF); SAM/CRAM keep the single-threaded reader.
@@ -225,7 +225,7 @@ fn run_pipeline(
 
     // #884 R3 (perf gate, oxy 10M PE): floor BAM extract workers at 2 — a single
     // extract worker can't drain the 2-thread parallel decode (`--parallel 1` on
-    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.8 s / ~13 s with
+    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.6 s / ~12.3 s with
     // ≥2 workers), so the common `--parallel 1` default benefits fully. SAM/CRAM
     // (single-threaded decode) keep `max(1)` — extra workers can't beat serial decode.
     // Output is byte-identical across worker counts (batch_seq reorder), so this
@@ -238,8 +238,8 @@ fn run_pipeline(
     // #884 R3: BAM decode uses a fixed-2-thread parallel-BGZF reader
     // (`ThreadedBamReader`), ALWAYS — independent of `--parallel` (see
     // `DECODE_THREADS`). Single-threaded BGZF decode was the ~19 s pipeline
-    // ceiling; 2 decode threads drop the decode floor ~18.3→13.0 s and the plain
-    // `.txt` wall ~20→~17.9 s, so even `--parallel 1` benefits. SAM/CRAM are not
+    // ceiling; 2 decode threads drop the `--mbias_only` wall 18.8→12.3 s and the
+    // plain `.txt` wall 20.0→17.6 s, so even `--parallel 1` benefits. SAM/CRAM are not
     // BGZF → keep the single-threaded reader. `ThreadedBamReader::from_path`
     // applies the SAME coordinate-sort rejection as `open_reader`, so the
     // read-order contract (PE adjacent-pairing) is unchanged.
