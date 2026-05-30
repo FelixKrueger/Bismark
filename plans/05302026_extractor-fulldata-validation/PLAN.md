@@ -221,3 +221,35 @@ Total threads ≈ `1 main + ~2 producer/collector + 2 decode + max(--parallel,2)
 - **Remaining risk:** campaign length vs shared-oxy availability — mitigated by idle-gate + priority order
   + per-config resumability. The one true risk is a *genuine* full-data byte-identity FAIL (after PNG +
   rounding triage) — a hard stop, never papered over.
+
+## Implementation notes — Phase 0 (2026-05-30; branch `extractor-fulldata-bench`)
+**Harness shipped** (`5cfed84` + `ca7cad8`): `scripts/bench_run.sh`, `byteid_run.sh`,
+`oxy_idle_gate.sh`, `overnight_driver.sh`, + `phase_h_smoke.sh` rev-2 patches (PNG-delta
+codification, rounding-triage dump). All pass `bash -n` (bash 5.3).
+
+**Dry-run on oxy — every mechanism validated (10M PE + 13k synth RRBS):**
+- `bench_run` Rust 10M PE **mbias_only**: wall=12.64s (in R3 tolerance band, NOT pre-R3 ~19–21s →
+  confirms the corrected baseline), cores=3.18, rss=57MB, **threads=9** (1 main + 2 prod/coll + 2
+  decode + 4 workers — model exact), fds=5, exit=0.
+- `bench_run` Rust 10M PE **gzip**: wall=12.94s, **cores=7.19** (≫ mbias → per-mode reporting
+  vindicated), rss=254MB, **threads=69** (~60 gzip pool confirmed), **fds=17** (= 12 outputs + 5
+  stdio/input → Phase 3 must subtract overhead), exit=0.
+- `byteid_run` on synth 10k: **PARITY PASS** (Rust-vs-Perl) + worker-invariance {1,2,4} PASS — the
+  `phase_h_smoke.sh` patches work end-to-end.
+- `oxy_idle_gate` correctly detected the sibling c2c `coverage2cytosine` run (exit 1).
+- **Env finding:** oxy's Perl has **no `GD::Graph`** → emits no M-bias PNGs (explains the clean 10M
+  smoke); the PNG-exclusion patch is inert-but-safe here, protective elsewhere.
+
+**Deviations from plan (documented):**
+- **Disk bound (post-dry-run fix `ca7cad8`):** `bench_run` now purges each perf run's output on
+  SUCCESS (keeps on failure for triage) — keeping rep1 per config would exhaust oxy's 68G disk across
+  full-WGBS gzip × dozens of configs and the precheck would then silently skip later configs.
+- Driver drops the raw SE BAM after dedup (~5G reclaimed); idle-gate timeout raised to 8h / 5-min poll
+  for the overnight wait.
+- The S3-symlink guard works as designed: `bench_run`/`byteid_run` reject symlinks; the driver
+  `cp -L`-stages all three (WGBS-PE 9.6G, WGBS-SE 5.2G→dedup, RRBS 4.2G) to local disk first.
+
+**Campaign launched 2026-05-30 16:53Z** — tmux `fulldata_bench` on oxy, `~/fulldata_bench/` (driver.log,
+console.log, results.csv, FINDINGS.md). Sequence: STAGE → idle-gate (waits for the c2c session) →
+Phase 1 byte-identity (hard-stop on genuine FAIL) → Phase 2 priority-ordered resumable perf matrix →
+FINDINGS. Runs overnight unattended.
