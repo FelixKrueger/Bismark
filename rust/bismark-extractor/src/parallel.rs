@@ -8,7 +8,8 @@
 //!                 └─ worker N ─┘             (main thread)
 //! ```
 //!
-//! - **Producer** (single thread): drives `open_reader().records()`,
+//! - **Producer** (single thread): drives the reader's `records()` (BAM uses a
+//!   fixed 2-thread parallel-BGZF `ThreadedBamReader`, #884 R3; SAM/CRAM single-threaded),
 //!   accumulates `WorkerInputItem::Se | Pe | Err` into batches of up to
 //!   `BATCH_SIZE` (#884 R1), tags each batch with a monotonic `batch_seq`, and
 //!   sends one `InputBatch` per batch into a bounded MPMC channel. For PE the
@@ -70,7 +71,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use bismark_io::{BismarkPair, BismarkRecord, BismarkStrand, open_reader};
+use bismark_io::{
+    AlignmentKind, BismarkIoError, BismarkPair, BismarkRecord, BismarkStrand, ThreadedBamReader,
+    open_reader,
+};
 use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 
 use crate::call::{CytosineContext, MethCall, extract_calls};
@@ -96,6 +100,18 @@ use crate::state::ExtractState;
 /// *pattern* transfers, not its exact per-batch memory profile — our payload is
 /// a `Vec<RoutedCall>` fanning to ≤12 output files.
 pub(crate) const BATCH_SIZE: usize = 4096;
+
+/// #884 R3: decode worker threads for the parallel-BGZF BAM reader.
+///
+/// **Fixed at 2, decoupled from `--parallel` by design.** Single-threaded BGZF
+/// decode is the pipeline's ~19 s ceiling — the extract workers sit idle behind
+/// it (CPU probe: ~2.8 cores used regardless of `--parallel`). An oxy trial
+/// (10M PE) measured **2 decode threads as the sweet spot**: `--mbias_only`
+/// 18.8→12.3 s, plain `.txt` 20.0→17.6 s; 3–4 threads add nothing (even regress).
+/// Fixing it at 2 (vs tying to `--parallel`) lets the common `--parallel 1`
+/// default benefit — same rationale shape as `output.rs::GZIP_COMPRESS_THREADS`.
+/// Applies to BAM only (BGZF); SAM/CRAM keep the single-threaded reader.
+const DECODE_THREADS: std::num::NonZeroUsize = std::num::NonZeroUsize::new(2).unwrap();
 
 /// One unit of producer→worker work: a single SE record, a single PE pair, or
 /// a producer-side error that keeps its input slot. EOS is signaled by the
@@ -203,11 +219,35 @@ fn run_pipeline(
     config: &ResolvedConfig,
     is_paired: bool,
 ) -> Result<(), BismarkExtractorError> {
-    let n_workers = config.parallel.max(1);
+    // #884 R3: BAM decode uses the fixed-2-thread parallel-BGZF reader (always);
+    // SAM/CRAM (not BGZF) keep the single-threaded reader. Sniffed once, reused.
+    let is_bam = matches!(AlignmentKind::from_path(input)?, AlignmentKind::Bam);
+
+    // #884 R3 (perf gate, oxy 10M PE): floor BAM extract workers at 2 — a single
+    // extract worker can't drain the 2-thread parallel decode (`--parallel 1` on
+    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.6 s / ~12.3 s with
+    // ≥2 workers), so the common `--parallel 1` default benefits fully. SAM/CRAM
+    // (single-threaded decode) keep `max(1)` — extra workers can't beat serial decode.
+    // Output is byte-identical across worker counts (batch_seq reorder), so this
+    // floor changes timing only, not bytes.
+    let n_workers = config.parallel.max(if is_bam { 2 } else { 1 });
 
     // Open the reader on the main thread to get the header (for chr_table)
     // before we hand the reader off to the producer thread.
-    let reader = open_reader(input, /*cram_ref=*/ None)?;
+    //
+    // #884 R3: BAM decode uses a fixed-2-thread parallel-BGZF reader
+    // (`ThreadedBamReader`), ALWAYS — independent of `--parallel` (see
+    // `DECODE_THREADS`). Single-threaded BGZF decode was the ~19 s pipeline
+    // ceiling; 2 decode threads drop the `--mbias_only` wall 18.8→12.3 s and the
+    // plain `.txt` wall 20.0→17.6 s, so even `--parallel 1` benefits. SAM/CRAM are not
+    // BGZF → keep the single-threaded reader. `ThreadedBamReader::from_path`
+    // applies the SAME coordinate-sort rejection as `open_reader`, so the
+    // read-order contract (PE adjacent-pairing) is unchanged.
+    let reader = if is_bam {
+        ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
+    } else {
+        ProducerReader::Any(open_reader(input, /*cram_ref=*/ None)?)
+    };
     let chr_table: Arc<[String]> = Arc::from(build_chr_name_table(reader.header())?);
 
     // Console diagnostics (#882) — emit once on the main thread while we still
@@ -349,6 +389,32 @@ fn run_pipeline(
 
 // ─── Producer ────────────────────────────────────────────────────────────────
 
+/// Producer-side reader (#884 R3): the single-threaded [`AnyReader`] (SAM/CRAM)
+/// or the fixed-2-thread parallel-BGZF [`ThreadedBamReader`] (BAM). Both expose
+/// `header()` + `records()` yielding the same `Result<BismarkRecord, _>`; this
+/// enum lets `run_pipeline` and `producer_loop` own and drive either uniformly,
+/// so neither body changes vs the single-reader version.
+enum ProducerReader {
+    Any(bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>),
+    Threaded(ThreadedBamReader),
+}
+
+impl ProducerReader {
+    fn header(&self) -> &noodles_sam::Header {
+        match self {
+            ProducerReader::Any(r) => r.header(),
+            ProducerReader::Threaded(r) => r.header(),
+        }
+    }
+
+    fn records(&mut self) -> Box<dyn Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_> {
+        match self {
+            ProducerReader::Any(r) => Box::new(r.records()),
+            ProducerReader::Threaded(r) => Box::new(r.records()),
+        }
+    }
+}
+
 /// Producer loop: drive the reader's `records()` iterator, accumulate
 /// [`WorkerInputItem`]s into batches of up to [`BATCH_SIZE`] (in strict input
 /// order, tagged with a monotonic `batch_seq`), and send one [`InputBatch`] per
@@ -362,7 +428,7 @@ fn run_pipeline(
 /// before the producer short-circuits; dropping them would break byte-identity
 /// on error inputs). The producer still `return`s after the first error.
 fn producer_loop(
-    mut reader: bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>,
+    mut reader: ProducerReader,
     is_paired: bool,
     tx_input: Sender<InputBatch>,
     logger: crate::logging::Logger,
