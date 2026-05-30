@@ -301,10 +301,13 @@ struct ResolvedConfig {
 ### 12.2 Integration tests (small fixtures, `#[ignore]`-free)
 A tiny synthetic genome (a few hundred bp, multi-FASTA, with CpG-at-start, CpG-at-end, N runs, a short scaffold) + a hand-built `.bismark.cov` and `.cov.gz`. Run the binary; diff against a checked-in Perl-v0.25.1 golden for: CpG report, CX report, context summary, `--zero_based`, `--split_by_chromosome`, `--gzip` (decompressed compare), `--merge_CpGs` (+`--discordance`). Goldens generated once from Perl v0.25.1 and committed (cf. epic #795 fixtures).
 
-### 12.3 Real-data byte-identity gate (colossal) — the release gate
-Per `reference_colossal_access`. On colossal (`bioinf` env, Perl v0.25.1), against a **Perl-`bismark2bedGraph`-generated** `.bismark.cov.gz` (NOT a Rust-bedgraph one — coordinate via #797 if/when that crate lands; until then Perl cov input keeps the two producers genuinely independent, satisfying the §13 sub-gate-2 "two independent producers" rule):
+### 12.3 Real-data byte-identity gate (oxy — retargeted from colossal 2026-05-30) — the release gate
 
-- Genome: `/weka/projects/bioinf/Data/Felix/bismark_benchmarks/genome/` (verify exact subpath first session).
+**Machine retarget (Felix directive, 2026-05-30):** this gate runs on **oxy**, NOT colossal. Full harness design in `phase-e-byte-identity-gate/PLAN.md`. ⚠️ oxy's home is capped ~99 GB (the reason real-data testing migrated oxy→colossal 2026-05-28, per `reference_colossal_access`); because c2c's output is **genome-driven** (a full-hg38 `CX_report` is ~1B+ lines / ~40 GB uncompressed), the gate must gzip the heavy cells + **stream-decompress-compare** (`cmp <(zcat R) <(zcat P)`) + purge-on-pass + a disk-headroom pre-flight to fit. (The extractor's Phase H + full-size WGBS work stays on colossal.)
+
+On **oxy** (micromamba `bismark-test` env, Perl v0.25.1; access deprecated 2026-05-28 → verify connection/env/paths first session), against a **Perl-`bismark2bedGraph`-generated** `.bismark.cov.gz` (NOT a Rust-bedgraph one — coordinate via #797 if/when that crate lands; until then Perl cov input keeps the two producers genuinely independent, satisfying the §13 sub-gate-2 "two independent producers" rule):
+
+- Genome: `~/bismark_benchmarks/genome/` (oxy; verify exact subpath first session).
 - Input cov: derived from the 10M PE dataset via Perl `bismark2bedGraph`.
 - **Distinct out-dir from other sessions** (Felix directive) — e.g. `~/c2c_byte_identity_<ts>/`.
 - Assert **raw-byte-identity** Rust≡Perl on: `.CpG_report.txt[.gz]`, `.CX_report.txt[.gz]`, `.cytosine_context_summary.txt`, `.merged_CpG_evidence.cov[.gz]`, `.discordant_CpG_evidence.cov[.gz]`. (Reports are genome-ordered + deterministic ⇒ raw bytes, not sorted-md5; gzip compared after decompression to avoid mtime/OS gzip-header noise — pin `flate2` output or decompress-then-compare.)

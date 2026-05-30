@@ -34,7 +34,7 @@ Strictly sequential A→B→C→D→E (each merges to `rust/coverage2cytosine`; 
 
 - **Phase D — `--merge_CpGs` (+ `--discordance_filter`).** The post-pass that re-reads the CpG report and pools `+`/`-` strand pairs: chromosome-start resync (historical bugs #98/#229), sanity asserts (typed errors), discordance routing with the both-strands-measured gate, `%.6f` percentages, zero-based half-open coords. (SPEC §9.)
 
-- **Phase E — Real-data byte-identity gate (colossal).** Driver script + flag matrix on colossal ([[reference_colossal_access]]) against a **Perl-`bismark2bedGraph`-generated** `.cov.gz` (keeps the two c2c producers independent); raw-byte compare of reports + summary + merged/discordant cov (gzip compared post-decompression); distinct out-dir from other sessions; RELEASE checklist. Gates the `bismark-coverage2cytosine-v1.0` tag. (SPEC §12.3, §13.)
+- **Phase E — Real-data byte-identity gate (oxy — retargeted from colossal 2026-05-30).** Driver script + flag matrix on **oxy** (Felix directive 2026-05-30, overriding the colossal default; disk-cap-managed via gzip + stream-decompress-compare + purge-on-pass — [[reference_colossal_access]], `phase-e-byte-identity-gate/PLAN.md`) against a **Perl-`bismark2bedGraph`-generated** `.cov.gz` (keeps the two c2c producers independent); raw-byte compare of reports + summary + merged/discordant cov (gzip compared post-decompression); distinct out-dir from other sessions; RELEASE checklist. Gates the `bismark-coverage2cytosine-v1.0` tag. (SPEC §12.3, §13.)
 
 ## 4. Sub-plan table
 
@@ -44,7 +44,7 @@ Strictly sequential A→B→C→D→E (each merges to `rust/coverage2cytosine`; 
 | B | Core genome-wide report | `phase-b-core-report/PLAN.md` | #A |
 | C | `--gzip` + `--split_by_chromosome` | `phase-c-gzip-split/PLAN.md` | #B |
 | D | `--merge_CpGs` (+ `--discordance`) | `phase-d-merge-cpgs/PLAN.md` | #B (#C if gzip-merge) |
-| E | Real-data byte-identity gate | `phase-e-byte-identity-gate/PLAN.md` _(to be written)_ | #B, #C, #D |
+| E | Real-data byte-identity gate | `phase-e-byte-identity-gate/PLAN.md` | #B, #C, #D |
 
 ## 5. Shared assumptions (apply across all phases)
 
