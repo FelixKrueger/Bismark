@@ -219,7 +219,18 @@ fn run_pipeline(
     config: &ResolvedConfig,
     is_paired: bool,
 ) -> Result<(), BismarkExtractorError> {
-    let n_workers = config.parallel.max(1);
+    // #884 R3: BAM decode uses the fixed-2-thread parallel-BGZF reader (always);
+    // SAM/CRAM (not BGZF) keep the single-threaded reader. Sniffed once, reused.
+    let is_bam = matches!(AlignmentKind::from_path(input)?, AlignmentKind::Bam);
+
+    // #884 R3 (perf gate, oxy 10M PE): floor BAM extract workers at 2 — a single
+    // extract worker can't drain the 2-thread parallel decode (`--parallel 1` on
+    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.8 s / ~13 s with
+    // ≥2 workers), so the common `--parallel 1` default benefits fully. SAM/CRAM
+    // (single-threaded decode) keep `max(1)` — extra workers can't beat serial decode.
+    // Output is byte-identical across worker counts (batch_seq reorder), so this
+    // floor changes timing only, not bytes.
+    let n_workers = config.parallel.max(if is_bam { 2 } else { 1 });
 
     // Open the reader on the main thread to get the header (for chr_table)
     // before we hand the reader off to the producer thread.
@@ -232,7 +243,7 @@ fn run_pipeline(
     // BGZF → keep the single-threaded reader. `ThreadedBamReader::from_path`
     // applies the SAME coordinate-sort rejection as `open_reader`, so the
     // read-order contract (PE adjacent-pairing) is unchanged.
-    let reader = if matches!(AlignmentKind::from_path(input)?, AlignmentKind::Bam) {
+    let reader = if is_bam {
         ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
     } else {
         ProducerReader::Any(open_reader(input, /*cram_ref=*/ None)?)
