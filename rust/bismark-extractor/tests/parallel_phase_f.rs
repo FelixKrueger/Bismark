@@ -24,7 +24,7 @@ use std::path::Path;
 
 use bismark_extractor::cli::{Cli, ResolvedConfig};
 use bismark_extractor::{extract_pe, extract_pe_parallel, extract_se, extract_se_parallel};
-use bismark_io::{BamWriter, BismarkRecord};
+use bismark_io::{BamWriter, BismarkRecord, SamWriter};
 use bstr::BString;
 use clap::Parser;
 use flate2::read::GzDecoder;
@@ -82,38 +82,104 @@ fn synth_record(
     BismarkRecord::from_noodles_record(record).expect("synth produces a valid BismarkRecord")
 }
 
+/// The 5 SE-directional records (3 OT XR=CT XG=CT + 2 OB XR=CT XG=GA), covering
+/// CpG/CHG/CHH meth+unmeth. Shared by the BAM and SAM fixtures so the two
+/// containers hold byte-for-byte the same records (the #884 R3 dispatch test
+/// compares their extractor output).
+fn se_directional_records() -> Vec<BismarkRecord> {
+    vec![
+        synth_record(b"r_OT_1", b"CT", b"CT", b"Zz...", b"ACGTC", 100, 0),
+        synth_record(b"r_OT_2", b"CT", b"CT", b"..X.x", b"ACGTC", 200, 0),
+        synth_record(b"r_OT_3", b"CT", b"CT", b"H.h..", b"ACGTC", 300, 0),
+        synth_record(b"r_OB_1", b"CT", b"GA", b"Z....", b"ACGTC", 400, 0),
+        synth_record(b"r_OB_2", b"CT", b"GA", b"..h..", b"ACGTC", 500, 0),
+    ]
+}
+
 /// SE-directional BAM with mixed methylation contexts + both OT and OB strands.
 fn write_se_directional_bam(path: &Path) {
-    let header = header_with_chr1();
-    let mut writer = BamWriter::from_path(path, header).unwrap();
-    // 3 OT records (XR=CT XG=CT) covering CpG/CHG/CHH meth + unmeth.
-    writer
-        .write_record(&synth_record(
-            b"r_OT_1", b"CT", b"CT", b"Zz...", b"ACGTC", 100, 0,
-        ))
-        .unwrap();
-    writer
-        .write_record(&synth_record(
-            b"r_OT_2", b"CT", b"CT", b"..X.x", b"ACGTC", 200, 0,
-        ))
-        .unwrap();
-    writer
-        .write_record(&synth_record(
-            b"r_OT_3", b"CT", b"CT", b"H.h..", b"ACGTC", 300, 0,
-        ))
-        .unwrap();
-    // 2 OB records (XR=CT XG=GA).
-    writer
-        .write_record(&synth_record(
-            b"r_OB_1", b"CT", b"GA", b"Z....", b"ACGTC", 400, 0,
-        ))
-        .unwrap();
-    writer
-        .write_record(&synth_record(
-            b"r_OB_2", b"CT", b"GA", b"..h..", b"ACGTC", 500, 0,
-        ))
-        .unwrap();
+    let mut writer = BamWriter::from_path(path, header_with_chr1()).unwrap();
+    for rec in se_directional_records() {
+        writer.write_record(&rec).unwrap();
+    }
     writer.finish().unwrap();
+}
+
+/// Same records as [`write_se_directional_bam`], written as **SAM** (#884 R3:
+/// SAM is not BGZF, so it must take the single-threaded reader, not the
+/// `ThreadedBamReader`).
+fn write_se_directional_sam(path: &Path) {
+    let mut writer = SamWriter::from_path(path, header_with_chr1()).unwrap();
+    for rec in se_directional_records() {
+        writer.write_record(&rec).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// #884 R3 dispatch guard: SAM input must route to the single-threaded reader
+/// (NOT the BAM-only `ThreadedBamReader`) and yield the SAME methylation data as
+/// the equivalent BAM — which now goes through the fixed-2-thread parallel-BGZF
+/// reader. Identical records in → identical split-file calls out, regardless of
+/// container or decode threading. Guards the new `is_bam ? Threaded : Any` else-arm.
+#[test]
+fn sam_input_matches_bam_through_r3_dispatch() {
+    let workdir = tempfile::tempdir().unwrap();
+    let bam = workdir.path().join("se.bam");
+    let sam = workdir.path().join("se.sam");
+    write_se_directional_bam(&bam);
+    write_se_directional_sam(&sam);
+
+    let bam_dir = workdir.path().join("from_bam");
+    let sam_dir = workdir.path().join("from_sam");
+    extract_se_parallel(
+        &bam,
+        &resolved_config(&[
+            "--single-end",
+            "--parallel",
+            "4",
+            "--output_dir",
+            bam_dir.to_str().unwrap(),
+            bam.to_str().unwrap(),
+        ]),
+    )
+    .unwrap();
+    extract_se_parallel(
+        &sam,
+        &resolved_config(&[
+            "--single-end",
+            "--parallel",
+            "4",
+            "--output_dir",
+            sam_dir.to_str().unwrap(),
+            sam.to_str().unwrap(),
+        ]),
+    )
+    .unwrap();
+
+    // Compare the methylation split-data files (CpG/CHG/CHH) — these carry no
+    // input filename (unlike splitting_report), so SAM (single-threaded reader)
+    // vs BAM (threaded 2-decode reader) must be byte-equal. Same `se` basename
+    // ⇒ same filenames in both dirs.
+    let mut compared = 0usize;
+    for entry in fs::read_dir(&sam_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if (name.starts_with("CpG_") || name.starts_with("CHG_") || name.starts_with("CHH_"))
+            && name.ends_with(".txt")
+        {
+            let sam_bytes = fs::read(entry.path()).unwrap();
+            let bam_bytes = fs::read(bam_dir.join(&name)).unwrap();
+            assert_eq!(
+                sam_bytes, bam_bytes,
+                "split file {name}: SAM (Any path) differs from BAM (threaded path)"
+            );
+            compared += 1;
+        }
+    }
+    assert!(
+        compared > 0,
+        "expected >=1 methylation split file to compare"
+    );
 }
 
 /// SE BAM with `n` records — used to cross the parallel pipeline's
