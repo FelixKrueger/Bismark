@@ -24,7 +24,7 @@ use std::path::Path;
 
 use bismark_extractor::cli::{Cli, ResolvedConfig};
 use bismark_extractor::{extract_pe, extract_pe_parallel, extract_se, extract_se_parallel};
-use bismark_io::{BamWriter, BismarkRecord};
+use bismark_io::{BamWriter, BismarkRecord, SamWriter};
 use bstr::BString;
 use clap::Parser;
 use flate2::read::GzDecoder;
@@ -82,38 +82,104 @@ fn synth_record(
     BismarkRecord::from_noodles_record(record).expect("synth produces a valid BismarkRecord")
 }
 
+/// The 5 SE-directional records (3 OT XR=CT XG=CT + 2 OB XR=CT XG=GA), covering
+/// CpG/CHG/CHH meth+unmeth. Shared by the BAM and SAM fixtures so the two
+/// containers hold byte-for-byte the same records (the #884 R3 dispatch test
+/// compares their extractor output).
+fn se_directional_records() -> Vec<BismarkRecord> {
+    vec![
+        synth_record(b"r_OT_1", b"CT", b"CT", b"Zz...", b"ACGTC", 100, 0),
+        synth_record(b"r_OT_2", b"CT", b"CT", b"..X.x", b"ACGTC", 200, 0),
+        synth_record(b"r_OT_3", b"CT", b"CT", b"H.h..", b"ACGTC", 300, 0),
+        synth_record(b"r_OB_1", b"CT", b"GA", b"Z....", b"ACGTC", 400, 0),
+        synth_record(b"r_OB_2", b"CT", b"GA", b"..h..", b"ACGTC", 500, 0),
+    ]
+}
+
 /// SE-directional BAM with mixed methylation contexts + both OT and OB strands.
 fn write_se_directional_bam(path: &Path) {
-    let header = header_with_chr1();
-    let mut writer = BamWriter::from_path(path, header).unwrap();
-    // 3 OT records (XR=CT XG=CT) covering CpG/CHG/CHH meth + unmeth.
-    writer
-        .write_record(&synth_record(
-            b"r_OT_1", b"CT", b"CT", b"Zz...", b"ACGTC", 100, 0,
-        ))
-        .unwrap();
-    writer
-        .write_record(&synth_record(
-            b"r_OT_2", b"CT", b"CT", b"..X.x", b"ACGTC", 200, 0,
-        ))
-        .unwrap();
-    writer
-        .write_record(&synth_record(
-            b"r_OT_3", b"CT", b"CT", b"H.h..", b"ACGTC", 300, 0,
-        ))
-        .unwrap();
-    // 2 OB records (XR=CT XG=GA).
-    writer
-        .write_record(&synth_record(
-            b"r_OB_1", b"CT", b"GA", b"Z....", b"ACGTC", 400, 0,
-        ))
-        .unwrap();
-    writer
-        .write_record(&synth_record(
-            b"r_OB_2", b"CT", b"GA", b"..h..", b"ACGTC", 500, 0,
-        ))
-        .unwrap();
+    let mut writer = BamWriter::from_path(path, header_with_chr1()).unwrap();
+    for rec in se_directional_records() {
+        writer.write_record(&rec).unwrap();
+    }
     writer.finish().unwrap();
+}
+
+/// Same records as [`write_se_directional_bam`], written as **SAM** (#884 R3:
+/// SAM is not BGZF, so it must take the single-threaded reader, not the
+/// `ThreadedBamReader`).
+fn write_se_directional_sam(path: &Path) {
+    let mut writer = SamWriter::from_path(path, header_with_chr1()).unwrap();
+    for rec in se_directional_records() {
+        writer.write_record(&rec).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// #884 R3 dispatch guard: SAM input must route to the single-threaded reader
+/// (NOT the BAM-only `ThreadedBamReader`) and yield the SAME methylation data as
+/// the equivalent BAM — which now goes through the fixed-2-thread parallel-BGZF
+/// reader. Identical records in → identical split-file calls out, regardless of
+/// container or decode threading. Guards the new `is_bam ? Threaded : Any` else-arm.
+#[test]
+fn sam_input_matches_bam_through_r3_dispatch() {
+    let workdir = tempfile::tempdir().unwrap();
+    let bam = workdir.path().join("se.bam");
+    let sam = workdir.path().join("se.sam");
+    write_se_directional_bam(&bam);
+    write_se_directional_sam(&sam);
+
+    let bam_dir = workdir.path().join("from_bam");
+    let sam_dir = workdir.path().join("from_sam");
+    extract_se_parallel(
+        &bam,
+        &resolved_config(&[
+            "--single-end",
+            "--parallel",
+            "4",
+            "--output_dir",
+            bam_dir.to_str().unwrap(),
+            bam.to_str().unwrap(),
+        ]),
+    )
+    .unwrap();
+    extract_se_parallel(
+        &sam,
+        &resolved_config(&[
+            "--single-end",
+            "--parallel",
+            "4",
+            "--output_dir",
+            sam_dir.to_str().unwrap(),
+            sam.to_str().unwrap(),
+        ]),
+    )
+    .unwrap();
+
+    // Compare the methylation split-data files (CpG/CHG/CHH) — these carry no
+    // input filename (unlike splitting_report), so SAM (single-threaded reader)
+    // vs BAM (threaded 2-decode reader) must be byte-equal. Same `se` basename
+    // ⇒ same filenames in both dirs.
+    let mut compared = 0usize;
+    for entry in fs::read_dir(&sam_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if (name.starts_with("CpG_") || name.starts_with("CHG_") || name.starts_with("CHH_"))
+            && name.ends_with(".txt")
+        {
+            let sam_bytes = fs::read(entry.path()).unwrap();
+            let bam_bytes = fs::read(bam_dir.join(&name)).unwrap();
+            assert_eq!(
+                sam_bytes, bam_bytes,
+                "split file {name}: SAM (Any path) differs from BAM (threaded path)"
+            );
+            compared += 1;
+        }
+    }
+    assert!(
+        compared > 0,
+        "expected >=1 methylation split file to compare"
+    );
 }
 
 /// SE BAM with `n` records — used to cross the parallel pipeline's
@@ -422,6 +488,79 @@ fn legacy_vs_parallel_n4_se_default_byte_identical() {
     .unwrap();
 
     assert_dirs_byte_identical(&legacy_dir, &parallel_dir, "legacy", "parallel-n4");
+}
+
+/// #878 Test 4 — single-threaded `extract_se` vs parallel `extract_se_parallel`
+/// produce identical output (incl. `M-bias.txt`) under a NON-ZERO `--ignore`.
+///
+/// Structural guard for the dual-driver back-port trap: a rebase that landed in
+/// one driver but not the other would diverge here. Existing `legacy_vs_parallel_*`
+/// tests run `--ignore 0`, which never exercises the rebase.
+///
+/// NOTE (dual-review I-4): this guards driver **divergence**, NOT revert — both
+/// drivers share the rebase, so it stays green on a revert (Tests 1–3 cover
+/// absolute correctness). `--ignore 2` (< the 5-bp fixture reads) is mandatory:
+/// `--ignore 5` would trip the `lo>=hi` early-out (`call.rs:166`) → empty output
+/// → vacuously identical (dual-review C1). The non-emptiness assertion locks that out.
+#[test]
+fn se_driver_vs_parallel_driver_m_bias_equality() {
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path = workdir.path().join("se.bam");
+    write_se_directional_bam(&bam_path);
+    let bam_s = bam_path.to_str().unwrap();
+
+    let single_dir = workdir.path().join("single");
+    let parallel_dir = workdir.path().join("parallel_n4");
+    extract_se(
+        &bam_path,
+        &resolved_config(&[
+            "--single-end",
+            "--ignore",
+            "2",
+            "--output_dir",
+            single_dir.to_str().unwrap(),
+            bam_s,
+        ]),
+    )
+    .unwrap();
+    extract_se_parallel(
+        &bam_path,
+        &resolved_config(&[
+            "--single-end",
+            "--ignore",
+            "2",
+            "--parallel",
+            "4",
+            "--output_dir",
+            parallel_dir.to_str().unwrap(),
+            bam_s,
+        ]),
+    )
+    .unwrap();
+
+    // Non-emptiness guard (dual-review C1): --ignore must leave surviving calls,
+    // else both dirs are empty and the equality below is vacuous.
+    let mut call_lines = 0usize;
+    for entry in fs::read_dir(&single_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if (name.starts_with("CpG_") || name.starts_with("CHG_") || name.starts_with("CHH_"))
+            && name.ends_with(".txt")
+        {
+            for line in fs::read_to_string(entry.path()).unwrap().lines() {
+                if !line.is_empty() && !line.starts_with("Bismark") {
+                    call_lines += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        call_lines > 0,
+        "--ignore 2 must leave surviving methylation calls (guards the C1 vacuous-pass no-op)"
+    );
+
+    // M-bias.txt + all split/report files identical across the two drivers.
+    assert_dirs_byte_identical(&single_dir, &parallel_dir, "single", "parallel-n4");
 }
 
 #[test]
@@ -796,6 +935,103 @@ fn parallel_gzip_n4_decompresses_identical_to_legacy_plain() {
             }
         }
     }
+}
+
+/// #884 R2 regression guard: gzp's `ParCompress<Gzip>` must keep emitting a
+/// **single-member** gzip even when the input spans multiple `BATCH_SIZE`
+/// (4096) batches, and the decompressed content must be byte-identical across
+/// `--parallel` 1 vs 4 and to the plain (non-gzip) peer.
+///
+/// 8199 records = two full batches + a 7-record partial, so gzp stitches
+/// several internal sync-flushed DEFLATE blocks into one gzip stream.
+/// `decompress_gz` uses a single-member `GzDecoder`: if a future gzp change
+/// (or a switch to its `Mgzip`/`Bgzf` formats) emitted multi-member output,
+/// the decode would truncate at member 0 and the `== plain` assertion would
+/// fail. Decompressed *byte* identity (not merely sorted-equivalence) holds
+/// because the collector concatenates per-batch output strictly in
+/// `batch_seq` order, so the stream matches N=1's exactly (dual plan-review
+/// C2). Complements the small-fixture single-batch test above.
+#[test]
+fn parallel_gzip_multibatch_decompresses_identical_across_n_and_to_plain() {
+    with_timeout(
+        "parallel_gzip_multibatch_decompresses_identical_across_n_and_to_plain",
+        || {
+            let workdir = tempfile::tempdir().unwrap();
+            let bam_path = workdir.path().join("large.bam");
+            write_se_large_bam(&bam_path, 8199); // > 2 * BATCH_SIZE (4096)
+            let bam_s = bam_path.to_str().unwrap().to_string();
+
+            // Reference: plain (non-gzip) single-threaded output.
+            let plain_dir = workdir.path().join("plain");
+            extract_se(
+                &bam_path,
+                &resolved_config(&[
+                    "--single-end",
+                    "--output_dir",
+                    plain_dir.to_str().unwrap(),
+                    &bam_s,
+                ]),
+            )
+            .unwrap();
+
+            // Gzipped at N=1 and N=4.
+            let mut gz_dirs = Vec::new();
+            for n in [1u32, 4] {
+                let dir = workdir.path().join(format!("gz_n{n}"));
+                extract_se_parallel(
+                    &bam_path,
+                    &resolved_config(&[
+                        "--single-end",
+                        "--gzip",
+                        "--parallel",
+                        &n.to_string(),
+                        "--output_dir",
+                        dir.to_str().unwrap(),
+                        &bam_s,
+                    ]),
+                )
+                .unwrap();
+                gz_dirs.push((n, dir));
+            }
+            let gz_n1_dir = gz_dirs[0].1.clone();
+
+            for (n, dir) in &gz_dirs {
+                for entry in fs::read_dir(dir).unwrap() {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if let Some(stem) = name.strip_suffix(".gz") {
+                        // Single-member decode of a multi-block stream → full
+                        // plain content. Truncation here = a multi-member regression.
+                        let decoded = decompress_gz(&entry.path());
+                        let plain = fs::read(plain_dir.join(stem)).unwrap();
+                        assert_eq!(
+                            decoded, plain,
+                            "gz {name} at n{n} decompressed differs from plain peer \
+                             (truncation here would mean gzp regressed to multi-member)"
+                        );
+                        // Cross-N decompressed-byte identity.
+                        let decoded_n1 = decompress_gz(&gz_n1_dir.join(&name));
+                        assert_eq!(
+                            decoded, decoded_n1,
+                            "gz {name} decompressed differs between n1 and n{n}"
+                        );
+                    } else if name.ends_with("_splitting_report.txt") {
+                        assert_eq!(
+                            normalize_report(&fs::read(entry.path()).unwrap()),
+                            normalize_report(&fs::read(plain_dir.join(&name)).unwrap()),
+                            "non-gz splitting report {name} at n{n} differs"
+                        );
+                    } else {
+                        assert_eq!(
+                            fs::read(entry.path()).unwrap(),
+                            fs::read(plain_dir.join(&name)).unwrap(),
+                            "non-gz file {name} at n{n} differs from plain"
+                        );
+                    }
+                }
+            }
+        },
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════

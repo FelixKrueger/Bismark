@@ -237,10 +237,16 @@ mod tests {
     use noodles_sam::alignment::record_buf::data::field::Value;
     use noodles_sam::alignment::record_buf::{Cigar, RecordBuf, Sequence};
 
-    /// Build a minimal `+`-strand `BismarkRecord` with the given XM string,
-    /// `{n_soft}S{n_match}M` CIGAR, and `XG:Z:CT` (forward strand).
+    /// Build a minimal `BismarkRecord` with the given XM string,
+    /// `{n_soft}S{n_match}M` CIGAR, `XR:Z:CT`, and the caller-chosen `XG`
+    /// strand tag (`b"CT"` → OT/`+`, `b"GA"` → OB/`-`).
     /// Quality scores are filled with `30u8` matching seq length.
-    fn synth_se_record(xm: &[u8], n_soft: usize, n_match: usize) -> BismarkRecord {
+    fn synth_se_record_strand(
+        xm: &[u8],
+        n_soft: usize,
+        n_match: usize,
+        xg: &[u8],
+    ) -> BismarkRecord {
         assert_eq!(
             xm.len(),
             n_soft + n_match,
@@ -272,11 +278,16 @@ mod tests {
             Tag::from(*b"XR"),
             Value::String(BString::from(b"CT".to_vec())),
         );
-        record.data_mut().insert(
-            Tag::from(*b"XG"),
-            Value::String(BString::from(b"CT".to_vec())),
-        );
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XG"), Value::String(BString::from(xg.to_vec())));
         BismarkRecord::from_noodles_record(record).expect("synth BismarkRecord")
+    }
+
+    /// OT/`+`-strand convenience wrapper (`XG:Z:CT`) — preserves the original
+    /// `synth_se_record` API used by the existing `+`-strand tests.
+    fn synth_se_record(xm: &[u8], n_soft: usize, n_match: usize) -> BismarkRecord {
+        synth_se_record_strand(xm, n_soft, n_match, b"CT")
     }
 
     #[test]
@@ -303,6 +314,56 @@ mod tests {
             calls.len(),
             4,
             "must emit exactly 4 calls after 2-base ignore"
+        );
+    }
+
+    /// #878 Test 1 — OB/`-`-strand rebase + OT≡OB orientation invariance.
+    ///
+    /// The existing #876 rebase guards are OT-only. For OB records
+    /// `iter_aligned` reverses (`read_pos_5p = seq_len-1-BAM_index`,
+    /// `record.rs:236`), so to make an OB fixture yield the SAME 5'-oriented
+    /// calls as an OT fixture `XM_OT`, the OB XM must be `reverse(XM_OT)`.
+    /// With `ignore_5p=2` the surviving calls rebase to read_pos `[0,1,2]`;
+    /// reverting the fix (`call.rs:204` → `aligned.read_pos_5p`) makes both OT
+    /// and OB produce `[2,3,4]`, so the `== [0,1,2]` assertion fails — the
+    /// bidirectional regression-guard property. This guards the OB code path
+    /// (a future refactor moving the `saturating_sub` onto the BAM-coord
+    /// `read_pos` would silently break OB while passing OT-only tests).
+    #[test]
+    fn extract_calls_ob_strand_rebases_read_pos_after_ignore_5p() {
+        // OT "..Zxh." → 5'-order calls: Z@2 (CpG,meth), x@3 (CHG,unmeth), h@4 (CHH,unmeth).
+        let ot = synth_se_record_strand(b"..Zxh.", 0, 6, b"CT");
+        // OB reverse("..Zxh.") = ".hxZ.." → identical 5'-oriented calls.
+        let ob = synth_se_record_strand(b".hxZ..", 0, 6, b"GA");
+
+        let ot_calls = extract_calls(&ot, /*ignore_5p=*/ 2, 0, false).expect("OT extract");
+        let ob_calls = extract_calls(&ob, /*ignore_5p=*/ 2, 0, false).expect("OB extract");
+
+        let ot_pos: Vec<u32> = ot_calls.iter().map(|c| c.read_pos).collect();
+        let ob_pos: Vec<u32> = ob_calls.iter().map(|c| c.read_pos).collect();
+
+        // Rebased to 0-based-after-clip (NOT the absolute 2,3,4).
+        assert_eq!(
+            ob_pos,
+            vec![0, 1, 2],
+            "OB read_pos must rebase after ignore_5p=2 (not stay absolute 2,3,4)"
+        );
+        // Orientation invariance: OT and OB (reversed XM) yield identical positions.
+        assert_eq!(
+            ot_pos, ob_pos,
+            "OT and OB with reversed XM must agree on rebased read_pos"
+        );
+        // Context + methylation also match in 5'-order.
+        let ob_ctx: Vec<(CytosineContext, bool)> =
+            ob_calls.iter().map(|c| (c.context, c.methylated)).collect();
+        assert_eq!(
+            ob_ctx,
+            vec![
+                (CytosineContext::CpG, true),
+                (CytosineContext::CHG, false),
+                (CytosineContext::CHH, false),
+            ],
+            "OB calls must be CpG-meth, CHG-unmeth, CHH-unmeth in 5'-order"
         );
     }
 
