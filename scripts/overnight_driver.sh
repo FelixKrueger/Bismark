@@ -111,11 +111,12 @@ for ds in wgbs_pe wgbs_se rrbs_pe; do
     log "BYTEID FAIL for $ds — HARD GATE: stopping campaign. Triage $OUT_DIR/byteid/byteid_${ds}.status"
     exit 1
   fi
-  # Reuse the Phase-1 Perl --multicore 1 wall as the serial perf anchor — once
-  # (have_config guards against a duplicate row on resume).
-  if ! have_config perl "$ds" gzip 1 1; then
+  # Reuse the Phase-1 byteid Perl wall (now --multicore 12) as the Perl mc12 anchor —
+  # once (have_config guards against a duplicate row on resume). Saves a redundant
+  # Phase-2 Perl mc12 run.
+  if ! have_config perl "$ds" gzip 12 1; then
     ps=$(grep -E '^Perl: [0-9]+s$' "$OUT_DIR/byteid/parity_${ds}_gzip/diff_summary.txt" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
-    [[ -n "$ps" ]] && echo "perl,$ds,gzip,1,1,$ps,NA,NA,NA,NA,0" >> "$CSV" && log "Perl serial anchor $ds: ${ps}s (reused from byteid)"
+    [[ -n "$ps" ]] && echo "perl,$ds,gzip,12,1,$ps,NA,NA,NA,NA,0" >> "$CSV" && log "Perl --multicore 12 anchor $ds: ${ps}s (reused from byteid)"
   fi
 done
 log "PHASE 1 PASS — all datasets parity + worker-invariant"
@@ -136,10 +137,10 @@ for ds_bam in "wgbs_se:$WGBS_SE" "rrbs_pe:$RRBS_PE"; do
   ds="${ds_bam%%:*}"; bam="${ds_bam#*:}"
   for m in gzip mbias_only; do for p in 1 4 16; do run_cfg rust "$ds" "$bam" "$m" "$p" 2; done; done
 done
-# (iii) Perl --multicore 12 anchor (gzip = realistic), 1 rep, all datasets
-run_cfg perl wgbs_pe "$WGBS_PE" gzip 12 1
-run_cfg perl wgbs_se "$WGBS_SE" gzip 12 1
-run_cfg perl rrbs_pe "$RRBS_PE" gzip 12 1
+# (iii) Perl --multicore 12 walls are already banked from Phase-1 byteid (mc12) — no re-run.
+# (iv) Perl serial anchor (--multicore 1) on WGBS-PE ONLY — the speedup headline and the
+#      1-3h long pole. Run LAST so a short night drops only this (Rust perf already banked).
+run_cfg perl wgbs_pe "$WGBS_PE" gzip 1 1
 
 # ── REPORT ──────────────────────────────────────────────────────────────────
 log "=== REPORT ==="

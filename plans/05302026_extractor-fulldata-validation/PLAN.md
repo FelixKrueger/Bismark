@@ -253,3 +253,20 @@ codification, rounding-triage dump). All pass `bash -n` (bash 5.3).
 console.log, results.csv, FINDINGS.md). Sequence: STAGE → idle-gate (waits for the c2c session) →
 Phase 1 byte-identity (hard-stop on genuine FAIL) → Phase 2 priority-ordered resumable perf matrix →
 FINDINGS. Runs overnight unattended.
+
+**Post-launch verification (dual code-review + plan-manager) — 3 CRITICALs found + fixed before the
+heavy runs (`a05ab57`, `85bb09e`):** both reviewers independently caught (C1) `wait;ec=$?` killed by
+`set -e` → panic-as-failure silently lost; (C2) `log()` on stdout polluting `stage_local`'s returned
+path (confirmed live in driver.log) → cold-stage abort; (C3) `--mode plain` undefined in
+`phase_h_smoke.sh` → false PARITY FAIL → whole-campaign hard-stop. Plus: `have_config` counts only
+exit==0 rows; Phase 1 resumable; df-empty guard; worker-invariance file-COUNT check; degraded-night
+FINDINGS section; `stage_local` resume fast-path. The campaign was killed, fixed, and the previously-
+untested paths re-validated (plain byteid PASS; a forced-fail rep recorded `exit=1` not silently lost).
+plan-manager: COMPLETE (coverage was never the issue — these were correctness bugs).
+
+**Budget-driven design change [Felix-approved]:** Phase-1 byteid now runs Perl at **`--multicore 12`**
+(byte-identity is multicore-invariant — data files compared sorted, report/M-bias are deterministic
+aggregates, proven by the 10M smoke at mc4), not `--multicore 1`. This front-loads correctness (~15
+min/dataset) + the Rust perf sweep before the **single dedicated `--multicore 1` serial run on
+WGBS-PE** (the speedup headline + 1-3h long pole) which now runs LAST/droppable. The byteid mc12 wall
+is reused as the Perl mc12 anchor (no redundant re-run).

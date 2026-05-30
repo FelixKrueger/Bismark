@@ -21,13 +21,19 @@
 
 set -euo pipefail
 
-BAM="" DATASET="" OUT_DIR="" MODES="gzip" SWEEP="1 2 4 8 16"
+# BYTEID_PAR: Perl --multicore (and Rust --parallel) for the parity run. byte-identity
+# is multicore-invariant (data files compared sorted; report+M-bias are deterministic
+# aggregates — proven by the 10M smoke at --multicore 4), so we run it FAST at 12 rather
+# than the 1-3h --multicore 1. The serial (--multicore 1) speedup anchor is a separate
+# dedicated run in the driver (WGBS-PE only).
+BAM="" DATASET="" OUT_DIR="" MODES="gzip" SWEEP="1 2 4 8 16" BYTEID_PAR=12
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dataset) DATASET="$2"; shift 2 ;;
     --out) OUT_DIR="$2"; shift 2 ;;
     --modes) MODES="$2"; shift 2 ;;
     --sweep) SWEEP="$2"; shift 2 ;;
+    --byteid-par) BYTEID_PAR="$2"; shift 2 ;;
     *) if [[ -z "$BAM" ]]; then BAM="$1"; shift; else echo "unexpected arg: $1" >&2; exit 2; fi ;;
   esac
 done
@@ -52,10 +58,10 @@ fi
 for mode in $MODES; do
   # phase_h_smoke.sh has no "plain" mode; its no-extra-flags mode is "default" (= plain .txt).
   smoke_mode="$mode"; [[ "$mode" == "plain" ]] && smoke_mode="default"
-  echo "==> [$DATASET] Rust-vs-Perl parity: mode=$mode (--parallel 1)" | tee -a "$STATUS"
+  echo "==> [$DATASET] Rust-vs-Perl parity: mode=$mode (--multicore $BYTEID_PAR; byteid is multicore-invariant)" | tee -a "$STATUS"
   smoke_out="$OUT_DIR/parity_${DATASET}_${mode}"
   if RUST_BIN="$RUST_BIN" "$SCRIPT_DIR/phase_h_smoke.sh" "$BAM" \
-        --parallel 1 --mode "$smoke_mode" --out "$smoke_out" >>"$STATUS" 2>&1; then
+        --parallel "$BYTEID_PAR" --mode "$smoke_mode" --out "$smoke_out" >>"$STATUS" 2>&1; then
     echo "  PARITY PASS: $DATASET $mode" | tee -a "$STATUS"
   else
     echo "  PARITY FAIL: $DATASET $mode (see $smoke_out/diff_summary.txt)" | tee -a "$STATUS"
