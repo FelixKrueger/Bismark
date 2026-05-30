@@ -49,7 +49,15 @@ pub struct Cli {
     pub upper_threshold: Option<i64>,
 
     /// Minimum number of cytosine calls for a read to be considered [default 5].
-    #[arg(short = 'm', long = "min-count", default_value_t = 5u32)]
+    // `hide_default_value`: the doc comment already states "[default 5]", so
+    // suppress clap's auto-appended "[default: 5]" (it would print twice).
+    // lower/upper_threshold show their defaults the same way (doc text only).
+    #[arg(
+        short = 'm',
+        long = "min-count",
+        default_value_t = 5u32,
+        hide_default_value = true
+    )]
     pub min_count: u32,
 
     /// Path to a `samtools` binary (accepted for Perl compatibility,
