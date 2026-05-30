@@ -128,6 +128,17 @@ pub enum BismarkC2cError {
         /// 1-based line number in the coverage file.
         line_no: usize,
     },
+
+    /// `--merge_CpGs` pairing/sanity violation (Perl `combine_CpGs`
+    /// `:1886-1897` `die`) — a `+`/`-` strand pair desynced, or the report
+    /// ran out mid-resync (e.g. trailing lone chromosome-start CpGs). Perl
+    /// `die`s (exit 255) leaving the partial merged file; the Rust port errors
+    /// (exit 1, never panics) and likewise does not clean up the partial.
+    #[error("merge_CpGs sanity violation: {detail}")]
+    MergeCpgSanityViolation {
+        /// Which assertion failed (context/strand/spacing/chromosome/EOF).
+        detail: String,
+    },
 }
 
 #[cfg(test)]

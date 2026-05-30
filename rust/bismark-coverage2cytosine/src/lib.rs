@@ -32,6 +32,7 @@ pub mod cli;
 pub mod cov;
 pub mod error;
 pub mod genome;
+pub mod merge;
 pub mod report;
 pub mod summary;
 
@@ -48,7 +49,12 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
         "Stored sequence information of {} chromosomes/scaffolds in total",
         genome.len()
     );
-    report::run_report(config, &genome)
+    report::run_report(config, &genome)?;
+    // Phase D: --merge_CpGs post-pass (re-reads the just-written CpG report).
+    if config.merge_cpgs {
+        merge::run_merge(config)?;
+    }
+    Ok(())
 }
 
 /// TG-style provenance string for the binary's `--version` output.

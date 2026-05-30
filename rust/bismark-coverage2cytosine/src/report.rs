@@ -29,7 +29,7 @@ use crate::summary::ContextSummary;
 
 /// Output sink for a report file — plain or gzip, with an explicit `finish()`
 /// (Phase C). The context summary is never routed through this (always plain).
-enum ReportWriter {
+pub(crate) enum ReportWriter {
     Plain(BufWriter<File>),
     Gz(GzEncoder<BufWriter<File>>),
 }
@@ -38,7 +38,7 @@ impl ReportWriter {
     /// Create (truncating) the file at `path`; wrap in a gzip encoder when
     /// `gzip`. Truncation is load-bearing for `--split_by_chromosome`'s
     /// reopen-on-every-transition semantics.
-    fn create(path: &Path, gzip: bool) -> Result<Self, BismarkC2cError> {
+    pub(crate) fn create(path: &Path, gzip: bool) -> Result<Self, BismarkC2cError> {
         let bw = BufWriter::new(File::create(path)?);
         Ok(if gzip {
             ReportWriter::Gz(GzEncoder::new(bw, Compression::default()))
@@ -47,7 +47,7 @@ impl ReportWriter {
         })
     }
 
-    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+    pub(crate) fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
         match self {
             ReportWriter::Plain(w) => w.write_all(buf),
             ReportWriter::Gz(w) => w.write_all(buf),
@@ -56,7 +56,7 @@ impl ReportWriter {
 
     /// Flush/finish the underlying stream. For gzip this writes the trailer —
     /// called even on a zero-write encoder (→ a valid empty-gzip stream).
-    fn finish(self) -> Result<(), BismarkC2cError> {
+    pub(crate) fn finish(self) -> Result<(), BismarkC2cError> {
         match self {
             ReportWriter::Plain(mut w) => w.flush()?,
             ReportWriter::Gz(w) => {
@@ -420,7 +420,7 @@ fn flush_split_chromosome(
 /// infix with **no** suffix strip (Perl appends `.chr` before the strip, which
 /// then no-ops — so a suffixed `-o` doubles the suffix). Non-split uses the
 /// stripped stem. `.gz` appended under `--gzip`.
-fn report_name(
+pub(crate) fn report_name(
     output_raw: &str,
     output_stem: &str,
     chr: Option<&[u8]>,
@@ -450,7 +450,7 @@ fn summary_name(output_raw: &str, output_stem: &str, chr: Option<&[u8]>) -> Stri
 }
 
 /// `{output_dir}{name}` — `output_dir` is a path prefix (`""` = cwd, else ends `/`).
-fn report_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
+pub(crate) fn report_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
     PathBuf::from(format!(
         "{}{}",
         config.output_dir,
@@ -469,6 +469,61 @@ fn summary_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
         "{}{}",
         config.output_dir,
         summary_name(&config.output_raw, &config.output_stem, chr)
+    ))
+}
+
+// ── Phase D: merged / discordant CpG cov filenames (Perl combine_CpGs:1766-1790) ──
+// Derived from the REPORT filename: strip trailing `.gz` then `.txt`, append the
+// suffix (+ `.gz` under `--gzip`). For `-o merge` → report `merge.CpG_report.txt`
+// → `merge.CpG_report.merged_CpG_evidence.cov`.
+
+fn cov_evidence_name(report_filename: &str, suffix: &str, gzip: bool) -> String {
+    // Perl: s/\.gz$//; s/\.txt$//; (strip .gz then .txt, each at most once).
+    let base = report_filename
+        .strip_suffix(".gz")
+        .unwrap_or(report_filename);
+    let base = base.strip_suffix(".txt").unwrap_or(base);
+    let gzs = if gzip { ".gz" } else { "" };
+    format!("{base}{suffix}{gzs}")
+}
+
+pub(crate) fn merged_cov_name(report_filename: &str, gzip: bool) -> String {
+    cov_evidence_name(report_filename, ".merged_CpG_evidence.cov", gzip)
+}
+
+pub(crate) fn discordant_cov_name(report_filename: &str, gzip: bool) -> String {
+    cov_evidence_name(report_filename, ".discordant_CpG_evidence.cov", gzip)
+}
+
+/// `{output_dir}{merged_cov_name(report basename)}`. `--merge_CpGs` is non-split
+/// + non-CX (Phase A), so the report is `{output_stem}.CpG_report.txt[.gz]`.
+pub(crate) fn merged_cov_path(config: &ResolvedConfig) -> PathBuf {
+    let report = report_name(
+        &config.output_raw,
+        &config.output_stem,
+        None,
+        false,
+        config.gzip,
+    );
+    PathBuf::from(format!(
+        "{}{}",
+        config.output_dir,
+        merged_cov_name(&report, config.gzip)
+    ))
+}
+
+pub(crate) fn discordant_cov_path(config: &ResolvedConfig) -> PathBuf {
+    let report = report_name(
+        &config.output_raw,
+        &config.output_stem,
+        None,
+        false,
+        config.gzip,
+    );
+    PathBuf::from(format!(
+        "{}{}",
+        config.output_dir,
+        discordant_cov_name(&report, config.gzip)
     ))
 }
 
@@ -618,6 +673,29 @@ mod tests {
         assert_eq!(
             summary_name("split", "split", Some(b"chr1")),
             "split.chrchr1.cytosine_context_summary.txt"
+        );
+    }
+
+    // ── Phase D: merged / discordant cov filename derivation (V2) ──
+
+    #[test]
+    fn merged_discordant_cov_name_derivation() {
+        // From the REPORT filename: strip trailing `.gz` then `.txt`, append suffix.
+        assert_eq!(
+            merged_cov_name("merge.CpG_report.txt", false),
+            "merge.CpG_report.merged_CpG_evidence.cov"
+        );
+        assert_eq!(
+            merged_cov_name("merge.CpG_report.txt.gz", true),
+            "merge.CpG_report.merged_CpG_evidence.cov.gz"
+        );
+        assert_eq!(
+            discordant_cov_name("merge.CpG_report.txt", false),
+            "merge.CpG_report.discordant_CpG_evidence.cov"
+        );
+        assert_eq!(
+            discordant_cov_name("merge.CpG_report.txt.gz", true),
+            "merge.CpG_report.discordant_CpG_evidence.cov.gz"
         );
     }
 
