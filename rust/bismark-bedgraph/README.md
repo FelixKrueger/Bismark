@@ -157,8 +157,42 @@ the system allocator on a full `--CX` run (byte-identical, allocator-only).
 | `--gazillion` / `--buffer_size` / `--ample_memory` | switch sort strategy | accepted-but-ignored (in-memory always) |
 | Chromosome order | `sort` of per-chr temp filenames | same order, reproduced from the input argv order |
 
-`--gazillion` (Perl's `sort -V` scaffold mode) is an accepted no-op:
-byte-identity is guaranteed for the **default** chromosome ordering only.
+### Scaffold-heavy genomes (`--gazillion`/`--scaffolds`)
+
+`--gazillion`/`--scaffolds` (Perl's `sort -V` scaffold mode) is an accepted
+**no-op** here. Perl needs it because its default mode opens *one temp file per
+chromosome* and so dies (`ulimit -n`, ~1024) on freshly-assembled genomes with
+thousands of scaffolds. This port aggregates in memory with **no filehandle
+limit**, so it handles scaffold-heavy genomes natively in default mode — no
+special flag required (verified at 3,000 scaffolds, `tests/many_scaffolds.rs`).
+
+The one consequence: chromosomes/scaffolds are emitted in **bytewise (ASCII)**
+order (`scaffold_10` before `scaffold_2`) — identical to Perl's *default*-mode
+order, but **not** Perl `--gazillion`'s `sort -V` *natural* order (`scaffold_2`
+before `scaffold_10`). The **rows are identical** either way; only the
+chromosome *block order* differs. Byte-identity is therefore guaranteed for the
+default ordering only (SPEC §1.1 D2); downstream `coverage2cytosine` is
+order-agnostic, so this is cosmetic.
+
+### Memory footprint (⚠️ read before a genome-wide `--CX` run)
+
+Where Perl streams **one chromosome at a time** through UNIX `sort` (peak RAM
+bounded by `--buffer_size`, spilling to disk when needed), this port holds
+**every covered `(chr, pos)` position in memory at once** — there is **no disk
+spill**, and `--buffer_size` / `--ample_memory` are accepted but **ignored**.
+Peak RAM scales with the number of distinct covered positions (~40 B each):
+
+| Run (human/mouse) | Peak RAM |
+|---|---|
+| CpG-only (~28 M positions) | ~1 GB — fine anywhere |
+| `--CX`, all contexts (~840 M positions) | **~28–30 GB** (measured) |
+
+So CpG runs comfortably on a laptop, but a **genome-wide `--CX` run needs a
+large-memory host** (tens of GB) — far more than Perl's bounded ~2 GB, and it
+will **fail (OOM) rather than spill** if RAM is exhausted. On a memory-limited
+machine, use Perl `bismark2bedGraph` for full `--CX`, restrict to CpG context,
+or split the inputs. A bounded/external-spill mode is a documented future
+capability (SPEC §9).
 
 ## Using as a library
 
