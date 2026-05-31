@@ -28,9 +28,10 @@ The Perl-vs-Rust comparison is **NOT per-core**, and the docs must say so plainl
   would compare ~8 cores against ~1 and badly overstate the win. The honest comparison is
   **wall-clock at comparable resource: Rust default (~7 cores) vs Perl `--multicore 12`
   (~19 cores) → 4.8×, on fewer cores.**
-- The serial Perl `--multicore 1` run is still useful as a *Perl-only* reference ("Perl on one
-  core takes ~Xs"), but pair any such number with the explicit core counts — never imply it's
-  a per-core Rust speedup.
+- Perl-only serial reference (do NOT headline as a Rust speedup): Perl `--multicore 1` on
+  WGBS-PE = **4583 s (~76 min) at ~2 cores** — even Perl's "1" is ~2 cores because it pipes a
+  `samtools view` subprocess. The Rust default (~99 s, ~7 cores) replaces that 76-min run;
+  state it as "≈76 min → ≈99 s with built-in parallelism," WITH the core counts — never "46×".
 - **Pre-empt the "why does `--parallel 1` use 800% CPU?" reaction** with a positive framing:
   the default already parallelizes decode + compression for you (no flag needed); `--parallel`
   is only the extra extraction-worker knob, and the realistic (gzip) run will show ~700–800%

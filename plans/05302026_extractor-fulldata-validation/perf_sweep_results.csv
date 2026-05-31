@@ -71,3 +71,4 @@ rust,rrbs_pe,mbias_only,4,2,43.54,3.08,58732,9,5,0
 rust,rrbs_pe,mbias_only,16,1,42.65,3.14,97772,21,5,0
 rust,rrbs_pe,mbias_only,16,2,43.74,3.12,87580,21,5,0
 perl,rrbs_pe,gzip,12,1,196.87,18.97,10352,1,19,0
+perl,wgbs_pe,gzip,1,1,4583,1.99,10452,1,19,0
