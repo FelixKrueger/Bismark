@@ -21,7 +21,12 @@ bismark_genome_preparation_rs [OPTIONS] <GENOME_FOLDER>
 
 Key options (Perl-compatible spellings): `--bowtie2` (default) / `--hisat2` /
 `--minimap2`, `--path_to_aligner <DIR>`, `--parallel <N>`, `--single_fasta`,
-`--large-index`, `--slam` (deprecated), `--verbose`, `--version`, `--help`.
+`--large-index`, `--genomic_composition`, `--slam` (deprecated), `--verbose`,
+`--version`, `--help`.
+
+`--genomic_composition` writes a genomic mono-/di-nucleotide frequency table
+(`<genome>/genomic_nucleotide_frequencies.txt`) before the conversion —
+byte-identical to Perl v0.25.1.
 
 Bismark-Rust extension: `--combined_genome` additionally builds a single
 combined CT+GA reference + index (opt-in; for a future Rust aligner).
