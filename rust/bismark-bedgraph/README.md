@@ -160,6 +160,26 @@ chromosome *block order* differs. Byte-identity is therefore guaranteed for the
 default ordering only (SPEC §1.1 D2); downstream `coverage2cytosine` is
 order-agnostic, so this is cosmetic.
 
+### Memory footprint (⚠️ read before a genome-wide `--CX` run)
+
+Where Perl streams **one chromosome at a time** through UNIX `sort` (peak RAM
+bounded by `--buffer_size`, spilling to disk when needed), this port holds
+**every covered `(chr, pos)` position in memory at once** — there is **no disk
+spill**, and `--buffer_size` / `--ample_memory` are accepted but **ignored**.
+Peak RAM scales with the number of distinct covered positions (~40 B each):
+
+| Run (human/mouse) | Peak RAM |
+|---|---|
+| CpG-only (~28 M positions) | ~1 GB — fine anywhere |
+| `--CX`, all contexts (~840 M positions) | **~28–30 GB** (measured) |
+
+So CpG runs comfortably on a laptop, but a **genome-wide `--CX` run needs a
+large-memory host** (tens of GB) — far more than Perl's bounded ~2 GB, and it
+will **fail (OOM) rather than spill** if RAM is exhausted. On a memory-limited
+machine, use Perl `bismark2bedGraph` for full `--CX`, restrict to CpG context,
+or split the inputs. A bounded/external-spill mode is a documented future
+capability (SPEC §9).
+
 ## Using as a library
 
 `bismark-bedgraph` is both a binary and a library:
