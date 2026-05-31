@@ -23,18 +23,20 @@ fn in_group(name: &[u8], ext: &str) -> bool {
     }
 }
 
-/// Compare two FASTA file names the way Perl's `File::Glob <...>` sorts them:
-/// **case-insensitively** (ASCII), with the raw bytes as a tiebreak. Perl's
-/// glob sort is case-insensitive and locale-independent (verified empirically
-/// in code review — a pure bytewise sort diverges on mixed-case names, e.g.
-/// `{aa, ab, Ba, ZZ}` → Perl `aa, ab, Ba, ZZ` vs bytewise `Ba, ZZ, aa, ab`).
-/// This order fixes the MFA concatenation order, so it is part of the
-/// byte-identity contract. (The exact collation is pinned by a Perl-oracle
-/// mixed-case test.)
+/// Compare two FASTA file names the way Perl's `<*.fa>` sorts them **on the
+/// Linux deployment target: bytewise** (C-locale).
+///
+/// Subtle and load-bearing: byte-identity to "Perl" is *platform-dependent*
+/// here. `File::Glob` only sets `GLOB_NOCASE` on Windows/VMS/OS2/DOS/RISCOS —
+/// **not** on darwin or linux — so Perl never requests case-folding on either.
+/// On **Linux/glibc** the underlying `glob(3)` sorts bytewise (C locale); on
+/// **macOS** Darwin's libc `GLOB_CSH` path case-*folds* as a quirk. Bismark
+/// runs on Linux clusters (and CI + the real-data validation are Linux), so the
+/// contract is **Linux-Perl = bytewise**. This fixes the MFA concatenation
+/// order and the indexer `file_list`. (A `--single_fasta` of `chrN.fa` — the
+/// real-world case — is all-lowercase, so the platform split never bites it.)
 pub fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    a.to_ascii_lowercase()
-        .cmp(&b.to_ascii_lowercase())
-        .then_with(|| a.cmp(b))
+    a.cmp(b)
 }
 
 /// Discover FASTA files in `dir` following Perl's extension precedence and
@@ -42,10 +44,9 @@ pub fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
 ///
 /// - Tries `.fa` → `.fa.gz` → `.fasta` → `.fasta.gz`; the **first non-empty
 ///   group wins**.
-/// - Sorts via [`fasta_name_cmp`] (case-insensitive on the `file_name()` bytes)
-///   — matching Perl's `glob`. This order fixes the MFA concatenation order and
-///   the indexer `file_list`. (`chr1, chr10, chr2` — lexical, not numeric;
-///   mixed-case folded.)
+/// - Sorts via [`fasta_name_cmp`] (**bytewise** on the `file_name()` bytes) —
+///   matching Linux-Perl's `glob`. This order fixes the MFA concatenation order
+///   and the indexer `file_list`. (`chr1, chr10, chr2` — lexical, not numeric.)
 /// - Empty (no FASTA in any group) → [`GenomePrepError::NoFasta`].
 pub fn find_fasta_files(dir: &Path) -> Result<Vec<PathBuf>, GenomePrepError> {
     for ext in EXT_GROUPS {
@@ -210,10 +211,11 @@ mod tests {
     }
 
     #[test]
-    fn glob_mixed_case_is_case_insensitive() {
-        // Perl File::Glob folds case: {aa, ab, Ba, ZZ} → aa, ab, Ba, ZZ
-        // (a pure bytewise sort would give Ba, ZZ, aa, ab). The exact collation
-        // is additionally pinned against real Perl by an integration oracle test.
+    fn glob_mixed_case_is_bytewise() {
+        // Linux-Perl `<*.fa>` sorts BYTEWISE (C locale): uppercase (0x41-) before
+        // lowercase (0x61-). {ZZ, aa, Ba, ab} → Ba, ZZ, aa, ab. (macOS-Perl folds
+        // via a libc quirk, but Linux is the byte-identity target — see
+        // `fasta_name_cmp`. The mixed-case Perl-oracle test is Linux-gated.)
         let d = tempdir().unwrap();
         for n in ["ZZ.fa", "aa.fa", "Ba.fa", "ab.fa"] {
             fs::write(d.path().join(n), b">x\nACGT\n").unwrap();
@@ -223,7 +225,7 @@ mod tests {
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["aa.fa", "ab.fa", "Ba.fa", "ZZ.fa"]);
+        assert_eq!(names, vec!["Ba.fa", "ZZ.fa", "aa.fa", "ab.fa"]);
     }
 
     #[test]

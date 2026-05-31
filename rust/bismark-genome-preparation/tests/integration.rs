@@ -354,9 +354,14 @@ fn perl_vs_rust_edge_inputs_mfa() {
     );
 }
 
-/// H1 verification: mixed-case file names must concatenate in Perl's
-/// (case-insensitive) glob order — pinned against real Perl.
+/// Mixed-case glob order vs real Perl. **Linux-only**: the byte-identity target
+/// is Linux-Perl (bytewise); on macOS the system Perl case-*folds* via a Darwin
+/// libc `GLOB_CSH` quirk (File::Glob sets `GLOB_NOCASE` only on Windows/VMS/…,
+/// not darwin/linux), so Rust's bytewise order intentionally diverges from
+/// macOS-Perl and this oracle would mismatch there. On Linux/glibc both are
+/// bytewise → this confirms parity on the deployment target + CI.
 #[test]
+#[cfg(target_os = "linux")]
 fn perl_vs_rust_mixed_case_glob_order() {
     oracle_compare(
         |dir| {
