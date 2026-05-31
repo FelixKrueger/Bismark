@@ -133,6 +133,20 @@ Because the byte-identity contract is on *decompressed* content, the
 compression backend is free: under Cargo feature unification with the crate's
 `flate2` `zlib-rs` feature, gzp compresses using zlib-rs.
 
+The binary also uses [`mimalloc`](https://crates.io/crates/mimalloc) as its
+global allocator (matching `bismark-extractor`). The in-memory `(chr, pos)`
+aggregation map grows through many allocations; mimalloc is ~12% faster than
+the system allocator on a full `--CX` run (byte-identical, allocator-only).
+
+> **Why no `--parallel`?** Parsing the per-context input files *concurrently*
+> was prototyped and **rejected after measurement.** The read+aggregate phase
+> is **memory-bandwidth-bound** (random-access inserts into a multi-GB map), so
+> building several maps at once *anti-scales*: on a full `--CX` gate, sequential
+> (854 s) beat 6-way parallel (1125 s) even with mimalloc — and the cause
+> (shared memory bandwidth + the two CHH files dominating the work) is fixed by
+> neither a faster allocator nor sharding. Parse/aggregate stays single-threaded;
+> see `plans/05302026_bedgraph-parallel-parse/` for the full investigation.
+
 ## How is this different from Bismark Perl's `bismark2bedGraph`?
 
 | | Perl `bismark2bedGraph` | `bismark2bedGraph_rs` |
@@ -143,8 +157,49 @@ compression backend is free: under Cargo feature unification with the crate's
 | `--gazillion` / `--buffer_size` / `--ample_memory` | switch sort strategy | accepted-but-ignored (in-memory always) |
 | Chromosome order | `sort` of per-chr temp filenames | same order, reproduced from the input argv order |
 
-`--gazillion` (Perl's `sort -V` scaffold mode) is an accepted no-op:
-byte-identity is guaranteed for the **default** chromosome ordering only.
+### Scaffold-heavy genomes (`--gazillion`/`--scaffolds`)
+
+`--gazillion`/`--scaffolds` (Perl's `sort -V` scaffold mode) is an accepted
+**no-op** here. Perl needs it because its default mode opens *one temp file per
+chromosome* and so dies (`ulimit -n`, ~1024) on freshly-assembled genomes with
+thousands of scaffolds. This port aggregates in memory with **no filehandle
+limit**, so it handles scaffold-heavy genomes natively in default mode — no
+special flag required (verified at 3,000 scaffolds, `tests/many_scaffolds.rs`).
+
+The one consequence: chromosomes/scaffolds are emitted in **bytewise (ASCII)**
+order (`scaffold_10` before `scaffold_2`) — identical to Perl's *default*-mode
+order, but **not** Perl `--gazillion`'s `sort -V` *natural* order (`scaffold_2`
+before `scaffold_10`). The **rows are identical** either way; only the
+chromosome *block order* differs. Byte-identity is therefore guaranteed for the
+default ordering only (SPEC §1.1 D2); downstream `coverage2cytosine` is
+order-agnostic, so this is cosmetic.
+
+### Memory footprint (⚠️ read before a genome-wide `--CX` run)
+
+Where Perl streams **one chromosome at a time** through UNIX `sort` (peak RAM
+bounded by `--buffer_size`, spilling to disk when needed), this port holds
+**every covered `(chr, pos)` position in memory at once** — there is **no disk
+spill**, and `--buffer_size` / `--ample_memory` are accepted but **ignored**.
+Peak RAM scales with the number of distinct covered positions (~40 B each):
+
+| Run (human/mouse) | Distinct positions¹ | Peak RAM |
+|---|---|---|
+| CpG-only | ~38 M covered / ~56 M genome-wide | ~1.5–2 GB — fine anywhere |
+| `--CX`, all contexts | ~840 M (measured) | **~28–30 GB** (measured) |
+
+¹ **Counted per-cytosine, both strands.** bismark2bedGraph reports at single-C
+resolution and does *not* merge strands, so each CpG dinucleotide (~28 M
+genome-wide) yields **two** positions — the top-strand C at *N* (`+`) and the
+bottom-strand C at *N+1* (`−`) — i.e. ~2× the dinucleotide-site count (~56 M
+genome-wide; ~38 M *covered* in a typical WGBS sample — measured: CpG_OT 19.2 M
+\+ CpG_OB ~19.2 M).
+
+So CpG runs comfortably on a laptop, but a **genome-wide `--CX` run needs a
+large-memory host** (tens of GB) — far more than Perl's bounded ~2 GB, and it
+will **fail (OOM) rather than spill** if RAM is exhausted. On a memory-limited
+machine, use Perl `bismark2bedGraph` for full `--CX`, restrict to CpG context,
+or split the inputs. A bounded/external-spill mode is a documented future
+capability (SPEC §9).
 
 ## Using as a library
 
@@ -195,3 +250,4 @@ GPL-3.0-only. Matches the upstream Perl Bismark license.
 - [Bismark project](https://github.com/FelixKrueger/Bismark)
 - [`bismark-dedup`](../bismark-dedup/README.md), [`bismark-extractor`](../bismark-extractor/README.md) — sibling Rust ports
 - [`SPEC.md`](./SPEC.md) — the binding byte-identity contract
+- [`BENCHMARKS.md`](./BENCHMARKS.md) — full speed + memory numbers and methodology

@@ -230,13 +230,28 @@ SUMMARY="$OUT_DIR/diff_summary.txt"
 
 DIFFS=0
 TOTAL=0
-PERL_FILES=$(cd "$PERL_OUT" && ls -1 2>/dev/null | sort)
-RUST_FILES=$(cd "$RUST_OUT" && ls -1 2>/dev/null | sort)
+# rev-2 (full-data plan, PLAN_REVIEW_B Critical): codify the expected Perl-only
+# M-bias PNG delta. Perl's extractor emits *M-bias_R1.png / *_R2.png via GD::Graph
+# (when the module is installed); the Rust port defers PNG generation. Their presence
+# is an EXPECTED file-set delta, NOT a regression — without this an unattended
+# full-scale run would hard-FAIL the moment GD::Graph is present. We exclude *.png from
+# the comparison and report any Perl-only PNGs as expected; any OTHER name-set delta is
+# still a hard FAIL.
+PERL_FILES_ALL=$(cd "$PERL_OUT" && ls -1 2>/dev/null | LC_ALL=C sort || true)
+RUST_FILES_ALL=$(cd "$RUST_OUT" && ls -1 2>/dev/null | LC_ALL=C sort || true)
+PERL_FILES=$(printf '%s\n' "$PERL_FILES_ALL" | { grep -v '\.png$' || true; })
+RUST_FILES=$(printf '%s\n' "$RUST_FILES_ALL" | { grep -v '\.png$' || true; })
+PERL_ONLY_PNG=$(printf '%s\n' "$PERL_FILES_ALL" | { grep '\.png$' || true; })
 
-# File-name set diff
+# File-name set diff (PNG-excluded)
 NAME_DIFF=$(diff <(echo "$PERL_FILES") <(echo "$RUST_FILES") || true)
+if [[ -n "$PERL_ONLY_PNG" ]]; then
+  echo "EXPECTED PNG DELTA (Perl-only, Rust defers PNGs — not a failure):" >> "$SUMMARY"
+  echo "$PERL_ONLY_PNG" >> "$SUMMARY"
+  echo "" >> "$SUMMARY"
+fi
 if [[ -n "$NAME_DIFF" ]]; then
-  echo "FILE-NAME-SET MISMATCH:" >> "$SUMMARY"
+  echo "FILE-NAME-SET MISMATCH (non-PNG):" >> "$SUMMARY"
   echo "$NAME_DIFF" >> "$SUMMARY"
   echo "" >> "$SUMMARY"
 fi
@@ -262,11 +277,17 @@ for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
       *_splitting_report.txt|*.M-bias.txt)
         # Strict raw-byte match required for these. (#864 closes report;
         # M-bias was already byte-identical post-Phase C.1.)
+        # rev-2 (PLAN_REVIEW_A): dump the line diff for triage — a strict FAIL here at
+        # full scale may be a %.2f/%.1f half-way rounding artifact rather than a calling
+        # regression. Still counted as a DIFF (the hard gate fires); the dump lets a
+        # human/driver decide in seconds whether it is rounding-only and safe to resume.
         DIFFS=$((DIFFS + 1))
         SIZE_P=$(wc -c < "$PERL_OUT/$f")
         SIZE_R=$(wc -c < "$RUST_OUT/$f")
         FIRST_DIFF=$(cmp "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -1 || true)
         echo "  ✗ $f DIFFERS — perl=${SIZE_P}B rust=${SIZE_R}B ($FIRST_DIFF)" >> "$SUMMARY"
+        echo "    ── triage diff (first 8 differing lines; check for rounding-only deltas) ──" >> "$SUMMARY"
+        diff "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -8 | sed 's/^/      /' >> "$SUMMARY" || true
         ;;
       *.gz)
         # Decompress before sort (sorting raw gzip bytes is meaningless).

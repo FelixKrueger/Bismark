@@ -21,6 +21,13 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
+# Multithreaded global allocator (see src/main.rs). The parallel per-file parse
+# (parallel.rs) is allocation-heavy (per-thread hashmap growth); under the
+# default system allocator, concurrent map growth blocks on arena locks, making
+# `--parallel N>1` anti-scale (slower than N=1 on a full --CX gate). mimalloc's
+# per-thread heaps remove that contention (same fix as the extractor, #884).
+# Allocator-only — output is byte-identical.
+mimalloc = { version = "=0.1.52", default-features = false }
 # Plain/gzipped text I/O — bismark2bedGraph reads the extractor's
 # per-context call files and writes gzipped bedGraph + coverage. No BAM,
 # so no bismark-io / noodles dependency (SPEC §5).
