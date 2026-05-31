@@ -101,7 +101,11 @@ fi
 # ── PHASE 1: byte-identity (HARD GATE) ──────────────────────────────────────
 log "=== PHASE 1: byte-identity ==="
 declare -A DS_BAM=( [wgbs_pe]="$WGBS_PE" [wgbs_se]="$WGBS_SE" [rrbs_pe]="$RRBS_PE" )
-declare -A DS_MODES=( [wgbs_pe]="gzip plain" [wgbs_se]="gzip" [rrbs_pe]="gzip" )
+# Lean byteid: gzip only. The gzip byteid decompresses + compares the SAME content a
+# plain run would produce (it PASSED on full WGBS-PE), so a separate plain byteid is
+# redundant for correctness — and full-WGBS *uncompressed* plain output overflowed the
+# 99G /home overlay (false-FAIL). Plain is still PERF-timed in Phase 2 (on the big fs).
+declare -A DS_MODES=( [wgbs_pe]="gzip" [wgbs_se]="gzip" [rrbs_pe]="gzip" )
 for ds in wgbs_pe wgbs_se rrbs_pe; do
   # Resumable: skip the (multi-hour, Perl-serial) byteid if a prior run already PASSED.
   if grep -q "^BYTEID PASS" "$OUT_DIR/byteid/byteid_${ds}.status" 2>/dev/null; then

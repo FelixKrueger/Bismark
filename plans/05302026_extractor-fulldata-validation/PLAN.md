@@ -270,3 +270,14 @@ aggregates, proven by the 10M smoke at mc4), not `--multicore 1`. This front-loa
 min/dataset) + the Rust perf sweep before the **single dedicated `--multicore 1` serial run on
 WGBS-PE** (the speedup headline + 1-3h long pole) which now runs LAST/droppable. The byteid mc12 wall
 is reused as the Perl mc12 anchor (no redundant re-run).
+
+**First-run result + disk-full incident (2026-05-31 ~00:08Z):** The relaunched run reached Phase 1 and
+**WGBS-PE gzip byte-identity PASSED at full scale** (129.3M reads): Rust ≡ Perl, **Perl 475s → Rust
+105s = 4.5×** at `--multicore 12`. The run then **hard-stopped on a FALSE FAIL** — the *plain* byteid
+hit `No space left on device`: full-WGBS *uncompressed* output doesn't fit oxy's **99G `/home` overlay**
+(which also backs `/usr`/`/etc`/`/var/lib`). Diagnosis was instant from the status file (gzip PASS →
+plain ENOSPC). Two corrective changes [Felix-approved]: (1) **relocate the campaign to `/var/tmp`**
+(oxy's only big writable fs — 762G; `/home`/`/data` are the same 99G overlay); (2) **lean byteid —
+gzip only** (the gzip byteid already proves content parity; plain remains PERF-timed in Phase 2 on the
+big fs). Reclaimed the 54G of byteid output from `/home` (gzip-parity PASS was already recorded). Note:
+the harness never used `/tmp` — it wrote to `/home`, which was simply too small.
