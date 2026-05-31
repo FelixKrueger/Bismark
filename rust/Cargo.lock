@@ -110,6 +110,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bismark-coverage2cytosine"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "flate2",
+ "noodles-bgzf 0.47.0",
+ "noodles-fasta",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
 name = "bismark-dedup"
 version = "1.2.1-beta.1"
 dependencies = [

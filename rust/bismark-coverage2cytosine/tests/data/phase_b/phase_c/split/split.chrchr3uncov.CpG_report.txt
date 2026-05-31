@@ -1,0 +1,4 @@
+chr3uncov	2	+	0	0	CG	CGT
+chr3uncov	3	-	0	0	CG	CGT
+chr3uncov	6	+	0	0	CG	CGT
+chr3uncov	7	-	0	0	CG	CGT
