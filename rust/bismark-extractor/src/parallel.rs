@@ -8,7 +8,8 @@
 //!                 └─ worker N ─┘             (main thread)
 //! ```
 //!
-//! - **Producer** (single thread): drives `open_reader().records()`,
+//! - **Producer** (single thread): drives the reader's `records()` (BAM uses a
+//!   fixed 2-thread parallel-BGZF `ThreadedBamReader`, #884 R3; SAM/CRAM single-threaded),
 //!   accumulates `WorkerInputItem::Se | Pe | Err` into batches of up to
 //!   `BATCH_SIZE` (#884 R1), tags each batch with a monotonic `batch_seq`, and
 //!   sends one `InputBatch` per batch into a bounded MPMC channel. For PE the
@@ -70,7 +71,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use bismark_io::{BismarkPair, BismarkRecord, BismarkStrand, open_reader};
+use bismark_io::{
+    AlignmentKind, BismarkIoError, BismarkPair, BismarkRecord, BismarkStrand, ThreadedBamReader,
+    open_reader,
+};
 use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 
 use crate::call::{CytosineContext, MethCall, extract_calls};
@@ -96,6 +100,18 @@ use crate::state::ExtractState;
 /// *pattern* transfers, not its exact per-batch memory profile — our payload is
 /// a `Vec<RoutedCall>` fanning to ≤12 output files.
 pub(crate) const BATCH_SIZE: usize = 4096;
+
+/// #884 R3: decode worker threads for the parallel-BGZF BAM reader.
+///
+/// **Fixed at 2, decoupled from `--parallel` by design.** Single-threaded BGZF
+/// decode is the pipeline's ~19 s ceiling — the extract workers sit idle behind
+/// it (CPU probe: ~2.8 cores used regardless of `--parallel`). An oxy trial
+/// (10M PE) measured **2 decode threads as the sweet spot**: `--mbias_only`
+/// 18.8→12.3 s, plain `.txt` 20.0→17.6 s; 3–4 threads add nothing (even regress).
+/// Fixing it at 2 (vs tying to `--parallel`) lets the common `--parallel 1`
+/// default benefit — same rationale shape as `output.rs::GZIP_COMPRESS_THREADS`.
+/// Applies to BAM only (BGZF); SAM/CRAM keep the single-threaded reader.
+const DECODE_THREADS: std::num::NonZeroUsize = std::num::NonZeroUsize::new(2).unwrap();
 
 /// One unit of producer→worker work: a single SE record, a single PE pair, or
 /// a producer-side error that keeps its input slot. EOS is signaled by the
@@ -203,11 +219,35 @@ fn run_pipeline(
     config: &ResolvedConfig,
     is_paired: bool,
 ) -> Result<(), BismarkExtractorError> {
-    let n_workers = config.parallel.max(1);
+    // #884 R3: BAM decode uses the fixed-2-thread parallel-BGZF reader (always);
+    // SAM/CRAM (not BGZF) keep the single-threaded reader. Sniffed once, reused.
+    let is_bam = matches!(AlignmentKind::from_path(input)?, AlignmentKind::Bam);
+
+    // #884 R3 (perf gate, oxy 10M PE): floor BAM extract workers at 2 — a single
+    // extract worker can't drain the 2-thread parallel decode (`--parallel 1` on
+    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.6 s / ~12.3 s with
+    // ≥2 workers), so the common `--parallel 1` default benefits fully. SAM/CRAM
+    // (single-threaded decode) keep `max(1)` — extra workers can't beat serial decode.
+    // Output is byte-identical across worker counts (batch_seq reorder), so this
+    // floor changes timing only, not bytes.
+    let n_workers = config.parallel.max(if is_bam { 2 } else { 1 });
 
     // Open the reader on the main thread to get the header (for chr_table)
     // before we hand the reader off to the producer thread.
-    let reader = open_reader(input, /*cram_ref=*/ None)?;
+    //
+    // #884 R3: BAM decode uses a fixed-2-thread parallel-BGZF reader
+    // (`ThreadedBamReader`), ALWAYS — independent of `--parallel` (see
+    // `DECODE_THREADS`). Single-threaded BGZF decode was the ~19 s pipeline
+    // ceiling; 2 decode threads drop the `--mbias_only` wall 18.8→12.3 s and the
+    // plain `.txt` wall 20.0→17.6 s, so even `--parallel 1` benefits. SAM/CRAM are not
+    // BGZF → keep the single-threaded reader. `ThreadedBamReader::from_path`
+    // applies the SAME coordinate-sort rejection as `open_reader`, so the
+    // read-order contract (PE adjacent-pairing) is unchanged.
+    let reader = if is_bam {
+        ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
+    } else {
+        ProducerReader::Any(open_reader(input, /*cram_ref=*/ None)?)
+    };
     let chr_table: Arc<[String]> = Arc::from(build_chr_name_table(reader.header())?);
 
     // Console diagnostics (#882) — emit once on the main thread while we still
@@ -349,6 +389,32 @@ fn run_pipeline(
 
 // ─── Producer ────────────────────────────────────────────────────────────────
 
+/// Producer-side reader (#884 R3): the single-threaded [`AnyReader`] (SAM/CRAM)
+/// or the fixed-2-thread parallel-BGZF [`ThreadedBamReader`] (BAM). Both expose
+/// `header()` + `records()` yielding the same `Result<BismarkRecord, _>`; this
+/// enum lets `run_pipeline` and `producer_loop` own and drive either uniformly,
+/// so neither body changes vs the single-reader version.
+enum ProducerReader {
+    Any(bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>),
+    Threaded(ThreadedBamReader),
+}
+
+impl ProducerReader {
+    fn header(&self) -> &noodles_sam::Header {
+        match self {
+            ProducerReader::Any(r) => r.header(),
+            ProducerReader::Threaded(r) => r.header(),
+        }
+    }
+
+    fn records(&mut self) -> Box<dyn Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_> {
+        match self {
+            ProducerReader::Any(r) => Box::new(r.records()),
+            ProducerReader::Threaded(r) => Box::new(r.records()),
+        }
+    }
+}
+
 /// Producer loop: drive the reader's `records()` iterator, accumulate
 /// [`WorkerInputItem`]s into batches of up to [`BATCH_SIZE`] (in strict input
 /// order, tagged with a monotonic `batch_seq`), and send one [`InputBatch`] per
@@ -362,7 +428,7 @@ fn run_pipeline(
 /// before the producer short-circuits; dropping them would break byte-identity
 /// on error inputs). The producer still `return`s after the first error.
 fn producer_loop(
-    mut reader: bismark_io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>,
+    mut reader: ProducerReader,
     is_paired: bool,
     tx_input: Sender<InputBatch>,
     logger: crate::logging::Logger,
@@ -1139,6 +1205,185 @@ mod tests {
         } else {
             panic!("expected InternalError");
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #878 Tests 2–3: parallel worker M-bias accumulator slots are rebased.
+    // Guards parallel.rs:711 (SE → mbias[0]), :815 (PE R1 → mbias[0]),
+    // :838 (PE R2 → mbias[1], using ignore_r2). pos_1based = read_pos + 1, so
+    // a rebased first call lands at slot 1; reverting call.rs:204 shifts it to
+    // slot ignore+1. These call the private process_se/process_pe directly.
+    // ─────────────────────────────────────────────────────────────────────
+    use bstr::BString;
+    use noodles_core::Position;
+    use noodles_sam::alignment::record::Flags;
+    use noodles_sam::alignment::record::cigar::Op;
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    use noodles_sam::alignment::record_buf::{Cigar, RecordBuf, Sequence};
+
+    /// Minimal single-`M` `BismarkRecord` (mirrors `tests/parallel_phase_f.rs::synth_record`).
+    fn synth_rec(
+        qname: &[u8],
+        xr: &[u8],
+        xg: &[u8],
+        xm: &[u8],
+        start: usize,
+        flags: u16,
+    ) -> BismarkRecord {
+        let mut record = RecordBuf::default();
+        *record.flags_mut() = Flags::from(flags);
+        *record.sequence_mut() = Sequence::from(vec![b'A'; xm.len()]);
+        *record.alignment_start_mut() = Some(Position::try_from(start).unwrap());
+        *record.reference_sequence_id_mut() = Some(0);
+        *record.cigar_mut() = Cigar::from(vec![Op::new(Kind::Match, xm.len())]);
+        *record.name_mut() = Some(BString::from(qname.to_vec()));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XR"), Value::String(BString::from(xr.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XG"), Value::String(BString::from(xg.to_vec())));
+        record
+            .data_mut()
+            .insert(Tag::from(*b"XM"), Value::String(BString::from(xm.to_vec())));
+        BismarkRecord::from_noodles_record(record).expect("synth BismarkRecord")
+    }
+
+    /// Build a `ResolvedConfig` from CLI args (idiom from `parallel.rs:1173/1263`).
+    /// Needs a real `.bam` path arg for the parser; `process_*` never reads it.
+    fn config_with(extra: &[&str]) -> ResolvedConfig {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        std::fs::write(tmp.path(), b"x").unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let mut args = vec!["bismark-methylation-extractor-rs"];
+        args.extend(extra.iter().copied());
+        args.push(&path);
+        let cfg = Cli::try_parse_from(&args).unwrap().validate().unwrap();
+        drop(tmp);
+        cfg
+    }
+
+    /// Sum of all (meth+unmeth) counts across the 3 contexts of one table.
+    fn mbias_total(t: &MbiasTable) -> u64 {
+        t.cpg
+            .iter()
+            .chain(&t.chg)
+            .chain(&t.chh)
+            .map(|p| p.meth + p.unmeth)
+            .sum()
+    }
+
+    /// #878 Test 2 — SE worker M-bias slots are rebased (`parallel.rs:711`).
+    #[test]
+    fn parallel_se_worker_m_bias_rebased() {
+        // OT 6bp: '.'@0,1,2 ; Z(CpG,meth)@3 ; x(CHG,unmeth)@4 ; h(CHH,unmeth)@5.
+        let rec = synth_rec(b"r", b"CT", b"CT", b"...Zxh", 100, 0);
+        let config = config_with(&["--single-end", "--ignore", "3", "--mbias_only"]);
+        let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
+        let mut mbias = [MbiasTable::default(), MbiasTable::default()];
+        let mut report = SplittingReport::default();
+        process_se(
+            &rec,
+            0,
+            &chr_table,
+            &config,
+            true,
+            true,
+            &mut mbias,
+            &mut report,
+        )
+        .expect("process_se");
+
+        // Rebased: read_pos 0,1,2 → 1-based slots 1,2,3 (reverted would be 4,5,6).
+        assert_eq!(mbias[0].cpg[1].meth, 1, "CpG meth at rebased slot 1");
+        assert_eq!(mbias[0].chg[2].unmeth, 1, "CHG unmeth at rebased slot 2");
+        assert_eq!(mbias[0].chh[3].unmeth, 1, "CHH unmeth at rebased slot 3");
+        // The absolute (reverted) slots must be empty.
+        assert_eq!(
+            mbias[0].cpg.get(4).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "no CpG at absolute slot 4"
+        );
+        assert_eq!(
+            mbias[0].chg.get(5).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "no CHG at absolute slot 5"
+        );
+        assert_eq!(
+            mbias[0].chh.get(6).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "no CHH at absolute slot 6"
+        );
+        // SE → nothing in the R2 table.
+        assert_eq!(mbias_total(&mbias[1]), 0, "SE leaves mbias[1] empty");
+    }
+
+    /// #878 Test 3 — PE worker uses `--ignore_r2` for R2 + the R2 table
+    /// (`parallel.rs:838`); `--ignore` for R1 (`:815`). R2 of an OT pair is
+    /// CTOT (`-`-strand, reversed: read_pos_5p = seq_len-1-BAM), so its call
+    /// is placed at BAM index `seq_len-1-ignore_r2`. R1/R2 are non-overlapping
+    /// so `drop_overlap` keeps R2.
+    #[test]
+    fn parallel_pe_worker_m_bias_uses_r2_ignore_for_r2() {
+        // R1: OT (CT,CT) '+'-strand, 6bp, CpG 'Z'@BAM3 → read_pos_5p=3;
+        //     --ignore 3 → rebased 0 → mbias[0].cpg slot 1.
+        let r1 = synth_rec(b"pair", b"CT", b"CT", b"...Z..", 100, 0x41);
+        // R2: CTOT (GA,CT) '-'-strand reversed, 9bp, CpG 'Z'@BAM1 →
+        //     read_pos_5p = 9-1-1 = 7; --ignore_r2 7 → rebased 0 → mbias[1].cpg slot 1.
+        //     start=200 (non-overlapping with R1@100) so drop_overlap keeps it.
+        let r2 = synth_rec(b"pair", b"GA", b"CT", b".Z.......", 200, 0x81);
+        let pair = BismarkPair::from_mates(r1, r2).expect("valid OT pair");
+
+        let config = config_with(&["-p", "--ignore", "3", "--ignore_r2", "7", "--mbias_only"]);
+        let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
+        let mut mbias = [MbiasTable::default(), MbiasTable::default()];
+        let mut report = SplittingReport::default();
+        process_pe(
+            &pair,
+            0,
+            &chr_table,
+            &config,
+            true,
+            true,
+            &mut mbias,
+            &mut report,
+        )
+        .expect("process_pe");
+
+        // R1 → mbias[0] slot 1 (rebased by --ignore 3); R2 → mbias[1] slot 1 (by --ignore_r2 7).
+        assert_eq!(
+            mbias[0].cpg[1].meth, 1,
+            "R1 CpG meth at mbias[0] rebased slot 1"
+        );
+        assert_eq!(
+            mbias[1].cpg[1].meth, 1,
+            "R2 CpG meth at mbias[1] rebased slot 1"
+        );
+        // Absolute (reverted) slots empty; no cross-table leakage.
+        assert_eq!(
+            mbias[0].cpg.get(4).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "R1 not at absolute slot 4"
+        );
+        assert_eq!(
+            mbias[1].cpg.get(8).map_or(0, |p| p.meth + p.unmeth),
+            0,
+            "R2 not at absolute slot 8"
+        );
+        assert_eq!(
+            mbias_total(&mbias[0]),
+            1,
+            "mbias[0] holds exactly R1's call"
+        );
+        assert_eq!(
+            mbias_total(&mbias[1]),
+            1,
+            "mbias[1] holds exactly R2's call"
+        );
     }
 
     /// Plan rev 1 §7.1 + Reviewer A & B both flagged: prove that a

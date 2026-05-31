@@ -17,9 +17,10 @@
 //!   - `Yacht` (1 file `any_C_context_*` with 8-col rows; SE-only),
 //!   - `MbiasOnly` (0 split files; M-bias.txt + splitting-report only).
 //!
-//! `--gzip` wraps every per-mode split file in a `flate2::write::GzEncoder`
-//! and appends `.gz` to filenames. `--mbias_only` silently skips
-//! `InvalidXmByte` errors (per Perl `:2972/3054`).
+//! `--gzip` wraps every per-mode split file in a parallel-gzip
+//! `gzp::par::compress::ParCompress` writer (#884 R2) and appends `.gz` to
+//! filenames. `--mbias_only` silently skips `InvalidXmByte` errors (per Perl
+//! `:2972/3054`).
 //!
 //! SE + PE both run end-to-end, with SE-vs-PE auto-detect via
 //! `@PG ID:Bismark` header probe. M-bias.txt + `_splitting_report.txt`

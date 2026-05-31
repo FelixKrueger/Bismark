@@ -1,0 +1,2 @@
+Bismark methylation extractor version v0.25.1
+r	+	1	18	H

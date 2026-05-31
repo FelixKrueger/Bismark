@@ -3,8 +3,8 @@
 //! Phase B opened 12 strand×context files eagerly at [`OutputFileMap::new`]
 //! time. Phase E generalises this to all 5 non-`MbiasOnly` modes: the
 //! `(key, filename)` list comes from [`crate::output_mode::mode_keys`], and
-//! each file may be wrapped in a `flate2::write::GzEncoder` when
-//! `--gzip` is set. `MbiasOnly` skips eager-open entirely (the map is
+//! each file may be wrapped in a parallel-gzip `gzp::par::compress::ParCompress`
+//! writer when `--gzip` is set. `MbiasOnly` skips eager-open entirely (the map is
 //! empty; `route_call` short-circuits before any `write_call` ever runs).
 //!
 //! The map's value type changed from Phase B's `BufWriter<File>` to
@@ -19,8 +19,6 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use bismark_io::BismarkStrand;
-use flate2::Compression;
-use flate2::write::GzEncoder;
 
 use crate::call::MethCall;
 use crate::cli::{OutputMode, ResolvedConfig};
@@ -37,8 +35,9 @@ pub const BISMARK_VERSION: &str = "v0.25.1";
 /// 5159, 5182, 5205, 5228, 5429, 5452, 5475, 5498, etc.
 pub const SPLIT_FILE_HEADER: &str = "Bismark methylation extractor version v0.25.1\n";
 
-/// Per-call type-erased boxed writer (plain `File` or `GzEncoder<File>`)
-/// wrapped in an 8-KiB `BufWriter`. Phase F may revisit static-dispatch
+/// Per-call type-erased boxed writer (plain `File` or a gzp
+/// `ParCompress<Gzip>` over `File`) wrapped in an 8-KiB `BufWriter`.
+/// Phase F may revisit static-dispatch
 /// once profiling under multicore is available (Phase E plan §9.2 #2).
 type BoxedWriter = BufWriter<Box<dyn Write + Send>>;
 
@@ -106,8 +105,9 @@ impl OutputFileMap {
     /// unless($mbias_only)` skip-eager-open). `flush_all` and `cleanup_all`
     /// remain valid no-ops on the empty map.
     ///
-    /// When `gzip == true` every writer is wrapped in a `flate2::write::GzEncoder`;
-    /// filenames already carry the `.gz` suffix per [`mode_keys`].
+    /// When `gzip == true` every writer is wrapped in a gzp parallel-gzip
+    /// `ParCompress<Gzip>`; filenames already carry the `.gz` suffix per
+    /// [`mode_keys`].
     pub fn new(
         output_dir: &Path,
         input_basename: &str,
@@ -235,10 +235,10 @@ impl OutputFileMap {
     /// are on disk before the run terminates. On the empty `MbiasOnly`
     /// map this is a no-op.
     ///
-    /// For gzipped writers, `BufWriter::flush` propagates to the inner
-    /// `GzEncoder` which writes its trailing gzip footer when the writer
+    /// For gzipped writers, `BufWriter::flush` propagates to the inner gzp
+    /// `ParCompress`, which writes its trailing gzip footer when the writer
     /// drops (which happens at `cleanup_all` time, or at struct-drop time
-    /// for the normal exit path).
+    /// for the normal exit path) — NOT on flush.
     pub fn flush_all(&mut self) -> Result<(), std::io::Error> {
         for entry in self.files.values_mut() {
             entry.writer.flush()?;
@@ -249,8 +249,8 @@ impl OutputFileMap {
     /// Sweep empty per-strand output files at flush time, matching Perl's
     /// end-of-run `was empty -> deleted` behaviour (closes #865).
     ///
-    /// For each entry: drop the writer (closes the `File` + flushes the
-    /// `GzEncoder` trailer if applicable — `flush_all` does NOT write
+    /// For each entry: drop the writer (closes the `File` + flushes the gzp
+    /// `ParCompress` gzip trailer if applicable — `flush_all` does NOT write
     /// the gzip trailer, only `drop` does); if `records_written == 0`,
     /// unlink the file and emit `{filename} was empty ->\tdeleted` to
     /// **STDERR** via `eprintln!`. Otherwise emit `{filename} contains
@@ -298,7 +298,8 @@ impl OutputFileMap {
         {
             // Explicit drop closes the writer AND flushes the gzip trailer
             // for gzipped writers (which `flush_all` doesn't — gzip trailer
-            // emission is tied to GzEncoder's Drop impl, not its flush).
+            // emission is tied to gzp ParCompress's Drop impl, which calls
+            // finish() to write the footer, not to its flush).
             // For kept files this is the seal-the-trailer point.
             drop(writer);
             // Phase G (rev 1 C4): canonicalize BEFORE potential removal so
@@ -362,8 +363,8 @@ impl OutputFileMap {
             },
         ) in entries
         {
-            // Explicitly close the writer (and the inner GzEncoder, if any)
-            // BEFORE calling `remove_file`. A named `let` binding (even
+            // Explicitly close the writer (and the inner gzp `ParCompress`,
+            // if any) BEFORE calling `remove_file`. A named `let` binding (even
             // underscore-prefixed) lives to the end of the loop iteration,
             // so without this explicit drop the file would still be open
             // when `remove_file` runs — benign on Unix but fails on Windows
@@ -380,16 +381,62 @@ impl OutputFileMap {
     }
 }
 
-/// Factory: open the per-key writer, dispatching to plain `File` or
-/// gzipped `GzEncoder<File>` based on `gzip`.
+/// Number of threads gzp uses for parallel `--gzip` compression.
+///
+/// **Decoupled from `--parallel` by design (#884 R2).** gzp's `ParCompress`
+/// runs its own compression thread pool, independent of the extractor's
+/// worker count. The default run is `--parallel 1`, yet single-threaded gzip
+/// is the dominant serial wall (Phase-0 spike: `.gz` 75 s, of which ~52 s is
+/// compression). A fixed pool of 4 captures that wall on *every* `--gzip`
+/// path — including the common `--parallel 1` default — reproducing the
+/// spike's measured ~4.1x (`.gz` 75 s -> ~18 s) regardless of `--parallel`.
+/// Tying it to `--parallel` instead would leave the default path
+/// single-threaded (~75 s), defeating R2's purpose.
+///
+/// **Aggregate thread footprint (dual code-review, Medium):** gzp spawns its
+/// pool *eagerly* at `from_writer` (writer-open), not lazily, and each gzipped
+/// file holds `1 writer + GZIP_COMPRESS_THREADS compressor` threads for the
+/// whole run. So the real total is `(GZIP_COMPRESS_THREADS + 1) × open_files`
+/// — e.g. Default mode opens 12 split files ⇒ ~60 gzip threads, independent of
+/// `--parallel` (including zero-record CTOT/CTOB strands later swept). No
+/// correctness/CPU impact (idle threads block on empty channels), but it is a
+/// thread-count, not a "pool of 4". Lowering the value (e.g. 2–3) or
+/// lazy-opening writers is a measured follow-up — 4 reproduces the validated
+/// spike, so it stays for R2.
+const GZIP_COMPRESS_THREADS: usize = 4;
+
+/// Factory: open the per-key writer, dispatching to plain `File` or a
+/// parallel-gzip `gzp::par::compress::ParCompress<Gzip>` writer based on `gzip`.
 ///
 /// Returns the writer already wrapped in an 8-KiB `BufWriter` (matching
 /// Phase B's capacity). `Box<dyn Write + Send>` is the inner type to
 /// keep the `OutputFileMap::write_call` body branch-free w.r.t. plain-vs-gz.
+///
+/// **gzip output framing (#884 R2):** gzp's `Gzip` format emits a *single*
+/// gzip member — one header, sync-flushed DEFLATE blocks, one stream-wide
+/// CRC32+ISIZE footer (gzp `par/compress.rs` writes `header()`/`footer()`
+/// once per stream). A plain single-member `GzDecoder` reads it correctly; no
+/// `MultiGzDecoder` is needed. The footer is written when the writer is
+/// **dropped** (gzp's `Drop` calls `finish()`), matching the flate2
+/// `GzEncoder` drop-finalization the empty-sweep relies on. Caveats: a
+/// footer-flush I/O error surfaces as a *panic* on drop (gzp `.unwrap()`s),
+/// unlike flate2's silent swallow — mid-stream write errors still propagate
+/// as `io::Error`. The `deflate_rust` backend (pure Rust, no cmake) skips the
+/// cross-block dictionary, so the *compressed* bytes differ from flate2's,
+/// but the *decompressed* content is byte-identical (no test hashes raw
+/// `.gz`; the colossal smoke compares `zcat | sort | md5`).
 fn open_writer(path: &Path, gzip: bool) -> Result<BoxedWriter, std::io::Error> {
     let file = File::create(path)?;
     let inner: Box<dyn Write + Send> = if gzip {
-        Box::new(GzEncoder::new(file, Compression::default()))
+        // #884 R2: parallelize the single-threaded gzip compression wall via
+        // gzp's ParCompress pool (deflate_rust backend). num_threads is a
+        // fixed constant decoupled from --parallel — see GZIP_COMPRESS_THREADS.
+        Box::new(
+            gzp::par::compress::ParCompressBuilder::<gzp::deflate::Gzip>::new()
+                .num_threads(GZIP_COMPRESS_THREADS)
+                .expect("GZIP_COMPRESS_THREADS is nonzero")
+                .from_writer(file),
+        )
     } else {
         Box::new(file)
     };
