@@ -182,10 +182,17 @@ bounded by `--buffer_size`, spilling to disk when needed), this port holds
 spill**, and `--buffer_size` / `--ample_memory` are accepted but **ignored**.
 Peak RAM scales with the number of distinct covered positions (~40 B each):
 
-| Run (human/mouse) | Peak RAM |
-|---|---|
-| CpG-only (~28 M positions) | ~1 GB — fine anywhere |
-| `--CX`, all contexts (~840 M positions) | **~28–30 GB** (measured) |
+| Run (human/mouse) | Distinct positions¹ | Peak RAM |
+|---|---|---|
+| CpG-only | ~38 M covered / ~56 M genome-wide | ~1.5–2 GB — fine anywhere |
+| `--CX`, all contexts | ~840 M (measured) | **~28–30 GB** (measured) |
+
+¹ **Counted per-cytosine, both strands.** bismark2bedGraph reports at single-C
+resolution and does *not* merge strands, so each CpG dinucleotide (~28 M
+genome-wide) yields **two** positions — the top-strand C at *N* (`+`) and the
+bottom-strand C at *N+1* (`−`) — i.e. ~2× the dinucleotide-site count (~56 M
+genome-wide; ~38 M *covered* in a typical WGBS sample — measured: CpG_OT 19.2 M
+\+ CpG_OB ~19.2 M).
 
 So CpG runs comfortably on a laptop, but a **genome-wide `--CX` run needs a
 large-memory host** (tens of GB) — far more than Perl's bounded ~2 GB, and it
@@ -243,3 +250,4 @@ GPL-3.0-only. Matches the upstream Perl Bismark license.
 - [Bismark project](https://github.com/FelixKrueger/Bismark)
 - [`bismark-dedup`](../bismark-dedup/README.md), [`bismark-extractor`](../bismark-extractor/README.md) — sibling Rust ports
 - [`SPEC.md`](./SPEC.md) — the binding byte-identity contract
+- [`BENCHMARKS.md`](./BENCHMARKS.md) — full speed + memory numbers and methodology
