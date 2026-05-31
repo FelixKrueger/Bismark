@@ -5,16 +5,21 @@ Raw data: `perf_sweep_results.csv` (this dir). Campaign: full-dataset benchmark 
 Numbers below are medians over reps (2–3); recompute from the CSV for final figures.
 
 ## Verdict (lead with this)
-- **Byte-identical (parity) to Perl v0.25.1 at full scale** — WGBS-PE (129.3M reads) +
-  WGBS-SE (63.6M) PASSED (gzip; sorted-equivalent data + identical reports). RRBS-PE
+- **Byte-identical (parity) to Perl v0.25.1 at full scale** — WGBS-PE (64.6M read pairs) +
+  WGBS-SE (63.6M reads) PASSED (gzip; sorted-equivalent data + identical reports). RRBS-PE
   byteid not finished before the budget pivot, but PE+SE prove the calling path.
 - **gzip (the default/realistic path) is 4.2–4.9× faster than Perl's best (`--multicore 12`):**
 
-  | Dataset | Reads | Perl mc12 | Rust (gzip, any `--parallel`) | Speedup |
+  | Dataset | Size | Perl mc12 | Rust (gzip, any `--parallel`) | Speedup |
   |---|---:|---:|---:|---:|
-  | WGBS-PE | 129.3M | 479 s | ~99 s | 4.8× |
-  | WGBS-SE | 63.6M | 237 s | ~48 s | 4.9× |
-  | RRBS-PE | 61.2M | 197 s | ~47 s | 4.2× |
+  | WGBS-PE | 64.6M read pairs | 479 s | ~99 s | 4.8× |
+  | WGBS-SE | 63.6M reads | 237 s | ~48 s | 4.9× |
+  | RRBS-PE | 30.6M read pairs | 197 s | ~47 s | 4.2× |
+
+  Report PE sizes as **read pairs** (intuitive), not records. `samtools view -c` counts
+  *alignment records* = 2 per pair, so WGBS-PE 129.3M records = 64.6M pairs, RRBS-PE 61.2M
+  = 30.6M pairs; SE is 1 record/read. (Cross-check: WGBS-PE 64.6M pairs ≈ WGBS-SE 63.6M
+  reads — same sample's fragments, R1 aligned SE.)
   - Note Perl mc12 used ~19 CPU-cores (fork model re-decodes the BAM N×); Rust uses ~7
     and decodes once → faster *and* leaner.
 
