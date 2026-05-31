@@ -27,7 +27,7 @@ Per [`SPEC.md`](./SPEC.md) §10 (rev 2, locked):
 
 Each phase is its own PR, dual-code-reviewed, and squash-merged to the integration branch (`rust/iron-chancellor`).
 
-## CLI surface (Phase A — all 35 flags parse + validate)
+## CLI surface (35 flags — names match Perl exactly)
 
 ```text
 $ bismark-methylation-extractor-rs --help
@@ -64,7 +64,8 @@ Request a fixed allocation **by output mode**, not by `--parallel`:
 | Mode | cpus | memory | notes |
 |------|------|--------|-------|
 | gzip (default) | ~8 | ~2 GB | ~80 threads peak → ensure `ulimit -u` / `nproc` headroom |
-| `--mbias_only` / plain `.txt` | ~3 | ~0.5–1.5 GB | plain `.txt` output is large and write-I/O-bound |
+| `--mbias_only` | ~3 | ~0.1 GB | no per-context output files written |
+| plain `.txt` | ~1 | ~1.5 GB | write-I/O-bound — uses <1 core; output is large + uncompressed |
 
 **Tip:** keep gzip output enabled — it is *faster* than plain `.txt`, not slower, because it slashes the volume written to disk.
 
@@ -89,7 +90,7 @@ Locked in [SPEC.md §6](./SPEC.md) — each choice structurally prevents a class
 1. **`BismarkStrand` derived once per pair** (via [`bismark-io::BismarkPair::pair_strand()`](https://crates.io/crates/bismark-io)) — closes Alan Hoyle's port's "strand-routing splits one read across multiple files" bug structurally.
 2. **M-bias counters as `[MbiasTable; 2]`** indexed by `ReadIdentity` — closes the missing-CHG/CHH M-bias context bug; every iteration site must explicitly handle all three contexts.
 3. **Argument structs** (`ExtractParams`, `PairParams`) instead of 14-parameter functions — replaces the wide-signature smell from Alan's port.
-4. **Rayon-based `--multicore N`** with single BGZF decompression + bounded MPMC channel + per-worker scratch + input-order output collector — replaces Perl's wasteful fork+modulo model. Byte-identity invariant: output is identical at any N ≥ 1.
+4. **`std::thread`-based `--multicore N`** with always-on 2-thread parallel BGZF decode + bounded MPMC channel + per-worker scratch + input-order output collector — replaces Perl's wasteful fork+modulo model. Byte-identity invariant: output is identical at any N ≥ 1.
 5. **CIGAR + XM orientation correction** lives in [`bismark-io::BismarkRecord::iter_aligned()`](https://crates.io/crates/bismark-io/1.0.0-beta.6) (v1.0.0-beta.6+) — the extractor consumes orientation-corrected `(read_pos_5p, ref_pos, xm_byte)` triples without needing to know about `-`-strand reverse-complement.
 6. **`--bedGraph` / `--cytosine_report` subprocess** to Perl `bismark2bedGraph` / `coverage2cytosine` (Phase G). Inline-Rust migration is a v1.x concern.
 
@@ -100,14 +101,14 @@ Locked in [SPEC.md §6](./SPEC.md) — each choice structurally prevents a class
 - Long-running integration branch: [`rust/iron-chancellor`](https://github.com/FelixKrueger/Bismark/tree/rust/iron-chancellor).
 - Project board: [Bismark Rust rewrite](https://github.com/users/FelixKrueger/projects/1).
 
-## Tests (Phase A)
+## Tests
 
 ```sh
 cd rust/bismark-extractor
 cargo test
 ```
 
-40 tests — 35 lib unit tests covering CLI parse + validate + derived-config resolution; 5 sanity tests including `help_text_lists_all_35_flags` (structural guard against silent flag drops in future refactors).
+105 lib unit tests (CLI parse/validate, derived-config resolution, and the parallel worker pipeline) plus integration tests asserting byte-identity (legacy vs parallel at N=1 and N≥2), M-bias accumulation, and gzip round-trips. `help_text_lists_all_35_flags` remains a structural guard against silent flag drops.
 
 ## References
 
