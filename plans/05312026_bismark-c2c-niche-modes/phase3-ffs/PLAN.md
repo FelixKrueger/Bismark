@@ -2,7 +2,7 @@
 
 **Epic:** `05312026_bismark-c2c-niche-modes/EPIC.md`, Phase 3 — `--ffs` (FFS context columns)
 **Design contract:** the v1.0 [`../../05292026_bismark-coverage2cytosine/SPEC.md`](../../05292026_bismark-coverage2cytosine/SPEC.md) — §7 (coordinate arithmetic; the `tri_nt` model this phase extends), §7.1 (`perl_substr` negative-wrap), §5 (output topology / report-line shape).
-**Status:** rev 0 (2026-05-31) — drafted from EPIC + v1.0 SPEC + the three Perl extraction blocks (`:234–352`, `:481–578`, `:1400–1553`), with the exact tetra/penta/hexa substr offsets **empirically pinned against live Perl v0.25.1** (a 3-chromosome fixture diffed byte-for-byte; see §9 V0). Awaiting manual review.
+**Status:** rev 1 (2026-05-31) — **dual plan-review folded** (both `PLAN_REVIEW_A.md` + `PLAN_REVIEW_B.md` APPROVE-WITH-CHANGES, **0 Critical**; both independently re-derived the §3.2 offset table from the Perl source and diffed it byte-for-byte against live Perl v0.25.1 — the offset arithmetic, the forward-hexa negative-wrap, and the reverse-hexa `i-3` are all confirmed correct). The folded changes are NOT logic fixes — they are the **post-Phase-1 rebase** (stale line numbers + the `emit_position`/`chromosome_report_bytes` signatures now carry Phase 1's `nome`/`cov_out`; see the §2 rebase note), the precise CLI-rejection-test narrowing (§3.7), and **one real gotcha: the `--help` "Ns ignored" claim is FALSE** — N-windows are emitted verbatim, do not filter (§3.2, V15). **Ready for the implement trigger.** (The exact offset table was already empirically pinned in rev 0; §9 V0.)
 
 ---
 
@@ -29,6 +29,13 @@ U00096.3  91  -  1  0  CG  CGG  CGGC   CGGCA   CACGGC
 ```
 
 ## 2. Context
+
+> ⚠️ **rev 1 — POST-PHASE-1 REBASE (read first).** This plan was drafted against the **pre-Phase-1** `report.rs`/`cli.rs`; Phase 1 (`--gc`/`--nome-seq`) has since landed in the same files and reshaped exactly the functions Phase 3 touches. **All cited line numbers below and the `emit_position` signature in §4 are STALE** — the implementer must re-grep, not trust the numbers. The concrete corrections (both dual reviewers, independently):
+> - **`emit_position` already takes `nome: bool` AND `cov_out: &mut Vec<u8>`** (after `threshold` and after `out`, respectively). Thread the new `ffs: bool` **alongside `nome`** — do NOT use the §4 signature verbatim (it predates `nome`/`cov_out`).
+> - **`chromosome_report_bytes` now returns `(Vec<u8>, Vec<u8>)`** (report + cov) and has a single `emit_position` call site — pass `config.ffs` there. `extract` has **exactly one** caller (`emit_position`); `run_t`/`run_nome` call `emit_position`, not `extract`.
+> - **The unit-test harness is now `run_nome`** (with `run_t`/`run` as thin wrappers over `run_nome(..., nome=false)`). Add `ffs` (default `false`) to `run_nome` so the existing wrappers stay green, then add the ffs assertions.
+> - Approx current lines (re-confirm): `perl_substr` ~`:99`, `revcomp` ~`:115`, `extract` ~`:145`, `emit_position` ~`:169`, `chromosome_report_bytes` ~`:264`, `run_single` ~`:316`, `run_split` ~`:406`, `flush_split_chromosome` ~`:471`; `cli.rs` `--ffs` rejection ~`:159-161`.
+> - **Adding `pub ffs: bool` to `ResolvedConfig` breaks the in-test struct literal** in `report.rs::nome_cov_path_uses_raw_base` (it enumerates every field) — add `ffs: false` there too, or `cargo test` won't compile.
 
 - **Where:** `rust/bismark-coverage2cytosine/src/`. Touches **two** files: `report.rs` (the kernel + `extract`) and `cli.rs` (un-reject `--ffs`, add `ffs` to `ResolvedConfig`). No new module.
 - **The v1.0 substrate this extends** (`report.rs`, all already shipped + green):
@@ -84,6 +91,8 @@ For the cytosine at 0-based index `i`, Perl uses `pos = i+1` (1-based). v1.0 alr
 - Reverse `penta_nt` uses offset `pos-5 = i-4` and guard `pos-5 ≥ 0` (`i ≥ 4`), `want=5`.
 - Because the guards are `≥ 0` integer tests on a non-negative-only path (when the guard passes, `i-3`/`i-4 ≥ 0` so the offset is never negative), there is **no negative-wrap on the reverse strand** — the guard prevents it. (Contrast forward `hexa_nt`, where the guard `len ≥ i+4` does NOT prevent the offset `i-2` from being negative.)
 
+⚠️ **rev 1 (A-V-gap-1) — N-containing windows are NOT filtered; the `--help` is wrong.** Perl's `--help` (`:2291`) claims "sequences containing Ns are ignored," but **v0.25.1 does NOT filter N-windows** — it emits the tetra/penta/hexa fields verbatim even when they span an `N`, and `tr/ACTG/TGAC/` (the `revcomp` helper) leaves `N` unchanged on the reverse strand. Live-Perl-verified by **both** reviewers (e.g. a C whose window spans an `N` emits `CGN`/`CGNT`…). **Do NOT implement the N-filtering the help describes** — that would diverge. The correct behaviour is exactly the §3.2 offset table with the existing `perl_substr`/`revcomp` (which already pass `N` through). Pinned by the new N-window golden (§9 V15).
+
 **Worked examples** (all from §9 V0, genome `chr1 = GCCGTGAAACACGGCTTT`, `chrC = CGTAAACCC`):
 - `chr1` `i=2` `pos3` `+`: tetra=`CGTG` (`seq[2..6]`), penta=`CGTGA` (`seq[2..7]`), hexa=`GCCGTG` (`substr(pos-3=0,6)=seq[0..6]`). Matches the help example.
 - `chr1` `i=1` `pos2` `+`: tetra=`CCGT`, penta=`CCGTG`, hexa=`T` (negative-wrap: `substr(seq,-1,6)`).
@@ -112,7 +121,9 @@ The Rust `merge::parse_report_row` (`merge.rs:52-77`) already mirrors this: it r
 
 ### 3.7 CLI — un-reject `--ffs`
 
-In `cli.rs::validate()`: **delete** the `if self.ffs { return Err(UnsupportedFlag … "--ffs") }` block (`cli.rs:158-160`). Add `ffs: bool` to `ResolvedConfig` (`cli.rs:103`, e.g. after `discordance`) and set it in the constructor (`cli.rs:213` block) from `self.ffs`. Update the `cli.rs:97` doc-comment (`(v1.x, rejected) tetra/penta/hexamer context columns.`) to the real help: e.g. `Append tetra-, penta- and hexamer nucleotide-context columns to each report line (hexamers follow the xxCxxx rule; edge windows are left blank).` The `--gc`/`--nome-seq`/`--drach` rejections stay (Phases 1/2 own those). **No new mutex** — `--ffs` composes with every supported flag (CpG/`--CX`/`--zero_based`/`--split_by_chromosome`/`--coverage_threshold`/`--gzip`/`--merge_CpGs`/`--discordance_filter`). The Phase-A `cli.rs:303` test loop that asserts `--ffs` rejects (`("--ffs", "ffs")`) must be **removed** (it would now fail); replace with a positive assertion that `--ffs` resolves (V7).
+In `cli.rs::validate()`: **delete only the `--ffs` arm** of the v1.x rejection (the `if self.ffs { return Err(UnsupportedFlag … "--ffs") }` block, ~`:159-161`). Add `ffs: bool` to `ResolvedConfig` (append it — the §4 `:103` insertion point is now occupied by Phase 1's `gc_context`/`nome` fields) and set it in the constructor block from `self.ffs`. Update the `--ffs` doc-comment (`(v1.x, rejected) tetra/penta/hexamer context columns.`) to the real help: e.g. `Append tetra-, penta- and hexamer nucleotide-context columns to each report line (hexamers follow the xxCxxx rule; edge windows are left blank).` The `--drach` rejection **stays** (Phase 2 owns it). **No new mutex** — `--ffs` composes with every supported flag (CpG/`--CX`/`--zero_based`/`--split_by_chromosome`/`--coverage_threshold`/`--gzip`/`--merge_CpGs`/`--discordance_filter`).
+- ⚠️ **rev 1 (A-A4 / B-3): the `--ffs` rejection lives in the SHARED `rejects_v1x_flags` test loop** `for (flag, frag) in [("--drach","drach"), ("--ffs","ffs")]`. **Narrow** the loop to `[("--drach","drach")]` — do NOT delete the whole test (that would drop `--drach`'s rejection coverage). Add a separate positive assertion that `--ffs` resolves (V7).
+- ⚠️ **rev 1 (B-4): adding `pub ffs: bool` to `ResolvedConfig` will fail to compile** the in-test `ResolvedConfig { … }` literal in `report.rs::nome_cov_path_uses_raw_base` (it enumerates every field) — add `ffs: false` there too.
 
 ## 4. Signatures
 
@@ -132,15 +143,20 @@ fn extract(seq: &[u8], i: usize, ffs: bool) -> Extracted;
 //    and keeps non-ffs runs byte-identical (they never read these fields anyway).
 
 // report.rs — emit_position() gains `ffs: bool`; appends 3 columns when set.
+// ⚠️ STALE (pre-Phase-1) — see the §2 rebase note. The LIVE signature already
+// has `nome: bool` (after `threshold`) and `cov_out: &mut Vec<u8>` (after `out`);
+// thread `ffs` ALONGSIDE `nome`, do NOT copy the param list below verbatim.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_position(
     name: &[u8], seq: &[u8], i: usize,
     buffer: &HashMap<u32,(u32,u32)>,
     cpg_only: bool, zero_based: bool, threshold: u32,
-    ffs: bool,                       // NEW
+    nome: bool,                      // EXISTS (Phase 1)
+    ffs: bool,                       // NEW — add next to nome
     accumulate_summary: bool,
     summary: &mut ContextSummary,
     out: &mut Vec<u8>,
+    cov_out: &mut Vec<u8>,           // EXISTS (Phase 1)
 );
 
 // cli.rs — ResolvedConfig gains:
@@ -156,7 +172,7 @@ pub ffs: bool,
 3. **Extend `emit_position`** (`report.rs:161`): add `ffs: bool`; after the `tri` field, when `ffs`, append `\t{tetra}\t{penta}\t{hexa}` before the `\n` (§3.3). Columns 1–7 byte-unchanged.
 4. **Thread `config.ffs`** through the call chain: `chromosome_report_bytes` (`report.rs:226`) passes `config.ffs` to `emit_position`; both call sites are `run_single` (`:299/311`) and `flush_split_chromosome` (`:408`) via `chromosome_report_bytes` — they pass `config`, so add the arg inside `chromosome_report_bytes` only. Update the `run_t` test harness signature.
 5. **CLI** (`cli.rs`): delete the `--ffs` rejection (`:158-160`); add `ffs` to `ResolvedConfig` + constructor; update the `:97` help doc-comment; remove `("--ffs","ffs")` from the rejection test loop (`:303`) and add a positive resolve test (V7).
-6. **Goldens + integration tests**: a `tests/golden_phase3_ffs.rs` + `tests/data/phase3_ffs/` fixture (tiny multi-FASTA with chr-start/chr-end/short-scaffold C and G, generated from the **repo Perl v0.25.1** — extend the existing `generate_goldens.sh` with an ffs block). Diff Rust vs Perl golden for: `--ffs` (CpG), `--CX --ffs`, `--ffs --zero_based`, `--ffs --split_by_chromosome`, `--ffs --gzip` (decompressed), `--ffs --merge_CpGs` (merged cov == no-ffs golden), and an uncovered-chromosome `--ffs` line.
+6. **Goldens + integration tests**: a `tests/golden_phase3.rs` (matches the `golden_phase_b/c/d.rs` + `golden_phase1.rs` naming) + a `tests/data/phase3_ffs/` fixture dir. ⚠️ **rev 1 (B-Opt1):** there is **no shared `generate_goldens.sh`** — each phase has its OWN under `tests/data/<phase>/`; create `tests/data/phase3_ffs/generate_goldens.sh` modeled on `tests/data/phase1/generate_goldens.sh` (it sets `C2C="$(cd "$HERE/../../../../.." && pwd)/coverage2cytosine"`, `set -eo pipefail`, and writes each FASTA into a per-fixture **directory** via `mkfa`, since Perl reads the genome from a folder). Fixture: a tiny multi-FASTA with chr-start/chr-end/short-scaffold C and G **plus an `N`-containing chromosome** (V15). Diff Rust vs Perl golden for: `--ffs` (CpG), `--CX --ffs`, `--ffs --zero_based`, `--ffs --split_by_chromosome`, `--ffs --gzip` (decompressed), `--ffs --merge_CpGs` (merged cov == no-ffs golden), an uncovered-chromosome `--ffs` line, and the N-window case.
 7. **Regression:** full suite green (the v1.0 + Phase D tests must be unaffected — non-ffs runs emit the identical 7-col lines).
 
 ## 6. Efficiency
@@ -209,6 +225,8 @@ Goldens generated from the **repo Perl v0.25.1** (`generate_goldens.sh` ffs bloc
 | V12 | `--ffs --gzip` golden | binary; decompress + diff vs plain V8 golden | byte-identical after decompression |
 | V13 | **uncovered-chromosome `--ffs` line** | fixture with a genome chr absent from the cov file, `threshold=0` | the uncovered chr emits 10-col `0 0` lines (Perl `:1524`), byte-identical |
 | V14 | regression: v1.0 + Phase D suites | full `cargo test` | green (non-ffs runs emit identical 7-col lines; merge unaffected) |
+| V15 | **N-window NOT filtered** (rev 1 A-V-gap-1) | a `chrN` fixture with a C/G whose tetra/penta/hexa windows span an `N`, both strands, `--CX --ffs`; diff vs Perl golden | N-windows **emitted verbatim** (`CGN`/`CGNT`…; revcomp passes `N`→`N`) — proves the false `--help` "Ns ignored" claim is NOT implemented |
+| V16 | (optional) all-three-empty trailing-tab + reverse `i=2` all-empty | unit on `extract` (reverse `G` at `i=2`: tetra/penta/hexa all `""`) + a byte-level golden of a chr-end line ending `…\t{tri}\t\t\t\n` | empty fields render as nothing-between-tabs; `parse_report_row` still tolerates it in the `--merge_CpGs` re-read |
 
 ## 10. Questions or ambiguities
 
@@ -219,6 +237,7 @@ Goldens generated from the **repo Perl v0.25.1** (`generate_goldens.sh` ffs bloc
 | Resolved | Does `--ffs` apply to CpG-only AND `--CX`, covered AND uncovered? | **Both, both** (§3.1, V0/V13). |
 | Resolved | `--ffs` + `--merge_CpGs` mutex? | **No mutex** (Perl allows it; merge discards the extra columns via 6-element list assignment). Rust `parse_report_row` already tolerates extra cols → **no `merge.rs` change** (§3.6, V6). |
 | Resolved | Does `--ffs` affect the context summary? | No — summary is fed `tri`+`upstream` only (§3.5, V5). |
+| **Resolved (rev 1)** | Are N-containing windows filtered (the `--help` says "Ns ignored")? | **No** — v0.25.1 emits N-windows verbatim; the `--help` claim is FALSE/stale. Do NOT implement N-filtering. Both reviewers confirmed on live Perl; `revcomp` already passes `N` through. Pinned by V15 (§3.2 note). |
 | Open (non-blocking) | `Extracted` struct vs extended tuple for `extract`'s return | Implementer's choice (§4); a named 6-field struct reads better. Does not affect output. |
 
 No **Critical** ambiguities remain — the offset table is empirically pinned and the flag interactions are confirmed against live Perl.
@@ -233,3 +252,4 @@ No **Critical** ambiguities remain — the offset table is empirically pinned an
 
 ## Revision history
 - **rev 0** (2026-05-31): initial Phase 3 plan from EPIC + v1.0 SPEC §7 + the three Perl extraction blocks. The six tetra/penta/hexa substr offsets pinned byte-identical against live Perl v0.25.1 on a 3-chromosome edge-case fixture (V0); `--ffs` scope (CpG+CX, covered+uncovered), the `--merge_CpGs` no-op interaction, and the context-summary invariance all confirmed against live Perl. Reuses the v1.0 `extract`/`emit_position`/`perl_substr`/`revcomp` substrate (append-only). Awaiting manual review.
+- **rev 1** (2026-05-31): **dual plan-review folded** (`PLAN_REVIEW_A.md` + `PLAN_REVIEW_B.md`, both APPROVE-WITH-CHANGES, 0 Critical / 4 Important each; both independently re-derived the §3.2 offset table from the Perl source and diffed it byte-for-byte against live Perl — including the forward-hexa negative-wrap and the reverse-hexa `i-3`, both confirmed correct). Folded: **the POST-PHASE-1 REBASE** (a prominent §2 note — every cited line number is stale, and `emit_position` already takes `nome: bool`+`cov_out`, `chromosome_report_bytes` returns `(report, cov)`, the harness is `run_nome`; thread `ffs` alongside `nome`; the §4 signature flagged stale); **A-A4/B-3** — narrow the SHARED `rejects_v1x_flags` loop to `[("--drach","drach")]` (don't delete it; §3.7); **B-4** — add `ffs: false` to the `nome_cov_path_uses_raw_base` in-test `ResolvedConfig` literal (§3.7); **A-V-gap-1** — the `--help` "sequences containing Ns are ignored" claim is **FALSE** in v0.25.1; N-windows emit verbatim, do NOT filter (§3.2 note, §10, new golden V15); **B-Opt1** — per-phase `generate_goldens.sh` (no shared script) + `golden_phase3.rs` naming (§5 task 6); **A-V-gap-2/B-Opt2** — added V16 (all-three-empty trailing-tab + reverse `i=2` all-empty). **The byte-identity crux (the offset table) had NO defect** — all changes are rebase hygiene + the N-window note. Status → **ready for the implement trigger.**
