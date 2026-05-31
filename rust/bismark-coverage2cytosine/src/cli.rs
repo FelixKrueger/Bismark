@@ -84,13 +84,15 @@ pub struct Cli {
     #[arg(short = 'V', long = "version")]
     pub version: bool,
 
-    // ── v1.x flags: declared so they parse, but rejected at validate() ──
-    /// (v1.x, rejected) GpC-context report.
+    /// GpC-context report (`{stem}.GpC_report.txt` + `.GpC.cov`), emitted in
+    /// addition to the standard report.
     #[arg(long = "gc", visible_aliases = ["GC", "GC_context", "gc_context"])]
     pub gc: bool,
-    /// (v1.x, rejected) NOMe-Seq filtering.
+    /// NOMe-Seq filtering (implies --gc; CpG context only; bumps the threshold to 1).
     #[arg(long = "nome-seq")]
     pub nome_seq: bool,
+
+    // ── v1.x flags: declared so they parse, but rejected at validate() ──
     /// (v1.x, rejected) DRACH m6A filtering.
     #[arg(long = "drach", visible_alias = "m6A")]
     pub drach: bool,
@@ -122,6 +124,10 @@ pub struct ResolvedConfig {
     pub cpg_only: bool,
     /// `--CX` requested.
     pub cx_context: bool,
+    /// `--gc`/`--gc_context` requested (also set by `--nome-seq`): emit the GpC report.
+    pub gc_context: bool,
+    /// `--nome-seq` requested: NOMe-Seq filtering of the core + GpC reports.
+    pub nome: bool,
     /// `--zero_based` requested.
     pub zero_based: bool,
     /// `--split_by_chromosome` requested.
@@ -145,13 +151,8 @@ impl Cli {
     /// `--coverage_threshold`) → `--discordance_filter` without merge →
     /// discordance range `1..=100` → `--coverage_threshold 0`.
     pub fn validate(self) -> Result<ResolvedConfig, BismarkC2cError> {
-        // v1.x flags rejected outright (not silently ignored).
-        if self.gc {
-            return Err(BismarkC2cError::UnsupportedFlag { flag: "--gc" });
-        }
-        if self.nome_seq {
-            return Err(BismarkC2cError::UnsupportedFlag { flag: "--nome-seq" });
-        }
+        // v1.x flags still rejected outright (Phases 2/3): --drach, --ffs.
+        // (--gc / --nome-seq are now supported — Phase 1.)
         if self.drach {
             return Err(BismarkC2cError::UnsupportedFlag { flag: "--drach" });
         }
@@ -171,6 +172,16 @@ impl Cli {
         if self.merge_cpgs && self.split_by_chromosome {
             return Err(BismarkC2cError::MergeCpgsWithSplit);
         }
+        // NOMe block (Perl :2147-2161), evaluated BEFORE the merge-threshold
+        // mutex — Perl's NOMe block (:2147) precedes the threshold block (:2174),
+        // so `--nome-seq --merge_CpGs --coverage_threshold N` dies with
+        // NomeWithMerge, not MergeCpgsWithThreshold (rev 1 A-M1).
+        if self.nome_seq && self.cx_context {
+            return Err(BismarkC2cError::NomeWithCx);
+        }
+        if self.nome_seq && self.merge_cpgs {
+            return Err(BismarkC2cError::NomeWithMerge);
+        }
         if self.merge_cpgs && self.threshold.is_some() {
             return Err(BismarkC2cError::MergeCpgsWithThreshold);
         }
@@ -188,7 +199,17 @@ impl Cli {
 
         // ── Resolution ──
         let cpg_only = !self.cx_context;
-        let threshold = self.threshold.unwrap_or(0);
+        let nome = self.nome_seq;
+        let gc_context = self.gc || self.nome_seq; // --nome-seq implies --gc (Perl :2150-2153)
+        // NOMe bumps the threshold default to 1 (Perl :2154-2160); an explicit
+        // value (already validated != 0 above) is kept. `--gc` alone does NOT
+        // bump it here — the GpC walk applies `max(threshold, 1)` locally
+        // (rev 1 B-M2/B-M3: never mutate this from the user's value).
+        let threshold = match self.threshold {
+            Some(t) => t,
+            None if nome => 1,
+            None => 0,
+        };
 
         // C1: context-conditional stem strip — strip EXACTLY ONE suffix gated
         // on --CX (Perl handle_filehandles:107-112). Never both.
@@ -219,6 +240,8 @@ impl Cli {
             genome_folder,
             cpg_only,
             cx_context: self.cx_context,
+            gc_context,
+            nome,
             zero_based: self.zero_based,
             split_by_chromosome: self.split_by_chromosome,
             threshold,
@@ -296,12 +319,8 @@ mod tests {
 
     #[test]
     fn rejects_v1x_flags() {
-        for (flag, frag) in [
-            ("--gc", "gc"),
-            ("--nome-seq", "nome-seq"),
-            ("--drach", "drach"),
-            ("--ffs", "ffs"),
-        ] {
+        // Phase 1 supports --gc/--nome-seq; only --drach/--ffs stay rejected.
+        for (flag, frag) in [("--drach", "drach"), ("--ffs", "ffs")] {
             let e = cli(&["-o", "x", "-g", "g", flag, "in.cov"])
                 .validate()
                 .unwrap_err();
@@ -310,6 +329,77 @@ mod tests {
                 "flag {flag} did not reject as UnsupportedFlag containing {frag}: {e:?}"
             );
         }
+    }
+
+    // ── Phase 1: --gc / --nome-seq resolution + NOMe mutexes (V1/V2) ──
+
+    #[test]
+    fn gc_alone_resolves_supported_threshold_zero() {
+        let c = cli(&["-o", "x", "-g", "g", "--gc", "in.cov"])
+            .validate()
+            .unwrap();
+        assert!(c.gc_context && !c.nome);
+        assert_eq!(c.threshold, 0); // --gc does NOT bump the threshold (B-M2)
+    }
+
+    #[test]
+    fn gc_composes_with_cx() {
+        // --gc has no new mutex; it composes with --CX (GpC report + CX core).
+        let c = cli(&["-o", "x", "-g", "g", "--gc", "--CX", "in.cov"])
+            .validate()
+            .unwrap();
+        assert!(c.gc_context && c.cx_context && !c.cpg_only && !c.nome);
+    }
+
+    #[test]
+    fn nome_implies_gc_and_threshold_one() {
+        let c = cli(&["-o", "x", "-g", "g", "--nome-seq", "in.cov"])
+            .validate()
+            .unwrap();
+        assert!(c.gc_context && c.nome);
+        assert_eq!(c.threshold, 1); // NOMe bumps the unset threshold to 1
+    }
+
+    #[test]
+    fn nome_explicit_threshold_kept() {
+        let c = cli(&[
+            "-o", "x", "-g", "g", "--nome-seq", "--coverage_threshold", "5", "in.cov",
+        ])
+        .validate()
+        .unwrap();
+        assert_eq!(c.threshold, 5);
+    }
+
+    #[test]
+    fn nome_mutexes() {
+        let cx = cli(&["-o", "x", "-g", "g", "--nome-seq", "--CX", "in.cov"])
+            .validate()
+            .unwrap_err();
+        assert!(matches!(cx, BismarkC2cError::NomeWithCx));
+        let mg = cli(&["-o", "x", "-g", "g", "--nome-seq", "--merge_CpGs", "in.cov"])
+            .validate()
+            .unwrap_err();
+        assert!(matches!(mg, BismarkC2cError::NomeWithMerge));
+        // explicit --coverage_threshold 0 still illegal under NOMe
+        let t0 = cli(&[
+            "-o", "x", "-g", "g", "--nome-seq", "--coverage_threshold", "0", "in.cov",
+        ])
+        .validate()
+        .unwrap_err();
+        assert!(matches!(t0, BismarkC2cError::ThresholdNotPositive));
+    }
+
+    #[test]
+    fn nome_merge_threshold_triple_fires_nome_not_merge_threshold() {
+        // rev 1 A-M1: the NOMe block precedes the merge-threshold check, so the
+        // triple combo dies with NomeWithMerge (matching Perl's order).
+        let e = cli(&[
+            "-o", "x", "-g", "g", "--nome-seq", "--merge_CpGs", "--coverage_threshold", "5",
+            "in.cov",
+        ])
+        .validate()
+        .unwrap_err();
+        assert!(matches!(e, BismarkC2cError::NomeWithMerge), "got {e:?}");
     }
 
     #[test]

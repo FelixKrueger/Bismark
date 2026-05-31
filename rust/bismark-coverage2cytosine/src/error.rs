@@ -55,6 +55,15 @@ pub enum BismarkC2cError {
     #[error("a coverage threshold cannot be specified together with --merge_CpGs")]
     MergeCpgsWithThreshold,
 
+    /// `--nome-seq` + `--CX` (Perl `:2148`). NOMe is CpG-context only.
+    #[error("NOMe-Seq filtering only works for CpG context (drop the --CX option)")]
+    NomeWithCx,
+
+    /// `--nome-seq` + `--merge_CpGs` (Perl `:2149`) — NOMe filters out positions,
+    /// so the merge pairing would desync.
+    #[error("NOMe-Seq filtering does not work with --merge_CpGs (some positions are filtered out)")]
+    NomeWithMerge,
+
     /// `--discordance_filter` without `--merge_CpGs` (Perl `:2165`).
     #[error("--discordance_filter requires the option --merge_CpGs as well")]
     DiscordanceWithoutMerge,

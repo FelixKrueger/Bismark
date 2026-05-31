@@ -58,13 +58,14 @@ fn missing_output_fails_with_clear_message() {
 
 #[test]
 fn unsupported_v1x_flag_is_rejected() {
+    // --gc / --nome-seq are now supported (Phase 1); --drach / --ffs stay rejected.
     Command::cargo_bin("coverage2cytosine_rs")
         .unwrap()
         .arg("-o")
         .arg("out")
         .arg("-g")
         .arg("genome_dir")
-        .arg("--nome-seq")
+        .arg("--drach")
         .arg("in.bismark.cov")
         .assert()
         .failure()
