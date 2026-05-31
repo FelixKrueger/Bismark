@@ -5,7 +5,7 @@
 use crate::cli::{Aligner, Cli};
 use crate::error::GenomePrepError;
 use crate::logging::Logger;
-use crate::{BISMARK_VERSION, combined, convert, discovery, folders, indexer};
+use crate::{BISMARK_VERSION, combined, composition, convert, discovery, folders, indexer};
 
 fn aligner_label(a: Aligner) -> &'static str {
     match a {
@@ -27,13 +27,6 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
              and NOT in BISULFITE MODE",
         );
     }
-    if config.genomic_composition {
-        logger.note(
-            "note: --genomic_composition is deferred in this version and is ignored \
-             (no genomic_nucleotide_frequencies.txt is produced).",
-        );
-    }
-
     // ── Step I — discover FASTA, validate explicit aligner path, make folders ──
     logger.info("Bismark Genome Preparation - Step I: Preparing folders");
     let files = discovery::find_fasta_files(&config.genome_folder)?;
@@ -47,6 +40,18 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
         None => None,
     };
     let (ct_dir, ga_dir) = folders::create_tree(&config.genome_folder, &logger)?;
+
+    // ── Step I.5 — optional genomic composition (Perl runs `get_genomic_frequencies`
+    // BEFORE `process_sequence_files`). Errors here (duplicate chromosome / not
+    // FASTA) fire before any frequency table OR converted FASTA is written. ──
+    if config.genomic_composition {
+        logger.note(
+            "Calculating genomic nucleotide frequencies (this may take several minutes \
+             depending on genome size) ...",
+        );
+        composition::write_genomic_composition(&files, &config.genome_folder, &logger)?;
+        logger.note("Finished processing genomic nucleotide frequencies\n");
+    }
 
     // ── Step II — bisulfite conversion (the byte-identity core) ──
     logger.info("Bismark Genome Preparation - Step II: Bisulfite converting reference genome");
