@@ -412,6 +412,7 @@ mod tests {
             gzip,
             merge_cpgs: false,
             discordance: None,
+            drach: false,
         }
     }
 

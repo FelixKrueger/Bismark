@@ -33,6 +33,7 @@
 
 pub mod cli;
 pub mod cov;
+pub mod drach;
 pub mod error;
 pub mod genome;
 pub mod gpc;
@@ -44,17 +45,24 @@ pub use cli::{Cli, ResolvedConfig};
 pub use error::BismarkC2cError;
 pub use genome::Genome;
 
-/// Run the genome-wide cytosine report: load the genome into memory, stream the
-/// coverage file and emit the report + cytosine-context summary, then the
-/// optional `--merge_CpGs` post-pass and the optional `--gc`/`--nome-seq`
-/// GpC-context report. Mirrors Perl `coverage2cytosine`'s top-level flow
-/// (`:44` report → `:49` summary → `:58` merge → `:82` GpC).
+/// Run the tool: load the genome, then either the standalone `--drach`/`--m6A`
+/// DRACH report (an early-exit mode, Perl `:38-42`) **or** the genome-wide
+/// cytosine report + cytosine-context summary, the optional `--merge_CpGs`
+/// post-pass, and the optional `--gc`/`--nome-seq` GpC-context report. Mirrors
+/// Perl `coverage2cytosine`'s top-level flow (`:38` DRACH early-exit; otherwise
+/// `:44` report → `:49` summary → `:58` merge → `:82` GpC).
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
     let genome = Genome::load(&config.genome_folder)?;
     eprintln!(
         "Stored sequence information of {} chromosomes/scaffolds in total",
         genome.len()
     );
+    // Phase 2 (v1.x): `--drach`/`--m6A` is a STANDALONE early-exit mode (Perl
+    // main flow :38-42) — it writes only the DRACH report + cov and returns,
+    // bypassing the normal cytosine report, summary, merge, and GpC report.
+    if config.drach {
+        return drach::run_drach(config, &genome);
+    }
     report::run_report(config, &genome)?;
     // Phase D: --merge_CpGs post-pass (re-reads the just-written CpG report).
     if config.merge_cpgs {

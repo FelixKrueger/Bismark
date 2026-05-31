@@ -1,0 +1,2 @@
+chr1	7	+	4	2	GAACA	CAT
+chr1	31	+	1	1	GAACN	CNT

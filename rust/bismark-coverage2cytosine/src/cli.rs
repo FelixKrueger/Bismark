@@ -2,9 +2,9 @@
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], reproducing every Perl `process_commandline`
-//! (`coverage2cytosine:1990-2197`) validation rule and **rejecting** the v1.x
-//! flags (`--gc`/`--nome-seq`/`--drach`/`--ffs`) rather than silently
-//! accepting them.
+//! (`coverage2cytosine:1990-2197`) validation rule. `--gc`/`--nome-seq`
+//! (Phase 1) and `--drach`/`--m6A` (Phase 2) are supported; the remaining v1.x
+//! flag `--ffs` (Phase 3) is still **rejected** rather than silently accepted.
 //!
 //! Two byte-identity-relevant subtleties (folded from Phase-A dual review):
 //! - **Output-stem strip is context-conditional**: strip `.CX_report.txt` iff
@@ -92,10 +92,11 @@ pub struct Cli {
     #[arg(long = "nome-seq")]
     pub nome_seq: bool,
 
-    // ── v1.x flags: declared so they parse, but rejected at validate() ──
-    /// (v1.x, rejected) DRACH m6A filtering.
+    /// DRACH/m6A filtering: a standalone report of DRACH-motif cytosines on both
+    /// strands (no normal cytosine report is produced). Coverage threshold ≥ 1.
     #[arg(long = "drach", visible_alias = "m6A")]
     pub drach: bool,
+    // ── v1.x flags: declared so they parse, but rejected at validate() ──
     /// (v1.x, rejected) tetra/penta/hexamer context columns.
     #[arg(long = "ffs")]
     pub ffs: bool,
@@ -140,6 +141,8 @@ pub struct ResolvedConfig {
     pub merge_cpgs: bool,
     /// `--discordance_filter` value, if any.
     pub discordance: Option<u8>,
+    /// `--drach`/`--m6A` requested: standalone DRACH/m6A report (early-exit).
+    pub drach: bool,
 }
 
 impl Cli {
@@ -151,11 +154,12 @@ impl Cli {
     /// `--coverage_threshold`) → `--discordance_filter` without merge →
     /// discordance range `1..=100` → `--coverage_threshold 0`.
     pub fn validate(self) -> Result<ResolvedConfig, BismarkC2cError> {
-        // v1.x flags still rejected outright (Phases 2/3): --drach, --ffs.
-        // (--gc / --nome-seq are now supported — Phase 1.)
-        if self.drach {
-            return Err(BismarkC2cError::UnsupportedFlag { flag: "--drach" });
-        }
+        // v1.x flags still rejected outright (Phase 3): --ffs.
+        // (--gc / --nome-seq supported — Phase 1; --drach / --m6A — Phase 2.)
+        // NOTE: --drach is a standalone early-exit mode that IGNORES (does not
+        // die on) --CX / --merge_CpGs, so it gets no dedicated mutex. The general
+        // merge mutexes below still fire under --drach (Perl runs them before the
+        // early exit) — do NOT add a `--drach` short-circuit that skips them.
         if self.ffs {
             return Err(BismarkC2cError::UnsupportedFlag { flag: "--ffs" });
         }
@@ -205,9 +209,12 @@ impl Cli {
         // value (already validated != 0 above) is kept. `--gc` alone does NOT
         // bump it here — the GpC walk applies `max(threshold, 1)` locally
         // (rev 1 B-M2/B-M3: never mutate this from the user's value).
+        // `--drach` also auto-sets the default threshold to 1 (Perl :2188-2194),
+        // so an uncovered DRACH motif (lookup miss → 0) is skipped; an explicit
+        // `--coverage_threshold` survives, and an explicit 0 was already rejected.
         let threshold = match self.threshold {
             Some(t) => t,
-            None if nome => 1,
+            None if nome || self.drach => 1,
             None => 0,
         };
 
@@ -248,6 +255,7 @@ impl Cli {
             gzip: self.gzip,
             merge_cpgs: self.merge_cpgs,
             discordance: self.discordance,
+            drach: self.drach,
         })
     }
 }
@@ -319,16 +327,109 @@ mod tests {
 
     #[test]
     fn rejects_v1x_flags() {
-        // Phase 1 supports --gc/--nome-seq; only --drach/--ffs stay rejected.
-        for (flag, frag) in [("--drach", "drach"), ("--ffs", "ffs")] {
-            let e = cli(&["-o", "x", "-g", "g", flag, "in.cov"])
+        // Phase 1 supports --gc/--nome-seq; Phase 2 supports --drach/--m6A;
+        // only --ffs stays rejected (Phase 3).
+        let e = cli(&["-o", "x", "-g", "g", "--ffs", "in.cov"])
+            .validate()
+            .unwrap_err();
+        assert!(
+            matches!(e, BismarkC2cError::UnsupportedFlag { flag } if flag.contains("ffs")),
+            "--ffs did not reject as UnsupportedFlag: {e:?}"
+        );
+    }
+
+    // ── Phase 2: --drach / --m6A resolution (V1/V2/V13) ──
+
+    #[test]
+    fn drach_accepted_and_auto_sets_threshold_one() {
+        let c = cli(&["-o", "x", "-g", "g", "--drach", "in.cov"])
+            .validate()
+            .unwrap();
+        assert!(c.drach);
+        assert_eq!(c.threshold, 1); // --drach auto-sets the default threshold to 1
+        // --m6A is the visible alias.
+        assert!(
+            cli(&["-o", "x", "-g", "g", "--m6A", "in.cov"])
                 .validate()
-                .unwrap_err();
-            assert!(
-                matches!(e, BismarkC2cError::UnsupportedFlag { flag } if flag.contains(frag)),
-                "flag {flag} did not reject as UnsupportedFlag containing {frag}: {e:?}"
-            );
-        }
+                .unwrap()
+                .drach
+        );
+    }
+
+    #[test]
+    fn drach_explicit_threshold_survives_auto_set() {
+        let c = cli(&[
+            "-o",
+            "x",
+            "-g",
+            "g",
+            "--drach",
+            "--coverage_threshold",
+            "5",
+            "in.cov",
+        ])
+        .validate()
+        .unwrap();
+        assert_eq!(c.threshold, 5);
+        // explicit 0 is still rejected (generic check fires before the auto-set).
+        let e = cli(&[
+            "-o",
+            "x",
+            "-g",
+            "g",
+            "--drach",
+            "--coverage_threshold",
+            "0",
+            "in.cov",
+        ])
+        .validate()
+        .unwrap_err();
+        assert!(matches!(e, BismarkC2cError::ThresholdNotPositive));
+    }
+
+    #[test]
+    fn drach_has_no_dedicated_mutex_but_general_mutexes_still_fire() {
+        // --drach IGNORES (does not die on) --CX / --merge_CpGs — both accepted.
+        assert!(
+            cli(&["-o", "x", "-g", "g", "--drach", "--CX", "in.cov"])
+                .validate()
+                .unwrap()
+                .drach
+        );
+        assert!(
+            cli(&["-o", "x", "-g", "g", "--drach", "--merge_CpGs", "in.cov"])
+                .validate()
+                .unwrap()
+                .drach
+        );
+        // But the pre-existing GENERAL mutexes are NOT bypassed by --drach
+        // (rev 2 A-F2): --merge_CpGs + --coverage_threshold still errors.
+        let e = cli(&[
+            "-o",
+            "x",
+            "-g",
+            "g",
+            "--drach",
+            "--merge_CpGs",
+            "--coverage_threshold",
+            "5",
+            "in.cov",
+        ])
+        .validate()
+        .unwrap_err();
+        assert!(
+            matches!(e, BismarkC2cError::MergeCpgsWithThreshold),
+            "got {e:?}"
+        );
+    }
+
+    #[test]
+    fn drach_zero_based_resolves() {
+        // --drach --zero_based parses/resolves (the DRACH path ignores zero_based).
+        let c = cli(&["-o", "x", "-g", "g", "--drach", "--zero_based", "in.cov"])
+            .validate()
+            .unwrap();
+        assert!(c.drach && c.zero_based);
     }
 
     // ── Phase 1: --gc / --nome-seq resolution + NOMe mutexes (V1/V2) ──

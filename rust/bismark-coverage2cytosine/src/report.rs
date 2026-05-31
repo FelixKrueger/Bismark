@@ -889,6 +889,7 @@ mod tests {
                 gzip: gz,
                 merge_cpgs: false,
                 discordance: None,
+                drach: false,
             };
             nome_cov_path(&c, chr).to_string_lossy().into_owned()
         };
