@@ -29,6 +29,12 @@ use crate::summary::ContextSummary;
 
 /// Output sink for a report file — plain or gzip, with an explicit `finish()`
 /// (Phase C). The context summary is never routed through this (always plain).
+// The `Gz` variant is intentionally larger than `Plain` (it wraps a
+// `GzEncoder`). This enum is constructed once per output file, so the size
+// disparity is immaterial; boxing would only add an allocation + indirection on
+// the hot write path. Suppress `large_enum_variant` (surfaced by a clippy
+// toolchain bump on otherwise-unchanged code).
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ReportWriter {
     Plain(BufWriter<File>),
     Gz(GzEncoder<BufWriter<File>>),
