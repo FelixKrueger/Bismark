@@ -1,6 +1,6 @@
 # EPIC — `bismark-coverage2cytosine` v1.x (specialty methylation modes)
 
-**Status:** rev 0 (2026-05-31) — skeleton, awaiting per-phase plans.
+**Status:** rev 1 (2026-05-31) — Phases 1–3 plans drafted (all **byte-identical to Perl v0.25.1**; DRACH Q1 resolved → no divergence). Phase 4 (oxy gate) plan pending. Awaiting manual review → per-phase dual plan-review.
 **Predecessor:** the v1.0 epic [`../05292026_bismark-coverage2cytosine/EPIC.md`](../05292026_bismark-coverage2cytosine/EPIC.md) — Phases A–E shipped + byte-identity-proven on oxy (full hg38); tagged **`bismark-coverage2cytosine-v1.0.0-beta.1`** (PR #892).
 **Crate:** the existing `bismark-coverage2cytosine` in the `rust/` workspace.
 **Branch:** a new v1.x branch off `rust/iron-chancellor` once PR #892 merges (see §3 Precondition).
@@ -33,7 +33,7 @@ v1.0 must be **merged** to `rust/iron-chancellor` (PR #892, currently green A–
 Each phase is independently byte-identity-testable against Perl v0.25.1 and ships with its own full cycle (plan → manual review → dual plan-review → implement → dual code-review + plan-manager), mirroring the v1.0 cadence.
 
 - **Phase 1 — GpC report + NOMe-Seq (`--gc`/`--gc_context` + `--nome-seq`).** Port `generate_GC_context_report` (the GpC-context report stream) and `--nome-seq` (which sets `--gc` and adds the ACG/TCG CpG + GpC filtering). Combined because nome-seq is a thin filter on top of the GpC machinery (Felix, 2026-05-31). Un-reject both flags in `validate()` + `--help`. (Perl ln 2022 / 2025.)
-- **Phase 2 — DRACH m6A (`--drach`/`--m6A`).** Port `generate_DRACH_report` (DRACH-motif m6A filtering, ~300 LOC). The Perl carries a `// TODO`; Felix's read (2026-05-31) is that it's a **vestigial leftover, not active incompleteness** — so the phase's plan **confirms this first** (a quick read of the Perl path) and then proceeds as a normal byte-identity port. If the `// TODO` turns out to gate real behavior, surface it as a Critical question before implementing (don't silently reproduce a half-finished output). (Perl ln 2028.)
+- **Phase 2 — DRACH m6A (`--drach`/`--m6A`).** Port `generate_DRACH_report` (a **standalone early-exit mode**; DRACH-motif m6A filtering, ~300 LOC). The Perl `// TODO` (`:1369`, bottom-strand C position) was investigated (geometry + main-report convention + live `--CX` agreement all show `pos-1` is the C's coordinate) and **resolved (Felix, 2026-05-31): BS-seq is cytosine-specific, so the C anchor `pos-1` is intended — byte-identical to Perl on both strands**, no divergence. Plan: `phase2-drach-m6a/PLAN.md` rev 1. (Perl ln 2028.)
 - **Phase 3 — FFS context columns (`--ffs`).** Add the tetra/penta/hexamer nucleotide-context columns to the cytosine-report line (a report-line format extension). (Perl ln 2023.)
 - **Phase 4 — Real-data byte-identity gate.** Extend `c2c_byte_identity_matrix.sh` with `--gc` / `--nome-seq` / `--drach` / `--ffs` cells (+ the cross-cell differentials that prove each flag actually changes the output), run the full-genome matrix on oxy, and gate the `bismark-coverage2cytosine-v1.x` tag. Reuses the v1.0 harness pattern + the mandatory §0 fail-CLOSED self-tests.
 
@@ -41,9 +41,9 @@ Each phase is independently byte-identity-testable against Perl v0.25.1 and ship
 
 | # | Phase | Plan file | Depends on |
 |---|-------|-----------|------------|
-| 1 | GpC report + NOMe-Seq | `phase1-gpc-report-nome-seq/PLAN.md` _(to be written)_ | v1.0 merged |
-| 2 | DRACH m6A | `phase2-drach-m6a/PLAN.md` _(to be written)_ | v1.0 merged |
-| 3 | FFS context columns | `phase3-ffs/PLAN.md` _(to be written)_ | v1.0 merged |
+| 1 | GpC report + NOMe-Seq | `phase1-gpc-report-nome-seq/PLAN.md` | v1.0 merged |
+| 2 | DRACH m6A | `phase2-drach-m6a/PLAN.md` | v1.0 merged |
+| 3 | FFS context columns | `phase3-ffs/PLAN.md` | v1.0 merged |
 | 4 | Real-data byte-identity gate | `phase4-byte-identity-gate/PLAN.md` _(to be written)_ | #1, #2, #3 |
 
 Phases 1–3 are **mutually independent** (different flags / code paths), so they can be planned and implemented in any order or in parallel; Phase 4 gates them all.
