@@ -133,6 +133,20 @@ Because the byte-identity contract is on *decompressed* content, the
 compression backend is free: under Cargo feature unification with the crate's
 `flate2` `zlib-rs` feature, gzp compresses using zlib-rs.
 
+The binary also uses [`mimalloc`](https://crates.io/crates/mimalloc) as its
+global allocator (matching `bismark-extractor`). The in-memory `(chr, pos)`
+aggregation map grows through many allocations; mimalloc is ~12% faster than
+the system allocator on a full `--CX` run (byte-identical, allocator-only).
+
+> **Why no `--parallel`?** Parsing the per-context input files *concurrently*
+> was prototyped and **rejected after measurement.** The read+aggregate phase
+> is **memory-bandwidth-bound** (random-access inserts into a multi-GB map), so
+> building several maps at once *anti-scales*: on a full `--CX` gate, sequential
+> (854 s) beat 6-way parallel (1125 s) even with mimalloc — and the cause
+> (shared memory bandwidth + the two CHH files dominating the work) is fixed by
+> neither a faster allocator nor sharding. Parse/aggregate stays single-threaded;
+> see `plans/05302026_bedgraph-parallel-parse/` for the full investigation.
+
 ## How is this different from Bismark Perl's `bismark2bedGraph`?
 
 | | Perl `bismark2bedGraph` | `bismark2bedGraph_rs` |
