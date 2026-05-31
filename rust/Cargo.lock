@@ -103,6 +103,7 @@ dependencies = [
  "clap",
  "flate2",
  "gzp",
+ "mimalloc",
  "predicates",
  "rustc-hash",
  "tempfile",
