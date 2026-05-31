@@ -143,8 +143,22 @@ compression backend is free: under Cargo feature unification with the crate's
 | `--gazillion` / `--buffer_size` / `--ample_memory` | switch sort strategy | accepted-but-ignored (in-memory always) |
 | Chromosome order | `sort` of per-chr temp filenames | same order, reproduced from the input argv order |
 
-`--gazillion` (Perl's `sort -V` scaffold mode) is an accepted no-op:
-byte-identity is guaranteed for the **default** chromosome ordering only.
+### Scaffold-heavy genomes (`--gazillion`/`--scaffolds`)
+
+`--gazillion`/`--scaffolds` (Perl's `sort -V` scaffold mode) is an accepted
+**no-op** here. Perl needs it because its default mode opens *one temp file per
+chromosome* and so dies (`ulimit -n`, ~1024) on freshly-assembled genomes with
+thousands of scaffolds. This port aggregates in memory with **no filehandle
+limit**, so it handles scaffold-heavy genomes natively in default mode — no
+special flag required (verified at 3,000 scaffolds, `tests/many_scaffolds.rs`).
+
+The one consequence: chromosomes/scaffolds are emitted in **bytewise (ASCII)**
+order (`scaffold_10` before `scaffold_2`) — identical to Perl's *default*-mode
+order, but **not** Perl `--gazillion`'s `sort -V` *natural* order (`scaffold_2`
+before `scaffold_10`). The **rows are identical** either way; only the
+chromosome *block order* differs. Byte-identity is therefore guaranteed for the
+default ordering only (SPEC §1.1 D2); downstream `coverage2cytosine` is
+order-agnostic, so this is cosmetic.
 
 ## Using as a library
 
