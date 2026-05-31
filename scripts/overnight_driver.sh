@@ -20,10 +20,12 @@ set -uo pipefail   # NOTE: not -e — one failed config must not abort the whole
 
 OUT_DIR="$HOME/fulldata_bench"
 SKIP_GATE=0
+PHASE2_ONLY=0   # skip Phase-1 byteid (when parity is already proven) and go straight to perf
 while [[ $# -gt 0 ]]; do
   case $1 in
     --out) OUT_DIR="$2"; shift 2 ;;
     --skip-gate) SKIP_GATE=1; shift ;;
+    --phase2-only) PHASE2_ONLY=1; shift ;;
     *) echo "unexpected arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -99,6 +101,9 @@ if [[ "$SKIP_GATE" -eq 0 ]]; then
 fi
 
 # ── PHASE 1: byte-identity (HARD GATE) ──────────────────────────────────────
+if [[ "$PHASE2_ONLY" -eq 1 ]]; then
+  log "=== PHASE 1: byte-identity — SKIPPED (--phase2-only; parity already proven for WGBS-PE/SE) ==="
+else
 log "=== PHASE 1: byte-identity ==="
 declare -A DS_BAM=( [wgbs_pe]="$WGBS_PE" [wgbs_se]="$WGBS_SE" [rrbs_pe]="$RRBS_PE" )
 # Lean byteid: gzip only. The gzip byteid decompresses + compares the SAME content a
@@ -124,6 +129,7 @@ for ds in wgbs_pe wgbs_se rrbs_pe; do
   fi
 done
 log "PHASE 1 PASS — all datasets parity + worker-invariant"
+fi  # end PHASE2_ONLY guard
 
 # ── PHASE 2: perf (priority order; resumable) ───────────────────────────────
 log "=== PHASE 2: perf ==="
@@ -141,9 +147,13 @@ for ds_bam in "wgbs_se:$WGBS_SE" "rrbs_pe:$RRBS_PE"; do
   ds="${ds_bam%%:*}"; bam="${ds_bam#*:}"
   for m in gzip mbias_only; do for p in 1 4 16; do run_cfg rust "$ds" "$bam" "$m" "$p" 2; done; done
 done
-# (iii) Perl --multicore 12 walls are already banked from Phase-1 byteid (mc12) — no re-run.
+# (iii) Perl --multicore 12 anchors (have_config skips any already banked from Phase-1 byteid;
+#       under --phase2-only this fills in RRBS, which never reached byteid).
+run_cfg perl wgbs_pe "$WGBS_PE" gzip 12 1
+run_cfg perl wgbs_se "$WGBS_SE" gzip 12 1
+run_cfg perl rrbs_pe "$RRBS_PE" gzip 12 1
 # (iv) Perl serial anchor (--multicore 1) on WGBS-PE ONLY — the speedup headline and the
-#      1-3h long pole. Run LAST so a short night drops only this (Rust perf already banked).
+#      1-3h long pole. Run LAST so a short window drops only this (Rust perf already banked).
 run_cfg perl wgbs_pe "$WGBS_PE" gzip 1 1
 
 # ── REPORT ──────────────────────────────────────────────────────────────────
