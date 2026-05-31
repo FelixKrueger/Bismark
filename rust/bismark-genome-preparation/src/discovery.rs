@@ -23,20 +23,24 @@ fn in_group(name: &[u8], ext: &str) -> bool {
     }
 }
 
-/// Compare two FASTA file names the way Perl's `<*.fa>` sorts them **on the
-/// Linux deployment target: bytewise** (C-locale).
+/// Compare two FASTA file names the way Perl's `<*.fa>` sorts them:
+/// **case-insensitively** (ASCII fold), with the raw bytes as a tiebreak.
 ///
-/// Subtle and load-bearing: byte-identity to "Perl" is *platform-dependent*
-/// here. `File::Glob` only sets `GLOB_NOCASE` on Windows/VMS/OS2/DOS/RISCOS —
-/// **not** on darwin or linux — so Perl never requests case-folding on either.
-/// On **Linux/glibc** the underlying `glob(3)` sorts bytewise (C locale); on
-/// **macOS** Darwin's libc `GLOB_CSH` path case-*folds* as a quirk. Bismark
-/// runs on Linux clusters (and CI + the real-data validation are Linux), so the
-/// contract is **Linux-Perl = bytewise**. This fixes the MFA concatenation
-/// order and the indexer `file_list`. (A `--single_fasta` of `chrN.fa` — the
-/// real-world case — is all-lowercase, so the platform split never bites it.)
+/// Load-bearing + subtle. Perl's `glob`/`<>` does NOT use the platform libc
+/// `glob(3)`; it uses its own bundled `File::Glob::bsd_glob` (csh_glob path),
+/// which **case-folds on BOTH Linux and macOS** — not via `GLOB_NOCASE` (that's
+/// set only on Windows/VMS/…), but as csh_glob's own ordering. **Verified on
+/// Linux CI** (the deployment target): `{chr1, Chr10, CHR2, Scaffold_a,
+/// scaffold_b}` → Perl `chr1, Chr10, CHR2, Scaffold_a, scaffold_b` (folded), NOT
+/// the bytewise `CHR2, Chr10, Scaffold_a, chr1, scaffold_b`. So the
+/// byte-identity contract is **case-insensitive**. (`(lowercased, raw)` is a
+/// valid total order; the raw-byte tiebreak for names differing only by case is
+/// not exercised by real genomes — all-lowercase `chrN.fa` — and untested
+/// against Perl.)
 pub fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    a.cmp(b)
+    a.to_ascii_lowercase()
+        .cmp(&b.to_ascii_lowercase())
+        .then_with(|| a.cmp(b))
 }
 
 /// Discover FASTA files in `dir` following Perl's extension precedence and
@@ -44,9 +48,10 @@ pub fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
 ///
 /// - Tries `.fa` → `.fa.gz` → `.fasta` → `.fasta.gz`; the **first non-empty
 ///   group wins**.
-/// - Sorts via [`fasta_name_cmp`] (**bytewise** on the `file_name()` bytes) —
-///   matching Linux-Perl's `glob`. This order fixes the MFA concatenation order
-///   and the indexer `file_list`. (`chr1, chr10, chr2` — lexical, not numeric.)
+/// - Sorts via [`fasta_name_cmp`] (**case-insensitive** on the `file_name()`
+///   bytes) — matching Perl's `glob` (folds on Linux + macOS). This order fixes
+///   the MFA concatenation order and the indexer `file_list`. (`chr1, chr10,
+///   chr2` — lexical, not numeric.)
 /// - Empty (no FASTA in any group) → [`GenomePrepError::NoFasta`].
 pub fn find_fasta_files(dir: &Path) -> Result<Vec<PathBuf>, GenomePrepError> {
     for ext in EXT_GROUPS {
@@ -211,11 +216,10 @@ mod tests {
     }
 
     #[test]
-    fn glob_mixed_case_is_bytewise() {
-        // Linux-Perl `<*.fa>` sorts BYTEWISE (C locale): uppercase (0x41-) before
-        // lowercase (0x61-). {ZZ, aa, Ba, ab} → Ba, ZZ, aa, ab. (macOS-Perl folds
-        // via a libc quirk, but Linux is the byte-identity target — see
-        // `fasta_name_cmp`. The mixed-case Perl-oracle test is Linux-gated.)
+    fn glob_mixed_case_is_case_insensitive() {
+        // Perl `<*.fa>` folds case on BOTH Linux and macOS (csh_glob), verified
+        // on Linux CI. {ZZ, aa, Ba, ab} → aa, ab, Ba, ZZ (case-insensitive), NOT
+        // the bytewise Ba, ZZ, aa, ab. See `fasta_name_cmp`.
         let d = tempdir().unwrap();
         for n in ["ZZ.fa", "aa.fa", "Ba.fa", "ab.fa"] {
             fs::write(d.path().join(n), b">x\nACGT\n").unwrap();
@@ -225,7 +229,7 @@ mod tests {
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["Ba.fa", "ZZ.fa", "aa.fa", "ab.fa"]);
+        assert_eq!(names, vec!["aa.fa", "ab.fa", "Ba.fa", "ZZ.fa"]);
     }
 
     #[test]

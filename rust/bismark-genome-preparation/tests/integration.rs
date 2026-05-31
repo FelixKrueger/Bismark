@@ -354,14 +354,12 @@ fn perl_vs_rust_edge_inputs_mfa() {
     );
 }
 
-/// Mixed-case glob order vs real Perl. **Linux-only**: the byte-identity target
-/// is Linux-Perl (bytewise); on macOS the system Perl case-*folds* via a Darwin
-/// libc `GLOB_CSH` quirk (File::Glob sets `GLOB_NOCASE` only on Windows/VMS/…,
-/// not darwin/linux), so Rust's bytewise order intentionally diverges from
-/// macOS-Perl and this oracle would mismatch there. On Linux/glibc both are
-/// bytewise → this confirms parity on the deployment target + CI.
+/// Mixed-case glob order vs real Perl. Perl `<*.fa>` (bundled `File::Glob`
+/// csh_glob) case-folds on **both** Linux and macOS — confirmed on Linux CI:
+/// `{chr1, Chr10, CHR2, Scaffold_a, scaffold_b}` → Perl folded order. Rust's
+/// case-insensitive `fasta_name_cmp` matches on both platforms, so this runs
+/// everywhere (it is the authoritative pin for the glob-order contract).
 #[test]
-#[cfg(target_os = "linux")]
 fn perl_vs_rust_mixed_case_glob_order() {
     oracle_compare(
         |dir| {
