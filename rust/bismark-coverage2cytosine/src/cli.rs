@@ -363,7 +363,14 @@ mod tests {
     #[test]
     fn nome_explicit_threshold_kept() {
         let c = cli(&[
-            "-o", "x", "-g", "g", "--nome-seq", "--coverage_threshold", "5", "in.cov",
+            "-o",
+            "x",
+            "-g",
+            "g",
+            "--nome-seq",
+            "--coverage_threshold",
+            "5",
+            "in.cov",
         ])
         .validate()
         .unwrap();
@@ -382,7 +389,14 @@ mod tests {
         assert!(matches!(mg, BismarkC2cError::NomeWithMerge));
         // explicit --coverage_threshold 0 still illegal under NOMe
         let t0 = cli(&[
-            "-o", "x", "-g", "g", "--nome-seq", "--coverage_threshold", "0", "in.cov",
+            "-o",
+            "x",
+            "-g",
+            "g",
+            "--nome-seq",
+            "--coverage_threshold",
+            "0",
+            "in.cov",
         ])
         .validate()
         .unwrap_err();
@@ -394,7 +408,14 @@ mod tests {
         // rev 1 A-M1: the NOMe block precedes the merge-threshold check, so the
         // triple combo dies with NomeWithMerge (matching Perl's order).
         let e = cli(&[
-            "-o", "x", "-g", "g", "--nome-seq", "--merge_CpGs", "--coverage_threshold", "5",
+            "-o",
+            "x",
+            "-g",
+            "g",
+            "--nome-seq",
+            "--merge_CpGs",
+            "--coverage_threshold",
+            "5",
             "in.cov",
         ])
         .validate()

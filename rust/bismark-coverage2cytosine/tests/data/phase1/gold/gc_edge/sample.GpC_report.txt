@@ -1,0 +1,2 @@
+chr1	4	-	2	0	CHG	CTG
+chr1	5	+	0	3	CHH	CTT
