@@ -18,4 +18,4 @@ Initial implementation. Rust port of the Perl `bismark2report` per-sample graphi
 
 ### Notes
 - The reference HTML checked into `plotly/` (`bismark_bt2_PE_report.html`) is from Bismark v0.19.1 and is **not** used as the oracle — the gate runs the current Perl `bismark2report`.
-- Real-data validation on `oxy` (full Bismark report sets) is the remaining gate, run separately.
+- **Real-data validated** byte-identical to Perl v0.25.1 on real human WGBS: **PE** (10M + full 55.7M) locally, and **SE + `--nucleotide_coverage`** on `oxy` (Linux-built binary; dedup + splitting + M-bias + nucleotide_stats). Every code path is real-data validated.

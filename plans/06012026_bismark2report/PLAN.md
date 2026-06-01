@@ -256,7 +256,15 @@ Validated against **real Bismark v0.25.1 reports** from the profiling runs at `~
 | Real **10M** PE (`SRR24827378_10M`) | 3,156,840 B | **byte-identical** ✅ |
 | Real **full 55.7M** PE (`SRR24827378_GSM7445366`) | 3,157,378 B | **byte-identical** ✅ |
 
-**Note on venue:** run locally rather than on `oxy`. `bismark2report` consumes only small *report* text files (sub-second regardless of dataset size) and its output is platform-independent (assets are identical bytes; timestamp normalized), so the value of the real-data gate is the *realism of the report formats*, fully achieved here with real Bismark output. **Not covered by real data** (no such reports in the local set): **SE** (no real SE run available) and **`--nucleotide_coverage`** (not enabled in these runs) — both covered by the synthetic Perl-oracle (`wgbs_se`) and nucleotide unit tests. A literal `oxy` run and/or real SE+nuc reports can be added if desired.
+### 16.1 Literal `oxy` run — SE + `--nucleotide_coverage` (2026-06-01)
+
+To close the two paths the local set lacked (SE and nucleotide coverage), built the release binary **on oxy** (Linux, HEAD `790768e`) and generated real companions from the real 10M SE BAM: `deduplicate_bismark` → `bismark_methylation_extractor` → `bam2nuc` (the `--nucleotide_coverage` equivalent). Ran Perl `bismark2report` vs the oxy-built `bismark2report_rs` (auto-detecting all 5 companions), timestamp-normalized, `cmp`:
+
+| Venue | Dataset | Companions | HTML | Result |
+|---|---|---|---|---|
+| **oxy (Linux)** | real **SE** 10M (`directional_10M`) | dedup + splitting + M-bias + **nucleotide_stats** | 3,156,393 B | **byte-identical** ✅ |
+
+Confirmed the **Nucleotide Coverage** section and the **SE** label (`Single-end alignments with a unique best hit`) actually rendered. This also re-validates platform-independence (Linux binary == macOS binary output). **Every code path is now real-data byte-identical** (PE local + SE/nuc on oxy); the synthetic `wgbs_se`/nucleotide tests remain as fast hermetic coverage.
 
 ---
 
