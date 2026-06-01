@@ -1,0 +1,4 @@
+Analysed sequences (single-end) in file >> in.bam << in total:	2
+Sequences removed because of apparent non-bisulfite conversion (at least 5 non-CG calls per read):	1 (50.0%)
+
+filter_non_conversion completed in 0d 0h 0m 0s

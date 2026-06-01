@@ -1,0 +1,9 @@
+se_default	in.bam	-s
+se_consecutive	in.bam	-s --consecutive
+se_percentage	in.bam	-s --percentage_cutoff 20
+se_threshold5	in.bam	-s --threshold 5
+pe_default	in.bam	-p
+pe_percentage	in.bam	-p --percentage_cutoff 20
+autodetect_pe	in.bam	
+se_unmapped	in.bam	-s
+na_nondotted	emptyfoobam	-s
