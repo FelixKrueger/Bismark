@@ -69,3 +69,65 @@ jobs:
           components: rustfmt
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
+
+  perl-oracle:
+    name: perl-oracle byte-identity
+    # Runs the live-Perl byte-identity oracle tests (issue #796): install Perl
+    # Bismark's tooling, run the per-crate oracles that diff Rust output against
+    # the in-repo Perl v0.25.1 scripts, and PROVE all of them ran (they auto-skip
+    # when tooling is absent, which would otherwise pass green without comparing).
+    runs-on: ubuntu-latest # intentionally Linux-only: oracle parity with the Perl
+                           # environment; the fake-indexer plumbing is #[cfg(unix)].
+    timeout-minutes: 15    # guard against a hung Perl subprocess
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install samtools
+        run: |
+          sudo apt-get update || sudo apt-get update # transient-mirror retry
+          sudo apt-get install -y --no-install-recommends samtools
+      - name: Preflight — assert oracle tooling present
+        # This job must NEVER add a Bismark install / the repo root to PATH —
+        # doing so would erode bismark-extractor's phase_g_discovery "not-found"
+        # test. The oracle scripts are invoked by relative path, not via PATH.
+        run: |
+          set -euo pipefail
+          command -v perl     >/dev/null || { echo "perl missing";     exit 1; }
+          command -v gzip     >/dev/null || { echo "gzip missing";     exit 1; }
+          command -v gunzip   >/dev/null || { echo "gunzip missing";   exit 1; }
+          command -v samtools >/dev/null || { echo "samtools missing"; exit 1; }
+          perl -v
+          samtools --version >/dev/null
+      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 10 ran)
+        env:
+          BISMARK_REQUIRE_PERL: "1"
+        run: |
+          set -euo pipefail
+          EXPECTED=10
+          out=$(cargo test -p bismark-genome-preparation -p bismark-methylation-consistency \
+                  -- --exact \
+                  perl_vs_rust_byte_identical_mfa \
+                  perl_vs_rust_byte_identical_single_fasta \
+                  perl_vs_rust_edge_inputs_mfa \
+                  perl_vs_rust_mixed_case_glob_order \
+                  perl_vs_rust_slam \
+                  perl_vs_rust_genomic_composition \
+                  perl_vs_rust_gzip_input \
+                  perl_vs_rust_se_three_way \
+                  perl_vs_rust_pe_three_way \
+                  perl_vs_rust_chh_se \
+                  2>&1 | tee /dev/stderr)
+          n=$(printf '%s\n' "$out" | grep -cE '^test .* \.\.\. ok$' || true)
+          test "$n" -eq "$EXPECTED" || { echo "::error::expected $EXPECTED oracle tests, $n ran ok"; exit 1; }
+          if printf '%s\n' "$out" | grep -q '^skipping:'; then
+            echo "::error::an oracle silently skipped"; exit 1
+          fi

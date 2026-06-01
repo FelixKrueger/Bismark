@@ -465,6 +465,22 @@ fn perl_script() -> Option<std::path::PathBuf> {
     Some(script)
 }
 
+/// CI sets `BISMARK_REQUIRE_PERL=1` so a "missing tool" turns the silent skip
+/// into a hard failure — the point of issue #796. `== "1"` (not `is_some`) so an
+/// accidental empty export doesn't trip local dev.
+fn require_perl() -> bool {
+    std::env::var("BISMARK_REQUIRE_PERL").as_deref() == Ok("1")
+}
+
+/// Skip the oracle (local dev without Perl/samtools) or panic (CI, where a
+/// missing tool means the byte-identity check would silently not run — #796).
+fn skip_or_panic(reason: &str) {
+    if require_perl() {
+        panic!("BISMARK_REQUIRE_PERL=1 but {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
 /// One record line per output record (no header — so the samtools `@PG`
 /// provenance lines that Perl injects but the Rust port omits are excluded),
 /// with optional tags compared as an order-independent set (SPEC §7).
@@ -499,7 +515,7 @@ fn samtools_record_set(path: &Path) -> Vec<String> {
 /// populated bucket's records match (header `@PG` provenance excluded).
 fn assert_perl_rust_identical(records: &[RecordBuf], so: Option<&str>, extra_args: &[&str]) {
     let Some(script) = perl_script() else {
-        eprintln!("skipping Perl-vs-Rust byte-identity: perl/samtools/script not available");
+        skip_or_panic("Perl-vs-Rust byte-identity: perl/samtools/script not available");
         return;
     };
 

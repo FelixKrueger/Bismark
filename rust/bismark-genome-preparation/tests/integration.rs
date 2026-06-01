@@ -45,6 +45,22 @@ fn have_perl() -> bool {
         .unwrap_or(false)
 }
 
+/// CI sets `BISMARK_REQUIRE_PERL=1` so a "missing tool" turns the silent skip
+/// into a hard failure — the point of issue #796. `== "1"` (not `is_some`) so an
+/// accidental empty export doesn't trip local dev.
+fn require_perl() -> bool {
+    std::env::var("BISMARK_REQUIRE_PERL").as_deref() == Ok("1")
+}
+
+/// Skip the oracle (local dev without Perl/tools) or panic (CI, where a missing
+/// tool means the byte-identity check would silently not run — see #796).
+fn skip_or_panic(reason: &str) {
+    if require_perl() {
+        panic!("BISMARK_REQUIRE_PERL=1 but {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
 #[test]
 fn binary_end_to_end_mfa_bytes() {
     let tmp = tempfile::tempdir().unwrap();
@@ -173,7 +189,7 @@ fn binary_no_fasta_dir_errors() {
 #[test]
 fn perl_vs_rust_byte_identical_mfa() {
     if !have_perl() {
-        eprintln!("skipping perl_vs_rust_byte_identical_mfa: perl not available");
+        skip_or_panic("perl_vs_rust_byte_identical_mfa: perl not available");
         return;
     }
     let perl = perl_script();
@@ -240,7 +256,7 @@ fn perl_vs_rust_byte_identical_mfa() {
 #[test]
 fn perl_vs_rust_byte_identical_single_fasta() {
     if !have_perl() {
-        eprintln!("skipping perl_vs_rust_byte_identical_single_fasta: perl not available");
+        skip_or_panic("perl_vs_rust_byte_identical_single_fasta: perl not available");
         return;
     }
     let perl = perl_script();
@@ -332,7 +348,7 @@ fn bad_path_to_aligner_fails_before_conversion() {
 /// Auto-skips if `perl` is absent.
 fn oracle_compare(setup: impl Fn(&Path), extra_args: &[&str], rel_files: &[&str]) {
     if !have_perl() {
-        eprintln!("skipping oracle test: perl not available");
+        skip_or_panic("oracle test: perl not available");
         return;
     }
     let perl = perl_script();
@@ -476,7 +492,7 @@ fn perl_vs_rust_genomic_composition() {
 #[test]
 fn perl_vs_rust_gzip_input() {
     if !have_perl() || !have_cmd("gzip") {
-        eprintln!("skipping perl_vs_rust_gzip_input: perl or gzip not available");
+        skip_or_panic("perl_vs_rust_gzip_input: perl or gzip not available");
         return;
     }
     oracle_compare(
