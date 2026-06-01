@@ -181,6 +181,7 @@ name = "bismark-io"
 version = "1.0.0-beta.8"
 dependencies = [
  "bstr",
+ "flate2",
  "noodles-bam",
  "noodles-bgzf 0.47.0",
  "noodles-core 0.20.0",
@@ -205,6 +206,19 @@ dependencies = [
  "noodles-bam",
  "noodles-core 0.20.0",
  "noodles-sam",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
+name = "bismark-nome-filtering"
+version = "1.0.0-beta.1"
+dependencies = [
+ "assert_cmd",
+ "bismark-io",
+ "clap",
+ "flate2",
  "predicates",
  "tempfile",
  "thiserror 2.0.0",
