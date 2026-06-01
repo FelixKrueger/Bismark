@@ -642,9 +642,19 @@ fn check_not_coordinate_sorted(header: &Header) -> Result<(), BismarkIoError> {
 /// - `None` — no Bismark @PG line in the header; caller must error out
 ///   (typically by demanding the user pass `--single`/`--paired` explicitly).
 ///
-/// Mirrors Perl `deduplicate_bismark` lines 90–116. Promoted from
+/// Mirrors Perl `deduplicate_bismark` lines 90–116 / `filter_non_conversion`
+/// `determine_file_type` lines 374–399. Promoted from
 /// `bismark-dedup/src/pipeline.rs:137` in `bismark-io 1.0.0-beta.7` to share
 /// the same header-detection logic with `bismark-extractor`.
+///
+/// **Last-Bismark-`@PG` wins.** If the header carries more than one
+/// `ID:Bismark` `@PG` line, the result reflects the **last** one — matching
+/// Perl's `while` loop, which re-assigns `$paired`/`$single` for every Bismark
+/// `@PG` it sees so the final occurrence decides. Byte-neutral for all real
+/// Bismark BAMs (exactly one Bismark `@PG`); only a re-processed BAM with two
+/// distinct Bismark `@PG` lines is affected. (Fix for the two-`@PG`
+/// first-vs-last divergence surfaced by the `filter_non_conversion` port's
+/// code review.)
 #[must_use]
 pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
     // Serialize the header to its on-disk SAM text representation and
@@ -659,6 +669,7 @@ pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
         }
     }
     let text = String::from_utf8_lossy(&buf);
+    let mut result = None;
     for line in text.lines() {
         // SAM header @PG line format: `@PG\tID:<id>\t...\tCL:<args>...`
         // The `ID:Bismark` substring identifies the Bismark @PG.
@@ -671,9 +682,11 @@ pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
         // boundaries to be robust to argument quoting differences.
         let has_1 = arg_present(line, "-1") || arg_present(line, "--1");
         let has_2 = arg_present(line, "-2") || arg_present(line, "--2");
-        return Some(has_1 && has_2);
+        // Do NOT return here: keep scanning so the LAST Bismark @PG wins
+        // (Perl re-assigns on each match).
+        result = Some(has_1 && has_2);
     }
-    None
+    result
 }
 
 /// True if `arg` appears as a standalone token in `text`, delimited by
@@ -1190,5 +1203,42 @@ read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\
         assert!(!arg_present("foo -1", "-1"));
         assert!(!arg_present("-1 bar", "-1"));
         assert!(!arg_present("foo--1 bar", "-1")); // no preceding boundary
+    }
+
+    /// Build a header with TWO Bismark `@PG` lines in the given CL order.
+    fn header_with_two_bismark_pg(first_cl: &str, second_cl: &str) -> Header {
+        use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+        let mut p1 = Map::<Program>::default();
+        p1.other_fields_mut()
+            .insert(COMMAND_LINE, BString::from(first_cl.as_bytes().to_vec()));
+        let mut p2 = Map::<Program>::default();
+        p2.other_fields_mut()
+            .insert(COMMAND_LINE, BString::from(second_cl.as_bytes().to_vec()));
+        // Distinct IDs (SAM requires unique @PG IDs); both contain "ID:Bismark".
+        Header::builder()
+            .add_program(BString::from("Bismark"), p1)
+            .add_program(BString::from("Bismark.1"), p2)
+            .build()
+    }
+
+    #[test]
+    fn detect_paired_two_bismark_pg_last_wins_se() {
+        // PE-style @PG first, SE-style @PG last → the LAST wins → SE.
+        // Matches Perl `determine_file_type`'s re-assign-on-each-match loop.
+        let header = header_with_two_bismark_pg(
+            "bismark --genome /g -1 R1.fq -2 R2.fq",
+            "bismark --genome /g reads.fq",
+        );
+        assert_eq!(detect_paired_from_header(&header), Some(false));
+    }
+
+    #[test]
+    fn detect_paired_two_bismark_pg_last_wins_pe() {
+        // SE-style first, PE-style last → the LAST wins → PE.
+        let header = header_with_two_bismark_pg(
+            "bismark --genome /g reads.fq",
+            "bismark --genome /g -1 R1.fq -2 R2.fq",
+        );
+        assert_eq!(detect_paired_from_header(&header), Some(true));
     }
 }

@@ -1,0 +1,2 @@
+c_keep_broken	0	chr1	100	40	10M	*	0	0	AAAAAAAAAA	IIIIIIIIII	XM:Z:HHhHH.....	XR:Z:CT	XG:Z:CT
+c_keep_z_breaks	0	chr1	100	40	10M	*	0	0	AAAAAAAAAA	IIIIIIIIII	XM:Z:HHzHH.....	XR:Z:CT	XG:Z:CT
