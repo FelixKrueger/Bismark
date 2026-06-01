@@ -2,9 +2,9 @@
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], reproducing every Perl `process_commandline`
-//! (`coverage2cytosine:1990-2197`) validation rule. `--gc`/`--nome-seq`
-//! (Phase 1) and `--drach`/`--m6A` (Phase 2) are supported; the remaining v1.x
-//! flag `--ffs` (Phase 3) is still **rejected** rather than silently accepted.
+//! (`coverage2cytosine:1990-2197`) validation rule. All v1.x niche flags are
+//! now supported — `--gc`/`--nome-seq` (Phase 1), `--drach`/`--m6A` (Phase 2),
+//! `--ffs` (Phase 3).
 //!
 //! Two byte-identity-relevant subtleties (folded from Phase-A dual review):
 //! - **Output-stem strip is context-conditional**: strip `.CX_report.txt` iff
@@ -96,8 +96,8 @@ pub struct Cli {
     /// strands (no normal cytosine report is produced). Coverage threshold ≥ 1.
     #[arg(long = "drach", visible_alias = "m6A")]
     pub drach: bool,
-    // ── v1.x flags: declared so they parse, but rejected at validate() ──
-    /// (v1.x, rejected) tetra/penta/hexamer context columns.
+    /// Append tetra-, penta- and hexamer nucleotide-context columns to each
+    /// report line (hexamers follow the xxCxxx rule; edge windows are blank).
     #[arg(long = "ffs")]
     pub ffs: bool,
 }
@@ -143,6 +143,8 @@ pub struct ResolvedConfig {
     pub discordance: Option<u8>,
     /// `--drach`/`--m6A` requested: standalone DRACH/m6A report (early-exit).
     pub drach: bool,
+    /// `--ffs` requested: append tetra/penta/hexamer context columns (7→10).
+    pub ffs: bool,
 }
 
 impl Cli {
@@ -154,16 +156,14 @@ impl Cli {
     /// `--coverage_threshold`) → `--discordance_filter` without merge →
     /// discordance range `1..=100` → `--coverage_threshold 0`.
     pub fn validate(self) -> Result<ResolvedConfig, BismarkC2cError> {
-        // v1.x flags still rejected outright (Phase 3): --ffs.
-        // (--gc / --nome-seq supported — Phase 1; --drach / --m6A — Phase 2.)
-        // NOTE: --drach is a standalone early-exit mode that IGNORES (does not
-        // die on) --CX / --merge_CpGs, so it gets no dedicated mutex. The general
-        // merge mutexes below still fire under --drach (Perl runs them before the
-        // early exit) — do NOT add a `--drach` short-circuit that skips them.
-        if self.ffs {
-            return Err(BismarkC2cError::UnsupportedFlag { flag: "--ffs" });
-        }
-
+        // All v1.x niche flags are now supported: --gc/--nome-seq (Phase 1),
+        // --drach/--m6A (Phase 2), --ffs (Phase 3). No flag is rejected here any
+        // more (the `UnsupportedFlag` variant is retained for the error-display
+        // contract + any future deferral). NOTE: --drach is a standalone
+        // early-exit mode that IGNORES (does not die on) --CX / --merge_CpGs; the
+        // general merge mutexes below still fire under --drach (Perl runs them
+        // before the early exit) — do NOT add a `--drach` short-circuit that
+        // skips them. --ffs has no mutex (it composes with every flag).
         let cov_infile = self.cov_infile.ok_or(BismarkC2cError::MissingCovInput)?;
         let output = self.output.ok_or(BismarkC2cError::MissingOutput)?;
         let genome_folder = self
@@ -256,6 +256,7 @@ impl Cli {
             merge_cpgs: self.merge_cpgs,
             discordance: self.discordance,
             drach: self.drach,
+            ffs: self.ffs,
         })
     }
 }
@@ -326,15 +327,22 @@ mod tests {
     // ── Task 4: validation rejections ──
 
     #[test]
-    fn rejects_v1x_flags() {
-        // Phase 1 supports --gc/--nome-seq; Phase 2 supports --drach/--m6A;
-        // only --ffs stays rejected (Phase 3).
-        let e = cli(&["-o", "x", "-g", "g", "--ffs", "in.cov"])
+    fn ffs_resolves_and_composes() {
+        // Phase 3: --ffs is now supported and composes with every flag (no mutex).
+        let c = cli(&["-o", "x", "-g", "g", "--ffs", "in.cov"])
             .validate()
-            .unwrap_err();
+            .unwrap();
+        assert!(c.ffs);
+        // composes with --CX, --merge_CpGs, --zero_based, --gzip (no mutex).
+        let c = cli(&["-o", "x", "-g", "g", "--ffs", "--merge_CpGs", "in.cov"])
+            .validate()
+            .unwrap();
+        assert!(c.ffs && c.merge_cpgs);
         assert!(
-            matches!(e, BismarkC2cError::UnsupportedFlag { flag } if flag.contains("ffs")),
-            "--ffs did not reject as UnsupportedFlag: {e:?}"
+            cli(&["-o", "x", "-g", "g", "--ffs", "--CX", "in.cov"])
+                .validate()
+                .unwrap()
+                .ffs
         );
     }
 

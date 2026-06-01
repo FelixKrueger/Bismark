@@ -361,6 +361,7 @@ mod tests {
             merge_cpgs: false,
             discordance: None,
             drach: true,
+            ffs: false,
         }
     }
 

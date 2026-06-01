@@ -56,20 +56,7 @@ fn missing_output_fails_with_clear_message() {
         .stderr(predicates::str::contains("output"));
 }
 
-#[test]
-fn unsupported_v1x_flag_is_rejected() {
-    // --gc/--nome-seq (Phase 1) and --drach/--m6A (Phase 2) are now supported;
-    // only --ffs (Phase 3) stays rejected.
-    Command::cargo_bin("coverage2cytosine_rs")
-        .unwrap()
-        .arg("-o")
-        .arg("out")
-        .arg("-g")
-        .arg("genome_dir")
-        .arg("--ffs")
-        .arg("in.bismark.cov")
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicates::str::contains("not supported"));
-}
+// (The Phase-A `unsupported_v1x_flag_is_rejected` probe was removed in Phase 3:
+// all v1.x niche flags — --gc/--nome-seq, --drach/--m6A, --ffs — are now
+// supported, so no v1.x flag is rejected. `missing_output_fails_with_clear_message`
+// above still covers the "fails clearly on a bad invocation" bar.)

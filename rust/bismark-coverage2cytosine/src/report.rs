@@ -161,6 +161,61 @@ fn extract(seq: &[u8], i: usize) -> (Vec<u8>, Vec<u8>, u8) {
     }
 }
 
+/// The three `--ffs` nucleotide-context fields `(tetra_nt, penta_nt, hexa_nt)`
+/// for the `C`/`G` at index `i` (Perl `:262-330`/`:507-585`/`:1421-1493`). Each
+/// is the empty string when its window runs off a chromosome edge (Perl prints a
+/// blank field). On the reverse strand all three are reverse-complemented.
+///
+/// ⚠️ Forward `hexa_nt` uses the SIGNED offset `i-2`, which is negative at `i=0,1`
+/// while its guard `len ≥ i+4` can still pass → Perl wraps `substr` from the
+/// string end. So the empties are gated by the **numeric `len` guards**, NOT by
+/// "`perl_substr` returned empty" (the wrap returns a non-empty short slice). The
+/// reverse fields never negative-wrap (the `i ≥ 3`/`i ≥ 4` guards prevent it).
+/// N bytes are passed through verbatim (Perl does NOT filter N-windows, despite
+/// the `--help` text — verified against live Perl v0.25.1).
+fn ffs_fields(seq: &[u8], i: usize, strand: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let len = seq.len();
+    if strand == b'+' {
+        // Forward: tetra=substr(i,4) [len≥i+4], penta=substr(i,5) [len≥i+5],
+        // hexa=substr(i-2,6) [len≥i+4; offset signed → negative-wrap at i=0,1].
+        let tetra = if len >= i + 4 {
+            perl_substr(seq, i as isize, 4).to_vec()
+        } else {
+            Vec::new()
+        };
+        let penta = if len >= i + 5 {
+            perl_substr(seq, i as isize, 5).to_vec()
+        } else {
+            Vec::new()
+        };
+        let hexa = if len >= i + 4 {
+            perl_substr(seq, i as isize - 2, 6).to_vec()
+        } else {
+            Vec::new()
+        };
+        (tetra, penta, hexa)
+    } else {
+        // Reverse: revcomp of substr(i-3,4) [i≥3], substr(i-4,5) [i≥4],
+        // substr(i-3,6) [i≥3]. The ≥0 guards mean the offset is never negative.
+        let tetra = if i >= 3 {
+            revcomp(perl_substr(seq, i as isize - 3, 4))
+        } else {
+            Vec::new()
+        };
+        let penta = if i >= 4 {
+            revcomp(perl_substr(seq, i as isize - 4, 5))
+        } else {
+            Vec::new()
+        };
+        let hexa = if i >= 3 {
+            revcomp(perl_substr(seq, i as isize - 3, 6))
+        } else {
+            Vec::new()
+        };
+        (tetra, penta, hexa)
+    }
+}
+
 /// The per-position kernel: extract → guards → classify → accumulate summary
 /// → emit. Appends the report line to `out` (when emitted) and accumulates the
 /// context summary (when `accumulate_summary`). Guard order per Perl's
@@ -175,6 +230,7 @@ pub(crate) fn emit_position(
     zero_based: bool,
     threshold: u32,
     nome: bool,
+    ffs: bool,
     accumulate_summary: bool,
     summary: &mut ContextSummary,
     out: &mut Vec<u8>,
@@ -234,13 +290,35 @@ pub(crate) fn emit_position(
     out.extend_from_slice(context.as_bytes());
     out.push(b'\t');
     out.extend_from_slice(&tri);
+    // --ffs (Perl :399/:414/:1524): append tetra/penta/hexamer context columns
+    // (7 → 10 fields) BEFORE the newline. An edge window is an empty field
+    // (nothing between tabs). Columns 1–7 are byte-unchanged. Computed only when
+    // `ffs`, so the default hot path is untouched.
+    if ffs {
+        let (tetra, penta, hexa) = ffs_fields(seq, i, strand);
+        out.push(b'\t');
+        out.extend_from_slice(&tetra);
+        out.push(b'\t');
+        out.extend_from_slice(&penta);
+        out.push(b'\t');
+        out.extend_from_slice(&hexa);
+    }
     out.push(b'\n');
 
     // NOMe `.cov` companion (Perl :402-406 / :417-421): `chr out_pos out_pos
     // %.6f m u` — a POINT coordinate (both columns = out_pos, honouring
     // --zero_based), NOT the merge cov's half-open interval. `meth + nonmeth >=
     // threshold >= 1` here (NOMe threshold is always ≥ 1), so `pct6` is safe.
-    if nome {
+    //
+    // ⚠️ Gated on `nome && !ffs`: Perl nests the emit as
+    //   if ($tetra) { print CYT (10-col) }            # --ffs
+    //   else { if ($nome) { print CYT (7-col); print CYTCOV } else { print CYT } }
+    // (`:398-425`). So under `--ffs --nome-seq` the `$tetra` branch short-circuits
+    // BEFORE `print CYTCOV` → the `.NOMe.CpG.cov` is opened (because `$nome`) but
+    // never written (a 0-byte file). The report line above is still the 10-col
+    // ffs line; only the cov companion is suppressed. (Phase-3 dual-review
+    // Critical; the Phase-1 plan flagged this as a sibling-branch interaction.)
+    if nome && !ffs {
         let pct = pct6(meth, nonmeth);
         cov_out.extend_from_slice(name);
         cov_out.push(b'\t');
@@ -285,6 +363,7 @@ fn chromosome_report_bytes(
                 config.zero_based,
                 config.threshold,
                 config.nome,
+                config.ffs,
                 accumulate_summary,
                 summary,
                 &mut out,
@@ -707,6 +786,7 @@ mod tests {
                     zero,
                     thr,
                     nome,
+                    false, // ffs — exercised separately via ffs_fields unit tests
                     true,
                     &mut summ,
                     &mut out,
@@ -747,6 +827,75 @@ mod tests {
         let (report, cov) = run_nome(b"GGCGTT", &[(3, 5, 0)], true, false, 1, true);
         assert_eq!(report, "");
         assert_eq!(cov, "");
+    }
+
+    // ── Phase 3: --ffs tetra/penta/hexamer offset table (live-Perl-pinned) ──
+
+    fn ffs3(seq: &[u8], i: usize, strand: u8) -> (String, String, String) {
+        let (t, p, h) = ffs_fields(seq, i, strand);
+        (
+            String::from_utf8(t).unwrap(),
+            String::from_utf8(p).unwrap(),
+            String::from_utf8(h).unwrap(),
+        )
+    }
+
+    #[test]
+    fn ffs_forward_interior() {
+        // V1: chr1=GCCGTGAAACACGGCTTT, i=2 (pos3, +).
+        let g = b"GCCGTGAAACACGGCTTT";
+        assert_eq!(
+            ffs3(g, 2, b'+'),
+            ("CGTG".into(), "CGTGA".into(), "GCCGTG".into())
+        );
+    }
+
+    #[test]
+    fn ffs_forward_hexa_negative_wrap() {
+        // V2: forward hexa offset i-2 is NEGATIVE at i=1,0 while its guard
+        // (len≥i+4) passes → Perl wraps from the string end (NOT empty/clamped).
+        let g = b"GCCGTGAAACACGGCTTT"; // len 18
+        assert_eq!(
+            ffs3(g, 1, b'+'),
+            ("CCGT".into(), "CCGTG".into(), "T".into())
+        );
+        let c = b"CGTAAACCC"; // len 9
+        assert_eq!(
+            ffs3(c, 0, b'+'),
+            ("CGTA".into(), "CGTAA".into(), "CC".into())
+        );
+    }
+
+    #[test]
+    fn ffs_forward_empty_windows_at_chr_end() {
+        // V3: penta empty at chr-end (len < i+5); all three empty further in.
+        let g = b"GCCGTGAAACACGGCTTT"; // len 18
+        assert_eq!(
+            ffs3(g, 14, b'+'),
+            ("CTTT".into(), "".into(), "GGCTTT".into())
+        );
+        let c = b"CGTAAACCC"; // len 9
+        assert_eq!(ffs3(c, 6, b'+'), ("".into(), "".into(), "".into()));
+    }
+
+    #[test]
+    fn ffs_reverse_fields_and_empty_penta() {
+        // V4: chr1 i=3 (pos4, -): revcomp'd; penta empty (guard i≥4 fails at i=3).
+        let g = b"GCCGTGAAACACGGCTTT";
+        assert_eq!(
+            ffs3(g, 3, b'-'),
+            ("CGGC".into(), "".into(), "CACGGC".into())
+        );
+    }
+
+    #[test]
+    fn ffs_passes_n_windows_verbatim() {
+        // Perl does NOT filter N-windows (the --help "Ns ignored" claim is stale);
+        // the fields carry N through (forward verbatim, reverse via revcomp's N→N).
+        assert_eq!(ffs3(b"CNGTAA", 0, b'+').0, "CNGT"); // forward tetra keeps N
+        // reverse: a G at i=3 (`ANCGTT`) whose tetra window spans the N → revcomp
+        // leaves N (revcomp(ANCG) = CGNT), NOT filtered.
+        assert_eq!(ffs_fields(b"ANCGTT", 3, b'-').0, revcomp(b"ANCG"));
     }
 
     #[test]
@@ -890,6 +1039,7 @@ mod tests {
                 merge_cpgs: false,
                 discordance: None,
                 drach: false,
+                ffs: false,
             };
             nome_cov_path(&c, chr).to_string_lossy().into_owned()
         };
