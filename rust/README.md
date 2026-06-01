@@ -48,5 +48,6 @@ cargo build --release
 | `coverage2cytosine` | `bismark-coverage2cytosine` (`coverage2cytosine_rs`) | 1.0.0-alpha.1 | In progress — byte-identity golden tests through phase D |
 | `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-alpha.1 | Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 (indexing delegated to the external indexer) |
 | `methylation_consistency` | `bismark-methylation-consistency` (`methylation_consistency_rs`) | 1.0.0-beta.1 | **Byte-identical** output vs Perl v0.25.1 |
+| `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | 1.0.0-alpha.1 | In progress — Phase 1/10 (CLI + option parsing + genome/index discovery + Bowtie 2 detection); no alignment yet. Byte-identity premise validated by a determinism spike (pinned Bowtie 2 2.5.5) |
 
 Versions are the crate manifests on `rust/iron-chancellor`. "Byte-identical" = validated against Perl Bismark v0.25.1 per each crate's README/CHANGELOG + golden/real-data tests; speedups are full-scale where measured. Per-crate detail lives in each crate's `README.md` / `CHANGELOG.md`. `bismark-io` and `bismark-dedup` have early beta lines published to crates.io; later betas are queued for the next publish window.

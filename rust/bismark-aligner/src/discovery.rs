@@ -1,0 +1,306 @@
+//! Genome folder + bisulfite-index + raw-FASTA discovery.
+//!
+//! Mirrors Perl `bismark` 7604–7800 / `read_genome_into_memory` 5031–50:
+//! - the genome folder is made **absolute** (Perl `chdir`+`getcwd`);
+//! - the Bowtie 2 small index (`BS_CT.{1,2,3,4,rev.1,rev.2}.bt2`) is required,
+//!   with a **large** (`.bt2l`) fallback for >4 Gbp references;
+//! - the raw FASTA is found by **extension priority** (`.fa` → `.fa.gz` →
+//!   `.fasta` → `.fasta.gz`). The extension **match** is **case-SENSITIVE** on
+//!   raw bytes (Perl `<*.fa>` glob on Linux), while the **sort** within the
+//!   chosen group is **case-INSENSITIVE** (Perl's bundled `File::Glob` folds on
+//!   all platforms). The order is **byte-significant** — it sets the BAM `@SQ`
+//!   order in Phase 5. This logic is a deliberate mirror of
+//!   `bismark-genome-preparation::discovery` (`in_group` + `fasta_name_cmp`):
+//!   the two ports **jointly** define the `@SQ`/index ordering contract and MUST
+//!   stay in lockstep — adjudicate on Linux/oxy, never macOS (the genome-prep
+//!   glob-fold lesson). *Follow-up:* promote this to a shared crate to remove
+//!   the duplication.
+
+use std::path::{Path, PathBuf};
+
+use crate::error::{AlignerError, Result};
+
+/// Which FASTA extension category was found (extension-priority order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FastaKind {
+    /// `*.fa`
+    Fa,
+    /// `*.fa.gz`
+    FaGz,
+    /// `*.fasta`
+    Fasta,
+    /// `*.fasta.gz`
+    FastaGz,
+}
+
+impl FastaKind {
+    /// The extension-priority probe order Perl uses (`.fa` → `.fa.gz` →
+    /// `.fasta` → `.fasta.gz`).
+    const PROBE_ORDER: [FastaKind; 4] = [
+        FastaKind::Fa,
+        FastaKind::FaGz,
+        FastaKind::Fasta,
+        FastaKind::FastaGz,
+    ];
+
+    /// Case-SENSITIVE raw-byte membership test (mirrors Perl `<*.fa>` + the
+    /// sibling `bismark-genome-preparation::discovery::in_group`): `.fa`/`.fasta`
+    /// exclude their `.gz` siblings so the groups are disjoint. Matching on bytes
+    /// (not `&str`) means a non-UTF-8 file name is **not** silently dropped.
+    fn matches(self, name: &[u8]) -> bool {
+        match self {
+            FastaKind::Fa => name.ends_with(b".fa") && !name.ends_with(b".fa.gz"),
+            FastaKind::FaGz => name.ends_with(b".fa.gz"),
+            FastaKind::Fasta => name.ends_with(b".fasta") && !name.ends_with(b".fasta.gz"),
+            FastaKind::FastaGz => name.ends_with(b".fasta.gz"),
+        }
+    }
+}
+
+/// Compare FASTA file names the way Perl's `<*.fa>` sorts them: **case-insensitively**
+/// (ASCII fold) with the raw bytes as a tiebreak. Must match
+/// `bismark-genome-preparation::discovery::fasta_name_cmp` exactly.
+fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    a.to_ascii_lowercase()
+        .cmp(&b.to_ascii_lowercase())
+        .then_with(|| a.cmp(b))
+}
+
+/// Resolved genome indexes + raw FASTA inventory (the input contract for the
+/// rest of the pipeline).
+#[derive(Debug, Clone)]
+pub struct GenomeIndexes {
+    /// Absolute path to the genome folder.
+    pub genome_dir: PathBuf,
+    /// `<genome>/Bisulfite_Genome/CT_conversion/BS_CT` (index basename).
+    pub ct_index_basename: PathBuf,
+    /// `<genome>/Bisulfite_Genome/GA_conversion/BS_GA` (index basename).
+    pub ga_index_basename: PathBuf,
+    /// `true` if the large (`.bt2l`) index was found instead of the small one.
+    pub large_index: bool,
+    /// Raw FASTA file(s), in byte-significant order (sets `@SQ` order, Phase 5).
+    pub fastas: Vec<PathBuf>,
+    /// Which extension category the FASTA(s) came from.
+    pub fasta_kind: FastaKind,
+}
+
+/// The six Bowtie 2 small-index suffixes for a given basename stem.
+fn bt2_suffixes(stem: &str, large: bool) -> [String; 6] {
+    let ext = if large { "bt2l" } else { "bt2" };
+    [
+        format!("{stem}.1.{ext}"),
+        format!("{stem}.2.{ext}"),
+        format!("{stem}.3.{ext}"),
+        format!("{stem}.4.{ext}"),
+        format!("{stem}.rev.1.{ext}"),
+        format!("{stem}.rev.2.{ext}"),
+    ]
+}
+
+/// Check that all six index files for `stem` exist in `dir`. Returns the first
+/// missing file name, or `None` if all present.
+fn first_missing(dir: &Path, stem: &str, large: bool) -> Option<String> {
+    bt2_suffixes(stem, large)
+        .into_iter()
+        .find(|f| !dir.join(f).is_file())
+}
+
+/// Discover the genome folder, validate the Bowtie 2 bisulfite indexes, and
+/// inventory the raw FASTA file(s).
+pub fn discover_genome(genome_arg: &Path) -> Result<GenomeIndexes> {
+    // Absolute path (Perl chdir + getcwd). canonicalize also verifies existence.
+    let genome_dir = std::fs::canonicalize(genome_arg)
+        .map_err(|_| AlignerError::GenomeFolder(genome_arg.to_path_buf()))?;
+    if !genome_dir.is_dir() {
+        return Err(AlignerError::GenomeFolder(genome_arg.to_path_buf()));
+    }
+
+    let ct_dir = genome_dir.join("Bisulfite_Genome").join("CT_conversion");
+    let ga_dir = genome_dir.join("Bisulfite_Genome").join("GA_conversion");
+
+    // Small index first, then large fallback (Perl 7646–7800).
+    let large_index = match (
+        first_missing(&ct_dir, "BS_CT", false),
+        first_missing(&ga_dir, "BS_GA", false),
+    ) {
+        (None, None) => false,
+        _ => {
+            // Small incomplete — require the large index instead.
+            if let Some(missing) = first_missing(&ct_dir, "BS_CT", true) {
+                return Err(AlignerError::FaultyIndex {
+                    converted: "C->T".to_string(),
+                    missing,
+                });
+            }
+            if let Some(missing) = first_missing(&ga_dir, "BS_GA", true) {
+                return Err(AlignerError::FaultyIndex {
+                    converted: "G->A".to_string(),
+                    missing,
+                });
+            }
+            true
+        }
+    };
+
+    let (fastas, fasta_kind) = discover_fastas(&genome_dir)?;
+
+    Ok(GenomeIndexes {
+        ct_index_basename: ct_dir.join("BS_CT"),
+        ga_index_basename: ga_dir.join("BS_GA"),
+        genome_dir,
+        large_index,
+        fastas,
+        fasta_kind,
+    })
+}
+
+/// Find the raw FASTA file(s) by extension priority (first non-empty group
+/// wins), case-insensitively sorted. Filters on `path.is_file()` (which
+/// **follows symlinks**) and matches on raw file-name bytes (non-UTF-8 safe) —
+/// both mirroring `bismark-genome-preparation::discovery::find_fasta_files`.
+fn discover_fastas(genome_dir: &Path) -> Result<(Vec<PathBuf>, FastaKind)> {
+    for kind in FastaKind::PROBE_ORDER {
+        let mut group: Vec<PathBuf> = std::fs::read_dir(genome_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.file_name()
+                        .map(|n| kind.matches(n.as_encoded_bytes()))
+                        .unwrap_or(false)
+            })
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        group.sort_by(|a, b| {
+            let ka = a.file_name().map(|n| n.as_encoded_bytes()).unwrap_or(b"");
+            let kb = b.file_name().map(|n| n.as_encoded_bytes()).unwrap_or(b"");
+            fasta_name_cmp(ka, kb)
+        });
+        return Ok((group, kind));
+    }
+
+    Err(AlignerError::NoFasta(genome_dir.to_path_buf()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn make_small_index(dir: &Path) {
+        let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+        let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+        fs::create_dir_all(&ct).unwrap();
+        fs::create_dir_all(&ga).unwrap();
+        for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+            fs::write(ct.join(format!("BS_CT.{s}.bt2")), b"x").unwrap();
+            fs::write(ga.join(format!("BS_GA.{s}.bt2")), b"x").unwrap();
+        }
+    }
+
+    #[test]
+    fn fasta_priority_prefers_fa_and_sorts_case_insensitively() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("B.fa"), b">b\nA\n").unwrap();
+        fs::write(tmp.path().join("a.fa"), b">a\nA\n").unwrap();
+        // a `.fa.gz` must be ignored entirely because `.fa` files exist.
+        fs::write(tmp.path().join("z.fa.gz"), b"x").unwrap();
+
+        let g = discover_genome(tmp.path()).unwrap();
+        assert_eq!(g.fasta_kind, FastaKind::Fa);
+        assert!(!g.large_index);
+        let names: Vec<String> = g
+            .fastas
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["a.fa".to_string(), "B.fa".to_string()]);
+        assert!(g.ct_index_basename.ends_with("CT_conversion/BS_CT"));
+        assert!(g.ga_index_basename.ends_with("GA_conversion/BS_GA"));
+    }
+
+    #[test]
+    fn falls_back_to_fasta_when_no_fa() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("genome.fasta"), b">c\nA\n").unwrap();
+        let g = discover_genome(tmp.path()).unwrap();
+        assert_eq!(g.fasta_kind, FastaKind::Fasta);
+    }
+
+    #[test]
+    fn incomplete_index_errors() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+        fs::remove_file(
+            tmp.path()
+                .join("Bisulfite_Genome")
+                .join("CT_conversion")
+                .join("BS_CT.3.bt2"),
+        )
+        .unwrap();
+        let err = discover_genome(tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::FaultyIndex { .. }));
+    }
+
+    #[test]
+    fn no_fasta_errors() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        let err = discover_genome(tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::NoFasta(_)));
+    }
+
+    #[test]
+    fn extension_match_is_case_sensitive() {
+        // Perl `<*.fa>` is case-sensitive on Linux; an uppercase `.FA` must NOT
+        // match (mirrors the sibling genome-prep contract for the @SQ order).
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("GENOME.FA"), b">c\nA\n").unwrap();
+        let err = discover_genome(tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::NoFasta(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn follows_symlinked_fasta() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        let real = tmp.path().join("real.fa");
+        fs::write(&real, b">c\nA\n").unwrap();
+        std::os::unix::fs::symlink(&real, tmp.path().join("link.fa")).unwrap();
+        let g = discover_genome(tmp.path()).unwrap();
+        // both the real file and the symlink are followed (is_file()).
+        assert_eq!(g.fastas.len(), 2);
+    }
+
+    #[test]
+    fn matcher_handles_non_utf8_bytes() {
+        // A non-UTF-8 name ending in `.fa` (0xFF is invalid UTF-8) must match —
+        // the byte-level guarantee that fixes the `to_str()`-drops-non-UTF-8 bug.
+        assert!(FastaKind::Fa.matches(&[0xff, b'.', b'f', b'a']));
+        assert!(!FastaKind::Fa.matches(&[0xff, b'.', b'f', b'a', b'.', b'g', b'z']));
+        assert!(FastaKind::FaGz.matches(&[0xff, b'.', b'f', b'a', b'.', b'g', b'z']));
+    }
+
+    // Real non-UTF-8 file on disk: Linux only (macOS/APFS rejects such names).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_filename_not_dropped() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        let name = OsString::from_vec(vec![0xff, b'.', b'f', b'a']);
+        fs::write(tmp.path().join(&name), b">c\nA\n").unwrap();
+        let g = discover_genome(tmp.path()).unwrap();
+        assert_eq!(g.fasta_kind, FastaKind::Fa);
+        assert_eq!(g.fastas.len(), 1);
+    }
+}
