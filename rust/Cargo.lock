@@ -163,6 +163,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bismark-filter-nonconversion"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "assert_cmd",
+ "bismark-io",
+ "bstr",
+ "clap",
+ "mimalloc",
+ "noodles-bam",
+ "noodles-bgzf 0.47.0",
+ "noodles-core 0.20.0",
+ "noodles-sam",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
 name = "bismark-genome-preparation"
 version = "1.0.0-alpha.1"
 dependencies = [
