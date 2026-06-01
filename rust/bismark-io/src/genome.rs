@@ -212,7 +212,10 @@ fn read_one_fasta(path: &Path) -> Result<FastaRecords, GenomeError> {
     // MultiGzDecoder decodes plain gzip (Perl `gunzip -c`) AND gzip-framed
     // BGZF; noodles' build_from_path is BGZF-only, so we decompress ourselves.
     let records = if is_gz {
-        collect_records(BufReader::new(flate2::read::MultiGzDecoder::new(file)), path)?
+        collect_records(
+            BufReader::new(flate2::read::MultiGzDecoder::new(file)),
+            path,
+        )?
     } else {
         collect_records(BufReader::new(file), path)?
     };

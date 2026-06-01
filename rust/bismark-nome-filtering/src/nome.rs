@@ -26,9 +26,9 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
+use bismark_io::genome::Genome;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use bismark_io::genome::Genome;
 
 use crate::error::BismarkNomeError;
 use crate::substr::perl_substr;
@@ -158,8 +158,7 @@ fn cytosine_lookup<W: Write>(
         let is_gpc = upstream.len() >= 2 && &upstream[0..2] == b"GC";
         match ctx {
             Context::Cg
-                if (call == b'z' || call == b'Z')
-                    && (upstream == b"ACG" || upstream == b"TCG") =>
+                if (call == b'z' || call == b'Z') && (upstream == b"ACG" || upstream == b"TCG") =>
             {
                 match state {
                     b'+' => meth_cg += 1,
@@ -218,8 +217,8 @@ fn process_read<W: Write>(
 
     // Perl :132 — uses `start` for BOTH strands. i64 avoids underflow when
     // start < 2 (Perl numeric: start-2 negative → `> 1` false → not suitable).
-    let suitable = (start as i64 - 2 > 1)
-        && (chr_len as i64 >= start as i64 - 2 + length as i64 + 4);
+    let suitable =
+        (start as i64 - 2 > 1) && (chr_len as i64 >= start as i64 - 2 + length as i64 + 4);
     if !suitable {
         return Ok(());
     }
@@ -268,11 +267,14 @@ pub fn per_read_filtering<R: BufRead, W: Write>(
         if f.len() < 8 {
             continue; // malformed line — skip defensively (cannot occur on real --yacht)
         }
-        let (pos, start, end) =
-            match (f[3].parse::<u32>(), f[5].parse::<u32>(), f[6].parse::<u32>()) {
-                (Ok(p), Ok(s), Ok(e)) => (p, s, e),
-                _ => continue, // non-numeric coords — skip defensively
-            };
+        let (pos, start, end) = match (
+            f[3].parse::<u32>(),
+            f[5].parse::<u32>(),
+            f[6].parse::<u32>(),
+        ) {
+            (Ok(p), Ok(s), Ok(e)) => (p, s, e),
+            _ => continue, // non-numeric coords — skip defensively
+        };
         let state_b = f[1].as_bytes().first().copied().unwrap_or(b'?');
         let call_b = f[4].as_bytes().first().copied().unwrap_or(b'?');
         let id = f[0].as_bytes();
@@ -493,7 +495,11 @@ mod tests {
                      r1\t-\tchr1\t6\tz\t4\t12\t+\n";
         let out = run_pipeline(G20, yacht);
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 3, "non-consecutive r1 must flush twice: {out:?}");
+        assert_eq!(
+            lines.len(),
+            3,
+            "non-consecutive r1 must flush twice: {out:?}"
+        );
         assert_eq!(lines[0], "r1\tchr1\t4\t12\t1\t0\t0\t0");
         assert_eq!(lines[2], "r1\tchr1\t4\t12\t0\t1\t0\t0");
     }
@@ -513,8 +519,12 @@ mod tests {
         std::fs::write(t.path().join("chr1.fa"), ">chr1\nACGTACGT\n").unwrap();
         let genome = Genome::load(t.path(), &[".fa"]).unwrap();
         let mut out = Vec::new();
-        let err = per_read_filtering(Cursor::new(&b"Bismark header only\n"[..]), &genome, &mut out)
-            .unwrap_err();
+        let err = per_read_filtering(
+            Cursor::new(&b"Bismark header only\n"[..]),
+            &genome,
+            &mut out,
+        )
+        .unwrap_err();
         assert!(matches!(err, BismarkNomeError::EmptyInput));
         assert!(out.is_empty());
     }
@@ -564,7 +574,11 @@ mod tests {
             !run_pipeline(g11, yacht).is_empty(),
             "chr_len == boundary must be suitable"
         );
-        assert_eq!(run_pipeline(g10, yacht), "", "chr_len == boundary-1 must skip");
+        assert_eq!(
+            run_pipeline(g10, yacht),
+            "",
+            "chr_len == boundary-1 must skip"
+        );
     }
 
     // ── Task 6: write_report header constant ─────────────────────────
