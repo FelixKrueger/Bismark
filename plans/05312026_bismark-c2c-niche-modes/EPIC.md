@@ -44,7 +44,7 @@ Each phase is independently byte-identity-testable against Perl v0.25.1 and ship
 | 1 | GpC report + NOMe-Seq | `phase1-gpc-report-nome-seq/PLAN.md` | v1.0 merged |
 | 2 | DRACH m6A | `phase2-drach-m6a/PLAN.md` | v1.0 merged |
 | 3 | FFS context columns | `phase3-ffs/PLAN.md` | v1.0 merged |
-| 4 | Real-data byte-identity gate | `phase4-byte-identity-gate/PLAN.md` _(to be written)_ | #1, #2, #3 |
+| 4 | Real-data byte-identity gate | `phase4-byte-identity-gate/PLAN.md` | #1, #2, #3 |
 
 Phases 1–3 are **mutually independent** (different flags / code paths), so they can be planned and implemented in any order or in parallel; Phase 4 gates them all.
 

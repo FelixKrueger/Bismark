@@ -1,0 +1,92 @@
+# Plan Review B — Phase 4 (coverage2cytosine v1.x real-data byte-identity gate)
+
+**Reviewer:** Plan Reviewer B (independent; live-verified against the committed Rust binary + Perl v0.25.1 + the shipped harness)
+**Plan:** `plans/05312026_bismark-c2c-niche-modes/phase4-byte-identity-gate/PLAN.md` (rev 0)
+**Date:** 2026-06-01
+**Worktree:** `/Users/fkrueger/Github/Bismark-c2c` (`rust/c2c-v1x`)
+
+---
+
+## Top-line verdict
+
+**APPROVE-WITH-CHANGES.** The plan is sound in its core design — it extends the proven v1.0 fail-CLOSED harness additively, the six cells map to real output streams, and every filename in §3.1/§3.2 matches the actual Rust + Perl output **byte-for-byte** as I verified live. The four genuinely-novel differentials (#2 nome-filters-down, #3 drach-standalone, #4 ffs-10-col, #5 ffs_nome-0-byte) each catch a distinct flag-effect; #1 is redundant insurance but not harmful.
+
+I found **no Critical fail-OPEN that would let a wrong gate pass** at the per-cell layer (the file-set match + byte-compare are the real backstops and they are unchanged). But I found **two Important issues that would FALSE-FAIL a correct run** (the gate failing when it shouldn't is the inverse risk, equally release-blocking), **one Important fail-OPEN in the §3.3.5 differential as worded** (insurance-only, but it must stash, not stat-post-purge), and several specification gaps that, if implemented literally, produce a broken gate. None block the plan; they must be folded before implementation.
+
+- **Critical:** 0
+- **Important:** 4
+- **Optional:** 4
+
+---
+
+## Checks I ran (live: committed `rust/target/debug/coverage2cytosine_rs` + repo-root Perl `./coverage2cytosine` v0.25.1)
+
+| Check | Mode | Rust files (sizes) | Perl files (sizes) | Result |
+|-------|------|--------------------|--------------------|--------|
+| `gc` filenames | `--gc` (g_primary/primary.cov) | `c2c.CpG_report.txt`(83) `c2c.GpC.cov`(70) `c2c.GpC_report.txt`(62) `c2c.cytosine_context_summary.txt`(1312) | identical set+sizes | ✅ names match §3.2 exactly; GpC streams NON-empty |
+| `nome` filenames | `--nome-seq` (g_nome/nome.cov) | `c2c.NOMe.CpG.cov`(72) `c2c.NOMe.CpG_report.txt`(61) `c2c.NOMe.GpC.cov`(**0**) `c2c.NOMe.GpC_report.txt`(**0**) `…summary.txt`(1309) | identical | ⚠️ names match, but **GpC streams 0-byte on this fixture** (see Imp-1) |
+| `drach` file-set | `--drach` (g_top/top.cov) | `c2c_DRACH.cov`(48) `c2c_DRACH_report.txt`(47) — **NO CpG report, NO summary** | identical; byte-identical content | ✅ underscore names match §3.1; standalone confirmed; Rust≡Perl |
+| `ffs` columns | `--ffs` (g_main/main.cov) | `c2c.CpG_report.txt`(254, **NF=10 all lines**) `…summary.txt` | identical | ✅ 10-col vs default 7-col; line-count == default (7==7); first-7-cols identical |
+| `ffs_cx` | `--ffs --CX --gzip` | `c2c.CX_report.txt.gz`(226, gz OK, **NF=10**) `…summary.txt` | identical; decompressed byte-identical | ✅ name `c2c.CX_report.txt.gz` matches §3.1; gzip-integrity passes |
+| `ffs_nome` 0-byte cov | `--ffs --nome-seq` (g_nome/nome.cov) | `c2c.NOMe.CpG.cov`(**0**) `c2c.NOMe.CpG_report.txt`(110) `c2c.NOMe.GpC.cov`(**0**) `c2c.NOMe.GpC_report.txt`(**0**) `…summary.txt` | **identical (0==0 on cov)** | ✅ `.NOMe.CpG.cov` is 0-byte BOTH sides (rev-3 Critical holds); ⚠️ `.NOMe.GpC_report.txt` ALSO 0-byte (see Imp-1) |
+| diff #1 premise | gc core vs default core (same input) | `diff` → IDENTICAL | — | ✅ `--gc` adds without altering core |
+| diff #2 premise | nome core lines vs default lines | 3 < 4 | — | ✅ NOMe filter drops lines |
+| absent-file fail-OPEN | `[[ ! -s absent ]]` | TRUE (absent == 0-byte) | — | ⚠️ confirms Imp-2 (post-purge stat is fail-OPEN) |
+| purge deletes 0-byte cov | harness purge glob | 0-byte `*.cov` deleted | — | ⚠️ confirms Imp-2 |
+
+All filenames, the drach standalone shape, the ffs 10-vs-7 columns, the ffs_cx gzip integrity, and the ffs_nome `.NOMe.CpG.cov` 0-byte-both-sides claim are **verified true**. The byte-identity Rust≡Perl held on every mode I ran.
+
+---
+
+## Findings
+
+### Important
+
+**Imp-1 — The `nome` / `ffs_nome` GpC `REQUIRE_NONEMPTY` entries will FALSE-FAIL on any input whose NOMe GpC stream is empty; the plan asserts non-emptiness it has not demonstrated.**
+The plan's `[nome] = "… c2c.NOMe.GpC_report.txt c2c.NOMe.GpC.cov …"` and `[ffs_nome] = "… c2c.NOMe.GpC_report.txt …"` mark the NOMe **GpC** streams as required-non-empty. **On the committed `g_nome`/`nome.cov` fixture — both Rust and Perl — these files are 0 bytes** (verified above; the Phase-1 `nome_primary` golden and the Phase-3 `ffs_nome` golden are both 0-byte for `s.NOMe.GpC_report.txt`). The non-emptiness depends entirely on the input cov containing covered GpC-context positions. The plan's Assumption 8 hand-waves "real WGBS has covered ACG/TCG CpGs" — but that justifies the **CpG** stream, not the **GpC** stream, and offers zero evidence the GpC stream is non-empty.
+Mitigating fact (I verified): the gate's cov is generated by `bismark2bedGraph --CX` (RELEASE_CHECKLIST_c2c.md:69) over CpG+CHG+CHH context files, so on full hg38 the cov DOES cover GpC-context positions → the GpC report will be non-empty in practice. So this is real-data-plausible. **But the plan never states this dependency.** If a future operator regenerates a CpG-context-only cov (no `--CX`), the `gc`/`nome` GpC require-nonempty FALSE-FAILS a perfectly correct run, and the failure message ("required output empty") will mislead.
+*Action:* (a) state explicitly that the GpC streams require an all-context (`--CX`) cov, and pin it in the checklist; (b) consider demoting the NOMe **GpC** `.cov`/report to existence-only (empty-tolerant) and relying on the differential to prove the flag did something — OR keep them required-non-empty but add a sentence proving (from the cov recipe) that they will be non-empty. As written, the require-nonempty list embeds an unproven data assumption that turns a correct gate red.
+
+**Imp-2 — The §3.3.5 `ffs_nome` 0-byte differential, as worded ("decompress/stat to 0 bytes"), is fail-OPEN if implemented post-loop, because the file is purged on PASS and an ABSENT file stats as 0 bytes.**
+I confirmed two facts: (1) the harness purge glob (`*.cov`) **deletes** the 0-byte `c2c.NOMe.CpG.cov` on a cell PASS, before the post-loop differential phase runs; (2) a naive `[[ ! -s "$f" ]]` returns TRUE for an **absent** file. So a §3.3.5 check that stats the file after the loop would PASS on a file that was never emitted, or one that a future bug deleted — a textbook fail-OPEN. §5.1 says "add the §3.3 differential stash vars," which implies the right approach, but §3.3.5's prose ("assert both sides' `.NOMe.CpG.cov` decompress/stat to 0 bytes") reads as a direct file op and must not be implemented that way.
+*Action:* §3.3.5 must STASH a boolean during the cell loop (before purge), mirroring `MERGE_COV_NONEMPTY` — e.g. `FFSNOME_CPGCOV_PRESENT_AND_EMPTY=1` only if the file **exists AND is 0-byte on both Perl and Rust** — and the post-loop `diff_check` must read that stash under the `ran ffs_nome && [[ -n "$VAR" ]]` guard. Distinguish "present-and-empty" (PASS) from "absent" (the file-set match already FAILs, but the differential must not silently treat absent as 0). NOTE: the gate is not actually fail-OPEN overall here — the per-cell file-set match (present on both) + byte-compare (0==0) already validate this stream — so the differential is insurance; but insurance that passes on a no-op is worse than no insurance because it gives false confidence.
+
+**Imp-3 — Differential #1 (`gc` core == default core) is tautological-leaning / redundant; the no-op detection rests entirely on its second clause, which duplicates the require-nonempty.**
+The plan frames diff #1 as proving `--gc` "ADDS the GpC stream and must NOT alter the core." But `HASH_GC_CORE == HASH_DEFAULT` is the EXPECTED-PASS state whether or not `--gc` did anything to the core (the core is supposed to be unchanged — I verified it is byte-identical). So the equality clause cannot detect a `--gc` no-op. The only no-op detector in #1 is "GpC report non-empty" — which is **identical** to the `[gc]` REQUIRE_NONEMPTY entry already enforced per-cell. So diff #1 adds no detection power beyond the per-cell layer. It is harmless (it won't false-pass anything the per-cell layer catches), but the plan over-claims its value.
+*Action:* either drop diff #1 (the per-cell file-set + require-nonempty already cover it) or re-scope its description to "regression assertion that `--gc` leaves the core untouched" (its actual, legitimate purpose) rather than "proves `--gc` changes output." Do not present it as a both-binaries-no-op catcher — it is not.
+
+**Imp-4 — The new differential stash vars must be initialized to `""` at the top-level declaration (line ~234) or the `[[ -n "$VAR" ]]` guards abort under `set -u`.**
+The existing guard pattern (`if ran X && [[ -n "$STASH" ]]`) is robust ONLY because every stash var is pre-declared empty at lines 234-235. The plan (§5.1) says "add the §3.3 differential stash vars" but does not call out that EACH new var (`HASH_GC_CORE`, `LINES_NOME_CORE`, `DRACH_FILESET_OK`, `FFS_COLS`, `LINES_FFS`, `FFSNOME_CPGCOV_PRESENT_AND_EMPTY`, etc.) must be initialized alongside the existing ones. Under `set -euo pipefail`, a `[[ -n "$UNSET_VAR" ]]` on an un-initialized var is an unbound-variable abort → exit 1 → reads as a byte-FAIL (a confusing false-FAIL), not a clean skip.
+*Action:* the implementation outline should explicitly require initializing every new stash var to `""` at the declaration block, exactly as the v1.0 vars are.
+
+### Optional
+
+**Opt-1 — Differential #4's `awk -F'\t' 'NR==1{print NF}'` is correct here but should be documented as relying on line 1 having a populated hexamer.** I verified all 7 ffs lines are NF=10 (interior penta-empties keep the tab, so NF stays 10; the hexamer col 10 is always populated, even `CC` on the short chrC). On full hg38, line 1 will be a normal CpG with a full hexamer → NF=10. The check is sound. Optionally count NF on a line known to be fully populated, or assert `NF==10` across all lines via `awk 'NF!=10{exit 1}'`, to be robust against a degenerate first line.
+
+**Opt-2 — §3.3.2 (`nome` core lines < default) compares the NOMe core report to the `default` cell's CpG report; confirm both cells use the SAME cov+genome in the matrix.** They do (every cell runs the same `<COV_GZ>` + `--genome`), so the inequality is meaningful. Worth one sentence pinning this, since the differential is only valid when the reference and subject share inputs.
+
+**Opt-3 — The lean 6-cell set leaves the new modes' `--split_by_chromosome` per-chr writer lifecycle untested at scale.** The plan flags this as an Open question and defaults to skipping (locally golden-covered). I concur the lean set is sufficient to gate v1.x — the split lifecycle is a generic mechanism already scale-proven by the v1.0 `split` cell; the new modes reuse the same per-chr truncating writers (drach.rs:98, report.rs:563). Adding `gc_split`/`drach_split` is genuinely nice-to-have, not gating. Affirm the lean set; add the split cells only if the oxy run has spare time/disk.
+
+**Opt-4 — RELEASE_CHECKLIST_c2c.md still says `git checkout rust/coverage2cytosine` (line 55) and titles itself "v1.0 release checklist (Phase E)".** The plan §5.2 commits to updating the checklist; ensure that update also fixes the branch to `rust/c2c-v1x`, the tag to the v1.x name, and the cell list (currently the 9 v1.0 cells at lines 92-94). Minor, already in scope, but easy to miss.
+
+---
+
+## Area-by-area assessment (against the review focus)
+
+1. **Per-mode filename enumeration (focus 1):** ✅ All six cells' filenames verified live against Rust + Perl. The drach underscore names (`c2c_DRACH_report.txt` / `c2c_DRACH.cov`) and the dotted GpC/NOMe names (`c2c.GpC_report.txt`, `c2c.NOMe.CpG.cov`, etc.) all match §3.1/§3.2 exactly. No glob in `REQUIRE_NONEMPTY` mis-names a stream → no silent non-fire from a typo. The ONLY issue is Imp-1 (a correctly-named guard pointed at a data-dependently-empty stream).
+
+2. **`ffs_nome` required-EMPTY handling (focus 2):** ✅ `c2c.NOMe.CpG.cov` is 0-byte on BOTH Perl and Rust (verified). The plan correctly KEEPS it OUT of `REQUIRE_NONEMPTY` (§3.2 warning is accurate and well-reasoned). The per-cell file-set + byte-compare validate it (0==0). The §3.3.5 differential is correct in intent but fail-OPEN as worded (Imp-2). Bonus finding: `.NOMe.GpC_report.txt` is ALSO 0-byte under `--ffs --nome-seq` on the fixture, yet the plan's `[ffs_nome]` require-nonempty lists it (Imp-1).
+
+3. **Differential rigor (focus 3):** Mixed. #2/#3/#4 are genuine no-op catchers and would FAIL if a flag were silently dropped. #1 is redundant/over-claimed (Imp-3). #5 is insurance and must stash (Imp-2). The ffs NF measurement and the drach standalone file-set claim are both verified correct (the drach run produced NO `.CpG_report.txt`/summary). None are tautological in the dangerous sense (comparing a cell to itself / passing on a no-op) EXCEPT #1's equality clause, which I've flagged.
+
+4. **Fail-CLOSED integration (focus 4):** The reused machinery (`set -euo pipefail`, file-set match, byte-compare, gzip-integrity, binary exit codes) is unchanged and remains the real backstop — sound. The new additions are safe IF (a) stash vars are init'd `""` (Imp-4), (b) the §3.3.5 check reads a stash not a post-purge stat (Imp-2), (c) every differential keeps the `ran X && [[ -n "$VAR" ]]` guard. The plan's §3.4/§5.1 commit to these but the prose in §3.3.5 must be tightened.
+
+5. **Disk + oxy operational (focus 5):** Sound. The GpC/NOMe/DRACH reports emit only COVERED positions (threshold ≥ 1; verified in gpc.rs:250/265 and drach.rs), so they scale with the 10M-PE cov's covered count (a few GB), NOT the full genome. `ffs_cx` (gzipped) remains the dominant consumer, correctly identified. cx-first + purge-on-pass + the `--CX`-cov reuse all hold. The multi-hour runtime + the Perl `--drach` 20 s sleep (I observed ~24 s wall on a tiny fixture, dominated by the sleep) are accounted for and negligible at full-genome wall-time. The cov.gz-reuse path is sound (same inputs as v1.0).
+
+6. **Validation sufficiency / scope (focus 6):** The lean 6-cell set is sufficient to gate v1.x (Opt-3). The mandatory §3.5 local self-test (broken output → FAIL, no-op → FAIL, ffs_nome non-empty cov → FAIL) is the right gate-on-the-gate and mirrors the v1.0 V1/V11 discipline — keep it mandatory. One real scale-only risk it should add to the self-test: a probe that the GpC require-nonempty FALSE-FAILS gracefully (clear message) on an empty GpC stream, to surface Imp-1 before the oxy spend.
+
+---
+
+## Recommendation
+
+**APPROVE-WITH-CHANGES.** Fold Imp-1 through Imp-4 (all small, all in the plan's own §3.2/§3.3/§5 scope) before implementation. The core design — additive cells on the proven fail-CLOSED harness, six verified streams, four real differentials — is correct and the byte-identity holds on every mode I ran live. The residual risk is a correct-run FALSE-FAIL (Imp-1) and an insurance-only fail-OPEN differential (Imp-2), not a wrong-gate-passes hole at the per-cell layer.
