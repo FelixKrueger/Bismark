@@ -31,9 +31,10 @@ Single-threaded, full 10.29 GB input, genome warm in page cache:
 - [x] **C1 (full plain) PASS** byte-identical.
 - [x] **C2 (gz-input) PASS** byte-identical, md5 == plain.
 - [~] **C3** (native single-cell NOMe-Seq SE sample): none present on oxy → gated on the benchmark **10M SE** `--yacht` instead (a real, full-scale stressor; the comparison is Perl-NOMe vs Rust-NOMe on a common input regardless of provenance).
-- [ ] CHANGELOG + crate README (pending).
-- [ ] Commit the gate driver + this result (pending).
-- [ ] Tag `bismark-nome-filtering-v1.0.0-beta.1` (pending Felix's go).
+- [x] CHANGELOG + crate README added.
+- [x] Committed the gate driver (`tests/data/phase_c/nome_gate.sh`) + this result + version bump (0.1.0→1.0.0-beta.1) in release commit `2a2a6a5`.
+- [x] **Tagged `bismark-nome-filtering-v1.0.0-beta.1`** (at `2a2a6a5`) + branch + tag pushed to `origin`.
+- [x] oxy gate artifacts purged (~10 GB); `~/nome-build` worktree + binary kept.
 
 ## Reproduce
 Driver: `tests/data/phase_c/nome_gate.sh` (committed). On oxy: launch from the per-side output dir with a bare filename (Perl checks `-e` at launch-cwd then opens relative to `--dir`; launching from the dir with no `--dir` satisfies both — the extractor's real invocation pattern).
