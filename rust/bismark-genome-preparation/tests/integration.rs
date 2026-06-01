@@ -108,6 +108,52 @@ fn binary_combined_genome_is_ct_concat_ga() {
 }
 
 #[test]
+fn binary_genomic_composition_freq_table_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let genome = tmp.path().join("genome");
+    fs::create_dir_all(&genome).unwrap();
+    fs::write(genome.join("g.fa"), b">chr1\nACGT\n").unwrap();
+    let bin = fake_indexer_dir(tmp.path());
+
+    Command::cargo_bin("bismark_genome_preparation_rs")
+        .unwrap()
+        .env("BISMARK_BIN", &bin)
+        .arg("--genomic_composition")
+        .arg(&genome)
+        .assert()
+        .success();
+
+    // "ACGT" → mono A,C,G,T=1; di AC,CG,GT=1; byte-lexical (mono before its di).
+    let freq = fs::read(genome.join("genomic_nucleotide_frequencies.txt")).unwrap();
+    assert_eq!(
+        freq,
+        b"A\t1\nAC\t1\nC\t1\nCG\t1\nG\t1\nGT\t1\nT\t1\n".to_vec()
+    );
+}
+
+/// Without `--genomic_composition`, the frequency table is NOT produced.
+#[test]
+fn binary_no_genomic_composition_flag_writes_no_table() {
+    let tmp = tempfile::tempdir().unwrap();
+    let genome = tmp.path().join("genome");
+    fs::create_dir_all(&genome).unwrap();
+    fs::write(genome.join("g.fa"), b">chr1\nACGT\n").unwrap();
+    let bin = fake_indexer_dir(tmp.path());
+
+    Command::cargo_bin("bismark_genome_preparation_rs")
+        .unwrap()
+        .env("BISMARK_BIN", &bin)
+        .arg(&genome)
+        .assert()
+        .success();
+
+    assert!(
+        !genome.join("genomic_nucleotide_frequencies.txt").exists(),
+        "freq table must not exist without --genomic_composition"
+    );
+}
+
+#[test]
 fn binary_no_fasta_dir_errors() {
     let tmp = tempfile::tempdir().unwrap();
     let genome = tmp.path().join("empty_genome");
@@ -388,6 +434,41 @@ fn perl_vs_rust_slam() {
             "Bisulfite_Genome/CT_conversion/genome_mfa.CT_conversion.fa",
             "Bisulfite_Genome/GA_conversion/genome_mfa.GA_conversion.fa",
         ],
+    );
+}
+
+/// `--genomic_composition`: the mono/di-nucleotide frequency table vs real
+/// Perl. Exercises lowercase (`uc`), IUPAC ambiguity codes (**counted**, NOT
+/// mapped to `N` — unlike the conversion path), `N`-skipping, di across line
+/// boundaries (within `chr1`), multi-record + multi-file (no di across
+/// chromosomes/files), and a final line without a trailing newline.
+///
+/// `chr4.fa` additionally pins the `s/\r//`-first-only path and the high-byte
+/// (`uc` vs `to_ascii_uppercase`) tail against **live Perl**: a CRLF header, a
+/// double-`\r` line (first `\r` removed, second survives + counted), a stray
+/// high byte (`0xc3 0xa9`, UTF-8 `é`, counted as its own keys), and a lowercase
+/// `n` (uppercased to `N`, then skipped). Since `oracle_compare` diffs Perl's
+/// output against Rust's, no hand-computed expectation is needed. The table
+/// lands in the genome folder root, not `Bisulfite_Genome/`.
+#[test]
+fn perl_vs_rust_genomic_composition() {
+    oracle_compare(
+        |dir| {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(
+                dir.join("chr1.fa"),
+                b">chr1 desc\nACGTacgtNRYK\nTTTTCCCCGGGG\n>chr2\nGATTACA\n",
+            )
+            .unwrap();
+            fs::write(dir.join("chr3.fa"), b">chr3\nGGGCCCttt").unwrap();
+            fs::write(
+                dir.join("chr4.fa"),
+                b">chr4\r\nAC\r\rGT\r\nGG\xc3\xa9CCnnTT\r\n",
+            )
+            .unwrap();
+        },
+        &["--genomic_composition"],
+        &["genomic_nucleotide_frequencies.txt"],
     );
 }
 

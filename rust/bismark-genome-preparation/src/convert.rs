@@ -106,8 +106,9 @@ fn header_line(name: &[u8], side: Side, out: &mut Vec<u8>) {
 }
 
 /// Open a FASTA file for reading, transparently decompressing `.gz`
-/// (multi-member safe). Returns a buffered byte reader.
-fn open_fasta(path: &Path) -> Result<Box<dyn BufRead>, GenomePrepError> {
+/// (multi-member safe). Returns a buffered byte reader. Shared with the
+/// `--genomic_composition` read path ([`crate::composition`]).
+pub(crate) fn open_fasta(path: &Path) -> Result<Box<dyn BufRead>, GenomePrepError> {
     let f = File::open(path)?;
     let is_gz = path
         .file_name()
