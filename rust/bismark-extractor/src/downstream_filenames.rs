@@ -1,123 +1,50 @@
-//! Phase G — subprocess chain to Perl `bismark2bedGraph` + `coverage2cytosine`.
+//! Phase 2 — in-process file-coupled orchestration of `bismark2bedGraph` +
+//! `coverage2cytosine`.
 //!
-//! Per SPEC §6.6 and the Phase G plan, the v1.0 extractor shells out to the
-//! existing Perl tools rather than implementing the bedGraph / cytosine_report
-//! algorithms inline. The Rust port's responsibilities here are:
+//! After extraction writes the per-context split files, the extractor drives
+//! the bedGraph + cytosine-report tools **in-process** (no fork/exec, no Perl):
+//! it builds the argv each standalone binary would receive, feeds it to that
+//! crate's own `Cli::try_parse_from(..).validate()`, and calls its `run()`.
+//! This supersedes the scaffolded Phase G Perl-subprocess chain (the
+//! discovery/spawn/tee machinery was deleted in Phase 2).
 //!
-//! 1. **Subprocess discovery** — `BISMARK_BIN` env (strict if set), then `PATH`,
-//!    then alongside the Rust binary (`current_exe()` parent).
-//! 2. **Argv construction** — match Perl `bismark_methylation_extractor:323-428`
-//!    byte-for-byte modulo Perl's GetOptions prefix-abbreviation (Perl pushes
-//!    `--remove`/`--zero`; Rust pushes the long forms `--remove_spaces`/
-//!    `--zero_based` that the subprocess GetOptions resolves to the same flag).
-//! 3. **Stderr handling** — TEE: spawn the child with piped stderr, drain it on
-//!    a side thread that writes each line live to the parent's stderr and
-//!    retains the trailing 64 KiB in a ring buffer for error reporting.
-//! 4. **Error propagation** — non-zero exit → `SubprocessFailed { tool,
-//!    exit_status, stderr_tail }`; missing tool → `SubprocessNotFound`; spawn
-//!    failure → `SubprocessSpawnFailed`.
+//! The module retains two responsibilities:
 //!
-//! ## Byte-identity invariant
+//! 1. **Filename derivation** (`derive_bedgraph_filename` /
+//!    `derive_coverage_filename` / `derive_cytosine_filename`) — mirrors Perl
+//!    `bismark_methylation_extractor:325-330, :392-399, :419-420` to compute
+//!    the output basenames the downstream tools should use. These are
+//!    byte-identity-load-bearing (see the trailing-dot quirk below).
+//! 2. **Argv construction** (`build_bismark2bedgraph_argv` /
+//!    `build_coverage2cytosine_argv`) — emits the flags + positionals that the
+//!    **Rust** `bismark_bedgraph::Cli` / `bismark_coverage2cytosine::Cli`
+//!    accept. (Phase 2 T1 reconciled these from the old Perl-CLI spellings; the
+//!    notable fix was c2c `--genome` → `--genome_folder`.)
 //!
-//! `argv` passed to Perl `bismark2bedGraph` and `coverage2cytosine` from the
-//! Rust port MUST match the Perl extractor's `@args` byte-for-byte, modulo the
-//! long-form flag expansion documented in the Phase G plan §2.4.4. The
-//! `tests/phase_g_argv_parity.rs` golden tests assert this for the three
-//! canonical Phase G configurations.
-//!
-//! ## Filename-derivation quirk (rev 1 C3)
+//! ## Byte-identity invariant (filenames)
 //!
 //! Perl `:325-330` strips the **literal** trailing letters `gz`, `sam`, `bam`,
 //! `txt` (no leading dot). Chained extensions therefore preserve a trailing
 //! dot: `foo.bam.gz` → `foo.bam.bedGraph`. No-extension inputs produce no
 //! leading dot: `foo` → `foobedGraph`. The `derive_*` functions below mirror
 //! Perl's regex pipeline step-by-step.
+//!
+//! ## c2c cov-path gotcha (Phase 2 NEW-1)
+//!
+//! Rust `coverage2cytosine` **ignores `--parent_dir`** and opens the positional
+//! coverage file **verbatim from the CWD** (`report.rs` → `cov.rs::open_cov`).
+//! The in-process orchestrator therefore passes the cov positional as an
+//! **absolute** path (`output_dir.join(coverage_filename)`); a bare basename
+//! would ENOENT whenever the extractor's CWD differs from `--output_dir`.
+//! Output naming is unaffected (c2c derives report names from `--output`).
 
-use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::fmt;
-use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::thread;
+
+use clap::Parser;
 
 use crate::cli::ResolvedConfig;
 use crate::error::BismarkExtractorError;
-
-/// Maximum stderr-tail bytes retained for error reporting. The full stderr
-/// stream is still tee'd live to the parent's stderr; this cap only bounds
-/// the in-memory copy attached to a [`BismarkExtractorError::SubprocessFailed`].
-const SUBPROCESS_STDERR_RING_CAP: usize = 65536; // 64 KiB
-
-/// Identifies which Perl subprocess is being invoked. Used for discovery,
-/// argv-building dispatch, and error messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubprocessTool {
-    /// `bismark2bedGraph` — Perl `bismark_methylation_extractor:377`.
-    Bismark2BedGraph,
-    /// `coverage2cytosine` — Perl `bismark_methylation_extractor:424`.
-    Coverage2Cytosine,
-}
-
-impl SubprocessTool {
-    /// The on-disk binary name the subprocess is expected to be installed as.
-    /// Matches Perl's `$RealBin/<name>` invocation.
-    pub fn binary_name(self) -> &'static str {
-        match self {
-            Self::Bismark2BedGraph => "bismark2bedGraph",
-            Self::Coverage2Cytosine => "coverage2cytosine",
-        }
-    }
-}
-
-impl fmt::Display for SubprocessTool {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.binary_name())
-    }
-}
-
-// ─── Ring buffer ────────────────────────────────────────────────────────────
-
-/// Bounded byte-level FIFO with O(1) eviction. Owned by the stderr drain
-/// thread; never shared. Snapshot returned via thread `join`.
-pub(crate) struct RingBuffer {
-    buf: VecDeque<u8>,
-    cap: usize,
-}
-
-impl RingBuffer {
-    pub(crate) fn new(cap: usize) -> Self {
-        Self {
-            buf: VecDeque::with_capacity(cap),
-            cap,
-        }
-    }
-
-    /// Append `bytes`, evicting from the front to stay within `cap`. If
-    /// `bytes.len() >= cap`, the buffer is fully replaced by the trailing
-    /// `cap` bytes of the input.
-    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) {
-        if bytes.len() >= self.cap {
-            self.buf.clear();
-            self.buf.extend(&bytes[bytes.len() - self.cap..]);
-            return;
-        }
-        while self.buf.len() + bytes.len() > self.cap {
-            self.buf.pop_front();
-        }
-        self.buf.extend(bytes);
-    }
-
-    /// Consume into a `Vec<u8>` snapshot (used at thread-join time).
-    pub(crate) fn into_vec(self) -> Vec<u8> {
-        self.buf.into_iter().collect()
-    }
-
-    #[allow(dead_code)] // used by inline tests
-    pub(crate) fn len(&self) -> usize {
-        self.buf.len()
-    }
-}
 
 // ─── Filename derivation (Perl :325-330, :392-399, :419-420) ────────────────
 
@@ -179,102 +106,14 @@ pub fn derive_cytosine_filename(bedgraph_filename: &str, cx_context: bool) -> St
     }
 }
 
-// ─── Subprocess discovery (BISMARK_BIN-first, strict; PATH; current_exe) ────
+// ─── Argv builders (target the RUST bedGraph / c2c CLIs; Phase 2 T1) ─────────
 
-/// Locate the on-disk binary for `tool`. Search order:
-///
-/// 1. `BISMARK_BIN` env var (strict): if set and non-empty, `$BISMARK_BIN/<tool>`
-///    must exist and be executable, else `SubprocessNotFound`. **No fallback.**
-///    Empty string is treated as "unset" and falls through to step 2.
-/// 2. `PATH` lookup via the `which` crate.
-/// 3. `current_exe()`'s parent directory (mirrors Perl `$RealBin`). Under
-///    `#[cfg(test)]`, the `BISMARK_TEST_CURRENT_EXE_DIR` env var overrides
-///    `current_exe()` to support fake-binary placement without symlinks.
-///
-/// Returns `SubprocessNotFound { tool, searched_paths }` if all three fail.
-pub fn discover_subprocess(tool: SubprocessTool) -> Result<PathBuf, BismarkExtractorError> {
-    let mut searched: Vec<PathBuf> = Vec::new();
-    let tool_name = tool.binary_name();
-
-    // 1. BISMARK_BIN strict.
-    if let Ok(bin_dir) = std::env::var("BISMARK_BIN")
-        && !bin_dir.is_empty()
-    {
-        let candidate = PathBuf::from(&bin_dir).join(tool_name);
-        searched.push(candidate.clone());
-        if is_executable_file(&candidate) {
-            return Ok(candidate);
-        }
-        return Err(BismarkExtractorError::SubprocessNotFound {
-            tool,
-            searched_paths: searched,
-        });
-    }
-
-    // 2. PATH via `which`.
-    match which::which(tool_name) {
-        Ok(p) => return Ok(p),
-        Err(_) => searched.push(PathBuf::from(format!("$PATH/{tool_name}"))),
-    }
-
-    // 3. current_exe() parent (test-overridable).
-    let exe_dir = current_exe_dir_for_lookup();
-    if let Some(dir) = exe_dir {
-        let candidate = dir.join(tool_name);
-        searched.push(candidate.clone());
-        if is_executable_file(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(BismarkExtractorError::SubprocessNotFound {
-        tool,
-        searched_paths: searched,
-    })
-}
-
-/// Resolve the `current_exe()` parent directory for discovery step 3. The
-/// `BISMARK_TEST_CURRENT_EXE_DIR` env var, if set + non-empty, overrides
-/// `current_exe()` to support test placement of fake binaries without
-/// symlinking the test binary itself. Harmless in production (the env var
-/// won't be set); intentionally not gated behind `#[cfg(test)]` because
-/// integration-test crates don't inherit the lib's cfg(test) flag.
-fn current_exe_dir_for_lookup() -> Option<PathBuf> {
-    if let Ok(test_dir) = std::env::var("BISMARK_TEST_CURRENT_EXE_DIR")
-        && !test_dir.is_empty()
-    {
-        return Some(PathBuf::from(test_dir));
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-}
-
-#[cfg(unix)]
-fn is_executable_file(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let Ok(meta) = std::fs::metadata(p) else {
-        return false;
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    meta.permissions().mode() & 0o111 != 0
-}
-
-#[cfg(not(unix))]
-fn is_executable_file(p: &Path) -> bool {
-    // Non-unix: just check file presence; permission semantics differ.
-    std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
-}
-
-// ─── Argv builders (Perl :333-373 + :388-422) ───────────────────────────────
-
-/// Build the argv list (excluding argv[0]) for `bismark2bedGraph`. Mirrors
-/// Perl `:333-373` order and flag selection. Long-form flag names are used
-/// throughout; Perl uses GetOptions prefix-abbreviation (`--remove`,
-/// `--zero`) but `bismark2bedGraph` resolves them to the same long-form
-/// flags (`--remove_spaces`, `--zero_based`).
+/// Build the argv list (excluding argv[0]) for the in-process
+/// `bismark_bedgraph::Cli`. Every emitted flag is one the **Rust**
+/// `bismark2bedGraph` CLI accepts (`bismark-bedgraph/src/cli.rs`). Phase 2 T1
+/// reconciled this from the old Perl-CLI spellings; the bedGraph side already
+/// used the long forms (`--remove_spaces`, `--zero_based`) the Rust CLI exposes
+/// directly.
 ///
 /// `kept_split_files` are appended verbatim as positional arguments (the
 /// post-empty-sweep set, absolute paths, sorted lexicographically).
@@ -325,24 +164,33 @@ pub fn build_bismark2bedgraph_argv(
     argv
 }
 
-/// Build the argv for `coverage2cytosine`. Mirrors Perl `:388-422`. Note
-/// that `--parent_dir` is intentionally set equal to `--dir` (rev 1 I13),
-/// matching Perl `:404`.
+/// Build the argv for the in-process `bismark_coverage2cytosine::Cli`. Every
+/// emitted flag is one the **Rust** `coverage2cytosine` CLI accepts
+/// (`bismark-coverage2cytosine/src/cli.rs`).
+///
+/// Phase 2 T1: the genome flag is `--genome_folder` (the Rust CLI has no
+/// `--genome` and does not infer abbreviations). `--parent_dir` is still passed
+/// for argv shape but is **inert** in the Rust port (stored, never read).
+///
+/// Phase 2 NEW-1: the caller MUST pass `coverage_input_path` as an **absolute**
+/// path — the Rust c2c opens the cov positional verbatim from the CWD, so a
+/// bare basename ENOENTs whenever CWD ≠ `output_dir`.
 pub fn build_coverage2cytosine_argv(
     config: &ResolvedConfig,
-    coverage_input_filename: &str,
+    coverage_input_path: &Path,
     cytosine_output_filename: &str,
     output_dir: &Path,
     genome_folder: &Path,
 ) -> Vec<OsString> {
     // Header section is unconditional; use vec![] for clippy + readability.
-    // --parent_dir == --dir per Perl :404 (rev 1 I13).
+    // --parent_dir == --dir per Perl :404 (rev 1 I13). It is inert in the Rust
+    // c2c (ignored at runtime) but kept for argv-shape parity.
     let mut argv: Vec<OsString> = vec![
         "--output".into(),
         cytosine_output_filename.into(),
         "--dir".into(),
         output_dir.as_os_str().to_owned(),
-        "--genome".into(),
+        "--genome_folder".into(),
         genome_folder.as_os_str().to_owned(),
         "--parent_dir".into(),
         output_dir.as_os_str().to_owned(),
@@ -359,189 +207,96 @@ pub fn build_coverage2cytosine_argv(
     if config.gzip {
         argv.push("--gzip".into());
     }
-    // Positional: .bismark.cov.gz filename (basename; coverage2cytosine
-    // reads from --dir).
-    argv.push(coverage_input_filename.into());
+    // Positional: the .bismark.cov.gz file, as an ABSOLUTE path (NEW-1).
+    argv.push(coverage_input_path.as_os_str().to_owned());
     argv
 }
 
-// ─── Runner trait + RealRunner ─────────────────────────────────────────────
+// ─── In-process orchestrator ─────────────────────────────────────────────────
 
-/// Outcome of a single subprocess invocation. On non-zero exit the orchestrator
-/// converts this into a `SubprocessFailed` error; on success it's discarded
-/// (the stderr was already tee'd live to the parent's stderr).
-#[derive(Debug)]
-pub struct RunOutcome {
-    /// Exit status reported by the OS.
-    pub exit_status: ExitStatus,
-    /// Trailing ≤ 64 KiB of stderr captured via the tee drain thread.
-    pub stderr_tail: Vec<u8>,
+/// Basename of `p` as a `&str` (lossy-safe). Used by the no-CpG pre-check.
+fn basename_str(p: &Path) -> std::borrow::Cow<'_, str> {
+    p.file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or(std::borrow::Cow::Borrowed(""))
 }
 
-/// Abstracts subprocess invocation so tests can swap a mock implementation
-/// without spawning real children. Production: [`RealRunner`] shells out via
-/// `std::process::Command`. Tests: a closure-based runner that captures the
-/// call and synthesises an outcome.
-pub trait BismarkSubprocessRunner {
-    /// Run `program` with `argv`. The implementor is responsible for stderr
-    /// tee + ring-buffer semantics (for `RealRunner` — see module docs).
-    fn run(
-        &self,
-        tool: SubprocessTool,
-        program: &Path,
-        argv: &[OsString],
-    ) -> Result<RunOutcome, BismarkExtractorError>;
-}
-
-/// Production implementation. Spawns the child via `Command`; spawns a stderr
-/// drain thread BEFORE calling `child.wait()` (prevents pipe-buffer-full
-/// deadlock on >64 KiB stderr bursts); reads via `read_until(b'\n', ...)`
-/// (byte-safe; doesn't require UTF-8 stderr); always joins the drain thread
-/// before returning (prevents stderr-tail races + thread leaks).
-pub struct RealRunner {
-    /// Suppress the pre-spawn audit line under `--quiet` (#882).
-    pub quiet: bool,
-}
-
-impl BismarkSubprocessRunner for RealRunner {
-    fn run(
-        &self,
-        tool: SubprocessTool,
-        program: &Path,
-        argv: &[OsString],
-    ) -> Result<RunOutcome, BismarkExtractorError> {
-        // Pre-spawn audit line (rev 1 O2). Informational → gated by --quiet (#882).
-        if !self.quiet {
-            eprintln!(
-                "[bismark-extractor] spawning: {} {}",
-                program.display(),
-                argv.iter()
-                    .map(|a| a.to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-        }
-
-        let mut child = Command::new(program)
-            .args(argv)
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            // stdout inherited (subprocesses write outputs to files via --output)
-            .spawn()
-            .map_err(|source| BismarkExtractorError::SubprocessSpawnFailed { tool, source })?;
-
-        // Take stderr immediately; spawn drain thread BEFORE child.wait()
-        // (rev 1 I6 — prevents pipe-buffer-full deadlock).
-        let stderr = child
-            .stderr
-            .take()
-            .expect("stderr was set to piped at spawn time");
-
-        let drain_handle = thread::spawn(move || -> io::Result<Vec<u8>> {
-            let mut ring = RingBuffer::new(SUBPROCESS_STDERR_RING_CAP);
-            let mut reader = BufReader::new(stderr);
-            let mut buf: Vec<u8> = Vec::with_capacity(4096);
-            let stderr_out = io::stderr();
-            let mut stderr_lock = stderr_out.lock();
-            loop {
-                buf.clear();
-                // read_until is byte-safe (unlike read_line which errors on
-                // non-UTF-8). rev 1 C5.
-                let n = reader.read_until(b'\n', &mut buf)?;
-                if n == 0 {
-                    break; // EOF
-                }
-                stderr_lock.write_all(&buf)?;
-                ring.push_bytes(&buf);
-            }
-            stderr_lock.flush()?;
-            Ok(ring.into_vec())
-        });
-
-        // Phase G rev 2 (code-review A ER1 fix): join the drain BEFORE
-        // inspecting `child.wait()`'s outcome. The previous code returned
-        // via `?` on a `wait()` failure and skipped the drain join,
-        // contradicting the rev-1 I1 "always join" contract. The drain
-        // naturally exits when the subprocess closes stderr (which happens
-        // on exit, success or fail), so joining first is correct ordering
-        // — `wait()` then returns immediately because the child has already
-        // exited.
-        let wait_result = child.wait();
-        let stderr_tail = match drain_handle.join() {
-            Ok(Ok(tail)) => tail,
-            Ok(Err(e)) => {
-                return Err(BismarkExtractorError::InternalError {
-                    message: format!("stderr drain thread io error: {e}"),
-                });
-            }
-            Err(_panic) => {
-                return Err(BismarkExtractorError::InternalError {
-                    message: "stderr drain thread panicked".to_string(),
-                });
-            }
-        };
-        let exit_status = wait_result
-            .map_err(|source| BismarkExtractorError::SubprocessSpawnFailed { tool, source })?;
-
-        Ok(RunOutcome {
-            exit_status,
-            stderr_tail,
-        })
-    }
-}
-
-// ─── Orchestrator ──────────────────────────────────────────────────────────
-
-/// Run the Phase G subprocess chain. Invoked from
-/// [`crate::state::ExtractState::finalize`] after split files + splitting
-/// report + M-bias.txt have been written, when `config.bedgraph` is true.
+/// Drive `bismark2bedGraph` then (optionally) `coverage2cytosine` in-process.
 ///
-/// Order:
-///   1. If `config.bedgraph` is false: no-op return Ok(()).
-///   2. If `kept_split_files` is empty AND `config.cytosine_report` is set:
-///      emit a UX warning to stderr (chain still runs).
-///   3. Discover `bismark2bedGraph`; build argv; run via `runner`. On non-zero
-///      exit, return `SubprocessFailed` (coverage2cytosine never invoked).
-///   4. If `config.cytosine_report` is set: discover `coverage2cytosine`;
-///      build argv referring to the `.bismark.cov.gz` produced by step 3;
-///      run. Same error semantics.
+/// Invoked from [`crate::state::ExtractState::finalize`] after the split files +
+/// splitting report + M-bias.txt have been written, when `config.bedgraph` is
+/// true. Runs AFTER the M-bias write so the console-output ordering after the
+/// M-bias summary is preserved.
+///
+/// Steps:
+/// 1. If `config.bedgraph` is false: no-op return `Ok(())`.
+/// 2. **No-CpG / empty-input pre-check (Phase 2 T5)**: if there is no usable
+///    input for bedGraph (under `--CX`, the `kept` set is empty; otherwise no
+///    kept file's basename starts with `"CpG"`), warn via the logger and **skip**
+///    the downstream steps, returning `Ok(())` (exit 0). This matches Perl's
+///    *net output*: Perl `bismark2bedGraph:111` / `coverage2cytosine:473` die on
+///    such input, but the Perl extractor's `system()` calls are unchecked, so it
+///    finishes (exit 0, no downstream files).
+/// 3. Build + parse + validate + run the in-process `bismark2bedGraph`.
+/// 4. If `config.cytosine_report`: build + parse + validate + run the in-process
+///    `coverage2cytosine`, feeding it the `.bismark.cov.gz` written in step 3
+///    (as an ABSOLUTE path — NEW-1).
 ///
 /// All filename derivations preserve Perl's trailing-dot quirk per
 /// [`derive_bedgraph_filename`].
-pub fn run_phase_g_chain<R: BismarkSubprocessRunner>(
+pub fn run_downstream_chain(
     config: &ResolvedConfig,
     input_basename: &str,
     output_dir: &Path,
     kept_split_files: &[PathBuf],
-    runner: &R,
 ) -> Result<(), BismarkExtractorError> {
     if !config.bedgraph {
         return Ok(());
     }
 
-    // UX warning for empty-kept-set + cytosine_report (rev 1 I14).
-    if kept_split_files.is_empty() && config.cytosine_report {
-        eprintln!(
-            "note: extractor produced no methylation calls; \
-             cytosine_report will scan the genome anyway"
+    // ── Pre-check: usable bedGraph input? (T5) ──
+    // Default (CpG-only) bedGraph reads ONLY files whose basename starts with
+    // "CpG"; --CX reads all kept files. If nothing is usable, warn + skip.
+    let usable = if config.cx_context {
+        !kept_split_files.is_empty()
+    } else {
+        kept_split_files
+            .iter()
+            .any(|p| basename_str(p).starts_with("CpG"))
+    };
+    if !usable {
+        let logger = crate::logging::Logger::from_config(config);
+        logger.note(
+            "Warning: no methylation calls usable for bedGraph were produced; \
+             skipping the bedGraph/cytosine_report steps.",
         );
+        return Ok(());
     }
 
-    // ── Step 1: bismark2bedGraph ──
+    // ── Step 1: bismark2bedGraph (in-process) ──
     let bedgraph_filename = derive_bedgraph_filename(input_basename);
-    let b2bg_program = discover_subprocess(SubprocessTool::Bismark2BedGraph)?;
     let b2bg_argv =
         build_bismark2bedgraph_argv(config, kept_split_files, &bedgraph_filename, output_dir);
-    let b2bg_outcome = runner.run(SubprocessTool::Bismark2BedGraph, &b2bg_program, &b2bg_argv)?;
-    if !b2bg_outcome.exit_status.success() {
-        return Err(BismarkExtractorError::SubprocessFailed {
-            tool: SubprocessTool::Bismark2BedGraph,
-            exit_status: b2bg_outcome.exit_status,
-            stderr_tail: b2bg_outcome.stderr_tail,
-        });
-    }
+    let mut b2bg_full: Vec<OsString> = vec!["bismark2bedGraph".into()];
+    b2bg_full.extend(b2bg_argv);
+    let b2bg_cli = bismark_bedgraph::Cli::try_parse_from(&b2bg_full).map_err(|e| {
+        BismarkExtractorError::Downstream {
+            tool: "bismark2bedGraph",
+            message: e.to_string(),
+        }
+    })?;
+    let b2bg_cfg = b2bg_cli
+        .validate()
+        .map_err(|e| BismarkExtractorError::Downstream {
+            tool: "bismark2bedGraph",
+            message: e.to_string(),
+        })?;
+    bismark_bedgraph::run(&b2bg_cfg).map_err(|e| BismarkExtractorError::Downstream {
+        tool: "bismark2bedGraph",
+        message: e.to_string(),
+    })?;
 
-    // ── Step 2: coverage2cytosine (if engaged) ──
+    // ── Step 2: coverage2cytosine (in-process; if engaged) ──
     if config.cytosine_report {
         let coverage_filename = derive_coverage_filename(&bedgraph_filename);
         let cytosine_filename = derive_cytosine_filename(&bedgraph_filename, config.cx_context);
@@ -549,22 +304,36 @@ pub fn run_phase_g_chain<R: BismarkSubprocessRunner>(
             .genome_folder
             .as_ref()
             .expect("CLI validation guarantees genome_folder is Some when cytosine_report is set");
-        let c2c_program = discover_subprocess(SubprocessTool::Coverage2Cytosine)?;
+        // NEW-1: the cov positional MUST be absolute — Rust c2c opens it
+        // verbatim from CWD and ignores --parent_dir.
+        let coverage_input_path = output_dir.join(&coverage_filename);
         let c2c_argv = build_coverage2cytosine_argv(
             config,
-            &coverage_filename,
+            &coverage_input_path,
             &cytosine_filename,
             output_dir,
             genome_folder,
         );
-        let c2c_outcome = runner.run(SubprocessTool::Coverage2Cytosine, &c2c_program, &c2c_argv)?;
-        if !c2c_outcome.exit_status.success() {
-            return Err(BismarkExtractorError::SubprocessFailed {
-                tool: SubprocessTool::Coverage2Cytosine,
-                exit_status: c2c_outcome.exit_status,
-                stderr_tail: c2c_outcome.stderr_tail,
-            });
-        }
+        let mut c2c_full: Vec<OsString> = vec!["coverage2cytosine".into()];
+        c2c_full.extend(c2c_argv);
+        let c2c_cli = bismark_coverage2cytosine::Cli::try_parse_from(&c2c_full).map_err(|e| {
+            BismarkExtractorError::Downstream {
+                tool: "coverage2cytosine",
+                message: e.to_string(),
+            }
+        })?;
+        let c2c_cfg = c2c_cli
+            .validate()
+            .map_err(|e| BismarkExtractorError::Downstream {
+                tool: "coverage2cytosine",
+                message: e.to_string(),
+            })?;
+        bismark_coverage2cytosine::run(&c2c_cfg).map_err(|e| {
+            BismarkExtractorError::Downstream {
+                tool: "coverage2cytosine",
+                message: e.to_string(),
+            }
+        })?;
     }
 
     Ok(())
@@ -610,29 +379,6 @@ mod tests {
             quiet: false,
             verbose: false,
         }
-    }
-
-    // ─── SubprocessTool Display ─────────────────────────────────────────
-
-    #[test]
-    fn subprocess_tool_display_matches_binary_name() {
-        assert_eq!(
-            format!("{}", SubprocessTool::Bismark2BedGraph),
-            "bismark2bedGraph"
-        );
-        assert_eq!(
-            format!("{}", SubprocessTool::Coverage2Cytosine),
-            "coverage2cytosine"
-        );
-        // Round-trip via binary_name() — same source of truth.
-        assert_eq!(
-            SubprocessTool::Bismark2BedGraph.binary_name(),
-            "bismark2bedGraph"
-        );
-        assert_eq!(
-            SubprocessTool::Coverage2Cytosine.binary_name(),
-            "coverage2cytosine"
-        );
     }
 
     // ─── Filename derivation (rev 1 C3 — trailing-dot quirk) ────────────
@@ -877,7 +623,7 @@ mod tests {
 
     #[test]
     fn build_bismark2bedgraph_argv_does_not_pass_gzip() {
-        // bismark2bedGraph has no --gzip flag (`bismark2bedGraph:637-651`).
+        // bismark2bedGraph has no --gzip flag (`bismark-bedgraph/src/cli.rs`).
         let mut cfg = default_config();
         cfg.gzip = true;
         let argv = build_bismark2bedgraph_argv(&cfg, &[], "foo.bedGraph", Path::new("/out"));
@@ -891,13 +637,14 @@ mod tests {
         let cfg = default_config();
         let argv = build_coverage2cytosine_argv(
             &cfg,
-            "foo.bismark.cov.gz",
+            Path::new("/out/foo.bismark.cov.gz"),
             "foo.CpG_report.txt",
             Path::new("/out"),
             Path::new("/genome"),
         );
-        // Order per Perl :388-422 + rev 1 I13 (--parent_dir == --dir).
-        // --zero_based / --CX_context / --split_by_chromosome / --gzip all off.
+        // Order: header (--output --dir --genome_folder --parent_dir) +
+        // conditional flags (none) + absolute cov positional.
+        // Phase 2 T1: --genome_folder (not --genome). NEW-1: absolute cov path.
         assert_eq!(
             argv,
             vec![
@@ -905,13 +652,29 @@ mod tests {
                 OsString::from("foo.CpG_report.txt"),
                 OsString::from("--dir"),
                 OsString::from("/out"),
-                OsString::from("--genome"),
+                OsString::from("--genome_folder"),
                 OsString::from("/genome"),
                 OsString::from("--parent_dir"),
                 OsString::from("/out"),
-                OsString::from("foo.bismark.cov.gz"),
+                OsString::from("/out/foo.bismark.cov.gz"),
             ]
         );
+    }
+
+    #[test]
+    fn build_coverage2cytosine_argv_uses_genome_folder_not_genome() {
+        // Phase 2 T1 (C-1): the Rust c2c CLI rejects --genome; we must emit
+        // --genome_folder.
+        let cfg = default_config();
+        let argv = build_coverage2cytosine_argv(
+            &cfg,
+            Path::new("/out/foo.bismark.cov.gz"),
+            "foo.CpG_report.txt",
+            Path::new("/out"),
+            Path::new("/genome"),
+        );
+        assert!(argv.contains(&OsString::from("--genome_folder")));
+        assert!(!argv.contains(&OsString::from("--genome")));
     }
 
     #[test]
@@ -920,7 +683,7 @@ mod tests {
         cfg.cx_context = true;
         let argv = build_coverage2cytosine_argv(
             &cfg,
-            "foo.bismark.cov.gz",
+            Path::new("/out/foo.bismark.cov.gz"),
             "foo.CX_report.txt",
             Path::new("/out"),
             Path::new("/genome"),
@@ -934,7 +697,7 @@ mod tests {
         cfg.split_by_chromosome = true;
         let argv = build_coverage2cytosine_argv(
             &cfg,
-            "foo.bismark.cov.gz",
+            Path::new("/out/foo.bismark.cov.gz"),
             "foo.CpG_report.txt",
             Path::new("/out"),
             Path::new("/genome"),
@@ -948,7 +711,7 @@ mod tests {
         cfg.gzip = true;
         let argv = build_coverage2cytosine_argv(
             &cfg,
-            "foo.bismark.cov.gz",
+            Path::new("/out/foo.bismark.cov.gz"),
             "foo.CpG_report.txt",
             Path::new("/out"),
             Path::new("/genome"),
@@ -957,26 +720,30 @@ mod tests {
     }
 
     #[test]
-    fn build_coverage2cytosine_argv_positional_is_coverage_file() {
+    fn build_coverage2cytosine_argv_positional_is_absolute_coverage_file() {
+        // NEW-1: the cov positional is the ABSOLUTE path, not a bare basename.
         let cfg = default_config();
         let argv = build_coverage2cytosine_argv(
             &cfg,
-            "foo.bismark.cov.gz",
+            Path::new("/out/foo.bismark.cov.gz"),
             "foo.CpG_report.txt",
             Path::new("/out"),
             Path::new("/genome"),
         );
-        // Last argv element is the .bismark.cov.gz positional infile.
-        assert_eq!(argv.last(), Some(&OsString::from("foo.bismark.cov.gz")));
+        assert_eq!(
+            argv.last(),
+            Some(&OsString::from("/out/foo.bismark.cov.gz"))
+        );
     }
 
     #[test]
     fn build_coverage2cytosine_argv_passes_parent_dir_equal_to_dir() {
-        // rev 1 I13: --parent_dir takes the SAME value as --dir per Perl :404.
+        // rev 1 I13: --parent_dir takes the SAME value as --dir per Perl :404
+        // (inert in the Rust port, but kept for argv-shape parity).
         let cfg = default_config();
         let argv = build_coverage2cytosine_argv(
             &cfg,
-            "foo.bismark.cov.gz",
+            Path::new("/some/output/dir/foo.bismark.cov.gz"),
             "foo.CpG_report.txt",
             Path::new("/some/output/dir"),
             Path::new("/genome"),
@@ -993,55 +760,67 @@ mod tests {
         assert_eq!(argv[dir_idx + 1], OsString::from("/some/output/dir"));
     }
 
-    // ─── Ring buffer ────────────────────────────────────────────────────
+    // ─── Phase 2 T1: argv parses cleanly via each Rust crate's Cli ──────
 
     #[test]
-    fn ring_buffer_under_capacity_returns_full_content() {
-        let mut rb = RingBuffer::new(1024);
-        rb.push_bytes(b"hello");
-        rb.push_bytes(b" world");
-        assert_eq!(rb.into_vec(), b"hello world".to_vec());
+    fn argv_parses_into_each_rust_cli() {
+        // Representative config exercising the flags the builders emit.
+        let mut cfg = default_config();
+        cfg.cytosine_report = true;
+        cfg.cx_context = true;
+        cfg.zero_based = true;
+        cfg.split_by_chromosome = true;
+        cfg.gzip = true;
+        cfg.remove_spaces = true;
+        cfg.no_header = true;
+        cfg.ucsc = true;
+        cfg.cutoff = 3;
+        cfg.genome_folder = Some(PathBuf::from("/genome"));
+
+        // bedGraph side: needs at least one positional file to validate.
+        let kept = vec![PathBuf::from("/out/CpG_OT_input.txt")];
+        let b2bg_argv = build_bismark2bedgraph_argv(&cfg, &kept, "foo.bedGraph", Path::new("/out"));
+        let mut b2bg_full: Vec<OsString> = vec!["bismark2bedGraph".into()];
+        b2bg_full.extend(b2bg_argv);
+        bismark_bedgraph::Cli::try_parse_from(&b2bg_full)
+            .expect("bedGraph argv must parse into bismark_bedgraph::Cli");
+
+        // c2c side.
+        let c2c_argv = build_coverage2cytosine_argv(
+            &cfg,
+            Path::new("/out/foo.bismark.cov.gz"),
+            "foo.CX_report.txt",
+            Path::new("/out"),
+            Path::new("/genome"),
+        );
+        let mut c2c_full: Vec<OsString> = vec!["coverage2cytosine".into()];
+        c2c_full.extend(c2c_argv);
+        bismark_coverage2cytosine::Cli::try_parse_from(&c2c_full)
+            .expect("c2c argv must parse into bismark_coverage2cytosine::Cli");
     }
 
     #[test]
-    fn ring_buffer_evicts_oldest_when_capacity_exceeded() {
-        // Push 1.5x cap; final snapshot is exactly the last `cap` bytes.
-        let cap = 100;
-        let mut rb = RingBuffer::new(cap);
-        let big: Vec<u8> = (0u8..150).collect();
-        rb.push_bytes(&big);
-        let snap = rb.into_vec();
-        assert_eq!(snap.len(), cap);
-        assert_eq!(snap, big[50..].to_vec());
-    }
+    fn argv_parses_into_each_rust_cli_minimal() {
+        // Minimal (all optional flags off) — bedGraph default + c2c CpG-only.
+        let mut cfg = default_config();
+        cfg.cytosine_report = true;
+        cfg.genome_folder = Some(PathBuf::from("/genome"));
 
-    #[test]
-    fn ring_buffer_line_exactly_at_capacity_replaces_entirely() {
-        let cap = 100;
-        let mut rb = RingBuffer::new(cap);
-        rb.push_bytes(&[b'a'; 50]);
-        // Now push something exactly cap-sized — should replace entirely
-        // (push_bytes's >= cap branch fires).
-        let exact: Vec<u8> = vec![b'b'; 100];
-        rb.push_bytes(&exact);
-        assert_eq!(rb.into_vec(), exact);
-    }
+        let kept = vec![PathBuf::from("/out/CpG_OT_input.txt")];
+        let b2bg_argv = build_bismark2bedgraph_argv(&cfg, &kept, "foo.bedGraph", Path::new("/out"));
+        let mut b2bg_full: Vec<OsString> = vec!["bismark2bedGraph".into()];
+        b2bg_full.extend(b2bg_argv);
+        bismark_bedgraph::Cli::try_parse_from(&b2bg_full).expect("minimal bedGraph argv parses");
 
-    #[test]
-    fn ring_buffer_line_larger_than_capacity_keeps_trailing_cap_bytes() {
-        // rev 1: pin exact length + trailing-bytes assertion (replaces
-        // rev 0's "some bounded substring" vacuous test).
-        let cap = 64;
-        let mut rb = RingBuffer::new(cap);
-        let big: Vec<u8> = (0u8..200).cycle().take(128).collect();
-        rb.push_bytes(&big);
-        let snap = rb.into_vec();
-        assert_eq!(snap.len(), cap);
-        assert_eq!(snap, big[64..].to_vec());
+        let c2c_argv = build_coverage2cytosine_argv(
+            &cfg,
+            Path::new("/out/foo.bismark.cov.gz"),
+            "foo.CpG_report.txt",
+            Path::new("/out"),
+            Path::new("/genome"),
+        );
+        let mut c2c_full: Vec<OsString> = vec!["coverage2cytosine".into()];
+        c2c_full.extend(c2c_argv);
+        bismark_coverage2cytosine::Cli::try_parse_from(&c2c_full).expect("minimal c2c argv parses");
     }
-
-    // Subprocess discovery tests use `std::env::{set_var, remove_var}` which
-    // are `unsafe` in Rust 2024+; the crate's `#![forbid(unsafe_code)]` blocks
-    // them at the inline-test level. They live in
-    // `tests/phase_g_discovery.rs` (separate crate; forbid does not apply).
 }

@@ -20,6 +20,10 @@ path = "src/main.rs"
 
 [dependencies]
 bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+# Inline-streaming epic Phase 2: the extractor drives bedGraph + cytosine_report
+# IN-PROCESS via these crates' `Cli`/`run()` (no fork/exec, no Perl subprocess).
+bismark-bedgraph = { path = "../bismark-bedgraph" }
+bismark-coverage2cytosine = { path = "../bismark-coverage2cytosine" }
 clap = { version = "=4.5.30", features = ["derive"] }
 # Multithreaded allocator (#884). The default system allocator's arena locks
 # were the dominant cost of the extractor's parallel pipeline: 4-8 worker
@@ -42,9 +46,9 @@ noodles-sam = "=0.85.0"
 # Phase F: bounded MPMC channels for producer→worker (N×32) and
 # worker→collector (N×8). Pin verified via cargo tree.
 crossbeam-channel = "=0.5.15"
-# Phase G: PATH-based subprocess discovery for bismark2bedGraph + coverage2cytosine.
-# Cross-platform PATH lookup; honours BISMARK_BIN env override per SPEC §6.6.
-which = "=7.0.3"
+# (the `which` dependency was dropped in the inline-streaming epic Phase 2:
+# the bedGraph/cytosine_report chain now runs IN-PROCESS, so there is no
+# subprocess to discover on PATH / via BISMARK_BIN.)
 # (rayon was added then dropped during Phase F implementation. Reason:
 # `rayon::ThreadPool::scope()` consumes one pool thread for its closure,
 # deadlocking at N=1 with our producer/worker/collector pattern. Switched

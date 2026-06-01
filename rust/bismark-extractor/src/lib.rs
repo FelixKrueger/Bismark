@@ -24,9 +24,13 @@
 //!
 //! SE + PE both run end-to-end, with SE-vs-PE auto-detect via
 //! `@PG ID:Bismark` header probe. M-bias.txt + `_splitting_report.txt`
-//! emit per Phase D's byte-identity contract. `--multicore` (Phase F),
-//! `--bedGraph` / `--cytosine_report` (Phase G), and multiple input files
-//! still rejected with [`BismarkExtractorError::PhaseNotYetImplemented`].
+//! emit per Phase D's byte-identity contract. `--multicore` (Phase F) is
+//! supported. `--bedGraph` / `--cytosine_report` drive the `bismark2bedGraph`
+//! and `coverage2cytosine` tools **in-process** (inline-streaming epic Phase
+//! 2; no fork/exec, no Perl): the extractor builds the argv each tool's CLI
+//! accepts, parses and validates it via that crate's `Cli`, and calls its
+//! `run()` on the per-context files. Multiple input files are still
+//! rejected with [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! See [SPEC.md §10](../SPEC.md) for the full phase outline.
 //!
@@ -57,6 +61,7 @@
 
 pub mod call;
 pub mod cli;
+pub mod downstream_filenames;
 pub mod error;
 pub mod header;
 pub mod logging;
@@ -70,7 +75,6 @@ pub mod params;
 pub mod pipeline;
 pub mod route;
 pub mod state;
-pub mod subprocess;
 
 pub use call::{CytosineContext, MethCall, extract_calls};
 pub use cli::{Cli, OutputMode, PairedMode, ResolvedConfig};

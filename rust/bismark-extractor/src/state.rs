@@ -164,30 +164,29 @@ impl ExtractState {
             write_mbias_txt(&mbias_path, &self.mbias, self.is_paired)?;
         }
 
-        // Phase G subprocess chain (gated on `config.bedgraph`, which is
-        // true iff the user set --bedGraph or --cytosine_report — c2c
-        // auto-triggers bedgraph at `cli.rs:455`). Runs AFTER M-bias write
-        // so the user has already seen "M-bias.txt written" before the
-        // subprocess progress messages start streaming.
+        // In-process downstream chain (inline-streaming epic Phase 2). Gated
+        // on `config.bedgraph`, which is true iff the user set --bedGraph or
+        // --cytosine_report (c2c auto-triggers bedgraph at `cli.rs:479`). Runs
+        // AFTER the M-bias write so the user has already seen the M-bias
+        // summary before any downstream progress lines stream. The chain
+        // drives `bismark2bedGraph` + `coverage2cytosine` IN-PROCESS (no
+        // fork/exec, no Perl) via each crate's `Cli`/`validate`/`run`.
         //
-        // **Phase G rev 2 (code-review A L1 fix)**: pass the RAW input
-        // filename (un-stripped), NOT `self.input_basename` (which
+        // **Phase G rev 2 (code-review A L1 fix), preserved**: pass the RAW
+        // input filename (un-stripped), NOT `self.input_basename` (which
         // `pipeline::derive_basename` already stripped of `.bam`/`.sam`/
-        // `.cram`). `subprocess::derive_bedgraph_filename` mirrors Perl
-        // `:325-330` which only path-splits + strips literal `gz`/`sam`/
-        // `bam`/`txt` — feeding it the already-stripped basename would
-        // produce `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`,
-        // breaking Phase H byte-identity on every real `.bam` input.
+        // `.cram`). `downstream_filenames::derive_bedgraph_filename` mirrors
+        // Perl `:325-330` which only path-splits + strips literal `gz`/`sam`/
+        // `bam`/`txt` — feeding it the already-stripped basename would produce
+        // `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`, breaking
+        // byte-identity on every real `.bam` input.
         if config.bedgraph {
-            let raw_filename = derive_raw_filename_for_phase_g(&self.input_path);
-            crate::subprocess::run_phase_g_chain(
+            let raw_filename = derive_raw_filename_for_downstream(&self.input_path);
+            crate::downstream_filenames::run_downstream_chain(
                 config,
                 &raw_filename,
                 &config.output_dir,
                 &finalization.kept,
-                &crate::subprocess::RealRunner {
-                    quiet: config.quiet,
-                },
             )?;
         }
 
@@ -202,13 +201,14 @@ impl ExtractState {
     }
 }
 
-/// Extract the RAW input filename (un-stripped) for Phase G's filename
-/// derivation. Mirrors Perl `bismark_methylation_extractor:325` which does
-/// `my $out = (split (/\//, $filename))[-1];` — i.e. path-split only, no
+/// Extract the RAW input filename (un-stripped) for the downstream chain's
+/// filename derivation. Mirrors Perl `bismark_methylation_extractor:325` which
+/// does `my $out = (split (/\//, $filename))[-1];` — i.e. path-split only, no
 /// extension stripping. The subsequent `s/gz$//`, `s/sam$//`, `s/bam$//`,
-/// `s/txt$//` pipeline lives in [`crate::subprocess::derive_bedgraph_filename`].
+/// `s/txt$//` pipeline lives in
+/// [`crate::downstream_filenames::derive_bedgraph_filename`].
 ///
-/// **Phase G rev 2 (code-review A L1 fix)**: separated from
+/// **Phase G rev 2 (code-review A L1 fix), preserved**: separated from
 /// [`crate::pipeline::derive_basename`] because that function strips
 /// `.bam`/`.sam`/`.cram` (used by the split-file naming + splitting-report
 /// path) which would double-strip when fed to `derive_bedgraph_filename`.
@@ -216,7 +216,7 @@ impl ExtractState {
 /// Returns the file_name() component of `input_path`. Falls back to the
 /// full lossy path string if `input_path` has no filename component
 /// (defensive — CLI validation guarantees a real file).
-fn derive_raw_filename_for_phase_g(input_path: &std::path::Path) -> String {
+fn derive_raw_filename_for_downstream(input_path: &std::path::Path) -> String {
     input_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -228,25 +228,25 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// Phase G rev 2 (code-review A L1 regression guard): verify that the
-    /// helper that produces Phase G's input filename returns the RAW
-    /// filename (un-stripped), so that
-    /// `subprocess::derive_bedgraph_filename` sees the full extension and
-    /// produces a Perl-byte-identical bedGraph filename.
+    /// Phase G rev 2 (code-review A L1 regression guard), preserved: verify
+    /// that the helper producing the downstream chain's input filename returns
+    /// the RAW filename (un-stripped), so that
+    /// `downstream_filenames::derive_bedgraph_filename` sees the full extension
+    /// and produces a Perl-byte-identical bedGraph filename.
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_bam_extension() {
+    fn derive_raw_filename_for_downstream_preserves_bam_extension() {
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.bam")),
+            derive_raw_filename_for_downstream(Path::new("/tmp/foo.bam")),
             "foo.bam"
         );
     }
 
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_real_bismark_pe_filename() {
+    fn derive_raw_filename_for_downstream_preserves_real_bismark_pe_filename() {
         // The byte-identity-critical case: chained extensions on real
         // Bismark output names.
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new(
+            derive_raw_filename_for_downstream(Path::new(
                 "/path/to/sample.fastq_bismark_bt2_pe.deduplicated.bam"
             )),
             "sample.fastq_bismark_bt2_pe.deduplicated.bam"
@@ -254,17 +254,17 @@ mod tests {
     }
 
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_cram_extension() {
+    fn derive_raw_filename_for_downstream_preserves_cram_extension() {
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.cram")),
+            derive_raw_filename_for_downstream(Path::new("/tmp/foo.cram")),
             "foo.cram"
         );
     }
 
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_chained_bam_gz_extension() {
+    fn derive_raw_filename_for_downstream_preserves_chained_bam_gz_extension() {
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.bam.gz")),
+            derive_raw_filename_for_downstream(Path::new("/tmp/foo.bam.gz")),
             "foo.bam.gz"
         );
     }
