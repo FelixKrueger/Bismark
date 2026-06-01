@@ -117,6 +117,11 @@ pe_pg='@PG'"$tab"'ID:Bismark'"$tab"'PN:Bismark'"$tab"'VN:v0.25.1'"$tab"'CL:bisma
 } > "$WORK/se.sam"
 make_bam "$WORK/se.sam" "$DATA/se.bam"
 
+# Coordinate-sorted SE BAM (gap #4): samtools sort appends its OWN @PG AFTER
+# Bismark's, so detect_paired_from_header still sees ID:Bismark → SE. bam2nuc
+# tallies are order-independent, so its stats MUST equal the unsorted se golden.
+"$SAMTOOLS" sort -o "$DATA/se_sorted.bam" "$DATA/se.bam"
+
 # PE BAM: canonical flags 99 / 147 / 83 / 163.
 {
   printf '@HD\tVN:1.6\tSO:unsorted\n'
@@ -151,6 +156,17 @@ make_bam "$WORK/pe_noncanonical.sam" "$DATA/pe_noncanonical.bam"
 } > "$WORK/all_indel.sam"
 make_bam "$WORK/all_indel.sam" "$DATA/all_indel.bam"
 
+# Non-Bismark @PG BAM (gap #3): header has @SQ + a bowtie2 @PG (NO ID:Bismark),
+# so detect_paired_from_header returns None → SePeUndetermined. Rust error cell
+# (no golden); Perl test_file likewise dies "Failed to figure out SE or PE".
+{
+  printf '@HD\tVN:1.6\tSO:unsorted\n'
+  printf '@SQ\tSN:chr1\tLN:17\n'
+  printf '@PG\tID:bowtie2\tPN:bowtie2\tVN:2.5.0\tCL:bowtie2 -x g -U reads.fq\n'
+  printf 'r1\t0\tchr1\t1\t40\t8M\t*\t0\t0\tACGTACGT\tIIIIIIII\n'
+} > "$WORK/no_bismark_pg.sam"
+make_bam "$WORK/no_bismark_pg.sam" "$DATA/no_bismark_pg.bam"
+
 # ── run Perl bam2nuc into a fresh copy of each genome, harvest goldens ──
 # Returns the run dir on stdout; ALL diagnostics go to stderr so the
 # command-substitution caller captures only the path.
@@ -179,6 +195,10 @@ cp "$run_dir/genome/genomic_nucleotide_frequencies.txt" "$GOLD/cache_mus.golden"
 run_dir="$(run_perl se "$DATA/genome_acgtn" "$DATA/se.bam")"
 cp "$run_dir/out/se.nucleotide_stats.txt" "$GOLD/se_stats.golden"
 cp "$run_dir/genome/genomic_nucleotide_frequencies.txt" "$GOLD/se_cache.golden"
+
+# Coordinate-sorted SE (gap #4): same composition as unsorted (order-independent).
+run_dir="$(run_perl se_sorted "$DATA/genome_acgtn" "$DATA/se_sorted.bam")"
+cp "$run_dir/out/se_sorted.nucleotide_stats.txt" "$GOLD/se_sorted_stats.golden"
 
 run_dir="$(run_perl pe "$DATA/genome_acgtn" "$DATA/pe.bam")"
 cp "$run_dir/out/pe.nucleotide_stats.txt" "$GOLD/pe_stats.golden"

@@ -299,6 +299,37 @@ mod tests {
         assert_eq!(correct_pe(b"AACG".to_vec(), 256), b"CGTT");
     }
 
+    #[test]
+    fn build_chr_name_table_rejects_non_ascii_sq_name() {
+        use bstr::BString;
+        use noodles_sam::header::record::value::Map;
+        use noodles_sam::header::record::value::map::ReferenceSequence;
+        use std::num::NonZeroUsize;
+
+        let ln = NonZeroUsize::try_from(1000).unwrap();
+
+        // Positive control: an all-ASCII @SQ name round-trips to its bytes (proves
+        // the guard fires ONLY on non-ASCII, not unconditionally).
+        let mut ok = Header::default();
+        ok.reference_sequences_mut().insert(
+            BString::from(b"chr1".to_vec()),
+            Map::<ReferenceSequence>::new(ln),
+        );
+        assert_eq!(build_chr_name_table(&ok).unwrap(), vec![b"chr1".to_vec()]);
+
+        // A non-ASCII byte in a @SQ name → NonAsciiChromosomeName. (The `name` field
+        // is lossy-UTF-8, so 0xFF surfaces as U+FFFD; we match the variant only.)
+        let mut bad = Header::default();
+        bad.reference_sequences_mut().insert(
+            BString::from(b"chr\xff".to_vec()),
+            Map::<ReferenceSequence>::new(ln),
+        );
+        assert!(matches!(
+            build_chr_name_table(&bad).unwrap_err(),
+            BismarkBam2nucError::NonAsciiChromosomeName { .. }
+        ));
+    }
+
     // ── count_records driver (synthetic RecordBufs) ──
 
     fn rec(

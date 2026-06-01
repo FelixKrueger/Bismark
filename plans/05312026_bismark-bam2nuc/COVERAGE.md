@@ -150,3 +150,24 @@ Notable golden cells confirmed PASS: `cache_acgtn`, `cache_iupac` (IUPAC R/CR/RG
 **COMPLETE.** Every one of the 43 PLAN checklist rows and all 18 Phase A–F tasks are implemented in code and covered by a passing test. All 4 documented deviations (D-impl-1..4) are present and acceptable; all 7 SPEC deviations (D1–D7) are reflected. The mandated review-fold-in cells (C-1/C-2/C-3, allocation-free counter, case-sensitive output name, non-canonical-PE-flag, all-InDel ZeroDivision, IUPAC cache + revcomp vectors, cache-reuse ×1000, two-file reset, empty-genome 0-byte, content-BAM-`.sam` reject) all exist and pass.
 
 The only outstanding work is the **oxy real-data gate RUN**, which the PLAN and brief explicitly mark as a manual, post-review step — the harness is built and committed, so this is not a code coverage gap. No action is required for plan coverage; the work is ready for the workflow's dual code-review step.
+
+---
+
+## Addendum — 2026-05-31: optional test-gap closure (PR #922 reopened)
+
+The 4 optional robustness test gaps recorded in the session handoff (§2) are now **CLOSED**
+per `TEST_GAPS_PLAN.md` (drafted → manual review → dual plan-review → implemented). None was
+a byte-identity risk; all are additive tests over already-correct code.
+
+| Gap | Cell | Evidence |
+|---|---|---|
+| 1 — `--version`/`-V` e2e | `golden.rs` `version_flag_{long,short}_prints_version_and_exits_zero` | binary spawn → stdout `bam2nuc_rs ` + OS, exit 0 |
+| 2 — non-ASCII `@SQ` error | `count.rs` `build_chr_name_table_rejects_non_ascii_sq_name` | ASCII control → `Ok`; `chr\xff` → `NonAsciiChromosomeName` |
+| 3 — `SePeUndetermined` e2e | `golden.rs` `non_bismark_pg_bam_is_se_pe_undetermined` | new `no_bismark_pg.bam` (bowtie2 `@PG`) → exit 1 + msg + no stats file |
+| 4 — coord-sorted golden | `golden.rs` `se_sorted_stats_byte_identical` | new `se_sorted.bam` + Perl-oracle `se_sorted_stats.golden` (== `se_stats.golden`) |
+
+**Updated test counts:** `cargo test -p bismark-bam2nuc` = **72 unit + 17 golden + 2 sanity**
+(was 71/13/2), 1 `#[ignore]` real-data smoke; `clippy -p bismark-bam2nuc --all-targets -D
+warnings` clean; `fmt` clean. New fixtures + golden minted by hand (NOT a full
+`generate_goldens.sh` re-run) so the 8 existing goldens are byte-unchanged; the script edits
+keep them reproducible from source.

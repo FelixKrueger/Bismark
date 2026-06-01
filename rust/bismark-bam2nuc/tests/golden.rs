@@ -284,3 +284,65 @@ fn missing_genome_folder_errors() {
         .failure()
         .stderr(predicates::str::contains("genome folder"));
 }
+
+// ── Test-gap closure cells (handoff §2: robustness; none a byte-identity risk) ──
+
+#[test]
+fn version_flag_long_prints_version_and_exits_zero() {
+    // e2e: `--version` short-circuits in main.rs (before run()), prints
+    // version_string() to stdout, exits 0. Only version_string() itself was
+    // unit-tested before; this covers the clap wiring + the main-fn branch.
+    bin()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("bam2nuc_rs "))
+        .stdout(predicates::str::contains(std::env::consts::OS));
+}
+
+#[test]
+fn version_flag_short_prints_version_and_exits_zero() {
+    bin()
+        .arg("-V")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("bam2nuc_rs "));
+}
+
+#[test]
+fn non_bismark_pg_bam_is_se_pe_undetermined() {
+    // A BAM whose @PG is bowtie2 (no ID:Bismark) → detect_paired_from_header == None
+    // → SePeUndetermined. The error is raised inside count_reads_in_file, BEFORE the
+    // output stats file is created, so no partial stats file is left behind (contrast
+    // all_indel, where counting succeeds and a header-only partial IS written).
+    let tmp = copy_genome("genome_acgtn");
+    let genome = tmp.path().join("genome");
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    bin()
+        .arg("-g")
+        .arg(&genome)
+        .arg("--dir")
+        .arg(format!("{}/", out.display()))
+        .arg(data_dir().join("no_bismark_pg.bam"))
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("single-end vs paired-end"));
+    assert!(!out.join("no_bismark_pg.nucleotide_stats.txt").exists());
+}
+
+#[test]
+fn se_sorted_stats_byte_identical() {
+    // Coordinate-sorted SE BAM: samtools appends its @PG AFTER Bismark's, so SE/PE
+    // detection still sees ID:Bismark (SE). bam2nuc tallies are order-independent, so
+    // the stats match BOTH the Perl oracle's sorted golden AND the unsorted SE golden
+    // byte-for-byte (the second assert proves the cell isn't comparing a file to itself).
+    let (_t, stats) = run_stats("genome_acgtn", "se_sorted.bam");
+    assert_bytes_eq(&stats, &golden("se_sorted_stats.golden"), "se_sorted");
+    assert_eq!(
+        stats,
+        golden("se_stats.golden"),
+        "sorted == unsorted SE stats"
+    );
+}
