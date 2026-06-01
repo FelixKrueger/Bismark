@@ -354,14 +354,13 @@ dropped — unused.)
    the next tag as garbage, while Rust's structured tag-read yields `""`. Equivalent for all real
    data (XM length == read length ≥ 1); documented as **accepted** (Rust is arguably more correct).
 8. **PE die message not byte-matched** (error path; Reviewer B A-3) — a comparable message is emitted.
-9. **Two-`@PG`-line SE/PE auto-detect (code-review B-1, accepted).** If a BAM carries **two**
-   `@PG ID:Bismark` lines (a PE-style then an SE-style), Perl `determine_file_type` picks the
-   **last** match (→ SE) whereas the shared `bismark_io::detect_paired_from_header` returns on the
-   **first** (→ PE, then dies on the qname-adjacency check). Pathological input (a BAM re-aligned
-   by Bismark in two modes); the divergence lives in the shared `bismark-io` crate (identical for
-   dedup/extractor), so it is **documented as accepted** here rather than patched from this port.
-   A cross-crate fix in `detect_paired_from_header` (scan for the *last* Bismark `@PG`) is a
-   possible future follow-up.
+9. **Two-`@PG`-line SE/PE auto-detect (code-review B-1) — FIXED in `bismark-io`.** If a BAM
+   carries **two** `@PG ID:Bismark` lines (a PE-style then an SE-style), Perl `determine_file_type`
+   picks the **last** match (→ SE) whereas the shared `bismark_io::detect_paired_from_header`
+   formerly returned on the **first** (→ PE). Fixed: `detect_paired_from_header` now keeps scanning
+   and the **last** Bismark `@PG` wins, matching Perl. Byte-neutral for all real Bismark BAMs
+   (exactly one Bismark `@PG`), so dedup/extractor are unaffected (re-verified: their suites pass).
+   Regression tests added in `bismark-io` (`detect_paired_two_bismark_pg_last_wins_{se,pe}`).
 10. **Mid-stream truncation → generic I/O error (code-review L2, accepted).** A `.bam` that
     truncates partway through streaming surfaces as a plain `Io` error with partial output already
     written, rather than Perl's up-front `bam_isTruncated` die-before-output. Only the initial

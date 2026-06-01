@@ -66,9 +66,28 @@ then pipeline, then integration goldens.
 Post-polish: 55 unit + 1 byte-identity (9 cells) + 8 edge + 2 `#[ignore]` real-data — all pass;
 clippy `-D warnings` + fmt clean; workspace builds.
 
+## Real-data gate — oxy, 2026-06-01 — PASSED
+
+Ran the REAL Perl `filter_non_conversion` v0.25.1 + `filter_non_conversion_rs` on oxy
+(`dockyard-oxy-0`) across **all 4 decision modes × SE and PE**, comparing decompressed
+kept/removed bodies (`samtools view`) + the timing-normalized report. Datasets:
+`10M_SE/directional_10M_R1_val_1_bismark_bt2.bam` (8,501,508 reads) and
+`10M_PE/SRR24827378_10M_R1_val_1_bismark_bt2_pe.deduplicated.bam` (15,398,272 records =
+7,699,136 pairs). **All 8 cells BYTE-IDENTICAL** (~36 min wall, cargo build 15s, deps cached):
+
+| mode | SE kept/removed | PE kept/removed |
+|------|-----------------|-----------------|
+| default (t=3)  | 8,468,804 / 32,704 | 15,304,032 / 94,240 |
+| --threshold 5  | 8,487,814 / 13,694 | 15,370,378 / 27,894 |
+| --consecutive  | 8,486,815 / 14,693 | 15,367,800 / 30,472 |
+| --percentage_cutoff 20 | 8,438,571 / 62,937 | 15,200,454 / 197,818 |
+
+The differential removed-counts per mode confirm each decision branch is genuinely exercised
+at scale. Harness: `scripts/fnc_real_data_gate.sh` (symlinks the input, runs Perl+Rust per cell,
+`cmp`s bodies + normalized report). oxy `/tmp/fnc-gate` cleaned up afterward.
+
 ## Still open / not done
 
-- A1/A7: `--help` exit code (0 vs Perl's 1) — **RESOLVED (Felix 2026-06-01): keep exit 0 as a documented deviation** (SPEC §10.1). No code change.
-- Real-data gate (`byte_identity_real_data_se/pe`) not yet run on colossal/oxy (env-gated, `#[ignore]`).
+- A1/A7: `--help` exit code — **RESOLVED: keep exit 0** as a documented deviation (SPEC §10.1).
 - No git commit / PR / epic created — stopped per Felix's "apply polish, then stop".
 - B-1 cross-crate fix in `bismark-io::detect_paired_from_header` (deferred, documented).
