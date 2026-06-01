@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-nome-filtering"
-version = "0.1.0-beta.1"
+version = "1.0.0-beta.1"
 dependencies = [
  "assert_cmd",
  "bismark-io",

@@ -1,6 +1,6 @@
 [package]
 name = "bismark-nome-filtering"
-version = "0.1.0-beta.1"
+version = "1.0.0-beta.1"
 description = "Rust port of Bismark Perl's standalone NOMe_filtering script (per-read NOMe-Seq classifier)"
 edition.workspace = true
 rust-version.workspace = true
