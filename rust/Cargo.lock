@@ -262,6 +262,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bismark-report"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "libc",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -51,5 +51,6 @@ cargo build --release
 | `bam2nuc` | `bismark-bam2nuc` (`bam2nuc_rs`) | 1.0.0-alpha.1 | **Byte-identical** to Perl v0.25.1 (mono/di-nucleotide stats; local goldens + oxy real-data gate) |
 | `NOMe_filtering` | `bismark-nome-filtering` (`NOMe_filtering_rs`) | 1.0.0-beta.1 | **Byte-identical** to Perl v0.25.1 (synthetic goldens + full 10M SE oxy gate) |
 | `filter_non_conversion` | `bismark-filter-nonconversion` (`filter_non_conversion_rs`) | 1.0.0-alpha.1 | **Byte-identical** to Perl v0.25.1 (9 golden cells + oxy 10M SE + PE × 4 decision modes) |
+| `bismark2report` | `bismark-report` (`bismark2report_rs`) | 1.0.0-alpha.1 | **Byte-identical** HTML vs Perl v0.25.1 (modulo the `localtime` timestamp line); validated on synthetic + real WGBS PE (10M + ~55M) |
 
 Versions are the crate manifests on `rust/iron-chancellor`. "Byte-identical" = validated against Perl Bismark v0.25.1 per each crate's README/CHANGELOG + golden/real-data tests; speedups are full-scale where measured. Per-crate detail lives in each crate's `README.md` / `CHANGELOG.md`. `bismark-io` and `bismark-dedup` have early beta lines published to crates.io; later betas are queued for the next publish window.
