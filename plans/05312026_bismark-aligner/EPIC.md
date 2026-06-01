@@ -76,7 +76,7 @@ byte-identity (or worker-invariance) gate.
 | 0 | Determinism spike ✅ | `phase0-determinism-spike/SPIKE_determinism.md` | — |
 | 1 | CLI + options + discovery | `phase1-cli-options-discovery/PLAN.md` | #0 |
 | 2 | Read conversion (FastQ SE directional) | `phase2-read-conversion/PLAN.md` | #1 |
-| 3 | Single-instance align + SAM parse | _(to be written)_ | #1, #2 |
+| 3 | Single-instance align + SAM parse | `phase3-single-instance-align-parse/PLAN.md` | #1, #2 |
 | 4 | N-way merge + scoring + MAPQ | _(to be written)_ | #3 |
 | 5 | Genomic-seq + XM/XR/XG + SAM/BAM (SE dir) 🎯 | _(to be written)_ | #4 |
 | 6 | Reports + ambig/unmapped (SE) 🎯 | _(to be written)_ | #5 |

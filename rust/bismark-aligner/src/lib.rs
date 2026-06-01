@@ -16,6 +16,7 @@
 //! detection + `aligner_options` assembly → a [`config::RunConfig`]; **no
 //! alignment is performed yet**.
 
+pub mod align;
 pub mod aligner;
 pub mod cli;
 pub mod config;
