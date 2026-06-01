@@ -110,7 +110,7 @@ pub fn convert_seq_c_to_t(seq: &[u8]) -> Vec<u8> {
 }
 
 /// Strip a single trailing `\n` (Perl `chomp`, `$/ = "\n"`); a `\r` is kept.
-fn chomp_newline(line: &[u8]) -> &[u8] {
+pub(crate) fn chomp_newline(line: &[u8]) -> &[u8] {
     if line.last() == Some(&b'\n') {
         &line[..line.len() - 1]
     } else {

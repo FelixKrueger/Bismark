@@ -140,6 +140,10 @@ pub struct RunConfig {
     pub aligner_options: String,
     /// Gap penalties (for later MAPQ).
     pub gap_penalties: GapPenalties,
+    /// `--score_min` intercept (default `0.0`) — for `calc_mapq`.
+    pub score_min_intercept: f64,
+    /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
+    pub score_min_slope: f64,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -169,6 +173,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let detected_aligner = aligner::detect_bowtie2(cli.path_to_bowtie2.as_deref())?;
     let (aligner_options, gap_penalties) =
         options::build_aligner_options(cli, format, layout.is_paired())?;
+    let (score_min_intercept, score_min_slope) = options::score_min_params(cli)?;
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {
         skip: cli.skip,
@@ -187,6 +192,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         detected_aligner,
         aligner_options,
         gap_penalties,
+        score_min_intercept,
+        score_min_slope,
         output,
         read_processing,
     })

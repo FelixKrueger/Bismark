@@ -190,6 +190,35 @@ fn require_fastq(format: ReadFormat) -> Result<()> {
     }
 }
 
+/// Parse `--score_min` into the numeric `(intercept, slope)` for `calc_mapq`
+/// (default `(0.0, -0.2)`). Splits on the LAST comma (Perl's greedy
+/// `^L,(.+),(.+)$`). `--local` (G-form) is rejected in `build_aligner_options`,
+/// so only the end-to-end `L` form reaches here.
+pub fn score_min_params(cli: &Cli) -> Result<(f64, f64)> {
+    match &cli.score_min {
+        None => Ok((0.0, -0.2)),
+        Some(s) => {
+            let rest = s.strip_prefix("L,").ok_or_else(|| {
+                AlignerError::Validation(
+                    "--score_min must be of the form L,<intercept>,<slope>".into(),
+                )
+            })?;
+            let (i, sl) = rest.rsplit_once(',').ok_or_else(|| {
+                AlignerError::Validation(
+                    "--score_min must be of the form L,<intercept>,<slope>".into(),
+                )
+            })?;
+            let intercept = i.parse::<f64>().map_err(|_| {
+                AlignerError::Validation(format!("bad --score_min intercept '{i}'"))
+            })?;
+            let slope = sl
+                .parse::<f64>()
+                .map_err(|_| AlignerError::Validation(format!("bad --score_min slope '{sl}'")))?;
+            Ok((intercept, slope))
+        }
+    }
+}
+
 /// Shape-only validation of `--score_min` for end-to-end mode: `L,<a>,<b>` with
 /// non-empty `a`/`b` (mirrors Perl's permissive `^L,(.+),(.+)$` — content is not
 /// numerically validated). Pushing the original string is byte-equivalent to

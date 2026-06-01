@@ -40,10 +40,17 @@ fn make_genome(dir: &Path) {
 
 #[cfg(unix)]
 fn make_fake_bowtie2(dir: &Path) {
-    write_exec(
-        &dir.join("bowtie2"),
-        "#!/bin/sh\necho \"fake-bowtie2 version 2.5.5\"\n",
-    );
+    // `--version` → the version banner (Phase-1 detection). Otherwise (alignment)
+    // → a SAM header + one unmapped (flag 4) record per input read, read from the
+    // `-U` converted file, so the Phase-4 merge has lockstep-matching qnames.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
 }
 
 fn make_read(dir: &Path) -> std::path::PathBuf {
@@ -136,7 +143,10 @@ fn happy_path_resolves_and_prints_config() {
                 .and(predicate::str::contains("single-end"))
                 .and(predicate::str::contains("Bowtie 2 2.5.5"))
                 // Phase 2: the C->T temp file is produced for the v1 spine.
-                .and(predicate::str::contains("Created C->T converted")),
+                .and(predicate::str::contains("Created C->T converted"))
+                // Phase 4: the merge ran end-to-end (fake bowtie2 emits unmapped).
+                .and(predicate::str::contains("Phase 4 merge summary"))
+                .and(predicate::str::contains("no alignment found:")),
         );
     // the converted temp file landed in --temp_dir
     assert!(temp.path().join("reads.fq_C_to_T.fastq").is_file());

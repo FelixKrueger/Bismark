@@ -129,6 +129,25 @@ impl SamRecord {
     }
 }
 
+/// The peek/advance interface the Phase-4 merge drives. Implemented by
+/// [`AlignerStream`] (a real Bowtie 2 subprocess) and by test doubles, so the
+/// N-way merge can be unit-tested with canned records.
+pub trait SamStream {
+    /// Peek the current record (`None` at EOF).
+    fn current(&self) -> Option<&SamRecord>;
+    /// Advance to the next record.
+    fn advance(&mut self) -> Result<()>;
+}
+
+impl SamStream for AlignerStream {
+    fn current(&self) -> Option<&SamRecord> {
+        AlignerStream::current(self)
+    }
+    fn advance(&mut self) -> Result<()> {
+        AlignerStream::advance(self)
+    }
+}
+
 /// A live single Bowtie 2 instance, presenting a peek/advance SAM stream.
 pub struct AlignerStream {
     child: Child,
