@@ -4,6 +4,41 @@ All notable changes to `bismark-genome-preparation` will be documented in this f
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-alpha.2] — 2026-05-31
+
+Implements **`--genomic_composition`** (previously accepted-and-ignored in
+alpha.1). Tracking issue:
+[#919](https://github.com/FelixKrueger/Bismark/issues/919).
+
+### Added
+
+- **`--genomic_composition`** — calculates the genome's **mono- and
+  di-nucleotide frequencies** and writes
+  `<genome>/genomic_nucleotide_frequencies.txt` (in the genome folder, not
+  `Bisulfite_Genome/`). Runs **before** the bisulfite conversion, mirroring Perl
+  (`get_genomic_frequencies` → `process_sequence_files`). The table is
+  **byte-identical** to Perl `bismark_genome_preparation` v0.25.1.
+- **NOT the conversion path** (load-bearing): this pass `uc`s the sequence but
+  does **not** apply the conversion's `[^ATCGN]→N` mapping — so IUPAC ambiguity
+  codes (`R`/`Y`/`S`/`W`/`K`/`M`/`B`/`D`/`H`/`V`) and stray bytes are counted as
+  their own keys; only a literal `N` is skipped (mono), and a di-mer is skipped
+  if **either** base is `N`. Di-mers span line boundaries but **not**
+  chromosome/file boundaries.
+- **Allocation-free counters** (`[u64; 256]` mono + flat `[u64; 65536]` di) — no
+  per-base allocation on multi-Gbp genomes — emitted in **plain byte-lexical key
+  order** (each mono key immediately before its di block), reproducing Perl's
+  `sort keys %freqs` exactly. (Plain byte sort — *not* the case-folding glob
+  order.)
+- **Faithful edge behaviour:** the legacy `Mus_musculus.NCBIM37.fa` filename is
+  excluded from counting (but not conversion); `chomp` then `s/\r//` removes only
+  the **first** `\r`; a duplicate chromosome name / non-`>` first line errors
+  **before** any table is written (Perl `die`s in `read_genome_into_memory`, so
+  no orphan file is left); an empty / `N`-only genome yields a 0-byte file. Write
+  failures are **non-fatal** (warn and skip, matching Perl).
+- **Tests:** 20 unit tests (counter logic + all edge cases) + 2 binary
+  end-to-end + a live `perl_vs_rust_genomic_composition` oracle + a `#[ignore]`
+  real-data gate (`genomic_nucleotide_frequencies.txt` vs real Perl).
+
 ## [1.0.0-alpha.1] — 2026-05-31
 
 First **public pre-release** of `bismark-genome-preparation` — a Rust port of

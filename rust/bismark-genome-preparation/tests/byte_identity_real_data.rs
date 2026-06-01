@@ -155,6 +155,17 @@ fn byte_identity_real_data_mfa() {
 
 #[test]
 #[ignore = "requires BISMARK_GENOMEPREP_REAL_GENOME_DIR + Perl bismark_genome_preparation"]
+fn byte_identity_real_data_genomic_composition() {
+    // The mono-/di-nucleotide frequency table lands in the genome folder root.
+    gate(
+        "real-data genomic_composition",
+        &["--genomic_composition"],
+        &["genomic_nucleotide_frequencies.txt"],
+    );
+}
+
+#[test]
+#[ignore = "requires BISMARK_GENOMEPREP_REAL_GENOME_DIR + Perl bismark_genome_preparation"]
 fn byte_identity_real_data_single_fasta() {
     // Per-chromosome file set is compared by re-globbing the Perl output dir and
     // diffing each against the Rust counterpart.
