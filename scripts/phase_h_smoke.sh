@@ -18,11 +18,15 @@
 # **Scope:** validates the extractor's own output streams — 12 strand×context
 # split files (or fewer per --comprehensive / --merge_non_CpG; 6 for
 # directional SE post-Phase C.2 empty-sweep), M-bias.txt, _splitting_report.txt.
-# Does NOT validate bedGraph / cytosine_report output (subprocess-to-Perl
-# in Phase G; Phase H sub-gate 2 covers those, blocked on epic #797).
+# Phase 4 (Phase H sub-gate 2, unblocked by the inline integration): the
+# downstream cells (bg / cutoff2 / zero / ucsc / cr / cr_cx / cr_split) ALSO
+# validate the in-process bedGraph + coverage2cytosine outputs vs Perl, using a
+# STRICT ORDERED decompressed comparison (the chromosome emission order is the
+# byte-identity contract — never the order-independent sort|md5 path).
 #
 # Usage:
 #   ./scripts/phase_h_smoke.sh <BAM> [--parallel N] [--mode MODE] [--out DIR] \
+#       [--genome DIR]   # required by the cr* (cytosine_report) modes
 #       [--extra-rust "<flags>"] [--extra-perl "<flags>"]
 #
 # Defaults: --parallel 4, --mode default, --out ./phase_h_out
@@ -33,6 +37,14 @@
 #   merge_non_CpG           — --merge_non_CpG (8 files)
 #   comprehensive_merge     — --comprehensive --merge_non_CpG (2 files)
 #   gzip                    — --gzip (12 .gz files for PE; 6 for SE)
+#   # Phase 4 (sub-gate 2) downstream cells — also diff bedGraph/c2c outputs (ordered):
+#   bg                      — --bedGraph
+#   cutoff2                 — --bedGraph --cutoff 2
+#   zero                    — --bedGraph --zero_based
+#   ucsc                    — --bedGraph --ucsc
+#   cr                      — --cytosine_report --genome_folder <DIR>   (needs --genome)
+#   cr_cx                   — cr + --CX                                  (needs --genome)
+#   cr_split                — cr + --split_by_chromosome                (needs --genome)
 #
 # --extra-rust / --extra-perl: arbitrary additional flags appended to the
 # respective binary's argv. Parsed as bash arrays (read -r -a); pass-through
@@ -67,6 +79,7 @@ MODE=default
 OUT_DIR="./phase_h_out"
 EXTRA_RUST_STR=""
 EXTRA_PERL_STR=""
+GENOME=""   # bismark genome dir, required by the cr* (cytosine_report) modes
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -76,6 +89,8 @@ while [[ $# -gt 0 ]]; do
       MODE="$2"; shift 2 ;;
     --out)
       OUT_DIR="$2"; shift 2 ;;
+    --genome)
+      GENOME="$2"; shift 2 ;;
     --extra-rust)
       EXTRA_RUST_STR="$2"; shift 2 ;;
     --extra-perl)
@@ -140,6 +155,20 @@ case "$MODE" in
   merge_non_CpG)            EXTRA_FLAGS+=(--merge_non_CpG) ;;
   comprehensive_merge)      EXTRA_FLAGS+=(--comprehensive --merge_non_CpG) ;;
   gzip)                     EXTRA_FLAGS+=(--gzip) ;;
+  # ── Phase 4 (sub-gate 2): downstream bedGraph / coverage2cytosine cells.
+  # All flags have identical Perl/Rust extractor spellings (Perl GetOptions
+  # :972-993), so they go in EXTRA_FLAGS (forwarded to BOTH tools).
+  bg)                       EXTRA_FLAGS+=(--bedGraph) ;;
+  cutoff2)                  EXTRA_FLAGS+=(--bedGraph --cutoff 2) ;;
+  zero)                     EXTRA_FLAGS+=(--bedGraph --zero_based) ;;
+  ucsc)                     EXTRA_FLAGS+=(--bedGraph --ucsc) ;;
+  cr|cr_cx|cr_split)
+    [[ -z "$GENOME" ]] && { echo "error: mode '$MODE' requires --genome <DIR>" >&2; exit 2; }
+    # --cytosine_report forces --bedGraph in both tools; --genome_folder required.
+    EXTRA_FLAGS+=(--cytosine_report --genome_folder "$GENOME")
+    [[ "$MODE" == cr_cx ]]    && EXTRA_FLAGS+=(--CX)
+    [[ "$MODE" == cr_split ]] && EXTRA_FLAGS+=(--split_by_chromosome)
+    ;;
   *)
     echo "error: unknown mode: $MODE" >&2; exit 2 ;;
 esac
@@ -287,6 +316,32 @@ for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
         FIRST_DIFF=$(cmp "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -1 || true)
         echo "  ✗ $f DIFFERS — perl=${SIZE_P}B rust=${SIZE_R}B ($FIRST_DIFF)" >> "$SUMMARY"
         echo "    ── triage diff (first 8 differing lines; check for rounding-only deltas) ──" >> "$SUMMARY"
+        diff "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -8 | sed 's/^/      /' >> "$SUMMARY" || true
+        ;;
+      # ── Phase 4 (sub-gate 2): downstream bedGraph / c2c outputs. ORDER IS the
+      # byte-identity contract here (the sorted chromosome emission order is the
+      # whole point of the inline integration), so compare DECOMPRESSED content
+      # STRICTLY and IN ORDER — NEVER the order-independent sort|md5 path below,
+      # which would MASK a chromosome-ordering bug. These arms MUST precede the
+      # generic *.gz / * arms.
+      *.bedGraph.gz|*.bismark.cov.gz|*_UCSC.bedGraph.gz|*.CpG_report.txt.gz|*.CX_report.txt.gz)
+        # Reached because raw-gzip cmp (above) differed — expected (Rust gzp vs
+        # Perl gzip containers). Re-check the DECOMPRESSED stream, in order.
+        if zcat "$PERL_OUT/$f" | cmp -s - <(zcat "$RUST_OUT/$f"); then
+          echo "  ✓ $f — downstream decompressed-identical (gzip container differs only)" >> "$SUMMARY"
+        else
+          DIFFS=$((DIFFS + 1))
+          echo "  ✗ $f DIFFERS — downstream decompressed mismatch (ORDERED)" >> "$SUMMARY"
+          echo "    ── triage (first 8 differing lines) ──" >> "$SUMMARY"
+          diff <(zcat "$PERL_OUT/$f") <(zcat "$RUST_OUT/$f") 2>&1 | head -8 | sed 's/^/      /' >> "$SUMMARY" || true
+        fi
+        ;;
+      *.CpG_report.txt|*.CX_report.txt|*.cytosine_context_summary.txt|*.bismark.zero.cov)
+        # Plain downstream output: reached only because the strict cmp above
+        # already failed → a genuine ORDERED difference (hard DIFF; NOT sort|md5).
+        DIFFS=$((DIFFS + 1))
+        echo "  ✗ $f DIFFERS — downstream plain mismatch (ORDERED)" >> "$SUMMARY"
+        echo "    ── triage (first 8 differing lines) ──" >> "$SUMMARY"
         diff "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -8 | sed 's/^/      /' >> "$SUMMARY" || true
         ;;
       *.gz)
