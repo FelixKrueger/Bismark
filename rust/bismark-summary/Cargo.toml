@@ -1,0 +1,32 @@
+[package]
+name = "bismark-summary"
+version = "1.0.0-alpha.1"
+description = "Rust port of Bismark Perl's bismark2summary project-level multi-sample aggregator"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "summary", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark2summary_rs"
+path = "src/main.rs"
+
+[dependencies]
+# bismark2summary opens NO BAM/SAM/CRAM (filename-only) and writes plain-text
+# outputs — so NO bismark-io, NO noodles, NO flate2. Pure CLI + text parsers +
+# string templating.
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.0"
+anyhow = "=1.0.86"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
