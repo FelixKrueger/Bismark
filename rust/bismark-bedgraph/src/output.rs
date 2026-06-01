@@ -22,7 +22,7 @@ use gzp::ZWriter;
 use gzp::deflate::Gzip;
 use gzp::par::compress::{ParCompress, ParCompressBuilder};
 
-use crate::aggregate::Aggregator;
+use crate::aggregate::{Aggregator, ChrPositions};
 use crate::cli::ResolvedConfig;
 use crate::error::BismarkBedgraphError;
 use crate::fmt_g::format_g15;
@@ -59,11 +59,26 @@ fn finish_gz(w: GzWriter) -> Result<(), BismarkBedgraphError> {
 }
 
 /// Write the bedGraph + coverage (+ optional zero) outputs from a populated
-/// aggregator. Positions whose total coverage is below `cfg.cutoff` are
-/// dropped (Perl `:399`/`:601`).
+/// aggregator. Thin wrapper over [`write_outputs_from_sorted`]; the
+/// file-reading path ([`crate::run`]) uses this.
 pub fn write_outputs(cfg: &ResolvedConfig, agg: Aggregator) -> Result<(), BismarkBedgraphError> {
     let sorted = agg.into_sorted();
+    write_outputs_from_sorted(cfg, &sorted)
+}
 
+/// Write the bedGraph + coverage (+ optional zero) outputs from already-sorted
+/// chromosome data. Positions whose total coverage is below `cfg.cutoff` are
+/// dropped (Perl `:399`/`:601`) — applied **here**, so the `.cov.gz` is the
+/// authoritative post-cutoff set (SPEC R3).
+///
+/// Exposed for the extractor's in-process streaming path: it produces `sorted`
+/// once via [`Aggregator::into_sorted`] and reuses it to write these files
+/// without re-reading the per-context call files. (c2c is then fed from the
+/// `.cov.gz` written here — SPEC D4 Phase 3a.)
+pub fn write_outputs_from_sorted(
+    cfg: &ResolvedConfig,
+    sorted: &[ChrPositions],
+) -> Result<(), BismarkBedgraphError> {
     // Per-stream compression workers. Two large streams each get their own
     // pool; cap modestly so CI / small hosts don't oversubscribe.
     let threads = std::thread::available_parallelism()
@@ -85,7 +100,7 @@ pub fn write_outputs(cfg: &ResolvedConfig, agg: Aggregator) -> Result<(), Bismar
         None
     };
 
-    for (chr, positions) in &sorted {
+    for (chr, positions) in sorted {
         for &(pos, meth, unmeth) in positions {
             let total = meth + unmeth;
             if total < cfg.cutoff {

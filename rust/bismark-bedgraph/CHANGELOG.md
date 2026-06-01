@@ -6,12 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- **In-memory streaming ingestion** (`Aggregator::add_min_owner`) and a
+  write/feed split (`output::write_outputs_from_sorted`), so an in-process caller
+  (the methylation extractor) can tee calls directly into the aggregator instead
+  of re-reading the per-context files, then write the bedGraph/coverage from the
+  same sorted records. Ownership resolves to the minimum basename — equivalent to
+  the first file in lexicographically-sorted argv order, so the file-reading
+  output is reproduced regardless of tee arrival order. Additive: the file path
+  (`run()`/`add()`/`write_outputs`) is unchanged and byte-preserved.
+
 ### Changed
 
 - **`mimalloc` global allocator** for `bismark2bedGraph_rs` (matching
   `bismark-extractor`). The in-memory `(chr, pos)` aggregation map grows through
   many allocations; mimalloc is ~12% faster than the system allocator on a full
   `--CX` run (973 s → 854 s, ~4.4× vs Perl). Allocator-only — byte-identical.
+- Internal: `ChrMeta` stores the owner basename and builds the bytewise ordering
+  key lazily in `into_sorted()` (was eager at intern time). Byte-neutral for the
+  file path (gated by the 8 ownership regression tests); enables `add_min_owner`
+  to revise ownership before emission.
 
 ### Investigated and rejected
 

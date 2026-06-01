@@ -39,11 +39,15 @@ use rustc_hash::FxHashMap;
 /// `(pos, meth, unmeth)` rows in ascending position order.
 pub type ChrPositions = (Box<str>, Vec<(u32, u32, u32)>);
 
-/// Per-chromosome metadata: the original (output) name and the bytewise
-/// ordering key (the synthetic Perl temp filename).
+/// Per-chromosome metadata: the original (output) name and the owning
+/// per-context file basename. The bytewise ordering key is built lazily from
+/// `owner` at [`Aggregator::into_sorted`] time (rather than eagerly at intern
+/// time) so the owner can be revised by [`Aggregator::add_min_owner`] before
+/// emission. The file-reading path never revises it (first-touch), so its
+/// output is unchanged.
 struct ChrMeta {
     original: Box<str>,
-    order_key: Vec<u8>,
+    owner: Box<str>,
 }
 
 /// Accumulates `(chr, pos) → (methylated, unmethylated)` counts and tracks
@@ -76,26 +80,49 @@ impl Aggregator {
         Self::default()
     }
 
-    /// Intern a chromosome, recording its owner on first sight (never
-    /// reassigned). Returns the interned id.
-    fn intern(&mut self, chr: &str, source_basename: &str) -> u32 {
+    /// Intern a chromosome with **first-touch** ownership: the first file to
+    /// emit a call owns it (never reassigned). Used by [`add`](Self::add) — the
+    /// standalone file-reading path, where argv order is the user's and must be
+    /// honored verbatim. Returns the interned id.
+    fn intern_first(&mut self, chr: &str, source_basename: &str) -> u32 {
         if let Some(&id) = self.chr_ids.get(chr) {
             return id;
         }
+        self.push_chr(chr, source_basename)
+    }
+
+    /// Intern a chromosome with **minimum-basename** ownership: the owner is
+    /// revised whenever a lexicographically-smaller basename emits a call for
+    /// it. Used by [`add_min_owner`](Self::add_min_owner) — the extractor's
+    /// streaming tee, where calls arrive in BAM/read order but the per-context
+    /// files are passed to bedGraph in lexicographically-sorted order, so the
+    /// owner is the smallest basename regardless of arrival order. Returns the
+    /// interned id.
+    fn intern_min(&mut self, chr: &str, source_basename: &str) -> u32 {
+        if let Some(&id) = self.chr_ids.get(chr) {
+            let meta = &mut self.chrs[id as usize];
+            if source_basename < meta.owner.as_ref() {
+                meta.owner = source_basename.into();
+            }
+            return id;
+        }
+        self.push_chr(chr, source_basename)
+    }
+
+    /// Register a never-before-seen chromosome with the given initial owner.
+    fn push_chr(&mut self, chr: &str, source_basename: &str) -> u32 {
         let id = self.chrs.len() as u32;
         self.chrs.push(ChrMeta {
             original: chr.into(),
-            order_key: order_key(source_basename, chr),
+            owner: source_basename.into(),
         });
         self.chr_ids.insert(chr.into(), id);
         id
     }
 
-    /// Record one call. `methylated` increments the methylated count, else
-    /// the unmethylated count (Perl `:374-381`). `source_basename` only
-    /// matters the first time a chromosome is seen (ownership).
-    pub fn add(&mut self, chr: &str, pos: u32, methylated: bool, source_basename: &str) {
-        let id = self.intern(chr, source_basename);
+    /// Increment the methylated/unmethylated count for `(chr_id, pos)`
+    /// (Perl `:374-381`).
+    fn bump(&mut self, id: u32, pos: u32, methylated: bool) {
         let entry = self.counts.entry((id, pos)).or_insert((0, 0));
         if methylated {
             entry.0 += 1;
@@ -104,9 +131,38 @@ impl Aggregator {
         }
     }
 
+    /// Record one call with **first-touch** chromosome ownership. This is the
+    /// file-reading path ([`run`](crate::run)): `source_basename` only matters
+    /// the first time a chromosome is seen.
+    pub fn add(&mut self, chr: &str, pos: u32, methylated: bool, source_basename: &str) {
+        let id = self.intern_first(chr, source_basename);
+        self.bump(id, pos, methylated);
+    }
+
+    /// Record one call with **minimum-basename** chromosome ownership, for the
+    /// extractor's in-process streaming tee. Counts are order-free. Ownership
+    /// resolves to the lexicographically-smallest `source_basename` seen for the
+    /// chromosome.
+    ///
+    /// This is **byte-identical to the file-reading path** as long as the caller
+    /// passes its per-context files in lexicographically-sorted (basename) order
+    /// — which the extractor guarantees (it sorts the kept set; SPEC D3/D6). The
+    /// file path assigns ownership by *first-touch in argv/read order*, and
+    /// reading basename-sorted files makes that first-touch owner the
+    /// smallest-basename emitter — exactly what this method picks. The
+    /// equivalence holds **even when one basename is a prefix of another**,
+    /// because both paths order by the same basename byte-comparison (the file
+    /// path via its sorted argv; this method via `<`) — not by the full
+    /// `order_key`. Feeding calls in arbitrary BAM/read order is therefore safe.
+    pub fn add_min_owner(&mut self, chr: &str, pos: u32, methylated: bool, source_basename: &str) {
+        let id = self.intern_min(chr, source_basename);
+        self.bump(id, pos, methylated);
+    }
+
     /// Consume the aggregator and yield chromosomes in Perl output order,
     /// each with its positions sorted ascending. Each tuple is
-    /// `(pos, meth, unmeth)`.
+    /// `(pos, meth, unmeth)`. The bytewise ordering key is built here (lazily)
+    /// from each chromosome's resolved owner basename.
     #[must_use]
     pub fn into_sorted(self) -> Vec<ChrPositions> {
         let Aggregator { chrs, counts, .. } = self;
@@ -122,10 +178,14 @@ impl Aggregator {
             v.sort_unstable_by_key(|&(pos, _, _)| pos);
         }
 
-        // Chromosome emission order: bytewise sort of the ordering keys
-        // (Perl `sort @temp_files`).
+        // Build each chromosome's ordering key from its resolved owner, then
+        // emit in bytewise key order (Perl `sort @temp_files`).
+        let keys: Vec<Vec<u8>> = chrs
+            .iter()
+            .map(|m| order_key(&m.owner, &m.original))
+            .collect();
         let mut order: Vec<usize> = (0..n).collect();
-        order.sort_by(|&a, &b| chrs[a].order_key.cmp(&chrs[b].order_key));
+        order.sort_by(|&a, &b| keys[a].cmp(&keys[b]));
 
         order
             .into_iter()
@@ -235,5 +295,84 @@ mod tests {
         agg.add("chr1", 50, false, "f.txt");
         let sorted = agg.into_sorted();
         assert_eq!(sorted[0].1, vec![(50, 2, 1)]);
+    }
+
+    // ── add_min_owner (streaming tee) — SPEC D6, promoted from the spike ──
+
+    #[test]
+    fn add_min_owner_matches_basename_sorted_file_order() {
+        // The extractor passes per-context files in lexicographic (basename)
+        // order, so the file path reads CpG_OB before CpG_OT and the owner is
+        // the MIN basename. The streaming tee must reproduce that even though
+        // calls arrive in BAM/read order.
+        //
+        // ORACLE: add() (first-touch) in basename-sorted order [CpG_OB, CpG_OT].
+        let mut oracle = Aggregator::new();
+        oracle.add("2", 100, false, "CpG_OB_s.txt"); // OB read first → OB owns 2
+        oracle.add("2", 100, true, "CpG_OT_s.txt");
+        oracle.add("1", 50, true, "CpG_OT_s.txt"); // OT owns 1
+        oracle.add("MT", 5, false, "CpG_OB_s.txt"); // OB owns MT
+        let oracle_sorted = oracle.into_sorted();
+
+        // TEE: add_min_owner in BAM/read order — chr "2" first seen via OT.
+        let mut tee = Aggregator::new();
+        tee.add_min_owner("2", 100, true, "CpG_OT_s.txt"); // OT first in read order
+        tee.add_min_owner("2", 100, false, "CpG_OB_s.txt"); // OB later → becomes min owner
+        tee.add_min_owner("1", 50, true, "CpG_OT_s.txt");
+        tee.add_min_owner("MT", 5, false, "CpG_OB_s.txt");
+        let tee_sorted = tee.into_sorted();
+
+        // Byte-identical structure AND the same chromosome order.
+        assert_eq!(tee_sorted, oracle_sorted);
+        assert_eq!(names(&tee_sorted), vec!["2", "MT", "1"]);
+    }
+
+    #[test]
+    fn add_min_owner_revises_owner_to_smaller_basename() {
+        // X is first seen via OT, then via the smaller OB → ownership must flip
+        // to OB. The order vs an OB-owned Y proves the flip happened.
+        let mut agg = Aggregator::new();
+        agg.add_min_owner("X", 10, true, "CpG_OT_s.txt"); // X first owned by OT
+        agg.add_min_owner("X", 20, true, "CpG_OB_s.txt"); // smaller → X now owned by OB
+        agg.add_min_owner("Y", 10, true, "CpG_OB_s.txt"); // Y owned by OB
+        // With the flip both are OB-owned → chrX < chrY → [X, Y].
+        // Without the flip X→OT (OT.chrX) would sort AFTER Y→OB (OB.chrY) → [Y, X].
+        assert_eq!(names(&agg.into_sorted()), vec!["X", "Y"]);
+    }
+
+    #[test]
+    fn first_touch_add_diverges_from_min_owner_in_read_order() {
+        // The SAME read-order calls as the matches-file-order test, but via the
+        // first-touch add(): chr "2" first seen via OT → OT owns 2, yielding a
+        // DIFFERENT chromosome order. This is exactly why the streaming tee must
+        // use add_min_owner, not add().
+        let mut naive = Aggregator::new();
+        naive.add("2", 100, true, "CpG_OT_s.txt"); // OT first-touch owns 2
+        naive.add("2", 100, false, "CpG_OB_s.txt");
+        naive.add("1", 50, true, "CpG_OT_s.txt");
+        naive.add("MT", 5, false, "CpG_OB_s.txt");
+        // OT owns 1 and 2; OB owns MT → keys OB.chrMT < OT.chr1 < OT.chr2.
+        assert_eq!(names(&naive.into_sorted()), vec!["MT", "1", "2"]);
+    }
+
+    #[test]
+    fn add_min_owner_prefix_basenames_match_basename_sorted_file_order() {
+        // Even when one basename is a strict prefix of another — the case a
+        // FULL-key comparison would order differently, since "!" (0x21) sorts
+        // before "." (0x2e) — min-basename ownership matches the file path,
+        // because the file path also reads files in basename byte-sorted order.
+        // Oracle: add() over files in sorted order ["f", "f!"]; tee:
+        // add_min_owner in reverse (read) order.
+        let mut oracle = Aggregator::new();
+        oracle.add("X", 1, true, "f"); // "f" sorts before "f!" → owns X
+        oracle.add("X", 2, true, "f!");
+        let oracle_sorted = oracle.into_sorted();
+
+        let mut tee = Aggregator::new();
+        tee.add_min_owner("X", 2, true, "f!"); // larger basename first (read order)
+        tee.add_min_owner("X", 1, true, "f"); // smaller → owns X
+        let tee_sorted = tee.into_sorted();
+
+        assert_eq!(tee_sorted, oracle_sorted);
     }
 }
