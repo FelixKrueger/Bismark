@@ -10,7 +10,13 @@
 |-------|-------|------|--------|
 | **A** | scaffold + crate + clap `Cli`/`validate` + error enum + BAM discovery + report-name derivation + 3 parsers + `.txt` table | `.txt` byte-identical to Perl | ✅ DONE — `cmp` clean on the WGBS fixture |
 | **B** | `.html`: embedded plot.ly/logo assets + normalizer + verbatim heredoc template + fill engine + raw/dedup section deletion + `%.2f`/`%.15g` percentages + timestamp + hidden `--__test_timestamp` | `.html` byte-identical modulo the timestamp line | ✅ DONE — 3,149,130-byte HTML byte-identical to Perl across WGBS / all-RRBS / single-RRBS / plot-excluded / mixed-die |
-| **C** | real-data byte-identity gate on **oxy** + RELEASE checklist + docs/CHANGELOG | Perl≡Rust on a real multi-sample dir | ⏳ PENDING (gates the `v1.0.0-beta.1` tag) |
+| **C** | real-data byte-identity gate on **oxy** + RELEASE checklist + docs/CHANGELOG | Perl≡Rust on a real multi-sample dir | ✅ **GATE PASSED 2026-06-01** (oxy). Docs/CHANGELOG + tag still to do. |
+
+### Phase C real-data gate (oxy, 2026-06-01) — PASSED
+Built release on oxy (cargo 1.96.0) from pushed commit `0ee6a56`; Perl v0.25.1 + Rust on identical real Bismark report sets from `~/bismark_benchmarks`:
+- **Gate 1** — 4 × RRBS_PE samples (alignment + dedup reports → dedup-mode PE): `.txt` byte-identical, `.html` byte-identical modulo timestamp (3,154,150 B both).
+- **Gate 2** — 2 × SE samples (10M_SE directional + full-size human SRR24827373; no dedup → raw-mode SE): `.txt` byte-identical, `.html` byte-identical modulo timestamp (3,150,184 B both).
+- Real-world magnitudes (e.g. 168,790,344 total Cs); both dedup-mode and raw-mode exercised. oxy worktree + staging purged on pass.
 
 ## Test surface (all green — 66 tests)
 - **50 unit tests** — discovery/derivation, glob case-fold sort (+ case-only tiebreak), parsers (PE/SE, overwrites, last-match-wins, CRLF-anchored), `.txt` table, plot assembly (defaulting/blanking/exclusion), `fmt_g` (`%.15g` + the `100−rounded` complement), ctime, html span helpers + render, **`ZeroAlignmentTotal` guard**.
