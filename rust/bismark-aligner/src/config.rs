@@ -104,7 +104,22 @@ pub struct OutputTarget {
     pub gzip: bool,
 }
 
-/// The fully-resolved Phase-1 configuration.
+/// Read-processing options that shape the converted output (Phase 2+). Only the
+/// fields not already on [`OutputTarget`] live here; `gzip`/`prefix`/`temp_dir`
+/// are read from `output` (single source of truth).
+#[derive(Debug, Clone)]
+pub struct ReadProcessing {
+    /// Skip the first N reads (`--skip`; `0`/None disables, Perl falsy).
+    pub skip: Option<u64>,
+    /// Stop after read N (`--upto`; `0`/None disables, Perl falsy).
+    pub upto: Option<u64>,
+    /// `--icpc`: truncate read IDs at the first space/tab (else underscore them).
+    pub icpc: bool,
+    /// minimap2-only maximum read length (`--mm2_maximum_length`); inert for Bowtie 2.
+    pub maximum_length_cutoff: Option<u32>,
+}
+
+/// The fully-resolved configuration (the seam consumed by later phases).
 #[derive(Debug, Clone)]
 pub struct RunConfig {
     /// Verbatim argv (program name excluded) for the `@PG` `CL:` line (Phase 5).
@@ -127,11 +142,22 @@ pub struct RunConfig {
     pub gap_penalties: GapPenalties,
     /// Output target.
     pub output: OutputTarget,
+    /// Read-processing options (skip/upto/icpc/max-len).
+    pub read_processing: ReadProcessing,
 }
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
+    // `--mm2_maximum_length` is only valid in minimap2 mode (Perl 8333). minimap2
+    // is itself deferred (errors above), so on the Bowtie 2 spine this must error
+    // rather than silently no-op — otherwise it would reach the convert-side
+    // length guard and drop records where Perl would die.
+    if cli.maximum_length_cutoff.is_some() {
+        return Err(AlignerError::Validation(
+            "The option '--mm2_maximum_length' is only available in --minimap2 mode.".into(),
+        ));
+    }
     let library = resolve_library(cli)?;
     let format = resolve_format(cli)?;
     validate_multicore(cli)?;
@@ -144,6 +170,12 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (aligner_options, gap_penalties) =
         options::build_aligner_options(cli, format, layout.is_paired())?;
     let output = resolve_output(cli)?;
+    let read_processing = ReadProcessing {
+        skip: cli.skip,
+        upto: cli.upto,
+        icpc: cli.icpc,
+        maximum_length_cutoff: cli.maximum_length_cutoff,
+    };
 
     Ok(RunConfig {
         command_line,
@@ -156,6 +188,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         aligner_options,
         gap_penalties,
         output,
+        read_processing,
     })
 }
 
@@ -244,8 +277,9 @@ pub fn deferred_flags(cli: &Cli) -> Vec<&'static str> {
             v.push(name);
         }
     };
-    push(cli.skip.is_some(), "--skip");
-    push(cli.upto.is_some(), "--upto");
+    // NB: --skip/--upto/--gzip/--prefix are ACTIVE as of Phase 2 (read conversion)
+    // and are deliberately NOT listed here. --basename/--multicore etc. are still
+    // wired in later phases.
     push(cli.unmapped, "--unmapped");
     push(cli.ambiguous, "--ambiguous");
     push(cli.ambig_bam, "--ambig_bam");
@@ -254,8 +288,6 @@ pub fn deferred_flags(cli: &Cli) -> Vec<&'static str> {
     push(cli.slam, "--slam");
     push(cli.non_bs_mm, "--non_bs_mm");
     push(cli.multicore.is_some(), "--multicore");
-    push(cli.gzip, "--gzip");
-    push(cli.prefix.is_some(), "--prefix");
     push(cli.basename.is_some(), "--basename");
     push(cli.old_flag, "--old_flag");
     push(cli.sam_no_hd, "--sam-no-hd");
@@ -377,7 +409,12 @@ fn resolve_output(cli: &Cli) -> Result<OutputTarget> {
         output_dir: cli.output_dir.clone().unwrap_or_default(),
         temp_dir: cli.temp_dir.clone().unwrap_or_default(),
         basename: cli.basename.clone(),
-        prefix: cli.prefix.clone(),
+        // Perl 8238: `$prefix =~ s/\.+$//` — strip trailing dots (the `.` joining
+        // prefix to the file name is added at use-time).
+        prefix: cli
+            .prefix
+            .clone()
+            .map(|p| p.trim_end_matches('.').to_string()),
         format: OutputFormat::Bam,
         gzip: cli.gzip,
     })

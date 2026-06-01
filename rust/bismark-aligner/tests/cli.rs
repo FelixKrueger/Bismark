@@ -116,12 +116,15 @@ fn happy_path_resolves_and_prints_config() {
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2(bins.path());
     let read = make_read(genome.path());
+    let temp = TempDir::new().unwrap();
 
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--path_to_bowtie2")
         .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
         .arg(&read)
         .assert()
         .success()
@@ -131,8 +134,12 @@ fn happy_path_resolves_and_prints_config() {
                     "-q --score-min L,0,-0.2 --ignore-quals",
                 ))
                 .and(predicate::str::contains("single-end"))
-                .and(predicate::str::contains("Bowtie 2 2.5.5")),
+                .and(predicate::str::contains("Bowtie 2 2.5.5"))
+                // Phase 2: the C->T temp file is produced for the v1 spine.
+                .and(predicate::str::contains("Created C->T converted")),
         );
+    // the converted temp file landed in --temp_dir
+    assert!(temp.path().join("reads.fq_C_to_T.fastq").is_file());
 }
 
 #[cfg(unix)]
@@ -253,12 +260,15 @@ fn deferred_flag_emits_notice() {
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2(bins.path());
     let read = make_read(genome.path());
+    let temp = TempDir::new().unwrap();
 
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--path_to_bowtie2")
         .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
         .arg("--unmapped")
         .arg(&read)
         .assert()

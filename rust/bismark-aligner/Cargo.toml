@@ -23,6 +23,9 @@ clap = { version = "=4.5.30", features = ["derive"] }
 # PATH-based discovery of the external aligner (bowtie2). Same crate + pin the
 # genome-preparation port uses for subprocess discovery.
 which = "=7.0.3"
+# gzip read (.fq.gz input) + optional gzip write (--gzip temp). MultiGzDecoder
+# handles concatenated-member .gz (Perl uses `gunzip -c`); same pin as genome-prep.
+flate2 = "=1.1.9"
 thiserror = "=2.0.0"
 anyhow = "=1.0.86"
 

@@ -213,7 +213,8 @@ pub struct Cli {
     /// HISAT2: disable spliced alignment (deferred).
     #[arg(long = "no-spliced-alignment")]
     pub nosplice: bool,
-    /// HISAT2 `--ignore-quals` variant (deferred).
+    /// Truncate read IDs at the first space/tab instead of replacing
+    /// whitespace with underscores (Bismark issue #236; affects `fix_IDs`).
     #[arg(long)]
     pub icpc: bool,
     /// minimap2 short-read preset (deferred).

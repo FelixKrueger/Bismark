@@ -19,9 +19,12 @@
 pub mod aligner;
 pub mod cli;
 pub mod config;
+pub mod convert;
 pub mod discovery;
 pub mod error;
 pub mod options;
+
+use std::path::Path;
 
 pub use config::{RunConfig, resolve};
 pub use error::{AlignerError, Result};
@@ -55,5 +58,37 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         );
     }
     eprintln!("{}", config.summary());
+    convert_reads(&config)?;
+    Ok(())
+}
+
+/// Phase 2: write the bisulfite-converted temp FastQ for the v1 spine
+/// (single-end + directional + FastQ). Other modes are wired in later phases;
+/// no alignment is performed in either case.
+fn convert_reads(config: &RunConfig) -> Result<()> {
+    use config::{LibraryType, ReadFormat, ReadLayout};
+    match (&config.layout, config.library, config.format) {
+        (ReadLayout::SingleEnd { reads }, LibraryType::Directional, ReadFormat::FastQ) => {
+            let opts = convert::ConvertOptions::from_config(config);
+            for read in reads {
+                let converted = convert::bisulfite_convert_fastq_se(
+                    Path::new(read),
+                    &config.output.temp_dir,
+                    &opts,
+                )?;
+                eprintln!(
+                    "Created C->T converted version of {read} -> {} ({} sequences)",
+                    converted.path.display(),
+                    converted.count
+                );
+            }
+        }
+        _ => {
+            eprintln!(
+                "(read conversion for this mode is wired in a later phase; \
+                 Phase 2 covers FastQ single-end directional only)"
+            );
+        }
+    }
     Ok(())
 }

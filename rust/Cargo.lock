@@ -102,6 +102,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
+ "flate2",
  "predicates",
  "tempfile",
  "thiserror 2.0.0",
