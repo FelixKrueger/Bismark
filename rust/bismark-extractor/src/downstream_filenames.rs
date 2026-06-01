@@ -230,17 +230,29 @@ fn basename_str(p: &Path) -> std::borrow::Cow<'_, str> {
 ///
 /// Steps:
 /// 1. If `config.bedgraph` is false: no-op return `Ok(())`.
-/// 2. **No-CpG / empty-input pre-check (Phase 2 T5)**: if there is no usable
-///    input for bedGraph (under `--CX`, the `kept` set is empty; otherwise no
-///    kept file's basename starts with `"CpG"`), warn via the logger and **skip**
-///    the downstream steps, returning `Ok(())` (exit 0). This matches Perl's
-///    *net output*: Perl `bismark2bedGraph:111` / `coverage2cytosine:473` die on
-///    such input, but the Perl extractor's `system()` calls are unchecked, so it
-///    finishes (exit 0, no downstream files).
-/// 3. Build + parse + validate + run the in-process `bismark2bedGraph`.
+/// 2. **No-CpG / empty-input pre-check (Phase 2 T5, preserved in Phase 3a /
+///    F3)**: if there is no usable input for bedGraph (under `--CX`, the `kept`
+///    set is empty; otherwise no kept file's basename starts with `"CpG"`),
+///    warn via the logger and **skip** the downstream steps, returning `Ok(())`
+///    (exit 0). This matches Perl's *net output*: Perl `bismark2bedGraph:111` /
+///    `coverage2cytosine:473` die on such input, but the Perl extractor's
+///    `system()` calls are unchecked, so it finishes (exit 0, no downstream
+///    files). We deliberately do NOT add a `sorted.is_empty()` branch — the
+///    kept-set pre-check is the proven gate (the kept set is empty exactly when
+///    the aggregator is empty, since the same calls feed both).
+/// 3. Build + parse + validate the in-process `bismark2bedGraph` config, then
+///    write the `.bedGraph`/`.cov.gz` (+ optional UCSC) **from the in-memory
+///    `sorted` records** (Phase 3a / F2) — NOT by re-reading the kept files.
 /// 4. If `config.cytosine_report`: build + parse + validate + run the in-process
 ///    `coverage2cytosine`, feeding it the `.bismark.cov.gz` written in step 3
-///    (as an ABSOLUTE path — NEW-1).
+///    (as an ABSOLUTE path — NEW-1). c2c still reads the on-disk `.cov.gz` (D4,
+///    unchanged from Phase 2).
+///
+/// `sorted` is the `bismark_bedgraph::aggregate::ChrPositions` slice produced by
+/// the extraction-time tee's `Aggregator::into_sorted()` (SPEC §4.3.3). It is
+/// the authoritative input to the `.cov.gz`/`.bedGraph` writers; the kept files
+/// remain in `b2bg_cfg.files` (used only by `validate()` to derive
+/// filenames/cutoff/ucsc — `write_outputs_from_sorted` ignores them).
 ///
 /// All filename derivations preserve Perl's trailing-dot quirk per
 /// [`derive_bedgraph_filename`].
@@ -249,12 +261,13 @@ pub fn run_downstream_chain(
     input_basename: &str,
     output_dir: &Path,
     kept_split_files: &[PathBuf],
+    sorted: &[bismark_bedgraph::aggregate::ChrPositions],
 ) -> Result<(), BismarkExtractorError> {
     if !config.bedgraph {
         return Ok(());
     }
 
-    // ── Pre-check: usable bedGraph input? (T5) ──
+    // ── Pre-check: usable bedGraph input? (T5 / F3) ──
     // Default (CpG-only) bedGraph reads ONLY files whose basename starts with
     // "CpG"; --CX reads all kept files. If nothing is usable, warn + skip.
     let usable = if config.cx_context {
@@ -273,7 +286,7 @@ pub fn run_downstream_chain(
         return Ok(());
     }
 
-    // ── Step 1: bismark2bedGraph (in-process) ──
+    // ── Step 1: bismark2bedGraph config (in-process) ──
     let bedgraph_filename = derive_bedgraph_filename(input_basename);
     let b2bg_argv =
         build_bismark2bedgraph_argv(config, kept_split_files, &bedgraph_filename, output_dir);
@@ -291,10 +304,30 @@ pub fn run_downstream_chain(
             tool: "bismark2bedGraph",
             message: e.to_string(),
         })?;
-    bismark_bedgraph::run(&b2bg_cfg).map_err(|e| BismarkExtractorError::Downstream {
-        tool: "bismark2bedGraph",
-        message: e.to_string(),
+    // Phase 3a (F2): write the `.bedGraph`/`.cov.gz` from the in-memory tee's
+    // `sorted` records — replacing (NOT wrapping) the old
+    // `bismark_bedgraph::run(&b2bg_cfg)` file-read so the `.cov.gz` is written
+    // EXACTLY once (R-4). The cutoff is applied inside
+    // `write_outputs_from_sorted` (R3), so the `.cov.gz` is the authoritative
+    // post-cutoff set that c2c then reads (D4). `run()`'s only non-file-read
+    // side effect was `create_dir_all(output_dir)`, already covered (the dir
+    // was created at `OutputFileMap::new` during extraction).
+    bismark_bedgraph::output::write_outputs_from_sorted(&b2bg_cfg, sorted).map_err(|e| {
+        BismarkExtractorError::Downstream {
+            tool: "bismark2bedGraph",
+            message: e.to_string(),
+        }
     })?;
+    // UCSC post-pass re-reads the just-written `.bedGraph` (E7); `run()` orders
+    // write_outputs → write_ucsc, and we preserve that order here.
+    if b2bg_cfg.ucsc {
+        bismark_bedgraph::ucsc::write_ucsc(&b2bg_cfg).map_err(|e| {
+            BismarkExtractorError::Downstream {
+                tool: "bismark2bedGraph",
+                message: e.to_string(),
+            }
+        })?;
+    }
 
     // ── Step 2: coverage2cytosine (in-process; if engaged) ──
     if config.cytosine_report {

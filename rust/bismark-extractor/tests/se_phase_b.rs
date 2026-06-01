@@ -587,6 +587,8 @@ fn output_file_map_write_call_appends_after_header() {
         BismarkStrand::OT,
         /*yacht_col6=*/ 0,
         /*yacht_col7=*/ 0,
+        /*agg=*/ None,
+        /*cx=*/ false,
     )
     .unwrap();
     map.flush_all().unwrap();
@@ -621,6 +623,8 @@ fn format_meth_line_exact_bytes_for_unmethylated() {
         BismarkStrand::CTOT,
         /*yacht_col6=*/ 0,
         /*yacht_col7=*/ 0,
+        /*agg=*/ None,
+        /*cx=*/ false,
     )
     .unwrap();
     map.flush_all().unwrap();

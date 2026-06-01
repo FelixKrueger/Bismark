@@ -160,6 +160,25 @@ impl OutputFileMap {
     ///
     /// See [`write_yacht_row`].
     ///
+    /// # Phase 3a (inline-streaming epic) — the bedGraph tee
+    ///
+    /// `agg` is the optional in-memory `bismark_bedgraph::Aggregator` (present
+    /// iff `--bedGraph`/`--cytosine_report`). When `Some`, after routing the
+    /// call to its destination [`OutputFileEntry`], this method tees the call
+    /// into the aggregator via `add_min_owner`, using the destination file's
+    /// **basename** (`entry.path.file_name()`, borrowed `&str`, NO allocation —
+    /// this is the hot path, ≈1B calls). The tee is gated by R4: feed iff
+    /// `cx` OR the basename starts with `"CpG"` (mirrors bedGraph's
+    /// `select_input_files`). Calls routed to `MbiasOnly` (which has no real
+    /// `OutputKey`) are skipped by construction (the `route_to_key` `None`
+    /// short-circuit below returns before the tee). The tee is purely
+    /// ADDITIVE — the per-context write below is unchanged (D2).
+    ///
+    /// Using the real written-to basename guarantees the tee's
+    /// `source_basename` equals what bedGraph's file-read path would intern
+    /// from the same on-disk file (incl. the `.txt`/`.txt.gz` suffix), so
+    /// min-basename ownership matches the sorted-argv file order (R1/D3).
+    ///
     /// # Errors
     ///
     /// `BismarkExtractorError::IoWrite` on I/O failures. `InternalError` if
@@ -167,6 +186,12 @@ impl OutputFileMap {
     /// — shouldn't be possible because [`OutputFileMap::new`] inserts every
     /// key from `mode_keys`. Surfaces loudly rather than panicking if it
     /// ever happens.
+    // The arg count (9) exceeds clippy's default threshold (7) after Phase 3a
+    // added the `agg`/`cx` tee parameters. A param struct would obscure the
+    // hot-path call sites (`route.rs`/`parallel.rs` already destructure
+    // `ExtractState` and forward fields by name); the yacht col-6/7 args predate
+    // this. Keep the flat signature — it reads cleanly at the two callers.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_call(
         &mut self,
         record_name: &[u8],
@@ -175,11 +200,16 @@ impl OutputFileMap {
         strand: BismarkStrand,
         yacht_col6: u32,
         yacht_col7: u32,
+        agg: Option<&mut bismark_bedgraph::Aggregator>,
+        cx: bool,
     ) -> Result<(), BismarkExtractorError> {
         // `route_to_key` returns None for MbiasOnly. The route_call
         // short-circuit upstream means write_call is never invoked in that
         // mode, but if it ever were we'd silently no-op (consistent with
-        // "no per-context files in mbias_only").
+        // "no per-context files in mbias_only"). The bedGraph tee is also
+        // skipped here for MbiasOnly — `--mbias_only` is unreachable under
+        // `--bedGraph` (Perl :1037-1041), so this is a non-issue, but the
+        // early return keeps the tee strictly tied to a real destination file.
         let key = match route_to_key(self.mode, call.context, strand) {
             Some(k) => k,
             None => return Ok(()),
@@ -194,6 +224,29 @@ impl OutputFileMap {
                         key, self.mode,
                     ),
                 })?;
+
+        // Phase 3a tee — BEFORE the per-context write so the borrow of
+        // `entry.path` (the basename) is taken while we hold `&entry`, then
+        // released before the `&mut entry.writer` write below. NO allocation:
+        // the basename is a borrowed `&str` slice of the already-owned
+        // `entry.path`. The per-context write is unchanged (D2 additive).
+        if let Some(agg) = agg {
+            // `file_name().to_str()` is a borrowed `&str` slice of the
+            // already-owned `entry.path` — zero allocation (Bismark filenames
+            // are ASCII by construction, so `to_str()` never returns None in
+            // practice; the `unwrap_or("")` is defensive). The suffix
+            // (.txt[.gz]) is included, matching what bedGraph's file-read path
+            // interns from the same on-disk file (R1).
+            let basename: &str = entry
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            // R4 selection: feed iff --CX OR the destination is a CpG file.
+            if cx || basename.starts_with("CpG") {
+                agg.add_min_owner(chr, call.ref_pos, call.methylated, basename);
+            }
+        }
 
         if self.mode == OutputMode::Yacht {
             write_yacht_row(
