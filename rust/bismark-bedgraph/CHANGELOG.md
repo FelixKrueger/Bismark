@@ -4,6 +4,27 @@ All notable changes to `bismark-bedgraph` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`mimalloc` global allocator** for `bismark2bedGraph_rs` (matching
+  `bismark-extractor`). The in-memory `(chr, pos)` aggregation map grows through
+  many allocations; mimalloc is ~12% faster than the system allocator on a full
+  `--CX` run (973 s → 854 s, ~4.4× vs Perl). Allocator-only — byte-identical.
+
+### Investigated and rejected
+
+- A `--parallel` flag to parse the per-context input files **concurrently** was
+  prototyped (byte-identical, N-invariant) but **rejected after measurement.**
+  The read+aggregate phase is **memory-bandwidth-bound**, so concurrent
+  multi-GB map builds *anti-scale*: on a full `--CX` gate sequential beat 6-way
+  parallel (854 s vs 1125 s) even with mimalloc, and a controlled experiment
+  (parse-only, interleaved, %CPU + thread-state sampling) confirmed the cause is
+  the shared memory bus + CHH-file load imbalance — fixed by neither a faster
+  allocator nor sharding. Parse/aggregate stays single-threaded. Full
+  investigation + data: `plans/05302026_bedgraph-parallel-parse/`.
+
 ## [1.0.0-beta.1] — 2026-05-29
 
 Initial Rust port of Bismark Perl's `bismark2bedGraph` (v0.25.1). Binary

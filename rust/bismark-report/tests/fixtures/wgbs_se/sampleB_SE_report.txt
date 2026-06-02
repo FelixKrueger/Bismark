@@ -1,0 +1,33 @@
+Bismark report for: sampleB.fastq.gz (version: v0.25.1)
+Bismark was run with Bowtie 2 against the bisulfite genome of /genomes/GRCh38/ with the specified options: -q --score-min L,0,-0.2
+
+Final Alignment report
+======================
+Sequences analysed in total:	100000
+Number of alignments with a unique best hit from the different alignments:	85000
+Mapping efficiency:	85.00%
+Sequences with no alignments under any condition:	10000
+Sequences did not map uniquely:	5000
+Sequences which were discarded because genomic sequence could not be extracted:	0
+
+Number of sequences with unique best (first) alignment came from the bowtie output:
+CT/CT:	42500	((converted) top strand)
+GA/CT:	0	(complementary to (converted) top strand)
+GA/GA:	0	(complementary to (converted) bottom strand)
+CT/GA:	42500	((converted) bottom strand)
+
+Final Cytosine Methylation Report
+=================================
+Total number of C's analysed:	4000000
+
+Total methylated C's in CpG context:	200000
+Total methylated C's in CHG context:	1400
+Total methylated C's in CHH context:	4000
+
+Total unmethylated C's in CpG context:	60000
+Total unmethylated C's in CHG context:	1050000
+Total unmethylated C's in CHH context:	2684600
+
+C methylated in CpG context:	76.9%
+C methylated in CHG context:	0.1%
+C methylated in CHH context:	0.1%

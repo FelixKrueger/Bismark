@@ -1,0 +1,31 @@
+[package]
+name = "bismark-report"
+version = "1.0.0-alpha.1"
+description = "Rust port of Bismark Perl's bismark2report script (per-sample graphical HTML report)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["bisulfite", "methylation", "bismark", "report", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark2report_rs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.0"
+# Local-time formatting for the default {{date}}/{{time}} (Perl `localtime`).
+# Already in the workspace Cargo.lock (transitive) — this adds NO new dependency
+# tree. The deterministic `--__test_timestamp` path is pure-std (no libc).
+libc = "=0.2.186"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"

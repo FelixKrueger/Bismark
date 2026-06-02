@@ -1,0 +1,35 @@
+[package]
+name = "bismark-genome-preparation"
+version = "1.0.0-alpha.2"
+description = "Rust port of Bismark Perl's bismark_genome_preparation script"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "genome", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark_genome_preparation_rs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.5.30", features = ["derive"] }
+# gzip input (.fa.gz / .fasta.gz). MultiGzDecoder handles multi-member files
+# (some genome .gz are concatenated members); a plain GzDecoder would truncate.
+flate2 = "=1.1.9"
+# PATH-based discovery of the external indexer (bowtie2-build / hisat2-build /
+# minimap2). Same crate + pin the extractor uses for subprocess discovery.
+which = "=7.0.3"
+thiserror = "=2.0.0"
+anyhow = "=1.0.86"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"

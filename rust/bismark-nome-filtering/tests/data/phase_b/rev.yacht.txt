@@ -1,0 +1,2 @@
+r_rev	-	chr1	9	z	10	8	-
+r_rev	+	chr1	10	Z	10	8	-

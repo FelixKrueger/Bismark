@@ -222,8 +222,15 @@ pub struct Cli {
     pub samtools_path: Option<PathBuf>,
 
     // ─── Parallelism (SPEC §3 row 33, Perl 991) ───
-    /// Number of rayon worker threads (Phase F). Replaces Perl's
-    /// fork+modulo `--multicore N` model. `0` is rejected at validate-time.
+    /// Number of extraction worker threads (default 1; floored at 2 for BAM).
+    ///
+    /// Replaces Perl's fork+modulo `--multicore N`. Sets ONLY the worker count —
+    /// BGZF decode (fixed 2 threads) and gzip output (a compression pool) are
+    /// always-on and independent of `--parallel`, so even `--parallel 1` uses
+    /// ~7-8 CPU cores in gzip mode (by design, not a runaway). The default is
+    /// already throughput-optimal; raising `--parallel` does NOT speed up BAM
+    /// extraction (decode-bound). `0` is rejected at validate-time. See the
+    /// README "Resource usage" section.
     #[arg(long = "parallel", visible_alias = "multicore", default_value_t = 1u32)]
     pub parallel: u32,
 

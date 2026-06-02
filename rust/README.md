@@ -37,9 +37,20 @@ cd rust
 cargo build --release
 ```
 
-The workspace currently contains:
+## Status
 
-- **`bismark-io`** (library) at `1.0.0-beta.2` — shared BAM/SAM/CRAM I/O on noodles, with v1.1's `ThreadedBamReader` / `ThreadedBamWriter` for parallel BGZF (de)compression. `1.0.0-beta.1` is published to crates.io; `1.0.0-beta.2` is queued for the next publish window.
-- **`bismark-dedup`** (library + `deduplicate_bismark_rs` binary) at `1.1.0-beta.1` — Rust port of Perl `deduplicate_bismark`, byte-identical to v0.25.1 on real-data WGBS (10M PE + ~55M PE) with optional `--parallel N` BGZF threading. `1.0.0-beta.1` is published to crates.io; `1.1.0-beta.1` is queued for the next publish window.
+| Perl tool | Rust crate (binary) | Version | State |
+|---|---|---|---|
+| _(shared library)_ | `bismark-io` | 1.0.0-beta.8 | noodles BAM/SAM/CRAM I/O + `ThreadedBam{Reader,Writer}` (parallel BGZF); byte-equal output is a CI invariant for consumers |
+| `deduplicate_bismark` | `bismark-dedup` (`deduplicate_bismark_rs`) | 1.2.1-beta.1 | **Byte-identical** to Perl v0.25.1 on real-data WGBS (10M + ~55M PE); optional `--parallel N` BGZF threading |
+| `bismark_methylation_extractor` | `bismark-extractor` (`bismark-methylation-extractor-rs`) | 1.0.0-beta.1 | **Byte-identical** at full scale (WGBS PE/SE + RRBS, worker-count-invariant); **~4.8×** vs Perl `--multicore 12` |
+| `bismark2bedGraph` | `bismark-bedgraph` (`bismark2bedGraph_rs`) | 1.0.0-beta.1 | **Byte-identical** (decompressed content); **~3.4×** |
+| `coverage2cytosine` | `bismark-coverage2cytosine` (`coverage2cytosine_rs`) | 1.0.0-alpha.1 | In progress — byte-identity golden tests through phase D |
+| `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-alpha.1 | Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 (indexing delegated to the external indexer) |
+| `methylation_consistency` | `bismark-methylation-consistency` (`methylation_consistency_rs`) | 1.0.0-beta.1 | **Byte-identical** output vs Perl v0.25.1 |
+| `bam2nuc` | `bismark-bam2nuc` (`bam2nuc_rs`) | 1.0.0-alpha.1 | **Byte-identical** to Perl v0.25.1 (mono/di-nucleotide stats; local goldens + oxy real-data gate) |
+| `NOMe_filtering` | `bismark-nome-filtering` (`NOMe_filtering_rs`) | 1.0.0-beta.1 | **Byte-identical** to Perl v0.25.1 (synthetic goldens + full 10M SE oxy gate) |
+| `filter_non_conversion` | `bismark-filter-nonconversion` (`filter_non_conversion_rs`) | 1.0.0-alpha.1 | **Byte-identical** to Perl v0.25.1 (9 golden cells + oxy 10M SE + PE × 4 decision modes) |
+| `bismark2report` | `bismark-report` (`bismark2report_rs`) | 1.0.0-alpha.1 | **Byte-identical** HTML vs Perl v0.25.1 (modulo the `localtime` timestamp line); validated on synthetic + real WGBS PE (10M + ~55M) |
 
-Additional binary crates (`bismark-extractor`, `bismark-bedgraph`, `bismark-coverage2cytosine`, etc.) land as their Phase 1 sub-issues are implemented.
+Versions are the crate manifests on `rust/iron-chancellor`. "Byte-identical" = validated against Perl Bismark v0.25.1 per each crate's README/CHANGELOG + golden/real-data tests; speedups are full-scale where measured. Per-crate detail lives in each crate's `README.md` / `CHANGELOG.md`. `bismark-io` and `bismark-dedup` have early beta lines published to crates.io; later betas are queued for the next publish window.
