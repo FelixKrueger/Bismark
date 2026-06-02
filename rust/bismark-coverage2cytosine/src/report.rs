@@ -82,13 +82,21 @@ pub(crate) enum Context {
 }
 
 impl Context {
-    fn as_bytes(self) -> &'static [u8] {
+    pub(crate) fn as_bytes(self) -> &'static [u8] {
         match self {
             Context::Cg => b"CG",
             Context::Chg => b"CHG",
             Context::Chh => b"CHH",
         }
     }
+}
+
+/// `sprintf "%.6f"` of `m/(m+u)*100` — the percentage string Perl writes into a
+/// `.cov` line (Perl `:403`/`:418`, GpC `:918`/`:930`, merge `:1934`). Caller
+/// guarantees `m + u > 0` (the threshold guard ensures coverage ≥ 1 on every
+/// path that writes a `.cov` line, so there is no division by zero).
+pub(crate) fn pct6(m: u32, u: u32) -> String {
+    format!("{:.6}", f64::from(m) / f64::from(m + u) * 100.0)
 }
 
 /// Faithful model of Perl `substr(seq, offset, want)`: a negative `offset`
@@ -159,6 +167,61 @@ fn extract(seq: &[u8], i: usize) -> (Vec<u8>, Vec<u8>, u8) {
     }
 }
 
+/// The three `--ffs` nucleotide-context fields `(tetra_nt, penta_nt, hexa_nt)`
+/// for the `C`/`G` at index `i` (Perl `:262-330`/`:507-585`/`:1421-1493`). Each
+/// is the empty string when its window runs off a chromosome edge (Perl prints a
+/// blank field). On the reverse strand all three are reverse-complemented.
+///
+/// ⚠️ Forward `hexa_nt` uses the SIGNED offset `i-2`, which is negative at `i=0,1`
+/// while its guard `len ≥ i+4` can still pass → Perl wraps `substr` from the
+/// string end. So the empties are gated by the **numeric `len` guards**, NOT by
+/// "`perl_substr` returned empty" (the wrap returns a non-empty short slice). The
+/// reverse fields never negative-wrap (the `i ≥ 3`/`i ≥ 4` guards prevent it).
+/// N bytes are passed through verbatim (Perl does NOT filter N-windows, despite
+/// the `--help` text — verified against live Perl v0.25.1).
+fn ffs_fields(seq: &[u8], i: usize, strand: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let len = seq.len();
+    if strand == b'+' {
+        // Forward: tetra=substr(i,4) [len≥i+4], penta=substr(i,5) [len≥i+5],
+        // hexa=substr(i-2,6) [len≥i+4; offset signed → negative-wrap at i=0,1].
+        let tetra = if len >= i + 4 {
+            perl_substr(seq, i as isize, 4).to_vec()
+        } else {
+            Vec::new()
+        };
+        let penta = if len >= i + 5 {
+            perl_substr(seq, i as isize, 5).to_vec()
+        } else {
+            Vec::new()
+        };
+        let hexa = if len >= i + 4 {
+            perl_substr(seq, i as isize - 2, 6).to_vec()
+        } else {
+            Vec::new()
+        };
+        (tetra, penta, hexa)
+    } else {
+        // Reverse: revcomp of substr(i-3,4) [i≥3], substr(i-4,5) [i≥4],
+        // substr(i-3,6) [i≥3]. The ≥0 guards mean the offset is never negative.
+        let tetra = if i >= 3 {
+            revcomp(perl_substr(seq, i as isize - 3, 4))
+        } else {
+            Vec::new()
+        };
+        let penta = if i >= 4 {
+            revcomp(perl_substr(seq, i as isize - 4, 5))
+        } else {
+            Vec::new()
+        };
+        let hexa = if i >= 3 {
+            revcomp(perl_substr(seq, i as isize - 3, 6))
+        } else {
+            Vec::new()
+        };
+        (tetra, penta, hexa)
+    }
+}
+
 /// The per-position kernel: extract → guards → classify → accumulate summary
 /// → emit. Appends the report line to `out` (when emitted) and accumulates the
 /// context summary (when `accumulate_summary`). Guard order per Perl's
@@ -172,9 +235,12 @@ pub(crate) fn emit_position(
     cpg_only: bool,
     zero_based: bool,
     threshold: u32,
+    nome: bool,
+    ffs: bool,
     accumulate_summary: bool,
     summary: &mut ContextSummary,
     out: &mut Vec<u8>,
+    cov_out: &mut Vec<u8>,
 ) {
     let pos = (i + 1) as u32;
     let (tri, upstream, strand) = extract(seq, i);
@@ -207,6 +273,14 @@ pub(crate) fn emit_position(
     if cpg_only && context != Context::Cg {
         return;
     }
+    // NOMe ACG/TCG upstream filter (Perl :387-394): inside the CpG-context
+    // branch, drop any CpG whose upstream trinucleotide is neither ACG nor TCG
+    // (the `-` strand `upstream` is already revcomp'd by `extract`). Runs AFTER
+    // `context_reporting` (summary accumulation above) — exactly as Perl's
+    // `next` follows `:381` — so the summary still counts these positions.
+    if nome && context == Context::Cg && upstream != b"ACG" && upstream != b"TCG" {
+        return;
+    }
     let out_pos = if zero_based { pos - 1 } else { pos };
 
     out.extend_from_slice(name);
@@ -222,7 +296,49 @@ pub(crate) fn emit_position(
     out.extend_from_slice(context.as_bytes());
     out.push(b'\t');
     out.extend_from_slice(&tri);
+    // --ffs (Perl :399/:414/:1524): append tetra/penta/hexamer context columns
+    // (7 → 10 fields) BEFORE the newline. An edge window is an empty field
+    // (nothing between tabs). Columns 1–7 are byte-unchanged. Computed only when
+    // `ffs`, so the default hot path is untouched.
+    if ffs {
+        let (tetra, penta, hexa) = ffs_fields(seq, i, strand);
+        out.push(b'\t');
+        out.extend_from_slice(&tetra);
+        out.push(b'\t');
+        out.extend_from_slice(&penta);
+        out.push(b'\t');
+        out.extend_from_slice(&hexa);
+    }
     out.push(b'\n');
+
+    // NOMe `.cov` companion (Perl :402-406 / :417-421): `chr out_pos out_pos
+    // %.6f m u` — a POINT coordinate (both columns = out_pos, honouring
+    // --zero_based), NOT the merge cov's half-open interval. `meth + nonmeth >=
+    // threshold >= 1` here (NOMe threshold is always ≥ 1), so `pct6` is safe.
+    //
+    // ⚠️ Gated on `nome && !ffs`: Perl nests the emit as
+    //   if ($tetra) { print CYT (10-col) }            # --ffs
+    //   else { if ($nome) { print CYT (7-col); print CYTCOV } else { print CYT } }
+    // (`:398-425`). So under `--ffs --nome-seq` the `$tetra` branch short-circuits
+    // BEFORE `print CYTCOV` → the `.NOMe.CpG.cov` is opened (because `$nome`) but
+    // never written (a 0-byte file). The report line above is still the 10-col
+    // ffs line; only the cov companion is suppressed. (Phase-3 dual-review
+    // Critical; the Phase-1 plan flagged this as a sibling-branch interaction.)
+    if nome && !ffs {
+        let pct = pct6(meth, nonmeth);
+        cov_out.extend_from_slice(name);
+        cov_out.push(b'\t');
+        cov_out.extend_from_slice(out_pos.to_string().as_bytes());
+        cov_out.push(b'\t');
+        cov_out.extend_from_slice(out_pos.to_string().as_bytes());
+        cov_out.push(b'\t');
+        cov_out.extend_from_slice(pct.as_bytes());
+        cov_out.push(b'\t');
+        cov_out.extend_from_slice(meth.to_string().as_bytes());
+        cov_out.push(b'\t');
+        cov_out.extend_from_slice(nonmeth.to_string().as_bytes());
+        cov_out.push(b'\n');
+    }
 }
 
 /// Build one chromosome's report lines (the Phase-B kernel walk). A cov
@@ -236,10 +352,11 @@ fn chromosome_report_bytes(
     config: &ResolvedConfig,
     accumulate_summary: bool,
     summary: &mut ContextSummary,
-) -> Vec<u8> {
+) -> (Vec<u8>, Vec<u8>) {
     let mut out: Vec<u8> = Vec::new();
+    let mut cov_out: Vec<u8> = Vec::new(); // stays empty unless config.nome
     let Some(seq) = genome.get(name) else {
-        return out;
+        return (out, cov_out);
     };
     for i in 0..seq.len() {
         if seq[i] == b'C' || seq[i] == b'G' {
@@ -251,13 +368,16 @@ fn chromosome_report_bytes(
                 config.cpg_only,
                 config.zero_based,
                 config.threshold,
+                config.nome,
+                config.ffs,
                 accumulate_summary,
                 summary,
                 &mut out,
+                &mut cov_out,
             );
         }
     }
-    out
+    (out, cov_out)
 }
 
 /// Generate the genome-wide cytosine report(s) + context summary. Dispatches
@@ -285,6 +405,17 @@ fn run_single(
     summary: &mut ContextSummary,
 ) -> Result<(), BismarkC2cError> {
     let mut report_w = ReportWriter::create(&report_path(config, None), config.gzip)?;
+    // NOMe writes a `.cov` companion alongside the core report (Perl opens
+    // CYTCOV only when $nome — handle_filehandles:141-148). Non-NOMe runs emit
+    // no `.cov`.
+    let mut cov_w = if config.nome {
+        Some(ReportWriter::create(
+            &nome_cov_path(config, None),
+            config.gzip,
+        )?)
+    } else {
+        None
+    };
     let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     let mut cur_chr: Option<Vec<u8>> = None;
     let mut buffer: HashMap<u32, (u32, u32)> = HashMap::new();
@@ -302,8 +433,12 @@ fn run_single(
         };
         if cur_chr.as_deref() != Some(chr.as_slice()) {
             if let Some(prev) = cur_chr.take() {
-                let bytes = chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
+                let (bytes, cov_bytes) =
+                    chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
                 report_w.write_all(&bytes)?;
+                if let Some(cw) = cov_w.as_mut() {
+                    cw.write_all(&cov_bytes)?;
+                }
             }
             buffer.clear();
             seen.insert(chr.clone());
@@ -314,20 +449,33 @@ fn run_single(
     match cur_chr.take() {
         None => return Err(BismarkC2cError::EmptyCoverageInput),
         Some(prev) => {
-            let bytes = chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
+            let (bytes, cov_bytes) =
+                chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
             report_w.write_all(&bytes)?;
+            if let Some(cw) = cov_w.as_mut() {
+                cw.write_all(&cov_bytes)?;
+            }
         }
     }
-    if config.threshold == 0 {
+    // Uncovered-chromosome pass — runs ONLY at the default threshold 0 in
+    // non-NOMe mode. Mirrors Perl's 3-way branch (:708-718):
+    //   if ($nome)         → skip (NOMe reports covered positions only, :708-713)
+    //   elsif ($threshold>0) → skip (e.g. `--gc --coverage_threshold N`, :714)
+    //   else                 → process the uncovered chromosomes (:717).
+    if config.threshold == 0 && !config.nome {
         let empty: HashMap<u32, (u32, u32)> = HashMap::new();
         for name in genome.names_sorted() {
             if !seen.contains(name) {
-                let bytes = chromosome_report_bytes(name, genome, &empty, config, false, summary);
+                let (bytes, _cov) =
+                    chromosome_report_bytes(name, genome, &empty, config, false, summary);
                 report_w.write_all(&bytes)?;
             }
         }
     }
     report_w.finish()?;
+    if let Some(cw) = cov_w {
+        cw.finish()?;
+    }
 
     // Context summary — always plain (never gzipped).
     let mut sw = BufWriter::new(File::create(summary_path(config, None))?);
@@ -382,7 +530,9 @@ fn run_split(
         None => return Err(BismarkC2cError::EmptyCoverageInput),
         Some(prev) => flush_split_chromosome(&prev, genome, &buffer, config, true, summary)?,
     };
-    if config.threshold == 0 {
+    // Uncovered-chromosome pass — same gate as `run_single`: only at the default
+    // threshold 0 in non-NOMe mode (Perl's 3-way branch :708-718).
+    if config.threshold == 0 && !config.nome {
         let empty: HashMap<u32, (u32, u32)> = HashMap::new();
         for name in genome.names_sorted() {
             if !seen.contains(name) {
@@ -411,10 +561,19 @@ fn flush_split_chromosome(
     accumulate_summary: bool,
     summary: &mut ContextSummary,
 ) -> Result<PathBuf, BismarkC2cError> {
-    let bytes = chromosome_report_bytes(name, genome, buffer, config, accumulate_summary, summary);
+    let (bytes, cov_bytes) =
+        chromosome_report_bytes(name, genome, buffer, config, accumulate_summary, summary);
     let mut w = ReportWriter::create(&report_path(config, Some(name)), config.gzip)?;
     w.write_all(&bytes)?;
     w.finish()?; // zero-emit chr: empty file (plain) / valid empty-gzip stream
+    // NOMe `.cov` companion — a fresh truncating per-chr writer (no caching), so
+    // a non-contiguous chromosome re-appearance re-truncates its `.cov` exactly
+    // as the report does (Perl reopens GCCOV/CYTCOV with '>').
+    if config.nome {
+        let mut cw = ReportWriter::create(&nome_cov_path(config, Some(name)), config.gzip)?;
+        cw.write_all(&cov_bytes)?;
+        cw.finish()?;
+    }
     let summary_path = summary_path(config, Some(name));
     File::create(&summary_path)?; // empty (truncate) — Perl reopens '>' per chr
     Ok(summary_path)
@@ -431,6 +590,7 @@ pub(crate) fn report_name(
     output_stem: &str,
     chr: Option<&[u8]>,
     cx: bool,
+    nome: bool,
     gz: bool,
 ) -> String {
     let base = match chr {
@@ -442,8 +602,11 @@ pub(crate) fn report_name(
     } else {
         ".CpG_report.txt"
     };
+    // NOMe inserts `.NOMe` before the suffix (Perl :121); NOMe is CpG-context
+    // only, so the suffix is always `.CpG_report.txt` under `nome`.
+    let nome_infix = if nome { ".NOMe" } else { "" };
     let gzs = if gz { ".gz" } else { "" };
-    format!("{base}{suffix}{gzs}")
+    format!("{base}{nome_infix}{suffix}{gzs}")
 }
 
 /// Context-summary filename (never gzipped). Same base as the report.
@@ -465,9 +628,28 @@ pub(crate) fn report_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBu
             &config.output_stem,
             chr,
             config.cx_context,
+            config.nome,
             config.gzip
         )
     ))
+}
+
+/// The NOMe core `.cov` companion path (`{raw}[.chr{name}].NOMe.CpG.cov[.gz]`).
+///
+/// ⚠️ Derived from the **raw `-o`** (`output_raw`), NOT the stripped stem —
+/// Perl `handle_filehandles` never suffix-strips `$cytosine_coverage_file`
+/// (`:96-101,:122`), only `$cytosine_report_file` (`:104-112`). For a plain
+/// `-o sample` the two bases coincide; for a `.CpG_report.txt`-suffixed `-o`
+/// the cov keeps the suffix (`foo.CpG_report.txt.NOMe.CpG.cov`) while the
+/// report drops it (`foo.NOMe.CpG_report.txt`). Verified against live Perl
+/// v0.25.1. NOMe ✗ `--CX`, so the suffix is always `.CpG.cov`.
+pub(crate) fn nome_cov_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
+    let base = match chr {
+        Some(name) => format!("{}.chr{}", config.output_raw, String::from_utf8_lossy(name)),
+        None => config.output_raw.clone(),
+    };
+    let gzs = if config.gzip { ".gz" } else { "" };
+    PathBuf::from(format!("{}{base}.NOMe.CpG.cov{gzs}", config.output_dir))
 }
 
 fn summary_path(config: &ResolvedConfig, chr: Option<&[u8]>) -> PathBuf {
@@ -509,6 +691,7 @@ pub(crate) fn merged_cov_path(config: &ResolvedConfig) -> PathBuf {
         &config.output_stem,
         None,
         false,
+        false, // --merge_CpGs ✗ --nome-seq
         config.gzip,
     );
     PathBuf::from(format!(
@@ -524,6 +707,7 @@ pub(crate) fn discordant_cov_path(config: &ResolvedConfig) -> PathBuf {
         &config.output_stem,
         None,
         false,
+        false, // --merge_CpGs ✗ --nome-seq
         config.gzip,
     );
     PathBuf::from(format!(
@@ -576,23 +760,148 @@ mod tests {
     // ── Task 4: the kernel (verified against the Perl anchor) ──
 
     fn run_t(seq: &[u8], cov: &[(u32, u32, u32)], cpg_only: bool, zero: bool, thr: u32) -> String {
+        run_nome(seq, cov, cpg_only, zero, thr, false).0
+    }
+    fn run(seq: &[u8], cov: &[(u32, u32, u32)], cpg_only: bool, zero: bool) -> String {
+        run_t(seq, cov, cpg_only, zero, 0)
+    }
+    /// Drive the kernel returning `(report, cov)`. `cov` is empty unless `nome`.
+    fn run_nome(
+        seq: &[u8],
+        cov: &[(u32, u32, u32)],
+        cpg_only: bool,
+        zero: bool,
+        thr: u32,
+        nome: bool,
+    ) -> (String, String) {
         let mut buf = HashMap::new();
         for &(p, m, u) in cov {
             buf.insert(p, (m, u));
         }
         let mut out = Vec::new();
+        let mut cov_out = Vec::new();
         let mut summ = ContextSummary::new();
         for i in 0..seq.len() {
             if seq[i] == b'C' || seq[i] == b'G' {
                 emit_position(
-                    b"chr1", seq, i, &buf, cpg_only, zero, thr, true, &mut summ, &mut out,
+                    b"chr1",
+                    seq,
+                    i,
+                    &buf,
+                    cpg_only,
+                    zero,
+                    thr,
+                    nome,
+                    false, // ffs — exercised separately via ffs_fields unit tests
+                    true,
+                    &mut summ,
+                    &mut out,
+                    &mut cov_out,
                 );
             }
         }
-        String::from_utf8(out).unwrap()
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(cov_out).unwrap(),
+        )
     }
-    fn run(seq: &[u8], cov: &[(u32, u32, u32)], cpg_only: bool, zero: bool) -> String {
-        run_t(seq, cov, cpg_only, zero, 0)
+
+    #[test]
+    fn nome_filters_acg_tcg_upstream_and_writes_cov() {
+        // TTACGTTAGCATCGTT, cov at 4 (+,upstream ACG) & 13 (+,upstream TCG):
+        // both kept; the NOMe `.cov` companion is a point coord with %.6f.
+        let (report, cov) = run_nome(
+            b"TTACGTTAGCATCGTT",
+            &[(4, 3, 1), (13, 9, 0)],
+            true,
+            false,
+            1,
+            true,
+        );
+        assert!(report.contains("chr1\t4\t+\t3\t1\tCG\tCGT\n"), "{report}");
+        assert!(report.contains("chr1\t13\t+\t9\t0\tCG\tCGT\n"), "{report}");
+        assert_eq!(
+            cov,
+            "chr1\t4\t4\t75.000000\t3\t1\nchr1\t13\t13\t100.000000\t9\t0\n"
+        );
+    }
+
+    #[test]
+    fn nome_drops_non_acg_tcg_cpg() {
+        // A CpG whose upstream trinucleotide is GCG (neither ACG nor TCG) is
+        // dropped under NOMe — no report line, no cov line.
+        let (report, cov) = run_nome(b"GGCGTT", &[(3, 5, 0)], true, false, 1, true);
+        assert_eq!(report, "");
+        assert_eq!(cov, "");
+    }
+
+    // ── Phase 3: --ffs tetra/penta/hexamer offset table (live-Perl-pinned) ──
+
+    fn ffs3(seq: &[u8], i: usize, strand: u8) -> (String, String, String) {
+        let (t, p, h) = ffs_fields(seq, i, strand);
+        (
+            String::from_utf8(t).unwrap(),
+            String::from_utf8(p).unwrap(),
+            String::from_utf8(h).unwrap(),
+        )
+    }
+
+    #[test]
+    fn ffs_forward_interior() {
+        // V1: chr1=GCCGTGAAACACGGCTTT, i=2 (pos3, +).
+        let g = b"GCCGTGAAACACGGCTTT";
+        assert_eq!(
+            ffs3(g, 2, b'+'),
+            ("CGTG".into(), "CGTGA".into(), "GCCGTG".into())
+        );
+    }
+
+    #[test]
+    fn ffs_forward_hexa_negative_wrap() {
+        // V2: forward hexa offset i-2 is NEGATIVE at i=1,0 while its guard
+        // (len≥i+4) passes → Perl wraps from the string end (NOT empty/clamped).
+        let g = b"GCCGTGAAACACGGCTTT"; // len 18
+        assert_eq!(
+            ffs3(g, 1, b'+'),
+            ("CCGT".into(), "CCGTG".into(), "T".into())
+        );
+        let c = b"CGTAAACCC"; // len 9
+        assert_eq!(
+            ffs3(c, 0, b'+'),
+            ("CGTA".into(), "CGTAA".into(), "CC".into())
+        );
+    }
+
+    #[test]
+    fn ffs_forward_empty_windows_at_chr_end() {
+        // V3: penta empty at chr-end (len < i+5); all three empty further in.
+        let g = b"GCCGTGAAACACGGCTTT"; // len 18
+        assert_eq!(
+            ffs3(g, 14, b'+'),
+            ("CTTT".into(), "".into(), "GGCTTT".into())
+        );
+        let c = b"CGTAAACCC"; // len 9
+        assert_eq!(ffs3(c, 6, b'+'), ("".into(), "".into(), "".into()));
+    }
+
+    #[test]
+    fn ffs_reverse_fields_and_empty_penta() {
+        // V4: chr1 i=3 (pos4, -): revcomp'd; penta empty (guard i≥4 fails at i=3).
+        let g = b"GCCGTGAAACACGGCTTT";
+        assert_eq!(
+            ffs3(g, 3, b'-'),
+            ("CGGC".into(), "".into(), "CACGGC".into())
+        );
+    }
+
+    #[test]
+    fn ffs_passes_n_windows_verbatim() {
+        // Perl does NOT filter N-windows (the --help "Ns ignored" claim is stale);
+        // the fields carry N through (forward verbatim, reverse via revcomp's N→N).
+        assert_eq!(ffs3(b"CNGTAA", 0, b'+').0, "CNGT"); // forward tetra keeps N
+        // reverse: a G at i=3 (`ANCGTT`) whose tetra window spans the N → revcomp
+        // leaves N (revcomp(ANCG) = CGNT), NOT filtered.
+        assert_eq!(ffs_fields(b"ANCGTT", 3, b'-').0, revcomp(b"ANCG"));
     }
 
     #[test]
@@ -651,11 +960,11 @@ mod tests {
     fn filename_derivation() {
         // non-split: stripped stem.
         assert_eq!(
-            report_name("foo", "foo", None, false, false),
+            report_name("foo", "foo", None, false, false, false),
             "foo.CpG_report.txt"
         );
         assert_eq!(
-            report_name("foo", "foo", None, true, true),
+            report_name("foo", "foo", None, true, false, true),
             "foo.CX_report.txt.gz"
         );
         assert_eq!(
@@ -664,22 +973,91 @@ mod tests {
         );
         // split: RAW `-o` + literal `.chr` infix, NO strip.
         assert_eq!(
-            report_name("split", "split", Some(b"chr1"), false, false),
+            report_name("split", "split", Some(b"chr1"), false, false, false),
             "split.chrchr1.CpG_report.txt"
         );
         assert_eq!(
-            report_name("split", "split", Some(b"chr1"), true, true),
+            report_name("split", "split", Some(b"chr1"), true, false, true),
             "split.chrchr1.CX_report.txt.gz"
         );
         // suffixed `-o` split → doubled suffix (C1, the extractor path).
         assert_eq!(
-            report_name("foo.CpG_report.txt", "foo", Some(b"chr1"), false, false),
+            report_name(
+                "foo.CpG_report.txt",
+                "foo",
+                Some(b"chr1"),
+                false,
+                false,
+                false
+            ),
             "foo.CpG_report.txt.chrchr1.CpG_report.txt"
         );
         assert_eq!(
             summary_name("split", "split", Some(b"chr1")),
             "split.chrchr1.cytosine_context_summary.txt"
         );
+    }
+
+    #[test]
+    fn nome_report_filename_inserts_nome_infix() {
+        // Phase 1: NOMe core report = `{base}.NOMe.CpG_report.txt` (stem
+        // non-split, raw+.chr split). NOMe ✗ --CX, so the suffix is .CpG.
+        assert_eq!(
+            report_name("foo", "foo", None, false, true, false),
+            "foo.NOMe.CpG_report.txt"
+        );
+        assert_eq!(
+            report_name("foo", "foo", None, false, true, true),
+            "foo.NOMe.CpG_report.txt.gz"
+        );
+        // suffixed `-o`: report drops the suffix to the stem, then re-adds .NOMe.CpG.
+        assert_eq!(
+            report_name("foo.CpG_report.txt", "foo", None, false, true, false),
+            "foo.NOMe.CpG_report.txt"
+        );
+        // split: raw + .chr infix (no strip) + .NOMe.
+        assert_eq!(
+            report_name("s", "s", Some(b"chr1"), false, true, false),
+            "s.chrchr1.NOMe.CpG_report.txt"
+        );
+    }
+
+    #[test]
+    fn nome_cov_path_uses_raw_base() {
+        // The NOMe `.cov` derives from the RAW `-o` (NOT the stripped stem) —
+        // the load-bearing divergence verified against live Perl v0.25.1.
+        let mk = |raw: &str, stem: &str, chr: Option<&[u8]>, gz: bool| {
+            let c = ResolvedConfig {
+                cov_infile: PathBuf::from("in.cov"),
+                output_raw: raw.to_string(),
+                output_stem: stem.to_string(),
+                output_dir: String::new(),
+                parent_dir: PathBuf::from("."),
+                genome_folder: PathBuf::from("g"),
+                cpg_only: true,
+                cx_context: false,
+                gc_context: true,
+                nome: true,
+                zero_based: false,
+                split_by_chromosome: chr.is_some(),
+                threshold: 1,
+                gzip: gz,
+                merge_cpgs: false,
+                discordance: None,
+                drach: false,
+                ffs: false,
+            };
+            nome_cov_path(&c, chr).to_string_lossy().into_owned()
+        };
+        assert_eq!(mk("sample", "sample", None, false), "sample.NOMe.CpG.cov");
+        assert_eq!(mk("sample", "sample", None, true), "sample.NOMe.CpG.cov.gz");
+        // suffixed `-o`: cov keeps the raw (un-stripped) base.
+        assert_eq!(
+            mk("foo.CpG_report.txt", "foo", None, false),
+            "foo.CpG_report.txt.NOMe.CpG.cov"
+        );
+        // split: raw + .chr infix.
+        assert_eq!(mk("s", "s", Some(b"chr1"), false), "s.chrchr1.NOMe.CpG.cov");
     }
 
     // ── Phase D: merged / discordant cov filename derivation (V2) ──

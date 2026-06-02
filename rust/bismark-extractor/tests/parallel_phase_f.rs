@@ -1198,3 +1198,257 @@ fn parallel_n1_via_extract_se_parallel_matches_legacy_extract_se_pe() {
     .unwrap();
     assert_dirs_byte_identical(&legacy, &parallel, "legacy-pe", "parallel-pe-n1");
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 6. PARALLEL DECODE / GZIP HARDENING (#904, #889 item 3)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Count the **data-bearing** BGZF blocks in a BAM/BGZF file: blocks whose
+/// uncompressed payload size (`ISIZE`, the last 4 bytes of each block) is `> 0`.
+/// This excludes the trailing BGZF EOF marker AND any empty flush blocks the
+/// writer emits (noodles writes an empty block before the EOF marker), so the
+/// count reflects the number of blocks the threaded reader must actually decode
+/// records across — which is what #904 cares about.
+///
+/// The block chain is walked via the BC-subfield `BSIZE` (each block's total
+/// size = `BSIZE + 1`), not by scanning for the 4 magic bytes, so a magic
+/// sequence occurring inside a compressed payload can't produce a false split.
+fn count_bgzf_data_blocks(path: &Path) -> usize {
+    let buf = fs::read(path).unwrap();
+    let mut off = 0usize;
+    let mut count = 0usize;
+    while off + 12 <= buf.len() {
+        // BGZF block header: gzip magic ID1=0x1f ID2=0x8b, CM=8, FLG=4 (FEXTRA).
+        assert!(
+            buf[off] == 0x1f
+                && buf[off + 1] == 0x8b
+                && buf[off + 2] == 0x08
+                && buf[off + 3] == 0x04,
+            "not a BGZF block header at offset {off}"
+        );
+        let xlen = u16::from_le_bytes([buf[off + 10], buf[off + 11]]) as usize;
+        let extra = &buf[off + 12..off + 12 + xlen];
+        // Scan the extra field for the BC subfield (SI1='B', SI2='C', SLEN=2).
+        let mut bsize: Option<usize> = None;
+        let mut p = 0usize;
+        while p + 4 <= extra.len() {
+            let slen = u16::from_le_bytes([extra[p + 2], extra[p + 3]]) as usize;
+            if extra[p] == b'B' && extra[p + 1] == b'C' && slen == 2 && p + 6 <= extra.len() {
+                bsize = Some(u16::from_le_bytes([extra[p + 4], extra[p + 5]]) as usize);
+                break;
+            }
+            p += 4 + slen;
+        }
+        let block_len = bsize.expect("BGZF block missing BC subfield") + 1;
+        // ISIZE = uncompressed payload size = the block's last 4 bytes (LE u32).
+        // Empty blocks (EOF marker + empty flush blocks) have ISIZE == 0.
+        let z = off + block_len - 4;
+        let isize = u32::from_le_bytes([buf[z], buf[z + 1], buf[z + 2], buf[z + 3]]);
+        if isize > 0 {
+            count += 1;
+        }
+        off += block_len;
+    }
+    count
+}
+
+/// Unit-tests the block counter against known fixtures. A header-only BAM has
+/// exactly **one** data-bearing block (the header) — the empty flush block and
+/// EOF marker (both `ISIZE==0`) are excluded. The large fixture must span
+/// several data blocks (the basis of the #904 guard below).
+#[test]
+fn count_bgzf_data_blocks_counts_data_bearing_blocks() {
+    let workdir = tempfile::tempdir().unwrap();
+
+    let empty = workdir.path().join("empty.bam");
+    write_empty_bam(&empty);
+    let small = workdir.path().join("small.bam");
+    write_se_directional_bam(&small);
+    let large = workdir.path().join("large.bam");
+    write_se_large_bam(&large, 8199);
+
+    let (n_empty, n_small, n_large) = (
+        count_bgzf_data_blocks(&empty),
+        count_bgzf_data_blocks(&small),
+        count_bgzf_data_blocks(&large),
+    );
+
+    // A header-only BAM has exactly one data-bearing block (the header); the
+    // empty flush block + EOF marker (both ISIZE==0) are excluded.
+    assert_eq!(n_empty, 1, "header-only BAM = 1 data block");
+    // 5 tiny records fit alongside the header in a single data block.
+    assert_eq!(n_small, 1, "5 tiny records = 1 data block");
+    // The 8199-record fixture is the basis of the #904 ≥3-block guard.
+    assert!(
+        n_large >= 3,
+        "8199 records must span ≥3 data blocks; got {n_large}"
+    );
+}
+
+/// #904: prove parallel BGZF decode preserves record order across **≥3 BGZF
+/// blocks**. The reference is the single-threaded sequential decode
+/// (`extract_se` → `open_reader`), which is order-correct by construction; the
+/// subject is `extract_se_parallel`, which decodes BAM via the fixed-2-thread
+/// `ThreadedBamReader` (#884 R3). A cross-block reordering in the threaded
+/// reader would make the subject diverge from the reference.
+///
+/// The existing multi-batch test compares parallel-vs-parallel (same threaded
+/// reader → blind to a reorder bug), and the other legacy-vs-parallel tests use
+/// a ≤1-block fixture — so this is the only in-repo test that pits
+/// single-threaded decode against threaded decode on a genuinely multi-block
+/// BAM. The `assert!(blocks >= 3)` makes the fixture self-verifying: if a future
+/// `BamWriter` change collapsed it to ≤2 blocks it fails loudly rather than
+/// silently under-testing.
+#[test]
+fn parallel_se_byte_identical_ge3_bgzf_blocks_legacy_vs_threaded() {
+    with_timeout(
+        "parallel_se_byte_identical_ge3_bgzf_blocks_legacy_vs_threaded",
+        || {
+            let workdir = tempfile::tempdir().unwrap();
+            let bam_path = workdir.path().join("large.bam");
+            write_se_large_bam(&bam_path, 8199);
+            let bam_s = bam_path.to_str().unwrap().to_string();
+
+            let blocks = count_bgzf_data_blocks(&bam_path);
+            assert!(
+                blocks >= 3,
+                "fixture must span ≥3 BGZF blocks to exercise multi-block parallel \
+                 decode ordering; got {blocks}"
+            );
+
+            // Reference: single-threaded sequential decode.
+            let legacy = workdir.path().join("legacy");
+            extract_se(
+                &bam_path,
+                &resolved_config(&[
+                    "--single-end",
+                    "--output_dir",
+                    legacy.to_str().unwrap(),
+                    &bam_s,
+                ]),
+            )
+            .unwrap();
+
+            // Subject: 2-thread ThreadedBamReader decode, at N=1 and N=4.
+            for n in [1u32, 4] {
+                let dir = workdir.path().join(format!("n{n}"));
+                extract_se_parallel(
+                    &bam_path,
+                    &resolved_config(&[
+                        "--single-end",
+                        "--parallel",
+                        &n.to_string(),
+                        "--output_dir",
+                        dir.to_str().unwrap(),
+                        &bam_s,
+                    ]),
+                )
+                .unwrap();
+                assert_dirs_byte_identical(&legacy, &dir, "legacy", &format!("threaded-n{n}"));
+            }
+        },
+    );
+}
+
+/// #889 item 3: PE + `--gzip` byte-identity, plus an explicit empty-`.gz` sweep
+/// assertion. PE flows through the same mode-agnostic `open_writer` as SE (only
+/// SE+gzip was previously tested), and the directional PE fixture leaves the 6
+/// CTOT/CTOB strands empty so the sweep is genuinely exercised under `--gzip`.
+#[test]
+fn parallel_pe_gzip_n4_decompresses_identical_to_legacy_plain() {
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path = workdir.path().join("pe.bam");
+    write_pe_directional_bam(&bam_path);
+    let bam_s = bam_path.to_str().unwrap();
+
+    let legacy = workdir.path().join("legacy"); // plain
+    let parallel = workdir.path().join("parallel"); // gzipped
+    extract_pe(
+        &bam_path,
+        &resolved_config(&["-p", "--output_dir", legacy.to_str().unwrap(), bam_s]),
+    )
+    .unwrap();
+    extract_pe_parallel(
+        &bam_path,
+        &resolved_config(&[
+            "-p",
+            "--gzip",
+            "--parallel",
+            "4",
+            "--output_dir",
+            parallel.to_str().unwrap(),
+            bam_s,
+        ]),
+    )
+    .unwrap();
+
+    // Every .gz decompresses to its plain peer; non-gz files byte-identical
+    // (splitting report normalized for the path-dependent lines).
+    for entry in fs::read_dir(&parallel).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(stem) = name.strip_suffix(".gz") {
+            let decoded = decompress_gz(&entry.path());
+            let plain = fs::read(legacy.join(stem)).unwrap();
+            assert_eq!(
+                decoded, plain,
+                "gz {name} decompressed differs from plain peer"
+            );
+        } else {
+            let parallel_bytes = fs::read(entry.path()).unwrap();
+            let legacy_bytes = fs::read(legacy.join(&name)).unwrap();
+            if name.ends_with("_splitting_report.txt") {
+                assert_eq!(
+                    normalize_report(&parallel_bytes),
+                    normalize_report(&legacy_bytes),
+                    "non-gz splitting report {name} differs (after path normalization)"
+                );
+            } else {
+                assert_eq!(parallel_bytes, legacy_bytes, "non-gz file {name} differs");
+            }
+        }
+    }
+
+    // (a) Empty-.gz sweep fired identically under --gzip: kept-file set (with
+    // .gz stripped) equals the plain run's file set.
+    let gzip_stems: BTreeSet<String> = fs::read_dir(&parallel)
+        .unwrap()
+        .map(|e| {
+            let n = e.unwrap().file_name().to_string_lossy().to_string();
+            match n.strip_suffix(".gz") {
+                Some(stem) => stem.to_string(),
+                None => n,
+            }
+        })
+        .collect();
+    let plain_names: BTreeSet<String> = fs::read_dir(&legacy)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        gzip_stems, plain_names,
+        "empty-.gz sweep must keep the same file set under --gzip as the plain run"
+    );
+
+    // (b) Non-vacuity guard: the directional PE fixture writes only OT/OB, so
+    // the 6 CTOT/CTOB context strands must be created-then-swept — NOT all 12
+    // kept, and NOT vacuously never-created. Counting kept .gz context files
+    // proves the sweep actually ran under --gzip.
+    let gz_context: Vec<String> = fs::read_dir(&parallel)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".txt.gz"))
+        .collect();
+    assert!(
+        !gz_context.is_empty() && gz_context.len() < 12,
+        "expected some-but-not-all context strands kept (sweep ran under gzip); \
+         got {} kept: {gz_context:?}",
+        gz_context.len()
+    );
+    assert!(
+        gz_context
+            .iter()
+            .all(|n| !n.contains("_CTOT_") && !n.contains("_CTOB_")),
+        "zero-record CTOT/CTOB strands must be swept under --gzip; got {gz_context:?}"
+    );
+}
