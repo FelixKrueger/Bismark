@@ -1,17 +1,21 @@
 //! Per-(mode-key) split-file map + splitting-report writer.
 //!
-//! Phase B opened 12 strand×context files eagerly at [`OutputFileMap::new`]
-//! time. Phase E generalises this to all 5 non-`MbiasOnly` modes: the
-//! `(key, filename)` list comes from [`crate::output_mode::mode_keys`], and
-//! each file may be wrapped in a parallel-gzip `gzp::par::compress::ParCompress`
-//! writer when `--gzip` is set. `MbiasOnly` skips eager-open entirely (the map is
-//! empty; `route_call` short-circuits before any `write_call` ever runs).
+//! The `(key, filename)` list comes from [`crate::output_mode::mode_keys`]
+//! (all 5 non-`MbiasOnly` modes); each file is a plain `File` or a parallel-gzip
+//! `ParCompress<Gzip>` when `--gzip` is set. `MbiasOnly` yields an empty map
+//! (`route_call` short-circuits before any `write_call`).
 //!
-//! The map's value type changed from Phase B's `BufWriter<File>` to
-//! `BufWriter<Box<dyn Write + Send>>` to accommodate the plain-vs-gzip
-//! dispatch through a single code-path. The `+ Send` bound is
-//! forward-looking for Phase F (per-worker `OutputFileMap`s moved between
-//! threads at join time).
+//! **Lazy-open (#889 item 1):** [`OutputFileMap::new`] no longer creates files
+//! or spawns gzip threads — each writer is opened on its strand's first
+//! `write_call`, so never-written strands (e.g. CTOT/CTOB in a directional
+//! library) cost no file and no threads.
+//!
+//! The per-file writer is the [`SplitWriter`] enum (`Plain | Gzip`), replacing
+//! the former `BufWriter<Box<dyn Write + Send>>` (#889 item 2) so finalization
+//! can call gzp's explicit `finish()` (propagating a footer error) instead of
+//! a `Drop`-time `unwrap()` panic. Both arms are `Send` (auto-derived); note
+//! the single `OutputFileMap` is collector-owned on the main thread, so `Send`
+//! is a forward-looking invariant, not a structural requirement today.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -19,6 +23,9 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use bismark_io::BismarkStrand;
+use gzp::ZWriter;
+use gzp::deflate::Gzip;
+use gzp::par::compress::{ParCompress, ParCompressBuilder};
 
 use crate::call::MethCall;
 use crate::cli::{OutputMode, ResolvedConfig};
@@ -35,11 +42,83 @@ pub const BISMARK_VERSION: &str = "v0.25.1";
 /// 5159, 5182, 5205, 5228, 5429, 5452, 5475, 5498, etc.
 pub const SPLIT_FILE_HEADER: &str = "Bismark methylation extractor version v0.25.1\n";
 
-/// Per-call type-erased boxed writer (plain `File` or a gzp
-/// `ParCompress<Gzip>` over `File`) wrapped in an 8-KiB `BufWriter`.
-/// Phase F may revisit static-dispatch
-/// once profiling under multicore is available (Phase E plan §9.2 #2).
-type BoxedWriter = BufWriter<Box<dyn Write + Send>>;
+/// A per-split-file writer: plain `File` or a gzp parallel-gzip
+/// `ParCompress<Gzip>`, each fronted by an 8-KiB `BufWriter`.
+///
+/// Replaces the former type-erased `BufWriter<Box<dyn Write + Send>>`
+/// (#889 item 2) so finalization can call gzp's **explicit** `finish()`
+/// — surfacing a footer-flush/thread-join error as `io::Error` — instead of
+/// relying on `ParCompress`'s `Drop`-time `finish().unwrap()`, which *panics*
+/// on such an error. Both arms are `Send` (auto-derived), preserving the
+/// forward-looking bound the boxed writer carried.
+enum SplitWriter {
+    Plain(BufWriter<File>),
+    Gzip(BufWriter<ParCompress<Gzip>>),
+}
+
+impl Write for SplitWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            SplitWriter::Plain(w) => w.write(buf),
+            SplitWriter::Gzip(w) => w.write(buf),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            SplitWriter::Plain(w) => w.flush(),
+            SplitWriter::Gzip(w) => w.flush(),
+        }
+    }
+}
+
+impl SplitWriter {
+    /// Flush + finalize the writer, returning any error as `io::Error`.
+    ///
+    /// `Plain`: flush the `BufWriter` to the `File` (no trailer to write).
+    /// `Gzip`: `flush()` the buffer into the `ParCompress`, then `get_mut()` +
+    /// gzp's explicit `ZWriter::finish()` (footer + worker-join), surfacing
+    /// errors as `io::Error` instead of gzp's `Drop`-time `unwrap()` panic
+    /// (#889 item 2). On the **success** path `finish()` `take()`s the
+    /// channels/handle, so the subsequent drop of the `ParCompress` is a no-op.
+    /// On the **error** path gzp returns from `flush_last(true)?` before taking
+    /// them, so its `Drop` would re-panic — see the inline note for why we
+    /// `mem::forget` the writer there. (Regression-tested by
+    /// `split_writer_gzip_finish_surfaces_error_not_panic` +
+    /// `finalize_surfaces_kept_finish_error_via_result` over a failing sink.)
+    fn finish(self) -> std::io::Result<()> {
+        match self {
+            SplitWriter::Plain(mut w) => w.flush(),
+            SplitWriter::Gzip(mut bw) => {
+                // Flush the 8-KiB buffer into the ParCompress (gzp's `flush` is
+                // `flush_last(false)` — no footer). Capture the error but do NOT
+                // early-return: we must still reach `finish()` below.
+                let flush_res = bw.flush();
+                // Explicitly finish the ParCompress: on success it writes the
+                // gzip footer, joins the workers, AND `take()`s its channels —
+                // so the subsequent drop of `bw` is a no-op.
+                let finish_res = bw.get_mut().finish().map_err(std::io::Error::other);
+                let result = flush_res.and(finish_res);
+                if result.is_err() {
+                    // #889 item 2 — the load-bearing bit. gzp 0.11.3's `finish()`
+                    // returns from `flush_last(true)?` BEFORE it `take()`s the
+                    // channels/handle, so on a finalization I/O error they stay
+                    // `Some` and the ParCompress's `Drop` re-runs
+                    // `finish().unwrap()` → PANIC (par/compress.rs:312). gzp gives
+                    // us no way to disarm that Drop (private fields), so leak the
+                    // writer to suppress it. Only reached on a footer/last-block
+                    // write failure (e.g. ENOSPC) where the worker has already
+                    // errored and the run is aborting — surfacing the error as a
+                    // clean `io::Error` matters more than reclaiming a dying
+                    // thread handle. The common (success) path drops normally.
+                    // (Regression-tested by `split_writer_gzip_finish_*` +
+                    // `finalize_surfaces_kept_finish_error_via_result`.)
+                    std::mem::forget(bw);
+                }
+                result
+            }
+        }
+    }
+}
 
 /// Result of [`OutputFileMap::finalize_with_empty_sweep`]. Lists every
 /// file the sweep retained on disk (`kept`) vs unlinked (`swept`) as
@@ -74,7 +153,11 @@ pub struct FinalizationReport {
 /// as empty and unlink it. SPEC §8.3 documents this invariant.
 struct OutputFileEntry {
     path: PathBuf,
-    writer: BoxedWriter,
+    /// `None` until the strand receives its first data row (#889 item 1
+    /// lazy-open): creating the file + writing the header + spawning the gzp
+    /// thread pool is deferred to `write_call`, so never-written strands
+    /// (e.g. CTOT/CTOB in a directional library) cost no file and no threads.
+    writer: Option<SplitWriter>,
     records_written: u64,
 }
 
@@ -92,20 +175,29 @@ pub struct OutputFileMap {
     /// key from `(context, strand)` and to dispatch yacht's 8-col row
     /// format.
     mode: OutputMode,
+    /// Open-time params captured for lazy-open in `write_call`.
+    gzip: bool,
+    no_header: bool,
 }
 
 impl OutputFileMap {
-    /// Eagerly open all per-mode split files in `output_dir`.
+    /// Build the per-mode split-file map. **Lazy-open (#889 item 1):** no
+    /// files are created, no headers written, and no gzip threads spawned
+    /// here — each writer is opened on its strand's first `write_call`. This
+    /// bounds the gzp thread footprint to the strands that actually receive
+    /// data (never-written strands, e.g. CTOT/CTOB in a directional library,
+    /// cost zero threads/files).
     ///
-    /// Writes the version header line to each file unless `no_header == true`.
     /// Creates `output_dir` via `create_dir_all` if missing (matches Perl
-    /// `make_path` behaviour).
+    /// `make_path`), then canonicalizes it once so every entry's `path` is
+    /// absolute — the `kept`/`swept` lists stay absolute even for strands
+    /// whose file is never created.
     ///
     /// When `mode == MbiasOnly` returns an empty map (Perl `:5148-5151
-    /// unless($mbias_only)` skip-eager-open). `flush_all` and `cleanup_all`
-    /// remain valid no-ops on the empty map.
+    /// unless($mbias_only)`). `flush_all`/`cleanup_all`/`finalize_*` remain
+    /// valid no-ops on the empty map.
     ///
-    /// When `gzip == true` every writer is wrapped in a gzp parallel-gzip
+    /// When `gzip == true` each lazily-opened writer is a gzp parallel-gzip
     /// `ParCompress<Gzip>`; filenames already carry the `.gz` suffix per
     /// [`mode_keys`].
     pub fn new(
@@ -116,27 +208,32 @@ impl OutputFileMap {
         gzip: bool,
     ) -> Result<Self, std::io::Error> {
         std::fs::create_dir_all(output_dir)?;
+        // Canonicalize the dir once so kept/swept paths are absolute even for
+        // never-created files (lazy-open). Fall back to the as-is dir if
+        // canonicalize fails (kept paths then match what the caller passed).
+        let dir_abs =
+            std::fs::canonicalize(output_dir).unwrap_or_else(|_| output_dir.to_path_buf());
 
         let keys = mode_keys(mode, input_basename, gzip);
         let mut files: HashMap<OutputKey, OutputFileEntry> = HashMap::with_capacity(keys.len());
 
         for (key, filename) in keys {
-            let path = output_dir.join(filename);
-            let mut writer = open_writer(&path, gzip)?;
-            if !no_header {
-                writer.write_all(SPLIT_FILE_HEADER.as_bytes())?;
-            }
             files.insert(
                 key,
                 OutputFileEntry {
-                    path,
-                    writer,
+                    path: dir_abs.join(filename),
+                    writer: None, // opened lazily on first write (#889 item 1)
                     records_written: 0,
                 },
             );
         }
 
-        Ok(OutputFileMap { files, mode })
+        Ok(OutputFileMap {
+            files,
+            mode,
+            gzip,
+            no_header,
+        })
     }
 
     /// Append a `MethCall` line to the appropriate split file.
@@ -163,7 +260,7 @@ impl OutputFileMap {
     /// # Errors
     ///
     /// `BismarkExtractorError::IoWrite` on I/O failures. `InternalError` if
-    /// the routed [`OutputKey`] is somehow missing from the eager-open map
+    /// the routed [`OutputKey`] is somehow missing from the map
     /// — shouldn't be possible because [`OutputFileMap::new`] inserts every
     /// key from `mode_keys`. Surfaces loudly rather than panicking if it
     /// ever happens.
@@ -184,20 +281,39 @@ impl OutputFileMap {
             Some(k) => k,
             None => return Ok(()),
         };
+        let gzip = self.gzip;
+        let no_header = self.no_header;
+        let yacht = self.mode == OutputMode::Yacht;
         let entry =
             self.files
                 .get_mut(&key)
                 .ok_or_else(|| BismarkExtractorError::InternalError {
                     message: format!(
                         "OutputFileMap missing key {:?} for mode {:?} — \
-                         eager-open should have created every key from mode_keys",
+                         new() inserts every key from mode_keys",
                         key, self.mode,
                     ),
                 })?;
 
-        if self.mode == OutputMode::Yacht {
+        // Lazy-open (#889 item 1): create the file + write the header + spawn
+        // the gzp pool only on the strand's first data row. The header is thus
+        // the first bytes of any created file — byte-identical to the former
+        // eager-open for every kept file.
+        if entry.writer.is_none() {
+            let mut w = open_split_writer(&entry.path, gzip)?;
+            if !no_header {
+                w.write_all(SPLIT_FILE_HEADER.as_bytes())?;
+            }
+            entry.writer = Some(w);
+        }
+        let writer = entry
+            .writer
+            .as_mut()
+            .expect("writer was opened on the line above");
+
+        if yacht {
             write_yacht_row(
-                &mut entry.writer,
+                writer,
                 record_name,
                 chr,
                 &call,
@@ -208,18 +324,16 @@ impl OutputFileMap {
         } else {
             // 5-col format (Phase B byte-identity locked).
             let meth_char: u8 = if call.methylated { b'+' } else { b'-' };
-            entry.writer.write_all(record_name)?;
-            entry.writer.write_all(b"\t")?;
-            entry.writer.write_all(&[meth_char])?;
-            entry.writer.write_all(b"\t")?;
-            entry.writer.write_all(chr.as_bytes())?;
-            entry.writer.write_all(b"\t")?;
-            entry
-                .writer
-                .write_all(call.ref_pos.to_string().as_bytes())?;
-            entry.writer.write_all(b"\t")?;
-            entry.writer.write_all(&[call.xm_byte])?;
-            entry.writer.write_all(b"\n")?;
+            writer.write_all(record_name)?;
+            writer.write_all(b"\t")?;
+            writer.write_all(&[meth_char])?;
+            writer.write_all(b"\t")?;
+            writer.write_all(chr.as_bytes())?;
+            writer.write_all(b"\t")?;
+            writer.write_all(call.ref_pos.to_string().as_bytes())?;
+            writer.write_all(b"\t")?;
+            writer.write_all(&[call.xm_byte])?;
+            writer.write_all(b"\n")?;
         }
         // Phase C.2 (#865): bump records_written AFTER all writes succeed.
         // Per plan §5.3 step 2 + R4: partial-write failures (any of the
@@ -235,13 +349,16 @@ impl OutputFileMap {
     /// are on disk before the run terminates. On the empty `MbiasOnly`
     /// map this is a no-op.
     ///
-    /// For gzipped writers, `BufWriter::flush` propagates to the inner gzp
-    /// `ParCompress`, which writes its trailing gzip footer when the writer
-    /// drops (which happens at `cleanup_all` time, or at struct-drop time
-    /// for the normal exit path) — NOT on flush.
+    /// Skips never-opened (`None`) writers (lazy-open #889 item 1). For gzipped
+    /// writers, `BufWriter::flush` propagates to the inner gzp `ParCompress`
+    /// (`flush_last(false)` — pushes pending blocks, NOT the footer). The gzip
+    /// footer is written later by [`SplitWriter::finish`] at finalize/cleanup
+    /// time (#889 item 2), not on flush and no longer via `Drop`.
     pub fn flush_all(&mut self) -> Result<(), std::io::Error> {
         for entry in self.files.values_mut() {
-            entry.writer.flush()?;
+            if let Some(writer) = entry.writer.as_mut() {
+                writer.flush()?;
+            }
         }
         Ok(())
     }
@@ -249,13 +366,14 @@ impl OutputFileMap {
     /// Sweep empty per-strand output files at flush time, matching Perl's
     /// end-of-run `was empty -> deleted` behaviour (closes #865).
     ///
-    /// For each entry: drop the writer (closes the `File` + flushes the gzp
-    /// `ParCompress` gzip trailer if applicable — `flush_all` does NOT write
-    /// the gzip trailer, only `drop` does); if `records_written == 0`,
-    /// unlink the file and emit `{filename} was empty ->\tdeleted` to
-    /// **STDERR** via `eprintln!`. Otherwise emit `{filename} contains
-    /// data ->\tkept`. Two trailing `eprintln!()` calls mirror Perl line
-    /// 625's `warn "\n\n"`.
+    /// For each entry: if it has an opened writer, [`SplitWriter::finish`] it
+    /// (seals the gzip footer for gzipped writers + surfaces any I/O error as
+    /// `Result` — #889 item 2). If `records_written == 0` (never-opened lazy
+    /// entries, or the rare opened-but-no-rows remnant) unlink any file and emit
+    /// `{filename} was empty ->\tdeleted` to **STDERR** via the logger;
+    /// otherwise emit `{filename} contains data ->\tkept`. Two trailing
+    /// blank `note("")` calls mirror Perl line 625's `warn "\n\n"`. A kept-file
+    /// finish error is collected and returned after the loop completes.
     ///
     /// Empties the internal map (the sweep is the terminal lifecycle
     /// method for `OutputFileMap`); subsequent `write_call` invocations
@@ -287,6 +405,9 @@ impl OutputFileMap {
         let entries: Vec<_> = self.files.drain().collect();
         let mut kept: Vec<PathBuf> = Vec::new();
         let mut swept: Vec<PathBuf> = Vec::new();
+        // #889 item 2: a footer-flush error on a kept gzip file is collected
+        // here and returned after the loop, so the sweep still completes.
+        let mut first_err: Option<std::io::Error> = None;
         for (
             _,
             OutputFileEntry {
@@ -296,42 +417,56 @@ impl OutputFileMap {
             },
         ) in entries
         {
-            // Explicit drop closes the writer AND flushes the gzip trailer
-            // for gzipped writers (which `flush_all` doesn't — gzip trailer
-            // emission is tied to gzp ParCompress's Drop impl, which calls
-            // finish() to write the footer, not to its flush).
-            // For kept files this is the seal-the-trailer point.
-            drop(writer);
-            // Phase G (rev 1 C4): canonicalize BEFORE potential removal so
-            // the swept list still gets an absolute path. canonicalize
-            // requires the file to exist; falling back to the as-is path
-            // covers the (defensive) case where the file disappeared
-            // between drop and stat.
+            // Phase G (rev 1 C4): canonicalize for an absolute path. A
+            // never-created file (lazy-open) can't be canonicalized, so fall
+            // back to the stored path — which is already absolute (`new`
+            // canonicalizes the output dir).
             let abs_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            // Phase C.2 code-review B H1: emit the FULL path (matches
-            // Perl `:607, :615` which use `$sorting_files[$index]` =
-            // `$output_dir . $filename`). We display the canonical path
-            // post-Phase-G so log lines match the argv passed downstream.
+            // Phase C.2 code-review B H1: emit the FULL path (matches Perl
+            // `:607, :615`); post-Phase-G the canonical path matches the argv
+            // passed downstream.
             let path_str = abs_path.display();
-            if records_written == 0 {
-                // Phase G rev 2 (code-review B H2): log-and-continue on
-                // unlink failure so subsequent files still get processed
-                // and post-sweep work runs.
-                if let Err(e) = std::fs::remove_file(&path) {
-                    // Genuine warning — never gated by --quiet.
-                    eprintln!("warning: failed to remove empty output file {path_str}: {e}");
+            match writer {
+                // Kept: a writer is opened only on a successful first write, so
+                // in the normal finalize path an opened writer has data. Seal
+                // the gzip trailer via gzp's explicit `finish()` (#889 item 2)
+                // — surfacing a footer-flush/join error as `io::Error` instead
+                // of `ParCompress`'s `Drop`-time `unwrap()` panic. Keep the
+                // first error and continue (fail-open-on-remove philosophy).
+                Some(w) if records_written > 0 => {
+                    if let Err(e) = w.finish() {
+                        first_err.get_or_insert(e);
+                    }
+                    logger.note(&format!("{path_str} contains data ->\tkept"));
+                    kept.push(abs_path);
                 }
-                logger.note(&format!("{path_str} was empty ->\tdeleted"));
-                swept.push(abs_path);
-            } else {
-                logger.note(&format!("{path_str} contains data ->\tkept"));
-                kept.push(abs_path);
+                // Empty: never-opened (`None`, the common lazy-open case — no
+                // file on disk) or opened-but-no-rows (an error-path remnant).
+                // Finish any writer, remove any file (fail-open; a never-created
+                // file gives NotFound, which is expected), log + record swept.
+                // Matches Perl's end-of-run `was empty -> deleted`.
+                maybe_writer => {
+                    if let Some(w) = maybe_writer
+                        && let Err(e) = w.finish()
+                    {
+                        first_err.get_or_insert(e);
+                    }
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => {
+                            // Genuine warning — never gated by --quiet.
+                            eprintln!(
+                                "warning: failed to remove empty output file {path_str}: {e}"
+                            );
+                        }
+                    }
+                    logger.note(&format!("{path_str} was empty ->\tdeleted"));
+                    swept.push(abs_path);
+                }
             }
         }
-        // Perl line 625: `warn "\n\n";` — two trailing blank lines on
-        // stderr to mark the end of the sweep block. Mirroring for
-        // consistency with downstream tooling that visually parses the
-        // captured stderr.
+        // Perl line 625: `warn "\n\n";` — two trailing blank lines on stderr.
         logger.note("");
         logger.note("");
         // Phase G (rev 1 I7): sort kept lexicographically so the argv
@@ -339,6 +474,11 @@ impl OutputFileMap {
         // across runs (underlying HashMap iteration order is not).
         kept.sort();
         swept.sort();
+        // #889 item 2: surface a kept-file footer-flush error now that every
+        // entry has been finalized + the sweep has run.
+        if let Some(e) = first_err {
+            return Err(e);
+        }
         Ok(FinalizationReport { kept, swept })
     }
 
@@ -363,19 +503,22 @@ impl OutputFileMap {
             },
         ) in entries
         {
-            // Explicitly close the writer (and the inner gzp `ParCompress`,
-            // if any) BEFORE calling `remove_file`. A named `let` binding (even
-            // underscore-prefixed) lives to the end of the loop iteration,
-            // so without this explicit drop the file would still be open
-            // when `remove_file` runs — benign on Unix but fails on Windows
-            // where `remove_file` on an open handle is denied.
-            drop(writer);
-            if let Err(e) = std::fs::remove_file(&path) {
-                eprintln!(
+            // Finish/close any opened writer (and its inner gzp `ParCompress`)
+            // BEFORE `remove_file` — an open handle blocks removal on Windows.
+            // Best-effort on this error path: ignore the finish result. A
+            // never-opened (`None`) entry has no file, so `remove_file` returns
+            // NotFound, which we ignore.
+            if let Some(w) = writer {
+                let _ = w.finish();
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => eprintln!(
                     "warning: failed to remove partial output file {}: {}",
                     path.display(),
                     e
-                );
+                ),
             }
         }
     }
@@ -393,54 +536,49 @@ impl OutputFileMap {
 /// Tying it to `--parallel` instead would leave the default path
 /// single-threaded (~75 s), defeating R2's purpose.
 ///
-/// **Aggregate thread footprint (dual code-review, Medium):** gzp spawns its
-/// pool *eagerly* at `from_writer` (writer-open), not lazily, and each gzipped
-/// file holds `1 writer + GZIP_COMPRESS_THREADS compressor` threads for the
-/// whole run. So the real total is `(GZIP_COMPRESS_THREADS + 1) × open_files`
-/// — e.g. Default mode opens 12 split files ⇒ ~60 gzip threads, independent of
-/// `--parallel` (including zero-record CTOT/CTOB strands later swept). No
-/// correctness/CPU impact (idle threads block on empty channels), but it is a
-/// thread-count, not a "pool of 4". Lowering the value (e.g. 2–3) or
-/// lazy-opening writers is a measured follow-up — 4 reproduces the validated
-/// spike, so it stays for R2.
+/// **Aggregate thread footprint (#889 item 1, resolved):** gzp spawns its pool
+/// *eagerly* at `from_writer`, holding `1 writer + GZIP_COMPRESS_THREADS`
+/// threads per open gzip file. The writers are now **lazy-opened** (only on a
+/// strand's first data row — see [`OutputFileMap::new`]/[`open_split_writer`]),
+/// so `open_files` is bounded to the strands that actually receive data, not
+/// all `mode_keys`. A directional library no longer spawns threads for its
+/// zero-record CTOT/CTOB strands (was `(4+1)×12 ≈ 60`; now `(4+1)×written`).
+/// The constant stays at 4 — it reproduces the validated ~4.1× gzip speedup
+/// (lowering it would need a perf re-measure; deliberately out of scope here).
 const GZIP_COMPRESS_THREADS: usize = 4;
 
-/// Factory: open the per-key writer, dispatching to plain `File` or a
-/// parallel-gzip `gzp::par::compress::ParCompress<Gzip>` writer based on `gzip`.
+/// Factory: create the per-key file + writer, dispatching to a plain `File`
+/// or a parallel-gzip `ParCompress<Gzip>` based on `gzip`. Called **lazily**
+/// from `write_call` on a strand's first data row (#889 item 1), so the file
+/// + gzip thread pool exist only for strands that receive data.
 ///
-/// Returns the writer already wrapped in an 8-KiB `BufWriter` (matching
-/// Phase B's capacity). `Box<dyn Write + Send>` is the inner type to
-/// keep the `OutputFileMap::write_call` body branch-free w.r.t. plain-vs-gz.
+/// Returns a [`SplitWriter`] (8-KiB `BufWriter` over either arm).
 ///
 /// **gzip output framing (#884 R2):** gzp's `Gzip` format emits a *single*
 /// gzip member — one header, sync-flushed DEFLATE blocks, one stream-wide
-/// CRC32+ISIZE footer (gzp `par/compress.rs` writes `header()`/`footer()`
-/// once per stream). A plain single-member `GzDecoder` reads it correctly; no
-/// `MultiGzDecoder` is needed. The footer is written when the writer is
-/// **dropped** (gzp's `Drop` calls `finish()`), matching the flate2
-/// `GzEncoder` drop-finalization the empty-sweep relies on. Caveats: a
-/// footer-flush I/O error surfaces as a *panic* on drop (gzp `.unwrap()`s),
-/// unlike flate2's silent swallow — mid-stream write errors still propagate
-/// as `io::Error`. The `deflate_rust` backend (pure Rust, no cmake) skips the
-/// cross-block dictionary, so the *compressed* bytes differ from flate2's,
-/// but the *decompressed* content is byte-identical (no test hashes raw
-/// `.gz`; the colossal smoke compares `zcat | sort | md5`).
-fn open_writer(path: &Path, gzip: bool) -> Result<BoxedWriter, std::io::Error> {
+/// CRC32+ISIZE footer. A plain single-member `GzDecoder` reads it correctly;
+/// no `MultiGzDecoder` is needed. The footer is written by
+/// [`SplitWriter::finish`] (gzp's explicit `ZWriter::finish`), called at
+/// finalize/cleanup time — **not** on `flush` and no longer via a `Drop`-time
+/// `unwrap()` (#889 item 2 replaced that panic with a propagated `io::Error`).
+/// The `deflate_rust` backend skips the cross-block dictionary, so the
+/// *compressed* bytes differ from flate2's, but the *decompressed* content is
+/// byte-identical (no test hashes raw `.gz`; the real-data smoke compares
+/// `zcat | sort | md5`).
+fn open_split_writer(path: &Path, gzip: bool) -> Result<SplitWriter, std::io::Error> {
     let file = File::create(path)?;
-    let inner: Box<dyn Write + Send> = if gzip {
+    if gzip {
         // #884 R2: parallelize the single-threaded gzip compression wall via
-        // gzp's ParCompress pool (deflate_rust backend). num_threads is a
-        // fixed constant decoupled from --parallel — see GZIP_COMPRESS_THREADS.
-        Box::new(
-            gzp::par::compress::ParCompressBuilder::<gzp::deflate::Gzip>::new()
-                .num_threads(GZIP_COMPRESS_THREADS)
-                .expect("GZIP_COMPRESS_THREADS is nonzero")
-                .from_writer(file),
-        )
+        // gzp's ParCompress pool. num_threads is a fixed constant decoupled
+        // from --parallel — see GZIP_COMPRESS_THREADS.
+        let par = ParCompressBuilder::<Gzip>::new()
+            .num_threads(GZIP_COMPRESS_THREADS)
+            .expect("GZIP_COMPRESS_THREADS is nonzero")
+            .from_writer(file);
+        Ok(SplitWriter::Gzip(BufWriter::with_capacity(8 * 1024, par)))
     } else {
-        Box::new(file)
-    };
-    Ok(BufWriter::with_capacity(8 * 1024, inner))
+        Ok(SplitWriter::Plain(BufWriter::with_capacity(8 * 1024, file)))
+    }
 }
 
 /// Per-context counts accumulated during the SE/PE loop. Drives the
@@ -837,6 +975,76 @@ pub fn write_splitting_report(
 mod tests {
     use super::*;
     use crate::cli::PairedMode;
+
+    // ── #889 item 2: finish() surfaces errors as io::Error, never panics ──
+
+    /// A sink that fails every write/flush. `ParCompress` type-erases its
+    /// underlying writer (a worker thread owns it), so a `SplitWriter::Gzip`
+    /// can wrap one — letting us prove `finish()` returns `Err` (gzp surfaces
+    /// the sink error as `GzpError::Io`) instead of panicking via
+    /// `ParCompress`'s `Drop`-time `finish().unwrap()`. (The `Plain` arm is
+    /// concretely `BufWriter<File>` and its `finish` is a plain flush that
+    /// never panicked — the panic risk was gzp-only.)
+    struct FailingWriter;
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("sink write failed"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("sink flush failed"))
+        }
+    }
+
+    #[test]
+    fn split_writer_gzip_finish_surfaces_error_not_panic() {
+        let par = ParCompressBuilder::<Gzip>::new()
+            .num_threads(1)
+            .expect("nonzero")
+            .from_writer(FailingWriter);
+        let mut w = SplitWriter::Gzip(BufWriter::new(par));
+        // Buffer a row so the gzip worker has data to push to the failing sink.
+        let _ = w.write_all(b"r\t+\tchr1\t100\tZ\n");
+        // #889 item 2: must return Err (gzp surfaces the sink error as
+        // GzpError::Io), NOT panic via ParCompress's Drop-time finish().unwrap().
+        assert!(
+            w.finish().is_err(),
+            "Gzip finish over a failing sink must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn finalize_surfaces_kept_finish_error_via_result() {
+        let tmp = tempfile::tempdir().unwrap();
+        // One kept gzip entry whose sink fails → finish() errors at finalize.
+        let par = ParCompressBuilder::<Gzip>::new()
+            .num_threads(1)
+            .expect("nonzero")
+            .from_writer(FailingWriter);
+        let mut bad = SplitWriter::Gzip(BufWriter::new(par));
+        let _ = bad.write_all(b"r\t+\tchr1\t100\tZ\n");
+        let mut files = HashMap::new();
+        files.insert(
+            OutputKey::Yacht, // key value is irrelevant; finalize iterates entries
+            OutputFileEntry {
+                path: tmp.path().join("kept.txt"),
+                writer: Some(bad),
+                records_written: 1,
+            },
+        );
+        let mut map = OutputFileMap {
+            files,
+            mode: OutputMode::Default,
+            gzip: true,
+            no_header: false,
+        };
+        // finalize collects the finish error and returns it after the sweep loop
+        // (#889 item 2) — instead of panicking.
+        let result = map.finalize_with_empty_sweep(crate::logging::Logger::new(true, false));
+        assert!(
+            result.is_err(),
+            "finalize must surface the kept-file finish error as Err"
+        );
+    }
 
     #[test]
     fn write_percent_or_fallback_cpg_not_last_emits_single_newline() {
