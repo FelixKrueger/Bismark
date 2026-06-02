@@ -256,10 +256,38 @@ fn output_file_map_skips_eager_open_for_mbias_only() {
     map.cleanup_all();
 }
 
+/// Drive one `write_call` to lazily materialize the split file for
+/// `(context, strand)`. `OutputFileMap::new` no longer creates files eagerly
+/// (#889 item 1 lazy-open) — a file exists on disk only once written — so the
+/// construction tests below write a triggering row per expected file before
+/// asserting the on-disk file set. (Filename *correctness* is also covered by
+/// the `mode_keys` tests above; these now also prove lazy materialization.)
+fn touch(map: &mut OutputFileMap, context: CytosineContext, strand: BismarkStrand) {
+    let call = MethCall {
+        ref_pos: 100,
+        read_pos: 0,
+        context,
+        methylated: true,
+        xm_byte: b'Z',
+    };
+    map.write_call(b"r", "chr1", call, strand, 0, 0).unwrap();
+}
+
 #[test]
 fn output_file_map_comprehensive_creates_3_files_with_context_infix() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(dir.path(), "x", true, OutputMode::Comprehensive, false).unwrap();
+    let mut map =
+        OutputFileMap::new(dir.path(), "x", true, OutputMode::Comprehensive, false).unwrap();
+    // Comprehensive merges strands into one per-context file; write one row per
+    // context to materialize all three.
+    for ctx in [
+        CytosineContext::CpG,
+        CytosineContext::CHG,
+        CytosineContext::CHH,
+    ] {
+        touch(&mut map, ctx, BismarkStrand::OT);
+    }
+    map.flush_all().unwrap();
     let names = on_disk_filenames(dir.path());
     assert_eq!(names.len(), 3);
     assert!(names.contains("CpG_context_x.txt"));
@@ -270,7 +298,20 @@ fn output_file_map_comprehensive_creates_3_files_with_context_infix() {
 #[test]
 fn output_file_map_merge_non_cpg_creates_8_files() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(dir.path(), "x", true, OutputMode::MergeNonCpG, false).unwrap();
+    let mut map =
+        OutputFileMap::new(dir.path(), "x", true, OutputMode::MergeNonCpG, false).unwrap();
+    // MergeNonCpG is per-strand: CpG_{strand} from CpG calls, Non_CpG_{strand}
+    // from CHG/CHH calls. Write both classes on every strand to materialize 8.
+    for strand in [
+        BismarkStrand::OT,
+        BismarkStrand::CTOT,
+        BismarkStrand::CTOB,
+        BismarkStrand::OB,
+    ] {
+        touch(&mut map, CytosineContext::CpG, strand);
+        touch(&mut map, CytosineContext::CHG, strand);
+    }
+    map.flush_all().unwrap();
     let names = on_disk_filenames(dir.path());
     assert_eq!(names.len(), 8);
     for class in ["CpG", "Non_CpG"] {
@@ -284,7 +325,9 @@ fn output_file_map_merge_non_cpg_creates_8_files() {
 #[test]
 fn output_file_map_yacht_creates_1_file() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(dir.path(), "x", true, OutputMode::Yacht, false).unwrap();
+    let mut map = OutputFileMap::new(dir.path(), "x", true, OutputMode::Yacht, false).unwrap();
+    touch(&mut map, CytosineContext::CpG, BismarkStrand::OT);
+    map.flush_all().unwrap();
     let names = on_disk_filenames(dir.path());
     assert_eq!(names.len(), 1);
     assert!(names.contains("any_C_context_x.txt"));
@@ -293,7 +336,7 @@ fn output_file_map_yacht_creates_1_file() {
 #[test]
 fn output_file_map_gzip_appends_dot_gz_to_disk_filenames() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(
+    let mut map = OutputFileMap::new(
         dir.path(),
         "x",
         true,
@@ -301,6 +344,14 @@ fn output_file_map_gzip_appends_dot_gz_to_disk_filenames() {
         true, // gzip
     )
     .unwrap();
+    for ctx in [
+        CytosineContext::CpG,
+        CytosineContext::CHG,
+        CytosineContext::CHH,
+    ] {
+        touch(&mut map, ctx, BismarkStrand::OT);
+    }
+    map.flush_all().unwrap();
     let names = on_disk_filenames(dir.path());
     assert_eq!(names.len(), 3);
     for name in &names {
