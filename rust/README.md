@@ -45,7 +45,7 @@ One headline per module — current state at a glance. Per-crate detail lives in
 |---|---|---|---|
 | _(shared library)_ | `bismark-io` | 1.0.0-beta.8 | ✅ noodles BAM/SAM/CRAM I/O + `ThreadedBam{Reader,Writer}` (parallel BGZF); byte-equal output is a CI invariant for consumers |
 | `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-alpha.2 | ✅ Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 + `--genomic_composition`; all 3 aligners (Bowtie2 / HISAT2 / minimap2), indexing delegated to the external indexer |
-| `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | _(unreleased)_ | 🚧 In progress on `rust/aligner` — Bowtie2 backend, Phases 0–4 (read-conversion C→T/G→A, single-instance align, N-way merge + MAPQ); BAM + first byte-identity gate next. The ~74% runtime "big beast". HISAT2/minimap2 backends planned (v1.x) |
+| `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | 1.0.0-alpha.1 | 🚧 In progress on `rust/aligner` — **Phases 1–8/10**: Bowtie 2 backend, **SE + PE FastQ, all 3 library types (directional / non-directional / pbat)** — read-conversion → 2–4 instances → lockstep merge/scoring/MAPQ → `XM`/`XR`/`XG` → BAM + report + `--unmapped`/`--ambiguous`/`--ambig_bam`, **byte-identical** to Perl v0.25.1 + Bowtie 2 2.5.5 (oxy, all 4 mode×layout cells, 1M reads/pairs). The ~74% runtime "big beast". FastA + threading (Ph 9) + full-scale gate (Ph 10) remain; HISAT2/minimap2 = v1.x |
 | `deduplicate_bismark` | `bismark-dedup` (`deduplicate_bismark_rs`) | 1.2.1-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 on real-data WGBS (10M + ~55M PE); UMI/RRBS modes; optional `--parallel N` BGZF threading |
 | `filter_non_conversion` | `bismark-filter-nonconversion` (`filter_non_conversion_rs`) | 1.0.0-alpha.1 | ✅ **Byte-identical** to Perl v0.25.1 (9 golden cells + oxy 10M SE + PE × 4 decision modes) |
 | `NOMe_filtering` | `bismark-nome-filtering` (`NOMe_filtering_rs`) | 1.0.0-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 (synthetic goldens + full 10M SE oxy gate); **~3.4×** |
@@ -65,6 +65,7 @@ Versions are the crate manifests on `rust/iron-chancellor` (a release **git tag*
 
 Reverse-chronological log of the main Rust-rewrite shipping events (merges into `rust/iron-chancellor`). One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-06-02** — `bismark` aligner **Phases 1–8** merged (#930) — SE + PE FastQ, **all 3 library types** (directional / non-directional / pbat); byte-identical to Perl v0.25.1 + Bowtie 2 2.5.5 on oxy (4 mode×layout cells, 10k + 1M reads/pairs). FastA + threading + full-scale gate (Phases 9–10) remain.
 - **2026-06-02** — `coverage2cytosine` **v1.x niche modes** (`--gc`/`--nome-seq`/`--drach`/`--ffs`) merged (#934); 15-cell full-hg38 oxy gate byte-identical to Perl v0.25.1, tag `…beta.2`. **c2c port complete.**
 - **2026-06-01** — `bismark2summary` ported (#932) — byte-identical project-level summary; the **last post-alignment module**.
 - **2026-06-01** — `bismark2report` ported (#931) — byte-identical per-sample HTML report.
@@ -79,4 +80,4 @@ Reverse-chronological log of the main Rust-rewrite shipping events (merges into 
 - **2026-05-26 → 05-29** — `bismark_methylation_extractor` ported (Phases A–G, #847–#883) — byte-identical at full scale, **~4.8×**; the ~16% runtime hot-spot.
 - **2026-05-24 → 05-26** — `deduplicate_bismark` v1.2 UMI/RRBS modes (#819–#844) — byte-identical.
 - _(earlier)_ — `bismark-io` shared library — the noodles BAM/SAM/CRAM foundation all consumers build on.
-- 🚧 **Next:** the `bismark` aligner (the ~74% runtime "big beast") — in progress on `rust/aligner`.
+- 🚧 **Next:** the `bismark` aligner **Phases 9–10** (FastA + order-preserving threading, then the full-scale real-data gate) — on `rust/aligner`. Phases 1–8 (SE + PE, all library types) are byte-identical and merged.

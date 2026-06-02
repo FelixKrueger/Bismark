@@ -1,0 +1,42 @@
+[package]
+name = "bismark-aligner"
+version = "1.0.0-alpha.1"
+description = "Rust port of the Bismark Perl aligner wrapper (bismark)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "alignment", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark_rs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.5.30", features = ["derive"] }
+# PATH-based discovery of the external aligner (bowtie2). Same crate + pin the
+# genome-preparation port uses for subprocess discovery.
+which = "=7.0.3"
+# gzip read (.fq.gz input) + optional gzip write (--gzip temp). MultiGzDecoder
+# handles concatenated-member .gz (Perl uses `gunzip -c`); same pin as genome-prep.
+flate2 = "=1.1.9"
+thiserror = "=2.0.0"
+anyhow = "=1.0.86"
+# Phase 5: BAM output via the shared noodles writer layer. Pins MUST match
+# bismark-io's transitive choice (same as bismark-dedup declares) so the
+# workspace links one shared noodles.
+bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+noodles-sam = "=0.85.0"
+noodles-core = "=0.20.0"
+bstr = "=1.10.0"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"

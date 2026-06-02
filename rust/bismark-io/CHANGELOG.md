@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `BamWriter::write_raw_record(&RecordBuf)` — writes a raw noodles record
+  **bypassing** the `BismarkRecord` `XR`/`XG`/`XM` validation, for records that
+  are deliberately not Bismark-shaped (the aligner port's `--ambig_bam`, which
+  passes through the external aligner's own SAM line: `AS:i`/`XS:i` tags, no
+  `XM`/`XR`/`XG`). Purely additive. Version intentionally **not** bumped (same
+  rationale as the `detect_paired_from_header` fix below: an exact-pin bump would
+  ripple to every dependent's manifest for an additive, opt-in API). Test:
+  `write_raw_record_bypasses_bismark_validation`.
+
 ### Fixed
 
 - `detect_paired_from_header` now picks the **last** Bismark `@PG` line when a
