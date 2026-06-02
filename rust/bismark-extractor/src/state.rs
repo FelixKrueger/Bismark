@@ -40,7 +40,7 @@ pub struct ExtractState {
     /// `Some` iff `config.bedgraph` (i.e. `--bedGraph` or `--cytosine_report`);
     /// `None` otherwise. During extraction, every kept call routed by
     /// [`OutputFileMap::write_call`] is tee'd into this aggregator via
-    /// `add_min_owner` (the tee), so finalize can write the `.bedGraph`/`.cov.gz`
+    /// `add_ranked` (the tee), so finalize can write the `.bedGraph`/`.cov.gz`
     /// from `into_sorted()` instead of re-reading the (large) per-context files.
     /// The per-context files are still written (D2 additive).
     pub bedgraph_aggregator: Option<bismark_bedgraph::Aggregator>,

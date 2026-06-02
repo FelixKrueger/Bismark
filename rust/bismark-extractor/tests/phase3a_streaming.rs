@@ -40,7 +40,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use bismark_extractor::{extract_se, extract_se_parallel};
+use bismark_extractor::{OutputMode, extract_se, extract_se_parallel};
 use bismark_io::{BamWriter, BismarkRecord};
 use bstr::BString;
 use noodles_core::Position;
@@ -202,22 +202,94 @@ fn read_bytes(path: &Path) -> Vec<u8> {
 
 /// Kept per-context split files in `dir`, sorted (mirrors the extractor's
 /// lexicographic kept ordering). Absolute paths.
+///
+/// **Order-INDEPENDENT use only.** The lexicographic sort here matches the
+/// extractor's `kept.sort()` but does NOT match Perl's chromosome ownership
+/// (Perl hands `bismark2bedGraph` the files in *creation* order, not sorted).
+/// For tests that assert the downstream chromosome EMISSION ORDER, use
+/// [`per_context_files_in_creation_order`] so the standalone-bedgraph oracle
+/// sees the SAME ownership the streaming tee does — otherwise the oracle would
+/// re-encode the very min-basename bug this fix removes.
 fn kept_split_files(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            (n.starts_with("CpG_")
-                || n.starts_with("CHG_")
-                || n.starts_with("CHH_")
-                || n.starts_with("Non_CpG_"))
-                && (n.ends_with(".txt") || n.ends_with(".txt.gz"))
-        })
+        .filter(|p| is_per_context_file(p))
         .map(|p| fs::canonicalize(&p).unwrap_or(p))
         .collect();
     v.sort();
     v
+}
+
+/// True for a kept per-context split file (CpG/CHG/CHH/Non_CpG `.txt[.gz]`).
+fn is_per_context_file(p: &Path) -> bool {
+    let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    (n.starts_with("CpG_")
+        || n.starts_with("CHG_")
+        || n.starts_with("CHH_")
+        || n.starts_with("Non_CpG_"))
+        && (n.ends_with(".txt") || n.ends_with(".txt.gz"))
+}
+
+/// Kept per-context split files in `dir`, in Perl's **creation order** for
+/// `mode` (the `mode_keys` order: `CpG_OT, CpG_CTOT, CpG_CTOB, CpG_OB, CHG_OT,
+/// …, CHH_OB` for Default). Absolute paths.
+///
+/// This is the Perl-faithful oracle argv ordering: Perl creates the
+/// per-context files in this order and hands them to `bismark2bedGraph`
+/// WITHOUT sorting, so the FIRST file to emit a chromosome owns it. Feeding the
+/// standalone bedgraph in this order reproduces the same ownership the
+/// streaming tee resolves via min creation-rank — the whole point of the fix.
+///
+/// We derive the order by matching each kept file's `{context}_{strand}_`
+/// prefix against the ordered prefixes from
+/// [`bismark_extractor::mode_keys`], independent of the input basename. Any
+/// kept file whose prefix is missing from `mode_keys` (shouldn't happen) is
+/// appended last in lexicographic order so it is never silently dropped.
+fn per_context_files_in_creation_order(
+    dir: &Path,
+    mode: bismark_extractor::OutputMode,
+) -> Vec<PathBuf> {
+    // Ordered list of `{context}_{strand}_` prefixes from mode_keys (creation
+    // order). mode_keys filenames look like "CpG_OT_<basename>.txt"; the prefix
+    // is everything up to and including the second underscore.
+    let ordered_prefixes: Vec<String> = bismark_extractor::mode_keys(mode, "", false)
+        .into_iter()
+        .map(|(_, filename)| {
+            // filename == "CpG_OT_.txt" when basename is "" → prefix "CpG_OT_".
+            // Strip from the LAST occurrence of the basename marker: take up to
+            // the third token boundary. Simpler: drop the trailing ".txt" and
+            // the empty basename, keeping the "{ctx}_{strand}_" head.
+            let stem = filename.strip_suffix(".txt").unwrap_or(&filename);
+            // stem is e.g. "CpG_OT_" (Default) or "CpG_context_" (Comprehensive)
+            // — keep it verbatim as the match prefix.
+            stem.to_string()
+        })
+        .collect();
+
+    let kept = kept_split_files(dir); // canonical, lexicographically sorted
+    let mut ordered: Vec<PathBuf> = Vec::with_capacity(kept.len());
+    let mut used = vec![false; kept.len()];
+    for prefix in &ordered_prefixes {
+        for (i, p) in kept.iter().enumerate() {
+            if used[i] {
+                continue;
+            }
+            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if n.starts_with(prefix.as_str()) {
+                ordered.push(p.clone());
+                used[i] = true;
+            }
+        }
+    }
+    // Defensive: append any unmatched kept files (none expected) so the oracle
+    // never silently loses an input.
+    for (i, p) in kept.iter().enumerate() {
+        if !used[i] {
+            ordered.push(p.clone());
+        }
+    }
+    ordered
 }
 
 /// Build + validate + run the standalone `bismark_bedgraph` crate as the
@@ -830,13 +902,17 @@ fn streaming_pe_matches_standalone() {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// chrA is emitted by an OT read FIRST (BAM order), then an OB read; chrB is
-/// emitted ONLY by an OB read. With correct MIN-basename ownership both chrA
-/// and chrB are owned by `CpG_OB_*` (B < T), so the bytewise order key gives
-/// chrA before chrB. An accidental first-touch `add()` would make chrA owned by
-/// `CpG_OT_*` (it was touched first by OT in BAM order), flipping the emission
-/// order to chrB, chrA. The oracle (reading the kept files in basename-sorted
-/// order: CpG_OB first) always sees min-basename ownership → chrA, chrB. So a
-/// first-touch bug fails this byte-identity assertion on the .cov.gz.
+/// emitted ONLY by an OB read. With correct MIN creation-RANK ownership chrA is
+/// owned by `CpG_OT_*` (rank 0, the file created FIRST — Perl's `OT, CTOT,
+/// CTOB, OB` order) and chrB by `CpG_OB_*` (rank 3). The bytewise order key is
+/// `{owner}.chr{name}`, so `CpG_OB_*.chrB` < `CpG_OT_*.chrA` (the OB owner
+/// prefix sorts first) → emission order is **chrB before chrA**.
+///
+/// This is the OPPOSITE of the interim min-basename rule, which owned BOTH
+/// chromosomes by `CpG_OB_*` (B < T) and emitted chrA before chrB. The oracle
+/// must read the kept files in **creation order** (`CpG_OT` before `CpG_OB`) so
+/// its first-touch `add()` resolves chrA → `CpG_OT` exactly like the tee's
+/// min-rank rule — reading them basename-sorted would re-encode the old bug.
 fn write_cross_file_ownership_bam(path: &Path) {
     // 30 bp dummy chrs; positions chosen so each read lands one CpG `Z`/`z`.
     let header = header_with_chr_a_chr_b(30);
@@ -864,15 +940,15 @@ fn streaming_cross_file_ownership_matches_standalone() {
 
     let extract_dir = work.path().join("extract");
     run_extractor(&bam, &extract_dir, &[]).success();
-    let kept = kept_split_files(&extract_dir);
     // The fixture must produce BOTH CpG_OT and CpG_OB files (cross-file).
-    let has_ot = kept.iter().any(|p| {
+    let sorted_kept = kept_split_files(&extract_dir);
+    let has_ot = sorted_kept.iter().any(|p| {
         p.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .starts_with("CpG_OT")
     });
-    let has_ob = kept.iter().any(|p| {
+    let has_ob = sorted_kept.iter().any(|p| {
         p.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
@@ -880,7 +956,19 @@ fn streaming_cross_file_ownership_matches_standalone() {
     });
     assert!(
         has_ot && has_ob,
-        "cross-file fixture must produce both CpG_OT and CpG_OB files; kept={kept:?}"
+        "cross-file fixture must produce both CpG_OT and CpG_OB files; kept={sorted_kept:?}"
+    );
+
+    // C1: feed the oracle in CREATION order (CpG_OT before CpG_OB) so its
+    // first-touch ownership matches the tee's min-rank ownership. The
+    // lexicographically-sorted order would put CpG_OB first → owns chrA → the
+    // old bug. The two orders MUST differ for this fixture, else the oracle is
+    // contaminated.
+    let kept = per_context_files_in_creation_order(&extract_dir, OutputMode::Default);
+    assert_ne!(
+        kept, sorted_kept,
+        "creation-order oracle must DIFFER from the lexicographically-sorted kept list \
+         (else the oracle re-encodes the min-basename bug); creation={kept:?} sorted={sorted_kept:?}"
     );
 
     let oracle_dir = work.path().join("oracle");
@@ -899,28 +987,197 @@ fn streaming_cross_file_ownership_matches_standalone() {
     let inline_dir = work.path().join("inline");
     run_extractor(&bam, &inline_dir, &["--bedGraph"]).success();
 
-    // Decompressed .cov.gz carries the chromosome emission ORDER. min-owner
-    // (correct) → chrA before chrB; a first-touch add() bug → chrB before chrA.
+    // Decompressed .cov.gz carries the chromosome emission ORDER. min creation-
+    // rank (correct) → chrA owned by CpG_OT (rank 0), chrB by CpG_OB (rank 3) →
+    // key CpG_OB.chrB < CpG_OT.chrA → chrB BEFORE chrA. (The old min-basename
+    // bug owned both by CpG_OB → chrA before chrB.)
     let cov_inline = read_gz(&inline_dir.join("own.bismark.cov.gz"));
     let cov_oracle = read_gz(&oracle_dir.join("own.bismark.cov.gz"));
     assert_eq!(
         cov_inline, cov_oracle,
-        "streaming cross-file-ownership coverage differs from oracle (a first-touch \
-         add() instead of add_min_owner flips the chromosome emission order)"
+        "streaming cross-file-ownership coverage differs from the creation-order oracle"
     );
-    // Explicitly assert the chromosome ORDER is chrA, chrB (min-owner CpG_OB).
+    // Explicitly assert the chromosome ORDER is chrB, chrA (owners: chrB→CpG_OB
+    // rank 3, chrA→CpG_OT rank 0; key CpG_OB.chrB < CpG_OT.chrA).
     let cov_text = String::from_utf8_lossy(&cov_inline);
     let first_a = cov_text.find("chrA").expect("chrA present in coverage");
     let first_b = cov_text.find("chrB").expect("chrB present in coverage");
     assert!(
-        first_a < first_b,
-        "chrA (min-owner CpG_OB) must be emitted before chrB; coverage:\n{cov_text}"
+        first_b < first_a,
+        "chrB (owner CpG_OB) must be emitted before chrA (owner CpG_OT); coverage:\n{cov_text}"
     );
     // bedGraph must agree too.
     assert_eq!(
         read_gz(&inline_dir.join("own.bedGraph.gz")),
         read_gz(&oracle_dir.join("own.bedGraph.gz")),
         "streaming cross-file-ownership bedGraph differs from oracle"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cross-CONTEXT ownership under --CX (the rank that only --CX reaches)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Two-chromosome genome for the --CX cross-context fixture:
+///   chrA: CpG `C` at pos 5 (C@5, G@6), CHG `C` at pos 10 (C@10, A@11, G@12).
+///   chrB: CHG `C` at pos 5 (C@5, A@6, G@7).
+/// (1-based positions; everything else is `A`.)
+const CX_CHR_A_SEQ: &[u8] = b"AAAACGAAACAGAAAAAAAAAA"; // 22 bp
+const CX_CHR_B_SEQ: &[u8] = b"AAAACAGAAAAAAAAAA"; // 17 bp
+
+fn write_cx_cross_context_genome(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    let mut fa = String::new();
+    fa.push_str(">chrA\n");
+    fa.push_str(std::str::from_utf8(CX_CHR_A_SEQ).unwrap());
+    fa.push('\n');
+    fa.push_str(">chrB\n");
+    fa.push_str(std::str::from_utf8(CX_CHR_B_SEQ).unwrap());
+    fa.push('\n');
+    fs::write(dir.join("genome.fa"), fa).unwrap();
+}
+
+fn cx_header() -> Header {
+    let mut header = Header::default();
+    header.reference_sequences_mut().insert(
+        BString::from(b"chrA".to_vec()),
+        Map::<ReferenceSequence>::new(NonZeroUsize::new(CX_CHR_A_SEQ.len()).unwrap()),
+    );
+    header.reference_sequences_mut().insert(
+        BString::from(b"chrB".to_vec()),
+        Map::<ReferenceSequence>::new(NonZeroUsize::new(CX_CHR_B_SEQ.len()).unwrap()),
+    );
+    header
+}
+
+/// chrA's CHG read (→ `CHG_OT`, creation rank 4) is emitted in the BAM BEFORE
+/// chrA's CpG read (→ `CpG_OT`, rank 0). With min creation-RANK ownership chrA
+/// must end up owned by `CpG_OT` (rank 0), NOT `CHG_OT` (rank 4), even though
+/// CHG touched it first in BAM order — this is the cross-context rank revision
+/// that ONLY `--CX` exercises (without `--CX`, CHG calls are never teed). chrB
+/// appears only in a CHG read → owned by `CHG_OT` (rank 4). Keys
+/// `CHG_OT.chrB` < `CpG_OT.chrA` ('H' 0x48 < 'p' 0x70) → emission order chrB,
+/// chrA.
+fn write_cx_cross_context_bam(path: &Path) {
+    let header = cx_header();
+    let mut writer = BamWriter::from_path(path, header).unwrap();
+    // chrA CHG read FIRST (first-touch would pick CHG_OT, rank 4).
+    writer
+        .write_record(&se_record(b"a_chg", b"X..", b"CAG", 10, b"CT", 0))
+        .unwrap();
+    // chrA CpG read SECOND (lower rank 0 must take over ownership).
+    writer
+        .write_record(&se_record(b"a_cpg", b"Z.", b"CG", 5, b"CT", 0))
+        .unwrap();
+    // chrB CHG read ONLY → owned by CHG_OT (rank 4).
+    writer
+        .write_record(&se_record(b"b_chg", b"X..", b"CAG", 5, b"CT", 1))
+        .unwrap();
+    writer.finish().unwrap();
+}
+
+#[test]
+fn streaming_cx_cross_context_ownership_matches_standalone() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("cx_own.bam");
+    write_cx_cross_context_bam(&bam);
+    let genome = work.path().join("genome");
+    write_cx_cross_context_genome(&genome);
+
+    let extract_dir = work.path().join("extract");
+    run_extractor(&bam, &extract_dir, &[]).success();
+
+    // The fixture must produce BOTH a CpG and a CHG file (cross-context).
+    let sorted_kept = kept_split_files(&extract_dir);
+    let has_cpg = sorted_kept.iter().any(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .starts_with("CpG_")
+    });
+    let has_chg = sorted_kept.iter().any(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .starts_with("CHG_")
+    });
+    assert!(
+        has_cpg && has_chg,
+        "cross-context fixture must produce both a CpG and a CHG file; kept={sorted_kept:?}"
+    );
+
+    // C1: feed the oracle in CREATION order (CpG block before CHG block, so
+    // CpG_OT precedes CHG_OT). Under --CX the cov ownership for a chr touched
+    // by both contexts must resolve to the lower-rank CpG file — reading the
+    // files basename-sorted would put CHG before CpG and contaminate the oracle.
+    let kept = per_context_files_in_creation_order(&extract_dir, OutputMode::Default);
+    // For this single-strand fixture the kept set is {CpG_OT, CHG_OT}; sorted
+    // gives [CHG_OT, CpG_OT] but creation order gives [CpG_OT, CHG_OT] — they
+    // MUST differ, else the oracle re-encodes the wrong cross-context order.
+    assert_ne!(
+        kept, sorted_kept,
+        "creation-order oracle must DIFFER from the lexicographically-sorted kept list \
+         (CpG block must precede CHG block); creation={kept:?} sorted={sorted_kept:?}"
+    );
+
+    let oracle_dir = work.path().join("oracle");
+    fs::create_dir_all(&oracle_dir).unwrap();
+    oracle_bedgraph(
+        &kept,
+        "cx_own.bedGraph",
+        &oracle_dir,
+        1,
+        /*cx=*/ true,
+        false,
+        false,
+        false,
+    );
+    oracle_c2c(
+        &oracle_dir.join("cx_own.bismark.cov.gz"),
+        "cx_own.CX_report.txt",
+        &oracle_dir,
+        &genome,
+        /*cx=*/ true,
+        false,
+        false,
+    );
+
+    let inline_dir = work.path().join("inline");
+    run_extractor(
+        &bam,
+        &inline_dir,
+        &[
+            "--cytosine_report",
+            "--CX",
+            "--genome_folder",
+            genome.to_str().unwrap(),
+        ],
+    )
+    .success();
+
+    // The .cov.gz carries the chromosome emission ORDER set by ownership.
+    let cov_inline = read_gz(&inline_dir.join("cx_own.bismark.cov.gz"));
+    let cov_oracle = read_gz(&oracle_dir.join("cx_own.bismark.cov.gz"));
+    assert_eq!(
+        cov_inline, cov_oracle,
+        "streaming --CX cross-context coverage differs from the creation-order oracle"
+    );
+    // chrA owned by CpG_OT (rank 0, won over the higher-rank CHG_OT it was
+    // touched by first); chrB owned by CHG_OT (rank 4). Keys CHG_OT.chrB <
+    // CpG_OT.chrA → chrB before chrA.
+    let cov_text = String::from_utf8_lossy(&cov_inline);
+    let first_a = cov_text.find("chrA").expect("chrA present in coverage");
+    let first_b = cov_text.find("chrB").expect("chrB present in coverage");
+    assert!(
+        first_b < first_a,
+        "chrB (owner CHG_OT) must be emitted before chrA (owner CpG_OT, rank 0 won over \
+         the CHG_OT it was touched by first); coverage:\n{cov_text}"
+    );
+    // The CX report must also be byte-identical (genome-driven content).
+    assert_eq!(
+        read_bytes(&inline_dir.join("cx_own.CX_report.txt")),
+        read_bytes(&oracle_dir.join("cx_own.CX_report.txt")),
+        "streaming --CX cross-context report differs from the creation-order oracle"
     );
 }
 

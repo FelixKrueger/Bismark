@@ -92,6 +92,13 @@ pub struct OutputFileMap {
     /// key from `(context, strand)` and to dispatch yacht's 8-col row
     /// format.
     mode: OutputMode,
+    /// `OutputKey` → **creation rank** = its index in the [`mode_keys`] list
+    /// (which is returned in Perl's file creation order). The bedGraph tee
+    /// passes this rank to `Aggregator::add_ranked` so chromosome ownership
+    /// resolves to the lowest-rank (first-created) file — matching Perl's
+    /// first-in-creation-order ownership. Precomputed here so the hot-path
+    /// tee does a single `HashMap` lookup, never re-deriving the order.
+    ranks: HashMap<OutputKey, u32>,
 }
 
 impl OutputFileMap {
@@ -119,13 +126,19 @@ impl OutputFileMap {
 
         let keys = mode_keys(mode, input_basename, gzip);
         let mut files: HashMap<OutputKey, OutputFileEntry> = HashMap::with_capacity(keys.len());
+        // Creation rank = the key's index in the mode_keys list (Perl's file
+        // creation order). Captured here so the bedGraph tee in `write_call`
+        // can pass it to `Aggregator::add_ranked` without re-deriving the order
+        // per call.
+        let mut ranks: HashMap<OutputKey, u32> = HashMap::with_capacity(keys.len());
 
-        for (key, filename) in keys {
+        for (rank, (key, filename)) in keys.into_iter().enumerate() {
             let path = output_dir.join(filename);
             let mut writer = open_writer(&path, gzip)?;
             if !no_header {
                 writer.write_all(SPLIT_FILE_HEADER.as_bytes())?;
             }
+            ranks.insert(key, rank as u32);
             files.insert(
                 key,
                 OutputFileEntry {
@@ -136,7 +149,7 @@ impl OutputFileMap {
             );
         }
 
-        Ok(OutputFileMap { files, mode })
+        Ok(OutputFileMap { files, mode, ranks })
     }
 
     /// Append a `MethCall` line to the appropriate split file.
@@ -165,19 +178,23 @@ impl OutputFileMap {
     /// `agg` is the optional in-memory `bismark_bedgraph::Aggregator` (present
     /// iff `--bedGraph`/`--cytosine_report`). When `Some`, after routing the
     /// call to its destination [`OutputFileEntry`], this method tees the call
-    /// into the aggregator via `add_min_owner`, using the destination file's
-    /// **basename** (`entry.path.file_name()`, borrowed `&str`, NO allocation —
-    /// this is the hot path, ≈1B calls). The tee is gated by R4: feed iff
-    /// `cx` OR the basename starts with `"CpG"` (mirrors bedGraph's
-    /// `select_input_files`). Calls routed to `MbiasOnly` (which has no real
-    /// `OutputKey`) are skipped by construction (the `route_to_key` `None`
-    /// short-circuit below returns before the tee). The tee is purely
+    /// into the aggregator via `add_ranked`, passing the destination file's
+    /// **creation rank** (its index in [`mode_keys`], looked up from
+    /// `self.ranks`) and its **basename** (`entry.path.file_name()`, borrowed
+    /// `&str`, NO allocation — this is the hot path, ≈1B calls). The tee is
+    /// gated by R4: feed iff `cx` OR the basename starts with `"CpG"` (mirrors
+    /// bedGraph's `select_input_files`). Calls routed to `MbiasOnly` (which has
+    /// no real `OutputKey`) are skipped by construction (the `route_to_key`
+    /// `None` short-circuit below returns before the tee). The tee is purely
     /// ADDITIVE — the per-context write below is unchanged (D2).
     ///
-    /// Using the real written-to basename guarantees the tee's
-    /// `source_basename` equals what bedGraph's file-read path would intern
-    /// from the same on-disk file (incl. the `.txt`/`.txt.gz` suffix), so
-    /// min-basename ownership matches the sorted-argv file order (R1/D3).
+    /// Passing the destination file's creation rank makes chromosome ownership
+    /// resolve to the lowest-rank (first-created) file emitting a call for it —
+    /// matching Perl, which hands `bismark2bedGraph` the per-context files in
+    /// creation order (`OT, CTOT, CTOB, OB`, NO sort) and owns by first-touch.
+    /// The basename is still passed so the resolved owner's order key is
+    /// byte-identical to what bedGraph's file-read path would intern from the
+    /// same on-disk file (incl. the `.txt`/`.txt.gz` suffix).
     ///
     /// # Errors
     ///
@@ -214,6 +231,15 @@ impl OutputFileMap {
             Some(k) => k,
             None => return Ok(()),
         };
+        // Creation rank of the destination file (its `mode_keys` index). Looked
+        // up BEFORE the `&mut entry` borrow below, since `self.ranks` and
+        // `self.files` would otherwise conflict. `OutputKey` is `Copy`, so this
+        // is a cheap hash lookup; every routable key is present in `ranks`
+        // (inserted alongside `files` in `new`). Defaults to `u32::MAX` if
+        // somehow absent — a chromosome owned by such a file would sort by its
+        // basename only (no rank-based revision), but this is unreachable given
+        // the eager-open invariant.
+        let rank = self.ranks.get(&key).copied().unwrap_or(u32::MAX);
         let entry =
             self.files
                 .get_mut(&key)
@@ -244,7 +270,7 @@ impl OutputFileMap {
                 .unwrap_or("");
             // R4 selection: feed iff --CX OR the destination is a CpG file.
             if cx || basename.starts_with("CpG") {
-                agg.add_min_owner(chr, call.ref_pos, call.methylated, basename);
+                agg.add_ranked(chr, call.ref_pos, call.methylated, rank, basename);
             }
         }
 
