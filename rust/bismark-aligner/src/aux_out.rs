@@ -88,6 +88,20 @@ pub fn write_fastq_record<W: Write>(
     Ok(())
 }
 
+/// Write one **FastA** record to an aux file (Perl 2454–2455 / 2461–2464):
+/// `>` + `<fixed_id>` + `\n` + `<seq>` + `\n`. FastA has no quality, so there is
+/// no `+`/qual line (unlike [`write_fastq_record`]). `fixed_id` is the `fix_id`'d,
+/// `>`-stripped identifier (a fresh `>` is prepended); `seq` is the original
+/// read, chomped but **NOT** upper-cased.
+pub fn write_fasta_record<W: Write>(w: &mut W, fixed_id: &[u8], seq: &[u8]) -> Result<()> {
+    w.write_all(b">")?;
+    w.write_all(fixed_id)?;
+    w.write_all(b"\n")?;
+    w.write_all(seq)?;
+    w.write_all(b"\n")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +192,28 @@ mod tests {
         let mut v = Vec::new();
         write_fastq_record(&mut v, b"r1", b"ACGT", b"+r1\r\n", b"IIII").unwrap();
         assert_eq!(String::from_utf8(v).unwrap(), "@r1\nACGT\n+r1\r\nIIII\n");
+    }
+
+    // ---- Phase 9a: FastA aux (2-line `>id\nseq`, `.fa.gz` filename) ---------
+
+    #[test]
+    fn fasta_record_two_line_no_qual() {
+        // `>` prepended, seq non-uc, NO `+`/qual line.
+        let mut v = Vec::new();
+        write_fasta_record(&mut v, b"read1_1:N:0", b"acgtACGT").unwrap();
+        assert_eq!(String::from_utf8(v).unwrap(), ">read1_1:N:0\nacgtACGT\n");
+    }
+
+    #[test]
+    fn filename_fasta_extension() {
+        // fasta=true flips `.fq` → `.fa` (the `.gz` still appended).
+        assert_eq!(
+            aux_filename("reads.fa", None, None, AuxKind::Unmapped, true, None),
+            "reads.fa_unmapped_reads.fa.gz"
+        );
+        assert_eq!(
+            aux_filename("r_2.fa", None, None, AuxKind::Ambiguous, true, Some(2)),
+            "r_2.fa_ambiguous_reads_2.fa.gz"
+        );
     }
 }

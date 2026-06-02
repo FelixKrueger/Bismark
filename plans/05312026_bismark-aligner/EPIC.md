@@ -64,8 +64,9 @@ byte-identity (or worker-invariance) gate.
   🎯 **PE byte-identity gate**.
 - **Phase 8 — Non-directional + pbat modes** (4-instance, wrong-strand rejection). 🎯 byte-identity gate
   across all library types.
-- **Phase 9 — FastA input + order-preserving file-level threading.** 🎯 **worker-invariance gate**
-  (output independent of worker count, like the extractor).
+- **Phase 9 — FastA input + order-preserving file-level threading.** Split into **9a (FastA input)** and
+  **9b (order-preserving threading)** per Felix (2026-06-02): 9a = FastA byte-identity (SE+PE, all libraries);
+  9b 🎯 **worker-invariance gate** (output independent of worker count, like the extractor).
 - **Phase 10 — Real-data gate on oxy** (full WGBS SE + PE + mouse RRBS). 🎯 **full-scale byte-identity**
   vs Perl v0.25.1 + Bowtie2 2.5.5; `/var/tmp`, idle-gate, reusable `scripts/` harness.
 
@@ -82,8 +83,9 @@ byte-identity (or worker-invariance) gate.
 | 6 | Reports + ambig/unmapped (SE) 🎯 | `phase6-reports-ambig-unmapped/PLAN.md` | #5 |
 | 7 | Paired-end support 🎯 | `phase7-paired-end/PLAN.md` | #5, #6 |
 | 8 | Non-directional + pbat 🎯 | `phase8-nondirectional-pbat/PLAN.md` | #7 |
-| 9 | FastA + order-preserving threading 🎯 | _(to be written)_ | #8 |
-| 10 | Real-data gate on oxy 🎯 | _(to be written)_ | #9 |
+| 9a | FastA input (SE+PE, all libraries) 🎯 | `phase9a-fasta/PLAN.md` | #8 |
+| 9b | Order-preserving threading 🎯 (worker-invariance) | _(to be written)_ | #9a |
+| 10 | Real-data gate on oxy 🎯 | _(to be written)_ | #9b |
 
 Sub-plans are written separately via `plan-writer` (Phase 0 via the `spike` skill). When a plan is
 written, update its row from `_(to be written)_` to the actual filename.
