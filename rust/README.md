@@ -44,7 +44,7 @@ One headline per module — current state at a glance. Per-crate detail lives in
 | Perl tool | Rust crate (binary) | Version | State |
 |---|---|---|---|
 | _(shared library)_ | `bismark-io` | 1.0.0-beta.8 | ✅ noodles BAM/SAM/CRAM I/O + `ThreadedBam{Reader,Writer}` (parallel BGZF); byte-equal output is a CI invariant for consumers |
-| `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-alpha.2 | ✅ Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 + `--genomic_composition` (indexing delegated to the external indexer) |
+| `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-alpha.2 | ✅ Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 + `--genomic_composition`; all 3 aligners (Bowtie2 / HISAT2 / minimap2), indexing delegated to the external indexer |
 | `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | _(unreleased)_ | 🚧 In progress on `rust/aligner` — Bowtie2 backend, Phases 0–4 (read-conversion C→T/G→A, single-instance align, N-way merge + MAPQ); BAM + first byte-identity gate next. The ~74% runtime "big beast". HISAT2/minimap2 backends planned (v1.x) |
 | `deduplicate_bismark` | `bismark-dedup` (`deduplicate_bismark_rs`) | 1.2.1-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 on real-data WGBS (10M + ~55M PE); UMI/RRBS modes; optional `--parallel N` BGZF threading |
 | `filter_non_conversion` | `bismark-filter-nonconversion` (`filter_non_conversion_rs`) | 1.0.0-alpha.1 | ✅ **Byte-identical** to Perl v0.25.1 (9 golden cells + oxy 10M SE + PE × 4 decision modes) |
