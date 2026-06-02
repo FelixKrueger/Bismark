@@ -34,16 +34,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
   rank and owns by minimum rank, matching Perl. Byte-affecting for the streaming
   tee only; the standalone file path (`add()`/`run()`) is unchanged.
 
-### Changed
-
 - **`mimalloc` global allocator** for `bismark2bedGraph_rs` (matching
   `bismark-extractor`). The in-memory `(chr, pos)` aggregation map grows through
   many allocations; mimalloc is ~12% faster than the system allocator on a full
   `--CX` run (973 s → 854 s, ~4.4× vs Perl). Allocator-only — byte-identical.
-- Internal: `ChrMeta` stores the owner basename and builds the bytewise ordering
-  key lazily in `into_sorted()` (was eager at intern time). Byte-neutral for the
-  file path (gated by the 8 ownership regression tests); enables `add_min_owner`
-  to revise ownership before emission.
+- Internal: `ChrMeta` stores the owner basename + creation rank and builds the
+  bytewise ordering key lazily in `into_sorted()` (was eager at intern time).
+  Byte-neutral for the file path (gated by the ownership regression tests);
+  enables `add_ranked` to revise ownership (by min creation rank) before emission.
 
 ### Investigated and rejected
 

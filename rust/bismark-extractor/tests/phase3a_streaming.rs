@@ -23,10 +23,12 @@
 //! Key tests beyond the flag matrix:
 //! - **F4 (cross-file ownership):** a multi-strand, multi-chromosome BAM where a
 //!   chromosome is emitted by >1 per-context file (CpG_OT + CpG_OB) and
-//!   ownership resolves to the MIN basename (CpG_OB). The chromosome emission
-//!   ORDER differs between correct min-owner and an accidental first-touch
-//!   `add()`, so this catches the wrong aggregation method. The Phase-2 fixture
-//!   is OT-only, so this is the first integration test of cross-file ownership.
+//!   ownership resolves to the **minimum creation-rank** file (CpG_OT, rank 0 —
+//!   matching Perl's first-in-creation-order owner), NOT the min basename (which
+//!   would wrongly pick CpG_OB). F4 guards min-rank-vs-min-basename + the
+//!   creation-order oracle de-contamination. (first-touch-vs-min-rank is covered
+//!   by the `aggregate.rs` unit tests + the `--CX` cross-context test, since F4's
+//!   BAM feeds the rank-0 call first so first-touch coincides with min-rank here.)
 //! - **F5 (parallel == single-threaded):** call the LIBRARY functions directly
 //!   (`extract_se` vs `extract_se_parallel`), NOT the CLI binary (which only
 //!   ever uses the parallel path); `--parallel 2` + a fixture interleaved across
