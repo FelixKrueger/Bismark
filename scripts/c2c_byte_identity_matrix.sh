@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 #
-# c2c_byte_identity_matrix.sh — bismark-coverage2cytosine Phase E release gate.
+# c2c_byte_identity_matrix.sh — bismark-coverage2cytosine release gate.
 #
 # Runs the Rust `coverage2cytosine_rs` and Perl `coverage2cytosine` (v0.25.1)
-# over a 9-cell representative flag matrix against a Perl-bismark2bedGraph
+# over a 15-cell representative flag matrix against a Perl-bismark2bedGraph
 # `.bismark.cov.gz` + genome, and asserts RAW-BYTE-IDENTITY Rust≡Perl on every
 # in-scope output stream (gzip compared after decompression). A clean pass
-# (exit 0) gates the `bismark-coverage2cytosine-v1.0` tag.
+# (exit 0) gates the release tag.
+#   - v1.0 (Phase E): the 9 core-report cells (cx/default/zero/gzip/thr/split/
+#     merge/merge_disc/merge_gzip) → gated `bismark-coverage2cytosine-v1.0`.
+#   - v1.x (Phase 4): + 6 niche-mode cells (gc/nome/drach/ffs/ffs_cx/ffs_nome)
+#     → gates the v1.x tag. ⚠️ The gate cov MUST be `bismark2bedGraph --CX`
+#     (all-context): the gc-cell GpC require-nonempty depends on covered
+#     GpC-context Cs (PLAN §8). The NOMe *GpC* streams are existence-only.
 #
-# Design: plans/05292026_bismark-coverage2cytosine/phase-e-byte-identity-gate/PLAN.md (rev 1).
+# Design: plans/05292026_bismark-coverage2cytosine/phase-e-byte-identity-gate/PLAN.md (rev 1)
+#       + plans/05312026_bismark-c2c-niche-modes/phase4-byte-identity-gate/PLAN.md (rev 1).
 # Models scripts/phase_h_se_matrix.sh; FAIL-CLOSED throughout (the count_mbias_rows lesson).
 #
 # Usage:
@@ -170,6 +177,13 @@ declare -a ALL_CELLS=(
   "merge|--merge_CpGs"
   "merge_disc|--merge_CpGs --discordance_filter 10"
   "merge_gzip|--merge_CpGs --gzip"
+  # ── v1.x niche modes (Phase 4) ──
+  "gc|--gc"
+  "nome|--nome-seq"
+  "drach|--drach"
+  "ffs|--ffs"
+  "ffs_cx|--ffs --CX --gzip"
+  "ffs_nome|--ffs --nome-seq"
 )
 
 # Per-cell REQUIRE-NONEMPTY globs (Perl-side ground truth must have content).
@@ -189,6 +203,18 @@ declare -A REQUIRE_NONEMPTY=(
   [merge]="c2c.CpG_report.merged_CpG_evidence.cov c2c.CpG_report.txt c2c.cytosine_context_summary.txt"
   [merge_disc]="c2c.CpG_report.txt c2c.cytosine_context_summary.txt"
   [merge_gzip]="c2c.CpG_report.merged_CpG_evidence.cov.gz c2c.cytosine_context_summary.txt"
+  # ── v1.x niche modes (Phase 4). The NOMe *GpC* streams are NOT listed: they are
+  # existence-only (validated by the file-set match + byte-compare), since their
+  # non-emptiness depends on covered non-CG GpC positions (Assumption 8 / PLAN
+  # §3.2). The gc-cell GpC streams ARE required (no ACG/TCG filter + the all-context
+  # --CX gate cov ⇒ every covered GC emits). ffs_nome's .NOMe.CpG.cov is the
+  # SUPPRESSED 0-byte file (rev-3 Critical) — required-EMPTY, so not listed here.
+  [gc]="c2c.GpC_report.txt c2c.GpC.cov c2c.CpG_report.txt c2c.cytosine_context_summary.txt"
+  [nome]="c2c.NOMe.CpG_report.txt c2c.NOMe.CpG.cov c2c.cytosine_context_summary.txt"
+  [drach]="c2c_DRACH_report.txt c2c_DRACH.cov"
+  [ffs]="c2c.CpG_report.txt c2c.cytosine_context_summary.txt"
+  [ffs_cx]="c2c.CX_report.txt.gz c2c.cytosine_context_summary.txt"
+  [ffs_nome]="c2c.NOMe.CpG_report.txt c2c.cytosine_context_summary.txt"
 )
 
 # Cells to run
@@ -233,6 +259,9 @@ declare -a CELL_NAMES=() CELL_VERDICT=() CELL_DETAIL=() CELL_PERL_S=() CELL_RUST
 # Differential stash (set during the cell loop; §3.6).
 HASH_DEFAULT="" LINES_DEFAULT="" HASH_ZERO="" HASH_GZIP_DECOMP="" LINES_CX="" LINES_THR=""
 HASH_MERGE_COV="" MERGE_COV_NONEMPTY="" HASH_MERGEGZIP_COV_DECOMP="" SPLIT_FILE_COUNT=""
+# v1.x niche-mode differential stash (Phase 4). Init "" so the `[[ -n "$VAR" ]]`
+# guards never trip `set -u` (B-Imp-4). Captured in run_cell's case BEFORE purge.
+HASH_GC_CORE="" LINES_NOME_CORE="" DRACH_STANDALONE_OK="" FFS_ALL_10COL="" LINES_FFS="" FFSNOME_COV_EMPTY=""
 
 now_s() { date +%s; }
 
@@ -352,6 +381,25 @@ run_cell() {
                nonempty "$pdir/c2c.CpG_report.merged_CpG_evidence.cov" && MERGE_COV_NONEMPTY=1 || MERGE_COV_NONEMPTY=0
              fi ;;
     merge_gzip) [[ -f "$pdir/c2c.CpG_report.merged_CpG_evidence.cov.gz" ]] && HASH_MERGEGZIP_COV_DECOMP="$(hash_gz "$pdir/c2c.CpG_report.merged_CpG_evidence.cov.gz")" ;;
+    # ── v1.x niche modes (Phase 4) — capture BEFORE the purge below (B-Imp-2). ──
+    gc)   [[ -f "$pdir/c2c.CpG_report.txt" ]] && HASH_GC_CORE="$(hash_plain "$pdir/c2c.CpG_report.txt")" ;;
+    nome) [[ -f "$pdir/c2c.NOMe.CpG_report.txt" ]] && LINES_NOME_CORE="$(lines_plain "$pdir/c2c.NOMe.CpG_report.txt")" ;;
+    drach)
+      # Standalone: a DRACH report present AND no normal CpG report / summary.
+      if [[ -f "$pdir/c2c_DRACH_report.txt" && ! -e "$pdir/c2c.CpG_report.txt" && ! -e "$pdir/c2c.cytosine_context_summary.txt" ]]; then
+        DRACH_STANDALONE_OK=1; else DRACH_STANDALONE_OK=0; fi ;;
+    ffs)
+      # 10 columns on EVERY line (NF!=10 anywhere → not-all-10) + line-count.
+      if [[ -f "$pdir/c2c.CpG_report.txt" ]]; then
+        if awk -F'\t' 'NF!=10{exit 1}' "$pdir/c2c.CpG_report.txt" 2>/dev/null; then FFS_ALL_10COL=1; else FFS_ALL_10COL=0; fi
+        LINES_FFS="$(lines_plain "$pdir/c2c.CpG_report.txt")"
+      fi ;;
+    ffs_nome)
+      # Present-AND-0-byte on BOTH sides (NOT a post-purge stat). Distinguishes
+      # present-and-empty (PASS) from absent (the file-set match already FAILs).
+      if [[ -f "$pdir/c2c.NOMe.CpG.cov" && -f "$rdir/c2c.NOMe.CpG.cov" \
+            && ! -s "$pdir/c2c.NOMe.CpG.cov" && ! -s "$rdir/c2c.NOMe.CpG.cov" ]]; then
+        FFSNOME_COV_EMPTY=1; else FFSNOME_COV_EMPTY=0; fi ;;
   esac
 
   CELL_NAMES+=("$name"); CELL_VERDICT+=("$verdict")
@@ -412,6 +460,29 @@ if ran merge && ran merge_gzip && [[ -n "$HASH_MERGE_COV" && -n "$HASH_MERGEGZIP
 fi
 if ran split && [[ -n "$SPLIT_FILE_COUNT" ]]; then
   diff_check "split produced >1 per-chr report" "$([[ "$SPLIT_FILE_COUNT" -gt 1 ]] && echo 0 || echo 1)" "files=$SPLIT_FILE_COUNT"
+fi
+
+# ── v1.x niche-mode differentials (Phase 4). ──
+# #1 regression (NOT a no-op detector): --gc must leave the core report untouched.
+if ran gc && ran default && [[ -n "$HASH_GC_CORE" && -n "$HASH_DEFAULT" ]]; then
+  diff_check "gc core report == default core report (--gc leaves the core untouched)" "$([[ "$HASH_GC_CORE" == "$HASH_DEFAULT" ]] && echo 0 || echo 1)"
+fi
+# #2 --nome-seq's ACG/TCG filter drops CpGs → fewer lines than the full report.
+if ran nome && ran default && [[ -n "$LINES_NOME_CORE" && -n "$LINES_DEFAULT" ]]; then
+  diff_check "nome core lines != AND < default lines (ACG/TCG filter fired)" "$([[ "$LINES_NOME_CORE" != "$LINES_DEFAULT" && "$LINES_NOME_CORE" -lt "$LINES_DEFAULT" ]] && echo 0 || echo 1)" "nome=$LINES_NOME_CORE default=$LINES_DEFAULT"
+fi
+# #3 --drach is standalone (DRACH report present, no normal CpG report / summary).
+if ran drach && [[ -n "$DRACH_STANDALONE_OK" ]]; then
+  diff_check "drach standalone (DRACH report, no CpG report/summary)" "$([[ "$DRACH_STANDALONE_OK" -eq 1 ]] && echo 0 || echo 1)"
+fi
+# #4 --ffs report is 10-col on every line + same line-count as default.
+if ran ffs && ran default && [[ -n "$FFS_ALL_10COL" && -n "$LINES_FFS" && -n "$LINES_DEFAULT" ]]; then
+  diff_check "ffs report 10-col on every line + lines == default" "$([[ "$FFS_ALL_10COL" -eq 1 && "$LINES_FFS" -eq "$LINES_DEFAULT" ]] && echo 0 || echo 1)" "all10col=$FFS_ALL_10COL ffs=$LINES_FFS default=$LINES_DEFAULT"
+fi
+# #5 --ffs --nome-seq: the NOMe .cov companion is present-and-0-byte on both sides
+#    (the rev-3 Critical; stash captured during the loop, NOT a post-purge stat).
+if ran ffs_nome && [[ -n "$FFSNOME_COV_EMPTY" ]]; then
+  diff_check "ffs_nome .NOMe.CpG.cov present-and-0-byte both sides (--ffs suppresses CYTCOV)" "$([[ "$FFSNOME_COV_EMPTY" -eq 1 ]] && echo 0 || echo 1)"
 fi
 
 # ─── Verdict + summaries + exit (§3.8) ─────────────────────────────────
