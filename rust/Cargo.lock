@@ -101,8 +101,12 @@ version = "1.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "bismark-io",
+ "bstr",
  "clap",
  "flate2",
+ "noodles-core 0.20.0",
+ "noodles-sam",
  "predicates",
  "tempfile",
  "thiserror 2.0.0",
@@ -192,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-io"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.9"
 dependencies = [
  "bstr",
  "noodles-bam",

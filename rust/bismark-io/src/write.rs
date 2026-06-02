@@ -23,6 +23,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use noodles_sam::Header;
+use noodles_sam::alignment::RecordBuf;
 use noodles_sam::alignment::io::Write as SamAlignmentWrite;
 
 use crate::cram_ref::build_fasta_repository;
@@ -71,6 +72,19 @@ impl<W: Write> BamWriter<W> {
     pub fn write_record(&mut self, record: &BismarkRecord) -> Result<(), BismarkIoError> {
         self.inner
             .write_alignment_record(&self.header, record.inner())?;
+        Ok(())
+    }
+
+    /// Write a **raw** [`RecordBuf`] to the BAM stream, **bypassing** the
+    /// [`BismarkRecord`] strand/`XR`/`XG`/`XM` validation.
+    ///
+    /// For records that are deliberately *not* Bismark-shaped — e.g. the
+    /// aligner port's `--ambig_bam` output, which is the external aligner's own
+    /// raw SAM line (carrying `AS:i`/`XS:i` tags, not `XM`/`XR`/`XG`). Such a
+    /// record would be rejected by every `BismarkRecord` constructor, so it
+    /// cannot go through [`Self::write_record`]. Added in v1.0.0-beta.9.
+    pub fn write_raw_record(&mut self, record: &RecordBuf) -> Result<(), BismarkIoError> {
+        self.inner.write_alignment_record(&self.header, record)?;
         Ok(())
     }
 
@@ -421,6 +435,50 @@ mod tests {
 
     fn synth_bismark_record() -> BismarkRecord {
         BismarkRecord::from_noodles_record(synth_record_buf()).unwrap()
+    }
+
+    #[test]
+    fn write_raw_record_bypasses_bismark_validation() {
+        // A raw aligner-style record with NO XR/XG/XM (only AS:i) — every
+        // BismarkRecord constructor rejects it, but write_raw_record writes it
+        // verbatim (the aligner's --ambig_bam passthrough path).
+        let mut raw = RecordBuf::default();
+        *raw.name_mut() = Some(BString::from("amb1".as_bytes().to_vec()));
+        *raw.flags_mut() = noodles_sam::alignment::record::Flags::from(0u16);
+        *raw.reference_sequence_id_mut() = Some(0);
+        *raw.alignment_start_mut() = Some(noodles_core::Position::try_from(10).unwrap());
+        *raw.sequence_mut() = Sequence::from(b"ACGTC".to_vec());
+        *raw.quality_scores_mut() =
+            noodles_sam::alignment::record_buf::QualityScores::from(vec![30u8; 5]);
+        raw.data_mut().insert(Tag::from(*b"AS"), Value::Int32(-6));
+
+        // It is NOT a valid BismarkRecord (no XR/XG/XM) — write_record can't take it.
+        assert!(BismarkRecord::from_noodles_record(raw.clone()).is_err());
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ambig.bam");
+        let mut w = BamWriter::from_path(&path, synth_header()).unwrap();
+        w.write_raw_record(&raw).unwrap();
+        w.finish().unwrap();
+
+        // Read back via RAW noodles (BamReader::records would filter/reject it).
+        let file = std::fs::File::open(&path).unwrap();
+        let mut reader = noodles_bam::io::Reader::new(std::io::BufReader::new(file));
+        let hdr = reader.read_header().unwrap();
+        let recs: Vec<RecordBuf> = reader
+            .record_bufs(&hdr)
+            .collect::<std::io::Result<_>>()
+            .unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].name().map(|n| n.to_vec()), Some(b"amb1".to_vec()));
+        let as_val = match recs[0].data().get(&Tag::from(*b"AS")).unwrap() {
+            Value::Int8(n) => i64::from(*n),
+            Value::Int16(n) => i64::from(*n),
+            Value::Int32(n) => i64::from(*n),
+            other => panic!("AS not an integer: {other:?}"),
+        };
+        assert_eq!(as_val, -6);
+        assert!(recs[0].data().get(&Tag::from(*b"XR")).is_none());
     }
 
     #[test]

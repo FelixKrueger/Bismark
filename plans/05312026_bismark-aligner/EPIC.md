@@ -78,8 +78,8 @@ byte-identity (or worker-invariance) gate.
 | 2 | Read conversion (FastQ SE directional) | `phase2-read-conversion/PLAN.md` | #1 |
 | 3 | Single-instance align + SAM parse | `phase3-single-instance-align-parse/PLAN.md` | #1, #2 |
 | 4 | N-way merge + scoring + MAPQ | `phase4-nway-merge-scoring/PLAN.md` | #3 |
-| 5 | Genomic-seq + XM/XR/XG + SAM/BAM (SE dir) 🎯 | _(to be written)_ | #4 |
-| 6 | Reports + ambig/unmapped (SE) 🎯 | _(to be written)_ | #5 |
+| 5 | Genomic-seq + XM/XR/XG + SAM/BAM (SE dir) 🎯 | `phase5-genomic-seq-xm-sam-output/PLAN.md` | #4 |
+| 6 | Reports + ambig/unmapped (SE) 🎯 | `phase6-reports-ambig-unmapped/PLAN.md` | #5 |
 | 7 | Paired-end support 🎯 | _(to be written)_ | #5, #6 |
 | 8 | Non-directional + pbat 🎯 | _(to be written)_ | #7 |
 | 9 | FastA + order-preserving threading 🎯 | _(to be written)_ | #8 |

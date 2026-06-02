@@ -144,6 +144,15 @@ pub struct RunConfig {
     pub score_min_intercept: f64,
     /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
     pub score_min_slope: f64,
+    /// `--phred64-quals`: input qualities are Phred+64; converted to Phred+33 on
+    /// SAM output (Perl 4191). Default `false` (Phred+33). Phase 5.
+    pub phred64: bool,
+    /// `--unmapped`: write reads with no alignment to `<name>_unmapped_reads.fq.gz`. Phase 6.
+    pub unmapped: bool,
+    /// `--ambiguous`: write ambiguously-mapping reads to `<name>_ambiguous_reads.fq.gz`. Phase 6.
+    pub ambiguous: bool,
+    /// `--ambig_bam`: write the first ambiguous alignment to `<name>_bismark_bt2.ambig.bam`. Phase 6.
+    pub ambig_bam: bool,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -174,6 +183,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (aligner_options, gap_penalties) =
         options::build_aligner_options(cli, format, layout.is_paired())?;
     let (score_min_intercept, score_min_slope) = options::score_min_params(cli)?;
+    reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {
         skip: cli.skip,
@@ -194,9 +204,41 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         gap_penalties,
         score_min_intercept,
         score_min_slope,
+        phred64: cli.phred64,
+        unmapped: cli.unmapped,
+        ambiguous: cli.ambiguous,
+        ambig_bam: cli.ambig_bam,
         output,
         read_processing,
     })
+}
+
+/// Hard-reject the output-affecting options that are out of the v1 byte-identity
+/// scope (Phase 5). These alter the SAM record/tag set or the header, are not
+/// covered by the gate, and so must fail loudly rather than silently no-op
+/// (rev-1 plan-review finding — fail-loud, not defer).
+fn reject_unsupported_output_flags(cli: &Cli) -> Result<()> {
+    if cli.slam {
+        return Err(AlignerError::Unsupported(
+            "--slam (SLAM-seq methylation call) is not yet supported in v1.".into(),
+        ));
+    }
+    if cli.non_bs_mm {
+        return Err(AlignerError::Unsupported(
+            "--non_bs_mm (extra XA non-bisulfite-mismatch tag) is not yet supported in v1.".into(),
+        ));
+    }
+    if cli.rg_tag {
+        return Err(AlignerError::Unsupported(
+            "--rg_tag/--rg_id/--rg_sample (read-group @RG/RG:Z) is not yet supported in v1.".into(),
+        ));
+    }
+    if cli.sam_no_hd {
+        return Err(AlignerError::Unsupported(
+            "--sam-no-hd (omit the SAM header) is not supported in v1 (a header-less BAM is invalid).".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
@@ -284,20 +326,14 @@ pub fn deferred_flags(cli: &Cli) -> Vec<&'static str> {
             v.push(name);
         }
     };
-    // NB: --skip/--upto/--gzip/--prefix are ACTIVE as of Phase 2 (read conversion)
-    // and are deliberately NOT listed here. --basename/--multicore etc. are still
-    // wired in later phases.
-    push(cli.unmapped, "--unmapped");
-    push(cli.ambiguous, "--ambiguous");
-    push(cli.ambig_bam, "--ambig_bam");
+    // NB: --skip/--upto/--gzip/--prefix ACTIVE as of Phase 2; --basename as of
+    // Phase 5; --unmapped/--ambiguous/--ambig_bam as of Phase 6 — none listed here.
+    // --rg_tag/--slam/--non_bs_mm/--sam-no-hd are HARD-REJECTED (see
+    // reject_unsupported_output_flags). --nucleotide_coverage/--multicore are
+    // wired in later phases (reports/threading).
     push(cli.nucleotide_coverage, "--nucleotide_coverage");
-    push(cli.rg_tag, "--rg_tag");
-    push(cli.slam, "--slam");
-    push(cli.non_bs_mm, "--non_bs_mm");
     push(cli.multicore.is_some(), "--multicore");
-    push(cli.basename.is_some(), "--basename");
     push(cli.old_flag, "--old_flag");
-    push(cli.sam_no_hd, "--sam-no-hd");
     v
 }
 

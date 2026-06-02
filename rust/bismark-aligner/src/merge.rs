@@ -43,14 +43,23 @@ pub enum Decision {
     /// A single best alignment (→ Phase 5 genomic-seq + `XM` + BAM).
     UniqueBest(BestAlignment),
     /// Multiple equally-good alignments (→ Phase 6 routes to `--ambiguous`/`--unmapped`/none).
-    Ambiguous,
+    ///
+    /// `first_ambig` carries the raw (suffix-intact) SAM line of the alignment
+    /// that established the best score, **only** when the read was booted on the
+    /// *within-thread* ambiguity path (Perl writes `--ambig_bam` at 2976) AND
+    /// `--ambig_bam` was requested. The *cross-instance-tie* path carries `None`
+    /// (Perl's 3091 block has no `AMBIBAM` write). Phase 6 writes the ambig BAM
+    /// iff this is `Some`.
+    Ambiguous { first_ambig: Option<String> },
     /// No alignment in any instance (→ Phase 6 routes to `--unmapped`/none).
     NoAlignment,
     /// `--directional` wrong-strand rejection (chosen index 2/3).
     Rejected,
 }
 
-/// Phase-4 counters (the per-strand CT_CT/… counters are added in Phase 5).
+/// Run counters. Phase 4 fills the alignment-outcome counts; Phase 5 adds the
+/// per-strand counts (behind the chromosome-edge guards), the
+/// could-not-extract count, and the methylation-context tallies.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Counters {
     /// Reads processed (driver-incremented).
@@ -63,6 +72,41 @@ pub struct Counters {
     pub no_single_alignment_found: u64,
     /// Reads rejected by `--directional` (index 2/3).
     pub alignments_rejected_count: u64,
+
+    // ---- Phase 5: per-strand counts (Perl 4402/4411/4426/4441) -------------
+    // Incremented in genomic extraction, ONLY when no chromosome-edge guard
+    // fired (so an edge read counts in `unique_best` but in no strand bucket).
+    /// CT-read vs CT-genome (OT, index 0).
+    pub ct_ct_count: u64,
+    /// CT-read vs GA-genome (CTOB/OB, index 1).
+    pub ct_ga_count: u64,
+    /// GA-read vs CT-genome (CTOT, index 2 — non-dir/pbat).
+    pub ga_ct_count: u64,
+    /// GA-read vs GA-genome (OB, index 3 — non-dir/pbat).
+    pub ga_ga_count: u64,
+
+    /// Reads whose genomic sequence could not be extracted (Perl 3129) — failed
+    /// the `len == read_len + 2` guard (chromosome edge); counted but NOT written.
+    pub genomic_sequence_could_not_be_extracted_count: u64,
+
+    // ---- Phase 5: methylation-context tallies (Perl 5006–5013) -------------
+    // Incremented in `methylation_call`; REPORTED in the Phase-6 report.
+    /// Methylated C in CpG context (`Z`).
+    pub total_me_cpg: u64,
+    /// Methylated C in CHG context (`X`).
+    pub total_me_chg: u64,
+    /// Methylated C in CHH context (`H`).
+    pub total_me_chh: u64,
+    /// Methylated C in unknown context (`U`).
+    pub total_me_c_unknown: u64,
+    /// Unmethylated C in CpG context (`z`).
+    pub total_unme_cpg: u64,
+    /// Unmethylated C in CHG context (`x`).
+    pub total_unme_chg: u64,
+    /// Unmethylated C in CHH context (`h`).
+    pub total_unme_chh: u64,
+    /// Unmethylated C in unknown context (`u`).
+    pub total_unme_c_unknown: u64,
 }
 
 /// An alignment stored at a `chromosome:position` key during the merge.
@@ -79,6 +123,7 @@ struct Stored {
 
 /// Run the merge for one read across the instances; advances the matching
 /// streams past this read. `sequence` is the original (uc) read (for MAPQ length).
+#[allow(clippy::too_many_arguments)]
 pub fn check_results_single_end<S: SamStream>(
     identifier: &str,
     sequence: &str,
@@ -86,11 +131,16 @@ pub fn check_results_single_end<S: SamStream>(
     directional: bool,
     score_min_intercept: f64,
     score_min_slope: f64,
+    want_ambig: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
     let mut best_as_so_far: Option<i64> = None;
     let mut amb_same_thread = false;
     let mut alignments: HashMap<String, Stored> = HashMap::new();
+    // The raw SAM line that established the best score (Perl `$first_ambig_alignment`,
+    // set at 2806 + 2822). Captured only when `--ambig_bam` is on; de-converted
+    // at write time (output.rs). Used only on the within-thread ambiguity path.
+    let mut first_ambig: Option<String> = None;
 
     for (index, stream) in streams.iter_mut().enumerate() {
         // Only instances whose current record is for THIS read (lockstep).
@@ -146,12 +196,21 @@ pub fn check_results_single_end<S: SamStream>(
             None => {
                 best_as_so_far = Some(alignment_score);
                 overwrite = true;
+                // First alignment seen sets `first_ambig` (Perl 2806–2810).
+                if want_ambig {
+                    first_ambig = Some(rec.raw_line.clone());
+                }
             }
             Some(best) => {
                 if alignment_score >= best {
                     overwrite = true;
                     if alignment_score > best {
                         amb_same_thread = false;
+                        // A strictly-better alignment resets `first_ambig` (Perl 2822–2826);
+                        // an EQUAL alignment does NOT (no re-capture).
+                        if want_ambig {
+                            first_ambig = Some(rec.raw_line.clone());
+                        }
                     }
                     best_as_so_far = Some(alignment_score);
                 }
@@ -194,10 +253,11 @@ pub fn check_results_single_end<S: SamStream>(
         }
     }
 
-    // Same-thread ambiguity → boot (2957–2988).
+    // Same-thread ambiguity → boot (2957–2988). This is the ONLY SE path that
+    // writes `--ambig_bam` (Perl 2976), so it carries the captured `first_ambig`.
     if amb_same_thread {
         counters.unsuitable_sequence_count += 1;
-        return Ok(Decision::Ambiguous);
+        return Ok(Decision::Ambiguous { first_ambig });
     }
     // No alignment anywhere (2991).
     if alignments.is_empty() {
@@ -215,7 +275,9 @@ pub fn check_results_single_end<S: SamStream>(
         entries.sort_by_key(|s| std::cmp::Reverse(s.alignment_score));
         if entries[0].alignment_score == entries[1].alignment_score {
             counters.unsuitable_sequence_count += 1; // 3060–63
-            return Ok(Decision::Ambiguous);
+            // Cross-instance tie: Perl's 3091 block has NO `AMBIBAM` write →
+            // no ambig-BAM record for this read (it still goes to the FastQ aux).
+            return Ok(Decision::Ambiguous { first_ambig: None });
         }
         let runner_up = entries[1].alignment_score;
         let b = entries.into_iter().next().unwrap();
@@ -329,6 +391,16 @@ mod tests {
     }
 
     fn run(id: &str, s0: &[&str], s1: &[&str], directional: bool) -> (Decision, Counters) {
+        run_amb(id, s0, s1, directional, false)
+    }
+
+    fn run_amb(
+        id: &str,
+        s0: &[&str],
+        s1: &[&str],
+        directional: bool,
+        want_ambig: bool,
+    ) -> (Decision, Counters) {
         let mut streams = vec![VecStream::new(s0), VecStream::new(s1)];
         let mut c = Counters::default();
         let d = check_results_single_end(
@@ -338,6 +410,7 @@ mod tests {
             directional,
             0.0,
             -0.2,
+            want_ambig,
             &mut c,
         )
         .unwrap();
@@ -391,7 +464,7 @@ mod tests {
             &[&mapped("r1", "chr2_GA_converted", 200, 0, "10", None)],
             false,
         );
-        assert_eq!(d, Decision::Ambiguous);
+        assert!(matches!(d, Decision::Ambiguous { .. }));
         assert_eq!(c.unsuitable_sequence_count, 1);
     }
 
@@ -404,7 +477,7 @@ mod tests {
             &[&unmapped("r1")],
             true,
         );
-        assert_eq!(d, Decision::Ambiguous);
+        assert!(matches!(d, Decision::Ambiguous { .. }));
         assert_eq!(c.unsuitable_sequence_count, 1);
     }
 
@@ -435,7 +508,16 @@ mod tests {
             VecStream::new(&[&unmapped("r1")]),
         ];
         let mut c = Counters::default();
-        let r = check_results_single_end("r1", "ACGTACGTAC", &mut streams, true, 0.0, -0.2, &mut c);
+        let r = check_results_single_end(
+            "r1",
+            "ACGTACGTAC",
+            &mut streams,
+            true,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        );
         assert!(r.is_err());
     }
 
@@ -450,7 +532,16 @@ mod tests {
             VecStream::new(&[&unmapped("r1")]),
         ];
         let mut c = Counters::default();
-        let r = check_results_single_end("r1", "ACGTACGTAC", &mut streams, true, 0.0, -0.2, &mut c);
+        let r = check_results_single_end(
+            "r1",
+            "ACGTACGTAC",
+            &mut streams,
+            true,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        );
         assert!(r.is_err());
     }
 
@@ -464,8 +555,17 @@ mod tests {
             VecStream::new(&[&unmapped("r1")]),
         ];
         let mut c = Counters::default();
-        let d = check_results_single_end("r1", "ACGTACGTAC", &mut streams, true, 0.0, -0.2, &mut c)
-            .unwrap();
+        let d = check_results_single_end(
+            "r1",
+            "ACGTACGTAC",
+            &mut streams,
+            true,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        )
+        .unwrap();
         assert_eq!(d, Decision::Rejected);
         assert_eq!(c.alignments_rejected_count, 1);
     }
@@ -479,9 +579,17 @@ mod tests {
             VecStream::new(&[&mapped("r1", "chr2_GA_converted", 200, -5, "10", None)]),
         ];
         let mut c = Counters::default();
-        let d =
-            check_results_single_end("r1", "ACGTACGTAC", &mut streams, false, 0.0, -0.2, &mut c)
-                .unwrap();
+        let d = check_results_single_end(
+            "r1",
+            "ACGTACGTAC",
+            &mut streams,
+            false,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        )
+        .unwrap();
         match d {
             Decision::UniqueBest(b) => {
                 assert_eq!(b.index, 0);
@@ -501,9 +609,17 @@ mod tests {
             VecStream::new(&[&mapped("r1", "chrC_CT_converted", 3, -2, "10", None)]),
         ];
         let mut c = Counters::default();
-        let d =
-            check_results_single_end("r1", "ACGTACGTAC", &mut streams, false, 0.0, -0.2, &mut c)
-                .unwrap();
+        let d = check_results_single_end(
+            "r1",
+            "ACGTACGTAC",
+            &mut streams,
+            false,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        )
+        .unwrap();
         match d {
             Decision::UniqueBest(b) => {
                 assert_eq!(b.index, 2); // AS -2 is highest
@@ -526,8 +642,89 @@ mod tests {
             VecStream::new(&[&mapped("r1", "chrE_CT_converted", 5, 0, "10", None)]),
         ];
         let mut c = Counters::default();
-        let r =
-            check_results_single_end("r1", "ACGTACGTAC", &mut streams, false, 0.0, -0.2, &mut c);
+        let r = check_results_single_end(
+            "r1",
+            "ACGTACGTAC",
+            &mut streams,
+            false,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        );
         assert!(r.is_err());
+    }
+
+    // ---- Phase 6: --ambig_bam first_ambig capture ----------------------------
+
+    #[test]
+    fn within_thread_ambiguity_captures_first_ambig() {
+        // instance 0: AS == XS (within-thread ambiguous). want_ambig → Some(line).
+        let (d, _) = run_amb(
+            "r1",
+            &[&mapped("r1", "chr1_CT_converted", 100, 0, "10", Some(0))],
+            &[&unmapped("r1")],
+            true,
+            true,
+        );
+        match d {
+            Decision::Ambiguous { first_ambig } => {
+                let line = first_ambig.expect("within-thread ambiguity must carry first_ambig");
+                assert!(line.contains("chr1_CT_converted")); // raw, suffix intact
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn within_thread_ambiguity_no_capture_when_flag_off() {
+        // same read, but want_ambig=false → no clone, first_ambig None.
+        let (d, _) = run_amb(
+            "r1",
+            &[&mapped("r1", "chr1_CT_converted", 100, 0, "10", Some(0))],
+            &[&unmapped("r1")],
+            true,
+            false,
+        );
+        assert_eq!(d, Decision::Ambiguous { first_ambig: None });
+    }
+
+    #[test]
+    fn cross_instance_tie_has_no_first_ambig() {
+        // cross-instance tie (different loci, equal AS) → NO ambig-BAM record
+        // even with want_ambig (Perl 3091 block has no AMBIBAM write).
+        let (d, _) = run_amb(
+            "r1",
+            &[&mapped("r1", "chr1_CT_converted", 100, 0, "10", None)],
+            &[&mapped("r1", "chr2_GA_converted", 200, 0, "10", None)],
+            false,
+            true,
+        );
+        assert_eq!(d, Decision::Ambiguous { first_ambig: None });
+    }
+
+    #[test]
+    fn first_ambig_captures_strict_improvement_instance() {
+        // instance 0 AS -5 sets first_ambig; instance 1 AS 0 strictly improves
+        // (re-captures) and ties itself (XS 0 → within-thread ambiguous). The
+        // captured line must be instance 1's, not instance 0's (Perl 2822).
+        let (d, _) = run_amb(
+            "r1",
+            &[&mapped("r1", "chr1_CT_converted", 100, -5, "10", None)],
+            &[&mapped("r1", "chr2_GA_converted", 200, 0, "10", Some(0))],
+            false,
+            true,
+        );
+        match d {
+            Decision::Ambiguous { first_ambig } => {
+                let line = first_ambig.expect("must capture");
+                assert!(
+                    line.contains("chr2_GA_converted"),
+                    "should be instance 1's line, got: {line}"
+                );
+                assert!(!line.contains("chr1_CT_converted"));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
     }
 }

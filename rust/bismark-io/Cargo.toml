@@ -1,6 +1,6 @@
 [package]
 name = "bismark-io"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.9"
 description = "Bismark-aware BAM/SAM/CRAM I/O on top of noodles"
 edition.workspace = true
 rust-version.workspace = true
