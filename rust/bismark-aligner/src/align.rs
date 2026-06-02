@@ -262,6 +262,211 @@ impl Drop for AlignerStream {
     }
 }
 
+// ===========================================================================
+// Paired-end stream (Phase 7) — peek-TWO / advance-TWO.
+// ===========================================================================
+
+/// One paired-end alignment: read 1 + read 2 records, **canonicalised** so
+/// `read1` is always the `/1` mate regardless of which line Bowtie 2 emitted
+/// first (it reports the leftmost-position mate first — Perl 6494–6508), plus
+/// the `/1`-stripped `seq_id` used for the read-ID lockstep.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SamPair {
+    /// Read 1 (the `/1` mate).
+    pub read1: SamRecord,
+    /// Read 2 (the `/2` mate).
+    pub read2: SamRecord,
+    /// QNAME with the trailing `/1` removed (Perl 6500–6508).
+    pub seq_id: String,
+}
+
+impl SamPair {
+    /// Build a pair from two raw SAM lines, identifying read 1 by the trailing
+    /// `/1` on its QNAME (Perl 6500–6508). Bowtie 2 strips the outer `/1`,`/2` we
+    /// added as `/1/1`,`/2/2`, leaving `/1`,`/2`. `die` if neither line is read 1.
+    pub(crate) fn from_lines(line1: &str, line2: &str) -> Result<SamPair> {
+        let r1 = SamRecord::parse(line1)?;
+        let r2 = SamRecord::parse(line2)?;
+        if let Some(id) = r1.qname.strip_suffix("/1") {
+            let seq_id = id.to_string();
+            Ok(SamPair {
+                read1: r1,
+                read2: r2,
+                seq_id,
+            })
+        } else if let Some(id) = r2.qname.strip_suffix("/1") {
+            let seq_id = id.to_string();
+            // read 2's line was emitted first → swap so `read1` is the /1 mate.
+            Ok(SamPair {
+                read1: r2,
+                read2: r1,
+                seq_id,
+            })
+        } else {
+            Err(AlignerError::Validation(format!(
+                "Either the first or the second id need to be read 1! ID1 was: {}; ID2 was: {}",
+                r1.qname, r2.qname
+            )))
+        }
+    }
+
+    /// The PE no-alignment marker: read 1 FLAG 77 (1+4+8+64) and read 2 FLAG 141
+    /// (1+4+8+128) (Perl 3317). Distinct from SE's single `flag == 4`.
+    pub fn is_unmapped_pair(&self) -> bool {
+        self.read1.flag == 77 && self.read2.flag == 141
+    }
+}
+
+/// The paired peek/advance interface the Phase-7 merge drives. Implemented by
+/// [`PairedAlignerStream`] (a real Bowtie 2 `-1/-2` subprocess) and by test
+/// doubles, so `check_results_paired_end` can be unit-tested with canned pairs.
+pub trait PairedSamStream {
+    /// Peek the current pair (`None` at EOF).
+    fn current_pair(&self) -> Option<&SamPair>;
+    /// Advance to the next pair (two SAM lines).
+    fn advance_pair(&mut self) -> Result<()>;
+}
+
+impl PairedSamStream for PairedAlignerStream {
+    fn current_pair(&self) -> Option<&SamPair> {
+        PairedAlignerStream::current_pair(self)
+    }
+    fn advance_pair(&mut self) -> Result<()> {
+        PairedAlignerStream::advance_pair(self)
+    }
+}
+
+/// A live paired-end Bowtie 2 instance, presenting a peek/advance pair stream.
+/// Each pair is two consecutive SAM lines (R1 + R2, in Bowtie 2's leftmost-first
+/// order); [`SamPair::from_lines`] canonicalises them to (read1, read2).
+pub struct PairedAlignerStream {
+    child: Child,
+    reader: BufReader<ChildStdout>,
+    current: Option<SamPair>,
+    finished: bool,
+}
+
+impl PairedAlignerStream {
+    /// Spawn one paired Bowtie 2 instance and read the first pair.
+    ///
+    /// Args mirror Perl 6474: `<aligner_options> <orient> -x <index> -1 <input1>
+    /// -2 <input2>`. stdout piped; stderr inherited (only stdout is drained).
+    pub fn spawn(
+        bowtie2: &Path,
+        options: &str,
+        orient: Orientation,
+        index: &Path,
+        input1: &Path,
+        input2: &Path,
+    ) -> Result<Self> {
+        let mut cmd = Command::new(bowtie2);
+        for opt in options.split_whitespace() {
+            cmd.arg(opt);
+        }
+        cmd.arg(orient.flag())
+            .arg("-x")
+            .arg(index)
+            .arg("-1")
+            .arg(input1)
+            .arg("-2")
+            .arg(input2)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            AlignerError::Validation(format!(
+                "failed to spawn Bowtie 2 ({}): {e}",
+                bowtie2.display()
+            ))
+        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AlignerError::Validation("Bowtie 2 stdout was not captured".into()))?;
+        let mut reader = BufReader::new(stdout);
+
+        // Skip `@` header lines; the first non-`@` line is the first record of
+        // the first pair (Perl 6477–6488).
+        let mut line1 = String::new();
+        loop {
+            line1.clear();
+            let n = reader.read_line(&mut line1)?;
+            if n == 0 {
+                // header-only / empty stream → no pairs
+                return Ok(PairedAlignerStream {
+                    child,
+                    reader,
+                    current: None,
+                    finished: false,
+                });
+            }
+            if !line1.starts_with('@') {
+                break;
+            }
+        }
+        let mut line2 = String::new();
+        let n2 = reader.read_line(&mut line2)?;
+        let current = if n2 == 0 {
+            None // a lone trailing line is not a complete pair (Perl 6491)
+        } else {
+            Some(SamPair::from_lines(&line1, &line2)?)
+        };
+
+        Ok(PairedAlignerStream {
+            child,
+            reader,
+            current,
+            finished: false,
+        })
+    }
+
+    /// Peek the current pair without consuming it (`None` at EOF).
+    pub fn current_pair(&self) -> Option<&SamPair> {
+        self.current.as_ref()
+    }
+
+    /// Advance to the next pair (reads two lines; `None` at EOF / a lone line).
+    pub fn advance_pair(&mut self) -> Result<()> {
+        let mut line1 = String::new();
+        let n1 = self.reader.read_line(&mut line1)?;
+        if n1 == 0 {
+            self.current = None;
+            return Ok(());
+        }
+        let mut line2 = String::new();
+        let n2 = self.reader.read_line(&mut line2)?;
+        self.current = if n2 == 0 {
+            None
+        } else {
+            Some(SamPair::from_lines(&line1, &line2)?)
+        };
+        Ok(())
+    }
+
+    /// Drain remaining stdout, reap the child, check exit status (as [`AlignerStream::finish`]).
+    pub fn finish(mut self) -> Result<()> {
+        std::io::copy(&mut self.reader, &mut std::io::sink())?;
+        let status = self.child.wait()?;
+        self.finished = true;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(AlignerError::Validation(format!(
+                "Bowtie 2 exited unsuccessfully ({status})"
+            )))
+        }
+    }
+}
+
+impl Drop for PairedAlignerStream {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +669,95 @@ mod tests {
         let (_d, s) = spawn_fake(body);
         assert_eq!(s.current().unwrap().qname, "r0");
         s.finish().unwrap(); // drains remaining stdout, then reaps — no hang
+    }
+
+    // ---- paired-end pair construction + stream (Phase 7) --------------------
+
+    fn pe_line(qname: &str, flag: u16, pos: u32) -> String {
+        format!(
+            "{qname}\t{flag}\tchr1_CT_converted\t{pos}\t40\t10M\t=\t{pos}\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:0\tMD:Z:10"
+        )
+    }
+
+    #[test]
+    fn sampair_identifies_read1_by_slash1() {
+        let p = SamPair::from_lines(&pe_line("readX/1", 99, 100), &pe_line("readX/2", 147, 140))
+            .unwrap();
+        assert_eq!(p.seq_id, "readX");
+        assert_eq!(p.read1.qname, "readX/1");
+        assert_eq!(p.read2.qname, "readX/2");
+    }
+
+    #[test]
+    fn sampair_swaps_when_read1_emitted_second() {
+        // Bowtie 2 emits the leftmost mate first; here read 2 is leftmost.
+        let p = SamPair::from_lines(&pe_line("readX/2", 147, 100), &pe_line("readX/1", 99, 140))
+            .unwrap();
+        assert_eq!(p.seq_id, "readX");
+        assert_eq!(p.read1.qname, "readX/1"); // canonicalised: read1 is the /1 mate
+        assert_eq!(p.read2.qname, "readX/2");
+    }
+
+    #[test]
+    fn sampair_dies_when_neither_is_read1() {
+        assert!(
+            SamPair::from_lines(&pe_line("readX/2", 147, 100), &pe_line("readY/2", 147, 140))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sampair_unmapped_marker_77_141() {
+        let p = SamPair::from_lines(&pe_line("r/1", 77, 0), &pe_line("r/2", 141, 0)).unwrap();
+        assert!(p.is_unmapped_pair());
+        let mapped =
+            SamPair::from_lines(&pe_line("r/1", 99, 100), &pe_line("r/2", 147, 140)).unwrap();
+        assert!(!mapped.is_unmapped_pair());
+    }
+
+    #[cfg(unix)]
+    fn spawn_fake_pe(body: &str) -> (tempfile::TempDir, PairedAlignerStream) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bt2 = fake_bowtie2(dir.path(), body);
+        let s = PairedAlignerStream::spawn(
+            &bt2,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500",
+            Orientation::Norc,
+            Path::new("idx"),
+            Path::new("r1.fq"),
+            Path::new("r2.fq"),
+        )
+        .unwrap();
+        (dir, s)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pe_stream_skips_header_then_walks_pairs_to_eof() {
+        // 1 header line + 2 pairs (4 records). Pair b is emitted read2-first.
+        let body = "printf '@HD\\tVN:1.0\\n\
+            a/1\\t99\\tchr1_CT_converted\\t10\\t40\\t4M\\t=\\t20\\t14\\tACGT\\tIIII\\tAS:i:0\\tMD:Z:4\\n\
+            a/2\\t147\\tchr1_CT_converted\\t20\\t40\\t4M\\t=\\t10\\t-14\\tACGT\\tIIII\\tAS:i:0\\tMD:Z:4\\n\
+            b/2\\t147\\tchr1_CT_converted\\t30\\t40\\t4M\\t=\\t40\\t14\\tACGT\\tIIII\\tAS:i:0\\tMD:Z:4\\n\
+            b/1\\t99\\tchr1_CT_converted\\t40\\t40\\t4M\\t=\\t30\\t-14\\tACGT\\tIIII\\tAS:i:0\\tMD:Z:4\\n'";
+        let (_d, mut s) = spawn_fake_pe(body);
+        assert_eq!(s.current_pair().unwrap().seq_id, "a");
+        assert_eq!(s.current_pair().unwrap().read1.pos, 10);
+        s.advance_pair().unwrap();
+        let b = s.current_pair().unwrap();
+        assert_eq!(b.seq_id, "b");
+        assert_eq!(b.read1.qname, "b/1"); // canonicalised despite read2-first emission
+        assert_eq!(b.read1.pos, 40);
+        s.advance_pair().unwrap();
+        assert!(s.current_pair().is_none()); // EOF
+        s.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pe_stream_all_header_has_no_pairs() {
+        let (_d, s) = spawn_fake_pe("printf '@HD\\tVN:1.0\\n'");
+        assert!(s.current_pair().is_none());
+        s.finish().unwrap();
     }
 }

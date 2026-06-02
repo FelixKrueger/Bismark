@@ -32,8 +32,8 @@ use bismark_io::{BamWriter, BismarkRecord};
 
 use crate::error::{AlignerError, Result};
 use crate::genome::Genome;
-use crate::merge::BestAlignment;
-use crate::methylation::{Conversion, GenomicExtraction, parse_cigar};
+use crate::merge::{BestAlignment, BestAlignmentPaired};
+use crate::methylation::{Conversion, GenomicExtraction, GenomicExtractionPaired, parse_cigar};
 
 /// Map chromosome name → reference id (0-based index into `sq_order`), the
 /// `reference_sequence_id` the BAM record needs.
@@ -443,6 +443,240 @@ pub fn single_end_sam_output(
         .map_err(|e| AlignerError::Validation(format!("failed to build SAM record: {e}")))
 }
 
+/// Assemble the TWO SAM/BAM records for one PE alignment (Perl `paired_end_SAM_output`,
+/// 8713–9225, default `!old_flag !rg_tag !strandID !non_bs_mm` path). Returns
+/// (read 1, read 2) in fixed order. `seq_1`/`seq_2` are the uc original reads;
+/// `qual_1`/`qual_2` the raw ASCII quality; `dovetail` = `!--no_dovetail` (Perl
+/// 8047–8048, gates the TLEN dovetail sub-cases). RNEXT is `=` (same tid),
+/// PNEXT is the mate's POS, TLEN is the signed template length.
+#[allow(clippy::too_many_arguments)]
+pub fn paired_end_sam_output(
+    id: &str,
+    seq_1: &[u8],
+    seq_2: &[u8],
+    qual_1: &[u8],
+    qual_2: &[u8],
+    best: &BestAlignmentPaired,
+    ext: &GenomicExtractionPaired,
+    methcall_1: &[u8],
+    methcall_2: &[u8],
+    refid: &HashMap<String, usize>,
+    phred64: bool,
+    dovetail: bool,
+) -> Result<(BismarkRecord, BismarkRecord)> {
+    // FLAG = a per-index constant pair (Perl 8825–8868); index 1/2 swap the R1/R2
+    // first/second-in-pair bits (SeqMonk concordance, 8821–8823). NOT bit-assembly.
+    let (flag_1, flag_2): (u16, u16) = match best.index {
+        0 => (99, 147),
+        1 => (163, 83),
+        2 => (147, 99),
+        3 => (83, 163),
+        _ => {
+            return Err(AlignerError::Validation(format!(
+                "Unexpected PE strand index {}",
+                best.index
+            )));
+        }
+    };
+
+    // +2 ref trim is INDEX-keyed for both mates (Perl 8772–8779) — NOT read_conv
+    // keyed like SE. index 0/3: R1 drop last 2, R2 drop first 2; index 1/2: R1
+    // drop first 2, R2 drop last 2.
+    let g1 = &ext.unmodified_genomic_sequence_1;
+    let g2 = &ext.unmodified_genomic_sequence_2;
+    let (ref_seq_1, ref_seq_2) = if best.index == 0 || best.index == 3 {
+        (
+            g1[..g1.len().saturating_sub(2)].to_vec(),
+            g2.get(2..).unwrap_or(&[]).to_vec(),
+        )
+    } else {
+        (
+            g1.get(2..).unwrap_or(&[]).to_vec(),
+            g2[..g2.len().saturating_sub(2)].to_vec(),
+        )
+    };
+
+    // TLEN (Perl 8890–8994). start = 1-based POS; end = 0-based-walked end_position.
+    // A/B form a total partition (`<=` vs `<`); each inner branch (`>=` vs `<`)
+    // is total → tlen is never unset.
+    let (start1, start2) = (best.position_1 as i64, best.position_2 as i64);
+    let (end1, end2) = (ext.end_position_1 as i64, ext.end_position_2 as i64);
+    let (tlen_1, tlen_2): (i64, i64) = if start1 <= start2 {
+        // Read 1 leftmost.
+        if end2 >= end1 {
+            if flag_1 == 83 && dovetail {
+                (start1 - end2 - 1, end2 - start1 + 1) // R1 reverse-oriented dovetail
+            } else {
+                (end2 - start1 + 1, start1 - end2 - 1) // leftmost +, rightmost -
+            }
+        } else {
+            // read 2 fully contained in read 1 → both = read-1 length.
+            let l = end1 - start1 + 1;
+            (l, -l)
+        }
+    } else {
+        // Read 2 leftmost (start2 < start1).
+        if end1 >= end2 {
+            if flag_1 == 99 && dovetail {
+                (end1 - start2 + 1, start2 - end1 - 1) // R1 forward-oriented dovetail
+            } else {
+                (start2 - end1 - 1, end1 - start2 + 1) // R1 rightmost -, R2 leftmost +
+            }
+        } else {
+            // read 1 fully contained in read 2 → both = read-2 length.
+            let l = end2 - start2 + 1;
+            (-l, l)
+        }
+    };
+
+    let tid = *refid.get(&best.chromosome).ok_or_else(|| {
+        AlignerError::Validation(format!("chromosome {} absent from @SQ", best.chromosome))
+    })?;
+
+    let rec1 = build_pe_mate(
+        id,
+        flag_1,
+        tid,
+        best.position_1,
+        best.mapq,
+        &best.cigar_1,
+        best.position_2, // PNEXT_1 = read 2's POS (Perl 8885)
+        tlen_1,
+        seq_1,
+        qual_1,
+        ref_seq_1,
+        &ext.genomic_seq_for_md_tag_1,
+        ext.indels_1,
+        methcall_1,
+        ext.alignment_read_1,
+        ext.read_conversion_1,
+        ext.genome_conversion,
+        phred64,
+    )?;
+    let rec2 = build_pe_mate(
+        id,
+        flag_2,
+        tid,
+        best.position_2,
+        best.mapq,
+        &best.cigar_2,
+        best.position_1, // PNEXT_2 = read 1's POS (Perl 8886)
+        tlen_2,
+        seq_2,
+        qual_2,
+        ref_seq_2,
+        &ext.genomic_seq_for_md_tag_2,
+        ext.indels_2,
+        methcall_2,
+        ext.alignment_read_2,
+        ext.read_conversion_2,
+        ext.genome_conversion,
+        phred64,
+    )?;
+    Ok((rec1, rec2))
+}
+
+/// Build one mate's [`BismarkRecord`] (the per-mate half of Perl 8999–9218):
+/// minus-strand reorientation (revcomp actual+ref, double-revcomp md on `D`,
+/// reverse qual), `NM`/`MD`/`XM`/`XR`/`XG`, and the mate-link fields (RNEXT `=`
+/// via `mate_reference_sequence_id == reference_sequence_id`, PNEXT, TLEN).
+#[allow(clippy::too_many_arguments)]
+fn build_pe_mate(
+    id: &str,
+    flag: u16,
+    tid: usize,
+    position: u32,
+    mapq: u8,
+    cigar: &str,
+    pnext: u32,
+    tlen: i64,
+    original_seq: &[u8],
+    qual: &[u8],
+    ref_seq_trimmed: Vec<u8>,
+    md_seq: &[u8],
+    indels: u32,
+    methylation_call: &[u8],
+    strand: u8,
+    read_conv: Conversion,
+    genome_conv: Conversion,
+    phred64: bool,
+) -> Result<BismarkRecord> {
+    let mut actual_seq = original_seq.to_vec();
+    let mut ref_seq = ref_seq_trimmed;
+    let mut md = md_seq.to_vec();
+    let offset: u8 = if phred64 { 64 } else { 33 };
+    let mut scores: Vec<u8> = qual.iter().map(|&q| q.wrapping_sub(offset)).collect();
+
+    if strand == b'-' {
+        actual_seq = revcomp(&actual_seq);
+        ref_seq = revcomp(&ref_seq);
+        if cigar.contains('D') {
+            md = revcomp(&md); // second revcomp (extraction did the first)
+        }
+        scores.reverse();
+    }
+
+    let nm = hemming_dist(&actual_seq, &ref_seq) as i64 + indels as i64;
+    let md_full = make_mismatch_string(&actual_seq, &ref_seq, cigar, &md);
+    let md_value = md_full
+        .strip_prefix("MD:Z:")
+        .unwrap_or(&md_full)
+        .to_string();
+    let xm: Vec<u8> = if strand == b'-' {
+        methylation_call.iter().rev().copied().collect()
+    } else {
+        methylation_call.to_vec()
+    };
+
+    let mut rec = RecordBuf::default();
+    *rec.name_mut() = Some(BString::from(id.as_bytes()));
+    *rec.flags_mut() = Flags::from(flag);
+    *rec.reference_sequence_id_mut() = Some(tid);
+    *rec.alignment_start_mut() = Position::new(position as usize);
+    *rec.mapping_quality_mut() = MappingQuality::new(mapq);
+    *rec.cigar_mut() = Cigar::from(cigar_to_ops(cigar));
+    *rec.sequence_mut() = Sequence::from(actual_seq);
+    *rec.quality_scores_mut() = QualityScores::from(scores);
+    // Mate-link fields (SE never sets these): RNEXT `=` (same tid), PNEXT, TLEN.
+    *rec.mate_reference_sequence_id_mut() = Some(tid);
+    *rec.mate_alignment_start_mut() = Position::new(pnext as usize);
+    *rec.template_length_mut() = tlen as i32;
+
+    rec.data_mut()
+        .insert(Tag::from(*b"NM"), Value::from(nm as i32));
+    rec.data_mut()
+        .insert(Tag::from(*b"MD"), Value::String(BString::from(md_value)));
+    rec.data_mut()
+        .insert(Tag::from(*b"XM"), Value::String(BString::from(xm)));
+    rec.data_mut().insert(
+        Tag::from(*b"XR"),
+        Value::String(BString::from(read_conv.as_str())),
+    );
+    rec.data_mut().insert(
+        Tag::from(*b"XG"),
+        Value::String(BString::from(genome_conv.as_str())),
+    );
+
+    BismarkRecord::from_noodles_record(rec)
+        .map_err(|e| AlignerError::Validation(format!("failed to build PE SAM record: {e}")))
+}
+
+/// Write the two raw ambiguous SAM lines (R1, R2) to the `--ambig_bam` (Perl
+/// 3677–3682). Each QNAME's read-number tag is stripped (`s|/1\t|\t|` / `s|/2\t|\t|`)
+/// and the RNAME de-converted (in `write_raw_sam_line_to_bam`).
+pub fn write_raw_pe_ambig_lines<W: std::io::Write>(
+    writer: &mut BamWriter<W>,
+    line1: &str,
+    line2: &str,
+    refid: &HashMap<String, usize>,
+) -> Result<()> {
+    let l1 = line1.replacen("/1\t", "\t", 1);
+    let l2 = line2.replacen("/2\t", "\t", 1);
+    write_raw_sam_line_to_bam(writer, &l1, refid)?;
+    write_raw_sam_line_to_bam(writer, &l2, refid)?;
+    Ok(())
+}
+
 /// Parse a CIGAR string into noodles ops (M/I/D/S/N; pre-validated by extraction).
 fn cigar_to_ops(cigar: &str) -> Vec<Op> {
     parse_cigar(cigar)
@@ -516,16 +750,45 @@ fn build_raw_record(raw_line: &str, refid: &HashMap<String, usize>) -> Result<Re
         .parse()
         .map_err(|_| AlignerError::Validation(format!("bad MAPQ in ambig line: {}", f[4])))?;
 
+    let own_tid = refid.get(rname).copied();
     let mut rec = RecordBuf::default();
     *rec.name_mut() = Some(BString::from(f[0].as_bytes()));
     *rec.flags_mut() = Flags::from(flag);
-    if let Some(&tid) = refid.get(rname) {
+    if let Some(tid) = own_tid {
         *rec.reference_sequence_id_mut() = Some(tid);
     }
     if pos > 0 {
         *rec.alignment_start_mut() = Position::new(pos);
     }
     *rec.mapping_quality_mut() = MappingQuality::new(mapq);
+    // RNEXT/PNEXT/TLEN (fields 6/7/8). Bowtie 2 PE lines carry `=`/<mate-pos>/<tlen>;
+    // SE lines carry `*`/`0`/`0` (→ left default, so SE `--ambig_bam` is unchanged).
+    // Dropping these (pre-fix) made the PE ambig BAM render `* 0 0` (gate mismatch).
+    match f[6] {
+        "*" => {} // unpaired → mate ref id stays None
+        "=" => {
+            if let Some(tid) = own_tid {
+                *rec.mate_reference_sequence_id_mut() = Some(tid);
+            }
+        }
+        other => {
+            let mrname = other
+                .strip_suffix("_CT_converted")
+                .or_else(|| other.strip_suffix("_GA_converted"))
+                .unwrap_or(other);
+            if let Some(&tid) = refid.get(mrname) {
+                *rec.mate_reference_sequence_id_mut() = Some(tid);
+            }
+        }
+    }
+    if let Ok(pnext) = f[7].parse::<usize>()
+        && pnext > 0
+    {
+        *rec.mate_alignment_start_mut() = Position::new(pnext);
+    }
+    if let Ok(tlen) = f[8].parse::<i32>() {
+        *rec.template_length_mut() = tlen;
+    }
     if f[5] != "*" {
         *rec.cigar_mut() = Cigar::from(cigar_to_ops(f[5]));
     }
@@ -982,5 +1245,249 @@ mod tests {
         // a `B` (array) tag type is not produced by Bowtie 2 SE and is unsupported.
         let raw = "r\t0\tchr1_CT_converted\t1\t0\t2M\t*\t0\t0\tAC\tII\tZZ:B:i,1,2";
         assert!(build_raw_record(raw, &refid).is_err());
+    }
+
+    // ---- paired_end_sam_output (Phase 7) -----------------------------------
+
+    fn strand_conv(index: usize) -> (u8, u8, Conversion, Conversion, Conversion) {
+        match index {
+            0 => (b'+', b'-', Conversion::Ct, Conversion::Ga, Conversion::Ct),
+            1 => (b'+', b'-', Conversion::Ga, Conversion::Ct, Conversion::Ga),
+            2 => (b'-', b'+', Conversion::Ga, Conversion::Ct, Conversion::Ct),
+            3 => (b'-', b'+', Conversion::Ct, Conversion::Ga, Conversion::Ga),
+            _ => unreachable!(),
+        }
+    }
+
+    fn pe_io(
+        index: usize,
+        pos1: u32,
+        pos2: u32,
+        end1: u32,
+        end2: u32,
+    ) -> (BestAlignmentPaired, GenomicExtractionPaired) {
+        let (s1, s2, rc1, rc2, gc) = strand_conv(index);
+        let best = BestAlignmentPaired {
+            chromosome: "chr1".into(),
+            index,
+            position_1: pos1,
+            position_2: pos2,
+            cigar_1: "4M".into(),
+            cigar_2: "4M".into(),
+            md_tag_1: String::new(),
+            md_tag_2: String::new(),
+            bowtie_sequence_1: String::new(),
+            bowtie_sequence_2: String::new(),
+            flag_1: 0,
+            flag_2: 0,
+            sum_of_alignment_scores: 0,
+            sum_of_alignment_scores_second_best: None,
+            mapq: 42,
+        };
+        let ext = GenomicExtractionPaired {
+            alignment_read_1: s1,
+            alignment_read_2: s2,
+            read_conversion_1: rc1,
+            read_conversion_2: rc2,
+            genome_conversion: gc,
+            unmodified_genomic_sequence_1: b"ACGTAC".to_vec(),
+            unmodified_genomic_sequence_2: b"ACGTAC".to_vec(),
+            genomic_seq_for_md_tag_1: Vec::new(),
+            genomic_seq_for_md_tag_2: Vec::new(),
+            end_position_1: end1,
+            end_position_2: end2,
+            indels_1: 0,
+            indels_2: 0,
+        };
+        (best, ext)
+    }
+
+    fn run_pe_sam(
+        index: usize,
+        pos1: u32,
+        pos2: u32,
+        end1: u32,
+        end2: u32,
+        dovetail: bool,
+    ) -> (RecordBuf, RecordBuf) {
+        let (best, ext) = pe_io(index, pos1, pos2, end1, end2);
+        let (r1, r2) = paired_end_sam_output(
+            "rp",
+            b"ACGT",
+            b"ACGT",
+            b"FFFF",
+            b"FFFF",
+            &best,
+            &ext,
+            b"....",
+            b"....",
+            &refid_of(&["chr1"]),
+            false,
+            dovetail,
+        )
+        .unwrap();
+        (r1.inner().clone(), r2.inner().clone())
+    }
+
+    #[test]
+    fn pe_flag_constant_table() {
+        // The four index→(flag_1, flag_2) constant pairs (Perl 8825–8868), incl.
+        // the index-1/2 R1↔R2 first/second-in-pair swap.
+        for (index, f1, f2) in [(0, 99, 147), (1, 163, 83), (2, 147, 99), (3, 83, 163)] {
+            let (r1, r2) = run_pe_sam(index, 100, 140, 110, 150, true);
+            assert_eq!(u16::from(r1.flags()), f1, "flag_1 for index {index}");
+            assert_eq!(u16::from(r2.flags()), f2, "flag_2 for index {index}");
+        }
+    }
+
+    #[test]
+    fn pe_rnext_pnext_mapq_shared() {
+        let (r1, r2) = run_pe_sam(0, 100, 140, 110, 150, true);
+        // RNEXT '=' → mate_reference_sequence_id == reference_sequence_id.
+        assert_eq!(r1.mate_reference_sequence_id(), r1.reference_sequence_id());
+        assert_eq!(r2.mate_reference_sequence_id(), r2.reference_sequence_id());
+        // PNEXT = the OTHER mate's POS.
+        assert_eq!(usize::from(r1.mate_alignment_start().unwrap()), 140);
+        assert_eq!(usize::from(r2.mate_alignment_start().unwrap()), 100);
+        // MAPQ shared.
+        assert_eq!(u8::from(r1.mapping_quality().unwrap()), 42);
+        assert_eq!(u8::from(r2.mapping_quality().unwrap()), 42);
+    }
+
+    #[test]
+    #[allow(clippy::type_complexity)]
+    fn pe_tlen_tree() {
+        // (index, pos1, pos2, end1, end2, dovetail) → (tlen_1, tlen_2). Hand-derived
+        // from Perl 8890–8994; flag_1 = {0:99, 3:83} drives the dovetail sub-cases.
+        let cases: &[(usize, u32, u32, u32, u32, bool, i64, i64)] = &[
+            // A1 normal (R1 leftmost, end2>=end1, flag_1=99 not 83): +51 / -51
+            (0, 100, 140, 110, 150, true, 51, -51),
+            // A1 dovetail (index 3 → flag_1=83, dovetail on): R1 keeps - though leftmost
+            (3, 100, 140, 110, 150, true, -51, 51),
+            // A1 dovetail SUPPRESSED (index 3, --no_dovetail): back to normal +/-
+            (3, 100, 140, 110, 150, false, 51, -51),
+            // A2 read2 contained in read1 → both = read1 length (51)
+            (0, 100, 120, 150, 130, true, 51, -51),
+            // B1 normal (R2 leftmost, flag_1=83 not 99): R2 +51, R1 -51
+            (3, 140, 100, 150, 110, true, -51, 51),
+            // B1 dovetail (index 0 → flag_1=99, dovetail on): R1 keeps + though not leftmost
+            (0, 140, 100, 150, 110, true, 51, -51),
+            // B2 read1 contained in read2 → both = read2 length (51)
+            (0, 120, 100, 130, 150, true, -51, 51),
+            // equality start1==start2 → branch A; end2==end1 → A1 normal (index 0): +11/-11
+            (0, 100, 100, 110, 110, true, 11, -11),
+        ];
+        for &(index, p1, p2, e1, e2, dov, t1, t2) in cases {
+            let (r1, r2) = run_pe_sam(index, p1, p2, e1, e2, dov);
+            assert_eq!(
+                r1.template_length(),
+                t1 as i32,
+                "tlen_1 idx{index} p1{p1} p2{p2} e1{e1} e2{e2} dov{dov}"
+            );
+            assert_eq!(r2.template_length(), t2 as i32, "tlen_2 idx{index}");
+        }
+    }
+
+    #[test]
+    fn pe_dovetail_gate_negative_index1_not_dovetailed() {
+        // An index-1 pair (flag_1=163, neither 83 nor 99) in a layout that WOULD
+        // dovetail must take the NORMAL branch — the FLAG gate is load-bearing.
+        // A1 (start1<=start2, end2>=end1) normal: +51 / -51.
+        let (r1, r2) = run_pe_sam(1, 100, 140, 110, 150, true);
+        assert_eq!(r1.template_length(), 51);
+        assert_eq!(r2.template_length(), -51);
+    }
+
+    #[test]
+    fn pe_per_mate_xr_shared_xg_and_tag_order() {
+        // index 0: XR_1=CT, XR_2=GA, XG=CT (shared); tag order NM MD XM XR XG.
+        let (r1, r2) = run_pe_sam(0, 100, 140, 110, 150, true);
+        for rec in [&r1, &r2] {
+            let tags: Vec<[u8; 2]> = rec.data().keys().map(<[u8; 2]>::from).collect();
+            assert_eq!(tags, vec![*b"NM", *b"MD", *b"XM", *b"XR", *b"XG"]);
+        }
+        assert_eq!(
+            r1.data().get(&Tag::from(*b"XR")),
+            Some(&Value::String(BString::from("CT")))
+        );
+        assert_eq!(
+            r2.data().get(&Tag::from(*b"XR")),
+            Some(&Value::String(BString::from("GA")))
+        );
+        // XG shared (both CT for index 0).
+        assert_eq!(
+            r1.data().get(&Tag::from(*b"XG")),
+            Some(&Value::String(BString::from("CT")))
+        );
+        assert_eq!(
+            r2.data().get(&Tag::from(*b"XG")),
+            Some(&Value::String(BString::from("CT")))
+        );
+    }
+
+    #[test]
+    fn pe_ambig_lines_strip_read_tag_and_deconvert_rname_only() {
+        // §7 #25: `write_raw_pe_ambig_lines` = `replacen("/1\t","\t",1)` (Perl 3677–3678)
+        // then `build_raw_record` (RNAME-only de-convert). Tested at that composition
+        // (raw records lack XR/XG so they can't round-trip through the validating
+        // BismarkRecord reader). A QNAME containing a literal `_CT_converted` must NOT
+        // be mangled — only the RNAME field is de-converted.
+        let refid = build_refid(&genome_of(&[("chr1", b"ACGTACGT")]));
+        let l1 = "weird_CT_converted_x/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        let l2 = "weird_CT_converted_x/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        let rec1 = build_raw_record(&l1.replacen("/1\t", "\t", 1), &refid).unwrap();
+        let rec2 = build_raw_record(&l2.replacen("/2\t", "\t", 1), &refid).unwrap();
+        // QNAME: the `/1`,`/2` tag stripped; the `_CT_converted` IN the qname survives.
+        assert_eq!(
+            rec1.name().map(|n| n.to_vec()),
+            Some(b"weird_CT_converted_x".to_vec())
+        );
+        assert_eq!(
+            rec2.name().map(|n| n.to_vec()),
+            Some(b"weird_CT_converted_x".to_vec())
+        );
+        // RNAME de-converted to chr1 (tid 0); FLAGs intact.
+        assert_eq!(rec1.reference_sequence_id(), Some(0));
+        assert_eq!(u16::from(rec1.flags()), 99);
+        assert_eq!(u16::from(rec2.flags()), 147);
+        // RNEXT/PNEXT/TLEN (fields 6/7/8) preserved from the raw PE line (`=`/1/6
+        // and `=`/1/-6) — these were dropped pre-fix, breaking the PE ambig-BAM gate.
+        assert_eq!(rec1.mate_reference_sequence_id(), Some(0)); // `=` → own tid
+        assert_eq!(usize::from(rec1.mate_alignment_start().unwrap()), 1);
+        assert_eq!(rec1.template_length(), 6);
+        assert_eq!(rec2.template_length(), -6);
+    }
+
+    #[test]
+    fn pe_minus_strand_mate_reverses_seq_and_xm() {
+        // index 0: mate2 is '-' → its SEQ is revcomp'd and XM reversed; mate1 '+' unchanged.
+        let (best, ext) = pe_io(0, 100, 140, 110, 150);
+        let (r1, r2) = paired_end_sam_output(
+            "rp",
+            b"AAAC",
+            b"AAAC",
+            b"FFFF",
+            b"FFFF",
+            &best,
+            &ext,
+            b"z...",
+            b"...h",
+            &refid_of(&["chr1"]),
+            false,
+            true,
+        )
+        .unwrap();
+        // mate1 (+): SEQ as-is, XM as-is.
+        assert_eq!(r1.inner().sequence().as_ref(), b"AAAC");
+        assert_eq!(
+            r1.inner().data().get(&Tag::from(*b"XM")),
+            Some(&Value::String(BString::from("z...")))
+        );
+        // mate2 (-): SEQ revcomp'd (revcomp("AAAC")="GTTT"), XM reversed ("...h"→"h...").
+        assert_eq!(r2.inner().sequence().as_ref(), b"GTTT");
+        assert_eq!(
+            r2.inner().data().get(&Tag::from(*b"XM")),
+            Some(&Value::String(BString::from("h...")))
+        );
     }
 }

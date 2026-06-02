@@ -80,7 +80,7 @@ byte-identity (or worker-invariance) gate.
 | 4 | N-way merge + scoring + MAPQ | `phase4-nway-merge-scoring/PLAN.md` | #3 |
 | 5 | Genomic-seq + XM/XR/XG + SAM/BAM (SE dir) 🎯 | `phase5-genomic-seq-xm-sam-output/PLAN.md` | #4 |
 | 6 | Reports + ambig/unmapped (SE) 🎯 | `phase6-reports-ambig-unmapped/PLAN.md` | #5 |
-| 7 | Paired-end support 🎯 | _(to be written)_ | #5, #6 |
+| 7 | Paired-end support 🎯 | `phase7-paired-end/PLAN.md` | #5, #6 |
 | 8 | Non-directional + pbat 🎯 | _(to be written)_ | #7 |
 | 9 | FastA + order-preserving threading 🎯 | _(to be written)_ | #8 |
 | 10 | Real-data gate on oxy 🎯 | _(to be written)_ | #9 |

@@ -135,11 +135,73 @@ fn temp_dir_prefix(temp_dir: &Path) -> Result<String> {
     Ok(s)
 }
 
+/// Which bisulfite substitution a converted temp file applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConvKind {
+    /// C→T (read 1 directional / SE).
+    Ct,
+    /// G→A (read 2 directional — Perl 5982).
+    Ga,
+}
+
+/// `uc` then `tr/G/A/` (Perl 5982, the read-2 directional transform). Net incl.
+/// lowercase: `a→A, c→C, g→A, t→T, n→N`.
+pub fn convert_seq_g_to_a(seq: &[u8]) -> Vec<u8> {
+    seq.iter()
+        .map(|&b| {
+            let up = b.to_ascii_uppercase();
+            if up == b'G' { b'A' } else { up }
+        })
+        .collect()
+}
+
+fn convert_one(seq: &[u8], kind: ConvKind) -> Vec<u8> {
+    match kind {
+        ConvKind::Ct => convert_seq_c_to_t(seq),
+        ConvKind::Ga => convert_seq_g_to_a(seq),
+    }
+}
+
 /// Write the C→T-converted FastQ temp file for one single-end directional input.
 pub fn bisulfite_convert_fastq_se(
     input: &Path,
     temp_dir: &Path,
     opts: &ConvertOptions,
+) -> Result<ConvertedReads> {
+    convert_fastq_impl(input, temp_dir, opts, ConvKind::Ct, b"", "_C_to_T")
+}
+
+/// Write the converted FastQ temp file for one paired-end directional mate (Perl
+/// `biTransformFastQFiles_paired_end`, 5810–6025). Read 1 → **C→T** (`_C_to_T`),
+/// read 2 → **forward G→A** (`_G_to_A`, NOT revcomp+C→T). The read-number tag
+/// `/1/1` (R1) or `/2/2` (R2) is inserted before the ID's trailing `\n` (Perl
+/// 5945–5960) — Bowtie 2 strips the outer `/1`,`/2`, leaving `/1`,`/2`.
+pub fn bisulfite_convert_fastq_pe(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    read_number: u8,
+) -> Result<ConvertedReads> {
+    match read_number {
+        1 => convert_fastq_impl(input, temp_dir, opts, ConvKind::Ct, b"/1/1", "_C_to_T"),
+        2 => convert_fastq_impl(input, temp_dir, opts, ConvKind::Ga, b"/2/2", "_G_to_A"),
+        _ => Err(AlignerError::Validation(format!(
+            "invalid paired-end read number {read_number} (expected 1 or 2)"
+        ))),
+    }
+}
+
+/// Shared per-record conversion core for SE + PE. `kind` selects the substitution,
+/// `id_suffix` the read-number tag (empty for SE), `file_base` the filename stem
+/// (`_C_to_T` / `_G_to_A`). Everything else (gz, skip/upto, prefix, max-len guard,
+/// record-1 sanity, verbatim id2/qual, truncated-tail drop) is shared.
+fn convert_fastq_impl(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    file_base: &str,
 ) -> Result<ConvertedReads> {
     // ---- output name + path (raw concat, Perl ${temp_dir}${name}) -----------
     let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
@@ -149,11 +211,8 @@ pub fn bisulfite_convert_fastq_se(
         Some(p) => format!("{p}.{basename}"),
         None => basename.to_string(),
     };
-    name.push_str(if opts.gzip {
-        "_C_to_T.fastq.gz"
-    } else {
-        "_C_to_T.fastq"
-    });
+    name.push_str(file_base);
+    name.push_str(if opts.gzip { ".fastq.gz" } else { ".fastq" });
     let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
     let full_path = PathBuf::from(&full);
 
@@ -193,8 +252,9 @@ pub fn bisulfite_convert_fastq_se(
         }
         count += 1;
 
-        // ID: chomp (\n only) → fix_id → re-append \n.
+        // ID: chomp (\n only) → fix_id → (PE: insert /1/1 or /2/2) → re-append \n.
         let mut fixed_id = fix_id(chomp_newline(&id), opts.icpc);
+        fixed_id.extend_from_slice(id_suffix);
         fixed_id.push(b'\n');
 
         // skip/upto (Perl falsy-0 semantics). The record-1 sanity below sits
@@ -237,7 +297,7 @@ pub fn bisulfite_convert_fastq_se(
         // uc + C→T + write (id2/qual verbatim). `convert_seq_c_to_t` uppercases
         // internally (Perl `uc` then `tr/C/T/`), so we pass the raw seq line.
         writer.write_all(&fixed_id)?;
-        writer.write_all(&convert_seq_c_to_t(&seq))?;
+        writer.write_all(&convert_one(&seq, kind))?;
         writer.write_all(&id2)?;
         writer.write_all(&qual)?;
     }
@@ -483,5 +543,77 @@ mod tests {
         };
         let cr = bisulfite_convert_fastq_se(&inp, &tmp.path().join("t"), &o).unwrap();
         assert_eq!(cr.name, "pre.reads.fq_C_to_T.fastq");
+    }
+
+    // ---- paired-end conversion (Phase 7) -----------------------------------
+
+    #[test]
+    fn convert_g_to_a_uc_then_substitute() {
+        // uc('ACGTacgtN') = 'ACGTACGTN', then G->A => 'ACATACATN'
+        assert_eq!(convert_seq_g_to_a(b"ACGTacgtN\n"), b"ACATACATN\n");
+        assert_eq!(convert_seq_g_to_a(b"ggGG\r\n"), b"AAAA\r\n");
+    }
+
+    fn run_pe(
+        input: &[u8],
+        name: &str,
+        o: &ConvertOptions,
+        read_number: u8,
+    ) -> (ConvertedReads, Vec<u8>) {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join(name);
+        std::fs::write(&inp, input).unwrap();
+        let td = tmp.path().join("t");
+        let cr = bisulfite_convert_fastq_pe(&inp, &td, o, read_number).unwrap();
+        let out = std::fs::read(&cr.path).unwrap();
+        (cr, out)
+    }
+
+    #[test]
+    fn pe_read1_c_to_t_with_slash_1_1_suffix() {
+        let (cr, out) = run_pe(GOLDEN_IN, "r_1.fq", &opts(false, None, None, false), 1);
+        assert_eq!(cr.name, "r_1.fq_C_to_T.fastq");
+        assert_eq!(
+            out,
+            b"@read1_1:N:0:ATCG/1/1\nATGTATGTNN\n+\nIIIIIIIIII\n@read2_lane2/1/1\nTTTTGGTT\n+read2\nJJJJJJJJ\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn pe_read2_g_to_a_with_slash_2_2_suffix() {
+        let (cr, out) = run_pe(GOLDEN_IN, "r_2.fq", &opts(false, None, None, false), 2);
+        assert_eq!(cr.name, "r_2.fq_G_to_A.fastq");
+        assert_eq!(
+            out,
+            b"@read1_1:N:0:ATCG/2/2\nACATACATNN\n+\nIIIIIIIIII\n@read2_lane2/2/2\nCCCCAATT\n+read2\nJJJJJJJJ\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn pe_suffix_inserted_before_newline_crlf() {
+        // the /1/1 tag goes BEFORE the trailing \n; a CRLF id keeps its \r.
+        let (_, out) = run_pe(
+            b"@r1\r\nACGT\r\n+\r\nIIII\r\n",
+            "r.fq",
+            &opts(false, None, None, false),
+            1,
+        );
+        assert_eq!(out, b"@r1\r/1/1\nATGT\r\n+\r\nIIII\r\n".to_vec());
+    }
+
+    #[test]
+    fn pe_invalid_read_number_errors() {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join("r.fq");
+        std::fs::write(&inp, GOLDEN_IN).unwrap();
+        assert!(
+            bisulfite_convert_fastq_pe(
+                &inp,
+                &tmp.path().join("t"),
+                &opts(false, None, None, false),
+                3
+            )
+            .is_err()
+        );
     }
 }

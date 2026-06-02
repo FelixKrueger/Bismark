@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use crate::align::SamStream;
+use crate::align::{PairedSamStream, SamRecord, SamStream};
 use crate::error::{AlignerError, Result};
 use crate::mapq::calc_mapq;
 
@@ -84,6 +84,18 @@ pub struct Counters {
     pub ga_ct_count: u64,
     /// GA-read vs GA-genome (OB, index 3 — non-dir/pbat).
     pub ga_ga_count: u64,
+
+    // ---- Phase 7: PE per-strand counts (Perl 4710/4727/4744/4761) ----------
+    // Distinct 3-token keys from the SE 2-token ones above; a run is SE xor PE.
+    // Incremented in PE genomic extraction past the four chromosome-edge guards.
+    /// CTread1/GAread2 vs CT-genome (OT, index 0). Perl `CT_GA_CT_count`.
+    pub ct_ga_ct_count: u64,
+    /// GAread1/CTread2 vs GA-genome (CTOB, index 1). Perl `GA_CT_GA_count`.
+    pub ga_ct_ga_count: u64,
+    /// GAread1/CTread2 vs CT-genome (CTOT, index 2). Perl `GA_CT_CT_count`.
+    pub ga_ct_ct_count: u64,
+    /// CTread1/GAread2 vs GA-genome (OB, index 3). Perl `CT_GA_GA_count`.
+    pub ct_ga_ga_count: u64,
 
     /// Reads whose genomic sequence could not be extracted (Perl 3129) — failed
     /// the `len == read_len + 2` guard (chromosome edge); counted but NOT written.
@@ -347,6 +359,377 @@ fn insert_alignment(
             cigar: rec.cigar.clone(),
             md_tag: md_tag.to_string(),
             bowtie_sequence: rec.seq.clone(),
+        },
+    );
+}
+
+// ===========================================================================
+// Paired-end merge (Phase 7) — a port of Perl `check_results_paired_end`
+// (3269–3897). Structurally the SE merge doubled for two mates: two SAM lines
+// per peek, selection by the SUM of both mates' AS, the (77,141) no-align pair,
+// scan order (0,3,1,2), directional reject on chosen index 1|2, and
+// `calc_mapq(len1, Some(len2), sum, sum_2nd)`.
+// ===========================================================================
+
+/// The chosen unique-best PE alignment (≈ Perl `methylation_call_params->{$id}`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BestAlignmentPaired {
+    /// RNAME with the `_CT_converted`/`_GA_converted` suffix stripped (both mates
+    /// share the chromosome, Perl 3364).
+    pub chromosome: String,
+    /// Bismark slot/index: 0=OT, 1=CTOB, 2=CTOT, 3=OB (drives strand + reject).
+    pub index: usize,
+    /// Read-1 1-based POS.
+    pub position_1: u32,
+    /// Read-2 1-based POS.
+    pub position_2: u32,
+    /// Read-1 CIGAR.
+    pub cigar_1: String,
+    /// Read-2 CIGAR.
+    pub cigar_2: String,
+    /// Read-1 `MD:Z:`.
+    pub md_tag_1: String,
+    /// Read-2 `MD:Z:`.
+    pub md_tag_2: String,
+    /// Read-1 (converted) SEQ as Bowtie 2 reported it.
+    pub bowtie_sequence_1: String,
+    /// Read-2 (converted) SEQ as Bowtie 2 reported it.
+    pub bowtie_sequence_2: String,
+    /// Read-1 FLAG as Bowtie 2 reported it (not the Bismark output FLAG).
+    pub flag_1: u16,
+    /// Read-2 FLAG as Bowtie 2 reported it.
+    pub flag_2: u16,
+    /// Sum of both mates' `AS:i:` (the selection score).
+    pub sum_of_alignment_scores: i64,
+    /// Second-best sum fed to MAPQ (per the 3811–3816 conditional).
+    pub sum_of_alignment_scores_second_best: Option<i64>,
+    /// Computed MAPQ (shared by both output records).
+    pub mapq: u8,
+}
+
+/// Per-pair outcome of the PE merge (mirrors [`Decision`], two-mate-shaped).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecisionPaired {
+    /// A single best PE alignment (→ driver: PE genomic-seq + `XM` + 2 BAM records).
+    UniqueBest(BestAlignmentPaired),
+    /// Multiple equally-good alignments. `first_ambig` carries the **two** raw
+    /// (suffix-intact) SAM lines (R1, R2) that established the best score, ONLY on
+    /// the within-thread ambiguity path AND when `--ambig_bam` was requested (Perl
+    /// 3673–3682); the cross-instance-tie path carries `None` (no AMBIBAM write).
+    Ambiguous {
+        first_ambig: Option<(String, String)>,
+    },
+    /// No alignment in any instance (→ `--unmapped`/none).
+    NoAlignment,
+    /// `--directional` wrong-strand rejection (chosen index 1/2).
+    Rejected,
+}
+
+/// A PE alignment stored at a `chromosome:pos1:pos2` key during the merge.
+struct StoredPair {
+    sum: i64,
+    sum_second_best: Option<i64>,
+    index: usize,
+    chromosome: String,
+    position_1: u32,
+    position_2: u32,
+    cigar_1: String,
+    cigar_2: String,
+    md_tag_1: String,
+    md_tag_2: String,
+    bowtie_sequence_1: String,
+    bowtie_sequence_2: String,
+    flag_1: u16,
+    flag_2: u16,
+}
+
+/// De-convert an RNAME (`s/_(CT|GA)_converted$//`, Perl 3351–3362).
+fn deconvert(rname: &str) -> Result<String> {
+    rname
+        .strip_suffix("_CT_converted")
+        .or_else(|| rname.strip_suffix("_GA_converted"))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            AlignerError::Validation(format!("Chromosome number extraction failed for {rname}"))
+        })
+}
+
+/// Run the PE merge for one read pair across the (slot-indexed) instances.
+///
+/// `streams` is indexed by **Bismark slot** (length 4): directional PE supplies
+/// `Some` only at slots 0 (OT) and 3 (OB); slots 1/2 are `None` (never spawned).
+/// The scan visits slots in order `(0,3,1,2)` (Perl 3300). `sequence_1`/`_2` are
+/// the original (uc) reads — their lengths feed `calc_mapq`.
+#[allow(clippy::too_many_arguments)]
+pub fn check_results_paired_end<S: PairedSamStream>(
+    identifier: &str,
+    sequence_1: &str,
+    sequence_2: &str,
+    streams: &mut [Option<S>],
+    directional: bool,
+    score_min_intercept: f64,
+    score_min_slope: f64,
+    want_ambig: bool,
+    counters: &mut Counters,
+) -> Result<DecisionPaired> {
+    let mut best_sum_so_far: Option<i64> = None;
+    let mut amb_same_thread = false;
+    let mut alignments: HashMap<String, StoredPair> = HashMap::new();
+    // The two raw SAM lines (R1, R2) that established the best score (Perl
+    // 3428–3433 + 3449–3454). Captured only when `--ambig_bam` is on.
+    let mut first_ambig: Option<(String, String)> = None;
+
+    // PE scan order: OT (0), OB (3), then the complementary strands (Perl 3300).
+    const SCAN_ORDER: [usize; 4] = [0, 3, 1, 2];
+    for &index in &SCAN_ORDER {
+        let Some(stream) = streams.get_mut(index).and_then(|s| s.as_mut()) else {
+            continue;
+        };
+        // lockstep: only the instance whose current pair is THIS read.
+        if stream.current_pair().is_none_or(|p| p.seq_id != identifier) {
+            continue;
+        }
+        let pair = stream.current_pair().unwrap().clone();
+
+        // PE no-alignment marker (77,141): advance once, move to next instance.
+        // NO die-if-same-id guard (unlike SE — Perl 3317–3346).
+        if pair.is_unmapped_pair() {
+            stream.advance_pair()?;
+            continue;
+        }
+
+        let (r1, r2) = (&pair.read1, &pair.read2);
+
+        // De-convert both RNAMEs; die unless on the same chromosome (Perl 3351–3364).
+        let chr1 = deconvert(&r1.rname)?;
+        let chr2 = deconvert(&r2.rname)?;
+        if chr1 != chr2 {
+            return Err(AlignerError::Validation(
+                "Paired-end alignments need to be on the same chromosome".into(),
+            ));
+        }
+
+        // AS + MD mandatory for both mates (Perl 3405–3406); sum = AS_1 + AS_2 (3416).
+        let as1 = r1.alignment_score.ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "Failed to extract alignment score 1 from line {}",
+                r1.raw_line
+            ))
+        })?;
+        let as2 = r2.alignment_score.ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "Failed to extract alignment score 2 from line {}",
+                r2.raw_line
+            ))
+        })?;
+        let md1 = r1.md_tag.clone().ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "Failed to extract MD tag 1 from line {}",
+                r1.raw_line
+            ))
+        })?;
+        let md2 = r2.md_tag.clone().ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "Failed to extract MD tag 2 from line {}",
+                r2.raw_line
+            ))
+        })?;
+        let sum = as1 + as2;
+
+        // overwrite / best_sum_so_far (Perl 3422–3463): `>=` keeps equally-good
+        // alignments; a strictly-better sum resets amb_same_thread + first_ambig.
+        let mut overwrite = false;
+        match best_sum_so_far {
+            None => {
+                best_sum_so_far = Some(sum);
+                overwrite = true;
+                if want_ambig {
+                    first_ambig = Some((r1.raw_line.clone(), r2.raw_line.clone()));
+                }
+            }
+            Some(best) => {
+                if sum >= best {
+                    overwrite = true;
+                    if sum > best {
+                        amb_same_thread = false;
+                        if want_ambig {
+                            first_ambig = Some((r1.raw_line.clone(), r2.raw_line.clone()));
+                        }
+                    }
+                    best_sum_so_far = Some(sum);
+                }
+            }
+        }
+
+        // second-best (Perl 3465–3590): if either mate has XS, the missing one
+        // defaults to its own AS.
+        let (mut sb1, mut sb2) = (r1.second_best, r2.second_best);
+        if sb1.is_some() || sb2.is_some() {
+            sb1 = sb1.or(Some(as1));
+            sb2 = sb2.or(Some(as2));
+        }
+
+        if let (Some(s1), Some(s2)) = (sb1, sb2) {
+            let sum_second = s1 + s2;
+            if sum == sum_second {
+                // within-thread ambiguous: store nothing (Perl 3483–3520).
+                if best_sum_so_far == Some(sum) {
+                    amb_same_thread = true;
+                }
+            } else if overwrite {
+                // key = chr:min:max (Perl 3527–3532).
+                insert_pair(
+                    &mut alignments,
+                    index,
+                    r1,
+                    r2,
+                    &chr1,
+                    sum,
+                    Some(sum_second),
+                    &md1,
+                    &md2,
+                    true,
+                );
+            }
+        } else if overwrite {
+            // no second best: key = chr:pos1:pos2 RAW (Perl 3593).
+            insert_pair(
+                &mut alignments,
+                index,
+                r1,
+                r2,
+                &chr1,
+                sum,
+                None,
+                &md1,
+                &md2,
+                false,
+            );
+        }
+
+        // discard the rest of this read's pairs in this stream (Perl until-loops).
+        stream.advance_pair()?;
+        while stream
+            .current_pair()
+            .is_some_and(|p| p.seq_id == identifier)
+        {
+            stream.advance_pair()?;
+        }
+    }
+
+    // Same-thread ambiguity → boot (Perl 3654–3694); carries the captured pair.
+    if amb_same_thread {
+        counters.unsuitable_sequence_count += 1;
+        return Ok(DecisionPaired::Ambiguous { first_ambig });
+    }
+    // No alignment anywhere (Perl 3697–3710).
+    if alignments.is_empty() {
+        counters.no_single_alignment_found += 1;
+        return Ok(DecisionPaired::NoAlignment);
+    }
+
+    // Unique-best selection (Perl 3750–3825).
+    let mut entries: Vec<StoredPair> = alignments.into_values().collect();
+    let (best, second_for_mapq) = if entries.len() == 1 {
+        let b = entries.pop().unwrap();
+        let s = b.sum_second_best;
+        (b, s)
+    } else if entries.len() <= 4 {
+        entries.sort_by_key(|s| std::cmp::Reverse(s.sum));
+        if entries[0].sum == entries[1].sum {
+            counters.unsuitable_sequence_count += 1; // sequence_pair_fails (3788–3790)
+            return Ok(DecisionPaired::Ambiguous { first_ambig: None });
+        }
+        let runner_up = entries[1].sum;
+        let b = entries.into_iter().next().unwrap();
+        // second-best for MAPQ (Perl 3811–3816): best's own only if strictly
+        // greater than the runner-up's sum; otherwise the runner-up's sum.
+        let s = match b.sum_second_best {
+            Some(sb) if sb > runner_up => Some(sb),
+            _ => Some(runner_up),
+        };
+        (b, s)
+    } else {
+        return Err(AlignerError::Validation(format!(
+            "There are too many potential hits for this sequence pair (1-4 expected, but found: {})",
+            entries.len()
+        )));
+    };
+
+    // --directional rejection (Perl 3851–3856): chosen index 1/2 (inert on
+    // directional PE since slots 1/2 are never spawned; live in Phase 8).
+    if directional && (best.index == 1 || best.index == 2) {
+        counters.alignments_rejected_count += 1;
+        return Ok(DecisionPaired::Rejected);
+    }
+
+    counters.unique_best_alignment_count += 1; // Perl 3860
+    let mapq = calc_mapq(
+        sequence_1.len(),
+        Some(sequence_2.len()),
+        best.sum,
+        second_for_mapq,
+        score_min_intercept,
+        score_min_slope,
+    );
+
+    Ok(DecisionPaired::UniqueBest(BestAlignmentPaired {
+        chromosome: best.chromosome,
+        index: best.index,
+        position_1: best.position_1,
+        position_2: best.position_2,
+        cigar_1: best.cigar_1,
+        cigar_2: best.cigar_2,
+        md_tag_1: best.md_tag_1,
+        md_tag_2: best.md_tag_2,
+        bowtie_sequence_1: best.bowtie_sequence_1,
+        bowtie_sequence_2: best.bowtie_sequence_2,
+        flag_1: best.flag_1,
+        flag_2: best.flag_2,
+        sum_of_alignment_scores: best.sum,
+        sum_of_alignment_scores_second_best: second_for_mapq,
+        mapq,
+    }))
+}
+
+/// Store one PE alignment. `min_max_key` selects the Perl-faithful key form:
+/// `chr:min(pos):max(pos)` (second-best branch, Perl 3527–3532) vs raw
+/// `chr:pos1:pos2` (no-second-best branch, Perl 3593).
+#[allow(clippy::too_many_arguments)]
+fn insert_pair(
+    alignments: &mut HashMap<String, StoredPair>,
+    index: usize,
+    r1: &SamRecord,
+    r2: &SamRecord,
+    chromosome: &str,
+    sum: i64,
+    sum_second_best: Option<i64>,
+    md1: &str,
+    md2: &str,
+    min_max_key: bool,
+) {
+    let loc = if min_max_key && r1.pos > r2.pos {
+        format!("{chromosome}:{}:{}", r2.pos, r1.pos)
+    } else {
+        format!("{chromosome}:{}:{}", r1.pos, r2.pos)
+    };
+    alignments.insert(
+        loc,
+        StoredPair {
+            sum,
+            sum_second_best,
+            index,
+            chromosome: chromosome.to_string(),
+            position_1: r1.pos,
+            position_2: r2.pos,
+            cigar_1: r1.cigar.clone(),
+            cigar_2: r2.cigar.clone(),
+            md_tag_1: md1.to_string(),
+            md_tag_2: md2.to_string(),
+            bowtie_sequence_1: r1.seq.clone(),
+            bowtie_sequence_2: r2.seq.clone(),
+            flag_1: r1.flag,
+            flag_2: r2.flag,
         },
     );
 }
@@ -726,5 +1109,362 @@ mod tests {
             }
             other => panic!("expected Ambiguous, got {other:?}"),
         }
+    }
+
+    // ===================================================================
+    // Paired-end merge (check_results_paired_end)
+    // ===================================================================
+
+    /// Canned paired stream double for unit-testing the PE merge.
+    struct VecPairStream {
+        pairs: Vec<crate::align::SamPair>,
+        pos: usize,
+    }
+    impl VecPairStream {
+        fn new(lines: &[(String, String)]) -> Self {
+            VecPairStream {
+                pairs: lines
+                    .iter()
+                    .map(|(a, b)| crate::align::SamPair::from_lines(a, b).unwrap())
+                    .collect(),
+                pos: 0,
+            }
+        }
+    }
+    impl PairedSamStream for VecPairStream {
+        fn current_pair(&self) -> Option<&crate::align::SamPair> {
+            self.pairs.get(self.pos)
+        }
+        fn advance_pair(&mut self) -> Result<()> {
+            self.pos += 1;
+            Ok(())
+        }
+    }
+
+    /// One PE SAM line. `id` is the read id (the `/<mate>` suffix is appended).
+    fn pl(
+        id: &str,
+        mate: u8,
+        flag: u16,
+        rname: &str,
+        pos: u32,
+        as_i: i64,
+        xs: Option<i64>,
+    ) -> String {
+        let xs = xs.map(|v| format!("\tXS:i:{v}")).unwrap_or_default();
+        format!(
+            "{id}/{mate}\t{flag}\t{rname}\t{pos}\t40\t10M\t=\t{pos}\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:{as_i}{xs}\tMD:Z:10"
+        )
+    }
+
+    /// A mapped OT-shaped pair (R1 flag 99, R2 flag 147) at the given positions.
+    #[allow(clippy::too_many_arguments)]
+    fn mapped_pair(
+        id: &str,
+        rname: &str,
+        pos1: u32,
+        pos2: u32,
+        as1: i64,
+        as2: i64,
+        xs1: Option<i64>,
+        xs2: Option<i64>,
+    ) -> (String, String) {
+        (
+            pl(id, 1, 99, rname, pos1, as1, xs1),
+            pl(id, 2, 147, rname, pos2, as2, xs2),
+        )
+    }
+
+    type Slot<'a> = Option<&'a [(String, String)]>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_pe(
+        id: &str,
+        s0: Slot,
+        s1: Slot,
+        s2: Slot,
+        s3: Slot,
+        directional: bool,
+        want_ambig: bool,
+    ) -> (DecisionPaired, Counters) {
+        let mut streams: Vec<Option<VecPairStream>> = vec![s0, s1, s2, s3]
+            .into_iter()
+            .map(|s| s.map(VecPairStream::new))
+            .collect();
+        let mut c = Counters::default();
+        let d = check_results_paired_end(
+            id,
+            "ACGTACGTAC",
+            "ACGTACGTAC",
+            &mut streams,
+            directional,
+            0.0,
+            -0.2,
+            want_ambig,
+            &mut c,
+        )
+        .unwrap();
+        (d, c)
+    }
+
+    #[test]
+    fn pe_unique_best_by_sum_across_slots() {
+        // Scan order is 0,3,1,2 — to keep BOTH alignments stored (so the runner-up
+        // feeds MAPQ), the better sum must arrive LATER: slot0 sum -6 (seen first,
+        // stored), slot3 sum 0 (seen second, overwrites, also stored). Best = slot3.
+        let s0 = [mapped_pair(
+            "r",
+            "chr1_CT_converted",
+            100,
+            140,
+            -3,
+            -3,
+            None,
+            None,
+        )];
+        let s3 = [mapped_pair(
+            "r",
+            "chr1_GA_converted",
+            200,
+            240,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let (d, c) = run_pe("r", Some(&s0), None, None, Some(&s3), false, false);
+        match d {
+            DecisionPaired::UniqueBest(b) => {
+                assert_eq!(b.index, 3);
+                assert_eq!(b.chromosome, "chr1"); // de-converted
+                assert_eq!(b.position_1, 200);
+                assert_eq!(b.position_2, 240);
+                assert_eq!(b.sum_of_alignment_scores, 0);
+                assert_eq!(b.sum_of_alignment_scores_second_best, Some(-6)); // runner-up sum
+            }
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    #[test]
+    fn pe_worse_later_alignment_not_stored_single_entry() {
+        // The mirror of the above: better sum FIRST (slot0), worse SECOND (slot3) →
+        // slot3 not stored (overwrite false) → one entry → sum_2nd = None.
+        let s0 = [mapped_pair(
+            "r",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let s3 = [mapped_pair(
+            "r",
+            "chr1_GA_converted",
+            200,
+            240,
+            -3,
+            -3,
+            None,
+            None,
+        )];
+        let (d, _) = run_pe("r", Some(&s0), None, None, Some(&s3), false, false);
+        match d {
+            DecisionPaired::UniqueBest(b) => {
+                assert_eq!(b.index, 0);
+                assert_eq!(b.sum_of_alignment_scores, 0);
+                assert_eq!(b.sum_of_alignment_scores_second_best, None);
+            }
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pe_no_align_marker_contributes_nothing() {
+        // slot0 is the (77,141) no-align pair; slot3 has the real alignment.
+        let s0 = [(
+            pl("r", 1, 77, "*", 0, 0, None),
+            pl("r", 2, 141, "*", 0, 0, None),
+        )];
+        let s3 = [mapped_pair(
+            "r",
+            "chr1_GA_converted",
+            200,
+            240,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let (d, _) = run_pe("r", Some(&s0), None, None, Some(&s3), false, false);
+        match d {
+            DecisionPaired::UniqueBest(b) => assert_eq!(b.index, 3),
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pe_no_alignment_when_all_unmapped() {
+        let s0 = [(
+            pl("r", 1, 77, "*", 0, 0, None),
+            pl("r", 2, 141, "*", 0, 0, None),
+        )];
+        let s3 = [(
+            pl("r", 1, 77, "*", 0, 0, None),
+            pl("r", 2, 141, "*", 0, 0, None),
+        )];
+        let (d, c) = run_pe("r", Some(&s0), None, None, Some(&s3), false, false);
+        assert_eq!(d, DecisionPaired::NoAlignment);
+        assert_eq!(c.no_single_alignment_found, 1);
+    }
+
+    #[test]
+    fn pe_cross_instance_tie_is_ambiguous() {
+        // equal best sum at different locations → sequence_pair_fails (3788).
+        let s0 = [mapped_pair(
+            "r",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let s3 = [mapped_pair(
+            "r",
+            "chr1_GA_converted",
+            200,
+            240,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let (d, c) = run_pe("r", Some(&s0), None, None, Some(&s3), false, true);
+        assert_eq!(d, DecisionPaired::Ambiguous { first_ambig: None }); // None on cross-tie
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn pe_within_thread_tie_is_ambiguous_and_captures_first_ambig() {
+        // one instance reports sum == sum_second (both mates' XS == their AS).
+        let s0 = [mapped_pair(
+            "r",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            Some(0),
+            Some(0),
+        )];
+        let (d, c) = run_pe("r", Some(&s0), None, None, None, false, true);
+        match d {
+            DecisionPaired::Ambiguous { first_ambig } => {
+                let (l1, l2) = first_ambig.expect("within-thread tie must capture both lines");
+                assert!(l1.contains("chr1_CT_converted") && l1.starts_with("r/1\t"));
+                assert!(l2.starts_with("r/2\t"));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn pe_directional_rejection_index_1() {
+        // a best alignment landing on slot 1 (CTOB) under --directional → rejected.
+        let s1 = [mapped_pair(
+            "r",
+            "chr1_GA_converted",
+            100,
+            140,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let (d, c) = run_pe("r", None, Some(&s1), None, None, true, false);
+        assert_eq!(d, DecisionPaired::Rejected);
+        assert_eq!(c.alignments_rejected_count, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    #[test]
+    fn pe_single_mate_xs_defaults_to_own_as() {
+        // R1 has XS -2, R2 has none → R2 defaults to its own AS (0); sum_2nd = -2.
+        let s0 = [mapped_pair(
+            "r",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            Some(-2),
+            None,
+        )];
+        let (d, _) = run_pe("r", Some(&s0), None, None, None, false, false);
+        match d {
+            DecisionPaired::UniqueBest(b) => {
+                assert_eq!(b.sum_of_alignment_scores, 0);
+                // sum == 0, sum_second = -2 + 0 = -2 (≠ sum) → stored, single entry.
+                assert_eq!(b.sum_of_alignment_scores_second_best, Some(-2));
+            }
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pe_same_location_both_instances_dedups() {
+        // both slots map the pair to the SAME chr:pos1:pos2 → one entry → unique.
+        let s0 = [mapped_pair(
+            "r",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let s3 = [mapped_pair(
+            "r",
+            "chr1_GA_converted",
+            100,
+            140,
+            0,
+            0,
+            None,
+            None,
+        )];
+        let (d, _) = run_pe("r", Some(&s0), None, None, Some(&s3), false, false);
+        assert!(matches!(d, DecisionPaired::UniqueBest(_)));
+    }
+
+    #[test]
+    fn pe_different_chromosomes_per_mate_errors() {
+        let pair = (
+            pl("r", 1, 99, "chr1_CT_converted", 100, 0, None),
+            pl("r", 2, 147, "chr2_CT_converted", 140, 0, None),
+        );
+        let lines = [pair];
+        let mut streams: Vec<Option<VecPairStream>> =
+            vec![Some(VecPairStream::new(&lines)), None, None, None];
+        let mut c = Counters::default();
+        let r = check_results_paired_end(
+            "r",
+            "ACGTACGTAC",
+            "ACGTACGTAC",
+            &mut streams,
+            false,
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        );
+        assert!(r.is_err());
     }
 }

@@ -23,8 +23,11 @@ use crate::merge::Counters;
 
 /// Inputs for the report header (the three lines before the per-read loop).
 pub struct ReportHeader<'a> {
-    /// The read-file argument, verbatim (Perl `$sequence_file`, 1642).
+    /// The read-file argument, verbatim (Perl `$sequence_file`, 1642 / R1 at 1843).
     pub sequence_file: &'a str,
+    /// The second (read-2) file for paired-end — `Some` ⇒ the header reads
+    /// `for: <f1> and <f2>` (Perl 1843); `None` ⇒ single-end.
+    pub sequence_file2: Option<&'a str>,
     /// The genome folder — **absolute, with a trailing `/`** (Perl absolutizes
     /// `$genome_folder` + forces a trailing slash, 7619–7629). The caller renders it.
     pub genome_folder: &'a str,
@@ -34,35 +37,64 @@ pub struct ReportHeader<'a> {
     pub library: LibraryType,
 }
 
-/// Write the report header (Perl 1642 + 1711–1729). Written before the read loop.
+/// Write the report header. 🔴 SE and PE differ in BOTH line order AND trailing
+/// newlines (the block always ends with a blank line, so the LAST line gets `\n\n`):
+/// - **SE** (Perl 1642/1712/1722): report-for, library-line (`\n`), `was run with` (`\n\n`).
+/// - **PE** (Perl 1843/1846/1941): report-for, `was run with` (`\n`), library-line (`\n\n`).
+///
+/// The library-line TEXT also differs for pbat between SE (1715) and PE (1944).
 pub fn write_report_header<W: Write>(w: &mut W, h: &ReportHeader) -> Result<()> {
-    write!(
-        w,
-        "Bismark report for: {} (version: {})\n",
-        h.sequence_file,
-        crate::BISMARK_VERSION
-    )?;
-    match h.library {
-        LibraryType::Directional => write!(
+    let paired = h.sequence_file2.is_some();
+    // line 1: "Bismark report for: ..." (PE names both files, Perl 1843).
+    match h.sequence_file2 {
+        Some(f2) => write!(
             w,
-            "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n"
+            "Bismark report for: {} and {} (version: {})\n",
+            h.sequence_file,
+            f2,
+            crate::BISMARK_VERSION
         )?,
-        // pbat / non-directional lines (1714–1718) are Phase 8.
-        LibraryType::Pbat => write!(
+        None => write!(
             w,
-            "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)\n"
-        )?,
-        LibraryType::NonDirectional => write!(
-            w,
-            "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)\n"
+            "Bismark report for: {} (version: {})\n",
+            h.sequence_file,
+            crate::BISMARK_VERSION
         )?,
     }
-    write!(
-        w,
-        "Bismark was run with Bowtie 2 against the bisulfite genome of {} with the specified options: {}\n\n",
+    let run_with = format!(
+        "Bismark was run with Bowtie 2 against the bisulfite genome of {} with the specified options: {}",
         h.genome_folder, h.aligner_options
-    )?;
+    );
+    let library_line = library_line(h.library, paired);
+    if paired {
+        // PE order: `was run with` (`\n`), then the library line (`\n\n`).
+        write!(w, "{run_with}\n")?;
+        write!(w, "{library_line}\n\n")?;
+    } else {
+        // SE order: the library line (`\n`), then `was run with` (`\n\n`).
+        write!(w, "{library_line}\n")?;
+        write!(w, "{run_with}\n\n")?;
+    }
     Ok(())
+}
+
+/// The library-type line (Perl SE 1712/1715/1718 vs PE 1941/1944/1947). Only the
+/// pbat wording differs between SE ("(OT and OB) strands") and PE ("(OT, OB)").
+fn library_line(library: LibraryType, paired: bool) -> &'static str {
+    match (library, paired) {
+        (LibraryType::Directional, _) => {
+            "Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)"
+        }
+        (LibraryType::Pbat, false) => {
+            "Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)"
+        }
+        (LibraryType::Pbat, true) => {
+            "Option '--pbat' specified: alignments to original strands (OT, OB) were ignored (i.e. not performed)"
+        }
+        (LibraryType::NonDirectional, _) => {
+            "Option '--non_directional' specified: alignments to all strands were being performed (OT, OB, CTOT, CTOB)"
+        }
+    }
 }
 
 /// Write the final analysis (Perl `print_final_analysis_report_single_end`,
@@ -124,8 +156,87 @@ pub fn print_final_analysis_report_single_end<W: Write>(
         )?;
     }
 
+    write_cytosine_report(w, c)?;
+    // The `seqID_contains_tabs` warning (2140–2143) never fires in v1 SE-directional
+    // (`fix_id` strips tabs before the check), so it is intentionally not emitted.
+    Ok(())
+}
+
+/// Write the final analysis for **paired-end** (Perl `print_final_analysis_report_paired_ends`,
+/// 2185–2312 — the `print REPORT` lines only). Differs from SE in the wording
+/// ("Sequence pairs …"), the 3-token strand labels, and the trailing-space quirk
+/// on the mapping-efficiency line (2205); the cytosine half is byte-identical.
+pub fn print_final_analysis_report_paired_ends<W: Write>(
+    w: &mut W,
+    c: &Counters,
+    directional: bool,
+) -> Result<()> {
+    write!(w, "Final Alignment report\n{}\n", "=".repeat(22))?;
+    write!(
+        w,
+        "Sequence pairs analysed in total:\t{}\n",
+        c.sequences_count
+    )?;
+
+    let efficiency = if c.sequences_count == 0 {
+        "0".to_string()
+    } else {
+        format!(
+            "{:.1}",
+            (c.unique_best_alignment_count as f64) * 100.0 / (c.sequences_count as f64)
+        )
+    };
+    // 🔴 REPORT line 2205 has a trailing space after `%` then a SINGLE `\n`
+    // (`…% \n`) — do NOT copy the STDOUT twin at 2204 (`%\n\n`, no trailing space).
+    write!(
+        w,
+        "Number of paired-end alignments with a unique best hit:\t{}\nMapping efficiency:\t{}% \n",
+        c.unique_best_alignment_count, efficiency
+    )?;
+
+    write!(
+        w,
+        "Sequence pairs with no alignments under any condition:\t{}\n",
+        c.no_single_alignment_found
+    )?;
+    write!(
+        w,
+        "Sequence pairs did not map uniquely:\t{}\n",
+        c.unsuitable_sequence_count
+    )?;
+    write!(
+        w,
+        "Sequence pairs which were discarded because genomic sequence could not be extracted:\t{}\n\n",
+        c.genomic_sequence_could_not_be_extracted_count
+    )?;
+    write!(
+        w,
+        "Number of sequence pairs with unique best (first) alignment came from the bowtie output:\n"
+    )?;
+    // 🔴 Join order is 0,2,1,3 (Perl 2218 join) — NOT field-declaration / scan order.
+    write!(
+        w,
+        "CT/GA/CT:\t{}\t((converted) top strand)\nGA/CT/CT:\t{}\t(complementary to (converted) top strand)\nGA/CT/GA:\t{}\t(complementary to (converted) bottom strand)\nCT/GA/GA:\t{}\t((converted) bottom strand)\n\n",
+        c.ct_ga_ct_count, c.ga_ct_ct_count, c.ga_ct_ga_count, c.ct_ga_ga_count
+    )?;
+
+    if directional {
+        write!(
+            w,
+            "Number of alignments to (merely theoretical) complementary strands being rejected in total:\t{}\n\n",
+            c.alignments_rejected_count
+        )?;
+    }
+
+    write_cytosine_report(w, c)?;
+    Ok(())
+}
+
+/// The Final Cytosine Methylation Report (Perl 2052–2136 SE == 2226–2312 PE),
+/// byte-identical between SE and PE → shared.
+fn write_cytosine_report<W: Write>(w: &mut W, c: &Counters) -> Result<()> {
     write!(w, "Final Cytosine Methylation Report\n{}\n", "=".repeat(33))?;
-    // Total EXCLUDES the Unknown buckets (Perl 2053).
+    // Total EXCLUDES the Unknown buckets (Perl 2053/2229).
     let total_c = c.total_me_cpg
         + c.total_me_chg
         + c.total_me_chh
@@ -187,8 +298,6 @@ pub fn print_final_analysis_report_single_end<W: Write>(
     )?;
 
     write!(w, "\n\n")?;
-    // The `seqID_contains_tabs` warning (2140–2143) never fires in v1 SE-directional
-    // (`fix_id` strips tabs before the check), so it is intentionally not emitted.
     Ok(())
 }
 
@@ -243,6 +352,7 @@ mod tests {
     fn header_directional_exact() {
         let h = ReportHeader {
             sequence_file: "reads.fq",
+            sequence_file2: None,
             genome_folder: "/abs/genome/", // absolute + trailing slash
             aligner_options: "-q --score-min L,0,-0.2 --ignore-quals",
             library: LibraryType::Directional,
@@ -275,6 +385,7 @@ mod tests {
             total_unme_chg: 95,
             total_unme_chh: 993,
             total_unme_c_unknown: 8,
+            ..Default::default()
         }
     }
 
@@ -386,5 +497,111 @@ C methylated in Unknown context (CN or CHN):\t20.0%\n\n\n";
         let mut v = Vec::new();
         write_completion_line(&mut v, 3661).unwrap(); // 1h 1m 1s
         assert_eq!(s(&v), "Bismark completed in 0d 1h 1m 1s\n");
+    }
+
+    // ---- paired-end report (Phase 7) ---------------------------------------
+
+    #[test]
+    fn pe_header_two_files() {
+        let h = ReportHeader {
+            sequence_file: "r_1.fq",
+            sequence_file2: Some("r_2.fq"),
+            genome_folder: "/abs/genome/",
+            aligner_options: "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500",
+            library: LibraryType::Directional,
+        };
+        // 🔴 PE order (Perl 1843/1846/1941): report-for, `was run with` (single `\n`),
+        // THEN the `--directional` line (`\n\n`) — the reverse of SE, with the `\n\n`
+        // on the last line.
+        assert_eq!(
+            s(&header_bytes(&h)),
+            "Bismark report for: r_1.fq and r_2.fq (version: v0.25.1)\n\
+             Bismark was run with Bowtie 2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500\n\
+             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n"
+        );
+    }
+
+    fn counters_pe() -> Counters {
+        Counters {
+            sequences_count: 5000,
+            unique_best_alignment_count: 4000,
+            unsuitable_sequence_count: 200,
+            no_single_alignment_found: 800,
+            alignments_rejected_count: 0,
+            ct_ga_ct_count: 2000,
+            ga_ct_ct_count: 0,
+            ga_ct_ga_count: 0,
+            ct_ga_ga_count: 2000,
+            genomic_sequence_could_not_be_extracted_count: 0,
+            total_me_cpg: 100,
+            total_me_chg: 5,
+            total_me_chh: 7,
+            total_me_c_unknown: 2,
+            total_unme_cpg: 900,
+            total_unme_chg: 95,
+            total_unme_chh: 993,
+            total_unme_c_unknown: 8,
+            ..Default::default()
+        }
+    }
+
+    fn pe_report_bytes(c: &Counters, directional: bool) -> Vec<u8> {
+        let mut v = Vec::new();
+        print_final_analysis_report_paired_ends(&mut v, c, directional).unwrap();
+        v
+    }
+
+    #[test]
+    fn pe_final_analysis_exact_directional() {
+        let expected = "Final Alignment report\n\
+======================\n\
+Sequence pairs analysed in total:\t5000\n\
+Number of paired-end alignments with a unique best hit:\t4000\n\
+Mapping efficiency:\t80.0% \n\
+Sequence pairs with no alignments under any condition:\t800\n\
+Sequence pairs did not map uniquely:\t200\n\
+Sequence pairs which were discarded because genomic sequence could not be extracted:\t0\n\n\
+Number of sequence pairs with unique best (first) alignment came from the bowtie output:\n\
+CT/GA/CT:\t2000\t((converted) top strand)\n\
+GA/CT/CT:\t0\t(complementary to (converted) top strand)\n\
+GA/CT/GA:\t0\t(complementary to (converted) bottom strand)\n\
+CT/GA/GA:\t2000\t((converted) bottom strand)\n\n\
+Number of alignments to (merely theoretical) complementary strands being rejected in total:\t0\n\n\
+Final Cytosine Methylation Report\n\
+=================================\n\
+Total number of C's analysed:\t2100\n\n\
+Total methylated C's in CpG context:\t100\n\
+Total methylated C's in CHG context:\t5\n\
+Total methylated C's in CHH context:\t7\n\
+Total methylated C's in Unknown context:\t2\n\n\
+Total unmethylated C's in CpG context:\t900\n\
+Total unmethylated C's in CHG context:\t95\n\
+Total unmethylated C's in CHH context:\t993\n\
+Total unmethylated C's in Unknown context:\t8\n\n\
+C methylated in CpG context:\t10.0%\n\
+C methylated in CHG context:\t5.0%\n\
+C methylated in CHH context:\t0.7%\n\
+C methylated in Unknown context (CN or CHN):\t20.0%\n\n\n";
+        assert_eq!(s(&pe_report_bytes(&counters_pe(), true)), expected);
+    }
+
+    #[test]
+    fn pe_mapping_efficiency_has_trailing_space() {
+        // The REPORT line (Perl 2205) is `…% \n` — a space then ONE newline.
+        let out = s(&pe_report_bytes(&counters_pe(), true));
+        assert!(out.contains("Mapping efficiency:\t80.0% \n"));
+        assert!(!out.contains("Mapping efficiency:\t80.0%\n")); // NOT the no-space form
+    }
+
+    #[test]
+    fn pe_non_directional_omits_rejected_line() {
+        let out = s(&pe_report_bytes(&counters_pe(), false));
+        assert!(!out.contains("complementary strands being rejected"));
+    }
+
+    #[test]
+    fn pe_zero_pairs_mapping_efficiency_bare_zero() {
+        let out = s(&pe_report_bytes(&Counters::default(), true));
+        assert!(out.contains("Mapping efficiency:\t0% \n")); // bare 0 + trailing space
     }
 }

@@ -48,15 +48,20 @@ use flate2::write::GzEncoder;
 
 use bismark_io::BamWriter;
 
-use crate::align::{AlignerStream, Orientation};
+use crate::align::{AlignerStream, Orientation, PairedAlignerStream};
 use crate::aux_out::AuxKind;
 use crate::config::{LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
-use crate::merge::{Counters, Decision, check_results_single_end};
-use crate::methylation::{extract_corresponding_genomic_sequence_single_end, methylation_call};
+use crate::merge::{
+    Counters, Decision, DecisionPaired, check_results_paired_end, check_results_single_end,
+};
+use crate::methylation::{
+    extract_corresponding_genomic_sequence_paired_end,
+    extract_corresponding_genomic_sequence_single_end, methylation_call,
+};
 use crate::output::{
-    build_refid, generate_sam_header, single_end_sam_output, write_raw_sam_line_to_bam,
-    write_record,
+    build_refid, generate_sam_header, paired_end_sam_output, single_end_sam_output,
+    write_raw_pe_ambig_lines, write_raw_sam_line_to_bam, write_record,
 };
 use crate::report::ReportHeader;
 
@@ -101,10 +106,13 @@ fn pipeline(config: &RunConfig) -> Result<()> {
         (ReadLayout::SingleEnd { reads }, LibraryType::Directional, ReadFormat::FastQ) => {
             run_se_directional(config, reads)
         }
+        (ReadLayout::PairedEnd { mates1, mates2 }, LibraryType::Directional, ReadFormat::FastQ) => {
+            run_pe_directional(config, mates1, mates2)
+        }
         _ => {
             eprintln!(
                 "(alignment for this mode is wired in a later phase; the v1 spine is \
-                 FastQ single-end directional)"
+                 FastQ single-end/paired-end directional)"
             );
             Ok(())
         }
@@ -183,6 +191,7 @@ fn run_se_directional(config: &RunConfig, reads: &[String]) -> Result<()> {
             &mut report,
             &ReportHeader {
                 sequence_file: read_file,
+                sequence_file2: None,
                 genome_folder: &genome_folder,
                 aligner_options: &config.aligner_options,
                 library: config.library,
@@ -275,7 +284,7 @@ fn open_sinks(
     let prefix = config.output.prefix.as_deref();
     let base = config.output.basename.as_deref();
     let open_gz = |kind: AuxKind| -> Result<GzEncoder<BufWriter<File>>> {
-        let name = aux_out::aux_filename(&filename, prefix, base, kind, fasta);
+        let name = aux_out::aux_filename(&filename, prefix, base, kind, fasta, None);
         let p = config.output.output_dir.join(name);
         Ok(GzEncoder::new(
             BufWriter::new(File::create(&p)?),
@@ -497,6 +506,498 @@ fn drive_merge(
         }
     }
     Ok(())
+}
+
+// ===========================================================================
+// Paired-end directional driver (Phase 7).
+// ===========================================================================
+
+/// PE-directional pipeline (Perl `start_methylation_call_procedure_paired_ends`,
+/// 1746–1962): load the genome once, then per mate-pair convert (R1→C→T, R2→G→A),
+/// spawn the **2** paired Bowtie 2 instances (slots 0/3), drive the PE lockstep
+/// merge, write the `_pe.bam` + `_PE_report.txt` + the `_1`/`_2` aux files.
+fn run_pe_directional(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let bt2 = &config.detected_aligner.path;
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let directional = matches!(config.library, LibraryType::Directional);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    // Perl's `$dovetail` (8047–8048): set unless `--no_dovetail`. `options.rs` adds
+    // the `--dovetail` token to aligner_options for paired && !no_dovetail, so its
+    // presence is exactly `$dovetail` — used by the PE TLEN dovetail sub-cases.
+    let dovetail = config
+        .aligner_options
+        .split_whitespace()
+        .any(|t| t == "--dovetail");
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        // PE conversion: R1 → C→T (with /1/1), R2 → G→A (with /2/2).
+        let conv1 = convert::bisulfite_convert_fastq_pe(
+            Path::new(read_1),
+            &config.output.temp_dir,
+            &opts,
+            1,
+        )?;
+        let conv2 = convert::bisulfite_convert_fastq_pe(
+            Path::new(read_2),
+            &config.output.temp_dir,
+            &opts,
+            2,
+        )?;
+        eprintln!(
+            "Created C->T converted version of {read_1} ({} seqs) and G->A converted version of {read_2} ({} seqs)",
+            conv1.count, conv2.count
+        );
+
+        // 2 paired instances reading the SAME `-1 <CT_R1> -2 <GA_R2>` (Perl 405–412,
+        // 6474): slot 0 = OT (CT index, --norc), slot 3 = OB (GA index, --nofw).
+        let s0 = PairedAlignerStream::spawn(
+            bt2,
+            &config.aligner_options,
+            Orientation::Norc,
+            &config.genome.ct_index_basename,
+            &conv1.path,
+            &conv2.path,
+        )?;
+        let s3 = PairedAlignerStream::spawn(
+            bt2,
+            &config.aligner_options,
+            Orientation::Nofw,
+            &config.genome.ga_index_basename,
+            &conv1.path,
+            &conv2.path,
+        )?;
+        // Slot-indexed (0..4): only 0 and 3 are live; the merge scans 0,3,1,2.
+        let mut streams: Vec<Option<PairedAlignerStream>> = vec![Some(s0), None, None, Some(s3)];
+
+        let bam_path = derive_output_path(read_1, config, "_bismark_bt2_pe.bam", "_pe.bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            "_bismark_bt2_PE_report.txt",
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &config.aligner_options,
+                library: config.library,
+            },
+        )?;
+
+        let mut counters = Counters::default();
+        drive_merge_pe(
+            Path::new(read_1),
+            Path::new(read_2),
+            &mut streams,
+            config,
+            &genome,
+            &refid,
+            dovetail,
+            &mut sinks,
+            &mut counters,
+        )?;
+        for s in streams.into_iter().flatten() {
+            s.finish()?;
+        }
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, directional)?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+
+        // Delete BOTH temps (Perl 2155; directional: C→T_1 + G→A_2). Best-effort.
+        let _ = std::fs::remove_file(&conv1.path);
+        let _ = std::fs::remove_file(&conv2.path);
+
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+    }
+    Ok(())
+}
+
+/// PE output sinks: one BAM (both mates), one optional `--ambig_bam`, and the
+/// `_1`/`_2` gzipped `--unmapped`/`--ambiguous` FastQ writers.
+struct PeSinks {
+    bam: BamWriter<BufWriter<File>>,
+    ambig_bam: Option<BamWriter<BufWriter<File>>>,
+    unmapped_1: Option<GzEncoder<BufWriter<File>>>,
+    unmapped_2: Option<GzEncoder<BufWriter<File>>>,
+    ambiguous_1: Option<GzEncoder<BufWriter<File>>>,
+    ambiguous_2: Option<GzEncoder<BufWriter<File>>>,
+}
+
+impl PeSinks {
+    fn finish(self) -> Result<()> {
+        self.bam
+            .finish()
+            .map_err(|e| AlignerError::Validation(format!("failed to finalise BAM: {e}")))?;
+        if let Some(ab) = self.ambig_bam {
+            ab.finish().map_err(|e| {
+                AlignerError::Validation(format!("failed to finalise ambig BAM: {e}"))
+            })?;
+        }
+        for g in [
+            self.unmapped_1,
+            self.unmapped_2,
+            self.ambiguous_1,
+            self.ambiguous_2,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            g.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// Open the PE BAM + the optional `--ambig_bam` (`_pe.ambig.bam`) and the `_1`/`_2`
+/// gzipped `--unmapped`/`--ambiguous` files (named off each mate's un-stripped basename).
+fn open_pe_sinks(
+    read_1: &str,
+    read_2: &str,
+    config: &RunConfig,
+    header: &noodles_sam::Header,
+    bam_path: &Path,
+) -> Result<PeSinks> {
+    let bam = BamWriter::from_path(bam_path, header.clone())
+        .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
+
+    let ambig_bam = if config.ambig_bam {
+        let p = derive_output_path(read_1, config, "_bismark_bt2_pe.ambig.bam", "_pe.ambig.bam");
+        eprintln!("Ambiguous BAM output: {}", p.display());
+        Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
+            AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
+        })?)
+    } else {
+        None
+    };
+
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let prefix = config.output.prefix.as_deref();
+    let base = config.output.basename.as_deref();
+    let (b1, b2) = (basename(read_1), basename(read_2));
+    let open_gz = |name: String| -> Result<GzEncoder<BufWriter<File>>> {
+        let p = config.output.output_dir.join(name);
+        Ok(GzEncoder::new(
+            BufWriter::new(File::create(&p)?),
+            Compression::default(),
+        ))
+    };
+    let (unmapped_1, unmapped_2) = if config.unmapped {
+        (
+            Some(open_gz(aux_out::aux_filename(
+                &b1,
+                prefix,
+                base,
+                AuxKind::Unmapped,
+                fasta,
+                Some(1),
+            ))?),
+            Some(open_gz(aux_out::aux_filename(
+                &b2,
+                prefix,
+                base,
+                AuxKind::Unmapped,
+                fasta,
+                Some(2),
+            ))?),
+        )
+    } else {
+        (None, None)
+    };
+    let (ambiguous_1, ambiguous_2) = if config.ambiguous {
+        (
+            Some(open_gz(aux_out::aux_filename(
+                &b1,
+                prefix,
+                base,
+                AuxKind::Ambiguous,
+                fasta,
+                Some(1),
+            ))?),
+            Some(open_gz(aux_out::aux_filename(
+                &b2,
+                prefix,
+                base,
+                AuxKind::Ambiguous,
+                fasta,
+                Some(2),
+            ))?),
+        )
+    } else {
+        (None, None)
+    };
+
+    Ok(PeSinks {
+        bam,
+        ambig_bam,
+        unmapped_1,
+        unmapped_2,
+        ambiguous_1,
+        ambiguous_2,
+    })
+}
+
+/// Open a FastQ reader (gz or plain) for the PE lockstep.
+fn open_reader(path: &Path) -> Result<Box<dyn BufRead>> {
+    let file = File::open(path)?;
+    Ok(if path.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    })
+}
+
+/// Re-read BOTH original FastQ files in lockstep (Perl 2600–2674) and run the PE
+/// merge per pair, routing each `DecisionPaired` to its sink. The two genomic-seq
+/// length guards run in order (R1 short-circuits before R2 — Perl 3864→3867).
+#[allow(clippy::too_many_arguments)]
+fn drive_merge_pe(
+    read_1: &Path,
+    read_2: &Path,
+    streams: &mut [Option<PairedAlignerStream>],
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    dovetail: bool,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let mut r1 = open_reader(read_1)?;
+    let mut r2 = open_reader(read_2)?;
+    let directional = matches!(config.library, LibraryType::Directional);
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+
+    let (mut id1, mut seq1, mut plus1, mut qual1) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut id2, mut seq2, mut plus2, mut qual2) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        for v in [
+            &mut id1, &mut seq1, &mut plus1, &mut qual1, &mut id2, &mut seq2, &mut plus2,
+            &mut qual2,
+        ] {
+            v.clear();
+        }
+        let n_id1 = r1.read_until(b'\n', &mut id1)?;
+        let n_seq1 = r1.read_until(b'\n', &mut seq1)?;
+        let _ = r1.read_until(b'\n', &mut plus1)?;
+        let n_qual1 = r1.read_until(b'\n', &mut qual1)?;
+        let n_id2 = r2.read_until(b'\n', &mut id2)?;
+        let n_seq2 = r2.read_until(b'\n', &mut seq2)?;
+        let _ = r2.read_until(b'\n', &mut plus2)?;
+        let n_qual2 = r2.read_until(b'\n', &mut qual2)?;
+        // Perl 2611 guard: the 6 needed lines (the two `+` lines are NOT guarded).
+        if n_id1 == 0 || n_seq1 == 0 || n_qual1 == 0 || n_id2 == 0 || n_seq2 == 0 || n_qual2 == 0 {
+            break;
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        counters.sequences_count += 1;
+
+        // R1 id: fix_id + @-strip → the merge identifier (Perl 2640). R2 id: fix_id
+        // + @-strip → the aux R2 id (R2 is never the merge key; Perl never strips R2's
+        // @, but write_fastq_record re-adds the @, so we pass the @-stripped form).
+        let id1_fixed = convert::fix_id(convert::chomp_newline(&id1), icpc);
+        let id2_fixed = convert::fix_id(convert::chomp_newline(&id2), icpc);
+        let identifier =
+            String::from_utf8_lossy(id1_fixed.strip_prefix(b"@").unwrap_or(&id1_fixed))
+                .into_owned();
+        let id2_stripped =
+            String::from_utf8_lossy(id2_fixed.strip_prefix(b"@").unwrap_or(&id2_fixed))
+                .into_owned();
+        let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
+        let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
+        let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
+        let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
+        let s1 = String::from_utf8_lossy(&seq1_uc).into_owned();
+        let s2 = String::from_utf8_lossy(&seq2_uc).into_owned();
+
+        let decision = check_results_paired_end(
+            &identifier,
+            &s1,
+            &s2,
+            streams,
+            directional,
+            config.score_min_intercept,
+            config.score_min_slope,
+            config.ambig_bam,
+            counters,
+        )?;
+
+        match decision {
+            DecisionPaired::UniqueBest(best) => {
+                let ext =
+                    extract_corresponding_genomic_sequence_paired_end(&best, genome, counters)?;
+                // R1 length guard first; on failure return (continue) BEFORE checking R2
+                // (Perl 3864→3867), each bumping the count by exactly 1.
+                if ext.unmodified_genomic_sequence_1.len() != seq1_uc.len() + 2 {
+                    eprintln!(
+                        "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
+                        best.chromosome, best.position_1
+                    );
+                    counters.genomic_sequence_could_not_be_extracted_count += 1;
+                    continue;
+                }
+                if ext.unmodified_genomic_sequence_2.len() != seq2_uc.len() + 2 {
+                    eprintln!(
+                        "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
+                        best.chromosome, best.position_2
+                    );
+                    counters.genomic_sequence_could_not_be_extracted_count += 1;
+                    continue;
+                }
+                let mc1 = methylation_call(
+                    &seq1_uc,
+                    &ext.unmodified_genomic_sequence_1,
+                    ext.read_conversion_1,
+                    counters,
+                );
+                let mc2 = methylation_call(
+                    &seq2_uc,
+                    &ext.unmodified_genomic_sequence_2,
+                    ext.read_conversion_2,
+                    counters,
+                );
+                let (rec1, rec2) = paired_end_sam_output(
+                    &identifier,
+                    &seq1_uc,
+                    &seq2_uc,
+                    &qual1_bytes,
+                    &qual2_bytes,
+                    &best,
+                    &ext,
+                    &mc1,
+                    &mc2,
+                    refid,
+                    config.phred64,
+                    dovetail,
+                )?;
+                write_record(&mut sinks.bam, &rec1)?;
+                write_record(&mut sinks.bam, &rec2)?;
+            }
+            DecisionPaired::Ambiguous { first_ambig } => {
+                if let Some(ab) = sinks.ambig_bam.as_mut()
+                    && let Some((l1, l2)) = first_ambig.as_ref()
+                {
+                    write_raw_pe_ambig_lines(ab, l1, l2, refid)?;
+                }
+                // precedence: --ambiguous else --unmapped (Perl 2649/2663).
+                let (route1, route2) = if sinks.ambiguous_1.is_some() {
+                    (sinks.ambiguous_1.as_mut(), sinks.ambiguous_2.as_mut())
+                } else {
+                    (sinks.unmapped_1.as_mut(), sinks.unmapped_2.as_mut())
+                };
+                write_pe_aux(
+                    route1,
+                    route2,
+                    &identifier,
+                    &id2_stripped,
+                    &seq1,
+                    &plus1,
+                    &qual1_bytes,
+                    &seq2,
+                    &plus2,
+                    &qual2_bytes,
+                )?;
+            }
+            DecisionPaired::NoAlignment => {
+                write_pe_aux(
+                    sinks.unmapped_1.as_mut(),
+                    sinks.unmapped_2.as_mut(),
+                    &identifier,
+                    &id2_stripped,
+                    &seq1,
+                    &plus1,
+                    &qual1_bytes,
+                    &seq2,
+                    &plus2,
+                    &qual2_bytes,
+                )?;
+            }
+            DecisionPaired::Rejected => {}
+        }
+    }
+    Ok(())
+}
+
+/// Write a pair's two FastQ records to the routed `_1`/`_2` aux files (Perl
+/// 2649–2674). Each record = `@<id>\n<orig non-uc seq>\n<verbatim + line><qual>\n`.
+#[allow(clippy::too_many_arguments)]
+fn write_pe_aux(
+    route1: Option<&mut GzEncoder<BufWriter<File>>>,
+    route2: Option<&mut GzEncoder<BufWriter<File>>>,
+    id1: &str,
+    id2: &str,
+    seq1: &[u8],
+    plus1: &[u8],
+    qual1: &[u8],
+    seq2: &[u8],
+    plus2: &[u8],
+    qual2: &[u8],
+) -> Result<()> {
+    if let Some(w) = route1 {
+        let s = convert::chomp_newline(seq1).to_vec();
+        aux_out::write_fastq_record(w, id1.as_bytes(), &s, plus1, qual1)?;
+    }
+    if let Some(w) = route2 {
+        let s = convert::chomp_newline(seq2).to_vec();
+        aux_out::write_fastq_record(w, id2.as_bytes(), &s, plus2, qual2)?;
+    }
+    Ok(())
+}
+
+fn counters_summary_pe(read_1: &str, read_2: &str, c: &Counters) -> String {
+    format!(
+        "Mapping summary for {read_1} / {read_2}:\n\
+           sequence pairs analysed:  {}\n\
+           unique best alignments:   {}\n\
+           no alignment found:       {}\n\
+           ambiguous (unsuitable):   {}\n\
+           directional-rejected:     {}\n\
+           could-not-extract genomic:{}\n\
+           strand OT/CTOB/CTOT/OB:   {}/{}/{}/{}",
+        c.sequences_count,
+        c.unique_best_alignment_count,
+        c.no_single_alignment_found,
+        c.unsuitable_sequence_count,
+        c.alignments_rejected_count,
+        c.genomic_sequence_could_not_be_extracted_count,
+        c.ct_ga_ct_count,
+        c.ga_ct_ga_count,
+        c.ga_ct_ct_count,
+        c.ct_ga_ga_count,
+    )
 }
 
 fn counters_summary(read_file: &str, c: &Counters) -> String {

@@ -10,7 +10,7 @@
 
 use crate::error::{AlignerError, Result};
 use crate::genome::Genome;
-use crate::merge::{BestAlignment, Counters};
+use crate::merge::{BestAlignment, BestAlignmentPaired, Counters};
 
 /// Read/genome bisulfite conversion direction (→ `XR:Z`/`XG:Z` tag values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +233,319 @@ pub fn extract_corresponding_genomic_sequence_single_end(
         indels,
         extracted: true,
     })
+}
+
+// ===========================================================================
+// Paired-end genomic-seq extraction (Phase 7) — Perl
+// `extract_corresponding_genomic_sequence_paired_end` (4471–4794).
+//
+// Each mate is extracted INDEPENDENTLY from its own POS+CIGAR (there is NO
+// fragment span). The +2 context placement (5′ for index 1/3, 3′ for index 0/2)
+// is keyed on the COMBINED PE index, same for both mates. Exactly one mate (the
+// `-`-strand one) is reverse-complemented by the index dispatch. The four
+// chromosome-edge guards `return` early; the caller gates per mate on
+// `len == read_len + 2`, so the failing mate's short sequence localises the miss.
+// ===========================================================================
+
+/// The two-mate genomic windows + strand/conversion (≈ the PE `methylation_call_params`
+/// fields set in 4779–4793). On a chromosome-edge miss the failing mate's
+/// `unmodified_genomic_sequence_*` is left SHORT while the other keeps its full
+/// `read_len+2`; the caller's per-mate length check is the could-not-extract gate.
+pub struct GenomicExtractionPaired {
+    /// Read-1 alignment strand (`b'+'`/`b'-'`).
+    pub alignment_read_1: u8,
+    /// Read-2 alignment strand (`b'+'`/`b'-'`).
+    pub alignment_read_2: u8,
+    /// Read-1 conversion (`XR` of mate 1).
+    pub read_conversion_1: Conversion,
+    /// Read-2 conversion (`XR` of mate 2).
+    pub read_conversion_2: Conversion,
+    /// Genome conversion (`XG`, shared).
+    pub genome_conversion: Conversion,
+    /// Read-1 genomic window (read_len + 2 when not edge-truncated; revcomp'd for index 2/3).
+    pub unmodified_genomic_sequence_1: Vec<u8>,
+    /// Read-2 genomic window (revcomp'd for index 0/1).
+    pub unmodified_genomic_sequence_2: Vec<u8>,
+    /// Read-1 MD-tag genomic seq (only when CIGAR-1 has a deletion).
+    pub genomic_seq_for_md_tag_1: Vec<u8>,
+    /// Read-2 MD-tag genomic seq (only when CIGAR-2 has a deletion).
+    pub genomic_seq_for_md_tag_2: Vec<u8>,
+    /// Read-1 walked end position (Perl `$pos_1`; for TLEN).
+    pub end_position_1: u32,
+    /// Read-2 walked end position (Perl `$pos_2`; for TLEN).
+    pub end_position_2: u32,
+    /// Read-1 deleted bases (`D` only — feeds NM).
+    pub indels_1: u32,
+    /// Read-2 deleted bases (`D` only — feeds NM).
+    pub indels_2: u32,
+}
+
+/// Per-mate CIGAR walk + index-driven +2 placement. `Edge` ⇒ a chromosome-edge
+/// guard fired (the partial sequence is shorter than `read_len + 2`).
+enum MateWalk {
+    Complete {
+        non_bis: Vec<u8>,
+        md_seq: Vec<u8>,
+        end_pos: u32,
+        indels: u32,
+    },
+    Edge {
+        non_bis: Vec<u8>,
+        md_seq: Vec<u8>,
+        end_pos: u32,
+        indels: u32,
+    },
+}
+
+/// Walk one mate (Perl 4530–4614 for mate 1, 4617–4702 for mate 2). `prepend_5p`
+/// adds the 2 context bases at the 5′ end (index 1/3); `append_3p` at the 3′ end
+/// (index 0/2). 🔴 `strict_5p` selects mate 1's strict `(pos-2) > 0` guard (Perl
+/// 4535) vs mate 2's `(pos-2) >= 0` (4622); the SE port uses `>= 0`, so mate 1
+/// must NOT reuse it. The +2 bases are NOT added to `md_seq` (Perl 4540/4613).
+fn walk_mate(
+    chr: &[u8],
+    position_1based: u32,
+    cigar: &str,
+    contains_deletion: bool,
+    prepend_5p: bool,
+    append_3p: bool,
+    strict_5p: bool,
+) -> Result<MateWalk> {
+    let runs = parse_cigar(cigar)?;
+    let mut pos: usize = (position_1based - 1) as usize; // 1-based → 0-based (Perl 4513)
+    let mut non_bis: Vec<u8> = Vec::new();
+    let mut md_seq: Vec<u8> = Vec::new();
+    let mut indels: u32 = 0;
+
+    // 5′ prepend (index 1/3).
+    if prepend_5p {
+        let ok = if strict_5p {
+            (pos as i64) - 2 > 0 // mate 1: pos >= 3 (Perl 4535)
+        } else {
+            (pos as i64) - 2 >= 0 // mate 2: pos >= 2 (Perl 4622)
+        };
+        if !ok {
+            return Ok(MateWalk::Edge {
+                non_bis,
+                md_seq,
+                end_pos: pos as u32,
+                indels,
+            });
+        }
+        non_bis.extend_from_slice(&chr[pos - 2..pos]);
+    }
+
+    // CIGAR walk (Perl 4543–4603 / 4631–4688).
+    for (len, op) in &runs {
+        let len = *len as usize;
+        match op {
+            b'M' => {
+                non_bis.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                if contains_deletion {
+                    md_seq.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                }
+                pos += len;
+            }
+            b'I' | b'S' => {
+                non_bis.extend(std::iter::repeat_n(b'X', len));
+                if contains_deletion {
+                    md_seq.extend(std::iter::repeat_n(b'X', len));
+                }
+            }
+            b'D' => {
+                if contains_deletion {
+                    md_seq.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                }
+                pos += len;
+                indels += len as u32;
+            }
+            b'N' => {
+                pos += len;
+            }
+            _ => {
+                return Err(AlignerError::Validation(format!(
+                    "The CIGAR string contained illegal CIGAR operations in addition to 'M', 'I', 'D', 'S' or 'N': {cigar}"
+                )));
+            }
+        }
+    }
+
+    // 3′ append (index 0/2).
+    if append_3p {
+        if chr.len() < pos + 2 {
+            return Ok(MateWalk::Edge {
+                non_bis,
+                md_seq,
+                end_pos: pos as u32,
+                indels,
+            });
+        }
+        non_bis.extend_from_slice(&chr[pos..pos + 2]);
+    }
+
+    Ok(MateWalk::Complete {
+        non_bis,
+        md_seq,
+        end_pos: pos as u32,
+        indels,
+    })
+}
+
+/// Extract the two genomic windows for one PE alignment (Perl 4471–4794).
+/// Walks mate 1 then mate 2 sequentially; a mate's edge guard short-circuits with
+/// that mate's sequence left SHORT (matching Perl's bare `return`). The per-strand
+/// counter is bumped — and the `-` mate reverse-complemented — ONLY past all four
+/// guards (Perl 4708–4775). The caller gates per mate on `len == read_len + 2`.
+pub fn extract_corresponding_genomic_sequence_paired_end(
+    best: &BestAlignmentPaired,
+    genome: &Genome,
+    counters: &mut Counters,
+) -> Result<GenomicExtractionPaired> {
+    let chr = genome.get(&best.chromosome).ok_or_else(|| {
+        AlignerError::Validation(format!(
+            "Chromosome {} not found in the genome",
+            best.chromosome
+        ))
+    })?;
+    let index = best.index;
+
+    // Strand/conversion/revcomp-target are a pure function of the index (Perl
+    // 4708–4772) — computed up-front (as SE does) so the early-return struct can
+    // carry them; only the COUNTER + revcomp are gated on passing all guards.
+    let (
+        alignment_read_1,
+        alignment_read_2,
+        read_conversion_1,
+        read_conversion_2,
+        genome_conversion,
+    ) = match index {
+        0 => (b'+', b'-', Conversion::Ct, Conversion::Ga, Conversion::Ct),
+        1 => (b'+', b'-', Conversion::Ga, Conversion::Ct, Conversion::Ga),
+        2 => (b'-', b'+', Conversion::Ga, Conversion::Ct, Conversion::Ct),
+        3 => (b'-', b'+', Conversion::Ct, Conversion::Ga, Conversion::Ga),
+        _ => {
+            return Err(AlignerError::Validation(
+                "Too many bowtie result filehandles".into(),
+            ));
+        }
+    };
+    let prepend_5p = index == 1 || index == 3;
+    let append_3p = index == 0 || index == 2;
+    let contains_deletion_1 = best.cigar_1.contains('D');
+    let contains_deletion_2 = best.cigar_2.contains('D');
+
+    let mk = |nb1: Vec<u8>,
+              md1: Vec<u8>,
+              ep1: u32,
+              in1: u32,
+              nb2: Vec<u8>,
+              md2: Vec<u8>,
+              ep2: u32,
+              in2: u32| {
+        GenomicExtractionPaired {
+            alignment_read_1,
+            alignment_read_2,
+            read_conversion_1,
+            read_conversion_2,
+            genome_conversion,
+            unmodified_genomic_sequence_1: nb1,
+            unmodified_genomic_sequence_2: nb2,
+            genomic_seq_for_md_tag_1: md1,
+            genomic_seq_for_md_tag_2: md2,
+            end_position_1: ep1,
+            end_position_2: ep2,
+            indels_1: in1,
+            indels_2: in2,
+        }
+    };
+
+    // ---- mate 1 (strict 5′ guard) -----------------------------------------
+    let mate1 = walk_mate(
+        chr,
+        best.position_1,
+        &best.cigar_1,
+        contains_deletion_1,
+        prepend_5p,
+        append_3p,
+        true,
+    )?;
+    let (mut nb1, mut md1, ep1, in1) = match mate1 {
+        // mate 1 edge → mate 2 is never walked (empty); R1 length check fails first.
+        MateWalk::Edge {
+            non_bis,
+            md_seq,
+            end_pos,
+            indels,
+        } => {
+            return Ok(mk(
+                non_bis,
+                md_seq,
+                end_pos,
+                indels,
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+            ));
+        }
+        MateWalk::Complete {
+            non_bis,
+            md_seq,
+            end_pos,
+            indels,
+        } => (non_bis, md_seq, end_pos, indels),
+    };
+
+    // ---- mate 2 (non-strict 5′ guard) -------------------------------------
+    let mate2 = walk_mate(
+        chr,
+        best.position_2,
+        &best.cigar_2,
+        contains_deletion_2,
+        prepend_5p,
+        append_3p,
+        false,
+    )?;
+    let (mut nb2, mut md2, ep2, in2) = match mate2 {
+        // mate 2 edge → R1 stays FULL (passes), R2 short (fails). One count.
+        MateWalk::Edge {
+            non_bis,
+            md_seq,
+            end_pos,
+            indels,
+        } => {
+            return Ok(mk(nb1, md1, ep1, in1, non_bis, md_seq, end_pos, indels));
+        }
+        MateWalk::Complete {
+            non_bis,
+            md_seq,
+            end_pos,
+            indels,
+        } => (non_bis, md_seq, end_pos, indels),
+    };
+
+    // ---- past all four guards: counter + revcomp the `-` mate (4708–4775) --
+    match index {
+        0 => counters.ct_ga_ct_count += 1,
+        1 => counters.ga_ct_ga_count += 1,
+        2 => counters.ga_ct_ct_count += 1,
+        3 => counters.ct_ga_ga_count += 1,
+        _ => unreachable!(),
+    }
+    // index 0/1 → mate 2 is the `-` hit; index 2/3 → mate 1 is the `-` hit.
+    if index == 0 || index == 1 {
+        nb2 = reverse_complement(&nb2);
+        if contains_deletion_2 {
+            md2 = reverse_complement(&md2);
+        }
+    } else {
+        nb1 = reverse_complement(&nb1);
+        if contains_deletion_1 {
+            md1 = reverse_complement(&md1);
+        }
+    }
+
+    Ok(mk(nb1, md1, ep1, in1, nb2, md2, ep2, in2))
 }
 
 /// The per-base methylation call (Perl `methylation_call`, 4800–5018).
@@ -558,5 +871,141 @@ mod tests {
         let mut c = Counters::default();
         let call = methylation_call(b"AT", b"ATGG", Conversion::Ct, &mut c);
         assert_eq!(call, b"..");
+    }
+
+    // ---- PE genomic extraction ---------------------------------------------
+
+    fn best_pe(
+        chr: &str,
+        index: usize,
+        pos1: u32,
+        pos2: u32,
+        cigar1: &str,
+        cigar2: &str,
+    ) -> BestAlignmentPaired {
+        BestAlignmentPaired {
+            chromosome: chr.to_string(),
+            index,
+            position_1: pos1,
+            position_2: pos2,
+            cigar_1: cigar1.to_string(),
+            cigar_2: cigar2.to_string(),
+            md_tag_1: String::new(),
+            md_tag_2: String::new(),
+            bowtie_sequence_1: String::new(),
+            bowtie_sequence_2: String::new(),
+            flag_1: 99,
+            flag_2: 147,
+            sum_of_alignment_scores: 0,
+            sum_of_alignment_scores_second_best: None,
+            mapq: 40,
+        }
+    }
+
+    #[test]
+    fn pe_extract_index0_appends_two_revcomps_mate2_counts_ct_ga_ct() {
+        // index 0 (OT): r1 '+', r2 '-'; +2 at 3' for both; mate2 revcomp'd.
+        let g = genome_of("chr1", b"AAACGTACGTAA"); // 12 bp
+        let b = best_pe("chr1", 0, 3, 5, "4M", "4M"); // pos0_1=2, pos0_2=4
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        assert_eq!(e.alignment_read_1, b'+');
+        assert_eq!(e.alignment_read_2, b'-');
+        assert_eq!(e.read_conversion_1, Conversion::Ct);
+        assert_eq!(e.read_conversion_2, Conversion::Ga);
+        assert_eq!(e.genome_conversion, Conversion::Ct);
+        // mate1: M(4)=chr[2..6]="ACGT" + 3'chr[6..8]="AC" = "ACGTAC"
+        assert_eq!(e.unmodified_genomic_sequence_1, b"ACGTAC");
+        // mate2: M(4)=chr[4..8]="GTAC" + 3'chr[8..10]="GT" = "GTACGT", then revcomp
+        assert_eq!(
+            e.unmodified_genomic_sequence_2,
+            reverse_complement(b"GTACGT")
+        );
+        assert_eq!(c.ct_ga_ct_count, 1);
+        assert_eq!(c.ga_ct_ct_count, 0);
+    }
+
+    #[test]
+    fn pe_extract_index2_revcomps_mate1_counts_ga_ct_ct() {
+        // index 2 (CTOT): r1 '-', r2 '+'; +2 at 3'; mate1 revcomp'd.
+        let g = genome_of("chr1", b"AAACGTACGTAA");
+        let b = best_pe("chr1", 2, 3, 5, "4M", "4M");
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        assert_eq!(e.alignment_read_1, b'-');
+        assert_eq!(e.alignment_read_2, b'+');
+        assert_eq!(e.read_conversion_1, Conversion::Ga);
+        assert_eq!(e.genome_conversion, Conversion::Ct);
+        // mate1 revcomp'd: revcomp("ACGTAC"); mate2 left forward "GTACGT".
+        assert_eq!(
+            e.unmodified_genomic_sequence_1,
+            reverse_complement(b"ACGTAC")
+        );
+        assert_eq!(e.unmodified_genomic_sequence_2, b"GTACGT");
+        assert_eq!(c.ga_ct_ct_count, 1);
+    }
+
+    #[test]
+    fn pe_extract_index1_prepends_two_counts_ga_ct_ga() {
+        // index 1 (CTOB): +2 at 5' for both; mate2 revcomp'd.
+        let g = genome_of("chr1", b"AAACGTACGTAA");
+        let b = best_pe("chr1", 1, 5, 5, "4M", "4M"); // pos0=4; (4-2)>0 ok (mate1 strict)
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        // mate1: 5' chr[2..4]="AC" + M(4)chr[4..8]="GTAC" = "ACGTAC"
+        assert_eq!(e.unmodified_genomic_sequence_1, b"ACGTAC");
+        assert_eq!(c.ga_ct_ga_count, 1);
+    }
+
+    #[test]
+    fn pe_mate1_5prime_guard_is_strict_gt0() {
+        // index 1, position_1 = 3 → pos0 = 2 → (2-2) > 0 is FALSE → mate1 Edge
+        // (the SE/mate2 `>= 0` guard would PASS here). Read 2 never walked.
+        let g = genome_of("chr1", b"AAACGTACGTAA");
+        let b = best_pe("chr1", 1, 3, 10, "4M", "1M");
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        assert_eq!(e.unmodified_genomic_sequence_1.len(), 0); // edge → empty
+        assert_eq!(e.unmodified_genomic_sequence_2.len(), 0); // mate2 never walked
+        assert_eq!(c.ga_ct_ga_count, 0); // NO counter past an edge guard
+    }
+
+    #[test]
+    fn pe_mate1_5prime_passes_at_position_4() {
+        // the boundary: position_1 = 4 → pos0 = 3 → (3-2) = 1 > 0 → passes.
+        let g = genome_of("chr1", b"AAACGTACGTAA");
+        let b = best_pe("chr1", 1, 4, 5, "4M", "4M");
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        assert_eq!(e.unmodified_genomic_sequence_1.len(), 4 + 2);
+        assert_eq!(c.ga_ct_ga_count, 1);
+    }
+
+    #[test]
+    fn pe_mate2_chr_edge_leaves_mate1_full_mate2_short() {
+        // index 0 (3' append). mate1 fine; mate2 ends within 2 bp of chr end →
+        // mate2 3' guard fires → R1 full (read_len+2), R2 short, NO counter.
+        let g = genome_of("chr1", b"AAACGTACGT"); // 10 bp
+        // mate1 at pos 1 (4M → ends at 4, +2 ok); mate2 at pos 5 (4M → ends at 8, +2 needs 10 ok)...
+        // make mate2 end at the edge: pos 6 (0-based 5), 4M → ends 9, +2 needs 11 > 10 → edge.
+        let b = best_pe("chr1", 0, 1, 6, "4M", "4M");
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        assert_eq!(e.unmodified_genomic_sequence_1.len(), 4 + 2); // mate1 full
+        assert_ne!(e.unmodified_genomic_sequence_2.len(), 4 + 2); // mate2 short → driver gate fails
+        assert_eq!(c.ct_ga_ct_count, 0); // edge → no strand bucket
+    }
+
+    #[test]
+    fn pe_extract_deletion_index0_builds_md_seq_and_indels() {
+        // mate1 has a deletion (2M1D2M); md_seq includes the deleted base, indels=1.
+        let g = genome_of("chr1", b"ACGTACGTACGT"); // 12 bp
+        let b = best_pe("chr1", 0, 1, 1, "2M1D2M", "4M");
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_paired_end(&b, &g, &mut c).unwrap();
+        assert_eq!(e.indels_1, 1);
+        assert_eq!(e.indels_2, 0);
+        // md_seq_1: M"AC" + D chr[2..3]="G" + M chr[3..5]="TA" = "ACGTA"
+        assert_eq!(e.genomic_seq_for_md_tag_1, b"ACGTA");
     }
 }

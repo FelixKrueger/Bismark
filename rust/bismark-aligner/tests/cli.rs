@@ -555,6 +555,168 @@ fn ambiguous_and_ambig_bam_end_to_end() {
     assert!(report.contains("Sequences did not map uniquely:\t1\n"));
 }
 
+// ---- paired-end end-to-end (Phase 7) -----------------------------------------
+
+/// A PE fake `bowtie2`: reads the `-1` (CT R1) temp file, derives the base id
+/// (stripping the `/1/1` tag we add), and emits TWO SAM lines per pair (R1 `/1`,
+/// R2 `/2` — mimicking Bowtie 2 clipping the outer tag). On the CT (`BS_CT`) index
+/// it reports a mapped OT pair (flags 99/147 at chr1:1); on GA, an unmapped pair
+/// (77/141) → the merge yields a unique best on OT.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6" }' "$m1" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// A PE fake `bowtie2` that reports every pair UNMAPPED (77/141) on both indexes.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_unmapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+#[cfg(unix)]
+#[test]
+fn pe_mapped_writes_two_bam_records_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("paired-end")
+                .and(predicate::str::contains("unique best alignments:   1")),
+        );
+
+    // The PE BAM (`_pe.bam`) holds BOTH mate records.
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    assert!(bam.is_file(), "expected {}", bam.display());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2, "two records per pair");
+    let (m1, m2) = (recs[0].inner(), recs[1].inner());
+    // index 0 (OT) FLAG pair.
+    assert_eq!(u16::from(m1.flags()), 99);
+    assert_eq!(u16::from(m2.flags()), 147);
+    // both at POS 1; RNEXT '=' (mate tid == own tid); PNEXT = the mate's POS.
+    assert_eq!(usize::from(m1.alignment_start().unwrap()), 1);
+    assert_eq!(usize::from(m2.alignment_start().unwrap()), 1);
+    assert_eq!(m1.mate_reference_sequence_id(), m1.reference_sequence_id());
+    assert_eq!(usize::from(m1.mate_alignment_start().unwrap()), 1);
+    // shared MAPQ.
+    assert_eq!(u8::from(m1.mapping_quality().unwrap()), 42);
+    assert_eq!(u8::from(m2.mapping_quality().unwrap()), 42);
+
+    // The PE report exists and uses the paired-end wording.
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
+    assert!(report.contains("Bismark report for: "));
+    assert!(report.contains("and"));
+    assert!(report.contains("Sequence pairs analysed in total:\t1\n"));
+    assert!(report.contains("Number of paired-end alignments with a unique best hit:\t1\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn pe_unmapped_routing_to_1_and_2_files() {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_unmapped(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nTGCATG\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--unmapped")
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    // R1 → _1 file, R2 → _2 file (un-stripped basenames + mate suffix; gzipped).
+    let un1 = outdir.path().join("reads_1.fq_unmapped_reads_1.fq.gz");
+    let un2 = outdir.path().join("reads_2.fq_unmapped_reads_2.fq.gz");
+    assert!(un1.is_file(), "expected {}", un1.display());
+    assert!(un2.is_file(), "expected {}", un2.display());
+    let read_gz = |p: &Path| {
+        let mut s = String::new();
+        GzDecoder::new(fs::File::open(p).unwrap())
+            .read_to_string(&mut s)
+            .unwrap();
+        s
+    };
+    assert_eq!(read_gz(&un1), "@r1\nACGTAC\n+\nFFFFFF\n"); // R1 original (non-uc)
+    assert_eq!(read_gz(&un2), "@r1\nTGCATG\n+\nFFFFFF\n"); // R2 original
+
+    // The PE BAM is header-only (no pair mapped).
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    assert!(bam.is_file());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 0);
+}
+
 #[cfg(unix)]
 #[test]
 fn pbat_genome_as_positional_resolves() {

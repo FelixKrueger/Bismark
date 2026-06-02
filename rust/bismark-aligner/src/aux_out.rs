@@ -43,9 +43,14 @@ pub fn aux_filename(
     basename: Option<&str>,
     kind: AuxKind,
     fasta: bool,
+    mate: Option<u8>,
 ) -> String {
     let ext = if fasta { "fa" } else { "fq" };
-    let stem = kind.stem();
+    // Paired-end inserts the mate number after the stem (Perl `_unmapped_reads_1.fq`).
+    let stem = match mate {
+        Some(m) => format!("{}_{m}", kind.stem()),
+        None => kind.stem().to_string(),
+    };
     let base = if let Some(b) = basename {
         // --basename overrides prefix + filename (Perl 1650 overwrites).
         format!("{b}_{stem}.{ext}")
@@ -91,11 +96,11 @@ mod tests {
     fn filename_unstripped_basename() {
         // The FastQ suffix is NOT stripped (contrast the BAM/report stems).
         assert_eq!(
-            aux_filename("reads.fq.gz", None, None, AuxKind::Unmapped, false),
+            aux_filename("reads.fq.gz", None, None, AuxKind::Unmapped, false, None),
             "reads.fq.gz_unmapped_reads.fq.gz"
         );
         assert_eq!(
-            aux_filename("reads.fq", None, None, AuxKind::Ambiguous, false),
+            aux_filename("reads.fq", None, None, AuxKind::Ambiguous, false, None),
             "reads.fq_ambiguous_reads.fq.gz"
         );
     }
@@ -103,7 +108,14 @@ mod tests {
     #[test]
     fn filename_prefix() {
         assert_eq!(
-            aux_filename("reads.fq", Some("expA"), None, AuxKind::Unmapped, false),
+            aux_filename(
+                "reads.fq",
+                Some("expA"),
+                None,
+                AuxKind::Unmapped,
+                false,
+                None
+            ),
             "expA.reads.fq_unmapped_reads.fq.gz"
         );
     }
@@ -116,9 +128,35 @@ mod tests {
                 Some("expA"),
                 Some("sampleX"),
                 AuxKind::Unmapped,
-                false
+                false,
+                None,
             ),
             "sampleX_unmapped_reads.fq.gz"
+        );
+    }
+
+    #[test]
+    fn filename_paired_mate_suffix() {
+        // PE inserts the mate number after the stem, before the extension.
+        assert_eq!(
+            aux_filename("r_1.fq", None, None, AuxKind::Unmapped, false, Some(1)),
+            "r_1.fq_unmapped_reads_1.fq.gz"
+        );
+        assert_eq!(
+            aux_filename("r_2.fq", None, None, AuxKind::Ambiguous, false, Some(2)),
+            "r_2.fq_ambiguous_reads_2.fq.gz"
+        );
+        // --basename + mate.
+        assert_eq!(
+            aux_filename(
+                "r_1.fq",
+                None,
+                Some("samp"),
+                AuxKind::Unmapped,
+                false,
+                Some(1)
+            ),
+            "samp_unmapped_reads_1.fq.gz"
         );
     }
 
