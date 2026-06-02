@@ -48,14 +48,33 @@ fn open_par_gz(path: PathBuf, threads: usize) -> Result<GzWriter, BismarkBedgrap
 }
 
 /// Flush a [`GzWriter`] and finalize the gzip stream (flush remaining blocks,
-/// join the worker threads, write the gzip trailer). Must be called — drop
-/// alone does not finalize a `ParCompress`.
-fn finish_gz(w: GzWriter) -> Result<(), BismarkBedgraphError> {
-    let mut par = w
-        .into_inner()
-        .map_err(|e| BismarkBedgraphError::Io(e.into_error()))?;
-    par.finish().map_err(std::io::Error::other)?;
-    Ok(())
+/// join the worker threads, write the gzip trailer), surfacing any I/O error as
+/// `BismarkBedgraphError::Io` instead of panicking (#939). Must be called —
+/// drop alone does not finalize a `ParCompress`.
+///
+/// `flush()` pushes the buffered bytes into the `ParCompress` (gzp `flush` is
+/// `flush_last(false)` — no footer); then `get_mut().finish()` writes the footer
+/// and joins the workers. On the **error** path gzp 0.11.3's `finish()` returns
+/// from `flush_last(true)?` BEFORE it `take()`s its channels/handle, so the
+/// `ParCompress`'s `Drop` would re-run `finish().unwrap()` → PANIC
+/// (`par/compress.rs:312`). gzp exposes no way to disarm that `Drop`, so we
+/// `mem::forget` the writer on error to suppress it — leaking an already-dead
+/// worker thread on the catastrophic-I/O abort path (e.g. ENOSPC) where the run
+/// is failing anyway; the success path drops normally. We use `flush()` +
+/// `get_mut().finish()` rather than `into_inner()` because a failed
+/// `into_inner()` strands the un-finished `ParCompress` in the `IntoInnerError`,
+/// whose drop re-introduces the same panic.
+///
+/// Mirrors the sibling fix `bismark-extractor::output::SplitWriter::Gzip::finish`
+/// (regression-tested there by `split_writer_gzip_finish_surfaces_error_not_panic`).
+fn finish_gz(mut w: GzWriter) -> Result<(), BismarkBedgraphError> {
+    let flush_res = w.flush();
+    let finish_res = w.get_mut().finish().map_err(std::io::Error::other);
+    let result: std::io::Result<()> = flush_res.and(finish_res);
+    if result.is_err() {
+        std::mem::forget(w);
+    }
+    result.map_err(BismarkBedgraphError::Io)
 }
 
 /// Write the bedGraph + coverage (+ optional zero) outputs from a populated
@@ -114,4 +133,44 @@ pub fn write_outputs(cfg: &ResolvedConfig, agg: Aggregator) -> Result<(), Bismar
         z.flush()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sink that fails every write/flush. `ParCompress` type-erases its sink
+    /// (a worker thread owns it), so a `GzWriter` can wrap one — letting us
+    /// prove `finish_gz` returns `Err` (gzp surfaces the sink error as
+    /// `GzpError::Io`) instead of panicking via `ParCompress`'s `Drop`-time
+    /// `finish().unwrap()` (#939). Sibling of `bismark-extractor`'s
+    /// `split_writer_gzip_finish_surfaces_error_not_panic`.
+    struct FailingWriter;
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("sink write failed"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("sink flush failed"))
+        }
+    }
+
+    #[test]
+    fn finish_gz_surfaces_error_not_panic() {
+        let par = ParCompressBuilder::<Gzip>::new()
+            .num_threads(1)
+            .expect("1 is nonzero")
+            .compression_level(Compression::new(GZIP_LEVEL))
+            .from_writer(FailingWriter);
+        let mut w: GzWriter = BufWriter::with_capacity(64 * 1024, par);
+        // Buffer a bedGraph-shaped row so the gzip worker has data to push to
+        // the failing sink.
+        let _ = w.write_all(b"chr1\t0\t1\t100.0\n");
+        // #939: must return Err (gzp surfaces the sink error), NOT panic via
+        // ParCompress's Drop-time finish().unwrap().
+        assert!(
+            finish_gz(w).is_err(),
+            "finish_gz over a failing sink must return Err, not panic"
+        );
+    }
 }
