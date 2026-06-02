@@ -1,0 +1,4 @@
+Analysed sequences (single-end) in file >> emptyfoobam << in total:	0
+Sequences removed because of apparent non-bisulfite conversion (at least 3 non-CG calls per read):	0 (N/A%)
+
+filter_non_conversion completed in 0d 0h 0m 0s

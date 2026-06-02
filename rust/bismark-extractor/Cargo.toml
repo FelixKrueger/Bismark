@@ -19,7 +19,7 @@ name = "bismark-methylation-extractor-rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-io = { version = "=1.0.0-beta.9", path = "../bismark-io" }
+bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
 # Multithreaded allocator (#884). The default system allocator's arena locks
 # were the dominant cost of the extractor's parallel pipeline: 4-8 worker

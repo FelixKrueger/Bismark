@@ -79,8 +79,8 @@ pub struct Cli {
     #[arg(long = "large-index")]
     pub large_index: bool,
 
-    /// (Deferred) write genomic_nucleotide_frequencies.txt. Accepted but not
-    /// produced in this version.
+    /// Calculate the genomic mono-/di-nucleotide composition and write
+    /// `<genome>/genomic_nucleotide_frequencies.txt` (before conversion).
     #[arg(long = "genomic_composition")]
     pub genomic_composition: bool,
 
@@ -119,7 +119,7 @@ pub struct ResolvedConfig {
     pub slam: bool,
     /// Force large index.
     pub large_index: bool,
-    /// `--genomic_composition` requested (deferred; accepted-and-ignored).
+    /// `--genomic_composition` requested — write the nucleotide-frequency table.
     pub genomic_composition: bool,
     /// `--combined_genome` requested.
     pub combined_genome: bool,

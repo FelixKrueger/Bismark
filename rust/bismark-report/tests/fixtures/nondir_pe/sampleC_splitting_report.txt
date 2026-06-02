@@ -1,0 +1,20 @@
+sampleC_PE_report.bam
+
+Final Cytosine Methylation Report
+=================================
+Total number of C's analysed:	4250000
+
+Total methylated C's in CpG context:	210000
+Total methylated C's in CHG context:	1500
+Total methylated C's in CHH context:	4200
+Total methylated C's in Unknown context:	35
+
+Total C to T conversions in CpG context:	62000
+Total C to T conversions in CHG context:	1100000
+Total C to T conversions in CHH context:	2872300
+Total C to T conversions in Unknown context:	3500
+
+C methylated in CpG context:	77.2%
+C methylated in CHG context:	0.1%
+C methylated in CHH context:	0.1%
+C methylated in Unknown context:	1.0%

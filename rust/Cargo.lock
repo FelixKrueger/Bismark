@@ -114,6 +114,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bismark-bam2nuc"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "assert_cmd",
+ "bismark-io",
+ "bstr",
+ "clap",
+ "flate2",
+ "mimalloc",
+ "noodles-bam",
+ "noodles-bgzf 0.47.0",
+ "noodles-core 0.20.0",
+ "noodles-fasta",
+ "noodles-sam",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
 name = "bismark-bedgraph"
 version = "1.0.0-beta.1"
 dependencies = [
@@ -181,8 +201,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "bismark-genome-preparation"
+name = "bismark-filter-nonconversion"
 version = "1.0.0-alpha.1"
+dependencies = [
+ "assert_cmd",
+ "bismark-io",
+ "bstr",
+ "clap",
+ "mimalloc",
+ "noodles-bam",
+ "noodles-bgzf 0.47.0",
+ "noodles-core 0.20.0",
+ "noodles-sam",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
+name = "bismark-genome-preparation"
+version = "1.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -196,9 +233,10 @@ dependencies = [
 
 [[package]]
 name = "bismark-io"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.8"
 dependencies = [
  "bstr",
+ "flate2",
  "noodles-bam",
  "noodles-bgzf 0.47.0",
  "noodles-core 0.20.0",
@@ -223,6 +261,43 @@ dependencies = [
  "noodles-bam",
  "noodles-core 0.20.0",
  "noodles-sam",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
+name = "bismark-nome-filtering"
+version = "1.0.0-beta.1"
+dependencies = [
+ "assert_cmd",
+ "bismark-io",
+ "clap",
+ "flate2",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
+name = "bismark-report"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "libc",
+ "predicates",
+ "tempfile",
+ "thiserror 2.0.0",
+]
+
+[[package]]
+name = "bismark-summary"
+version = "1.0.0-beta.1"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "clap",
  "predicates",
  "tempfile",
  "thiserror 2.0.0",

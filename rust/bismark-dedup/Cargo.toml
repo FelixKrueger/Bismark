@@ -19,7 +19,7 @@ name = "deduplicate_bismark_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-io = { version = "=1.0.0-beta.9", path = "../bismark-io" }
+bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 # noodles-sam pinned to match bismark-io =1.0.0's transitive choice.
 # Needed directly for `Header` (returned by `bismark_io::open_reader`
 # via `AnyReader::header`) and for test-helper types.
