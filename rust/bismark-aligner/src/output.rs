@@ -1130,6 +1130,112 @@ mod tests {
         );
     }
 
+    // ---- Phase 8: SE CTOT/CTOB FLAG arms (first exercised by non-dir/pbat) ----
+
+    #[test]
+    fn sam_output_ctob_eff3_plus_ga_ga_flag16() {
+        // pbat/non-dir CTOB (effective index 3): strand '+', GA/GA → FLAG 16, XR GA,
+        // XG GA. strand '+' ⇒ SEQ/XM are NOT reoriented. Driven through the REAL
+        // extraction (index 1 + pbat=true → eff 3) + the GA methylation_call branch.
+        let g = genome_of(&[("chr1", b"TTGCGTACTT")]);
+        let refid = build_refid(&g);
+        let b = best("chr1", 3, 1, "6M");
+        let mut c = Counters::default();
+        let ext = extract_corresponding_genomic_sequence_single_end(&b, &g, true, &mut c).unwrap();
+        assert_eq!(ext.unmodified_genomic_sequence, b"TTGCGTAC");
+        let read = b"GCGTAC";
+        let mc = methylation_call(
+            read,
+            &ext.unmodified_genomic_sequence,
+            ext.read_conversion,
+            &mut c,
+        );
+        let rec =
+            single_end_sam_output("r1", read, b"FFFFFF", &b, &ext, &mc, &refid, false).unwrap();
+        let inner = rec.inner();
+        assert_eq!(u16::from(inner.flags()), 16);
+        assert_eq!(inner.sequence().as_ref(), b"GCGTAC"); // strand '+', not revcomp'd
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        assert_eq!(xm, b"H.Z...");
+        assert_eq!(
+            inner.data().get(&Tag::from(*b"XR")).unwrap(),
+            &Value::String(BString::from("GA"))
+        );
+        assert_eq!(
+            inner.data().get(&Tag::from(*b"XG")).unwrap(),
+            &Value::String(BString::from("GA"))
+        );
+    }
+
+    #[test]
+    fn sam_output_ctot_eff2_minus_ga_ct_flag0() {
+        // pbat/non-dir CTOT (effective index 2): strand '-', GA/CT → FLAG 0, XR GA,
+        // XG CT. strand '-' ⇒ SEQ revcomp'd + XM reversed. (index 0 + pbat=true → eff 2.)
+        let g = genome_of(&[("chr1", b"TTGCGTACTT")]);
+        let refid = build_refid(&g);
+        let b = best("chr1", 3, 0, "6M");
+        let mut c = Counters::default();
+        let ext = extract_corresponding_genomic_sequence_single_end(&b, &g, true, &mut c).unwrap();
+        // 3' append "GCGTACTT" then revcomp → "AAGTACGC".
+        assert_eq!(ext.unmodified_genomic_sequence, b"AAGTACGC");
+        let read = b"GCGTAC";
+        let mc = methylation_call(
+            read,
+            &ext.unmodified_genomic_sequence,
+            ext.read_conversion,
+            &mut c,
+        );
+        // forward call "H...z." → reversed on the '-' strand below.
+        let rec =
+            single_end_sam_output("r1", read, b"FFFFFF", &b, &ext, &mc, &refid, false).unwrap();
+        let inner = rec.inner();
+        assert_eq!(u16::from(inner.flags()), 0); // (-, GA, CT) → FLAG 0
+        assert_eq!(inner.sequence().as_ref(), b"GTACGC"); // revcomp("GCGTAC")
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        assert_eq!(xm, b".z...H"); // reversed "H...z."
+        assert_eq!(
+            inner.data().get(&Tag::from(*b"XR")).unwrap(),
+            &Value::String(BString::from("GA"))
+        );
+        assert_eq!(
+            inner.data().get(&Tag::from(*b"XG")).unwrap(),
+            &Value::String(BString::from("CT"))
+        );
+    }
+
+    #[test]
+    fn pe_per_mate_xr_xg_index_1_and_2() {
+        // PE CTOB (index 1): XR_1=GA, XR_2=CT, XG=GA. PE CTOT (index 2): XR_1=GA,
+        // XR_2=CT, XG=CT. (The index-1/2 records are first populated by Phase-8
+        // pbat/non-dir; the FLAG pairs themselves are pinned by pe_flag_constant_table.)
+        let (r1, r2) = run_pe_sam(1, 100, 140, 110, 150, true);
+        assert_eq!(
+            r1.data().get(&Tag::from(*b"XR")),
+            Some(&Value::String(BString::from("GA")))
+        );
+        assert_eq!(
+            r2.data().get(&Tag::from(*b"XR")),
+            Some(&Value::String(BString::from("CT")))
+        );
+        assert_eq!(
+            r1.data().get(&Tag::from(*b"XG")),
+            Some(&Value::String(BString::from("GA")))
+        );
+        let (r1b, r2b) = run_pe_sam(2, 100, 140, 110, 150, true);
+        assert_eq!(
+            r1b.data().get(&Tag::from(*b"XR")),
+            Some(&Value::String(BString::from("GA")))
+        );
+        assert_eq!(
+            r2b.data().get(&Tag::from(*b"XR")),
+            Some(&Value::String(BString::from("CT")))
+        );
+        assert_eq!(
+            r1b.data().get(&Tag::from(*b"XG")),
+            Some(&Value::String(BString::from("CT")))
+        );
+    }
+
     #[test]
     fn record_roundtrips_through_bam_tag_order_values_qual() {
         // Build a record, write a BAM via BamWriter, read it back via bismark-io

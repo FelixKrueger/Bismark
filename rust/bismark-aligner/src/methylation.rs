@@ -996,6 +996,73 @@ mod tests {
         assert_eq!(c.ct_ga_ct_count, 0); // edge → no strand bucket
     }
 
+    // ---- Phase 8: SE pbat `+2` index modifier + the GA methylation branch ----
+
+    #[test]
+    fn extract_pbat_se_index0_eff2_ga_ct() {
+        // pbat SE: physical slot 0 + pbat=true → eff 2 → (-, GA, CT). 3' append +
+        // revcomp; lands in the ga_ct (CTOT) bucket. (No prior test passes pbat=true.)
+        let g = genome_of("chr1", b"TTGCGTACTT"); // 10 bp
+        let b = best("chr1", 3, 0, "6M"); // pos0 = 2
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_single_end(&b, &g, true, &mut c).unwrap();
+        assert!(e.extracted);
+        assert_eq!(e.alignment_strand, b'-');
+        assert_eq!(e.read_conversion, Conversion::Ga);
+        assert_eq!(e.genome_conversion, Conversion::Ct);
+        // M chr[2..8]="GCGTAC" + 3' chr[8..10]="TT" = "GCGTACTT", then revcomp.
+        assert_eq!(
+            e.unmodified_genomic_sequence,
+            reverse_complement(b"GCGTACTT")
+        );
+        assert_eq!(e.unmodified_genomic_sequence.len(), 6 + 2);
+        assert_eq!(c.ga_ct_count, 1);
+        assert_eq!(c.ct_ct_count, 0);
+    }
+
+    #[test]
+    fn extract_pbat_se_index1_eff3_ga_ga() {
+        // pbat SE: physical slot 1 + pbat=true → eff 3 → (+, GA, GA). 5' prepend, NO
+        // revcomp; lands in the ga_ga (CTOB) bucket.
+        let g = genome_of("chr1", b"TTGCGTACTT");
+        let b = best("chr1", 3, 1, "6M"); // pos0 = 2
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_single_end(&b, &g, true, &mut c).unwrap();
+        assert!(e.extracted);
+        assert_eq!(e.alignment_strand, b'+');
+        assert_eq!(e.read_conversion, Conversion::Ga);
+        assert_eq!(e.genome_conversion, Conversion::Ga);
+        // 5' chr[0..2]="TT" + M chr[2..8]="GCGTAC" = "TTGCGTAC" (no revcomp).
+        assert_eq!(e.unmodified_genomic_sequence, b"TTGCGTAC");
+        assert_eq!(c.ga_ga_count, 1);
+        assert_eq!(c.ga_ct_count, 0);
+    }
+
+    #[test]
+    fn methylation_call_ga_branch_contexts() {
+        // GA branch (Perl 4916–4998): compares seq[i] to genomic[i+2]; context looks
+        // UPSTREAM (i+1 then i). read "GCGTAC" vs genomic "TTGCGTAC":
+        //  i0 g=genomic[2]=G, read G == → meC; upstream genomic[1]=T, genomic[0]=T → CHH 'H'
+        //  i1 g=genomic[3]=C, read C ==, g!=G → '.'
+        //  i2 g=genomic[4]=G, read G == → meC; upstream genomic[3]=C → CpG 'Z'
+        //  i3 g=T '.' ; i4 g=A '.' ; i5 g=C '.'
+        let mut c = Counters::default();
+        let call = methylation_call(b"GCGTAC", b"TTGCGTAC", Conversion::Ga, &mut c);
+        assert_eq!(call, b"H.Z...");
+        assert_eq!(c.total_me_chh, 1);
+        assert_eq!(c.total_me_cpg, 1);
+    }
+
+    #[test]
+    fn methylation_call_ga_branch_converted_g_to_a_unmethylated() {
+        // GA branch, a converted (unmethylated) base: read 'A' where genomic[i+2]='G'
+        // → converted; upstream genomic[1]='C' → CpG → lower-case 'z'.
+        let mut c = Counters::default();
+        let call = methylation_call(b"A", b"CCG", Conversion::Ga, &mut c);
+        assert_eq!(call, b"z");
+        assert_eq!(c.total_unme_cpg, 1);
+    }
+
     #[test]
     fn pe_extract_deletion_index0_builds_md_seq_and_indels() {
         // mate1 has a deletion (2M1D2M); md_seq includes the deleted base, indels=1.

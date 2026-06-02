@@ -162,7 +162,8 @@ fn convert_one(seq: &[u8], kind: ConvKind) -> Vec<u8> {
     }
 }
 
-/// Write the C→T-converted FastQ temp file for one single-end directional input.
+/// Write the C→T-converted FastQ temp file for one single-end input (directional
+/// + the C→T half of non-directional). Perl `biTransformFastQFiles` 5540–5573.
 pub fn bisulfite_convert_fastq_se(
     input: &Path,
     temp_dir: &Path,
@@ -171,24 +172,77 @@ pub fn bisulfite_convert_fastq_se(
     convert_fastq_impl(input, temp_dir, opts, ConvKind::Ct, b"", "_C_to_T")
 }
 
-/// Write the converted FastQ temp file for one paired-end directional mate (Perl
-/// `biTransformFastQFiles_paired_end`, 5810–6025). Read 1 → **C→T** (`_C_to_T`),
-/// read 2 → **forward G→A** (`_G_to_A`, NOT revcomp+C→T). The read-number tag
-/// `/1/1` (R1) or `/2/2` (R2) is inserted before the ID's trailing `\n` (Perl
-/// 5945–5960) — Bowtie 2 strips the outer `/1`,`/2`, leaving `/1`,`/2`.
+/// Write the **G→A**-converted FastQ temp file for one single-end input — pbat
+/// (the sole converted file, Perl 5523–5539) and the G→A half of non-directional
+/// (Perl 5550–5573). No read-number ID suffix (SE), `_G_to_A` filename stem.
+pub fn bisulfite_convert_fastq_se_ga(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+) -> Result<ConvertedReads> {
+    convert_fastq_impl(input, temp_dir, opts, ConvKind::Ga, b"", "_G_to_A")
+}
+
+/// The temp-file filename stem for a conversion kind (Perl `_C_to_T` / `_G_to_A`).
+fn file_base_for(kind: ConvKind) -> &'static str {
+    match kind {
+        ConvKind::Ct => "_C_to_T",
+        ConvKind::Ga => "_G_to_A",
+    }
+}
+
+/// The `/1/1` (R1) or `/2/2` (R2) read-number ID tag inserted before the ID's
+/// trailing `\n` (Perl 5945–5960) — Bowtie 2 strips the outer `/1`,`/2`, leaving
+/// `/1`,`/2`. Mode-independent: only the `tr` direction (`kind`) flips per library.
+fn pe_id_suffix(read_number: u8) -> Result<&'static [u8]> {
+    match read_number {
+        1 => Ok(b"/1/1"),
+        2 => Ok(b"/2/2"),
+        _ => Err(AlignerError::Validation(format!(
+            "invalid paired-end read number {read_number} (expected 1 or 2)"
+        ))),
+    }
+}
+
+/// Write the converted FastQ temp file for one paired-end **directional** mate
+/// (Perl `biTransformFastQFiles_paired_end`, 5810–6025). Read 1 → **C→T**
+/// (`_C_to_T`), read 2 → **forward G→A** (`_G_to_A`, NOT revcomp+C→T). Delegates
+/// to [`bisulfite_convert_fastq_pe_kind`] with the directional read#→kind mapping.
 pub fn bisulfite_convert_fastq_pe(
     input: &Path,
     temp_dir: &Path,
     opts: &ConvertOptions,
     read_number: u8,
 ) -> Result<ConvertedReads> {
-    match read_number {
-        1 => convert_fastq_impl(input, temp_dir, opts, ConvKind::Ct, b"/1/1", "_C_to_T"),
-        2 => convert_fastq_impl(input, temp_dir, opts, ConvKind::Ga, b"/2/2", "_G_to_A"),
-        _ => Err(AlignerError::Validation(format!(
-            "invalid paired-end read number {read_number} (expected 1 or 2)"
-        ))),
-    }
+    // Directional: R1 = C→T, R2 = G→A (the mirror of pbat).
+    let kind = match read_number {
+        1 => ConvKind::Ct,
+        2 => ConvKind::Ga,
+        _ => {
+            return Err(AlignerError::Validation(format!(
+                "invalid paired-end read number {read_number} (expected 1 or 2)"
+            )));
+        }
+    };
+    bisulfite_convert_fastq_pe_kind(input, temp_dir, opts, read_number, kind)
+}
+
+/// Library-aware paired-end per-mate conversion (Perl 5810–6025). The `/1/1`,
+/// `/2/2` ID tag is per-mate regardless of mode; only the substitution `kind`
+/// flips with the library — directional R1=C→T/R2=G→A, **pbat R1=G→A/R2=C→T**,
+/// non-directional = BOTH per mate. The caller passes the explicit `kind` so the
+/// pbat inversion / non-dir doubling is never a silent reuse of the directional
+/// read#→kind hardcoding (rev1 plan-review B I-1). The filename stem follows the
+/// kind (`_C_to_T` / `_G_to_A`). `read_number` ∈ {1, 2}.
+pub(crate) fn bisulfite_convert_fastq_pe_kind(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    read_number: u8,
+    kind: ConvKind,
+) -> Result<ConvertedReads> {
+    let suffix = pe_id_suffix(read_number)?;
+    convert_fastq_impl(input, temp_dir, opts, kind, suffix, file_base_for(kind))
 }
 
 /// Shared per-record conversion core for SE + PE. `kind` selects the substitution,
@@ -615,5 +669,98 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    // ---- Phase 8: non-directional + pbat conversion variants ----------------
+
+    /// G→A of `GOLDEN_IN` (uc then `tr/G/A/`): read1 ACGTACGTNN→ACATACATNN,
+    /// read2 CCCCGGTT→CCCCAATT. id2/qual verbatim; fix_IDs ws→`_`.
+    const GOLDEN_OUT_GA: &[u8] =
+        b"@read1_1:N:0:ATCG\nACATACATNN\n+\nIIIIIIIIII\n@read2_lane2\nCCCCAATT\n+read2\nJJJJJJJJ\n";
+
+    #[test]
+    fn se_ga_entry_point_g_to_a_no_suffix() {
+        // pbat SE + the G→A half of non-dir SE: G→A bytes, `_G_to_A` stem, no tag.
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join("reads.fq");
+        std::fs::write(&inp, GOLDEN_IN).unwrap();
+        let cr = bisulfite_convert_fastq_se_ga(
+            &inp,
+            &tmp.path().join("t"),
+            &opts(false, None, None, false),
+        )
+        .unwrap();
+        let out = std::fs::read(&cr.path).unwrap();
+        assert_eq!(out, GOLDEN_OUT_GA);
+        assert_eq!(cr.name, "reads.fq_G_to_A.fastq");
+        assert_eq!(cr.count, 2);
+    }
+
+    fn run_pe_kind(
+        input: &[u8],
+        name: &str,
+        o: &ConvertOptions,
+        read_number: u8,
+        kind: ConvKind,
+    ) -> (ConvertedReads, Vec<u8>) {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join(name);
+        std::fs::write(&inp, input).unwrap();
+        let td = tmp.path().join("t");
+        let cr = bisulfite_convert_fastq_pe_kind(&inp, &td, o, read_number, kind).unwrap();
+        let out = std::fs::read(&cr.path).unwrap();
+        (cr, out)
+    }
+
+    #[test]
+    fn pe_pbat_r1_is_g_to_a_with_slash_1_1() {
+        // pbat INVERTS directional: R1 → G→A `/1/1` `_G_to_A` (not C→T).
+        let (cr, out) = run_pe_kind(
+            GOLDEN_IN,
+            "r_1.fq",
+            &opts(false, None, None, false),
+            1,
+            ConvKind::Ga,
+        );
+        assert_eq!(cr.name, "r_1.fq_G_to_A.fastq");
+        assert_eq!(
+            out,
+            b"@read1_1:N:0:ATCG/1/1\nACATACATNN\n+\nIIIIIIIIII\n@read2_lane2/1/1\nCCCCAATT\n+read2\nJJJJJJJJ\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn pe_pbat_r2_is_c_to_t_with_slash_2_2() {
+        // pbat R2 → C→T `/2/2` `_C_to_T` (the mirror of directional R1).
+        let (cr, out) = run_pe_kind(
+            GOLDEN_IN,
+            "r_2.fq",
+            &opts(false, None, None, false),
+            2,
+            ConvKind::Ct,
+        );
+        assert_eq!(cr.name, "r_2.fq_C_to_T.fastq");
+        assert_eq!(
+            out,
+            b"@read1_1:N:0:ATCG/2/2\nATGTATGTNN\n+\nIIIIIIIIII\n@read2_lane2/2/2\nTTTTGGTT\n+read2\nJJJJJJJJ\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn pe_nondir_makes_both_kinds_per_mate() {
+        // non-dir: each mate → BOTH C→T and G→A (4 temp files); the `/1/1`,`/2/2`
+        // tag is per-mate regardless of kind, the stem follows the kind.
+        let o = opts(false, None, None, false);
+        let (ct1, _) = run_pe_kind(GOLDEN_IN, "r_1.fq", &o, 1, ConvKind::Ct);
+        let (ga1, ga1_out) = run_pe_kind(GOLDEN_IN, "r_1.fq", &o, 1, ConvKind::Ga);
+        let (ct2, ct2_out) = run_pe_kind(GOLDEN_IN, "r_2.fq", &o, 2, ConvKind::Ct);
+        let (ga2, _) = run_pe_kind(GOLDEN_IN, "r_2.fq", &o, 2, ConvKind::Ga);
+        assert_eq!(ct1.name, "r_1.fq_C_to_T.fastq");
+        assert_eq!(ga1.name, "r_1.fq_G_to_A.fastq");
+        assert_eq!(ct2.name, "r_2.fq_C_to_T.fastq");
+        assert_eq!(ga2.name, "r_2.fq_G_to_A.fastq");
+        // R1 G→A carries the `/1/1` tag; R2 C→T carries `/2/2`.
+        assert!(ga1_out.starts_with(b"@read1_1:N:0:ATCG/1/1\nACATACATNN\n"));
+        assert!(ct2_out.starts_with(b"@read1_1:N:0:ATCG/2/2\nATGTATGTNN\n"));
     }
 }

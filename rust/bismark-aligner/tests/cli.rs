@@ -737,3 +737,461 @@ fn pbat_genome_as_positional_resolves() {
         .success()
         .stderr(predicate::str::contains("pbat"));
 }
+
+// ===========================================================================
+// Phase 8 — non-directional + pbat (the GA-reads complementary strands).
+//
+// 🔴 The pre-Phase-8 fakes emit a mapped hit ONLY on `*BS_CT*`, so a non-dir/pbat
+// test would silently pass on all-unmapped (both plan reviewers). These fakes map
+// the **G→A-converted reads** (`-U`/`-1` ending `_G_to_A`) onto a chosen index, so
+// the first-live CTOT/CTOB (SE eff 2/3) and PE index-1/2 paths actually run, and
+// we byte-assert FLAG/SEQ/XR/XG/XM. The directional-library oxy gate lands ~0 reads
+// on these strands, so these integration tests — not the gate — are the proof.
+// ===========================================================================
+
+/// Like [`make_genome`] but with a caller-chosen chr1 sequence (the GA-branch
+/// tests need a longer chr1 so the +2 context window fits around the alignment).
+#[cfg(unix)]
+fn make_genome_chr1(dir: &Path, seq: &[u8]) {
+    make_genome(dir);
+    let mut fa = b">chr1\n".to_vec();
+    fa.extend_from_slice(seq);
+    fa.push(b'\n');
+    fs::write(dir.join("genome.fa"), fa).unwrap();
+}
+
+/// Fake `bowtie2` that maps the read on the **CT index** ONLY when the `-U` reads
+/// file is the G→A-converted one (`*_G_to_A*`): pbat SE slot 0 / non-dir SE slot 2
+/// → effective index 2 → **CTOT**. chr1:3 6M. Other instances report unmapped.
+#[cfg(unix)]
+fn make_fake_bowtie2_ga_reads_ct_index(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+hit=0
+case "$idx" in *BS_CT*) case "$inp" in *_G_to_A*) hit=1;; esac;; esac
+if [ "$hit" = 1 ]; then
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t3\t42\t6M\t*\t0\t0\tACATAC\tFFFFFF\tAS:i:0\tMD:Z:6" }' "$inp"
+else
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+fi
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Fake `bowtie2` that maps the read on the **GA index** ONLY when the `-U` reads
+/// file is the G→A-converted one: pbat SE slot 1 / non-dir SE slot 3 → effective
+/// index 3 → **CTOB**. chr1:3 6M (RNAME `chr1_GA_converted`).
+#[cfg(unix)]
+fn make_fake_bowtie2_ga_reads_ga_index(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+hit=0
+case "$idx" in *BS_GA*) case "$inp" in *_G_to_A*) hit=1;; esac;; esac
+if [ "$hit" = 1 ]; then
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_GA_converted\t3\t42\t6M\t*\t0\t0\tACATAC\tFFFFFF\tAS:i:0\tMD:Z:6" }' "$inp"
+else
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+fi
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Read back a SAM string tag from a BAM record.
+#[cfg(unix)]
+fn rec_tag(r: &noodles_sam::alignment::RecordBuf, tag: [u8; 2]) -> Option<Vec<u8>> {
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    match r.data().get(&Tag::from(tag)) {
+        Some(Value::String(s)) => Some(s.to_vec()),
+        _ => None,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pbat_se_ct_index_writes_ctot_record() {
+    // pbat SE: BOTH instances read the G→A file; the CT-index hit lands at eff 2 →
+    // CTOT (strand '-', GA/CT → FLAG 0, SEQ revcomp'd, XM reversed).
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"TTGCGTACTT"); // 10 bp
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_ga_reads_ct_index(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 0); // CTOT → FLAG 0
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 3);
+    assert_eq!(r.sequence().as_ref(), b"GTACGC"); // strand '-' → revcomp(read)
+    assert_eq!(rec_tag(r, *b"XR").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XG").as_deref(), Some(&b"CT"[..]));
+    assert_eq!(rec_tag(r, *b"XM").as_deref(), Some(&b".z...H"[..]));
+    // pbat SE temp = the SINGLE G→A file; deleted after the run.
+    assert!(!temp.path().join("reads.fq_G_to_A.fastq").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn pbat_se_ga_index_writes_ctob_record() {
+    // pbat SE: the GA-index hit lands at eff 3 → CTOB (strand '+', GA/GA → FLAG 16,
+    // SEQ/XM NOT reoriented).
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"TTGCGTACTT");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_ga_reads_ga_index(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // CTOB → FLAG 16
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 3);
+    assert_eq!(r.sequence().as_ref(), b"GCGTAC"); // strand '+' → original read
+    assert_eq!(rec_tag(r, *b"XR").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XG").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XM").as_deref(), Some(&b"H.Z..."[..]));
+}
+
+#[cfg(unix)]
+#[test]
+fn nondir_se_four_instances_ctot_no_rejection() {
+    // non-dir SE spawns 4 instances (slots 0–3). The CT-index/G→A-reads hit lands
+    // at slot 2 → eff 2 → CTOT — a path directional would REJECT but non-dir keeps
+    // (a record is written; nothing rejected). Both C→T and G→A temps are cleaned up.
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"TTGCGTACTT");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_ga_reads_ct_index(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("unique best alignments:   1")
+                .and(predicate::str::contains("directional-rejected:     0")),
+        );
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(
+        recs.len(),
+        1,
+        "the complementary-strand read is KEPT (not rejected)"
+    );
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 0); // index 2 → CTOT → FLAG 0
+    assert_eq!(rec_tag(r, *b"XR").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XG").as_deref(), Some(&b"CT"[..]));
+    // non-dir SE temps: BOTH C→T and G→A deleted (rev1 A per-mode cleanup).
+    assert!(!temp.path().join("reads.fq_C_to_T.fastq").is_file());
+    assert!(!temp.path().join("reads.fq_G_to_A.fastq").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn nondir_se_ga_index_ctob_record() {
+    // non-dir SE: the GA-index/G→A-reads hit lands at slot 3 → eff 3 → CTOB.
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"TTGCGTACTT");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_ga_reads_ga_index(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // index 3 → CTOB → FLAG 16
+    assert_eq!(rec_tag(r, *b"XR").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XG").as_deref(), Some(&b"GA"[..]));
+}
+
+/// PE fake `bowtie2` that maps a pair on the **GA index** ONLY when `-1` is the
+/// G→A-converted R1 (`*_G_to_A*`): pbat slot 1 / non-dir slot 1 → PE index 1 →
+/// **CTOB** (FLAG 163/83). Both mates at chr1:5 6M, RNAME `chr1_GA_converted`.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_ga_index(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+hit=0
+case "$idx" in *BS_GA*) case "$m1" in *_G_to_A*) hit=1;; esac;; esac
+if [ "$hit" = 1 ]; then
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t99\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACATAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      print id "/2\t147\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACATAC\tFFFFFF\tAS:i:0\tMD:Z:6" }' "$m1"
+else
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1"
+fi
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// PE fake `bowtie2` that maps a pair on the **CT index** ONLY when `-1` is the
+/// G→A-converted R1: pbat slot 2 / non-dir slot 2 → PE index 2 → **CTOT** (FLAG
+/// 147/99). Both mates at chr1:5 6M, RNAME `chr1_CT_converted`.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_ct_index_ga_reads(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+hit=0
+case "$idx" in *BS_CT*) case "$m1" in *_G_to_A*) hit=1;; esac;; esac
+if [ "$hit" = 1 ]; then
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t99\tchr1_CT_converted\t5\t42\t6M\t=\t5\t6\tACATAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      print id "/2\t147\tchr1_CT_converted\t5\t42\t6M\t=\t5\t-6\tACATAC\tFFFFFF\tAS:i:0\tMD:Z:6" }' "$m1"
+else
+  awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1"
+fi
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+#[cfg(unix)]
+#[test]
+fn pbat_pe_ga_index_writes_ctob_pair() {
+    // pbat PE populates slots 1 (GA idx) + 2 (CT idx); the GA-index hit → PE index 1
+    // → CTOB: FLAG pair (163, 83), R1 XR GA / R2 XR CT, XG GA. pbat temps = G→A_1 +
+    // C→T_2 (both deleted).
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"ACGTACGTACGTACGTACGT"); // 20 bp
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_ga_index(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2);
+    let (m1, m2) = (recs[0].inner(), recs[1].inner());
+    assert_eq!(u16::from(m1.flags()), 163); // PE index 1 → (163, 83)
+    assert_eq!(u16::from(m2.flags()), 83);
+    assert_eq!(rec_tag(m1, *b"XR").as_deref(), Some(&b"GA"[..])); // R1 GA
+    assert_eq!(rec_tag(m2, *b"XR").as_deref(), Some(&b"CT"[..])); // R2 CT
+    assert_eq!(rec_tag(m1, *b"XG").as_deref(), Some(&b"GA"[..])); // XG shared GA
+    assert_eq!(rec_tag(m2, *b"XG").as_deref(), Some(&b"GA"[..]));
+    assert!(!temp.path().join("reads_1.fq_G_to_A.fastq").is_file());
+    assert!(!temp.path().join("reads_2.fq_C_to_T.fastq").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn pbat_pe_ct_index_writes_ctot_pair() {
+    // pbat PE: the CT-index hit → PE index 2 → CTOT: FLAG pair (147, 99), XG CT.
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"ACGTACGTACGTACGTACGT");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_ct_index_ga_reads(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2);
+    let (m1, m2) = (recs[0].inner(), recs[1].inner());
+    assert_eq!(u16::from(m1.flags()), 147); // PE index 2 → (147, 99)
+    assert_eq!(u16::from(m2.flags()), 99);
+    assert_eq!(rec_tag(m1, *b"XG").as_deref(), Some(&b"CT"[..]));
+}
+
+#[cfg(unix)]
+#[test]
+fn nondir_pe_four_slots_index1_no_rejection() {
+    // non-dir PE populates ALL 4 slots; the GA-index/G→A-R1 hit lands at slot 1 →
+    // PE index 1 → CTOB, KEPT (directional would reject index 1/2). All 4 temps gone.
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"ACGTACGTACGTACGTACGT");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_ga_index(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nGCGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("unique best alignments:   1")
+                .and(predicate::str::contains("directional-rejected:     0")),
+        );
+
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2, "the index-1 pair is KEPT (not rejected)");
+    assert_eq!(u16::from(recs[0].inner().flags()), 163); // index 1 → (163, 83)
+    assert_eq!(u16::from(recs[1].inner().flags()), 83);
+    // non-dir PE temps: all 4 (C→T_1, G→A_1, C→T_2, G→A_2) deleted.
+    assert!(!temp.path().join("reads_1.fq_C_to_T.fastq").is_file());
+    assert!(!temp.path().join("reads_1.fq_G_to_A.fastq").is_file());
+    assert!(!temp.path().join("reads_2.fq_C_to_T.fastq").is_file());
+    assert!(!temp.path().join("reads_2.fq_G_to_A.fastq").is_file());
+}

@@ -12,13 +12,14 @@
 //! Rust path writes via noodles, not samtools).
 //!
 //! **This crate is built phase by phase** (see `plans/05312026_bismark-aligner/`).
-//! Implemented so far (single-end directional spine): Phase 1 CLI/discovery/
-//! detection, Phase 2 read conversion, Phase 3 single-instance stream, Phase 4
-//! N-way lockstep merge + scoring + MAPQ, Phase 5 genomic-seq + `XM`/`XR`/`XG`
-//! call + BAM output (the first byte-identity gate, passed on oxy), and Phase 6
-//! the alignment report + `--unmapped`/`--ambiguous` FastQ + `--ambig_bam`. The
-//! SE-directional pipeline runs end to end. PE / non-directional / pbat / FastA /
-//! threading land in later phases.
+//! Implemented so far: Phase 1 CLI/discovery/detection, Phase 2 read conversion,
+//! Phase 3 single-instance stream, Phase 4 N-way lockstep merge + scoring + MAPQ,
+//! Phase 5 genomic-seq + `XM`/`XR`/`XG` call + BAM output (the first byte-identity
+//! gate, passed on oxy), Phase 6 the alignment report + `--unmapped`/`--ambiguous`
+//! FastQ + `--ambig_bam`, Phase 7 paired-end (directional), and Phase 8 the
+//! non-directional + pbat library types. **FastQ single-end + paired-end, all
+//! library types (directional/non-directional/pbat), run end to end.** FastA input
+//! and multicore/threading land in later phases.
 
 pub mod align;
 pub mod aligner;
@@ -102,28 +103,90 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 /// Dispatch the v1 spine (single-end + directional + FastQ) to the full
 /// convert→align→merge pipeline; other modes are wired in later phases.
 fn pipeline(config: &RunConfig) -> Result<()> {
-    match (&config.layout, config.library, config.format) {
-        (ReadLayout::SingleEnd { reads }, LibraryType::Directional, ReadFormat::FastQ) => {
-            run_se_directional(config, reads)
-        }
-        (ReadLayout::PairedEnd { mates1, mates2 }, LibraryType::Directional, ReadFormat::FastQ) => {
-            run_pe_directional(config, mates1, mates2)
+    match (&config.layout, config.format) {
+        // SE FastQ — all library types (directional/non-directional/pbat) fold
+        // into the generalized `run_se` (the per-mode instance plan).
+        (ReadLayout::SingleEnd { reads }, ReadFormat::FastQ) => run_se(config, reads),
+        (ReadLayout::PairedEnd { mates1, mates2 }, ReadFormat::FastQ) => {
+            run_pe(config, mates1, mates2)
         }
         _ => {
             eprintln!(
-                "(alignment for this mode is wired in a later phase; the v1 spine is \
-                 FastQ single-end/paired-end directional)"
+                "(FastA input and multicore/threading are wired in a later phase; \
+                 this build handles FastQ single-end/paired-end, all library types)"
             );
             Ok(())
         }
     }
 }
 
-/// SE-directional pipeline: load the genome once, then per read file convert
-/// (C→T), spawn the 2 Bowtie 2 instances, drive the lockstep merge, write the
-/// Bismark BAM + the alignment report, and (when requested) the `--unmapped` /
-/// `--ambiguous` FastQ files and the `--ambig_bam`.
-fn run_se_directional(config: &RunConfig, reads: &[String]) -> Result<()> {
+/// Which bisulfite index a spawned instance reads (`BS_CT` vs `BS_GA`).
+#[derive(Clone, Copy)]
+enum IndexChoice {
+    Ct,
+    Ga,
+}
+
+/// Convert the per-mode SE temp file(s) (Perl `biTransformFastQFiles` 5489–5651):
+/// directional = `[C→T]`, pbat = `[G→A]`, non-directional = `[C→T, G→A]` (in that
+/// order — the [`se_instance_plan`] file indices key off it).
+fn convert_se_files(
+    config: &RunConfig,
+    read_file: &str,
+    opts: &convert::ConvertOptions,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let path = Path::new(read_file);
+    let td = &config.output.temp_dir;
+    Ok(match config.library {
+        LibraryType::Directional => vec![convert::bisulfite_convert_fastq_se(path, td, opts)?],
+        LibraryType::Pbat => vec![convert::bisulfite_convert_fastq_se_ga(path, td, opts)?],
+        LibraryType::NonDirectional => vec![
+            convert::bisulfite_convert_fastq_se(path, td, opts)?, // file 0 = C→T
+            convert::bisulfite_convert_fastq_se_ga(path, td, opts)?, // file 1 = G→A
+        ],
+    })
+}
+
+/// The per-mode SE instance plan (Perl `@fhs` templates `reset_counters_and_fhs`
+/// 7153–7242 + the input assignment 519–546 + the `--norc`/`--nofw` name rule
+/// 6873). Each tuple is `(orientation, index, converted-file-index)` in **Bismark
+/// slot order** so the merge's `enumerate` index equals the Perl `@fhs` index.
+/// The file index points into [`convert_se_files`]'s output.
+fn se_instance_plan(library: LibraryType) -> Vec<(Orientation, IndexChoice, usize)> {
+    use IndexChoice::{Ct, Ga};
+    use Orientation::{Nofw, Norc};
+    match library {
+        // directional: s0 CTreadCTgenome (CT/--norc), s1 CTreadGAgenome (GA/--nofw);
+        // both read the C→T file. pbat=false; reject gated off.
+        LibraryType::Directional => vec![(Norc, Ct, 0), (Nofw, Ga, 0)],
+        // pbat: s0 GAreadCTgenome (CT/--nofw), s1 GAreadGAgenome (GA/--norc); both
+        // read the G→A file. The +2 index modifier (extraction) lifts slots 0/1 →
+        // effective 2/3 (CTOT/CTOB). Orientation FLIPS vs directional.
+        LibraryType::Pbat => vec![(Nofw, Ct, 0), (Norc, Ga, 0)],
+        // non-dir: s0 CT/--norc & s1 GA/--nofw read the C→T file (idx 0); s2 CT/--nofw
+        // & s3 GA/--norc read the G→A file (idx 1). All four kept (no rejection).
+        LibraryType::NonDirectional => {
+            vec![(Norc, Ct, 0), (Nofw, Ga, 0), (Nofw, Ct, 1), (Norc, Ga, 1)]
+        }
+    }
+}
+
+/// The conversion banner label for a converted temp file (`C->T`/`G->A`), derived
+/// from its filename stem. STDERR only (not byte-gated).
+fn conv_label(name: &str) -> &'static str {
+    if name.contains("_G_to_A") {
+        "G->A"
+    } else {
+        "C->T"
+    }
+}
+
+/// SE pipeline (all library types): load the genome once, then per read file
+/// convert the per-mode temp file(s), spawn the 2 (directional/pbat) or 4
+/// (non-directional) Bowtie 2 instances per the [`se_instance_plan`], drive the
+/// lockstep merge, write the Bismark BAM + the alignment report, and (when
+/// requested) the `--unmapped` / `--ambiguous` FastQ files and the `--ambig_bam`.
+fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     let started = Instant::now();
     let opts = convert::ConvertOptions::from_config(config);
     let bt2 = &config.detected_aligner.path;
@@ -142,34 +205,33 @@ fn run_se_directional(config: &RunConfig, reads: &[String]) -> Result<()> {
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
 
     for read_file in reads {
-        // Phase 2: C→T temp file (both instances read it).
-        let converted = convert::bisulfite_convert_fastq_se(
-            Path::new(read_file),
-            &config.output.temp_dir,
-            &opts,
-        )?;
-        eprintln!(
-            "Created C->T converted version of {read_file} -> {} ({} sequences)",
-            converted.path.display(),
-            converted.count
-        );
-        // Phase 3: 2 instances — CTreadCTgenome (--norc, CT index) + CTreadGAgenome (--nofw, GA index).
-        let mut streams = vec![
-            AlignerStream::spawn(
+        // Phase 2/8: convert the per-mode temp file(s) (1 for directional/pbat, 2
+        // for non-directional). Both/all instances read from this set.
+        let converted = convert_se_files(config, read_file, &opts)?;
+        for cr in &converted {
+            eprintln!(
+                "Created {} converted version of {read_file} -> {} ({} sequences)",
+                conv_label(&cr.name),
+                cr.path.display(),
+                cr.count
+            );
+        }
+        // Phase 3/8: spawn the instances per the per-mode plan, in Bismark slot
+        // order so the merge's `enumerate` index == the Perl `@fhs` index.
+        let mut streams = Vec::with_capacity(2);
+        for (orientation, index_choice, file_idx) in se_instance_plan(config.library) {
+            let index_basename = match index_choice {
+                IndexChoice::Ct => &config.genome.ct_index_basename,
+                IndexChoice::Ga => &config.genome.ga_index_basename,
+            };
+            streams.push(AlignerStream::spawn(
                 bt2,
                 &config.aligner_options,
-                Orientation::Norc,
-                &config.genome.ct_index_basename,
-                &converted.path,
-            )?,
-            AlignerStream::spawn(
-                bt2,
-                &config.aligner_options,
-                Orientation::Nofw,
-                &config.genome.ga_index_basename,
-                &converted.path,
-            )?,
-        ];
+                orientation,
+                index_basename,
+                &converted[file_idx].path,
+            )?);
+        }
 
         // Open the BAM + optional --ambig_bam / --unmapped / --ambiguous sinks.
         let bam_path = derive_output_path(read_file, config, "_bismark_bt2.bam", ".bam");
@@ -221,8 +283,13 @@ fn run_se_directional(config: &RunConfig, reads: &[String]) -> Result<()> {
 
         sinks.finish()?;
 
-        // Delete the C→T temp file (best-effort; Perl warns, never dies, 1974–1981).
-        let _ = std::fs::remove_file(&converted.path);
+        // Per-mode temp cleanup (rev1 A): delete EVERY converted temp file for this
+        // read — 1 for directional/pbat, 2 (C→T + G→A) for non-directional. Byte-
+        // invisible, so no gate/diff catches an omission. Best-effort (Perl warns,
+        // never dies, 1974–1981).
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
 
         eprintln!("{}", counters_summary(read_file, &counters));
     }
@@ -512,11 +579,64 @@ fn drive_merge(
 // Paired-end directional driver (Phase 7).
 // ===========================================================================
 
-/// PE-directional pipeline (Perl `start_methylation_call_procedure_paired_ends`,
-/// 1746–1962): load the genome once, then per mate-pair convert (R1→C→T, R2→G→A),
-/// spawn the **2** paired Bowtie 2 instances (slots 0/3), drive the PE lockstep
-/// merge, write the `_pe.bam` + `_PE_report.txt` + the `_1`/`_2` aux files.
-fn run_pe_directional(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
+/// The per-mode PE instance plan (Perl PE `@fhs` names 295–298, input assignment
+/// 394–451, name rule 6466–6471). Each tuple is `(Bismark slot, orientation,
+/// index, mate-1 conv kind, mate-2 conv kind)`; the stream is placed at `slot` in
+/// the length-4 `Vec<Option<_>>`. Per-slot index is CT,GA,CT,GA and orientation
+/// `--norc` for slots 0/1, `--nofw` for 2/3. PE extraction keys on the raw slot
+/// index (NO `+2` modifier — that is SE-pbat-only). The directional reject (index
+/// 1/2) is inert for non-dir/pbat (`directional=false`).
+fn pe_instance_plan(
+    library: LibraryType,
+) -> Vec<(
+    usize,
+    Orientation,
+    IndexChoice,
+    convert::ConvKind,
+    convert::ConvKind,
+)> {
+    use IndexChoice::{Ct as ICt, Ga as IGa};
+    use Orientation::{Nofw, Norc};
+    use convert::ConvKind::{Ct, Ga};
+    match library {
+        // directional: s0 OT (CT idx, --norc), s3 OB (GA idx, --nofw); both
+        // read `-1 C→T_R1 -2 G→A_R2`.
+        LibraryType::Directional => vec![(0, Norc, ICt, Ct, Ga), (3, Nofw, IGa, Ct, Ga)],
+        // pbat: s1 CTOB (GA idx, --norc), s2 CTOT (CT idx, --nofw); both read
+        // `-1 G→A_R1 -2 C→T_R2`. (Slots 0/3 unpopulated.)
+        LibraryType::Pbat => vec![(1, Norc, IGa, Ga, Ct), (2, Nofw, ICt, Ga, Ct)],
+        // non-dir: all 4 slots — s0,s3 read C→T_R1/G→A_R2; s1,s2 read G→A_R1/C→T_R2.
+        LibraryType::NonDirectional => vec![
+            (0, Norc, ICt, Ct, Ga),
+            (1, Norc, IGa, Ga, Ct),
+            (2, Nofw, ICt, Ga, Ct),
+            (3, Nofw, IGa, Ct, Ga),
+        ],
+    }
+}
+
+/// Look up the converted temp file for a planned `(mate, kind)` (every planned
+/// pair is converted exactly once into `converted`).
+fn pe_lookup(
+    converted: &[((u8, convert::ConvKind), convert::ConvertedReads)],
+    mate: u8,
+    kind: convert::ConvKind,
+) -> &Path {
+    &converted
+        .iter()
+        .find(|((m, k), _)| *m == mate && *k == kind)
+        .expect("a converted file exists for every planned (mate, kind)")
+        .1
+        .path
+}
+
+/// PE pipeline (all library types) (Perl `start_methylation_call_procedure_paired_ends`,
+/// 1746–1962): load the genome once, then per mate-pair convert the per-mode temp
+/// files (each distinct `(mate, kind)` once — directional/pbat = 2 files, non-dir
+/// = 4), spawn the **2** (directional/pbat) or **4** (non-dir) paired Bowtie 2
+/// instances per the [`pe_instance_plan`], drive the PE lockstep merge, write the
+/// `_pe.bam` + `_PE_report.txt` + the `_1`/`_2` aux files.
+fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
     let started = Instant::now();
     let opts = convert::ConvertOptions::from_config(config);
     let bt2 = &config.detected_aligner.path;
@@ -534,44 +654,58 @@ fn run_pe_directional(config: &RunConfig, mates1: &[String], mates2: &[String]) 
         .any(|t| t == "--dovetail");
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
-        // PE conversion: R1 → C→T (with /1/1), R2 → G→A (with /2/2).
-        let conv1 = convert::bisulfite_convert_fastq_pe(
-            Path::new(read_1),
-            &config.output.temp_dir,
-            &opts,
-            1,
-        )?;
-        let conv2 = convert::bisulfite_convert_fastq_pe(
-            Path::new(read_2),
-            &config.output.temp_dir,
-            &opts,
-            2,
-        )?;
-        eprintln!(
-            "Created C->T converted version of {read_1} ({} seqs) and G->A converted version of {read_2} ({} seqs)",
-            conv1.count, conv2.count
-        );
+        let plan = pe_instance_plan(config.library);
 
-        // 2 paired instances reading the SAME `-1 <CT_R1> -2 <GA_R2>` (Perl 405–412,
-        // 6474): slot 0 = OT (CT index, --norc), slot 3 = OB (GA index, --nofw).
-        let s0 = PairedAlignerStream::spawn(
-            bt2,
-            &config.aligner_options,
-            Orientation::Norc,
-            &config.genome.ct_index_basename,
-            &conv1.path,
-            &conv2.path,
-        )?;
-        let s3 = PairedAlignerStream::spawn(
-            bt2,
-            &config.aligner_options,
-            Orientation::Nofw,
-            &config.genome.ga_index_basename,
-            &conv1.path,
-            &conv2.path,
-        )?;
-        // Slot-indexed (0..4): only 0 and 3 are live; the merge scans 0,3,1,2.
-        let mut streams: Vec<Option<PairedAlignerStream>> = vec![Some(s0), None, None, Some(s3)];
+        // Convert each distinct (mate, kind) the plan needs EXACTLY ONCE — Perl
+        // makes 2 files for directional/pbat (shared by both instances) and 4 for
+        // non-dir (each pair shared by two slots). Preserve first-seen order.
+        let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
+        for &(_slot, _orient, _idx, k1, k2) in &plan {
+            for mk in [(1u8, k1), (2u8, k2)] {
+                if !needed.contains(&mk) {
+                    needed.push(mk);
+                }
+            }
+        }
+        let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
+        for &(mate, kind) in &needed {
+            let input = if mate == 1 { read_1 } else { read_2 };
+            let cr = convert::bisulfite_convert_fastq_pe_kind(
+                Path::new(input),
+                &config.output.temp_dir,
+                &opts,
+                mate,
+                kind,
+            )?;
+            eprintln!(
+                "Created {} converted version of {input} -> {} ({} sequences)",
+                conv_label(&cr.name),
+                cr.path.display(),
+                cr.count
+            );
+            converted.push(((mate, kind), cr));
+        }
+
+        // Slot-indexed (0..4): populate the per-mode slots, leaving the rest `None`
+        // (the merge scans 0,3,1,2). Each instance reads its `-1`/`-2` converted
+        // files (Perl 405–451, 6474).
+        let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
+        for (slot, orientation, index_choice, k1, k2) in plan {
+            let index_basename = match index_choice {
+                IndexChoice::Ct => &config.genome.ct_index_basename,
+                IndexChoice::Ga => &config.genome.ga_index_basename,
+            };
+            let m1 = pe_lookup(&converted, 1, k1);
+            let m2 = pe_lookup(&converted, 2, k2);
+            streams[slot] = Some(PairedAlignerStream::spawn(
+                bt2,
+                &config.aligner_options,
+                orientation,
+                index_basename,
+                m1,
+                m2,
+            )?);
+        }
 
         let bam_path = derive_output_path(read_1, config, "_bismark_bt2_pe.bam", "_pe.bam");
         eprintln!(
@@ -619,9 +753,13 @@ fn run_pe_directional(config: &RunConfig, mates1: &[String], mates2: &[String]) 
         report.flush()?;
         sinks.finish()?;
 
-        // Delete BOTH temps (Perl 2155; directional: C→T_1 + G→A_2). Best-effort.
-        let _ = std::fs::remove_file(&conv1.path);
-        let _ = std::fs::remove_file(&conv2.path);
+        // Per-mode temp cleanup (rev1 A; Perl 2155): delete EVERY converted temp
+        // file — 2 for directional (C→T_1, G→A_2) / pbat (G→A_1, C→T_2), 4 for
+        // non-directional. Byte-invisible, so no gate catches an omission.
+        // Best-effort.
+        for ((_mate, _kind), cr) in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
 
         eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
     }
