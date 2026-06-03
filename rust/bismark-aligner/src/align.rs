@@ -593,17 +593,46 @@ mod tests {
         p
     }
 
+    /// Retry a spawn on the transient `Text file busy` (ETXTBSY) write-then-exec race.
+    /// In the multi-threaded test runner a concurrent `fork`+`exec` on another thread
+    /// momentarily inherits this thread's just-written fake-`bowtie2` fd (the CLOEXEC
+    /// flag only closes it at the *other* child's exec), so exec'ing the freshly-written
+    /// file here can fail transiently — a short pause + retry clears it. Test-only:
+    /// production `bowtie2` is a real installed binary, never freshly written, so the
+    /// production `spawn` (which has no retry) never hits this. (Latent since Phase 3;
+    /// observed flaking the Phase-8 and Phase-9b CI runs.)
+    #[cfg(unix)]
+    fn spawn_retry_etxtbsy<T, E: std::fmt::Display>(
+        mut attempt: impl FnMut() -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        let mut last = attempt();
+        let mut tries = 0u64;
+        while tries < 9 {
+            match &last {
+                Err(e) if e.to_string().contains("Text file busy") => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20 * tries));
+                    last = attempt();
+                }
+                _ => break,
+            }
+        }
+        last
+    }
+
     #[cfg(unix)]
     fn spawn_fake(body: &str) -> (tempfile::TempDir, AlignerStream) {
         let dir = tempfile::TempDir::new().unwrap();
         let bt2 = fake_bowtie2(dir.path(), body);
-        let s = AlignerStream::spawn(
-            &bt2,
-            "-q --score-min L,0,-0.2 --ignore-quals",
-            Orientation::Norc,
-            Path::new("idx"),
-            Path::new("reads.fq"),
-        )
+        let s = spawn_retry_etxtbsy(|| {
+            AlignerStream::spawn(
+                &bt2,
+                "-q --score-min L,0,-0.2 --ignore-quals",
+                Orientation::Norc,
+                Path::new("idx"),
+                Path::new("reads.fq"),
+            )
+        })
         .unwrap();
         (dir, s)
     }
@@ -719,14 +748,16 @@ mod tests {
     fn spawn_fake_pe(body: &str) -> (tempfile::TempDir, PairedAlignerStream) {
         let dir = tempfile::TempDir::new().unwrap();
         let bt2 = fake_bowtie2(dir.path(), body);
-        let s = PairedAlignerStream::spawn(
-            &bt2,
-            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500",
-            Orientation::Norc,
-            Path::new("idx"),
-            Path::new("r1.fq"),
-            Path::new("r2.fq"),
-        )
+        let s = spawn_retry_etxtbsy(|| {
+            PairedAlignerStream::spawn(
+                &bt2,
+                "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500",
+                Orientation::Norc,
+                Path::new("idx"),
+                Path::new("r1.fq"),
+                Path::new("r2.fq"),
+            )
+        })
         .unwrap();
         (dir, s)
     }
