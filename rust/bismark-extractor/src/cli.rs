@@ -405,6 +405,15 @@ impl Cli {
         if self.yacht && self.mbias_only {
             return Err(BismarkExtractorError::YachtWithMbiasOnly);
         }
+        // --yacht × --bedGraph/--cytosine_report (inline-streaming epic Phase 2,
+        // T6). DELIBERATE divergence from Perl (which has no such mutex): the
+        // yacht `any_C_context_*` file is not consumable by the bedGraph chain,
+        // so the combination would silently produce no downstream output. We
+        // guard on the RESOLVED bedgraph flag (`--cytosine_report` forces
+        // `--bedGraph` below), so `--cytosine_report` alone also trips this.
+        if self.yacht && (self.bedgraph || self.cytosine_report) {
+            return Err(BismarkExtractorError::YachtWithBedgraphOrCytosineReport);
+        }
 
         // --cytosine_report needs --genome_folder (SPEC §11 rev 2).
         if self.cytosine_report && self.genome_folder.is_none() {
@@ -653,6 +662,38 @@ mod tests {
         assert!(matches!(
             cli.validate(),
             Err(BismarkExtractorError::YachtWithMbiasOnly)
+        ));
+    }
+
+    /// Inline-streaming epic Phase 2 (T6): `--yacht --bedGraph` rejects.
+    /// Deliberate divergence from Perl (which has no such mutex).
+    #[test]
+    fn validate_rejects_yacht_with_bedgraph() {
+        let f = temp_input();
+        let cli = parse(&["--yacht", "--bedGraph", f.path().to_str().unwrap()]).unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(BismarkExtractorError::YachtWithBedgraphOrCytosineReport)
+        ));
+    }
+
+    /// Inline-streaming epic Phase 2 (T6): `--yacht --cytosine_report` rejects
+    /// (cytosine_report forces bedgraph; the resolved-bedgraph guard catches it).
+    #[test]
+    fn validate_rejects_yacht_with_cytosine_report() {
+        let f = temp_input();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let cli = parse(&[
+            "--yacht",
+            "--cytosine_report",
+            "--genome_folder",
+            tmp_dir.path().to_str().unwrap(),
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(BismarkExtractorError::YachtWithBedgraphOrCytosineReport)
         ));
     }
 

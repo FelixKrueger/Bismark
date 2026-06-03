@@ -90,6 +90,23 @@ pub enum BismarkExtractorError {
     #[error("--yacht and --mbias_only are mutually exclusive")]
     YachtWithMbiasOnly,
 
+    /// `--yacht` is mutex with `--bedGraph` / `--cytosine_report`.
+    ///
+    /// **Deliberate divergence from Perl (inline-streaming epic Phase 2, T6):**
+    /// Perl has NO such mutex — it processes `--yacht --bedGraph --CX`. But
+    /// `--yacht` emits a single `any_C_context_*` file with read-metadata
+    /// columns, which `bismark2bedGraph` does not consume (the bedGraph chain
+    /// reads the standard per-context split files). Combining them is a
+    /// degenerate request: the downstream chain would find no usable input.
+    /// The Rust port rejects it up front rather than silently producing nothing.
+    #[error(
+        "--yacht cannot be combined with --bedGraph or --cytosine_report \
+         (yacht emits a single any_C_context_* file with read-metadata columns \
+         that the bedGraph/cytosine_report chain does not consume). This is a \
+         deliberate Rust-port divergence from Perl, which has no such mutex."
+    )]
+    YachtWithBedgraphOrCytosineReport,
+
     /// `--zero_based` is only valid with `--bedGraph` or `--cytosine_report`.
     /// Coordinate convention only affects those output streams.
     #[error("--zero_based is only valid with --bedGraph or --cytosine_report")]
@@ -173,11 +190,11 @@ pub enum BismarkExtractorError {
     },
 
     /// Chromosome name in @SQ contains non-ASCII bytes. Bismark output
-    /// filenames + bedGraph/cytosine_report subprocesses require ASCII
-    /// chr names.
+    /// filenames + the in-process bedGraph/cytosine_report steps require
+    /// ASCII chr names.
     #[error(
         "chromosome name in @SQ header contains non-ASCII bytes: {name}. \
-         Bismark output filenames + bedGraph/cytosine_report subprocesses \
+         Bismark output filenames + the bedGraph/cytosine_report steps \
          require ASCII chr names."
     )]
     NonAsciiChromosomeName {
@@ -224,55 +241,25 @@ pub enum BismarkExtractorError {
         message: String,
     },
 
-    // ─── Phase G (subprocess chain) additions ───────────────────────────────
-    /// One of the Phase G subprocesses (`bismark2bedGraph` /
-    /// `coverage2cytosine`) exited with a non-zero status. `stderr_tail` is
-    /// the trailing ≤ 64 KiB of the subprocess's stderr captured via the
-    /// tee drain thread; the full stream was already written live to the
-    /// parent's stderr during execution, so this is for downstream-tooling
-    /// error context (where the user may only see the bubbled error).
-    /// Stored as `Vec<u8>` to remain byte-safe under non-UTF-8 subprocess
-    /// output (rev 1 C5); `Display` renders via `String::from_utf8_lossy`.
-    #[error(
-        "subprocess `{tool}` exited with status {exit_status}: \
-         stderr tail (last {tail_len} bytes, UTF-8 lossy):\n{stderr_tail_str}",
-        tail_len = stderr_tail.len(),
-        stderr_tail_str = String::from_utf8_lossy(stderr_tail)
-    )]
-    SubprocessFailed {
-        /// Which subprocess (Bismark2BedGraph or Coverage2Cytosine).
-        tool: crate::subprocess::SubprocessTool,
-        /// Exit status reported by the OS.
-        exit_status: std::process::ExitStatus,
-        /// Trailing ≤ 64 KiB of stderr; byte-safe.
-        stderr_tail: Vec<u8>,
-    },
-
-    /// Could not locate a Phase G subprocess binary. `BISMARK_BIN` (when
-    /// set) is checked strictly — no fallback to PATH or `current_exe()`'s
-    /// parent. Set `BISMARK_BIN=/path/to/Bismark/` to lock the tool source,
-    /// or install Bismark and ensure the subprocess is on PATH.
-    #[error(
-        "could not locate `{tool}`: searched {searched_paths:?}. \
-         Install Bismark and ensure `{tool}` is on PATH, or set \
-         `BISMARK_BIN=/path/to/Bismark/` to lock the tool source."
-    )]
-    SubprocessNotFound {
-        /// Which subprocess.
-        tool: crate::subprocess::SubprocessTool,
-        /// All paths attempted, in the order tried.
-        searched_paths: Vec<std::path::PathBuf>,
-    },
-
-    /// Subprocess spawn (`Command::spawn`) failed at the OS level. Typically
-    /// permission denied on the discovered binary, or the binary disappeared
-    /// between discovery and spawn.
-    #[error("failed to spawn `{tool}`: {source}")]
-    SubprocessSpawnFailed {
-        /// Which subprocess.
-        tool: crate::subprocess::SubprocessTool,
-        /// Underlying I/O error from `Command::spawn` or `child.wait`.
-        #[source]
-        source: std::io::Error,
+    // ─── Inline-streaming epic Phase 2 (in-process downstream chain) ─────────
+    /// The in-process `bismark2bedGraph` / `coverage2cytosine` chain failed —
+    /// argv parse error, config validation error, or a `run()` error from the
+    /// downstream crate. `source` is the downstream error rendered as a string
+    /// (each downstream crate has its own error type; we don't expose them
+    /// across the API boundary). Replaces the Phase G
+    /// `SubprocessFailed`/`SubprocessNotFound`/`SubprocessSpawnFailed` variants,
+    /// which no longer apply now that the chain runs in-process.
+    #[error("downstream `{tool}` failed: {message}")]
+    Downstream {
+        /// Which downstream tool (`"bismark2bedGraph"` or `"coverage2cytosine"`).
+        tool: &'static str,
+        /// The downstream error rendered as a string (parse / validate / run).
+        ///
+        /// Named `message` rather than `source` so `thiserror` does not try to
+        /// treat it as a `std::error::Error` source (a `String` is not an
+        /// `Error`). The downstream crates each have their own error type that
+        /// we do not expose across this API boundary, so we carry the rendered
+        /// text.
+        message: String,
     },
 }

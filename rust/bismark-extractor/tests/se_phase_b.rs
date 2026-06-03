@@ -469,7 +469,8 @@ fn touch(map: &mut OutputFileMap, context: CytosineContext, strand: BismarkStran
         methylated: true,
         xm_byte: b'Z',
     };
-    map.write_call(b"r", "chr1", call, strand, 0, 0).unwrap();
+    map.write_call(b"r", "chr1", call, strand, 0, 0, None, false)
+        .unwrap();
 }
 
 /// Materialize all 12 Default-mode (context × strand) split files by writing
@@ -632,6 +633,8 @@ fn output_file_map_write_call_appends_after_header() {
         BismarkStrand::OT,
         /*yacht_col6=*/ 0,
         /*yacht_col7=*/ 0,
+        /*agg=*/ None,
+        /*cx=*/ false,
     )
     .unwrap();
     map.flush_all().unwrap();
@@ -666,6 +669,8 @@ fn format_meth_line_exact_bytes_for_unmethylated() {
         BismarkStrand::CTOT,
         /*yacht_col6=*/ 0,
         /*yacht_col7=*/ 0,
+        /*agg=*/ None,
+        /*cx=*/ false,
     )
     .unwrap();
     map.flush_all().unwrap();
@@ -1176,17 +1181,25 @@ fn main_accepts_mbias_only_no_longer_rejected() {
         .stderr(predicates::str::contains("output mode MbiasOnly").not());
 }
 
+/// Inline-streaming epic Phase 2 (T4): `--bedGraph` is no longer phase-gated.
+/// `tempbam()` writes junk content, so the run still fails at the bismark-io
+/// reader stage — but the failure text must NOT mention the old Phase G gate
+/// string. A full exit-0 + `.cov.gz` bridge-parity test lives in
+/// `tests/phase2_inline.rs` (it needs a real synthetic BAM with CpG calls).
 #[test]
-fn main_rejects_bedgraph_with_phase_error() {
+fn main_bedgraph_no_longer_rejected_phase_g() {
     let bam = tempbam();
     let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
     cmd.arg(bam.path())
         .arg("--bedGraph")
         .assert()
         .failure()
-        .stderr(predicates::str::contains(
-            "--bedGraph / --cytosine_report subprocess chain; arrives in Phase G",
-        ));
+        .stderr(
+            predicates::str::contains(
+                "--bedGraph / --cytosine_report subprocess chain; arrives in Phase G",
+            )
+            .not(),
+        );
 }
 
 // Note: `extract_se_rejects_record_with_paired_flag_set` requires a real

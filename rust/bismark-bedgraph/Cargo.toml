@@ -1,6 +1,6 @@
 [package]
 name = "bismark-bedgraph"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 description = "Rust port of Bismark Perl's bismark2bedGraph script"
 edition.workspace = true
 rust-version.workspace = true

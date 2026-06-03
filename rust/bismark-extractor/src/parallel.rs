@@ -1119,13 +1119,26 @@ fn write_routed_call(
             ),
         })?;
 
-    state.fhs.write_call(
+    // Phase 3a (F1/F6 + D5): this is the COLLECTOR-thread write funnel in
+    // `--parallel` mode (workers never tee). Disjoint field borrow so the
+    // bedGraph aggregator rides alongside the `&mut OutputFileMap`. `chr`
+    // borrows `chr_table` (not `state`), so it does not conflict with the
+    // split borrow of `state`.
+    let ExtractState {
+        fhs,
+        bedgraph_aggregator,
+        bedgraph_cx,
+        ..
+    } = state;
+    fhs.write_call(
         &routed.qname,
         chr,
         routed.call,
         routed.strand,
         routed.yacht_col6,
         routed.yacht_col7,
+        bedgraph_aggregator.as_mut(),
+        *bedgraph_cx,
     )?;
     Ok(())
 }
