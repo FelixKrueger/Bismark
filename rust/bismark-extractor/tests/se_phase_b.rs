@@ -13,7 +13,6 @@
 #![allow(non_snake_case)]
 
 use std::fs;
-use std::io::Read;
 
 use assert_cmd::Command;
 use bismark_extractor::call::{CytosineContext, MethCall, classify_xm_byte, extract_calls};
@@ -459,10 +458,44 @@ fn mbias_accumulate_routes_to_chh_for_h() {
 // 4. OutputFileMap eager-open tests
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Drive one `write_call` to lazily materialize the split file for
+/// `(context, strand)`. `OutputFileMap::new` is lazy (#889 item 1): a split
+/// file exists on disk only once written. (The 5-col row is `r\t+\tchr1\t100\tZ\n`.)
+fn touch(map: &mut OutputFileMap, context: CytosineContext, strand: BismarkStrand) {
+    let call = MethCall {
+        ref_pos: 100,
+        read_pos: 0,
+        context,
+        methylated: true,
+        xm_byte: b'Z',
+    };
+    map.write_call(b"r", "chr1", call, strand, 0, 0, None, false)
+        .unwrap();
+}
+
+/// Materialize all 12 Default-mode (context × strand) split files by writing
+/// one row to each.
+fn touch_all_12_default(map: &mut OutputFileMap) {
+    for ctx in [
+        CytosineContext::CpG,
+        CytosineContext::CHG,
+        CytosineContext::CHH,
+    ] {
+        for strand in [
+            BismarkStrand::OT,
+            BismarkStrand::CTOT,
+            BismarkStrand::CTOB,
+            BismarkStrand::OB,
+        ] {
+            touch(map, ctx, strand);
+        }
+    }
+}
+
 #[test]
-fn output_file_map_eagerly_creates_all_strand_files_for_default_mode() {
+fn output_file_map_lazily_creates_strand_files_on_write_for_default_mode() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(
+    let mut map = OutputFileMap::new(
         dir.path(),
         "myinput",
         /*no_header=*/ false,
@@ -470,7 +503,11 @@ fn output_file_map_eagerly_creates_all_strand_files_for_default_mode() {
         /*gzip=*/ false,
     )
     .unwrap();
-    drop(_map); // flush BufWriters via Drop
+    // Lazy-open (#889 item 1): no files exist until written. Writing one row to
+    // every (context × strand) materializes all 12, each beginning with header.
+    touch_all_12_default(&mut map);
+    map.flush_all().unwrap();
+    drop(map);
 
     let expected = [
         "CpG_OT_myinput.txt",
@@ -490,14 +527,18 @@ fn output_file_map_eagerly_creates_all_strand_files_for_default_mode() {
         let path = dir.path().join(name);
         assert!(path.exists(), "expected {} to exist", path.display());
         let content = fs::read_to_string(&path).unwrap();
-        assert_eq!(content, SPLIT_FILE_HEADER, "header content for {}", name);
+        assert!(
+            content.starts_with(SPLIT_FILE_HEADER),
+            "{} should begin with the version header",
+            name
+        );
     }
 }
 
 #[test]
 fn output_file_map_omits_header_when_no_header_true() {
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(
+    let mut map = OutputFileMap::new(
         dir.path(),
         "x",
         /*no_header=*/ true,
@@ -505,13 +546,17 @@ fn output_file_map_omits_header_when_no_header_true() {
         /*gzip=*/ false,
     )
     .unwrap();
-    drop(_map);
-    let path = dir.path().join("CpG_OT_x.txt");
-    let content = fs::read_to_string(&path).unwrap();
+    // Lazy-open: write one row so the file materializes; with no_header it must
+    // start with the data row, NOT the version header.
+    touch(&mut map, CytosineContext::CpG, BismarkStrand::OT);
+    map.flush_all().unwrap();
+    drop(map);
+    let content = fs::read_to_string(dir.path().join("CpG_OT_x.txt")).unwrap();
     assert!(
-        content.is_empty(),
-        "no-header mode should produce empty file"
+        !content.starts_with("Bismark methylation extractor"),
+        "no-header mode must not write the version header; got: {content:?}"
     );
+    assert_eq!(content, "r\t+\tchr1\t100\tZ\n");
 }
 
 #[test]
@@ -523,9 +568,9 @@ fn output_file_header_matches_perl_format() {
     );
     assert_eq!(BISMARK_VERSION, "v0.25.1");
 
-    // And verify it actually reaches disk.
+    // And verify it actually reaches disk (lazy-open: after the first write).
     let dir = tempfile::tempdir().unwrap();
-    let _map = OutputFileMap::new(
+    let mut map = OutputFileMap::new(
         dir.path(),
         "x",
         false,
@@ -533,13 +578,11 @@ fn output_file_header_matches_perl_format() {
         /*gzip=*/ false,
     )
     .unwrap();
-    drop(_map);
-    let mut content = String::new();
-    fs::File::open(dir.path().join("CpG_OT_x.txt"))
-        .unwrap()
-        .read_to_string(&mut content)
-        .unwrap();
-    assert_eq!(content, "Bismark methylation extractor version v0.25.1\n");
+    touch(&mut map, CytosineContext::CpG, BismarkStrand::OT);
+    map.flush_all().unwrap();
+    drop(map);
+    let content = fs::read_to_string(dir.path().join("CpG_OT_x.txt")).unwrap();
+    assert!(content.starts_with("Bismark methylation extractor version v0.25.1\n"));
 }
 
 #[test]
@@ -547,7 +590,7 @@ fn output_file_map_creates_output_dir_if_missing() {
     let parent = tempfile::tempdir().unwrap();
     let nested = parent.path().join("does/not/exist/yet");
     assert!(!nested.exists());
-    let _map = OutputFileMap::new(
+    let mut map = OutputFileMap::new(
         &nested,
         "x",
         false,
@@ -557,8 +600,11 @@ fn output_file_map_creates_output_dir_if_missing() {
     .unwrap();
     assert!(
         nested.exists(),
-        "OutputFileMap::new should create output_dir"
+        "OutputFileMap::new should create output_dir (create_dir_all) even before any write"
     );
+    // Lazy-open: the split file appears once written, inside the created dir.
+    touch(&mut map, CytosineContext::CpG, BismarkStrand::OT);
+    map.flush_all().unwrap();
     assert!(nested.join("CpG_OT_x.txt").exists());
 }
 
@@ -644,7 +690,9 @@ fn cleanup_partial_outputs_removes_all_12_files() {
         /*gzip=*/ false,
     )
     .unwrap();
-    // Confirm 12 files exist pre-cleanup.
+    // Lazy-open: materialize all 12 by writing to each strand, then clean up.
+    touch_all_12_default(&mut map);
+    map.flush_all().unwrap();
     let count_before = fs::read_dir(dir.path()).unwrap().count();
     assert_eq!(count_before, 12);
     map.cleanup_all();
@@ -671,6 +719,9 @@ fn cleanup_partial_outputs_continues_past_one_failure() {
         /*gzip=*/ false,
     )
     .unwrap();
+    // Lazy-open: materialize all 12 first, so there are files to clean up.
+    touch_all_12_default(&mut map);
+    map.flush_all().unwrap();
 
     // Pre-delete CpG_CTOT (a directional-library "always 0-byte" file).
     let pre_deleted = dir.path().join("CpG_CTOT_x.txt");
@@ -807,9 +858,12 @@ fn route_call_default_mode_routes_to_strand_specific_file() {
 
     let cpg_ot = fs::read_to_string(dir.path().join("CpG_OT_x.txt")).unwrap();
     assert!(cpg_ot.ends_with("read1\t+\tchr1\t100\tZ\n"));
-    // CpG_CTOT still only contains the header line (no call routed there).
-    let cpg_ctot = fs::read_to_string(dir.path().join("CpG_CTOT_x.txt")).unwrap();
-    assert_eq!(cpg_ctot, SPLIT_FILE_HEADER);
+    // Lazy-open: no call routed to CpG_CTOT → that file is never created
+    // (formerly an eager header-only file; final swept state is identical).
+    assert!(
+        !dir.path().join("CpG_CTOT_x.txt").exists(),
+        "CpG_CTOT must not exist — no call routed there (lazy-open)"
+    );
 }
 
 #[test]
@@ -848,15 +902,16 @@ fn route_single_record_with_mixed_contexts_routes_to_one_strand_directory() {
             content
         );
     }
-    // CTOT/CTOB/OB files for all 3 contexts should contain only the header.
+    // Lazy-open: CTOT/CTOB/OB strands receive no calls → their files are never
+    // created (formerly eager header-only files; final swept state is identical).
     for ctx in ["CpG", "CHG", "CHH"] {
         for strand in ["CTOT", "CTOB", "OB"] {
             let p = dir.path().join(format!("{}_{}_x.txt", ctx, strand));
-            let content = fs::read_to_string(&p).unwrap();
-            assert_eq!(
-                content, SPLIT_FILE_HEADER,
-                "{}_{}_x.txt should only contain the header",
-                ctx, strand
+            assert!(
+                !p.exists(),
+                "{}_{}_x.txt must not exist — no call routed there (lazy-open)",
+                ctx,
+                strand
             );
         }
     }
@@ -893,12 +948,12 @@ fn route_call_increments_counter_before_mbias_only_short_circuit() {
     // Counter must have incremented EVEN THOUGH the file write was short-circuited.
     assert_eq!(state.report.calls_total, 1);
     assert_eq!(state.report.calls_cpg_meth, 1);
-    // Verify the split-file write was indeed skipped (file still header-only).
+    // Verify the split-file write was short-circuited — lazy-open: no file is
+    // ever created for the routed strand when the write is skipped.
     state.fhs.flush_all().unwrap();
-    let cpg_ot = fs::read_to_string(dir.path().join("CpG_OT_x.txt")).unwrap();
-    assert_eq!(
-        cpg_ot, SPLIT_FILE_HEADER,
-        "write should have been short-circuited"
+    assert!(
+        !dir.path().join("CpG_OT_x.txt").exists(),
+        "write should have been short-circuited (no file under lazy-open)"
     );
 }
 

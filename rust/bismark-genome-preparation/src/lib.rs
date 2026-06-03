@@ -22,6 +22,7 @@
 
 pub mod cli;
 pub mod combined;
+pub mod composition;
 pub mod convert;
 pub mod discovery;
 pub mod error;

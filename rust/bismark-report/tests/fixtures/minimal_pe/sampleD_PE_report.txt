@@ -1,0 +1,32 @@
+Bismark report for: sampleD_R1.fq.gz and sampleD_R2.fq.gz (version: v0.25.1)
+
+Final Alignment report
+======================
+Sequence pairs analysed in total:	500
+Number of paired-end alignments with a unique best hit:	400
+Mapping efficiency:	80.00%
+Sequence pairs with no alignments under any condition:	60
+Sequence pairs did not map uniquely:	40
+Sequence pairs which were discarded because genomic sequence could not be extracted:	0
+
+Number of sequence pairs with unique best (first) alignment came from the bowtie output:
+CT/GA/CT:	200	((converted) top strand)
+GA/CT/CT:	0	(complementary to (converted) top strand)
+GA/CT/GA:	0	(complementary to (converted) bottom strand)
+CT/GA/GA:	200	((converted) bottom strand)
+
+Final Cytosine Methylation Report
+=================================
+Total number of C's analysed:	25000
+
+Total methylated C's in CpG context:	1000
+Total methylated C's in CHG context:	10
+Total methylated C's in CHH context:	20
+
+Total unmethylated C's in CpG context:	500
+Total unmethylated C's in CHG context:	11000
+Total unmethylated C's in CHH context:	12470
+
+C methylated in CpG context:	66.7%
+C methylated in CHG context:	0.1%
+C methylated in CHH context:	0.2%

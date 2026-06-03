@@ -1,0 +1,18 @@
+CpG context
+===========
+position	count methylated	count unmethylated	% methylation	coverage
+1	100	50	66.67	150
+2	110	40	73.33	150
+3	120	30	80.00	150
+
+CHG context
+===========
+position	count methylated	count unmethylated	% methylation	coverage
+1	5	500	0.99	505
+2	6	520	1.14	526
+
+CHH context
+===========
+position	count methylated	count unmethylated	% methylation	coverage
+1	8	800	0.99	808
+2	9	790	1.13	799

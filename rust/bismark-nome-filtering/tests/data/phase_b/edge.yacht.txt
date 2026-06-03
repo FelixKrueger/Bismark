@@ -1,0 +1,2 @@
+fwd_low	+	chr1	2	z	2	10	+
+rev_start	-	chr1	10	z	10	1	-

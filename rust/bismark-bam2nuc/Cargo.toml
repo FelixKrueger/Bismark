@@ -1,0 +1,57 @@
+[package]
+name = "bismark-bam2nuc"
+version = "1.0.0-beta.1"
+description = "Rust port of Bismark Perl's bam2nuc script (mono-/di-nucleotide coverage QC)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "nucleotide", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bam2nuc_rs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.0"
+# bismark-io supplies the magic-byte format sniff (AlignmentKind::from_path) for
+# the .bam accept gate + detect_paired_from_header for SE/PE detection. We do
+# NOT use its BamReader: it routes through BismarkRecord which REQUIRES XR/XG/XM
+# and silently drops unmapped reads — bam2nuc is tag-agnostic (it counts the
+# GENOMIC sequence, never the read's bases) and must keep the SE die-on-stray-flag
+# contract faithful.
+bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+# Genome FASTA reading (mirrors bismark-io/src/cram_ref.rs + c2c genome.rs pins).
+noodles-fasta = "=0.61.0"
+# Plain-gzip .fa.gz / .fasta.gz (Perl uses `gunzip -c`); MultiGzDecoder also
+# decodes gzip-framed BGZF.
+flate2 = "=1.1.9"
+# Raw BAM record reading WITHOUT BismarkRecord's tag validation / unmapped filter
+# / coordinate-sort check: noodles_bam::io::Reader::record_bufs(&header) yields
+# plain RecordBufs (PLAN C-1/OI-1). Pins match the single transitive versions in
+# the workspace Cargo.lock — do NOT bump (a second noodles-sam copy would break
+# record_bufs(&header) type-checking across versions).
+noodles-bam = "=0.89.0"
+noodles-bgzf = "=0.47.0"
+# Header reference-sequence-name table (chr-id -> name) + record field types.
+noodles-sam = "=0.85.0"
+# Multithreaded allocator (sibling precedent #884/#915). The per-read genomic
+# counting loop allocates a span Vec per read; mimalloc cuts the malloc cost.
+# Allocator-only — output is byte-identical.
+mimalloc = { version = "=0.1.52", default-features = false }
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
+# Synthetic record + header construction in tests.
+bstr = "=1.10.0"
+# `Position` for synthetic RecordBuf alignment_start in count.rs tests.
+noodles-core = "=0.20.0"

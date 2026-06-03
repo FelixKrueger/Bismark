@@ -1,0 +1,4 @@
+Analysed read pairs (paired-end) in file >> in.bam <<  in total:	2
+Sequences removed because of apparent non-bisulfite conversion (at least 20% methylation and 5 non-CG calls in total in at least one of the reads):	1 (50.0%)
+
+filter_non_conversion completed in 0d 0h 0m 2s

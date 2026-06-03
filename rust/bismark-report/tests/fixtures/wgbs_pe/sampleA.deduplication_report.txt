@@ -1,0 +1,5 @@
+Total number of alignments analysed in sampleA_PE_report.bam:	82345
+Total number duplicated alignments removed:	12345 (14.99%)
+Duplicated alignments were found at:	9001 different position(s)
+
+Total count of deduplicated leftover sequences: 70000 (85.01% of total)

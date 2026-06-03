@@ -29,16 +29,11 @@ struct ReportRow {
     context: Vec<u8>,
 }
 
-/// `sprintf "%.6f"` of `m/(m+u)*100` — the string Perl writes and (numified)
-/// compares. Caller guarantees `m+u > 0`.
-fn pct6(m: u32, u: u32) -> String {
-    format!("{:.6}", f64::from(m) / f64::from(m + u) * 100.0)
-}
-
 /// The 6-dp-rounded percentage Perl compares for discordance (it numifies the
 /// `sprintf "%.6f"` string). A raw-f64 compare byte-diverges at the boundary.
+/// Reuses [`report::pct6`] (the shared `%.6f` formatter).
 fn round6(m: u32, u: u32) -> f64 {
-    pct6(m, u).parse().expect("formatted f64 parses")
+    report::pct6(m, u).parse().expect("formatted f64 parses")
 }
 
 fn parse_u32(field: &[u8], line_no: usize) -> Result<u32, BismarkC2cError> {
@@ -164,8 +159,24 @@ pub fn run_merge(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
                     .expect("discordant writer present when discordance set");
                 let end1 = if zero { r1.pos + 1 } else { r1.pos };
                 let end2 = if zero { r2.pos + 1 } else { r2.pos };
-                write_cov_line(dw, &r1.chr, r1.pos, end1, &pct6(r1.m, r1.u), r1.m, r1.u)?;
-                write_cov_line(dw, &r2.chr, r2.pos, end2, &pct6(r2.m, r2.u), r2.m, r2.u)?;
+                write_cov_line(
+                    dw,
+                    &r1.chr,
+                    r1.pos,
+                    end1,
+                    &report::pct6(r1.m, r1.u),
+                    r1.m,
+                    r1.u,
+                )?;
+                write_cov_line(
+                    dw,
+                    &r2.chr,
+                    r2.pos,
+                    end2,
+                    &report::pct6(r2.m, r2.u),
+                    r2.m,
+                    r2.u,
+                )?;
                 continue;
             }
         }
@@ -182,7 +193,7 @@ pub fn run_merge(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
             &r1.chr,
             r1.pos,
             end,
-            &pct6(pooled_m, pooled_u),
+            &report::pct6(pooled_m, pooled_u),
             pooled_m,
             pooled_u,
         )?;
@@ -282,7 +293,7 @@ mod tests {
 
     #[test]
     fn round6_and_pct6_match_perl_sprintf() {
-        assert_eq!(pct6(408, 400), "50.495050"); // 408/808*100
+        assert_eq!(report::pct6(408, 400), "50.495050"); // 408/808*100
         assert!((round6(408, 400) - 50.495050).abs() < 1e-9);
         // boundary: 11/(11+9)=55% exactly; raw f64 is 55.000…007 but %.6f → 55.0
         assert_eq!(round6(11, 9), 55.0);

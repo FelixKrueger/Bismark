@@ -1,0 +1,3 @@
+chr1	6	+	10	0	CG	CGC
+chr1	7	-	0	5	CG	CGC
+chr1	8	+	3	1	CHH	CAT

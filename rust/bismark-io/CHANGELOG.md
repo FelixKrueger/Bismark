@@ -5,6 +5,33 @@ All notable changes to `bismark-io` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `BamWriter::write_raw_record(&RecordBuf)` — writes a raw noodles record
+  **bypassing** the `BismarkRecord` `XR`/`XG`/`XM` validation, for records that
+  are deliberately not Bismark-shaped (the aligner port's `--ambig_bam`, which
+  passes through the external aligner's own SAM line: `AS:i`/`XS:i` tags, no
+  `XM`/`XR`/`XG`). Purely additive. Version intentionally **not** bumped (same
+  rationale as the `detect_paired_from_header` fix below: an exact-pin bump would
+  ripple to every dependent's manifest for an additive, opt-in API). Test:
+  `write_raw_record_bypasses_bismark_validation`.
+
+### Fixed
+
+- `detect_paired_from_header` now picks the **last** Bismark `@PG` line when a
+  header carries more than one, matching Perl's `determine_file_type` /
+  `deduplicate_bismark` loop (which re-assigns on each match so the final
+  occurrence decides). Previously it returned on the first match. **Byte-neutral
+  for all real Bismark BAMs** (exactly one Bismark `@PG`), so `bismark-dedup` /
+  `bismark-extractor` behaviour is unchanged (suites re-verified). Surfaced by
+  the `filter_non_conversion` port's code review. Version intentionally **not**
+  bumped: the only observable change is on a re-processed BAM with two distinct
+  Bismark `@PG` lines, and an exact-pin bump would ripple to every dependent's
+  manifest for a real-data no-op. Regression tests:
+  `detect_paired_two_bismark_pg_last_wins_{se,pe}`.
+
 ## [1.0.0-beta.6] — 2026-05-26
 
 **Read-orientation `iter_aligned()` adapter** on `BismarkRecord` for the
