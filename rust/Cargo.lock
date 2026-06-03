@@ -105,6 +105,7 @@ dependencies = [
  "bstr",
  "clap",
  "flate2",
+ "noodles-bam",
  "noodles-core 0.20.0",
  "noodles-sam",
  "predicates",

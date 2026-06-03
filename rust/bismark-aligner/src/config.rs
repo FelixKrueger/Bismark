@@ -157,6 +157,10 @@ pub struct RunConfig {
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
     pub read_processing: ReadProcessing,
+    /// `--multicore`/`--parallel`: file-level worker count (Phase 9b). Resolved to
+    /// `cli.multicore.unwrap_or(1)`; `1` = the single-core direct path, `>1` = the
+    /// order-preserving contiguous-chunk fan-out. `validate_multicore` guarantees ≥ 1.
+    pub multicore: u32,
 }
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
@@ -210,6 +214,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ambig_bam: cli.ambig_bam,
         output,
         read_processing,
+        // Phase 9b: file-level worker count. `validate_multicore` (above) already
+        // rejected `0`; absent flag = single-core (1).
+        multicore: cli.multicore.unwrap_or(1),
     })
 }
 
@@ -327,12 +334,11 @@ pub fn deferred_flags(cli: &Cli) -> Vec<&'static str> {
         }
     };
     // NB: --skip/--upto/--gzip/--prefix ACTIVE as of Phase 2; --basename as of
-    // Phase 5; --unmapped/--ambiguous/--ambig_bam as of Phase 6 — none listed here.
-    // --rg_tag/--slam/--non_bs_mm/--sam-no-hd are HARD-REJECTED (see
-    // reject_unsupported_output_flags). --nucleotide_coverage/--multicore are
-    // wired in later phases (reports/threading).
+    // Phase 5; --unmapped/--ambiguous/--ambig_bam as of Phase 6; --multicore/
+    // --parallel as of Phase 9b — none listed here. --rg_tag/--slam/--non_bs_mm/
+    // --sam-no-hd are HARD-REJECTED (see reject_unsupported_output_flags).
+    // --nucleotide_coverage is wired in a later phase (reports).
     push(cli.nucleotide_coverage, "--nucleotide_coverage");
-    push(cli.multicore.is_some(), "--multicore");
     push(cli.old_flag, "--old_flag");
     v
 }

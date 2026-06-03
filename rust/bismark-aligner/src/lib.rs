@@ -19,8 +19,9 @@
 //! FastQ + `--ambig_bam`, Phase 7 paired-end (directional), Phase 8 the
 //! non-directional + pbat library types, and Phase 9a FastA input. **FastQ AND
 //! FastA, single-end + paired-end, all library types (directional/non-directional/
-//! pbat), run end to end.** Order-preserving multicore/threading (Phase 9b) and the
-//! full-scale real-data gate (Phase 10) land later.
+//! pbat), run end to end**, and Phase 9b order-preserving `--multicore`/`--parallel`
+//! threading (worker-count-invariant output — `parallel`). The full-scale real-data
+//! gate (Phase 10) lands later.
 
 pub mod align;
 pub mod aligner;
@@ -36,6 +37,7 @@ pub mod merge;
 pub mod methylation;
 pub mod options;
 pub mod output;
+pub mod parallel;
 pub mod report;
 
 use std::collections::HashMap;
@@ -103,13 +105,29 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 
 /// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
 /// types (directional/non-directional/pbat) AND both input formats (FastQ +
-/// FastA, Phase 9a) into the generalized `run_se`/`run_pe`. (Order-preserving
-/// `--multicore` threading is the only remaining deferral — Phase 9b — and is
-/// surfaced via `deferred_flags`, not here.)
+/// FastA, Phase 9a) into the generalized `run_se`/`run_pe`. Phase 9b routes
+/// `--multicore`/`--parallel N`: N > 1 → the order-preserving contiguous-chunk
+/// fan-out (`parallel::run_*_multicore`); N == 1 (default) → the direct path here.
 fn pipeline(config: &RunConfig) -> Result<()> {
+    // Phase 9b: `--multicore`/`--parallel N` (N > 1) takes the order-preserving
+    // contiguous-chunk fan-out; N == 1 (the default) takes the proven single-core
+    // direct path — byte-identical by construction (PLAN §3.1).
+    let n = config.multicore;
     match &config.layout {
-        ReadLayout::SingleEnd { reads } => run_se(config, reads),
-        ReadLayout::PairedEnd { mates1, mates2 } => run_pe(config, mates1, mates2),
+        ReadLayout::SingleEnd { reads } => {
+            if n > 1 {
+                parallel::run_se_multicore(config, reads, n)
+            } else {
+                run_se(config, reads)
+            }
+        }
+        ReadLayout::PairedEnd { mates1, mates2 } => {
+            if n > 1 {
+                parallel::run_pe_multicore(config, mates1, mates2, n)
+            } else {
+                run_pe(config, mates1, mates2)
+            }
+        }
     }
 }
 
@@ -220,58 +238,94 @@ fn conv_label(name: &str) -> &'static str {
     }
 }
 
-/// SE pipeline (all library types): load the genome once, then per read file
-/// convert the per-mode temp file(s), spawn the 2 (directional/pbat) or 4
-/// (non-directional) Bowtie 2 instances per the [`se_instance_plan`], drive the
-/// lockstep merge, write the Bismark BAM + the alignment report, and (when
-/// requested) the `--unmapped` / `--ambiguous` FastQ files and the `--ambig_bam`.
+/// Process one SE input — a whole read file (single-core / `--parallel 1`) or one
+/// contiguous chunk subset (`--parallel N`, Phase 9b): convert the per-mode temp
+/// file(s) (1 for directional/pbat, 2 for non-directional), spawn the 2/4 Bowtie 2
+/// instances per the [`se_instance_plan`], and drive the lockstep merge into the
+/// (already-open) `sinks`, accumulating `counters`. Returns the converted temp
+/// file(s) so the caller can clean them up. The report is **not** written here —
+/// the caller (`run_se` for N==1, or [`parallel`]'s ordered merge for N>1) owns it.
+/// `genome`/`refid` are borrowed read-only (so a Phase-9b worker can share them
+/// across `std::thread::scope` without `Arc`).
+fn process_se_chunk(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let read_file = input.to_string_lossy();
+    // Phase 2/8: convert the per-mode temp file(s). Both/all instances read this set.
+    let converted = convert_se_files(config, &read_file, opts)?;
+    for cr in &converted {
+        eprintln!(
+            "Created {} converted version of {read_file} -> {} ({} sequences)",
+            conv_label(&cr.name),
+            cr.path.display(),
+            cr.count
+        );
+    }
+    // Phase 3/8: spawn the instances per the per-mode plan, in Bismark slot order
+    // so the merge's `enumerate` index == the Perl `@fhs` index.
+    let mut streams = Vec::with_capacity(2);
+    for (orientation, index_choice, file_idx) in se_instance_plan(config.library) {
+        let index_basename = match index_choice {
+            IndexChoice::Ct => &config.genome.ct_index_basename,
+            IndexChoice::Ga => &config.genome.ga_index_basename,
+        };
+        streams.push(AlignerStream::spawn(
+            bt2,
+            &config.aligner_options,
+            orientation,
+            index_basename,
+            &converted[file_idx].path,
+        )?);
+    }
+
+    // Phase 4–6: drive the merge, routing each read to its sink.
+    let pbat = matches!(config.library, LibraryType::Pbat);
+    drive_merge(
+        input,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        pbat,
+        sinks,
+        counters,
+    )?;
+    for s in streams {
+        s.finish()?;
+    }
+    Ok(converted)
+}
+
+/// SE pipeline (single-core / `--parallel 1`, all library types): load the genome
+/// once, then per read file open the sinks + report header, run [`process_se_chunk`]
+/// against the whole file, write the final analysis + wall-clock line, finalise the
+/// sinks, and clean up the converted temp file(s). (The `--parallel N` path lives in
+/// [`parallel::run_se_multicore`], which fans [`process_se_chunk`] over contiguous
+/// chunks and merges in order.)
 fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     let started = Instant::now();
     let opts = convert::ConvertOptions::from_config(config);
-    let bt2 = &config.detected_aligner.path;
 
-    // Load the raw genome once (Perl 273–277), consuming Phase 1's ordered
-    // FASTA list — the single source of truth for the `@SQ` order.
+    // Load the raw genome once (Perl 273–277), consuming Phase 1's ordered FASTA
+    // list — the single source of truth for the `@SQ` order.
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
     // The header is identical for every read file (Bismark `@PG` reconstructed
     // from argv; samtools `@PG` normalised out per gate policy P1).
     let header = generate_sam_header(&genome, &config.command_line);
-    let pbat = matches!(config.library, LibraryType::Pbat);
     let directional = matches!(config.library, LibraryType::Directional);
     // The report's genome path is the absolute path WITH a trailing `/` (Perl
     // forces it, 7619–7629); `genome_dir` is absolute (canonicalize) but slashless.
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
 
     for read_file in reads {
-        // Phase 2/8: convert the per-mode temp file(s) (1 for directional/pbat, 2
-        // for non-directional). Both/all instances read from this set.
-        let converted = convert_se_files(config, read_file, &opts)?;
-        for cr in &converted {
-            eprintln!(
-                "Created {} converted version of {read_file} -> {} ({} sequences)",
-                conv_label(&cr.name),
-                cr.path.display(),
-                cr.count
-            );
-        }
-        // Phase 3/8: spawn the instances per the per-mode plan, in Bismark slot
-        // order so the merge's `enumerate` index == the Perl `@fhs` index.
-        let mut streams = Vec::with_capacity(2);
-        for (orientation, index_choice, file_idx) in se_instance_plan(config.library) {
-            let index_basename = match index_choice {
-                IndexChoice::Ct => &config.genome.ct_index_basename,
-                IndexChoice::Ga => &config.genome.ga_index_basename,
-            };
-            streams.push(AlignerStream::spawn(
-                bt2,
-                &config.aligner_options,
-                orientation,
-                index_basename,
-                &converted[file_idx].path,
-            )?);
-        }
-
         // Open the BAM + optional --ambig_bam / --unmapped / --ambiguous sinks.
         let bam_path = derive_output_path(read_file, config, "_bismark_bt2.bam", ".bam");
         eprintln!(
@@ -299,21 +353,16 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
             },
         )?;
 
-        // Phase 4–6: drive the merge, routing each read to its sink.
         let mut counters = Counters::default();
-        drive_merge(
-            Path::new(read_file),
-            &mut streams,
+        let converted = process_se_chunk(
             config,
             &genome,
             &refid,
-            pbat,
+            Path::new(read_file),
+            &opts,
             &mut sinks,
             &mut counters,
         )?;
-        for s in streams {
-            s.finish()?;
-        }
 
         // Final analysis + the trailing wall-clock line (Perl 1964–2144 + 926–927).
         report::print_final_analysis_report_single_end(&mut report, &counters, directional)?;
@@ -335,13 +384,62 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The per-read output sinks for one read file: the Bismark BAM plus the
-/// optional `--ambig_bam` and the gzipped `--unmapped`/`--ambiguous` FastQ files.
+/// A per-record aux writer (`--unmapped`/`--ambiguous`). The single-core path
+/// writes gzip inline (`Gz`); a Phase-9b chunk worker writes **plain** (`Plain`)
+/// to a temp file that the ordered merge re-emits through ONE `GzEncoder`
+/// (`parallel::merge_aux_gz`) — a single-member gz stream raw-identical to
+/// `--parallel 1` (PLAN §3.5). Both variants implement [`Write`] so the
+/// per-read routing in `drive_merge`/`drive_merge_pe` is writer-agnostic.
+// The `Gz` variant (a `GzEncoder` compression state) is larger than `Plain`, but an
+// `AuxWriter` is held singly (one per sink, ≤4 per `PeSinks`), never in a hot
+// collection, so the size difference is irrelevant — boxing would add pointless
+// indirection.
+#[allow(clippy::large_enum_variant)]
+enum AuxWriter {
+    /// Inline gzip (single-core / `--parallel 1`).
+    Gz(GzEncoder<BufWriter<File>>),
+    /// Plain bytes (a Phase-9b chunk worker; gz happens at the merge).
+    Plain(BufWriter<File>),
+}
+
+impl Write for AuxWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            AuxWriter::Gz(w) => w.write(buf),
+            AuxWriter::Plain(w) => w.write(buf),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            AuxWriter::Gz(w) => w.flush(),
+            AuxWriter::Plain(w) => w.flush(),
+        }
+    }
+}
+
+impl AuxWriter {
+    /// Finalise: gz writes its trailer (`finish`); plain only flushes. Neither
+    /// path flushes mid-stream — a `flush()` would force a deflate block boundary
+    /// and break the merge's raw-byte identity (PLAN §3.5 invariant).
+    fn finish(self) -> std::io::Result<()> {
+        match self {
+            AuxWriter::Gz(w) => {
+                w.finish()?;
+                Ok(())
+            }
+            AuxWriter::Plain(mut w) => w.flush(),
+        }
+    }
+}
+
+/// The per-read output sinks for one read file (or one Phase-9b chunk): the
+/// Bismark BAM plus the optional `--ambig_bam` and the `--unmapped`/`--ambiguous`
+/// aux writers (gzip for single-core, plain for a chunk worker — see [`AuxWriter`]).
 struct Sinks {
     bam: BamWriter<BufWriter<File>>,
     ambig_bam: Option<BamWriter<BufWriter<File>>>,
-    unmapped: Option<GzEncoder<BufWriter<File>>>,
-    ambiguous: Option<GzEncoder<BufWriter<File>>>,
+    unmapped: Option<AuxWriter>,
+    ambiguous: Option<AuxWriter>,
 }
 
 impl Sinks {
@@ -398,12 +496,12 @@ fn open_sinks(
         ))
     };
     let unmapped = if config.unmapped {
-        Some(open_gz(AuxKind::Unmapped)?)
+        Some(AuxWriter::Gz(open_gz(AuxKind::Unmapped)?))
     } else {
         None
     };
     let ambiguous = if config.ambiguous {
-        Some(open_gz(AuxKind::Ambiguous)?)
+        Some(AuxWriter::Gz(open_gz(AuxKind::Ambiguous)?))
     } else {
         None
     };
@@ -706,85 +804,111 @@ fn pe_lookup(
         .path
 }
 
-/// PE pipeline (all library types) (Perl `start_methylation_call_procedure_paired_ends`,
-/// 1746–1962): load the genome once, then per mate-pair convert the per-mode temp
-/// files (each distinct `(mate, kind)` once — directional/pbat = 2 files, non-dir
-/// = 4), spawn the **2** (directional/pbat) or **4** (non-dir) paired Bowtie 2
-/// instances per the [`pe_instance_plan`], drive the PE lockstep merge, write the
-/// `_pe.bam` + `_PE_report.txt` + the `_1`/`_2` aux files.
+/// Process one PE input — a whole mate-pair (single-core / `--parallel 1`) or one
+/// contiguous chunk subset pair (`--parallel N`, Phase 9b): convert each distinct
+/// `(mate, kind)` exactly once (2 files for directional/pbat, 4 for non-dir), spawn
+/// the 2/4 paired Bowtie 2 instances per the [`pe_instance_plan`], and drive the PE
+/// lockstep merge into the (already-open) `sinks`, accumulating `counters`. Returns
+/// the converted temp files for the caller to clean up. The report is **not** written
+/// here — the caller owns it (`run_pe` for N==1, [`parallel`] for N>1).
+#[allow(clippy::too_many_arguments)]
+fn process_pe_chunk(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<((u8, convert::ConvKind), convert::ConvertedReads)>> {
+    let bt2 = &config.detected_aligner.path;
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = pe_instance_plan(config.library);
+
+    // Convert each distinct (mate, kind) the plan needs EXACTLY ONCE — Perl makes 2
+    // files for directional/pbat (shared by both instances) and 4 for non-dir (each
+    // pair shared by two slots). Preserve first-seen order.
+    let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
+    for &(_slot, _orient, _idx, k1, k2) in &plan {
+        for mk in [(1u8, k1), (2u8, k2)] {
+            if !needed.contains(&mk) {
+                needed.push(mk);
+            }
+        }
+    }
+    let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
+    for &(mate, kind) in &needed {
+        let input = if mate == 1 { read_1 } else { read_2 };
+        let cr = convert_pe_kind(fasta, input, &config.output.temp_dir, opts, mate, kind)?;
+        eprintln!(
+            "Created {} converted version of {} -> {} ({} sequences)",
+            conv_label(&cr.name),
+            input.display(),
+            cr.path.display(),
+            cr.count
+        );
+        converted.push(((mate, kind), cr));
+    }
+
+    // Slot-indexed (0..4): populate the per-mode slots, leaving the rest `None`
+    // (the merge scans 0,3,1,2). Each instance reads its `-1`/`-2` converted files.
+    let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
+    for (slot, orientation, index_choice, k1, k2) in plan {
+        let index_basename = match index_choice {
+            IndexChoice::Ct => &config.genome.ct_index_basename,
+            IndexChoice::Ga => &config.genome.ga_index_basename,
+        };
+        let m1 = pe_lookup(&converted, 1, k1);
+        let m2 = pe_lookup(&converted, 2, k2);
+        streams[slot] = Some(PairedAlignerStream::spawn(
+            bt2,
+            &config.aligner_options,
+            orientation,
+            index_basename,
+            m1,
+            m2,
+        )?);
+    }
+
+    // Perl's `$dovetail` (8047–8048): present in aligner_options iff paired && !no_dovetail.
+    let dovetail = config
+        .aligner_options
+        .split_whitespace()
+        .any(|t| t == "--dovetail");
+    drive_merge_pe(
+        read_1,
+        read_2,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        dovetail,
+        sinks,
+        counters,
+    )?;
+    for s in streams.into_iter().flatten() {
+        s.finish()?;
+    }
+    Ok(converted)
+}
+
+/// PE pipeline (single-core / `--parallel 1`, all library types) (Perl
+/// `start_methylation_call_procedure_paired_ends`, 1746–1962): load the genome once,
+/// then per mate-pair open the sinks + report header, run [`process_pe_chunk`] against
+/// the whole pair, write the final analysis + wall-clock line, finalise the sinks, and
+/// clean up the converted temp files. (The `--parallel N` path lives in
+/// [`parallel::run_pe_multicore`].)
 fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
     let started = Instant::now();
     let opts = convert::ConvertOptions::from_config(config);
-    let bt2 = &config.detected_aligner.path;
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
     let header = generate_sam_header(&genome, &config.command_line);
     let directional = matches!(config.library, LibraryType::Directional);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
-    // Perl's `$dovetail` (8047–8048): set unless `--no_dovetail`. `options.rs` adds
-    // the `--dovetail` token to aligner_options for paired && !no_dovetail, so its
-    // presence is exactly `$dovetail` — used by the PE TLEN dovetail sub-cases.
-    let dovetail = config
-        .aligner_options
-        .split_whitespace()
-        .any(|t| t == "--dovetail");
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
-        let plan = pe_instance_plan(config.library);
-
-        // Convert each distinct (mate, kind) the plan needs EXACTLY ONCE — Perl
-        // makes 2 files for directional/pbat (shared by both instances) and 4 for
-        // non-dir (each pair shared by two slots). Preserve first-seen order.
-        let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
-        for &(_slot, _orient, _idx, k1, k2) in &plan {
-            for mk in [(1u8, k1), (2u8, k2)] {
-                if !needed.contains(&mk) {
-                    needed.push(mk);
-                }
-            }
-        }
-        let fasta = matches!(config.format, ReadFormat::FastA);
-        let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
-        for &(mate, kind) in &needed {
-            let input = if mate == 1 { read_1 } else { read_2 };
-            let cr = convert_pe_kind(
-                fasta,
-                Path::new(input),
-                &config.output.temp_dir,
-                &opts,
-                mate,
-                kind,
-            )?;
-            eprintln!(
-                "Created {} converted version of {input} -> {} ({} sequences)",
-                conv_label(&cr.name),
-                cr.path.display(),
-                cr.count
-            );
-            converted.push(((mate, kind), cr));
-        }
-
-        // Slot-indexed (0..4): populate the per-mode slots, leaving the rest `None`
-        // (the merge scans 0,3,1,2). Each instance reads its `-1`/`-2` converted
-        // files (Perl 405–451, 6474).
-        let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
-        for (slot, orientation, index_choice, k1, k2) in plan {
-            let index_basename = match index_choice {
-                IndexChoice::Ct => &config.genome.ct_index_basename,
-                IndexChoice::Ga => &config.genome.ga_index_basename,
-            };
-            let m1 = pe_lookup(&converted, 1, k1);
-            let m2 = pe_lookup(&converted, 2, k2);
-            streams[slot] = Some(PairedAlignerStream::spawn(
-                bt2,
-                &config.aligner_options,
-                orientation,
-                index_basename,
-                m1,
-                m2,
-            )?);
-        }
-
         let bam_path = derive_output_path(read_1, config, "_bismark_bt2_pe.bam", "_pe.bam");
         eprintln!(
             ">>> Writing bisulfite mapping results to {} <<<",
@@ -811,20 +935,16 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
         )?;
 
         let mut counters = Counters::default();
-        drive_merge_pe(
-            Path::new(read_1),
-            Path::new(read_2),
-            &mut streams,
+        let converted = process_pe_chunk(
             config,
             &genome,
             &refid,
-            dovetail,
+            Path::new(read_1),
+            Path::new(read_2),
+            &opts,
             &mut sinks,
             &mut counters,
         )?;
-        for s in streams.into_iter().flatten() {
-            s.finish()?;
-        }
 
         report::print_final_analysis_report_paired_ends(&mut report, &counters, directional)?;
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
@@ -832,9 +952,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
         sinks.finish()?;
 
         // Per-mode temp cleanup (rev1 A; Perl 2155): delete EVERY converted temp
-        // file — 2 for directional (C→T_1, G→A_2) / pbat (G→A_1, C→T_2), 4 for
-        // non-directional. Byte-invisible, so no gate catches an omission.
-        // Best-effort.
+        // file — 2 for directional/pbat, 4 for non-directional. Best-effort.
         for ((_mate, _kind), cr) in &converted {
             let _ = std::fs::remove_file(&cr.path);
         }
@@ -849,10 +967,10 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
 struct PeSinks {
     bam: BamWriter<BufWriter<File>>,
     ambig_bam: Option<BamWriter<BufWriter<File>>>,
-    unmapped_1: Option<GzEncoder<BufWriter<File>>>,
-    unmapped_2: Option<GzEncoder<BufWriter<File>>>,
-    ambiguous_1: Option<GzEncoder<BufWriter<File>>>,
-    ambiguous_2: Option<GzEncoder<BufWriter<File>>>,
+    unmapped_1: Option<AuxWriter>,
+    unmapped_2: Option<AuxWriter>,
+    ambiguous_1: Option<AuxWriter>,
+    ambiguous_2: Option<AuxWriter>,
 }
 
 impl PeSinks {
@@ -915,44 +1033,44 @@ fn open_pe_sinks(
     };
     let (unmapped_1, unmapped_2) = if config.unmapped {
         (
-            Some(open_gz(aux_out::aux_filename(
+            Some(AuxWriter::Gz(open_gz(aux_out::aux_filename(
                 &b1,
                 prefix,
                 base,
                 AuxKind::Unmapped,
                 fasta,
                 Some(1),
-            ))?),
-            Some(open_gz(aux_out::aux_filename(
+            ))?)),
+            Some(AuxWriter::Gz(open_gz(aux_out::aux_filename(
                 &b2,
                 prefix,
                 base,
                 AuxKind::Unmapped,
                 fasta,
                 Some(2),
-            ))?),
+            ))?)),
         )
     } else {
         (None, None)
     };
     let (ambiguous_1, ambiguous_2) = if config.ambiguous {
         (
-            Some(open_gz(aux_out::aux_filename(
+            Some(AuxWriter::Gz(open_gz(aux_out::aux_filename(
                 &b1,
                 prefix,
                 base,
                 AuxKind::Ambiguous,
                 fasta,
                 Some(1),
-            ))?),
-            Some(open_gz(aux_out::aux_filename(
+            ))?)),
+            Some(AuxWriter::Gz(open_gz(aux_out::aux_filename(
                 &b2,
                 prefix,
                 base,
                 AuxKind::Ambiguous,
                 fasta,
                 Some(2),
-            ))?),
+            ))?)),
         )
     } else {
         (None, None)
@@ -1206,8 +1324,8 @@ fn drive_merge_pe(
 /// `>id\nseq` (the `+`/qual args are ignored — Phase 9a).
 #[allow(clippy::too_many_arguments)]
 fn write_pe_aux(
-    route1: Option<&mut GzEncoder<BufWriter<File>>>,
-    route2: Option<&mut GzEncoder<BufWriter<File>>>,
+    route1: Option<&mut AuxWriter>,
+    route2: Option<&mut AuxWriter>,
     fasta: bool,
     id1: &str,
     id2: &str,
