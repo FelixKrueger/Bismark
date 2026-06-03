@@ -3,6 +3,12 @@
 All notable changes to this crate are documented here. Versions follow the
 sibling Rust-port convention (`1.0.0-alpha.N` during the initial port).
 
+## 1.0.0-beta.1 — version-coherence bump
+
+Promoted `alpha.1` → `beta.1` to reflect shipped + byte-identical status (no
+functional change), aligning with the sibling Rust ports' "beta = shipped +
+validated" convention.
+
 ## 1.0.0-alpha.1 — initial Rust port
 
 Port of Perl `bam2nuc` v0.25.1 (mono-/di-nucleotide coverage QC).
