@@ -1473,3 +1473,441 @@ fn fasta_se_unmapped_writes_2line_fa_aux() {
         .unwrap();
     assert_eq!(s, ">r1\nACGTAC\n");
 }
+
+// ===========================================================================
+// Phase 9b — worker-count invariance: `--parallel N` == `--parallel 1`, byte-for-byte.
+//
+// 🔴 The gate's loudness rests on a CONTENT-ADDRESSED fake (decision keyed on the
+// read ID, NOT on a line ordinal / `NR%4`): each chunk is a DIFFERENT converted
+// file with reads at DIFFERENT ordinals, so an ordinal-keyed fake would align
+// differently per chunk and could false-pass (the Phase-8/9a trap, rev1 A-Imp1/B-O2).
+// Test inputs use a read count coprime-ish to {2,4,8} so a chunk boundary is straddled
+// at every N, with each decision class (UniqueBest/Ambiguous/NoAlignment) on BOTH
+// sides; outputs are asserted byte-identical (BAM decompressed records, report modulo
+// the wall-clock line, aux RAW gz bytes AND decompressed) across N ∈ {1,2,4,8}.
+// ===========================================================================
+
+/// A CONTENT-ADDRESSED fake `bowtie2` (SE): per-read decision keyed on the read ID's
+/// first char — `m`=mapped (unique on CT/OT), `a`=within-thread ambiguous (AS==XS on
+/// CT), `u`=unmapped. The SAME read therefore aligns identically regardless of which
+/// chunk/ordinal/converted-file it lands in (the property that makes the
+/// worker-invariance test unable to false-pass). Works for directional/non-dir/pbat
+/// alike (it maps `m`/`a` on the CT index whatever the `-U` file).
+#[cfg(unix)]
+fn make_fake_bowtie2_content_addressed(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); c=substr(id,1,1);
+      if (c=="m") print id "\t0\tchr1_CT_converted\t1\t42\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (c=="a") print id "\t0\tchr1_CT_converted\t1\t1\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tXS:i:0\tMD:Z:6";
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+  *) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// CONTENT-ADDRESSED PE fake (keyed on the R1 ID): `m`=mapped pair (99/147 on CT/OT),
+/// `u`=unmapped pair. (Ambiguous + --ambig_bam are exercised by the SE cells.)
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_content_addressed(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id); c=substr(id,1,1);
+      if (c=="m") { print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+                    print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }
+      else { print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI"; } }' "$m1" ;;
+  *) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Canonical, ORDER-PRESERVING view of a BAM's decompressed records (one `Debug`
+/// string per record, in file order). Equality ⇔ byte-identical decompressed content
+/// (the gate's semantics — not raw BGZF bytes).
+///
+/// Reads RAW `RecordBuf`s via `noodles_bam` (NOT `bismark_io::BamReader`, which would
+/// validate `XR`/`XG`/`XM`) so it works on both the main BAM AND the tagless raw
+/// `--ambig_bam` — the same raw-read the production merge uses.
+#[cfg(unix)]
+fn canon_bam(path: &Path) -> Vec<String> {
+    let file = fs::File::open(path).unwrap();
+    let mut reader = noodles_bam::io::Reader::new(std::io::BufReader::new(file));
+    let header = reader.read_header().unwrap();
+    reader
+        .record_bufs(&header)
+        .map(|r| format!("{:?}", r.unwrap()))
+        .collect()
+}
+
+/// Decompress a gzip file to its raw bytes (the aux worker-invariance is on
+/// DECOMPRESSED content — gz framing, like BGZF for the BAM, is an impl detail that
+/// differs between the N==1 inline-incremental encoder and the N>1 bulk-merge encoder
+/// at scale, but decompresses identically).
+#[cfg(unix)]
+fn read_gz(path: &Path) -> Vec<u8> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut v = Vec::new();
+    GzDecoder::new(fs::File::open(path).unwrap())
+        .read_to_end(&mut v)
+        .unwrap();
+    v
+}
+
+/// Read a report, dropping the env-specific trailing wall-clock line.
+#[cfg(unix)]
+fn report_minus_wallclock(path: &Path) -> String {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with("Bismark completed in "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Build a `reads.fq` of `n` records cycling the decision classes `m`/`u`/`a` (so each
+/// class straddles chunk boundaries), distinct IDs, identical 6 bp seq (chr1:1 window).
+#[cfg(unix)]
+fn write_mua_reads(path: &Path, n: usize) {
+    let classes = ['m', 'u', 'a'];
+    let mut data = String::new();
+    for i in 1..=n {
+        let c = classes[(i - 1) % 3];
+        data.push_str(&format!("@{c}{i:04}\nACGTAC\n+\nFFFFFF\n"));
+    }
+    fs::write(path, data).unwrap();
+}
+
+/// Run an SE alignment at `--parallel n` (with `--unmapped --ambiguous --ambig_bam`)
+/// and return `(bam-records, report-minus-wallclock, unmapped DECOMPRESSED, ambiguous
+/// DECOMPRESSED, ambig-bam-records)`. The 5th element pins the `--ambig_bam` merge path
+/// across N (the exact path the gate-found tagless-record bug lived in). Reads every
+/// output into owned values before the temp dirs drop.
+#[cfg(unix)]
+fn run_se_parallel(
+    genome: &Path,
+    bins: &Path,
+    read: &Path,
+    extra: &[&str],
+    n: u32,
+) -> (Vec<String>, String, Vec<u8>, Vec<u8>, Vec<String>) {
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    let mut cmd = bin();
+    cmd.arg("--genome")
+        .arg(genome)
+        .arg("--path_to_bowtie2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--parallel")
+        .arg(n.to_string())
+        .arg("--unmapped")
+        .arg("--ambiguous")
+        .arg("--ambig_bam");
+    for a in extra {
+        cmd.arg(a);
+    }
+    cmd.arg(read).assert().success();
+
+    let fname = read.file_name().unwrap().to_string_lossy().into_owned(); // "reads.fq"
+    let stem = fname.strip_suffix(".fq").unwrap_or(&fname).to_string(); // "reads"
+    let bam = canon_bam(&outdir.path().join(format!("{stem}_bismark_bt2.bam")));
+    let report = report_minus_wallclock(
+        &outdir
+            .path()
+            .join(format!("{stem}_bismark_bt2_SE_report.txt")),
+    );
+    let un = read_gz(&outdir.path().join(format!("{fname}_unmapped_reads.fq.gz")));
+    let am = read_gz(&outdir.path().join(format!("{fname}_ambiguous_reads.fq.gz")));
+    let ambig = canon_bam(&outdir.path().join(format!("{stem}_bismark_bt2.ambig.bam")));
+    (bam, report, un, am, ambig)
+}
+
+/// Assert SE worker-invariance: `--parallel {2,4,8}` byte-identical to `--parallel 1`
+/// (BAM decompressed records, report modulo wall-clock, aux raw gz bytes).
+#[cfg(unix)]
+fn assert_se_worker_invariant(genome: &Path, bins: &Path, read: &Path, extra: &[&str]) {
+    let base = run_se_parallel(genome, bins, read, extra, 1);
+    for n in [2u32, 4, 8] {
+        let got = run_se_parallel(genome, bins, read, extra, n);
+        assert_eq!(
+            got.0, base.0,
+            "BAM records differ at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.1, base.1,
+            "report differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.2, base.2,
+            "unmapped decompressed content differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.3, base.3,
+            "ambiguous decompressed content differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.4, base.4,
+            "--ambig_bam records differ at --parallel {n} (extra={extra:?})"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_invariance_se_directional() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_content_addressed(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fq");
+    write_mua_reads(&read, 13); // 13 coprime to {2,4,8}
+    assert_se_worker_invariant(genome.path(), bins.path(), &read, &[]);
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_invariance_se_non_directional() {
+    // Non-dir SE spawns 4 instances per chunk; `m`/`a` still map on CT (OT) — the
+    // invariance must hold across the 4-instance fan-out under chunking.
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_content_addressed(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fq");
+    write_mua_reads(&read, 13);
+    assert_se_worker_invariant(genome.path(), bins.path(), &read, &["--non_directional"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_invariance_se_pbat() {
+    // pbat-FastQ (pbat ⊕ -f dies, so FastQ only). Both instances read the G→A file;
+    // `m`/`a` map on CT → eff index 2 (CTOT). Invariance across chunks.
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_content_addressed(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fq");
+    write_mua_reads(&read, 13);
+    assert_se_worker_invariant(genome.path(), bins.path(), &read, &["--pbat"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_invariance_se_empty_chunk_at_high_n() {
+    // 3 reads over --parallel 4 → chunk 3 is EMPTY: its (header-only) per-chunk BAM
+    // and empty plain aux must merge to nothing, byte-identical to --parallel 1.
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_content_addressed(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fq");
+    write_mua_reads(&read, 3); // 3 < 4 → trailing empty chunk
+    let base = run_se_parallel(genome.path(), bins.path(), &read, &[], 1);
+    let got = run_se_parallel(genome.path(), bins.path(), &read, &[], 4);
+    assert_eq!(
+        got.0, base.0,
+        "BAM records differ with an empty trailing chunk"
+    );
+    assert_eq!(got.1, base.1, "report differs with an empty trailing chunk");
+    assert_eq!(
+        got.2, base.2,
+        "unmapped decompressed content differs with an empty trailing chunk"
+    );
+    assert_eq!(
+        got.3, base.3,
+        "ambiguous decompressed content differs with an empty trailing chunk"
+    );
+    assert_eq!(
+        got.4, base.4,
+        "--ambig_bam records differ with an empty trailing chunk"
+    );
+}
+
+/// Run a PE alignment at `--parallel n` (with `--unmapped --ambig_bam`) and return
+/// `(pe-bam-records, report-minus-wallclock, _1.unmapped DECOMPRESSED, _2.unmapped
+/// DECOMPRESSED, pe.ambig-bam-records)`. The 5th element pins the `--ambig_bam` merge across N.
+#[cfg(unix)]
+fn run_pe_parallel(
+    genome: &Path,
+    bins: &Path,
+    r1: &Path,
+    r2: &Path,
+    extra: &[&str],
+    n: u32,
+) -> (Vec<String>, String, Vec<u8>, Vec<u8>, Vec<String>) {
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    let mut cmd = bin();
+    cmd.arg("--genome")
+        .arg(genome)
+        .arg("--path_to_bowtie2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--parallel")
+        .arg(n.to_string())
+        .arg("--unmapped")
+        .arg("--ambig_bam");
+    for a in extra {
+        cmd.arg(a);
+    }
+    cmd.arg("-1").arg(r1).arg("-2").arg(r2).assert().success();
+    let bam = canon_bam(&outdir.path().join("reads_1_bismark_bt2_pe.bam"));
+    let report = report_minus_wallclock(&outdir.path().join("reads_1_bismark_bt2_PE_report.txt"));
+    let un1 = read_gz(&outdir.path().join("reads_1.fq_unmapped_reads_1.fq.gz"));
+    let un2 = read_gz(&outdir.path().join("reads_2.fq_unmapped_reads_2.fq.gz"));
+    let ambig = canon_bam(&outdir.path().join("reads_1_bismark_bt2_pe.ambig.bam"));
+    (bam, report, un1, un2, ambig)
+}
+
+/// Assert PE worker-invariance: `--parallel {2,4,8}` byte-identical to `--parallel 1`.
+#[cfg(unix)]
+fn assert_pe_worker_invariant(genome: &Path, bins: &Path, r1: &Path, r2: &Path, extra: &[&str]) {
+    let base = run_pe_parallel(genome, bins, r1, r2, extra, 1);
+    for n in [2u32, 4, 8] {
+        let got = run_pe_parallel(genome, bins, r1, r2, extra, n);
+        assert_eq!(
+            got.0, base.0,
+            "PE BAM differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.1, base.1,
+            "PE report differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.2, base.2,
+            "PE _1 unmapped decompressed differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.3, base.3,
+            "PE _2 unmapped decompressed differs at --parallel {n} (extra={extra:?})"
+        );
+        assert_eq!(
+            got.4, base.4,
+            "PE --ambig_bam differs at --parallel {n} (extra={extra:?})"
+        );
+    }
+}
+
+/// Write a PE m/u read pair set (13 pairs, mate seqs distinct so the BAM records differ).
+#[cfg(unix)]
+fn write_pe_mu_reads(r1: &Path, r2: &Path) {
+    let classes = ['m', 'u'];
+    let (mut d1, mut d2) = (String::new(), String::new());
+    for i in 1..=13 {
+        let c = classes[(i - 1) % 2];
+        d1.push_str(&format!("@{c}{i:04}\nACGTAC\n+\nFFFFFF\n"));
+        d2.push_str(&format!("@{c}{i:04}\nACGTAC\n+\nFFFFFF\n"));
+    }
+    fs::write(r1, d1).unwrap();
+    fs::write(r2, d2).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_invariance_pe_directional() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_content_addressed(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let (r1, r2) = (
+        reads_dir.path().join("reads_1.fq"),
+        reads_dir.path().join("reads_2.fq"),
+    );
+    write_pe_mu_reads(&r1, &r2);
+    assert_pe_worker_invariant(genome.path(), bins.path(), &r1, &r2, &[]);
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_invariance_pe_non_directional() {
+    // Non-dir PE populates ALL 4 slots per chunk; `m` maps on CT/OT (slot 0). The
+    // invariance must hold across the 4-instance PE fan-out under chunking (B-M2).
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_content_addressed(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let (r1, r2) = (
+        reads_dir.path().join("reads_1.fq"),
+        reads_dir.path().join("reads_2.fq"),
+    );
+    write_pe_mu_reads(&r1, &r2);
+    assert_pe_worker_invariant(genome.path(), bins.path(), &r1, &r2, &["--non_directional"]);
+}
+
+/// A fake `bowtie2` that succeeds on `--version` (so Phase-1 detection passes) but
+/// **exits 1 on any alignment** — to drive a per-chunk worker error.
+#[cfg(unix)]
+fn make_fake_bowtie2_align_fails(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+exit 1
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_error_propagates_no_hang() {
+    // §9 #10: a chunk worker whose Bowtie 2 exits non-zero must surface a clean error
+    // (not hang/deadlock, not a panic abort). `AlignerStream::finish` errors on the
+    // non-zero exit → the chunk job returns Err → `collect_in_order` returns it →
+    // `bismark_rs` exits non-zero. (If the scope deadlocked, assert_cmd would hang and
+    // the test would time out instead of returning `.failure()`.)
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_align_fails(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fq");
+    write_mua_reads(&read, 13);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--parallel")
+        .arg("4")
+        .arg(&read)
+        .assert()
+        .failure()
+        .code(1);
+}

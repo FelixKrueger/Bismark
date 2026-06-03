@@ -34,6 +34,10 @@ anyhow = "=1.0.86"
 bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 noodles-sam = "=0.85.0"
 noodles-core = "=0.20.0"
+# Phase 9b: the order-preserving BAM merge reads per-chunk BAMs as RAW `RecordBuf`
+# (no Bismark-tag validation — the --ambig_bam holds bare aligner records, no XR/XG/XM).
+# Pinned to bismark-io's transitive choice so the workspace links one shared noodles-bam.
+noodles-bam = "=0.89.0"
 bstr = "=1.10.0"
 
 [dev-dependencies]

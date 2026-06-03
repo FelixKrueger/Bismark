@@ -84,7 +84,7 @@ byte-identity (or worker-invariance) gate.
 | 7 | Paired-end support 🎯 | `phase7-paired-end/PLAN.md` | #5, #6 |
 | 8 | Non-directional + pbat 🎯 | `phase8-nondirectional-pbat/PLAN.md` | #7 |
 | 9a | FastA input (SE+PE, all libraries) 🎯 | `phase9a-fasta/PLAN.md` | #8 |
-| 9b | Order-preserving threading 🎯 (worker-invariance) | _(to be written)_ | #9a |
+| 9b | Order-preserving threading 🎯 (worker-invariance) | `phase9b-threading/PLAN.md` | #9a |
 | 10 | Real-data gate on oxy 🎯 | _(to be written)_ | #9b |
 
 Sub-plans are written separately via `plan-writer` (Phase 0 via the `spike` skill). When a plan is
@@ -138,5 +138,23 @@ written, update its row from `_(to be written)_` to the actual filename.
 ## 7. Follow-ups (out of this epic)
 
 - **`v1.x` epic:** HISAT2 + minimap2 aligner wrappers (the deferred Phase J).
-- **v2:** combined-index alignment mode (concordance gate), Bowtie2 `-p`/`--reorder`, rammap engine
-  (#918), stdin-streamed reads.
+- **`v2` epic — alternative alignment engines/models (DECIDED 2026-06-03, strictly separate from this
+  faithful port).** Two avenues, both **concordance-gated, never silent** (NOT byte-identity — they
+  change the computation, so the Perl-Bowtie2 byte oracle does not apply):
+  - **(A) rammap** — a pure-Rust minimap2 engine (reads the `.mmi` index; no subprocess), the deeper
+    parallelism/memory win (threads share one in-process index vs N OS processes each loading their
+    own).
+  - **(B) combined single index** — one alignment for directional/pbat, two for non-directional,
+    against the already-built `--combined_index` genome. Changes the **ambiguity arithmetic** (a read
+    uniquely-mapping to BS_CT *and* BS_GA in the 2-instance merge becomes a single-search multi-mapper
+    → unique↔ambiguous classification diverges at the margin; ~2× reference → Bowtie2 scoring needs its
+    own validation). Loads one index once + halves directional/pbat alignment work.
+  - **Sequencing + gate:** finish the faithful port first (Phase 9b → 10); the byte-identical Rust
+    baseline then becomes the **concordance oracle** for these models. Own branch, own concordance
+    SPEC, **spike-first** (a combined-index *divergence-characterization* spike — how many reads change
+    classification, methylation concordance within tolerance — is the highest-value first step).
+    Validate each avenue independently before compounding them. The Phase-4 merge/scoring core was
+    built **aligner-agnostic** to make this additive. (See `project_aligner_v2_alternative_models`,
+    `project_concatenated_genome_experiment`, `reference_rammap_rust_minimap`.)
+- **v2 (misc):** Bowtie2 `-p`/`--reorder` (intra-instance threading → reorders → not byte-identical),
+  stdin-streamed reads.

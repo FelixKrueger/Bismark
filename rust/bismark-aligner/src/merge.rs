@@ -121,6 +121,38 @@ pub struct Counters {
     pub total_unme_c_unknown: u64,
 }
 
+impl Counters {
+    /// Field-wise sum another chunk's counters into this one (Phase 9b ordered
+    /// merge). Every field is a monotone `u64` count, so the sum is commutative and
+    /// associative → the merged report is identical regardless of worker count or
+    /// arrival order (the worker-invariance gate's counter half).
+    pub fn merge(&mut self, other: &Counters) {
+        self.sequences_count += other.sequences_count;
+        self.unique_best_alignment_count += other.unique_best_alignment_count;
+        self.unsuitable_sequence_count += other.unsuitable_sequence_count;
+        self.no_single_alignment_found += other.no_single_alignment_found;
+        self.alignments_rejected_count += other.alignments_rejected_count;
+        self.ct_ct_count += other.ct_ct_count;
+        self.ct_ga_count += other.ct_ga_count;
+        self.ga_ct_count += other.ga_ct_count;
+        self.ga_ga_count += other.ga_ga_count;
+        self.ct_ga_ct_count += other.ct_ga_ct_count;
+        self.ga_ct_ga_count += other.ga_ct_ga_count;
+        self.ga_ct_ct_count += other.ga_ct_ct_count;
+        self.ct_ga_ga_count += other.ct_ga_ga_count;
+        self.genomic_sequence_could_not_be_extracted_count +=
+            other.genomic_sequence_could_not_be_extracted_count;
+        self.total_me_cpg += other.total_me_cpg;
+        self.total_me_chg += other.total_me_chg;
+        self.total_me_chh += other.total_me_chh;
+        self.total_me_c_unknown += other.total_me_c_unknown;
+        self.total_unme_cpg += other.total_unme_cpg;
+        self.total_unme_chg += other.total_unme_chg;
+        self.total_unme_chh += other.total_unme_chh;
+        self.total_unme_c_unknown += other.total_unme_c_unknown;
+    }
+}
+
 /// An alignment stored at a `chromosome:position` key during the merge.
 struct Stored {
     alignment_score: i64,
