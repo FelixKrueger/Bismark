@@ -366,6 +366,175 @@ fn convert_fastq_impl(
     })
 }
 
+// ===========================================================================
+// FastA input (Phase 9a) — 2-line records (`>id` / `seq`, no quality line).
+// Mirrors Perl `biTransformFastAFiles` (5169–5306) / `_paired_end` (5308+).
+//
+// Kept as a SEPARATE core (not a `RecordShape`-parameterised merge with
+// `convert_fastq_impl`): the 2-vs-4-line read/write, the PER-RECORD `^>` sanity
+// (vs FastQ's record-1-only `@`/`+`), and the ABSENT max-length guard diverge
+// enough that a merged core would be more branches than shared code — and
+// leaving `convert_fastq_impl` UNMODIFIED guarantees the FastQ byte-freeze (its
+// unit tests + the oxy gate). Shared logic is the existing helpers (`fix_id`,
+// `convert_one`, `temp_dir_prefix`, `pe_id_suffix`, `file_base_for`). (rev1 A/B
+// endorsed a shared core; deviation documented — same intent: FastA correct +
+// FastQ frozen + helpers reused.)
+// ===========================================================================
+
+/// Write the **C→T**-converted FastA temp file for one single-end input
+/// (directional + the C→T half of non-directional). Perl 5278–5287.
+pub fn bisulfite_convert_fasta_se(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+) -> Result<ConvertedReads> {
+    convert_fasta_impl(input, temp_dir, opts, ConvKind::Ct, b"", "_C_to_T")
+}
+
+/// Write the **G→A**-converted FastA temp file for one single-end input — pbat
+/// (the sole file, Perl 5273–5276) + the G→A half of non-directional (5283–5286).
+pub fn bisulfite_convert_fasta_se_ga(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+) -> Result<ConvertedReads> {
+    convert_fasta_impl(input, temp_dir, opts, ConvKind::Ga, b"", "_G_to_A")
+}
+
+/// Library-aware paired-end per-mate **FastA** conversion (Perl 5308+). Same
+/// `(library, read_number) → kind` contract as the FastQ PE converter (caller
+/// passes the explicit `kind`), `/1/1`,`/2/2` tag per mate, `_C_to_T`/`_G_to_A`
+/// stem. 🔴 **PE FastA does NOT honor `--gzip`** — Perl warns and writes
+/// uncompressed `.fa` (5311–5314); SE FastA gzips. gzip is forced off here
+/// (byte-invisible: the converted temp is intermediate, fed straight to Bowtie 2).
+pub(crate) fn bisulfite_convert_fasta_pe_kind(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    read_number: u8,
+    kind: ConvKind,
+) -> Result<ConvertedReads> {
+    let suffix = pe_id_suffix(read_number)?;
+    let opts_no_gzip = ConvertOptions {
+        gzip: false,
+        ..opts.clone()
+    };
+    convert_fasta_impl(
+        input,
+        temp_dir,
+        &opts_no_gzip,
+        kind,
+        suffix,
+        file_base_for(kind),
+    )
+}
+
+/// 2-line FastA conversion core (Perl 5169–5306). Per record: read `header` +
+/// `sequence`; break if either is missing (truncated tail dropped, Perl
+/// `last unless ($header and $sequence)`). `count++` → chomp+`fix_id`+suffix+`\n`
+/// → skip/upto (falsy-0) → tab-detect → **PER-RECORD `^>` sanity** (die on every
+/// non-skipped record, NOT record-1-only — Perl 5271) → write `header` +
+/// `convert_one(seq, kind)` (2 lines; NO `+`/qual line, NO max-length guard).
+/// Filename `<prefix.>?<basename><file_base>.fa[.gz]`.
+fn convert_fasta_impl(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    file_base: &str,
+) -> Result<ConvertedReads> {
+    // ---- output name + path (raw concat; `.fa` ext, not `.fastq`) ----------
+    let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
+    })?;
+    let mut name = match &opts.prefix {
+        Some(p) => format!("{p}.{basename}"),
+        None => basename.to_string(),
+    };
+    name.push_str(file_base);
+    name.push_str(if opts.gzip { ".fa.gz" } else { ".fa" });
+    let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
+    let full_path = PathBuf::from(&full);
+
+    // ---- reader / writer (gz or plain) — same as the FastQ core ------------
+    let file = File::open(input)?;
+    let mut reader: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let out = File::create(&full_path)?;
+    let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(if opts.gzip {
+        Box::new(GzEncoder::new(out, Compression::default()))
+    } else {
+        Box::new(out)
+    });
+
+    let (mut id, mut seq) = (Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    let mut seqid_tab_count: u64 = 0;
+
+    loop {
+        id.clear();
+        seq.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        // Perl `last unless ($header and $sequence)` — a truncated final record drops.
+        if n1 == 0 || n2 == 0 {
+            break;
+        }
+        count += 1;
+
+        // header: chomp (\n only) → fix_id → (PE: insert /1/1 or /2/2) → re-append \n.
+        let mut fixed_id = fix_id(chomp_newline(&id), opts.icpc);
+        fixed_id.extend_from_slice(id_suffix);
+        fixed_id.push(b'\n');
+
+        // skip/upto (Perl falsy-0). The per-record sanity below sits AFTER skip,
+        // so a skipped record is not sanity-checked (Perl `next` precedes 5271).
+        if let Some(s) = opts.skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = opts.upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+
+        // tab-in-ID detection (byte-neutral counter; dead like FastQ — fix_id
+        // already removed tabs — matching Perl 5266).
+        if fixed_id.contains(&b'\t') {
+            seqid_tab_count += 1;
+        }
+
+        // PER-RECORD FastA sanity (Perl 5271): every non-skipped header must be `^>`.
+        if !fixed_id.starts_with(b">") {
+            return Err(AlignerError::Validation(format!(
+                "Input file doesn't seem to be in FastA format at sequence {count}"
+            )));
+        }
+
+        // Write 2 lines: header + converted seq (`convert_one` uppercases then
+        // C→T/G→A, preserving the seq's own `\n`). No `+`/qual, no max-len guard.
+        writer.write_all(&fixed_id)?;
+        writer.write_all(&convert_one(&seq, kind))?;
+    }
+
+    writer.flush()?;
+    drop(writer);
+    Ok(ConvertedReads {
+        name,
+        path: full_path,
+        count,
+        seqid_tab_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,5 +931,176 @@ mod tests {
         // R1 G→A carries the `/1/1` tag; R2 C→T carries `/2/2`.
         assert!(ga1_out.starts_with(b"@read1_1:N:0:ATCG/1/1\nACATACATNN\n"));
         assert!(ct2_out.starts_with(b"@read1_1:N:0:ATCG/2/2\nATGTATGTNN\n"));
+    }
+
+    // ---- Phase 9a: FastA conversion (2-line records, `>` prefix, `.fa`) ------
+
+    /// 2-line FastA: `>id` / seq, no `+`/qual. Same IDs/seqs as `GOLDEN_IN`.
+    const GOLDEN_FA_IN: &[u8] = b">read1 1:N:0:ATCG\nACGTacgtNN\n>read2\tlane2\nccCCggTT\n";
+    /// C→T (uc then tr/C/T/); `>` PRESERVED, fix_IDs ws→`_`; no qual lines.
+    const GOLDEN_FA_OUT_CT: &[u8] = b">read1_1:N:0:ATCG\nATGTATGTNN\n>read2_lane2\nTTTTGGTT\n";
+    /// G→A.
+    const GOLDEN_FA_OUT_GA: &[u8] = b">read1_1:N:0:ATCG\nACATACATNN\n>read2_lane2\nCCCCAATT\n";
+
+    fn run_fa(input: &[u8], name: &str, o: &ConvertOptions) -> (ConvertedReads, Vec<u8>) {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join(name);
+        std::fs::write(&inp, input).unwrap();
+        let cr = bisulfite_convert_fasta_se(&inp, &tmp.path().join("t"), o).unwrap();
+        let out = std::fs::read(&cr.path).unwrap();
+        (cr, out)
+    }
+
+    #[test]
+    fn fasta_se_c_to_t_golden() {
+        let (cr, out) = run_fa(GOLDEN_FA_IN, "reads.fa", &opts(false, None, None, false));
+        assert_eq!(out, GOLDEN_FA_OUT_CT);
+        assert_eq!(cr.name, "reads.fa_C_to_T.fa"); // `.fa`, not `.fastq`
+        assert_eq!(cr.count, 2);
+    }
+
+    #[test]
+    fn fasta_se_g_to_a_golden() {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join("reads.fa");
+        std::fs::write(&inp, GOLDEN_FA_IN).unwrap();
+        let cr = bisulfite_convert_fasta_se_ga(
+            &inp,
+            &tmp.path().join("t"),
+            &opts(false, None, None, false),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&cr.path).unwrap(), GOLDEN_FA_OUT_GA);
+        assert_eq!(cr.name, "reads.fa_G_to_A.fa");
+    }
+
+    fn run_fa_kind(
+        input: &[u8],
+        name: &str,
+        o: &ConvertOptions,
+        read_number: u8,
+        kind: ConvKind,
+    ) -> (ConvertedReads, Vec<u8>) {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join(name);
+        std::fs::write(&inp, input).unwrap();
+        let cr = bisulfite_convert_fasta_pe_kind(&inp, &tmp.path().join("t"), o, read_number, kind)
+            .unwrap();
+        let out = std::fs::read(&cr.path).unwrap();
+        (cr, out)
+    }
+
+    #[test]
+    fn fasta_pe_pbat_r1_ga_r2_ct() {
+        // pbat PE FastA: R1 → G→A `/1/1` `_G_to_A.fa`; R2 → C→T `/2/2` `_C_to_T.fa`.
+        let (cr1, out1) = run_fa_kind(
+            GOLDEN_FA_IN,
+            "r_1.fa",
+            &opts(false, None, None, false),
+            1,
+            ConvKind::Ga,
+        );
+        assert_eq!(cr1.name, "r_1.fa_G_to_A.fa");
+        assert_eq!(
+            out1,
+            b">read1_1:N:0:ATCG/1/1\nACATACATNN\n>read2_lane2/1/1\nCCCCAATT\n".to_vec()
+        );
+        let (cr2, out2) = run_fa_kind(
+            GOLDEN_FA_IN,
+            "r_2.fa",
+            &opts(false, None, None, false),
+            2,
+            ConvKind::Ct,
+        );
+        assert_eq!(cr2.name, "r_2.fa_C_to_T.fa");
+        assert_eq!(
+            out2,
+            b">read1_1:N:0:ATCG/2/2\nATGTATGTNN\n>read2_lane2/2/2\nTTTTGGTT\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn fasta_per_record_sanity_record2_dies() {
+        // 🔴 rev1 A/B: FastA dies on EVERY record whose header is not `^>` (Perl
+        // 5271), NOT record-1-only like FastQ. A malformed record 2 must die.
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join("bad.fa");
+        std::fs::write(&inp, b">r1\nACGT\nNOT_A_HEADER\nACGT\n").unwrap();
+        assert!(
+            bisulfite_convert_fasta_se(
+                &inp,
+                &tmp.path().join("t"),
+                &opts(false, None, None, false)
+            )
+            .is_err(),
+            "FastA record-2 with a non-`>` header must die (per-record sanity)"
+        );
+        // contrast: the SAME malformed record-2 PASSES under FastQ (record-1-only).
+        let fq = tmp.path().join("ok.fq");
+        std::fs::write(&fq, b"@r1\nACGT\n+\nIIII\nNOT_A_HEADER\nACGT\n+\nIIII\n").unwrap();
+        assert!(
+            bisulfite_convert_fastq_se(
+                &fq,
+                &tmp.path().join("t2"),
+                &opts(false, None, None, false)
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn fasta_record1_malformed_dies() {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join("bad.fa");
+        std::fs::write(&inp, b"@notfasta\nACGT\n").unwrap(); // `@` not `>`
+        assert!(
+            bisulfite_convert_fasta_se(
+                &inp,
+                &tmp.path().join("t"),
+                &opts(false, None, None, false)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn fasta_se_gzip_decompresses_to_plain() {
+        let (cr, raw) = run_fa(GOLDEN_FA_IN, "reads.fa", &opts(true, None, None, false));
+        assert_eq!(cr.name, "reads.fa_C_to_T.fa.gz");
+        assert_eq!(gunzip_bytes(&raw), GOLDEN_FA_OUT_CT); // SE FastA honors --gzip
+    }
+
+    #[test]
+    fn fasta_pe_gzip_forced_off() {
+        // PE FastA does NOT gzip even when --gzip is set (Perl warns + uncompressed).
+        let (cr, out) = run_fa_kind(
+            GOLDEN_FA_IN,
+            "r_1.fa",
+            &opts(true, None, None, false),
+            1,
+            ConvKind::Ct,
+        );
+        assert_eq!(cr.name, "r_1.fa_C_to_T.fa"); // NOT `.fa.gz`
+        assert!(out.starts_with(b">read1_1:N:0:ATCG/1/1\n")); // plain text, not gzip
+    }
+
+    #[test]
+    fn fasta_empty_and_crlf() {
+        let (cr, out) = run_fa(b"", "r.fa", &opts(false, None, None, false));
+        assert_eq!(cr.count, 0);
+        assert!(out.is_empty());
+        // CRLF: chomp strips \n (keeps \r) on the header; seq keeps \r\n.
+        let (_, out2) = run_fa(b">r1\r\nACGT\r\n", "r.fa", &opts(false, None, None, false));
+        assert_eq!(out2, b">r1\r\nATGT\r\n");
+    }
+
+    #[test]
+    fn fasta_skip_and_upto() {
+        let input = b">r1\nAA\n>r2\nAA\n>r3\nAA\n>r4\nAA\n>r5\nAA\n";
+        let (cr, out) = run_fa(input, "r.fa", &opts(false, Some(2), Some(4), false));
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains(">r3") && s.contains(">r4"));
+        assert!(!s.contains(">r1") && !s.contains(">r2") && !s.contains(">r5"));
+        assert_eq!(cr.count, 5); // count runs over unskipped numbering; upto breaks at 5
     }
 }

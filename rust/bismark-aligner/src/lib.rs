@@ -16,10 +16,11 @@
 //! Phase 3 single-instance stream, Phase 4 N-way lockstep merge + scoring + MAPQ,
 //! Phase 5 genomic-seq + `XM`/`XR`/`XG` call + BAM output (the first byte-identity
 //! gate, passed on oxy), Phase 6 the alignment report + `--unmapped`/`--ambiguous`
-//! FastQ + `--ambig_bam`, Phase 7 paired-end (directional), and Phase 8 the
-//! non-directional + pbat library types. **FastQ single-end + paired-end, all
-//! library types (directional/non-directional/pbat), run end to end.** FastA input
-//! and multicore/threading land in later phases.
+//! FastQ + `--ambig_bam`, Phase 7 paired-end (directional), Phase 8 the
+//! non-directional + pbat library types, and Phase 9a FastA input. **FastQ AND
+//! FastA, single-end + paired-end, all library types (directional/non-directional/
+//! pbat), run end to end.** Order-preserving multicore/threading (Phase 9b) and the
+//! full-scale real-data gate (Phase 10) land later.
 
 pub mod align;
 pub mod aligner;
@@ -100,23 +101,15 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     Ok(())
 }
 
-/// Dispatch the v1 spine (single-end + directional + FastQ) to the full
-/// convert→align→merge pipeline; other modes are wired in later phases.
+/// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
+/// types (directional/non-directional/pbat) AND both input formats (FastQ +
+/// FastA, Phase 9a) into the generalized `run_se`/`run_pe`. (Order-preserving
+/// `--multicore` threading is the only remaining deferral — Phase 9b — and is
+/// surfaced via `deferred_flags`, not here.)
 fn pipeline(config: &RunConfig) -> Result<()> {
-    match (&config.layout, config.format) {
-        // SE FastQ — all library types (directional/non-directional/pbat) fold
-        // into the generalized `run_se` (the per-mode instance plan).
-        (ReadLayout::SingleEnd { reads }, ReadFormat::FastQ) => run_se(config, reads),
-        (ReadLayout::PairedEnd { mates1, mates2 }, ReadFormat::FastQ) => {
-            run_pe(config, mates1, mates2)
-        }
-        _ => {
-            eprintln!(
-                "(FastA input and multicore/threading are wired in a later phase; \
-                 this build handles FastQ single-end/paired-end, all library types)"
-            );
-            Ok(())
-        }
+    match &config.layout {
+        ReadLayout::SingleEnd { reads } => run_se(config, reads),
+        ReadLayout::PairedEnd { mates1, mates2 } => run_pe(config, mates1, mates2),
     }
 }
 
@@ -127,9 +120,54 @@ enum IndexChoice {
     Ga,
 }
 
-/// Convert the per-mode SE temp file(s) (Perl `biTransformFastQFiles` 5489–5651):
-/// directional = `[C→T]`, pbat = `[G→A]`, non-directional = `[C→T, G→A]` (in that
-/// order — the [`se_instance_plan`] file indices key off it).
+/// SE C→T conversion, format-dispatched (FastQ 4-line vs FastA 2-line, Phase 9a).
+fn convert_se_ct(
+    fasta: bool,
+    path: &Path,
+    td: &Path,
+    opts: &convert::ConvertOptions,
+) -> Result<convert::ConvertedReads> {
+    if fasta {
+        convert::bisulfite_convert_fasta_se(path, td, opts)
+    } else {
+        convert::bisulfite_convert_fastq_se(path, td, opts)
+    }
+}
+
+/// SE G→A conversion, format-dispatched.
+fn convert_se_ga(
+    fasta: bool,
+    path: &Path,
+    td: &Path,
+    opts: &convert::ConvertOptions,
+) -> Result<convert::ConvertedReads> {
+    if fasta {
+        convert::bisulfite_convert_fasta_se_ga(path, td, opts)
+    } else {
+        convert::bisulfite_convert_fastq_se_ga(path, td, opts)
+    }
+}
+
+/// Library-aware PE per-mate conversion, format-dispatched (Phase 9a).
+fn convert_pe_kind(
+    fasta: bool,
+    path: &Path,
+    td: &Path,
+    opts: &convert::ConvertOptions,
+    read_number: u8,
+    kind: convert::ConvKind,
+) -> Result<convert::ConvertedReads> {
+    if fasta {
+        convert::bisulfite_convert_fasta_pe_kind(path, td, opts, read_number, kind)
+    } else {
+        convert::bisulfite_convert_fastq_pe_kind(path, td, opts, read_number, kind)
+    }
+}
+
+/// Convert the per-mode SE temp file(s) (Perl `biTransformFastQFiles` 5489–5651 /
+/// `biTransformFastAFiles` 5169–5306): directional = `[C→T]`, pbat = `[G→A]`,
+/// non-directional = `[C→T, G→A]` (in that order — the [`se_instance_plan`] file
+/// indices key off it). Format-dispatched FastQ vs FastA (Phase 9a).
 fn convert_se_files(
     config: &RunConfig,
     read_file: &str,
@@ -137,12 +175,13 @@ fn convert_se_files(
 ) -> Result<Vec<convert::ConvertedReads>> {
     let path = Path::new(read_file);
     let td = &config.output.temp_dir;
+    let fasta = matches!(config.format, ReadFormat::FastA);
     Ok(match config.library {
-        LibraryType::Directional => vec![convert::bisulfite_convert_fastq_se(path, td, opts)?],
-        LibraryType::Pbat => vec![convert::bisulfite_convert_fastq_se_ga(path, td, opts)?],
+        LibraryType::Directional => vec![convert_se_ct(fasta, path, td, opts)?],
+        LibraryType::Pbat => vec![convert_se_ga(fasta, path, td, opts)?],
         LibraryType::NonDirectional => vec![
-            convert::bisulfite_convert_fastq_se(path, td, opts)?, // file 0 = C→T
-            convert::bisulfite_convert_fastq_se_ga(path, td, opts)?, // file 1 = G→A
+            convert_se_ct(fasta, path, td, opts)?, // file 0 = C→T
+            convert_se_ga(fasta, path, td, opts)?, // file 1 = G→A
         ],
     })
 }
@@ -442,6 +481,7 @@ fn drive_merge(
         Box::new(BufReader::new(file))
     };
     let directional = matches!(config.library, LibraryType::Directional);
+    let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
         config.read_processing.skip,
         config.read_processing.upto,
@@ -455,12 +495,20 @@ fn drive_merge(
         seq.clear();
         plus.clear();
         qual.clear();
+        // FastQ = 4-line record; FastA = 2-line (`>id` / seq, no `+`/qual — Perl
+        // process_single_end_fastA_…_methylation_call 2317).
         let n1 = reader.read_until(b'\n', &mut id)?;
         let n2 = reader.read_until(b'\n', &mut seq)?;
-        let n3 = reader.read_until(b'\n', &mut plus)?;
-        let n4 = reader.read_until(b'\n', &mut qual)?;
-        if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
-            break;
+        if fasta {
+            if n1 == 0 || n2 == 0 {
+                break;
+            }
+        } else {
+            let n3 = reader.read_until(b'\n', &mut plus)?;
+            let n4 = reader.read_until(b'\n', &mut qual)?;
+            if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+                break;
+            }
         }
         count += 1;
         if let Some(s) = skip
@@ -476,12 +524,20 @@ fn drive_merge(
             break;
         }
         counters.sequences_count += 1;
-        // identifier = fix_id(chomp(header)) with the leading '@' stripped (Perl 2442).
+        // identifier = fix_id(chomp(header)) with the leading '@' (FastQ, Perl 2442)
+        // or '>' (FastA, Perl 2330) stripped.
         let fixed = convert::fix_id(convert::chomp_newline(&id), icpc);
-        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
+        let prefix: &[u8] = if fasta { b">" } else { b"@" };
+        let id_bytes = fixed.strip_prefix(prefix).unwrap_or(&fixed);
         let identifier = String::from_utf8_lossy(id_bytes).into_owned();
         let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
-        let qual_bytes: Vec<u8> = convert::chomp_newline(&qual).to_vec();
+        // FastA reads carry no quality → Phred 40 (`'I'`) × read length (Perl
+        // check_results_single_end 2707–2709). FastQ uses the chomped quality line.
+        let qual_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq_uc.len()]
+        } else {
+            convert::chomp_newline(&qual).to_vec()
+        };
         let sequence = String::from_utf8_lossy(&seq_uc).into_owned();
 
         let decision = check_results_single_end(
@@ -546,8 +602,9 @@ fn drive_merge(
                 };
                 if let Some(w) = route {
                     let seq_orig = convert::chomp_newline(&seq).to_vec();
-                    aux_out::write_fastq_record(
+                    write_se_aux_record(
                         w,
+                        fasta,
                         identifier.as_bytes(),
                         &seq_orig,
                         &plus,
@@ -559,8 +616,9 @@ fn drive_merge(
             Decision::NoAlignment => {
                 if let Some(w) = sinks.unmapped.as_mut() {
                     let seq_orig = convert::chomp_newline(&seq).to_vec();
-                    aux_out::write_fastq_record(
+                    write_se_aux_record(
                         w,
+                        fasta,
                         identifier.as_bytes(),
                         &seq_orig,
                         &plus,
@@ -573,6 +631,24 @@ fn drive_merge(
         }
     }
     Ok(())
+}
+
+/// Write one SE `--unmapped`/`--ambiguous` record in the input format: FastA
+/// 2-line `>id\nseq` (Perl 2454–2466) or FastQ 4-line. `seq` is the chomped,
+/// **non-uppercased** original read.
+fn write_se_aux_record<W: Write>(
+    w: &mut W,
+    fasta: bool,
+    id: &[u8],
+    seq: &[u8],
+    plus: &[u8],
+    qual: &[u8],
+) -> Result<()> {
+    if fasta {
+        aux_out::write_fasta_record(w, id, seq)
+    } else {
+        aux_out::write_fastq_record(w, id, seq, plus, qual)
+    }
 }
 
 // ===========================================================================
@@ -667,10 +743,12 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
                 }
             }
         }
+        let fasta = matches!(config.format, ReadFormat::FastA);
         let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
         for &(mate, kind) in &needed {
             let input = if mate == 1 { read_1 } else { read_2 };
-            let cr = convert::bisulfite_convert_fastq_pe_kind(
+            let cr = convert_pe_kind(
+                fasta,
                 Path::new(input),
                 &config.output.temp_dir,
                 &opts,
@@ -918,6 +996,7 @@ fn drive_merge_pe(
     let mut r1 = open_reader(read_1)?;
     let mut r2 = open_reader(read_2)?;
     let directional = matches!(config.library, LibraryType::Directional);
+    let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
         config.read_processing.skip,
         config.read_processing.upto,
@@ -936,16 +1015,36 @@ fn drive_merge_pe(
         ] {
             v.clear();
         }
+        // FastQ = 4 lines/mate; FastA = 2 lines/mate (no `+`/qual — Perl
+        // process_fastA_files_for_paired_end_methylation_calls 2484). Read r1 fully
+        // then r2 fully (the per-mate-file order).
         let n_id1 = r1.read_until(b'\n', &mut id1)?;
         let n_seq1 = r1.read_until(b'\n', &mut seq1)?;
-        let _ = r1.read_until(b'\n', &mut plus1)?;
-        let n_qual1 = r1.read_until(b'\n', &mut qual1)?;
+        if !fasta {
+            let _ = r1.read_until(b'\n', &mut plus1)?;
+            let _ = r1.read_until(b'\n', &mut qual1)?;
+        }
         let n_id2 = r2.read_until(b'\n', &mut id2)?;
         let n_seq2 = r2.read_until(b'\n', &mut seq2)?;
-        let _ = r2.read_until(b'\n', &mut plus2)?;
-        let n_qual2 = r2.read_until(b'\n', &mut qual2)?;
-        // Perl 2611 guard: the 6 needed lines (the two `+` lines are NOT guarded).
-        if n_id1 == 0 || n_seq1 == 0 || n_qual1 == 0 || n_id2 == 0 || n_seq2 == 0 || n_qual2 == 0 {
+        if !fasta {
+            let _ = r2.read_until(b'\n', &mut plus2)?;
+            let _ = r2.read_until(b'\n', &mut qual2)?;
+        }
+        // Break on a missing required line. FastQ guards the 6 data lines (the two
+        // `+` lines are NOT guarded — Perl 2611); FastA guards id+seq per mate
+        // (Perl 2484 `last unless ($id1 and $seq1 and $id2 and $seq2)`). For FastQ,
+        // `qual{1,2}.is_empty()` ≡ the original `n_qual == 0` (buffers were cleared).
+        let incomplete = if fasta {
+            n_id1 == 0 || n_seq1 == 0 || n_id2 == 0 || n_seq2 == 0
+        } else {
+            n_id1 == 0
+                || n_seq1 == 0
+                || qual1.is_empty()
+                || n_id2 == 0
+                || n_seq2 == 0
+                || qual2.is_empty()
+        };
+        if incomplete {
             break;
         }
         count += 1;
@@ -968,16 +1067,27 @@ fn drive_merge_pe(
         // @, but write_fastq_record re-adds the @, so we pass the @-stripped form).
         let id1_fixed = convert::fix_id(convert::chomp_newline(&id1), icpc);
         let id2_fixed = convert::fix_id(convert::chomp_newline(&id2), icpc);
+        let id_prefix: &[u8] = if fasta { b">" } else { b"@" };
         let identifier =
-            String::from_utf8_lossy(id1_fixed.strip_prefix(b"@").unwrap_or(&id1_fixed))
+            String::from_utf8_lossy(id1_fixed.strip_prefix(id_prefix).unwrap_or(&id1_fixed))
                 .into_owned();
         let id2_stripped =
-            String::from_utf8_lossy(id2_fixed.strip_prefix(b"@").unwrap_or(&id2_fixed))
+            String::from_utf8_lossy(id2_fixed.strip_prefix(id_prefix).unwrap_or(&id2_fixed))
                 .into_owned();
         let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
         let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
-        let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
-        let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
+        // FastA: per-mate Phred 40 (`'I'`) × that mate's read length (Perl
+        // check_results_paired_end 3271–3280). FastQ: the chomped quality lines.
+        let qual1_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq1_uc.len()]
+        } else {
+            convert::chomp_newline(&qual1).to_vec()
+        };
+        let qual2_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq2_uc.len()]
+        } else {
+            convert::chomp_newline(&qual2).to_vec()
+        };
         let s1 = String::from_utf8_lossy(&seq1_uc).into_owned();
         let s2 = String::from_utf8_lossy(&seq2_uc).into_owned();
 
@@ -1059,6 +1169,7 @@ fn drive_merge_pe(
                 write_pe_aux(
                     route1,
                     route2,
+                    fasta,
                     &identifier,
                     &id2_stripped,
                     &seq1,
@@ -1073,6 +1184,7 @@ fn drive_merge_pe(
                 write_pe_aux(
                     sinks.unmapped_1.as_mut(),
                     sinks.unmapped_2.as_mut(),
+                    fasta,
                     &identifier,
                     &id2_stripped,
                     &seq1,
@@ -1089,12 +1201,14 @@ fn drive_merge_pe(
     Ok(())
 }
 
-/// Write a pair's two FastQ records to the routed `_1`/`_2` aux files (Perl
-/// 2649–2674). Each record = `@<id>\n<orig non-uc seq>\n<verbatim + line><qual>\n`.
+/// Write a pair's two records to the routed `_1`/`_2` aux files (Perl 2649–2674).
+/// FastQ = `@<id>\n<orig non-uc seq>\n<verbatim + line><qual>\n`; FastA = 2-line
+/// `>id\nseq` (the `+`/qual args are ignored — Phase 9a).
 #[allow(clippy::too_many_arguments)]
 fn write_pe_aux(
     route1: Option<&mut GzEncoder<BufWriter<File>>>,
     route2: Option<&mut GzEncoder<BufWriter<File>>>,
+    fasta: bool,
     id1: &str,
     id2: &str,
     seq1: &[u8],
@@ -1106,11 +1220,11 @@ fn write_pe_aux(
 ) -> Result<()> {
     if let Some(w) = route1 {
         let s = convert::chomp_newline(seq1).to_vec();
-        aux_out::write_fastq_record(w, id1.as_bytes(), &s, plus1, qual1)?;
+        write_se_aux_record(w, fasta, id1.as_bytes(), &s, plus1, qual1)?;
     }
     if let Some(w) = route2 {
         let s = convert::chomp_newline(seq2).to_vec();
-        aux_out::write_fastq_record(w, id2.as_bytes(), &s, plus2, qual2)?;
+        write_se_aux_record(w, fasta, id2.as_bytes(), &s, plus2, qual2)?;
     }
     Ok(())
 }

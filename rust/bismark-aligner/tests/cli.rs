@@ -1195,3 +1195,281 @@ fn nondir_pe_four_slots_index1_no_rejection() {
     assert!(!temp.path().join("reads_2.fq_C_to_T.fastq").is_file());
     assert!(!temp.path().join("reads_2.fq_G_to_A.fastq").is_file());
 }
+
+// ===========================================================================
+// Phase 9a — FastA input (2-line records, synthesized Phred-40 QUAL).
+//
+// 🔴 The Phase-8 fakes parse the converted file with `awk 'NR%4==1 …
+// sub(/^@/,…)'` — the 4-line FastQ shape. Fed a 2-line `.fa` they skip every
+// other read and keep the `>`, so a FastA test would false-pass on all-unmapped
+// (rev1 B C-1). These FastA-aware fakes use `NR%2==1` + `sub(/^>/,…)`. Every
+// test byte-asserts the BAM record incl. **QUAL == Phred 40** (`'I'×len`, Perl
+// check_results_*_end 2707/3271) — the FastA-specific proof.
+// ===========================================================================
+
+/// SE FastA fake: maps on the CT index (`>id` 2-line records), unmapped on GA.
+#[cfg(unix)]
+fn make_fake_bowtie2_fasta_mapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%2==1 { id=$1; sub(/^>/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t6M\t*\t0\t0\tACGTAC\tIIIIII\tAS:i:0\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%2==1 { id=$1; sub(/^>/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// SE FastA fake: maps on the GA index ONLY when `-U` is the G→A-converted `.fa`
+/// (pbat slot 1 / non-dir slot 3 → effective index 3 → CTOB). chr1:3 6M.
+#[cfg(unix)]
+fn make_fake_bowtie2_fasta_ga_index(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+hit=0
+case "$idx" in *BS_GA*) case "$inp" in *_G_to_A*) hit=1;; esac;; esac
+if [ "$hit" = 1 ]; then
+  awk 'NR%2==1 { id=$1; sub(/^>/,"",id); print id "\t0\tchr1_GA_converted\t3\t42\t6M\t*\t0\t0\tACATAC\tIIIIII\tAS:i:0\tMD:Z:6" }' "$inp"
+else
+  awk 'NR%2==1 { id=$1; sub(/^>/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+fi
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// SE FastA fake: every read unmapped (flag 4), 2-line aware.
+#[cfg(unix)]
+fn make_fake_bowtie2_fasta_unmapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%2==1 { id=$1; sub(/^>/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// PE FastA fake: maps a pair on the CT index reading the `-1` C→T_R1 `.fa`,
+/// 2-line aware, strips the `/1/1` tag. chr1:1 6M, flags 99/147.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_fasta(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%2==1 { id=$1; sub(/^>/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tIIIIII\tAS:i:0\tMD:Z:6";
+      print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tIIIIII\tAS:i:0\tMD:Z:6" }' "$m1" ;;
+  *)       awk 'NR%2==1 { id=$1; sub(/^>/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+#[cfg(unix)]
+#[test]
+fn fasta_se_directional_mapped_phred40_qual() {
+    // SE FastA directional (OT, eff 0). FastA proof: SEQ = original read, QUAL =
+    // Phred 40 (`'I'×len`), and the C→T XM call is byte-correct.
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_fasta_mapped(bins.path());
+    // Reads must live OUTSIDE the genome dir — a `.fa` there is globbed as a genome
+    // reference (unlike `.fq`).
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fa");
+    fs::write(&read, b">r1\nACGTAC\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("-f")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    // FastA output name keeps `.fa` (strip_fastq_suffix is FastQ-only — Perl 1622).
+    let bam = outdir.path().join("reads.fa_bismark_bt2.bam");
+    assert!(bam.is_file(), "expected {}", bam.display());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 0);
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 1);
+    assert_eq!(r.sequence().as_ref(), b"ACGTAC");
+    assert_eq!(r.quality_scores().as_ref(), &[40u8; 6]); // 🔴 FastA QUAL = Phred 40
+    assert_eq!(rec_tag(r, *b"XR").as_deref(), Some(&b"CT"[..]));
+    assert_eq!(rec_tag(r, *b"XG").as_deref(), Some(&b"CT"[..]));
+    assert_eq!(rec_tag(r, *b"XM").as_deref(), Some(&b".Z...Z"[..]));
+    assert!(!temp.path().join("reads.fa_C_to_T.fa").is_file()); // `.fa` temp cleaned
+}
+
+#[cfg(unix)]
+#[test]
+fn fasta_se_nondir_ga_index_writes_ctob_phred40() {
+    // FastA NON-DIRECTIONAL: G→A reads, GA-index hit → slot 3 → eff 3 → CTOB
+    // (FLAG 16, XR GA, XG GA), QUAL Phred 40. Proves the FastA-aware strand fake +
+    // the GA branch on a complementary strand for FastA. (NB: pbat ⊕ -f DIES at
+    // config — Perl 8155 — so non-directional is the FastA complementary-strand path.)
+    let genome = TempDir::new().unwrap();
+    make_genome_chr1(genome.path(), b"TTGCGTACTT");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_fasta_ga_index(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fa");
+    fs::write(&read, b">r1\nGCGTAC\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("-f")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads.fa_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // CTOB
+    assert_eq!(r.sequence().as_ref(), b"GCGTAC"); // strand '+' → original read
+    assert_eq!(r.quality_scores().as_ref(), &[40u8; 6]); // FastA QUAL Phred 40
+    assert_eq!(rec_tag(r, *b"XR").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XG").as_deref(), Some(&b"GA"[..]));
+    assert_eq!(rec_tag(r, *b"XM").as_deref(), Some(&b"H.Z..."[..]));
+    // non-dir SE FastA temps = C→T + G→A `.fa`, both cleaned up.
+    assert!(!temp.path().join("reads.fa_C_to_T.fa").is_file());
+    assert!(!temp.path().join("reads.fa_G_to_A.fa").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn fasta_pe_directional_mapped_phred40() {
+    // PE FastA directional → two records, FLAG (99,147), both QUAL Phred 40.
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_fasta(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let r1 = reads_dir.path().join("reads_1.fa");
+    let r2 = reads_dir.path().join("reads_2.fa");
+    fs::write(&r1, b">r1\nACGTAC\n").unwrap();
+    fs::write(&r2, b">r1\nACGTAC\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("-f")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_1.fa_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2);
+    let (m1, m2) = (recs[0].inner(), recs[1].inner());
+    assert_eq!(u16::from(m1.flags()), 99);
+    assert_eq!(u16::from(m2.flags()), 147);
+    assert_eq!(m1.quality_scores().as_ref(), &[40u8; 6]); // both mates Phred 40
+    assert_eq!(m2.quality_scores().as_ref(), &[40u8; 6]);
+    assert!(!temp.path().join("reads_1.fa_C_to_T.fa").is_file());
+    assert!(!temp.path().join("reads_2.fa_G_to_A.fa").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn fasta_se_unmapped_writes_2line_fa_aux() {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_fasta_unmapped(bins.path());
+    let reads_dir = TempDir::new().unwrap();
+    let read = reads_dir.path().join("reads.fa");
+    fs::write(&read, b">r1\nACGTAC\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("-f")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--unmapped")
+        .arg(&read)
+        .assert()
+        .success();
+
+    // Unmapped FastA read → 2-line `>id\nseq` in the `.fa.gz` aux, NOT 4-line FastQ.
+    let un = outdir.path().join("reads.fa_unmapped_reads.fa.gz");
+    assert!(un.is_file(), "expected {}", un.display());
+    let mut s = String::new();
+    GzDecoder::new(fs::File::open(&un).unwrap())
+        .read_to_string(&mut s)
+        .unwrap();
+    assert_eq!(s, ">r1\nACGTAC\n");
+}
