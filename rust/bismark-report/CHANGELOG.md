@@ -2,6 +2,11 @@
 
 All notable changes to the `bismark-report` crate (Rust port of Perl `bismark2report`).
 
+## [1.0.0-beta.1] — 2026-06-03
+
+Version-coherence bump (no functional change): promoted to `beta` to reflect
+shipped + byte-identical HTML status.
+
 ## [1.0.0-alpha.1] — 2026-06-01
 
 Initial implementation. Rust port of the Perl `bismark2report` per-sample graphical HTML report generator.

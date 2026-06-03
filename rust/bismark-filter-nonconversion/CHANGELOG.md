@@ -3,6 +3,11 @@
 All notable changes to `bismark-filter-nonconversion` are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.0-beta.1] — 2026-06-03
+
+Version-coherence bump (no functional change): promoted to `beta` to reflect
+shipped + byte-identical status.
+
 ## [1.0.0-alpha.1] — 2026-05-31
 
 Initial Rust port of Bismark Perl's `filter_non_conversion` (v0.25.1). Binary

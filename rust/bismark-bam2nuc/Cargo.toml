@@ -1,6 +1,6 @@
 [package]
 name = "bismark-bam2nuc"
-version = "1.0.0-alpha.1"
+version = "1.0.0-beta.1"
 description = "Rust port of Bismark Perl's bam2nuc script (mono-/di-nucleotide coverage QC)"
 edition.workspace = true
 rust-version.workspace = true

@@ -4,6 +4,11 @@ All notable changes to `bismark-genome-preparation` will be documented in this f
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.1] — 2026-06-03
+
+Version-coherence bump (no functional change): promoted to `beta` to reflect
+shipped + byte-identical status.
+
 ## [1.0.0-alpha.2] — 2026-05-31
 
 Implements **`--genomic_composition`** (previously accepted-and-ignored in

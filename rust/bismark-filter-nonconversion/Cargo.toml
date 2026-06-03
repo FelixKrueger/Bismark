@@ -1,6 +1,6 @@
 [package]
 name = "bismark-filter-nonconversion"
-version = "1.0.0-alpha.1"
+version = "1.0.0-beta.1"
 description = "Rust port of Bismark Perl's filter_non_conversion script"
 edition.workspace = true
 rust-version.workspace = true
