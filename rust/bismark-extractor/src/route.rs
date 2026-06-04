@@ -128,13 +128,31 @@ pub fn route_call(
     //       in Phase F rev 1 for reuse by the parallel worker). ──
     let (yacht_col6, yacht_col7) = compute_yacht_columns(state.mode, record, strand)?;
 
-    // ── 5. Split-file write ──
+    // ── 5. Split-file write (+ Phase 3a bedGraph tee) ──
     let qname: &[u8] = match record.inner().name() {
         Some(name) => name.as_ref(),
         None => b"<unnamed>",
     };
-    state
-        .fhs
-        .write_call(qname, chr, call, strand, yacht_col6, yacht_col7)?;
+    // Phase 3a (F1/F6): disjoint field borrow so the bedGraph aggregator can be
+    // passed to `write_call` alongside the `&mut OutputFileMap`. The tee lives
+    // at the shared `write_call` funnel; this is the test-only single-threaded
+    // reference path (D5's "collector only" intent is preserved — in
+    // `--parallel` the funnel runs on the collector via `write_routed_call`).
+    let ExtractState {
+        fhs,
+        bedgraph_aggregator,
+        bedgraph_cx,
+        ..
+    } = state;
+    fhs.write_call(
+        qname,
+        chr,
+        call,
+        strand,
+        yacht_col6,
+        yacht_col7,
+        bedgraph_aggregator.as_mut(),
+        *bedgraph_cx,
+    )?;
     Ok(())
 }

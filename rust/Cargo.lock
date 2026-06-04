@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-bedgraph"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -186,6 +186,8 @@ name = "bismark-extractor"
 version = "1.0.0-beta.1"
 dependencies = [
  "assert_cmd",
+ "bismark-bedgraph",
+ "bismark-coverage2cytosine",
  "bismark-io",
  "bstr",
  "clap",
@@ -198,7 +200,6 @@ dependencies = [
  "predicates",
  "tempfile",
  "thiserror 2.0.0",
- "which",
 ]
 
 [[package]]

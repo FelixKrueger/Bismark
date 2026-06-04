@@ -36,6 +36,21 @@ pub struct ExtractState {
     pub is_paired: bool,
     /// Eagerly-opened per-(context, strand) split files.
     pub fhs: OutputFileMap,
+    /// **Phase 3a (inline-streaming epic)**: in-memory bedGraph aggregator.
+    /// `Some` iff `config.bedgraph` (i.e. `--bedGraph` or `--cytosine_report`);
+    /// `None` otherwise. During extraction, every kept call routed by
+    /// [`OutputFileMap::write_call`] is tee'd into this aggregator via
+    /// `add_ranked` (the tee), so finalize can write the `.bedGraph`/`.cov.gz`
+    /// from `into_sorted()` instead of re-reading the (large) per-context files.
+    /// The per-context files are still written (D2 additive).
+    pub bedgraph_aggregator: Option<bismark_bedgraph::Aggregator>,
+    /// **Phase 3a**: cached `config.cx_context`, since `config` is NOT in scope
+    /// at the tee sites (`parallel.rs::write_routed_call` / `route.rs::route_call`
+    /// take `&mut ExtractState`, not `&ResolvedConfig`). Drives the R4 tee
+    /// selection gate: feed a call into the aggregator iff `cx` OR the
+    /// destination basename starts with `"CpG"` (mirrors bedGraph's
+    /// `select_input_files`).
+    pub bedgraph_cx: bool,
     /// Per-context counters for the splitting report.
     pub report: SplittingReport,
     /// Path of the input BAM/SAM/CRAM — needed for splitting-report header.
@@ -86,6 +101,15 @@ impl ExtractState {
             mbias: [MbiasTable::default(), MbiasTable::default()],
             is_paired,
             fhs,
+            // Phase 3a: init the aggregator iff the downstream bedGraph step is
+            // engaged. `config.bedgraph` is true iff --bedGraph or
+            // --cytosine_report (c2c auto-triggers bedgraph at cli.rs:479).
+            bedgraph_aggregator: if config.bedgraph {
+                Some(bismark_bedgraph::Aggregator::new())
+            } else {
+                None
+            },
+            bedgraph_cx: config.cx_context,
             report: SplittingReport::default(),
             input_path: input_path.to_path_buf(),
             splitting_report_path,
@@ -164,30 +188,42 @@ impl ExtractState {
             write_mbias_txt(&mbias_path, &self.mbias, self.is_paired)?;
         }
 
-        // Phase G subprocess chain (gated on `config.bedgraph`, which is
-        // true iff the user set --bedGraph or --cytosine_report — c2c
-        // auto-triggers bedgraph at `cli.rs:455`). Runs AFTER M-bias write
-        // so the user has already seen "M-bias.txt written" before the
-        // subprocess progress messages start streaming.
+        // In-process downstream chain (inline-streaming epic Phase 2). Gated
+        // on `config.bedgraph`, which is true iff the user set --bedGraph or
+        // --cytosine_report (c2c auto-triggers bedgraph at `cli.rs:479`). Runs
+        // AFTER the M-bias write so the user has already seen the M-bias
+        // summary before any downstream progress lines stream. The chain
+        // drives `bismark2bedGraph` + `coverage2cytosine` IN-PROCESS (no
+        // fork/exec, no Perl) via each crate's `Cli`/`validate`/`run`.
         //
-        // **Phase G rev 2 (code-review A L1 fix)**: pass the RAW input
-        // filename (un-stripped), NOT `self.input_basename` (which
+        // **Phase G rev 2 (code-review A L1 fix), preserved**: pass the RAW
+        // input filename (un-stripped), NOT `self.input_basename` (which
         // `pipeline::derive_basename` already stripped of `.bam`/`.sam`/
-        // `.cram`). `subprocess::derive_bedgraph_filename` mirrors Perl
-        // `:325-330` which only path-splits + strips literal `gz`/`sam`/
-        // `bam`/`txt` — feeding it the already-stripped basename would
-        // produce `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`,
-        // breaking Phase H byte-identity on every real `.bam` input.
+        // `.cram`). `downstream_filenames::derive_bedgraph_filename` mirrors
+        // Perl `:325-330` which only path-splits + strips literal `gz`/`sam`/
+        // `bam`/`txt` — feeding it the already-stripped basename would produce
+        // `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`, breaking
+        // byte-identity on every real `.bam` input.
         if config.bedgraph {
-            let raw_filename = derive_raw_filename_for_phase_g(&self.input_path);
-            crate::subprocess::run_phase_g_chain(
+            let raw_filename = derive_raw_filename_for_downstream(&self.input_path);
+            // Phase 3a (F2): take the in-memory aggregator and materialize its
+            // sorted chromosome data. `run_downstream_chain` writes the
+            // `.bedGraph`/`.cov.gz` from THIS, instead of re-reading the
+            // per-context call files (the I/O win). `take()` leaves `None`
+            // behind (the aggregator is single-use). The aggregator is `Some`
+            // here by construction (init'd in `new` iff `config.bedgraph`); the
+            // `unwrap_or_default()` is a defensive empty-sorted fallback.
+            let sorted = self
+                .bedgraph_aggregator
+                .take()
+                .map(|a| a.into_sorted())
+                .unwrap_or_default();
+            crate::downstream_filenames::run_downstream_chain(
                 config,
                 &raw_filename,
                 &config.output_dir,
                 &finalization.kept,
-                &crate::subprocess::RealRunner {
-                    quiet: config.quiet,
-                },
+                &sorted,
             )?;
         }
 
@@ -202,13 +238,14 @@ impl ExtractState {
     }
 }
 
-/// Extract the RAW input filename (un-stripped) for Phase G's filename
-/// derivation. Mirrors Perl `bismark_methylation_extractor:325` which does
-/// `my $out = (split (/\//, $filename))[-1];` — i.e. path-split only, no
+/// Extract the RAW input filename (un-stripped) for the downstream chain's
+/// filename derivation. Mirrors Perl `bismark_methylation_extractor:325` which
+/// does `my $out = (split (/\//, $filename))[-1];` — i.e. path-split only, no
 /// extension stripping. The subsequent `s/gz$//`, `s/sam$//`, `s/bam$//`,
-/// `s/txt$//` pipeline lives in [`crate::subprocess::derive_bedgraph_filename`].
+/// `s/txt$//` pipeline lives in
+/// [`crate::downstream_filenames::derive_bedgraph_filename`].
 ///
-/// **Phase G rev 2 (code-review A L1 fix)**: separated from
+/// **Phase G rev 2 (code-review A L1 fix), preserved**: separated from
 /// [`crate::pipeline::derive_basename`] because that function strips
 /// `.bam`/`.sam`/`.cram` (used by the split-file naming + splitting-report
 /// path) which would double-strip when fed to `derive_bedgraph_filename`.
@@ -216,7 +253,7 @@ impl ExtractState {
 /// Returns the file_name() component of `input_path`. Falls back to the
 /// full lossy path string if `input_path` has no filename component
 /// (defensive — CLI validation guarantees a real file).
-fn derive_raw_filename_for_phase_g(input_path: &std::path::Path) -> String {
+fn derive_raw_filename_for_downstream(input_path: &std::path::Path) -> String {
     input_path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -226,27 +263,120 @@ fn derive_raw_filename_for_phase_g(input_path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::{OutputMode, PairedMode};
     use std::path::Path;
 
-    /// Phase G rev 2 (code-review A L1 regression guard): verify that the
-    /// helper that produces Phase G's input filename returns the RAW
-    /// filename (un-stripped), so that
-    /// `subprocess::derive_bedgraph_filename` sees the full extension and
-    /// produces a Perl-byte-identical bedGraph filename.
+    /// Minimal `ResolvedConfig` for `ExtractState::new` tests. `output_dir`
+    /// is the caller-supplied tempdir; `bedgraph` toggles the Phase 3a
+    /// aggregator init.
+    fn config_for_state(output_dir: &Path, bedgraph: bool, cx_context: bool) -> ResolvedConfig {
+        ResolvedConfig {
+            files: vec![std::path::PathBuf::from("sample.bam")],
+            paired_mode: PairedMode::SingleEnd,
+            output_mode: OutputMode::Default,
+            ignore_5p_r1: 0,
+            ignore_3p_r1: 0,
+            ignore_5p_r2: 0,
+            ignore_3p_r2: 0,
+            no_overlap: false,
+            output_dir: output_dir.to_path_buf(),
+            no_header: false,
+            gzip: false,
+            emit_splitting_report: true,
+            fasta_annotation: false,
+            mbias_off: false,
+            bedgraph,
+            cytosine_report: false,
+            cutoff: 1,
+            remove_spaces: false,
+            counts: true,
+            zero_based: false,
+            cx_context,
+            split_by_chromosome: false,
+            ucsc: false,
+            buffer_size: None,
+            gazillion: false,
+            ample_memory: false,
+            genome_folder: None,
+            parallel: 1,
+            quiet: false,
+            verbose: false,
+        }
+    }
+
+    /// Phase 3a T1: with `--bedGraph` (config.bedgraph == true), the state's
+    /// aggregator field is `Some` so the tee has a sink during extraction.
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_bam_extension() {
+    fn new_initializes_aggregator_when_bedgraph_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = config_for_state(
+            tmp.path(),
+            /*bedgraph=*/ true,
+            /*cx_context=*/ false,
+        );
+        let state = ExtractState::new(&cfg, Path::new("sample.bam"), "sample", false)
+            .expect("construct ExtractState with bedgraph");
+        assert!(
+            state.bedgraph_aggregator.is_some(),
+            "aggregator must be Some when config.bedgraph is true"
+        );
+    }
+
+    /// Phase 3a T1: without `--bedGraph`, the aggregator is `None` (no tee
+    /// overhead on the common extract-only path).
+    #[test]
+    fn new_leaves_aggregator_none_when_bedgraph_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = config_for_state(
+            tmp.path(),
+            /*bedgraph=*/ false,
+            /*cx_context=*/ false,
+        );
+        let state = ExtractState::new(&cfg, Path::new("sample.bam"), "sample", false)
+            .expect("construct ExtractState without bedgraph");
+        assert!(
+            state.bedgraph_aggregator.is_none(),
+            "aggregator must be None when config.bedgraph is false"
+        );
+    }
+
+    /// Phase 3a T1: `bedgraph_cx` caches `config.cx_context` for the R4 tee
+    /// gate (config is not in scope at the tee sites).
+    #[test]
+    fn new_caches_cx_context_for_r4_gate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = config_for_state(
+            tmp.path(),
+            /*bedgraph=*/ true,
+            /*cx_context=*/ true,
+        );
+        let state = ExtractState::new(&cfg, Path::new("sample.bam"), "sample", false)
+            .expect("construct ExtractState with cx");
+        assert!(
+            state.bedgraph_cx,
+            "bedgraph_cx must mirror config.cx_context"
+        );
+    }
+
+    /// Phase G rev 2 (code-review A L1 regression guard), preserved: verify
+    /// that the helper producing the downstream chain's input filename returns
+    /// the RAW filename (un-stripped), so that
+    /// `downstream_filenames::derive_bedgraph_filename` sees the full extension
+    /// and produces a Perl-byte-identical bedGraph filename.
+    #[test]
+    fn derive_raw_filename_for_downstream_preserves_bam_extension() {
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.bam")),
+            derive_raw_filename_for_downstream(Path::new("/tmp/foo.bam")),
             "foo.bam"
         );
     }
 
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_real_bismark_pe_filename() {
+    fn derive_raw_filename_for_downstream_preserves_real_bismark_pe_filename() {
         // The byte-identity-critical case: chained extensions on real
         // Bismark output names.
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new(
+            derive_raw_filename_for_downstream(Path::new(
                 "/path/to/sample.fastq_bismark_bt2_pe.deduplicated.bam"
             )),
             "sample.fastq_bismark_bt2_pe.deduplicated.bam"
@@ -254,17 +384,17 @@ mod tests {
     }
 
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_cram_extension() {
+    fn derive_raw_filename_for_downstream_preserves_cram_extension() {
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.cram")),
+            derive_raw_filename_for_downstream(Path::new("/tmp/foo.cram")),
             "foo.cram"
         );
     }
 
     #[test]
-    fn derive_raw_filename_for_phase_g_preserves_chained_bam_gz_extension() {
+    fn derive_raw_filename_for_downstream_preserves_chained_bam_gz_extension() {
         assert_eq!(
-            derive_raw_filename_for_phase_g(Path::new("/tmp/foo.bam.gz")),
+            derive_raw_filename_for_downstream(Path::new("/tmp/foo.bam.gz")),
             "foo.bam.gz"
         );
     }

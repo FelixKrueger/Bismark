@@ -6,12 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+
+- **In-memory streaming ingestion** (`Aggregator::add_ranked`) and a
+  write/feed split (`output::write_outputs_from_sorted`), so an in-process caller
+  (the methylation extractor) can tee calls directly into the aggregator instead
+  of re-reading the per-context files, then write the bedGraph/coverage from the
+  same sorted records. Ownership resolves to the minimum **creation rank** — the
+  index of the owning file in the extractor's `mode_keys` creation order, which
+  is Perl's file creation order (`OT, CTOT, CTOB, OB` per context). This
+  reproduces Perl's chromosome emission order regardless of tee arrival order.
+  Additive: the file path (`run()`/`add()`/`write_outputs`) is unchanged and
+  byte-preserved.
+
 ### Changed
+
+- **Streaming ownership rule: min-basename → min creation-rank**
+  (`add_min_owner` → `add_ranked`). The interim `add_min_owner` rule owned a
+  both-strand chromosome by the lexicographically-smallest basename (`CpG_OB` <
+  `CpG_OT`), which diverged from Perl: Perl hands `bismark2bedGraph` the
+  per-context files in *creation* order (`OT, CTOT, CTOB, OB`, NO sort;
+  `bismark_methylation_extractor:5156-5225`) and owns by first-touch, so the
+  owner is `CpG_OT` (created FIRST), not `CpG_OB` (created LAST). Because the
+  owner basename prefixes the bytewise emission key, the wrong owner reordered
+  every both-strand chromosome vs Perl (caught by the Phase-4 ordered real-data
+  gate). `add_ranked` takes the destination file's `mode_keys` index as the
+  rank and owns by minimum rank, matching Perl. Byte-affecting for the streaming
+  tee only; the standalone file path (`add()`/`run()`) is unchanged.
 
 - **`mimalloc` global allocator** for `bismark2bedGraph_rs` (matching
   `bismark-extractor`). The in-memory `(chr, pos)` aggregation map grows through
   many allocations; mimalloc is ~12% faster than the system allocator on a full
   `--CX` run (973 s → 854 s, ~4.4× vs Perl). Allocator-only — byte-identical.
+- Internal: `ChrMeta` stores the owner basename + creation rank and builds the
+  bytewise ordering key lazily in `into_sorted()` (was eager at intern time).
+  Byte-neutral for the file path (gated by the ownership regression tests);
+  enables `add_ranked` to revise ownership (by min creation rank) before emission.
 
 ### Investigated and rejected
 

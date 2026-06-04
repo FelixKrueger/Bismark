@@ -270,7 +270,8 @@ fn touch(map: &mut OutputFileMap, context: CytosineContext, strand: BismarkStran
         methylated: true,
         xm_byte: b'Z',
     };
-    map.write_call(b"r", "chr1", call, strand, 0, 0).unwrap();
+    map.write_call(b"r", "chr1", call, strand, 0, 0, None, false)
+        .unwrap();
 }
 
 #[test]
@@ -377,9 +378,9 @@ fn output_file_map_gzip_writes_valid_gz_content_byte_identical_to_plain() {
         xm_byte: b'Z',
     };
     plain
-        .write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0)
+        .write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0, None, false)
         .unwrap();
-    gz.write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0)
+    gz.write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0, None, false)
         .unwrap();
     plain.flush_all().unwrap();
     gz.flush_all().unwrap();
@@ -421,10 +422,28 @@ fn write_call_comprehensive_routes_OT_and_OB_to_single_per_context_file() {
         methylated: false,
         xm_byte: b'z',
     };
-    map.write_call(b"read_ot", "chr1", call_ot, BismarkStrand::OT, 0, 0)
-        .unwrap();
-    map.write_call(b"read_ob", "chr1", call_ob, BismarkStrand::OB, 0, 0)
-        .unwrap();
+    map.write_call(
+        b"read_ot",
+        "chr1",
+        call_ot,
+        BismarkStrand::OT,
+        0,
+        0,
+        None,
+        false,
+    )
+    .unwrap();
+    map.write_call(
+        b"read_ob",
+        "chr1",
+        call_ob,
+        BismarkStrand::OB,
+        0,
+        0,
+        None,
+        false,
+    )
+    .unwrap();
     map.flush_all().unwrap();
     drop(map);
 
@@ -466,7 +485,7 @@ fn write_call_merge_non_cpg_keeps_Z_in_cpg_OT() {
         methylated: true,
         xm_byte: b'Z',
     };
-    map.write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0)
+    map.write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0, None, false)
         .unwrap();
     map.flush_all().unwrap();
     drop(map);
@@ -576,7 +595,7 @@ fn routes_byte_to_non_cpg(xm_byte: u8, context: CytosineContext, methylated: boo
         methylated,
         xm_byte,
     };
-    map.write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0)
+    map.write_call(b"read1", "chr1", call, BismarkStrand::OT, 0, 0, None, false)
         .unwrap();
     map.flush_all().unwrap();
     drop(map);

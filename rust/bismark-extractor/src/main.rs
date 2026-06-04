@@ -7,11 +7,12 @@
 //!   to pick `extract_se` / `extract_pe`. Errors with `AutoDetectFailed`
 //!   if the BAM has no `@PG ID:Bismark*` line.
 //!
-//! Phase E (this build) supports all 6 output modes
+//! This build supports all 6 output modes
 //! (`Default` / `Comprehensive` / `MergeNonCpG` /
-//! `ComprehensiveMergeNonCpG` / `Yacht` / `MbiasOnly`) plus `--gzip`.
-//! `--parallel > 1` (Phase F), `--bedGraph` / `--cytosine_report` (Phase G),
-//! and multiple input files are still rejected with
+//! `ComprehensiveMergeNonCpG` / `Yacht` / `MbiasOnly`), `--gzip`,
+//! `--parallel > 1` (Phase F), and `--bedGraph` / `--cytosine_report`
+//! (inline-streaming epic Phase 2 — driven in-process from `state.finalize`).
+//! Multiple input files are still rejected with
 //! [`BismarkExtractorError::PhaseNotYetImplemented`].
 //!
 //! Exit codes:
@@ -79,14 +80,11 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
     // Phase F (this build): all 6 output modes + --gzip + --multicore N are
     // supported. The parallel pipeline is byte-identical to N=1 for any N
     // by construction (per SPEC §9 + PHASE_F_PLAN.md).
-
-    // Downstream subprocess chain: Phase G.
-    if config.bedgraph || config.cytosine_report {
-        return Err(BismarkExtractorError::PhaseNotYetImplemented {
-            feature: "--bedGraph / --cytosine_report subprocess chain; arrives in Phase G"
-                .to_string(),
-        });
-    }
+    //
+    // Inline-streaming epic Phase 2: --bedGraph / --cytosine_report are now
+    // driven IN-PROCESS from inside `state.finalize` (no main::run
+    // orchestration is added here) — the prior `PhaseNotYetImplemented` gate
+    // was removed.
 
     // Phase F dispatch (parallel pipeline; --parallel N for any N >= 1).
     // PairedMode dispatch:

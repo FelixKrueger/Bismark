@@ -175,6 +175,13 @@ pub struct OutputFileMap {
     /// key from `(context, strand)` and to dispatch yacht's 8-col row
     /// format.
     mode: OutputMode,
+    /// `OutputKey` → **creation rank** = its index in the [`mode_keys`] list
+    /// (which is returned in Perl's file creation order). The bedGraph tee
+    /// passes this rank to `Aggregator::add_ranked` so chromosome ownership
+    /// resolves to the lowest-rank (first-created) file — matching Perl's
+    /// first-in-creation-order ownership. Precomputed here so the hot-path
+    /// tee does a single `HashMap` lookup, never re-deriving the order.
+    ranks: HashMap<OutputKey, u32>,
     /// Open-time params captured for lazy-open in `write_call`.
     gzip: bool,
     no_header: bool,
@@ -216,8 +223,14 @@ impl OutputFileMap {
 
         let keys = mode_keys(mode, input_basename, gzip);
         let mut files: HashMap<OutputKey, OutputFileEntry> = HashMap::with_capacity(keys.len());
+        // Creation rank = the key's index in the mode_keys list (Perl's file
+        // creation order). Captured here so the bedGraph tee in `write_call`
+        // can pass it to `Aggregator::add_ranked` without re-deriving the order
+        // per call.
+        let mut ranks: HashMap<OutputKey, u32> = HashMap::with_capacity(keys.len());
 
-        for (key, filename) in keys {
+        for (rank, (key, filename)) in keys.into_iter().enumerate() {
+            ranks.insert(key, rank as u32);
             files.insert(
                 key,
                 OutputFileEntry {
@@ -231,6 +244,7 @@ impl OutputFileMap {
         Ok(OutputFileMap {
             files,
             mode,
+            ranks,
             gzip,
             no_header,
         })
@@ -257,6 +271,29 @@ impl OutputFileMap {
     ///
     /// See [`write_yacht_row`].
     ///
+    /// # Phase 3a (inline-streaming epic) — the bedGraph tee
+    ///
+    /// `agg` is the optional in-memory `bismark_bedgraph::Aggregator` (present
+    /// iff `--bedGraph`/`--cytosine_report`). When `Some`, after routing the
+    /// call to its destination [`OutputFileEntry`], this method tees the call
+    /// into the aggregator via `add_ranked`, passing the destination file's
+    /// **creation rank** (its index in [`mode_keys`], looked up from
+    /// `self.ranks`) and its **basename** (`entry.path.file_name()`, borrowed
+    /// `&str`, NO allocation — this is the hot path, ≈1B calls). The tee is
+    /// gated by R4: feed iff `cx` OR the basename starts with `"CpG"` (mirrors
+    /// bedGraph's `select_input_files`). Calls routed to `MbiasOnly` (which has
+    /// no real `OutputKey`) are skipped by construction (the `route_to_key`
+    /// `None` short-circuit below returns before the tee). The tee is purely
+    /// ADDITIVE — the per-context write below is unchanged (D2).
+    ///
+    /// Passing the destination file's creation rank makes chromosome ownership
+    /// resolve to the lowest-rank (first-created) file emitting a call for it —
+    /// matching Perl, which hands `bismark2bedGraph` the per-context files in
+    /// creation order (`OT, CTOT, CTOB, OB`, NO sort) and owns by first-touch.
+    /// The basename is still passed so the resolved owner's order key is
+    /// byte-identical to what bedGraph's file-read path would intern from the
+    /// same on-disk file (incl. the `.txt`/`.txt.gz` suffix).
+    ///
     /// # Errors
     ///
     /// `BismarkExtractorError::IoWrite` on I/O failures. `InternalError` if
@@ -264,6 +301,12 @@ impl OutputFileMap {
     /// — shouldn't be possible because [`OutputFileMap::new`] inserts every
     /// key from `mode_keys`. Surfaces loudly rather than panicking if it
     /// ever happens.
+    // The arg count (9) exceeds clippy's default threshold (7) after Phase 3a
+    // added the `agg`/`cx` tee parameters. A param struct would obscure the
+    // hot-path call sites (`route.rs`/`parallel.rs` already destructure
+    // `ExtractState` and forward fields by name); the yacht col-6/7 args predate
+    // this. Keep the flat signature — it reads cleanly at the two callers.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_call(
         &mut self,
         record_name: &[u8],
@@ -272,15 +315,27 @@ impl OutputFileMap {
         strand: BismarkStrand,
         yacht_col6: u32,
         yacht_col7: u32,
+        agg: Option<&mut bismark_bedgraph::Aggregator>,
+        cx: bool,
     ) -> Result<(), BismarkExtractorError> {
         // `route_to_key` returns None for MbiasOnly. The route_call
         // short-circuit upstream means write_call is never invoked in that
         // mode, but if it ever were we'd silently no-op (consistent with
-        // "no per-context files in mbias_only").
+        // "no per-context files in mbias_only"). The bedGraph tee is also
+        // skipped here for MbiasOnly — `--mbias_only` is unreachable under
+        // `--bedGraph` (Perl :1037-1041), so this is a non-issue, but the
+        // early return keeps the tee strictly tied to a real destination file.
         let key = match route_to_key(self.mode, call.context, strand) {
             Some(k) => k,
             None => return Ok(()),
         };
+        // Creation rank of the destination file (its `mode_keys` index). Looked
+        // up BEFORE the `&mut entry` borrow below, since `self.ranks` and
+        // `self.files` would otherwise conflict. `OutputKey` is `Copy`, so this
+        // is a cheap hash lookup; every routable key is present in `ranks`
+        // (inserted alongside `files` in `new`). Defaults to `u32::MAX` if
+        // somehow absent.
+        let rank = self.ranks.get(&key).copied().unwrap_or(u32::MAX);
         let gzip = self.gzip;
         let no_header = self.no_header;
         let yacht = self.mode == OutputMode::Yacht;
@@ -294,6 +349,29 @@ impl OutputFileMap {
                         key, self.mode,
                     ),
                 })?;
+
+        // Phase 3a tee — BEFORE the per-context write so the borrow of
+        // `entry.path` (the basename) is taken while we hold `&entry`, then
+        // released before the lazy-open `&mut entry.writer` below. NO allocation:
+        // the basename is a borrowed `&str` slice of the already-owned
+        // `entry.path`. The per-context write is unchanged (D2 additive).
+        if let Some(agg) = agg {
+            // `file_name().to_str()` is a borrowed `&str` slice of the
+            // already-owned `entry.path` — zero allocation (Bismark filenames
+            // are ASCII by construction, so `to_str()` never returns None in
+            // practice; the `unwrap_or("")` is defensive). The suffix
+            // (.txt[.gz]) is included, matching what bedGraph's file-read path
+            // interns from the same on-disk file (R1).
+            let basename: &str = entry
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            // R4 selection: feed iff --CX OR the destination is a CpG file.
+            if cx || basename.starts_with("CpG") {
+                agg.add_ranked(chr, call.ref_pos, call.methylated, rank, basename);
+            }
+        }
 
         // Lazy-open (#889 item 1): create the file + write the header + spawn
         // the gzp pool only on the strand's first data row. The header is thus
@@ -1034,6 +1112,7 @@ mod tests {
         let mut map = OutputFileMap {
             files,
             mode: OutputMode::Default,
+            ranks: HashMap::new(),
             gzip: true,
             no_header: false,
         };
