@@ -15,11 +15,35 @@ use crate::discovery::{self, GenomeIndexes};
 use crate::error::{AlignerError, Result};
 use crate::options;
 
-/// Which external aligner (v1 wires Bowtie 2 only).
+/// Which external aligner. v1 ships Bowtie 2; the v1.x epic adds HISAT2 (this
+/// phase) and later minimap2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Aligner {
-    /// Bowtie 2 (default and only v1 aligner).
+    /// Bowtie 2 (default).
     Bowtie2,
+    /// HISAT2 (v1.x; thin wrapper — same instance/strand model as Bowtie 2).
+    Hisat2,
+}
+
+impl Aligner {
+    /// The output-name token in `_bismark_<token>.bam` / `_<token>_SE_report.txt`
+    /// (Perl `_bismark_bt2` / `_bismark_hisat2`). Threaded ONLY into the
+    /// derived-name path, never `--basename`/`_unmapped`/`_ambiguous` names.
+    pub fn token(self) -> &'static str {
+        match self {
+            Aligner::Bowtie2 => "bt2",
+            Aligner::Hisat2 => "hisat2",
+        }
+    }
+
+    /// The human-readable name for the report "Bismark was run with …" line
+    /// (Perl 1722/1728) and detection diagnostics.
+    pub fn name(self) -> &'static str {
+        match self {
+            Aligner::Bowtie2 => "Bowtie 2",
+            Aligner::Hisat2 => "HISAT2",
+        }
+    }
 }
 
 /// Bisulfite library type.
@@ -124,7 +148,7 @@ pub struct ReadProcessing {
 pub struct RunConfig {
     /// Verbatim argv (program name excluded) for the `@PG` `CL:` line (Phase 5).
     pub command_line: String,
-    /// Aligner (Bowtie 2).
+    /// Selected aligner (Bowtie 2 or HISAT2).
     pub aligner: Aligner,
     /// Library type.
     pub library: LibraryType,
@@ -134,9 +158,9 @@ pub struct RunConfig {
     pub format: ReadFormat,
     /// Discovered genome indexes + FASTA inventory.
     pub genome: GenomeIndexes,
-    /// Detected Bowtie 2 binary + version.
+    /// Detected aligner binary + version (Bowtie 2 or HISAT2).
     pub detected_aligner: DetectedAligner,
-    /// Exact Bowtie 2 option string (per-instance `--norc`/`--nofw` added later).
+    /// Exact aligner option string (per-instance `--norc`/`--nofw` added later).
     pub aligner_options: String,
     /// Gap penalties (for later MAPQ).
     pub gap_penalties: GapPenalties,
@@ -144,6 +168,13 @@ pub struct RunConfig {
     pub score_min_intercept: f64,
     /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
     pub score_min_slope: f64,
+    /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
+    /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
+    /// pushed to the *aligner options*, NOT this variable). Consumed by the PE
+    /// TLEN sign computation (`output.rs`), where it must be aligner-INDEPENDENT —
+    /// HISAT2 suppresses the `--dovetail` flag from `aligner_options` but still
+    /// uses `$dovetail=1` for TLEN. Default `true`.
+    pub dovetail: bool,
     /// `--phred64-quals`: input qualities are Phred+64; converted to Phred+33 on
     /// SAM output (Perl 4191). Default `false` (Phred+33). Phase 5.
     pub phred64: bool,
@@ -151,7 +182,8 @@ pub struct RunConfig {
     pub unmapped: bool,
     /// `--ambiguous`: write ambiguously-mapping reads to `<name>_ambiguous_reads.fq.gz`. Phase 6.
     pub ambiguous: bool,
-    /// `--ambig_bam`: write the first ambiguous alignment to `<name>_bismark_bt2.ambig.bam`. Phase 6.
+    /// `--ambig_bam`: write the first ambiguous alignment to
+    /// `<name>_bismark_<aligner>.ambig.bam`. Phase 6 (single-core only for HISAT2).
     pub ambig_bam: bool,
     /// Output target.
     pub output: OutputTarget,
@@ -178,14 +210,37 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let library = resolve_library(cli)?;
     let format = resolve_format(cli)?;
     validate_multicore(cli)?;
+    // `--multicore`/`--parallel` is NOT supported with `--hisat2` (Phase-2a oxy
+    // gate finding): HISAT2 discovers splice sites across the WHOLE input read
+    // set, so splitting the reads into chunks changes the discovered splice sites
+    // and the resulting spliced alignments — the chunked output is not
+    // byte-identical to Perl Bismark (Perl itself is not worker-invariant here:
+    // single-core 1310 spliced vs `--multicore 8` 1219 on the 1M oxy subset).
+    // The faithful HISAT2 path is single-core, so fail loudly rather than ship
+    // non-faithful output. (This subsumes the `--ambig_bam`+multicore case: Perl's
+    // multicore temp-name builder is Bowtie 2-only, 676–684, so multicore HISAT2
+    // would drop the ambiguous BAM anyway.) Single-core `--hisat2` is unaffected.
+    if aligner == Aligner::Hisat2 && cli.multicore.unwrap_or(1) > 1 {
+        return Err(AlignerError::Unsupported(
+            "--multicore/--parallel is not supported with --hisat2: HISAT2 discovers splice sites \
+             across the whole input read set, so splitting the reads into chunks changes the \
+             alignments and the output is not byte-identical to Perl Bismark. Run --hisat2 \
+             single-core (the default)."
+                .into(),
+        ));
+    }
 
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
-    let genome = discovery::discover_genome(&genome_arg)?;
-    let detected_aligner = aligner::detect_bowtie2(cli.path_to_bowtie2.as_deref())?;
+    let genome = discovery::discover_genome(aligner, &genome_arg)?;
+    let path_to_aligner = match aligner {
+        Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
+        Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
+    };
+    let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
     let (aligner_options, gap_penalties) =
-        options::build_aligner_options(cli, format, layout.is_paired())?;
+        options::build_aligner_options(cli, aligner, format, layout.is_paired())?;
     let (score_min_intercept, score_min_slope) = options::score_min_params(cli)?;
     reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
@@ -208,6 +263,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         gap_penalties,
         score_min_intercept,
         score_min_slope,
+        // Perl 8047: `$dovetail = 1 unless $no_dovetail` — independent of the aligner.
+        dovetail: !cli.no_dovetail,
         phred64: cli.phred64,
         unmapped: cli.unmapped,
         ambiguous: cli.ambiguous,
@@ -266,9 +323,7 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
         ));
     }
     if cli.hisat2 {
-        return Err(AlignerError::Unsupported(
-            "HISAT2 alignment is deferred to a v1.x follow-up; use Perl Bismark or --bowtie2 (default).".into(),
-        ));
+        return Ok(Aligner::Hisat2);
     }
     if cli.minimap2 {
         return Err(AlignerError::Unsupported(
@@ -494,7 +549,7 @@ impl RunConfig {
         };
         format!(
             "Bismark aligner (Rust) — resolved configuration\n\
-               aligner:        Bowtie 2 {} ({})\n\
+               aligner:        {} {} ({})\n\
                library:        {library}\n\
                layout:         {layout} [{format}]\n\
                reads:          {files}\n\
@@ -506,6 +561,7 @@ impl RunConfig {
                aligner_options: {}\n\
                output:         BAM, dir={:?}, basename={:?}\n\
              (Phase 1: parse + discover + detect only — no alignment performed.)",
+            self.aligner.name(),
             self.detected_aligner.version,
             self.detected_aligner.path.display(),
             self.genome.genome_dir.display(),
@@ -518,5 +574,44 @@ impl RunConfig {
             self.output.output_dir,
             self.output.basename,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Cli;
+    use clap::Parser;
+
+    fn cli_from(args: &[&str]) -> Cli {
+        let mut v = vec!["bismark_rs"];
+        v.extend_from_slice(args);
+        Cli::parse_from(v)
+    }
+
+    #[test]
+    fn resolve_aligner_defaults_to_bowtie2() {
+        assert_eq!(resolve_aligner(&cli_from(&[])).unwrap(), Aligner::Bowtie2);
+    }
+
+    #[test]
+    fn resolve_aligner_selects_hisat2() {
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--hisat2"])).unwrap(),
+            Aligner::Hisat2
+        );
+    }
+
+    #[test]
+    fn resolve_aligner_minimap2_still_deferred() {
+        let e = resolve_aligner(&cli_from(&["--minimap2"])).unwrap_err();
+        assert!(matches!(e, AlignerError::Unsupported(_)));
+    }
+
+    #[test]
+    fn resolve_aligner_rejects_conflicting_selections() {
+        assert!(resolve_aligner(&cli_from(&["--hisat2", "--bowtie2"])).is_err());
+        assert!(resolve_aligner(&cli_from(&["--hisat2", "--minimap2"])).is_err());
+        assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
     }
 }

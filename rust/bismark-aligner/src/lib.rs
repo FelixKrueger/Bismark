@@ -324,10 +324,15 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     // The report's genome path is the absolute path WITH a trailing `/` (Perl
     // forces it, 7619–7629); `genome_dir` is absolute (canonicalize) but slashless.
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    // The `_bismark_<token>` output-name token (Perl `_bismark_bt2`/`_bismark_hisat2`),
+    // threaded ONLY into the derived-name (`default_suffix`) path — never the
+    // `--basename` / `_unmapped` / `_ambiguous` names (no token in Perl).
+    let tok = config.aligner.token();
 
     for read_file in reads {
         // Open the BAM + optional --ambig_bam / --unmapped / --ambiguous sinks.
-        let bam_path = derive_output_path(read_file, config, "_bismark_bt2.bam", ".bam");
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
         eprintln!(
             ">>> Writing bisulfite mapping results to {} <<<",
             bam_path.display()
@@ -338,7 +343,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
         let report_path = derive_output_path(
             read_file,
             config,
-            "_bismark_bt2_SE_report.txt",
+            &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
         let mut report = BufWriter::new(File::create(&report_path)?);
@@ -349,6 +354,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
                 sequence_file2: None,
                 genome_folder: &genome_folder,
                 aligner_options: &config.aligner_options,
+                aligner: config.aligner,
                 library: config.library,
             },
         )?;
@@ -474,7 +480,12 @@ fn open_sinks(
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
-        let p = derive_output_path(read_file, config, "_bismark_bt2.ambig.bam", ".ambig.bam");
+        let p = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{}.ambig.bam", config.aligner.token()),
+            ".ambig.bam",
+        );
         eprintln!("Ambiguous BAM output: {}", p.display());
         Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
             AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
@@ -871,11 +882,14 @@ fn process_pe_chunk(
         )?);
     }
 
-    // Perl's `$dovetail` (8047–8048): present in aligner_options iff paired && !no_dovetail.
-    let dovetail = config
-        .aligner_options
-        .split_whitespace()
-        .any(|t| t == "--dovetail");
+    // Perl's `$dovetail` (8047): `!--no_dovetail`, set for EVERY aligner — the
+    // `if($bowtie2)` at 8051 only gates pushing `--dovetail` to the aligner
+    // options, NOT this variable. HISAT2 suppresses the flag from `aligner_options`
+    // (2a) but still uses `$dovetail=1` for the PE TLEN sign (Perl 8898/8946), so
+    // this MUST come from `config.dovetail`, not a scan of `aligner_options`
+    // (which would wrongly yield `false` for HISAT2 → flipped TLEN on same-POS
+    // fully-overlapping pairs). For Bowtie 2 the two are equal, so this is a no-op.
+    let dovetail = config.dovetail;
     drive_merge_pe(
         read_1,
         read_2,
@@ -907,9 +921,11 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
     let header = generate_sam_header(&genome, &config.command_line);
     let directional = matches!(config.library, LibraryType::Directional);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
-        let bam_path = derive_output_path(read_1, config, "_bismark_bt2_pe.bam", "_pe.bam");
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
         eprintln!(
             ">>> Writing bisulfite mapping results to {} <<<",
             bam_path.display()
@@ -919,7 +935,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
         let report_path = derive_output_path(
             read_1,
             config,
-            "_bismark_bt2_PE_report.txt",
+            &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
         let mut report = BufWriter::new(File::create(&report_path)?);
@@ -930,6 +946,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
                 sequence_file2: Some(read_2),
                 genome_folder: &genome_folder,
                 aligner_options: &config.aligner_options,
+                aligner: config.aligner,
                 library: config.library,
             },
         )?;
@@ -1011,7 +1028,12 @@ fn open_pe_sinks(
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
-        let p = derive_output_path(read_1, config, "_bismark_bt2_pe.ambig.bam", "_pe.ambig.bam");
+        let p = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{}_pe.ambig.bam", config.aligner.token()),
+            "_pe.ambig.bam",
+        );
         eprintln!("Ambiguous BAM output: {}", p.display());
         Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
             AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
@@ -1218,6 +1240,7 @@ fn drive_merge_pe(
             config.score_min_intercept,
             config.score_min_slope,
             config.ambig_bam,
+            config.aligner,
             counters,
         )?;
 

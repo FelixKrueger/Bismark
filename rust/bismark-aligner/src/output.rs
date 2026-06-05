@@ -1482,6 +1482,15 @@ mod tests {
             (0, 120, 100, 130, 150, true, -51, 51),
             // equality start1==start2 → branch A; end2==end1 → A1 normal (index 0): +11/-11
             (0, 100, 100, 110, 110, true, 11, -11),
+            // 🔴 Phase-2b regression: index 3 (flag_1=83) + start1==start2 fully-
+            // overlapping pair — the case the HISAT2 oxy gate hit (read .1175). With
+            // dovetail TRUE (Perl `$dovetail`, ALL aligners incl. HISAT2) R1 gets the
+            // minus sign even though it ties for leftmost: -11/+11. The bug was
+            // deriving dovetail=false for HISAT2 (the flag is suppressed from
+            // aligner_options) → wrongly +11/-11.
+            (3, 100, 100, 110, 110, true, -11, 11),
+            // …and with dovetail SUPPRESSED (--no_dovetail) it flips back: +11/-11.
+            (3, 100, 100, 110, 110, false, 11, -11),
         ];
         for &(index, p1, p2, e1, e2, dov, t1, t2) in cases {
             let (r1, r2) = run_pe_sam(index, p1, p2, e1, e2, dov);

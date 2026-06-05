@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use crate::align::{PairedSamStream, SamRecord, SamStream};
+use crate::config::Aligner;
 use crate::error::{AlignerError, Result};
 use crate::mapq::calc_mapq;
 
@@ -502,6 +503,7 @@ pub fn check_results_paired_end<S: PairedSamStream>(
     score_min_intercept: f64,
     score_min_slope: f64,
     want_ambig: bool,
+    aligner: Aligner,
     counters: &mut Counters,
 ) -> Result<DecisionPaired> {
     let mut best_sum_so_far: Option<i64> = None;
@@ -593,9 +595,31 @@ pub fn check_results_paired_end<S: PairedSamStream>(
             }
         }
 
-        // second-best (Perl 3465–3590): if either mate has XS, the missing one
-        // defaults to its own AS.
-        let (mut sb1, mut sb2) = (r1.second_best, r2.second_best);
+        // second-best (Perl 3465–3590): if either mate has a second-best, the
+        // missing one defaults to its own AS.
+        //
+        // HISAT2 read-1 `ZS` asymmetry (Phase 2b): Perl's PE read-1 parse loop
+        // (3372–3382) has `if AS / elsif XS:i: / elsif MD:Z:` — NO `ZS:i:` branch
+        // — so under HISAT2 (which emits `ZS:i:`, not `XS:i:`, on read-1)
+        // `$second_best_1` is ALWAYS undef. The read-2 loop (3386–3403) DOES
+        // capture `ZS`. Our uniform parser (align.rs) captures `XS:i:`-or-`ZS:i:`
+        // for every record, so for HISAT2 PE we must drop read-1's second-best
+        // here to match Perl; read-2 keeps it. (SE is untouched — Perl's SE loop
+        // 2780 captures `ZS` for any aligner; verified byte-identical in Phase 2a.)
+        //
+        // Dropping read-1's second-best UNCONDITIONALLY (vs Perl's read-1 `elsif
+        // XS:i:` capture) is exact for HISAT2: HISAT2 emits `ZS:i:` for the
+        // secondary score and `XS:A:` (strand) for spliced reads — never `XS:i:` —
+        // so read-1's captured `second_best` is always the `ZS` value, and Perl's
+        // read-1 `XS:i:` branch never fires. They would only differ for a
+        // hypothetical HISAT2 build that emits `XS:i:` on read-1 (the 1M oxy gate
+        // is the backstop). See PLAN §8.
+        let r1_second_best = if aligner == Aligner::Hisat2 {
+            None
+        } else {
+            r1.second_best
+        };
+        let (mut sb1, mut sb2) = (r1_second_best, r2.second_best);
         if sb1.is_some() || sb2.is_some() {
             sb1 = sb1.or(Some(as1));
             sb2 = sb2.or(Some(as2));
@@ -805,6 +829,15 @@ mod tests {
         format!("{qname}\t4\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII")
     }
 
+    /// Like [`mapped`] but the second-best score is reported as HISAT2's `ZS:i:`
+    /// tag (not Bowtie 2's `XS:i:`). `SamRecord::parse` accepts either, so the
+    /// merge sees an identical `second_best` — this proves the SE HISAT2 path.
+    fn mapped_zs(qname: &str, rname: &str, pos: u32, as_i: i64, md: &str, zs: i64) -> String {
+        format!(
+            "{qname}\t0\t{rname}\t{pos}\t40\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:{as_i}\tZS:i:{zs}\tMD:Z:{md}"
+        )
+    }
+
     fn run(id: &str, s0: &[&str], s1: &[&str], directional: bool) -> (Decision, Counters) {
         run_amb(id, s0, s1, directional, false)
     }
@@ -894,6 +927,46 @@ mod tests {
         );
         assert!(matches!(d, Decision::Ambiguous { .. }));
         assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    // ---- HISAT2 SE second-best via ZS:i: (Phase 2a; V5) --------------------
+
+    /// V5 (tie): a HISAT2 SE multi-mapper whose `ZS:i:` equals its `AS:i:` is a
+    /// within-instance tie → ambiguous (same outcome as the Bowtie 2 `XS==AS`
+    /// case above, proving the ZS tag feeds the identical decision path).
+    #[test]
+    fn hisat2_se_zs_equal_as_is_ambiguous() {
+        let (d, c) = run(
+            "r1",
+            &[&mapped_zs("r1", "chr1_CT_converted", 100, 0, "10", 0)],
+            &[&unmapped("r1")],
+            true,
+        );
+        assert!(matches!(d, Decision::Ambiguous { .. }));
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    /// V5 (shift): a HISAT2 SE multi-mapper whose `ZS:i:` is strictly below its
+    /// `AS:i:` is a unique best whose MAPQ second-best comes from the record's
+    /// own ZS value (the other instance is unmapped, so there is no runner-up to
+    /// compare against) — not undef, not a runner-up instance.
+    #[test]
+    fn hisat2_se_zs_below_as_is_unique_best_with_zs_second() {
+        let (d, c) = run(
+            "r1",
+            &[&mapped_zs("r1", "chr1_CT_converted", 100, 0, "10", -6)],
+            &[&unmapped("r1")],
+            true,
+        );
+        match d {
+            Decision::UniqueBest(b) => {
+                assert_eq!(b.alignment_score, 0);
+                // second-best for MAPQ = the record's own ZS (-6).
+                assert_eq!(b.alignment_score_second_best, Some(-6));
+            }
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
     }
 
     #[test]
@@ -1219,6 +1292,30 @@ mod tests {
         directional: bool,
         want_ambig: bool,
     ) -> (DecisionPaired, Counters) {
+        // Existing PE tests are Bowtie 2 semantics.
+        run_pe_aln(
+            id,
+            s0,
+            s1,
+            s2,
+            s3,
+            directional,
+            want_ambig,
+            Aligner::Bowtie2,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_pe_aln(
+        id: &str,
+        s0: Slot,
+        s1: Slot,
+        s2: Slot,
+        s3: Slot,
+        directional: bool,
+        want_ambig: bool,
+        aligner: Aligner,
+    ) -> (DecisionPaired, Counters) {
         let mut streams: Vec<Option<VecPairStream>> = vec![s0, s1, s2, s3]
             .into_iter()
             .map(|s| s.map(VecPairStream::new))
@@ -1233,10 +1330,129 @@ mod tests {
             0.0,
             -0.2,
             want_ambig,
+            aligner,
             &mut c,
         )
         .unwrap();
         (d, c)
+    }
+
+    // ---- HISAT2 PE read-1 `ZS` asymmetry (Phase 2b; V2/V3/V4/V4b) ----------
+    // The discriminator is the `aligner` ARG: `align.rs SamRecord::parse` unifies
+    // `XS:i:`/`ZS:i:` into the one `second_best` field, so `mapped_pair` with a
+    // `Some(v)` second-best stands in for HISAT2's `ZS` tag. The fix masks
+    // read-1's second-best for HISAT2 only (merge.rs ~L607), reproducing Perl's
+    // read-1-has-no-ZS-branch behavior (read-2 keeps its `ZS`).
+
+    fn pe_second_best_sum(d: &DecisionPaired) -> Option<i64> {
+        match d {
+            DecisionPaired::UniqueBest(b) => b.sum_of_alignment_scores_second_best,
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+    }
+
+    /// (A) HISAT2: mate-1 AND mate-2 carry a second-best → read-1's is DROPPED
+    /// (backfilled to `as1=0`), read-2's kept → `sum_second = 0 + (-6) = -6`, NOT `-12`.
+    #[test]
+    fn pe_hisat2_mate1_zs_is_ignored() {
+        let pair = mapped_pair(
+            "r1",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            Some(-6),
+            Some(-6),
+        );
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Hisat2,
+        );
+        assert_eq!(pe_second_best_sum(&d), Some(-6));
+    }
+
+    /// (B) Bowtie 2 regression: SAME inputs, read-1's second-best IS used →
+    /// `sum_second = -6 + -6 = -12` (proves the mask is HISAT2-only).
+    #[test]
+    fn pe_bowtie2_mate1_second_best_is_kept() {
+        let pair = mapped_pair(
+            "r1",
+            "chr1_CT_converted",
+            100,
+            140,
+            0,
+            0,
+            Some(-6),
+            Some(-6),
+        );
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Bowtie2,
+        );
+        assert_eq!(pe_second_best_sum(&d), Some(-12));
+    }
+
+    /// (C) HISAT2, mate-1 second-best ONLY (mate-2 none): masking `sb1→None` makes
+    /// the `is_some() || is_some()` gate FALSE → the **no-second-best** branch
+    /// (a byte-visible MAPQ-ladder switch), NOT `Some(zs1 + as2)`. The subtlest
+    /// case (review I-1/B). Bowtie 2 contrast: read-1 kept, mate-2 backfills → `-6`.
+    #[test]
+    fn pe_hisat2_mate1_only_demotes_to_no_second_best() {
+        let pair = mapped_pair("r1", "chr1_CT_converted", 100, 140, 0, 0, Some(-6), None);
+        // `from_ref` borrows `pair` (no clone), so both calls can share it.
+        let (dh, _) = run_pe_aln(
+            "r1",
+            Some(std::slice::from_ref(&pair)),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Hisat2,
+        );
+        assert_eq!(pe_second_best_sum(&dh), None);
+        let (db, _) = run_pe_aln(
+            "r1",
+            Some(std::slice::from_ref(&pair)),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Bowtie2,
+        );
+        assert_eq!(pe_second_best_sum(&db), Some(-6));
+    }
+
+    /// (D) HISAT2, mate-2 second-best only: read-2 keeps it, read-1 backfills to
+    /// `as1=0` → `sum_second = 0 + (-6) = -6` (read-2 `ZS` is correct on both sides).
+    #[test]
+    fn pe_hisat2_mate2_only_backfills_mate1() {
+        let pair = mapped_pair("r1", "chr1_CT_converted", 100, 140, 0, 0, None, Some(-6));
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Hisat2,
+        );
+        assert_eq!(pe_second_best_sum(&d), Some(-6));
     }
 
     #[test]
@@ -1495,6 +1711,7 @@ mod tests {
             0.0,
             -0.2,
             false,
+            Aligner::Bowtie2,
             &mut c,
         );
         assert!(r.is_err());
