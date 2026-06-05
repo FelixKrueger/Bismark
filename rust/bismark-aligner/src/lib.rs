@@ -882,11 +882,14 @@ fn process_pe_chunk(
         )?);
     }
 
-    // Perl's `$dovetail` (8047–8048): present in aligner_options iff paired && !no_dovetail.
-    let dovetail = config
-        .aligner_options
-        .split_whitespace()
-        .any(|t| t == "--dovetail");
+    // Perl's `$dovetail` (8047): `!--no_dovetail`, set for EVERY aligner — the
+    // `if($bowtie2)` at 8051 only gates pushing `--dovetail` to the aligner
+    // options, NOT this variable. HISAT2 suppresses the flag from `aligner_options`
+    // (2a) but still uses `$dovetail=1` for the PE TLEN sign (Perl 8898/8946), so
+    // this MUST come from `config.dovetail`, not a scan of `aligner_options`
+    // (which would wrongly yield `false` for HISAT2 → flipped TLEN on same-POS
+    // fully-overlapping pairs). For Bowtie 2 the two are equal, so this is a no-op.
+    let dovetail = config.dovetail;
     drive_merge_pe(
         read_1,
         read_2,
@@ -1237,6 +1240,7 @@ fn drive_merge_pe(
             config.score_min_intercept,
             config.score_min_slope,
             config.ambig_bam,
+            config.aligner,
             counters,
         )?;
 

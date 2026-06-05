@@ -42,7 +42,7 @@ Spike-first per aligner. 🎯 marks a byte-identity gate.
 |---|-------|-----------|------------|
 | 1 | HISAT2 determinism spike ✅ **premise HOLDS** | `phase1-hisat2-determinism-spike/spikes/SPIKE_hisat2_determinism.md` | — |
 | 2a | HISAT2 core (detect+options+discovery+naming+SE gate) 🎯 | `phase2a-hisat2-core/PLAN.md` | #1 |
-| 2b | HISAT2 PE (read-1 ZS fix) + PE/non-dir/pbat/FastA gate 🎯 | _(to be written)_ | #2a |
+| 2b | HISAT2 PE (read-1 ZS fix) + PE/non-dir/pbat/FastA gate 🎯 | `phase2b-hisat2-pe/PLAN.md` | #2a |
 | 3 | minimap2 determinism + selection spike 🎯-premise | `phase3-minimap2-determinism-selection-spike/SPIKE_*.md` | #2b |
 | 4 | minimap2 wrapper + merge adaptation + gate 🎯 | _(to be written)_ | #3 |
 | 5 | Combined full-scale gate + PR 🎯 | _(to be written)_ | #2b, #4 |

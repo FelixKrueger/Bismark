@@ -547,6 +547,26 @@ C methylated in Unknown context (CN or CHN):\t20.0%\n\n\n";
         );
     }
 
+    #[test]
+    fn pe_header_hisat2_run_with_line() {
+        // V6 (Phase 2b): the PE HISAT2 header reads "Bismark was run with HISAT2 …"
+        // with the PE line-order (the option string has NO `--dovetail`, 2a).
+        let h = ReportHeader {
+            sequence_file: "r_1.fq",
+            sequence_file2: Some("r_2.fq"),
+            genome_folder: "/abs/genome/",
+            aligner_options: "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq",
+            aligner: Aligner::Hisat2,
+            library: LibraryType::Directional,
+        };
+        assert_eq!(
+            s(&header_bytes(&h)),
+            "Bismark report for: r_1.fq and r_2.fq (version: v0.25.1)\n\
+             Bismark was run with HISAT2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq\n\
+             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n"
+        );
+    }
+
     fn counters_pe() -> Counters {
         Counters {
             sequences_count: 5000,

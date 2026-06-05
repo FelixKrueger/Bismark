@@ -2113,3 +2113,88 @@ fn ambig_bam_single_core_hisat2_names_hisat2_token() {
             .is_file()
     );
 }
+
+/// A PE fake `hisat2` (banner `hisat2-align-s version 2.2.2`, via `--path_to_hisat2`):
+/// on the CT (`BS_CT`) index it maps an OT pair (99/147 at chr1:1) where **mate-1
+/// carries a `ZS:i:` second-best** (HISAT2's tag) — exercising the read-1-`ZS`
+/// mask end-to-end; UNMAPPED (77/141) on GA → a unique best on OT.
+#[cfg(unix)]
+fn make_fake_hisat2_pe(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-2\tMD:Z:6";
+      print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-2\tMD:Z:6" }' "$m1" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// V6 (Phase 2b): `--hisat2` PE end-to-end — the PE BAM + report carry the
+/// `hisat2` token (`_bismark_hisat2_pe*`), the report says "run with HISAT2" and
+/// echoes the PE HISAT2 option string (no `--dovetail`), and both mate records
+/// are written. The mate-1 `ZS` is consumed by the merge (masked), not emitted.
+#[cfg(unix)]
+#[test]
+fn hisat2_pe_mapped_names_and_report() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    // PE naming token is `hisat2`, NOT `bt2`.
+    let bam = outdir.path().join("reads_1_bismark_hisat2_pe.bam");
+    assert!(bam.is_file(), "expected {}", bam.display());
+    assert!(!outdir.path().join("reads_1_bismark_bt2_pe.bam").exists());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2, "two records per pair");
+    // MAPQ guard (review L-1): pins the end-to-end masked-path MAPQ. With the
+    // read-1 `ZS` mask, sum_second = as1(0) + zs2(-2) = -2; reverting the mask
+    // (read-1 zs1=-2 used) → sum_second = -4 → a different MAPQ. The unit tests
+    // (merge::pe_hisat2_*) are the precise guard; this locks the integration path.
+    let mapq = u8::from(recs[0].inner().mapping_quality().expect("mapq"));
+    assert_eq!(mapq, 38, "read-1-ZS-masked MAPQ (sum_second=-2)");
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_hisat2_PE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with HISAT2 against"));
+    assert!(
+        report.contains("--no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq")
+    );
+    assert!(!report.contains("--dovetail"));
+}

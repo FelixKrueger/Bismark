@@ -168,6 +168,13 @@ pub struct RunConfig {
     pub score_min_intercept: f64,
     /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
     pub score_min_slope: f64,
+    /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
+    /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
+    /// pushed to the *aligner options*, NOT this variable). Consumed by the PE
+    /// TLEN sign computation (`output.rs`), where it must be aligner-INDEPENDENT —
+    /// HISAT2 suppresses the `--dovetail` flag from `aligner_options` but still
+    /// uses `$dovetail=1` for TLEN. Default `true`.
+    pub dovetail: bool,
     /// `--phred64-quals`: input qualities are Phred+64; converted to Phred+33 on
     /// SAM output (Perl 4191). Default `false` (Phred+33). Phase 5.
     pub phred64: bool,
@@ -256,6 +263,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         gap_penalties,
         score_min_intercept,
         score_min_slope,
+        // Perl 8047: `$dovetail = 1 unless $no_dovetail` — independent of the aligner.
+        dovetail: !cli.no_dovetail,
         phred64: cli.phred64,
         unmapped: cli.unmapped,
         ambiguous: cli.ambiguous,
