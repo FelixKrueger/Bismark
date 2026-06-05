@@ -37,12 +37,16 @@ pub enum AlignerError {
     )]
     NoFasta(PathBuf),
 
-    /// A required Bowtie 2 index file is missing (mirrors Perl 7654–58).
+    /// A required bisulfite index file is missing (mirrors Perl 7654–58 /
+    /// 7743/7791). The `aligner` name distinguishes a faulty Bowtie 2 `.bt2`
+    /// index from a faulty HISAT2 `.ht2` one.
     #[error(
-        "the Bowtie 2 index of the {converted}->converted genome seems to be faulty or \
+        "the {aligner} index of the {converted}->converted genome seems to be faulty or \
          non-existant ('{missing}'). Please run the bismark_genome_preparation before running Bismark"
     )]
     FaultyIndex {
+        /// Human-readable aligner name (`Bowtie 2` / `HISAT2`).
+        aligner: String,
         /// `C->T` or `G->A`.
         converted: String,
         /// The first missing index file name.
@@ -52,13 +56,15 @@ pub enum AlignerError {
     /// The aligner binary could not be executed (mirrors Perl 7071–72).
     #[error(
         "failed to execute {aligner} properly (could not run '{cmd} --version'). Please install \
-         Bowtie 2 and make sure it is in the PATH, or specify the path with --path_to_bowtie2 /path/to/bowtie2"
+         {aligner} and make sure it is in the PATH, or specify the path with {path_flag} /path/to/dir"
     )]
     AlignerNotWorking {
-        /// Human-readable aligner name (`Bowtie 2`).
+        /// Human-readable aligner name (`Bowtie 2` / `HISAT2`).
         aligner: String,
         /// The command that failed (the resolved binary path).
         cmd: String,
+        /// The `--path_to_<aligner>` flag to hint in the diagnostic.
+        path_flag: String,
     },
 
     /// A supplied input read file does not exist (mirrors Perl 8102/8117).

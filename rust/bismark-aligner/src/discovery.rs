@@ -18,6 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::config::Aligner;
 use crate::error::{AlignerError, Result};
 
 /// Which FASTA extension category was found (extension-priority order).
@@ -84,30 +85,37 @@ pub struct GenomeIndexes {
     pub fasta_kind: FastaKind,
 }
 
-/// The six Bowtie 2 small-index suffixes for a given basename stem.
-fn bt2_suffixes(stem: &str, large: bool) -> [String; 6] {
-    let ext = if large { "bt2l" } else { "bt2" };
-    [
-        format!("{stem}.1.{ext}"),
-        format!("{stem}.2.{ext}"),
-        format!("{stem}.3.{ext}"),
-        format!("{stem}.4.{ext}"),
-        format!("{stem}.rev.1.{ext}"),
-        format!("{stem}.rev.2.{ext}"),
-    ]
+/// The expected index file names for a given basename stem. This is a per-aligner
+/// **suffix-arity** difference, not just an extension swap:
+/// - **Bowtie 2** — 6 files `{1,2,3,4,rev.1,rev.2}.bt2` (`.bt2l` large).
+/// - **HISAT2** — 8 files `{1,2,3,4,5,6,7,8}.ht2` (`.ht2l` large; no `rev.*`).
+fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
+    match aligner {
+        Aligner::Bowtie2 => {
+            let ext = if large { "bt2l" } else { "bt2" };
+            ["1", "2", "3", "4", "rev.1", "rev.2"]
+                .iter()
+                .map(|s| format!("{stem}.{s}.{ext}"))
+                .collect()
+        }
+        Aligner::Hisat2 => {
+            let ext = if large { "ht2l" } else { "ht2" };
+            (1..=8).map(|n| format!("{stem}.{n}.{ext}")).collect()
+        }
+    }
 }
 
-/// Check that all six index files for `stem` exist in `dir`. Returns the first
-/// missing file name, or `None` if all present.
-fn first_missing(dir: &Path, stem: &str, large: bool) -> Option<String> {
-    bt2_suffixes(stem, large)
+/// Check that all expected index files for `stem` exist in `dir`. Returns the
+/// first missing file name, or `None` if all present.
+fn first_missing(aligner: Aligner, dir: &Path, stem: &str, large: bool) -> Option<String> {
+    index_suffixes(aligner, stem, large)
         .into_iter()
         .find(|f| !dir.join(f).is_file())
 }
 
-/// Discover the genome folder, validate the Bowtie 2 bisulfite indexes, and
-/// inventory the raw FASTA file(s).
-pub fn discover_genome(genome_arg: &Path) -> Result<GenomeIndexes> {
+/// Discover the genome folder, validate the bisulfite indexes for `aligner`
+/// (Bowtie 2 `.bt2` or HISAT2 `.ht2`), and inventory the raw FASTA file(s).
+pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeIndexes> {
     // Absolute path (Perl chdir + getcwd). canonicalize also verifies existence.
     let genome_dir = std::fs::canonicalize(genome_arg)
         .map_err(|_| AlignerError::GenomeFolder(genome_arg.to_path_buf()))?;
@@ -120,20 +128,22 @@ pub fn discover_genome(genome_arg: &Path) -> Result<GenomeIndexes> {
 
     // Small index first, then large fallback (Perl 7646–7800).
     let large_index = match (
-        first_missing(&ct_dir, "BS_CT", false),
-        first_missing(&ga_dir, "BS_GA", false),
+        first_missing(aligner, &ct_dir, "BS_CT", false),
+        first_missing(aligner, &ga_dir, "BS_GA", false),
     ) {
         (None, None) => false,
         _ => {
             // Small incomplete — require the large index instead.
-            if let Some(missing) = first_missing(&ct_dir, "BS_CT", true) {
+            if let Some(missing) = first_missing(aligner, &ct_dir, "BS_CT", true) {
                 return Err(AlignerError::FaultyIndex {
+                    aligner: aligner.name().to_string(),
                     converted: "C->T".to_string(),
                     missing,
                 });
             }
-            if let Some(missing) = first_missing(&ga_dir, "BS_GA", true) {
+            if let Some(missing) = first_missing(aligner, &ga_dir, "BS_GA", true) {
                 return Err(AlignerError::FaultyIndex {
+                    aligner: aligner.name().to_string(),
                     converted: "G->A".to_string(),
                     missing,
                 });
@@ -201,6 +211,21 @@ mod tests {
         }
     }
 
+    /// A complete small HISAT2 index: 8 `.ht2` files per converted genome (no
+    /// `rev.*`) + one FASTA. `large` writes `.ht2l` instead.
+    fn make_ht2_index(dir: &Path, large: bool) {
+        let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+        let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+        fs::create_dir_all(&ct).unwrap();
+        fs::create_dir_all(&ga).unwrap();
+        let ext = if large { "ht2l" } else { "ht2" };
+        for n in 1..=8 {
+            fs::write(ct.join(format!("BS_CT.{n}.{ext}")), b"x").unwrap();
+            fs::write(ga.join(format!("BS_GA.{n}.{ext}")), b"x").unwrap();
+        }
+        fs::write(dir.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+    }
+
     #[test]
     fn fasta_priority_prefers_fa_and_sorts_case_insensitively() {
         let tmp = TempDir::new().unwrap();
@@ -210,7 +235,7 @@ mod tests {
         // a `.fa.gz` must be ignored entirely because `.fa` files exist.
         fs::write(tmp.path().join("z.fa.gz"), b"x").unwrap();
 
-        let g = discover_genome(tmp.path()).unwrap();
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
         assert_eq!(g.fasta_kind, FastaKind::Fa);
         assert!(!g.large_index);
         let names: Vec<String> = g
@@ -228,7 +253,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_small_index(tmp.path());
         fs::write(tmp.path().join("genome.fasta"), b">c\nA\n").unwrap();
-        let g = discover_genome(tmp.path()).unwrap();
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
         assert_eq!(g.fasta_kind, FastaKind::Fasta);
     }
 
@@ -244,7 +269,7 @@ mod tests {
                 .join("BS_CT.3.bt2"),
         )
         .unwrap();
-        let err = discover_genome(tmp.path()).unwrap_err();
+        let err = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap_err();
         assert!(matches!(err, AlignerError::FaultyIndex { .. }));
     }
 
@@ -252,8 +277,113 @@ mod tests {
     fn no_fasta_errors() {
         let tmp = TempDir::new().unwrap();
         make_small_index(tmp.path());
-        let err = discover_genome(tmp.path()).unwrap_err();
+        let err = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap_err();
         assert!(matches!(err, AlignerError::NoFasta(_)));
+    }
+
+    // ---- HISAT2 index discovery (Phase 2a; V4) -----------------------------
+
+    /// HISAT2 = 8 `.ht2` suffixes, no `rev.*` (vs Bowtie 2's 6).
+    #[test]
+    fn hisat2_suffix_arity_is_eight_ht2() {
+        let s = index_suffixes(Aligner::Hisat2, "BS_CT", false);
+        assert_eq!(
+            s,
+            vec![
+                "BS_CT.1.ht2",
+                "BS_CT.2.ht2",
+                "BS_CT.3.ht2",
+                "BS_CT.4.ht2",
+                "BS_CT.5.ht2",
+                "BS_CT.6.ht2",
+                "BS_CT.7.ht2",
+                "BS_CT.8.ht2",
+            ]
+        );
+        assert!(s.iter().all(|f| !f.contains("rev.")));
+        // large fallback flips the extension to .ht2l.
+        let l = index_suffixes(Aligner::Hisat2, "BS_GA", true);
+        assert_eq!(l[0], "BS_GA.1.ht2l");
+        assert_eq!(l.len(), 8);
+    }
+
+    #[test]
+    fn discovers_complete_ht2_index() {
+        let tmp = TempDir::new().unwrap();
+        make_ht2_index(tmp.path(), false);
+        let g = discover_genome(Aligner::Hisat2, tmp.path()).unwrap();
+        assert!(!g.large_index);
+        assert!(g.ct_index_basename.ends_with("CT_conversion/BS_CT"));
+        assert!(g.ga_index_basename.ends_with("GA_conversion/BS_GA"));
+    }
+
+    #[test]
+    fn falls_back_to_large_ht2l_index() {
+        let tmp = TempDir::new().unwrap();
+        make_ht2_index(tmp.path(), true);
+        let g = discover_genome(Aligner::Hisat2, tmp.path()).unwrap();
+        assert!(g.large_index);
+    }
+
+    #[test]
+    fn incomplete_ht2_index_errors_with_hisat2_wording() {
+        let tmp = TempDir::new().unwrap();
+        make_ht2_index(tmp.path(), false);
+        // Remove the 7th small file — a suffix that does NOT exist for Bowtie 2,
+        // so a 6-suffix check would never look for it. With the small index
+        // incomplete, discovery falls back to requiring the LARGE (.ht2l) index
+        // (Perl 7646-7800); that index is absent → it reports the first missing
+        // large file, named for HISAT2 (never a Bowtie 2 `.bt2`).
+        fs::remove_file(
+            tmp.path()
+                .join("Bisulfite_Genome")
+                .join("CT_conversion")
+                .join("BS_CT.7.ht2"),
+        )
+        .unwrap();
+        let err = discover_genome(Aligner::Hisat2, tmp.path()).unwrap_err();
+        match err {
+            AlignerError::FaultyIndex {
+                aligner, missing, ..
+            } => {
+                assert_eq!(aligner, "HISAT2");
+                assert!(
+                    missing.ends_with(".ht2l"),
+                    "expected an HISAT2 large-index file, got {missing}"
+                );
+            }
+            other => panic!("expected FaultyIndex, got {other:?}"),
+        }
+    }
+
+    /// A small `.ht2` index with fewer than 8 files (Bowtie 2 has only 6) is
+    /// rejected — proves the 8-suffix arity is enforced, not the Bowtie 2 6.
+    #[test]
+    fn six_ht2_files_is_not_a_complete_hisat2_index() {
+        let tmp = TempDir::new().unwrap();
+        let ct = tmp.path().join("Bisulfite_Genome").join("CT_conversion");
+        let ga = tmp.path().join("Bisulfite_Genome").join("GA_conversion");
+        fs::create_dir_all(&ct).unwrap();
+        fs::create_dir_all(&ga).unwrap();
+        // Only 6 of the 8 required small files (mirrors a Bowtie 2-arity mistake).
+        for n in 1..=6 {
+            fs::write(ct.join(format!("BS_CT.{n}.ht2")), b"x").unwrap();
+            fs::write(ga.join(format!("BS_GA.{n}.ht2")), b"x").unwrap();
+        }
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+        let err = discover_genome(Aligner::Hisat2, tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::FaultyIndex { .. }));
+    }
+
+    /// A Bowtie 2 `.bt2` index is NOT accepted in HISAT2 mode (the arity/extension
+    /// differ) — guards against a silent Bowtie 2-vs-HISAT2 index mix-up.
+    #[test]
+    fn bt2_index_rejected_in_hisat2_mode() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+        let err = discover_genome(Aligner::Hisat2, tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::FaultyIndex { .. }));
     }
 
     #[test]
@@ -263,7 +393,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         make_small_index(tmp.path());
         fs::write(tmp.path().join("GENOME.FA"), b">c\nA\n").unwrap();
-        let err = discover_genome(tmp.path()).unwrap_err();
+        let err = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap_err();
         assert!(matches!(err, AlignerError::NoFasta(_)));
     }
 
@@ -275,7 +405,7 @@ mod tests {
         let real = tmp.path().join("real.fa");
         fs::write(&real, b">c\nA\n").unwrap();
         std::os::unix::fs::symlink(&real, tmp.path().join("link.fa")).unwrap();
-        let g = discover_genome(tmp.path()).unwrap();
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
         // both the real file and the symlink are followed (is_file()).
         assert_eq!(g.fastas.len(), 2);
     }
@@ -299,7 +429,7 @@ mod tests {
         make_small_index(tmp.path());
         let name = OsString::from_vec(vec![0xff, b'.', b'f', b'a']);
         fs::write(tmp.path().join(&name), b">c\nA\n").unwrap();
-        let g = discover_genome(tmp.path()).unwrap();
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
         assert_eq!(g.fasta_kind, FastaKind::Fa);
         assert_eq!(g.fastas.len(), 1);
     }

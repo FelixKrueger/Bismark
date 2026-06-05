@@ -805,6 +805,15 @@ mod tests {
         format!("{qname}\t4\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII")
     }
 
+    /// Like [`mapped`] but the second-best score is reported as HISAT2's `ZS:i:`
+    /// tag (not Bowtie 2's `XS:i:`). `SamRecord::parse` accepts either, so the
+    /// merge sees an identical `second_best` — this proves the SE HISAT2 path.
+    fn mapped_zs(qname: &str, rname: &str, pos: u32, as_i: i64, md: &str, zs: i64) -> String {
+        format!(
+            "{qname}\t0\t{rname}\t{pos}\t40\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:{as_i}\tZS:i:{zs}\tMD:Z:{md}"
+        )
+    }
+
     fn run(id: &str, s0: &[&str], s1: &[&str], directional: bool) -> (Decision, Counters) {
         run_amb(id, s0, s1, directional, false)
     }
@@ -894,6 +903,46 @@ mod tests {
         );
         assert!(matches!(d, Decision::Ambiguous { .. }));
         assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    // ---- HISAT2 SE second-best via ZS:i: (Phase 2a; V5) --------------------
+
+    /// V5 (tie): a HISAT2 SE multi-mapper whose `ZS:i:` equals its `AS:i:` is a
+    /// within-instance tie → ambiguous (same outcome as the Bowtie 2 `XS==AS`
+    /// case above, proving the ZS tag feeds the identical decision path).
+    #[test]
+    fn hisat2_se_zs_equal_as_is_ambiguous() {
+        let (d, c) = run(
+            "r1",
+            &[&mapped_zs("r1", "chr1_CT_converted", 100, 0, "10", 0)],
+            &[&unmapped("r1")],
+            true,
+        );
+        assert!(matches!(d, Decision::Ambiguous { .. }));
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    /// V5 (shift): a HISAT2 SE multi-mapper whose `ZS:i:` is strictly below its
+    /// `AS:i:` is a unique best whose MAPQ second-best comes from the record's
+    /// own ZS value (the other instance is unmapped, so there is no runner-up to
+    /// compare against) — not undef, not a runner-up instance.
+    #[test]
+    fn hisat2_se_zs_below_as_is_unique_best_with_zs_second() {
+        let (d, c) = run(
+            "r1",
+            &[&mapped_zs("r1", "chr1_CT_converted", 100, 0, "10", -6)],
+            &[&unmapped("r1")],
+            true,
+        );
+        match d {
+            Decision::UniqueBest(b) => {
+                assert_eq!(b.alignment_score, 0);
+                // second-best for MAPQ = the record's own ZS (-6).
+                assert_eq!(b.alignment_score_second_best, Some(-6));
+            }
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
     }
 
     #[test]

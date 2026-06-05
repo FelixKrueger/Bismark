@@ -812,6 +812,71 @@ mod tests {
         assert_eq!(e.unmodified_genomic_sequence.len(), 6 + 2);
     }
 
+    // ---- spliced `N`-CIGAR extraction (HISAT2; Phase 2a; V6) ---------------
+
+    /// V6: a spliced read (`N` op) skips the intron — `pos` advances by the
+    /// intron length, NO genomic bases are appended, and the M-flanks are
+    /// concatenated (Perl 4376). `N` is not an indel.
+    #[test]
+    fn extract_spliced_n_skips_intron_index0() {
+        let g = genome_of("chr1", b"ACGTTTTTACGTACG"); // 15 bp
+        let b = best("chr1", 1, 0, "3M4N3M"); // pos0=0
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_single_end(&b, &g, false, &mut c).unwrap();
+        assert!(e.extracted);
+        // M(3)=chr[0..3]="ACG", N(4) skips chr[3..7], M(3)=chr[7..10]="TAC", +2=chr[10..12]="GT"
+        assert_eq!(e.unmodified_genomic_sequence, b"ACGTACGT");
+        assert_eq!(e.indels, 0); // N is NOT an indel
+        assert_eq!(c.ct_ct_count, 1);
+    }
+
+    /// V6: multiple introns (`M…N…M…N…M`) — every intron is skipped, all M-flanks
+    /// concatenated.
+    #[test]
+    fn extract_multi_n_spliced_index0() {
+        let g = genome_of("chr1", b"ACGTTTTTACGTACG");
+        let b = best("chr1", 1, 0, "2M2N2M2N2M"); // pos0=0
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_single_end(&b, &g, false, &mut c).unwrap();
+        assert!(e.extracted);
+        // chr[0..2]="AC", chr[4..6]="TT", chr[8..10]="AC", +2=chr[10..12]="GT"
+        assert_eq!(e.unmodified_genomic_sequence, b"ACTTACGT");
+        assert_eq!(e.indels, 0);
+    }
+
+    /// V6: an `N` (spliced) adjacent to a `D` (deletion) — `indels` counts ONLY
+    /// the D bases (N excluded, Perl 4370/4376); the `md_seq` includes the D base
+    /// but skips the intron.
+    #[test]
+    fn extract_n_and_deletion_counts_d_only_index0() {
+        let g = genome_of("chr1", b"ACGTTTTTACGTACG");
+        let b = best("chr1", 1, 0, "3M2N2M1D2M"); // pos0=0
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_single_end(&b, &g, false, &mut c).unwrap();
+        assert!(e.extracted);
+        assert_eq!(e.indels, 1); // D(1) only; N excluded
+        // md_seq: M(3)=chr[0..3]="ACG", M(2)=chr[5..7]="TT", D(1)=chr[7..8]="T", M(2)=chr[8..10]="AC"
+        assert_eq!(e.genomic_seq_for_md_tag, b"ACGTTTAC");
+    }
+
+    /// V6: a spliced read on the OB strand (index 3, GA read / GA genome) —
+    /// prepend-2 (no append, no revcomp for eff 3), the intron skipped.
+    #[test]
+    fn extract_spliced_n_on_ga_strand_index3() {
+        let g = genome_of("chr1", b"ACGTTTTTACGTACG");
+        let b = best("chr1", 3, 3, "3M4N3M"); // pos0=2
+        let mut c = Counters::default();
+        let e = extract_corresponding_genomic_sequence_single_end(&b, &g, false, &mut c).unwrap();
+        assert!(e.extracted);
+        assert_eq!(e.alignment_strand, b'+');
+        assert_eq!(e.read_conversion, Conversion::Ga);
+        assert_eq!(e.genome_conversion, Conversion::Ga);
+        // prepend chr[0..2]="AC", M(3)=chr[2..5]="GTT", N(4) skips chr[5..9], M(3)=chr[9..12]="CGT"
+        assert_eq!(e.unmodified_genomic_sequence, b"ACGTTCGT");
+        assert_eq!(e.indels, 0);
+        assert_eq!(c.ga_ga_count, 1);
+    }
+
     #[test]
     fn extract_insertion_pads_x_no_indels() {
         let g = genome_of("chr1", b"ACGTACGTAC");

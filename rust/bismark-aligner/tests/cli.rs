@@ -101,7 +101,10 @@ fn no_genome_errors() {
 }
 
 #[test]
-fn hisat2_is_deferred() {
+fn hisat2_is_accepted_not_deferred() {
+    // --hisat2 is wired as of Phase 2a: selection succeeds and the run proceeds
+    // past aligner selection (here failing later, on the missing read file) —
+    // it must NOT short-circuit with the old "deferred" message.
     bin()
         .arg("--hisat2")
         .arg("some_genome")
@@ -109,7 +112,10 @@ fn hisat2_is_deferred() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("HISAT2").and(predicate::str::contains("deferred")));
+        .stderr(
+            predicate::str::contains("does not exist")
+                .and(predicate::str::contains("deferred").not()),
+        );
 }
 
 #[test]
@@ -1910,4 +1916,200 @@ fn worker_error_propagates_no_hang() {
         .assert()
         .failure()
         .code(1);
+}
+
+// ---- HISAT2 backend (Phase 2a) -----------------------------------------------
+
+/// A genome dir with a complete small HISAT2 bisulfite index (8 `.ht2` files per
+/// converted genome, no `rev.*`) + one FASTA — the HISAT2 analogue of
+/// [`make_genome`].
+fn make_genome_ht2(dir: &Path) {
+    let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+    let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+    fs::create_dir_all(&ct).unwrap();
+    fs::create_dir_all(&ga).unwrap();
+    for n in 1..=8 {
+        fs::write(ct.join(format!("BS_CT.{n}.ht2")), b"x").unwrap();
+        fs::write(ga.join(format!("BS_GA.{n}.ht2")), b"x").unwrap();
+    }
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+}
+
+/// A fake `hisat2` (banner `hisat2-align-s version 2.2.2`, reached via
+/// `--path_to_hisat2`): on the CT (`BS_CT`) index it maps a 6 bp OT alignment at
+/// chr1:1 (`AS:i:0`/`MD:Z:6`), UNMAPPED on GA → the merge yields a unique best on
+/// the OT strand (the HISAT2 analogue of `make_fake_bowtie2_mapped`).
+#[cfg(unix)]
+fn make_fake_hisat2_mapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// V7: `--hisat2` SE end-to-end — the output BAM + report carry the `hisat2`
+/// naming token (not `bt2`) and the report says "Bismark was run with HISAT2"
+/// and echoes the `--no-softclip --omit-sec-seq` option delta.
+#[cfg(unix)]
+#[test]
+fn hisat2_se_mapped_names_and_report() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    // Naming token is `hisat2`, NOT `bt2`.
+    assert!(outdir.path().join("reads_bismark_hisat2.bam").is_file());
+    assert!(!outdir.path().join("reads_bismark_bt2.bam").exists());
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_hisat2_SE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with HISAT2 against"));
+    // The HISAT2 option delta is echoed in the report's aligner_options line.
+    assert!(report.contains("-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq"));
+    assert!(report.contains("Sequences analysed in total:\t1\n"));
+    assert!(report.contains("Mapping efficiency:\t100.0%\n"));
+}
+
+/// V8: `--hisat2 --no-spliced-alignment` wires the splice flag into the option
+/// string (before the softclip delta), visible in the report's aligner_options line.
+#[cfg(unix)]
+#[test]
+fn hisat2_no_spliced_alignment_echoed_in_report() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--no-spliced-alignment")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_hisat2_SE_report.txt")).unwrap();
+    assert!(report.contains(
+        "-q --score-min L,0,-0.2 --ignore-quals --no-spliced-alignment --no-softclip --omit-sec-seq"
+    ));
+}
+
+/// `--multicore`/`--parallel N>1` is hard-rejected in `--hisat2` mode (Phase-2a
+/// oxy-gate finding): HISAT2's splice-site discovery is input-batch-global, so
+/// chunking the reads changes the alignments and the output is not byte-identical
+/// to Perl. (This also subsumes the `--ambig_bam`+multicore case.)
+#[cfg(unix)]
+#[test]
+fn multicore_with_hisat2_is_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+
+    // Plain --multicore + --hisat2 (no --ambig_bam) is rejected.
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--multicore")
+        .arg("2")
+        .arg(&read)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--hisat2").and(predicate::str::contains("splice")));
+
+    // The --parallel alias is caught too.
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--parallel")
+        .arg("4")
+        .arg(&read)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("not supported with --hisat2"));
+}
+
+/// Single-core `--ambig_bam` + `--hisat2` IS supported and names the ambig BAM
+/// with the `hisat2` token (Perl 1583-1586) — the counterpart to the reject above.
+#[cfg(unix)]
+#[test]
+fn ambig_bam_single_core_hisat2_names_hisat2_token() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--ambig_bam")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    // The ambig BAM exists with the hisat2 token (the read here maps uniquely, so
+    // it is created empty-of-records but present — the naming is what we assert).
+    assert!(
+        outdir
+            .path()
+            .join("reads_bismark_hisat2.ambig.bam")
+            .is_file()
+    );
 }

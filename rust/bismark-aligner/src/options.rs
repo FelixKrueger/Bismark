@@ -9,13 +9,16 @@
 //! `--maxins`/`--maxins 500` → `--quiet`.
 
 use crate::cli::Cli;
-use crate::config::{GapPenalties, ReadFormat};
+use crate::config::{Aligner, GapPenalties, ReadFormat};
 use crate::error::{AlignerError, Result};
 
 /// Build the `aligner_options` string + the (read,ref) gap penalties used later
-/// for MAPQ. `is_paired` gates the PE-only flags.
+/// for MAPQ. `is_paired` gates the PE-only flags. The Bowtie 2 string is built
+/// unchanged for every `aligner`; the HISAT2 delta is **appended to the finished
+/// string** (mirrors Perl's last-push at 8314 — keeps Bowtie 2 structurally frozen).
 pub fn build_aligner_options(
     cli: &Cli,
+    aligner: Aligner,
     format: ReadFormat,
     is_paired: bool,
 ) -> Result<(String, GapPenalties)> {
@@ -135,12 +138,16 @@ pub fn build_aligner_options(
     // 11. --ignore-quals (ALWAYS) — NOT last; PE/insert/quiet follow.
     opts.push("--ignore-quals".into());
 
-    // 12. PE flags
+    // 12. PE flags. --no-mixed/--no-discordant are pushed for BOTH Bowtie 2 and
+    // HISAT2 (Perl 8044-8045, the `if($bowtie2)` is commented out). --dovetail is
+    // Bowtie 2-only (Perl gates it `if($bowtie2)`, 8051-8059 — "HISAT2 doesn't
+    // have the concept of --dovetail"); its --old_flag conflict is likewise
+    // Bowtie 2-only.
     if is_paired {
         opts.push("--no-mixed".into());
         opts.push("--no-discordant".into());
         // --dovetail is auto-set unless --no_dovetail; conflicts with --old_flag.
-        if !cli.no_dovetail {
+        if aligner == Aligner::Bowtie2 && !cli.no_dovetail {
             if cli.old_flag {
                 return Err(AlignerError::Validation(
                     "The option '--dovetail' may only be specified with the current SAM FLAG values. \
@@ -177,7 +184,67 @@ pub fn build_aligner_options(
         opts.push("--quiet".into());
     }
 
-    Ok((opts.join(" "), gp))
+    // 16. HISAT2 tail (Perl 8286-8326), appended to the FINISHED string — after
+    // the PE tail, --maxins, and --quiet — so the Bowtie 2 string is unchanged.
+    let options = apply_aligner_specific_options(opts.join(" "), cli, aligner)?;
+    Ok((options, gp))
+}
+
+/// Append the HISAT2-specific option tail (Perl `process_command_line` 8286-8326,
+/// the `### ADDITIONAL ALIGNMENT OPTIONS WE NEED FOR HISAT2` block) to the
+/// finished Bowtie 2 option string. For HISAT2 the tail, in Perl order, is
+/// `[--no-spliced-alignment] [--known-splicesite-infile <f>] --no-softclip
+/// --omit-sec-seq` (splice flags BEFORE the softclip delta). For any non-HISAT2
+/// aligner the splice flags are a hard error (Perl 8319-8324 — closes a
+/// pre-existing Bowtie 2 silent-no-op gap).
+///
+/// NB: `--local` is rejected upstream for every aligner (off the v1 byte-identity
+/// spine), so Perl's experimental HISAT2+`--local` path (`--omit-sec-seq` only,
+/// 8310-8312) is intentionally not reproduced — the default endToEnd tail
+/// (`--no-softclip --omit-sec-seq`) is the only HISAT2 path v1 supports.
+fn apply_aligner_specific_options(base: String, cli: &Cli, aligner: Aligner) -> Result<String> {
+    if aligner != Aligner::Hisat2 {
+        if cli.nosplice {
+            return Err(AlignerError::Validation(
+                "The option --no-spliced-alignment can only be selected in HISAT2 mode! Please \
+                 re-specificy!"
+                    .into(),
+            ));
+        }
+        if cli.known_splices.is_some() {
+            return Err(AlignerError::Validation(
+                "The option --known-splicesite-infile can only be selected in HISAT2 mode! Please \
+                 re-specificy!"
+                    .into(),
+            ));
+        }
+        return Ok(base);
+    }
+
+    let mut tail: Vec<String> = Vec::new();
+    if cli.nosplice {
+        if cli.known_splices.is_some() {
+            return Err(AlignerError::Validation(
+                "You cannot run Bismark in HISAT2 mode with known splice junctions but without \
+                 spliced alignments! Please respecify!"
+                    .into(),
+            ));
+        }
+        tail.push("--no-spliced-alignment".into());
+    }
+    if let Some(infile) = &cli.known_splices {
+        if !infile.exists() {
+            return Err(AlignerError::Validation(format!(
+                "Known splice site infile >{}< did not exist. Please check file name and try again!",
+                infile.display()
+            )));
+        }
+        tail.push(format!("--known-splicesite-infile {}", infile.display()));
+    }
+    // endToEnd alignments (default) — Perl 8314.
+    tail.push("--no-softclip --omit-sec-seq".into());
+
+    Ok(format!("{base} {}", tail.join(" ")))
 }
 
 fn require_fastq(format: ReadFormat) -> Result<()> {
@@ -257,7 +324,8 @@ mod tests {
     #[test]
     fn default_se_options_match_phase0_spike() {
         let cli = cli_from(&[]);
-        let (opts, _) = build_aligner_options(&cli, ReadFormat::FastQ, false).unwrap();
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
         assert_eq!(opts, "-q --score-min L,0,-0.2 --ignore-quals");
     }
 
@@ -265,7 +333,8 @@ mod tests {
     fn seed_flags_precede_score_min_and_quiet_is_last() {
         // Bismark input flags `-n`/`-l` map to Bowtie 2 output flags `-N`/`-L`.
         let cli = cli_from(&["-n", "1", "-l", "20", "--quiet"]);
-        let (opts, _) = build_aligner_options(&cli, ReadFormat::FastQ, false).unwrap();
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
         assert_eq!(
             opts,
             "-q -N 1 -L 20 --score-min L,0,-0.2 --ignore-quals --quiet"
@@ -275,14 +344,16 @@ mod tests {
     #[test]
     fn score_min_override_substituted() {
         let cli = cli_from(&["--score_min", "L,0,-0.4"]);
-        let (opts, _) = build_aligner_options(&cli, ReadFormat::FastQ, false).unwrap();
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
         assert_eq!(opts, "-q --score-min L,0,-0.4 --ignore-quals");
     }
 
     #[test]
     fn paired_end_tail_and_default_maxins() {
         let cli = cli_from(&[]);
-        let (opts, _) = build_aligner_options(&cli, ReadFormat::FastQ, true).unwrap();
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, true).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500"
@@ -292,38 +363,145 @@ mod tests {
     #[test]
     fn fasta_uses_dash_f() {
         let cli = cli_from(&["-f"]);
-        let (opts, _) = build_aligner_options(&cli, ReadFormat::FastA, false).unwrap();
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastA, false).unwrap();
         assert_eq!(opts, "-f --score-min L,0,-0.2 --ignore-quals");
     }
 
     #[test]
     fn rejects_bad_seedmms() {
         let cli = cli_from(&["-n", "2"]);
-        assert!(build_aligner_options(&cli, ReadFormat::FastQ, false).is_err());
+        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
     }
 
     #[test]
     fn rejects_local_in_v1() {
         let cli = cli_from(&["--local"]);
-        assert!(build_aligner_options(&cli, ReadFormat::FastQ, false).is_err());
+        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
     }
 
     #[test]
     fn phred_without_fastq_errors() {
         let cli = cli_from(&["--phred33-quals", "-f"]);
-        assert!(build_aligner_options(&cli, ReadFormat::FastA, false).is_err());
+        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastA, false).is_err());
     }
 
     #[test]
     fn rdg_rfg_appended_and_validated() {
         let cli = cli_from(&["--rdg", "5,3", "--rfg", "5,3"]);
-        let (opts, gp) = build_aligner_options(&cli, ReadFormat::FastQ, false).unwrap();
+        let (opts, gp) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --rdg 5,3 --rfg 5,3 --ignore-quals"
         );
         assert_eq!((gp.deletion_open, gp.insertion_open), (5, 5));
         let bad = cli_from(&["--rdg", "5"]);
-        assert!(build_aligner_options(&bad, ReadFormat::FastQ, false).is_err());
+        assert!(build_aligner_options(&bad, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+    }
+
+    // ---- HISAT2 option assembly (Phase 2a) ---------------------------------
+
+    /// V2: the default SE HISAT2 string = the Bowtie 2 base + `--no-softclip
+    /// --omit-sec-seq` appended last (spike Q2, Perl 8314).
+    #[test]
+    fn hisat2_se_option_string() {
+        let cli = cli_from(&[]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(
+            opts,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq"
+        );
+    }
+
+    /// V3 (hard literal): the default PE HISAT2 string — the softclip delta lands
+    /// AFTER the PE tail + `--maxins 500`, and there is **NO `--dovetail`** (Perl
+    /// gates dovetail `if($bowtie2)`, 8051-8059).
+    #[test]
+    fn hisat2_pe_option_string_has_no_dovetail() {
+        let cli = cli_from(&[]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, true).unwrap();
+        assert_eq!(
+            opts,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq"
+        );
+        assert!(!opts.contains("--dovetail"));
+    }
+
+    /// V1: passing the new `aligner` param does NOT change the Bowtie 2 PE string
+    /// (the dovetail kind-gating must keep Bowtie 2 PE byte-frozen).
+    #[test]
+    fn bowtie2_pe_string_byte_frozen_with_aligner_param() {
+        let cli = cli_from(&[]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, true).unwrap();
+        assert_eq!(
+            opts,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500"
+        );
+    }
+
+    /// V8: `--no-spliced-alignment` appends before the softclip delta (Perl 8295).
+    #[test]
+    fn hisat2_nosplice_appends_before_softclip() {
+        let cli = cli_from(&["--no-spliced-alignment"]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(
+            opts,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-spliced-alignment --no-softclip --omit-sec-seq"
+        );
+    }
+
+    /// V8: `--known-splicesite-infile <f>` (existing file) appends before the
+    /// softclip delta (Perl 8298-8306).
+    #[test]
+    fn hisat2_known_splices_appends() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let infile = tmp.path().join("splices.txt");
+        std::fs::write(&infile, b"x").unwrap();
+        let cli = cli_from(&["--known-splicesite-infile", infile.to_str().unwrap()]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(
+            opts,
+            format!(
+                "-q --score-min L,0,-0.2 --ignore-quals --known-splicesite-infile {} --no-softclip --omit-sec-seq",
+                infile.display()
+            )
+        );
+    }
+
+    /// V8: HISAT2 + both splice flags dies (Perl 8290).
+    #[test]
+    fn hisat2_both_splice_flags_die() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let infile = tmp.path().join("splices.txt");
+        std::fs::write(&infile, b"x").unwrap();
+        let cli = cli_from(&[
+            "--no-spliced-alignment",
+            "--known-splicesite-infile",
+            infile.to_str().unwrap(),
+        ]);
+        assert!(build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).is_err());
+    }
+
+    /// V8: HISAT2 + a missing known-splicesite infile dies (Perl 8304).
+    #[test]
+    fn hisat2_known_splices_missing_file_dies() {
+        let cli = cli_from(&["--known-splicesite-infile", "/no/such/splices.txt"]);
+        assert!(build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).is_err());
+    }
+
+    /// V8: the splice flags are HISAT2-only — they die in Bowtie 2 mode (Perl
+    /// 8319-8324; closes a pre-existing Bowtie 2 silent-no-op gap).
+    #[test]
+    fn non_hisat2_splice_flags_die() {
+        let cli = cli_from(&["--no-spliced-alignment"]);
+        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        let cli = cli_from(&["--known-splicesite-infile", "/no/such/splices.txt"]);
+        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
     }
 }

@@ -17,7 +17,7 @@
 
 use std::io::Write;
 
-use crate::config::LibraryType;
+use crate::config::{Aligner, LibraryType};
 use crate::error::Result;
 use crate::merge::Counters;
 
@@ -31,8 +31,11 @@ pub struct ReportHeader<'a> {
     /// The genome folder — **absolute, with a trailing `/`** (Perl absolutizes
     /// `$genome_folder` + forces a trailing slash, 7619–7629). The caller renders it.
     pub genome_folder: &'a str,
-    /// The base Bowtie 2 option string (`config.aligner_options`).
+    /// The base aligner option string (`config.aligner_options`).
     pub aligner_options: &'a str,
+    /// Which aligner — selects the "Bismark was run with …" wording (Perl
+    /// 1722 Bowtie 2 / 1728 HISAT2 SE; 1846/1849 PE).
+    pub aligner: Aligner,
     /// Library type (only `Directional` is wired in v1; pbat/non-dir = Phase 8).
     pub library: LibraryType,
 }
@@ -62,8 +65,10 @@ pub fn write_report_header<W: Write>(w: &mut W, h: &ReportHeader) -> Result<()> 
         )?,
     }
     let run_with = format!(
-        "Bismark was run with Bowtie 2 against the bisulfite genome of {} with the specified options: {}",
-        h.genome_folder, h.aligner_options
+        "Bismark was run with {} against the bisulfite genome of {} with the specified options: {}",
+        h.aligner.name(),
+        h.genome_folder,
+        h.aligner_options
     );
     let library_line = library_line(h.library, paired);
     if paired {
@@ -355,6 +360,7 @@ mod tests {
             sequence_file2: None,
             genome_folder: "/abs/genome/", // absolute + trailing slash
             aligner_options: "-q --score-min L,0,-0.2 --ignore-quals",
+            aligner: Aligner::Bowtie2,
             library: LibraryType::Directional,
         };
         assert_eq!(
@@ -362,6 +368,25 @@ mod tests {
             "Bismark report for: reads.fq (version: v0.25.1)\n\
              Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\
              Bismark was run with Bowtie 2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals\n\n"
+        );
+    }
+
+    #[test]
+    fn header_hisat2_run_with_line() {
+        // V7: the SE HISAT2 header reads "Bismark was run with HISAT2 …" (Perl 1728).
+        let h = ReportHeader {
+            sequence_file: "reads.fq",
+            sequence_file2: None,
+            genome_folder: "/abs/genome/",
+            aligner_options: "-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq",
+            aligner: Aligner::Hisat2,
+            library: LibraryType::Directional,
+        };
+        assert_eq!(
+            s(&header_bytes(&h)),
+            "Bismark report for: reads.fq (version: v0.25.1)\n\
+             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\
+             Bismark was run with HISAT2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq\n\n"
         );
     }
 
@@ -508,6 +533,7 @@ C methylated in Unknown context (CN or CHN):\t20.0%\n\n\n";
             sequence_file2: Some("r_2.fq"),
             genome_folder: "/abs/genome/",
             aligner_options: "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500",
+            aligner: Aligner::Bowtie2,
             library: LibraryType::Directional,
         };
         // 🔴 PE order (Perl 1843/1846/1941): report-for, `was run with` (single `\n`),

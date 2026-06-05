@@ -403,10 +403,11 @@ fn se_chunk_job(
         .map(|f| f.to_string_lossy().into_owned())
         .expect("subset has a file name");
     let td = &cfg.output.temp_dir;
-    let bam = temp_join(td, &format!("{base}_bismark_bt2.bam"));
+    let tok = cfg.aligner.token();
+    let bam = temp_join(td, &format!("{base}_bismark_{tok}.bam"));
     let ambig = cfg
         .ambig_bam
-        .then(|| temp_join(td, &format!("{base}_bismark_bt2.ambig.bam")));
+        .then(|| temp_join(td, &format!("{base}_bismark_{tok}.ambig.bam")));
     let unmapped = cfg
         .unmapped
         .then(|| temp_join(td, &format!("{base}_unmapped.tmp")));
@@ -455,10 +456,11 @@ fn pe_chunk_job(
         .map(|f| f.to_string_lossy().into_owned())
         .expect("subset has a file name");
     let td = &cfg.output.temp_dir;
-    let bam = temp_join(td, &format!("{base}_bismark_bt2_pe.bam"));
+    let tok = cfg.aligner.token();
+    let bam = temp_join(td, &format!("{base}_bismark_{tok}_pe.bam"));
     let ambig = cfg
         .ambig_bam
-        .then(|| temp_join(td, &format!("{base}_bismark_bt2_pe.ambig.bam")));
+        .then(|| temp_join(td, &format!("{base}_bismark_{tok}_pe.ambig.bam")));
     let unmapped_1 = cfg
         .unmapped
         .then(|| temp_join(td, &format!("{base}_unmapped_1.tmp")));
@@ -682,7 +684,9 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
         });
         let outcomes = collect_in_order(results)?;
 
-        let bam_path = crate::derive_output_path(read_file, &cfg, "_bismark_bt2.bam", ".bam");
+        let tok = cfg.aligner.token();
+        let bam_path =
+            crate::derive_output_path(read_file, &cfg, &format!("_bismark_{tok}.bam"), ".bam");
         eprintln!(
             ">>> Writing bisulfite mapping results to {} <<<",
             bam_path.display()
@@ -691,8 +695,12 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
         merge_bams(&bam_path, &header, &bams)?;
 
         if config.ambig_bam {
-            let ap =
-                crate::derive_output_path(read_file, &cfg, "_bismark_bt2.ambig.bam", ".ambig.bam");
+            let ap = crate::derive_output_path(
+                read_file,
+                &cfg,
+                &format!("_bismark_{tok}.ambig.bam"),
+                ".ambig.bam",
+            );
             let parts: Vec<PathBuf> = outcomes
                 .iter()
                 .filter_map(|o| o.ambig_bam.clone())
@@ -725,7 +733,7 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
         let report_path = crate::derive_output_path(
             read_file,
             &cfg,
-            "_bismark_bt2_SE_report.txt",
+            &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
         let mut report = BufWriter::new(File::create(&report_path)?);
@@ -736,6 +744,7 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
                 sequence_file2: None,
                 genome_folder: &genome_folder,
                 aligner_options: &cfg.aligner_options,
+                aligner: cfg.aligner,
                 library: cfg.library,
             },
         )?;
@@ -825,7 +834,9 @@ pub(crate) fn run_pe_multicore(
         });
         let outcomes = collect_in_order(results)?;
 
-        let bam_path = crate::derive_output_path(read_1, &cfg, "_bismark_bt2_pe.bam", "_pe.bam");
+        let tok = cfg.aligner.token();
+        let bam_path =
+            crate::derive_output_path(read_1, &cfg, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
         eprintln!(
             ">>> Writing bisulfite mapping results to {} <<<",
             bam_path.display()
@@ -837,7 +848,7 @@ pub(crate) fn run_pe_multicore(
             let ap = crate::derive_output_path(
                 read_1,
                 &cfg,
-                "_bismark_bt2_pe.ambig.bam",
+                &format!("_bismark_{tok}_pe.ambig.bam"),
                 "_pe.ambig.bam",
             );
             let parts: Vec<PathBuf> = outcomes
@@ -884,8 +895,12 @@ pub(crate) fn run_pe_multicore(
         for o in &outcomes {
             total.merge(&o.counters);
         }
-        let report_path =
-            crate::derive_output_path(read_1, &cfg, "_bismark_bt2_PE_report.txt", "_PE_report.txt");
+        let report_path = crate::derive_output_path(
+            read_1,
+            &cfg,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
         let mut report = BufWriter::new(File::create(&report_path)?);
         report::write_report_header(
             &mut report,
@@ -894,6 +909,7 @@ pub(crate) fn run_pe_multicore(
                 sequence_file2: Some(read_2),
                 genome_folder: &genome_folder,
                 aligner_options: &cfg.aligner_options,
+                aligner: cfg.aligner,
                 library: cfg.library,
             },
         )?;
