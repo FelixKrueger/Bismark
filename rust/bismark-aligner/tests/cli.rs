@@ -119,7 +119,10 @@ fn hisat2_is_accepted_not_deferred() {
 }
 
 #[test]
-fn minimap2_is_deferred() {
+fn minimap2_is_accepted_not_deferred() {
+    // --minimap2 is wired as of Phase 4 (SE): selection succeeds and the run
+    // proceeds past aligner selection (here failing later, on the missing read
+    // file) — it must NOT short-circuit with the old "deferred" message.
     bin()
         .arg("--minimap2")
         .arg("some_genome")
@@ -127,7 +130,36 @@ fn minimap2_is_deferred() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("minimap2").and(predicate::str::contains("deferred")));
+        .stderr(
+            predicate::str::contains("does not exist")
+                .and(predicate::str::contains("deferred").not()),
+        );
+}
+
+#[test]
+fn minimap2_paired_end_is_rejected() {
+    // PE-minimap2 is deferred out of v1.x (no trustworthy Perl oracle): a
+    // paired-end --minimap2 run must fail loudly, not silently mis-align.
+    let r1 = TempDir::new().unwrap();
+    let m1 = r1.path().join("r1.fq");
+    let m2 = r1.path().join("r2.fq");
+    fs::write(&m1, b"@r/1\nACGT\n+\nIIII\n").unwrap();
+    fs::write(&m2, b"@r/2\nACGT\n+\nIIII\n").unwrap();
+    bin()
+        .arg("--minimap2")
+        .arg("some_genome")
+        .arg("-1")
+        .arg(&m1)
+        .arg("-2")
+        .arg(&m2)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(
+            predicate::str::contains("paired-end")
+                .and(predicate::str::contains("minimap2"))
+                .and(predicate::str::contains("not supported")),
+        );
 }
 
 #[test]
@@ -2197,4 +2229,156 @@ fn hisat2_pe_mapped_names_and_report() {
         report.contains("--no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq")
     );
     assert!(!report.contains("--dovetail"));
+}
+
+// ===========================================================================
+// minimap2 (Phase 4) — SE only; positional `.mmi`, clean-slate options, `mm2`
+// naming, max-length cutoff. PE-minimap2 is rejected (see
+// `minimap2_paired_end_is_rejected` above).
+// ===========================================================================
+
+/// A genome dir with a complete minimap2 `.mmi` index (single file per converted
+/// genome) + one FASTA (chr1 = `ACGTACGT`, 8 bp).
+fn make_genome_mmi(dir: &Path) {
+    let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+    let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+    fs::create_dir_all(&ct).unwrap();
+    fs::create_dir_all(&ga).unwrap();
+    fs::write(ct.join("BS_CT.mmi"), b"x").unwrap();
+    fs::write(ga.join("BS_GA.mmi"), b"x").unwrap();
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+}
+
+/// A fake `minimap2` (prints the BARE version `2.31-r1302`; reached via
+/// `--path_to_minimap2`). It is invoked **positionally** — `<opts> <BS_*.mmi>
+/// <input>`, with NO `-x`/`-U`/`--norc`/`--nofw` — so it locates the index by the
+/// `.mmi` arg and the reads by the `.fastq` arg. On the CT (`BS_CT`) index it maps
+/// a 6 bp OT alignment at chr1:1 with minimap2-style tags: a **positive** `AS:i:`
+/// and a present-but-ignored `s2:i:` (the second-best chaining score Bismark
+/// drops); UNMAPPED on GA → the merge yields a unique best on OT.
+///
+/// 🔴 Cannot false-pass on a wrong invocation: had the Rust used the Bowtie 2
+/// shape (`-x BS_CT -U …`) there would be no `.mmi` arg → `$mmi` empty → every
+/// read routes to the unmapped branch → the mapping-efficiency assertions fail.
+#[cfg(unix)]
+fn make_fake_minimap2_mapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+inp=""; mmi=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) inp="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("minimap2"), script);
+}
+
+/// V8: `--minimap2` SE end-to-end — the output BAM + report carry the `mm2`
+/// naming token (not `bt2`/`hisat2`), the report says "Bismark was run with
+/// minimap2" (lowercase, Perl 1725) and echoes the clean-slate minimap2 option
+/// string (`-a --MD --secondary=no -t 2 -x map-ont -K 250K`). The fake's
+/// present-but-ignored `s2:i:` exercises the merge-no-op end to end.
+#[cfg(unix)]
+#[test]
+fn minimap2_se_mapped_names_and_report() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--minimap2")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    // Naming token is `mm2`, NOT `bt2`/`hisat2`.
+    assert!(outdir.path().join("reads_bismark_mm2.bam").is_file());
+    assert!(!outdir.path().join("reads_bismark_bt2.bam").exists());
+    assert!(!outdir.path().join("reads_bismark_hisat2.bam").exists());
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_mm2_SE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with minimap2 against"));
+    // The clean-slate minimap2 option string is echoed (NOT the Bowtie 2 `-q …`).
+    assert!(report.contains("-a --MD --secondary=no -t 2 -x map-ont -K 250K"));
+    assert!(!report.contains("-q --score-min"));
+    assert!(report.contains("Sequences analysed in total:\t1\n"));
+    assert!(report.contains("Mapping efficiency:\t100.0%\n"));
+
+    // The single mapped record was written.
+    let mut reader =
+        bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_mm2.bam")).unwrap();
+    assert_eq!(reader.records().count(), 1);
+}
+
+/// I-3 (review B): the `--mm2_maximum_length` drop interacts with the analysis
+/// counter — a read longer than the cutoff is removed from the temp file (so
+/// minimap2 never sees it), but it is STILL counted as "analysed" and lands in
+/// "no alignment" (the original-read loop counts it; no aligner record matches).
+/// Two reads: a 6 bp read that maps + a 101 bp read dropped by `--mm2_maximum_length
+/// 100` → 2 analysed, 1 unique, 1 no-alignment (50.0% efficiency).
+#[cfg(unix)]
+#[test]
+fn minimap2_max_length_drop_counts_as_no_alignment() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    let long_seq = "A".repeat(101);
+    let long_qual = "I".repeat(101);
+    fs::write(
+        &read,
+        format!("@r1\nACGTAC\n+\nIIIIII\n@long\n{long_seq}\n+\n{long_qual}\n"),
+    )
+    .unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--minimap2")
+        .arg("--mm2_maximum_length")
+        .arg("100")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_mm2_SE_report.txt")).unwrap();
+    // Both reads analysed (the >cutoff read is NOT silently lost)…
+    assert!(report.contains("Sequences analysed in total:\t2\n"));
+    // …the dropped read is "no alignment", the 6 bp read maps → 50% efficiency.
+    assert!(report.contains("Mapping efficiency:\t50.0%\n"));
+    assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+
+    // Exactly one BAM record (the 6 bp read; the 101 bp read never aligned).
+    let mut reader =
+        bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_mm2.bam")).unwrap();
+    assert_eq!(reader.records().count(), 1);
 }

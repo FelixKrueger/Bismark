@@ -89,6 +89,10 @@ pub struct GenomeIndexes {
 /// **suffix-arity** difference, not just an extension swap:
 /// - **Bowtie 2** — 6 files `{1,2,3,4,rev.1,rev.2}.bt2` (`.bt2l` large).
 /// - **HISAT2** — 8 files `{1,2,3,4,5,6,7,8}.ht2` (`.ht2l` large; no `rev.*`).
+/// - **minimap2** — a SINGLE `<stem>.mmi` (Perl 7022 `$bisulfiteIndex.".mmi"`).
+///   There is no large-index variant, so `large` is ignored: the small/large
+///   fallback in [`discover_genome`] is a harmless no-op (both probe the same
+///   `.mmi`), and `large_index` stays `false`.
 fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
     match aligner {
         Aligner::Bowtie2 => {
@@ -102,6 +106,7 @@ fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
             let ext = if large { "ht2l" } else { "ht2" };
             (1..=8).map(|n| format!("{stem}.{n}.{ext}")).collect()
         }
+        Aligner::Minimap2 => vec![format!("{stem}.mmi")],
     }
 }
 
@@ -383,6 +388,77 @@ mod tests {
         make_small_index(tmp.path());
         fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
         let err = discover_genome(Aligner::Hisat2, tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::FaultyIndex { .. }));
+    }
+
+    // ---- minimap2 index discovery (Phase 4; V4) ---------------------------
+
+    /// A complete minimap2 index: a single `.mmi` per converted genome + one FASTA.
+    fn make_mmi_index(dir: &Path) {
+        let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+        let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+        fs::create_dir_all(&ct).unwrap();
+        fs::create_dir_all(&ga).unwrap();
+        fs::write(ct.join("BS_CT.mmi"), b"x").unwrap();
+        fs::write(ga.join("BS_GA.mmi"), b"x").unwrap();
+        fs::write(dir.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+    }
+
+    /// V4: minimap2 = a SINGLE `.mmi` suffix; `large` is ignored (no `.mmil`).
+    #[test]
+    fn minimap2_suffix_is_single_mmi() {
+        let s = index_suffixes(Aligner::Minimap2, "BS_CT", false);
+        assert_eq!(s, vec!["BS_CT.mmi".to_string()]);
+        // large flag has no effect for minimap2 (no large-index variant).
+        assert_eq!(index_suffixes(Aligner::Minimap2, "BS_CT", true), s);
+    }
+
+    /// V4: a complete `.mmi` index resolves; `large_index` stays false.
+    #[test]
+    fn discovers_complete_mmi_index() {
+        let tmp = TempDir::new().unwrap();
+        make_mmi_index(tmp.path());
+        let g = discover_genome(Aligner::Minimap2, tmp.path()).unwrap();
+        assert!(!g.large_index);
+        assert!(g.ct_index_basename.ends_with("CT_conversion/BS_CT"));
+        assert!(g.ga_index_basename.ends_with("GA_conversion/BS_GA"));
+    }
+
+    /// V4: a missing `.mmi` errors (reported as a minimap2 faulty index, never a
+    /// Bowtie 2 `.bt2`).
+    #[test]
+    fn missing_mmi_errors_with_minimap2_wording() {
+        let tmp = TempDir::new().unwrap();
+        make_mmi_index(tmp.path());
+        fs::remove_file(
+            tmp.path()
+                .join("Bisulfite_Genome")
+                .join("CT_conversion")
+                .join("BS_CT.mmi"),
+        )
+        .unwrap();
+        let err = discover_genome(Aligner::Minimap2, tmp.path()).unwrap_err();
+        match err {
+            AlignerError::FaultyIndex {
+                aligner, missing, ..
+            } => {
+                assert_eq!(aligner, "minimap2");
+                assert!(
+                    missing.ends_with(".mmi"),
+                    "expected the .mmi, got {missing}"
+                );
+            }
+            other => panic!("expected FaultyIndex, got {other:?}"),
+        }
+    }
+
+    /// A Bowtie 2 `.bt2` index is NOT accepted in minimap2 mode (no `.mmi`).
+    #[test]
+    fn bt2_index_rejected_in_minimap2_mode() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+        let err = discover_genome(Aligner::Minimap2, tmp.path()).unwrap_err();
         assert!(matches!(err, AlignerError::FaultyIndex { .. }));
     }
 

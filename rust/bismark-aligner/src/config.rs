@@ -15,33 +15,40 @@ use crate::discovery::{self, GenomeIndexes};
 use crate::error::{AlignerError, Result};
 use crate::options;
 
-/// Which external aligner. v1 ships Bowtie 2; the v1.x epic adds HISAT2 (this
-/// phase) and later minimap2.
+/// Which external aligner. v1 ships Bowtie 2; the v1.x epic adds HISAT2 and
+/// minimap2 (this phase — SE only; see [`resolve`] for the PE-minimap2 reject).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Aligner {
     /// Bowtie 2 (default).
     Bowtie2,
     /// HISAT2 (v1.x; thin wrapper — same instance/strand model as Bowtie 2).
     Hisat2,
+    /// minimap2 (v1.x; pure wrapper — clean-slate options + positional `.mmi`).
+    /// Single-end only; the merge/MAPQ/XM core is reused unchanged (the within-
+    /// instance second-best `s2:i:` is IGNORED by Bismark → `second_best=None`).
+    Minimap2,
 }
 
 impl Aligner {
     /// The output-name token in `_bismark_<token>.bam` / `_<token>_SE_report.txt`
-    /// (Perl `_bismark_bt2` / `_bismark_hisat2`). Threaded ONLY into the
-    /// derived-name path, never `--basename`/`_unmapped`/`_ambiguous` names.
+    /// (Perl `_bismark_bt2` / `_bismark_hisat2` / `_bismark_mm2`). Threaded ONLY
+    /// into the derived-name path, never `--basename`/`_unmapped`/`_ambiguous`.
     pub fn token(self) -> &'static str {
         match self {
             Aligner::Bowtie2 => "bt2",
             Aligner::Hisat2 => "hisat2",
+            Aligner::Minimap2 => "mm2",
         }
     }
 
     /// The human-readable name for the report "Bismark was run with …" line
-    /// (Perl 1722/1728) and detection diagnostics.
+    /// (Perl 1722/1725/1728) and detection diagnostics. **`minimap2` is lowercase**
+    /// (Perl `elsif ($mm2)` 1725) — byte-significant in the SE report header.
     pub fn name(self) -> &'static str {
         match self {
             Aligner::Bowtie2 => "Bowtie 2",
             Aligner::Hisat2 => "HISAT2",
+            Aligner::Minimap2 => "minimap2",
         }
     }
 }
@@ -148,7 +155,7 @@ pub struct ReadProcessing {
 pub struct RunConfig {
     /// Verbatim argv (program name excluded) for the `@PG` `CL:` line (Phase 5).
     pub command_line: String,
-    /// Selected aligner (Bowtie 2 or HISAT2).
+    /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
     /// Library type.
     pub library: LibraryType,
@@ -158,7 +165,7 @@ pub struct RunConfig {
     pub format: ReadFormat,
     /// Discovered genome indexes + FASTA inventory.
     pub genome: GenomeIndexes,
-    /// Detected aligner binary + version (Bowtie 2 or HISAT2).
+    /// Detected aligner binary + version (Bowtie 2, HISAT2, or minimap2).
     pub detected_aligner: DetectedAligner,
     /// Exact aligner option string (per-instance `--norc`/`--nofw` added later).
     pub aligner_options: String,
@@ -198,15 +205,11 @@ pub struct RunConfig {
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
-    // `--mm2_maximum_length` is only valid in minimap2 mode (Perl 8333). minimap2
-    // is itself deferred (errors above), so on the Bowtie 2 spine this must error
-    // rather than silently no-op — otherwise it would reach the convert-side
-    // length guard and drop records where Perl would die.
-    if cli.maximum_length_cutoff.is_some() {
-        return Err(AlignerError::Validation(
-            "The option '--mm2_maximum_length' is only available in --minimap2 mode.".into(),
-        ));
-    }
+    // The minimap2-only preset/length flags (Perl 8329-8356): outside minimap2
+    // mode every `--mm2_*` flag dies (the `unless($mm2)` block); in minimap2 mode
+    // `--mm2_maximum_length` is range-checked + defaults to 10000. Returns the
+    // resolved cutoff to thread into `read_processing` (None for non-minimap2).
+    let maximum_length_cutoff = resolve_mm2_max_length(cli, aligner)?;
     let library = resolve_library(cli)?;
     let format = resolve_format(cli)?;
     validate_multicore(cli)?;
@@ -233,10 +236,26 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
+    // PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
+    // (Felix decision 2026-06-05): the Perl minimap2 paired-end path
+    // (`paired_end_…_minimap2` 6697-6708) is unfinished WIP (`# TODO` +
+    // `warn`+`sleep(1)` twice per read pair) AND the PE report writer (1845-1850)
+    // has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
+    // trustworthy oracle to byte-match. Fail loudly (Bowtie 2 + HISAT2 cover PE).
+    if aligner == Aligner::Minimap2 && layout.is_paired() {
+        return Err(AlignerError::Unsupported(
+            "paired-end alignment with --minimap2 is not supported: the Perl Bismark minimap2 \
+             paired-end path is unfinished/experimental and has no trustworthy byte-identity \
+             reference. Use --minimap2 for single-end reads, or --bowtie2/--hisat2 for paired-end."
+                .into(),
+        ));
+    }
+
     let genome = discovery::discover_genome(aligner, &genome_arg)?;
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
+        Aligner::Minimap2 => cli.path_to_minimap2.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
     let (aligner_options, gap_penalties) =
@@ -248,7 +267,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         skip: cli.skip,
         upto: cli.upto,
         icpc: cli.icpc,
-        maximum_length_cutoff: cli.maximum_length_cutoff,
+        // Resolved above (minimap2: Some(value-or-default-10000); else None).
+        maximum_length_cutoff,
     };
 
     Ok(RunConfig {
@@ -326,11 +346,71 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
         return Ok(Aligner::Hisat2);
     }
     if cli.minimap2 {
-        return Err(AlignerError::Unsupported(
-            "minimap2 alignment is deferred to a v1.x follow-up; use Perl Bismark or --bowtie2 (default).".into(),
-        ));
+        return Ok(Aligner::Minimap2);
     }
     Ok(Aligner::Bowtie2)
+}
+
+/// Validate the minimap2-only preset/length flags and resolve the maximum-length
+/// cutoff (Perl `process_command_line` 8329-8356).
+///
+/// - **Outside minimap2 mode** (the `unless($mm2)` block, 8329-8341): each of
+///   `--mm2_short_reads`, `--mm2_maximum_length`, `--mm2_pacbio`, `--mm2_nanopore`
+///   dies — they are only valid with `--minimap2`. Returns `None` (the convert-side
+///   length guard stays inert for Bowtie 2 / HISAT2).
+/// - **In minimap2 mode** (the `if($mm2)` block, 8344-8356): `--mm2_maximum_length`
+///   must be in `100..=100_000` (else die), and defaults to `10000` when absent.
+///   Returns `Some(value)`.
+///
+/// (Preset *selection* + the preset-conflict dies live in `options::minimap2_options`,
+/// mirroring Perl's `if($mm2)` option-assembly block 8358-8413.)
+fn resolve_mm2_max_length(cli: &Cli, aligner: Aligner) -> Result<Option<u32>> {
+    if aligner != Aligner::Minimap2 {
+        if cli.mm2_short_read {
+            return Err(AlignerError::Validation(
+                "You cannot specify minimap2 options (--mm2_short_reads) unless you also use \
+                 --minimap2. Please respecify!"
+                    .into(),
+            ));
+        }
+        if cli.maximum_length_cutoff.is_some() {
+            return Err(AlignerError::Validation(
+                "You cannot specify minimap2 options (--mm2_maximum_length) unless you also use \
+                 --minimap2. Please respecify!"
+                    .into(),
+            ));
+        }
+        if cli.mm2_pacbio {
+            return Err(AlignerError::Validation(
+                "You cannot specify minimap2 options (--pacbio) unless you also use --minimap2. \
+                 Please respecify!"
+                    .into(),
+            ));
+        }
+        if cli.mm2_nanopore {
+            return Err(AlignerError::Validation(
+                "You cannot specify minimap2 options (--nanopore) unless you also use --minimap2. \
+                 Please respecify!"
+                    .into(),
+            ));
+        }
+        return Ok(None);
+    }
+
+    match cli.maximum_length_cutoff {
+        Some(v) => {
+            if !(100..=100_000).contains(&v) {
+                return Err(AlignerError::Validation(
+                    "Please select a sensible maximum sequence length cutoff (currently \
+                     100-100,000 bp)"
+                        .into(),
+                ));
+            }
+            Ok(Some(v))
+        }
+        // Perl 8354: default cutoff when --mm2_maximum_length is absent.
+        None => Ok(Some(10000)),
+    }
 }
 
 fn resolve_library(cli: &Cli) -> Result<LibraryType> {
@@ -602,10 +682,21 @@ mod tests {
         );
     }
 
+    /// V11: `--minimap2` is no longer deferred — it now resolves to the Minimap2
+    /// backend (Phase 4 un-deferral).
     #[test]
-    fn resolve_aligner_minimap2_still_deferred() {
-        let e = resolve_aligner(&cli_from(&["--minimap2"])).unwrap_err();
-        assert!(matches!(e, AlignerError::Unsupported(_)));
+    fn resolve_aligner_selects_minimap2() {
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--minimap2"])).unwrap(),
+            Aligner::Minimap2
+        );
+    }
+
+    #[test]
+    fn minimap2_token_and_name() {
+        assert_eq!(Aligner::Minimap2.token(), "mm2");
+        // lowercase — byte-significant in the SE report "run with minimap2" line.
+        assert_eq!(Aligner::Minimap2.name(), "minimap2");
     }
 
     #[test]
@@ -613,5 +704,72 @@ mod tests {
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--bowtie2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--minimap2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
+    }
+
+    // ---- minimap2 preset/length flag gating (Phase 4) ----------------------
+
+    /// V11: the four `--mm2_*` flags die outside minimap2 mode (Perl 8329-8341).
+    #[test]
+    fn mm2_flags_require_minimap2_mode() {
+        for arg in ["--mm2_short_reads", "--mm2_pacbio", "--mm2_nanopore"] {
+            assert!(
+                resolve_mm2_max_length(&cli_from(&[arg]), Aligner::Bowtie2).is_err(),
+                "{arg} should die without --minimap2"
+            );
+        }
+        assert!(
+            resolve_mm2_max_length(
+                &cli_from(&["--mm2_maximum_length", "5000"]),
+                Aligner::Bowtie2
+            )
+            .is_err()
+        );
+        // …and none are an error in minimap2 mode.
+        assert!(
+            resolve_mm2_max_length(&cli_from(&["--mm2_short_reads"]), Aligner::Minimap2).is_ok()
+        );
+    }
+
+    /// V7: `--mm2_maximum_length` range-die (`<100` / `>100000`); boundaries OK;
+    /// absent → default 10000 in minimap2 mode (Perl 8344-8356).
+    #[test]
+    fn mm2_maximum_length_range_and_default() {
+        let lower = resolve_mm2_max_length(
+            &cli_from(&["--mm2_maximum_length", "99"]),
+            Aligner::Minimap2,
+        );
+        assert!(lower.is_err(), "<100 must die");
+        let upper = resolve_mm2_max_length(
+            &cli_from(&["--mm2_maximum_length", "100001"]),
+            Aligner::Minimap2,
+        );
+        assert!(upper.is_err(), ">100000 must die");
+        // boundaries are valid.
+        assert_eq!(
+            resolve_mm2_max_length(
+                &cli_from(&["--mm2_maximum_length", "100"]),
+                Aligner::Minimap2
+            )
+            .unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            resolve_mm2_max_length(
+                &cli_from(&["--mm2_maximum_length", "100000"]),
+                Aligner::Minimap2
+            )
+            .unwrap(),
+            Some(100000)
+        );
+        // absent → default 10000.
+        assert_eq!(
+            resolve_mm2_max_length(&cli_from(&[]), Aligner::Minimap2).unwrap(),
+            Some(10000)
+        );
+        // non-minimap2 → None (the convert guard stays inert).
+        assert_eq!(
+            resolve_mm2_max_length(&cli_from(&[]), Aligner::Bowtie2).unwrap(),
+            None
+        );
     }
 }
