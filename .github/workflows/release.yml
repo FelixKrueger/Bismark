@@ -287,6 +287,9 @@ jobs:
         with: { pattern: binary-*, path: /tmp/binaries, merge-multiple: true }
       - env:
           GH_TOKEN: ${{ github.token }}
+          # This job has no checkout, so gh can't infer the repo from a git
+          # remote — set GH_REPO explicitly (else: "fatal: not a git repository").
+          GH_REPO: ${{ github.repository }}
         run: gh release upload "${{ needs.check-release.outputs.tag }}" /tmp/binaries/*.tar.gz /tmp/binaries/*.sha256
 
   # Publish (un-draft) ONLY after binaries are uploaded AND the image passed its
@@ -299,4 +302,6 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
+          # No checkout here either — same GH_REPO fix as upload-binaries.
+          GH_REPO: ${{ github.repository }}
         run: gh release edit "${{ needs.check-release.outputs.tag }}" --draft=false
