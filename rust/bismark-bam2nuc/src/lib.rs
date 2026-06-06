@@ -96,7 +96,7 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
 pub fn version_string() -> String {
     format!(
         "bam2nuc_rs {} ({}/{})",
-        env!("CARGO_PKG_VERSION"),
+        bismark_meta::SUITE_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )

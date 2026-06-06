@@ -1,0 +1,70 @@
+# Bismark Rust suite — local CI parity + release helpers.
+#
+# Run `just` (or `just ci`) to run the portable checks CI runs on every push.
+# `just <target>` for an individual check. Install just: `cargo install just`.
+# All targets run from the workspace root (`rust/`); `just` cd's here.
+
+# Default: the portable CI check suite (lint + tests, both profiles).
+default: ci
+
+# Portable CI parity: fmt + clippy + tests (debug & release) across the workspace.
+ci: fmt clippy test test-release
+    @echo "✓ all portable CI checks passed"
+
+# Format check (CI's `cargo fmt --all -- --check`).
+fmt:
+    cargo fmt --all -- --check
+
+# Apply formatting in-place.
+fmt-fix:
+    cargo fmt --all
+
+# Clippy with -D warnings across the whole workspace (CI's lint gate).
+# NB: a *local* `--all-targets` run may flag untracked working-tree examples
+# CI never sees — treat a discrepancy as a stale/local artifact, not a gate.
+clippy:
+    cargo clippy --workspace --all-targets --release -- -D warnings
+
+# Debug-profile workspace tests.
+test:
+    cargo test --workspace
+
+# Release-profile workspace tests.
+test-release:
+    cargo test --workspace --release
+
+# Build all 12 release binaries (target/release/*_rs).
+build:
+    cargo build --workspace --release
+
+# Print every suite binary's --version (provenance + suite-version check).
+version: build
+    @for b in bismark_rs deduplicate_bismark_rs bismark_methylation_extractor_rs \
+              bismark2bedGraph_rs coverage2cytosine_rs bismark_genome_preparation_rs \
+              bam2nuc_rs NOMe_filtering_rs filter_non_conversion_rs \
+              methylation_consistency_rs bismark2report_rs bismark2summary_rs; do \
+        printf '%-34s ' "$b:"; ./target/release/$b --version 2>&1 | grep -iEm1 'version|/' || true; \
+    done
+
+# Reproducibility: build the whole suite twice under a fixed SOURCE_DATE_EPOCH
+# and diff every release binary. Mirrors the release reproducibility check; also
+# guards the `cc`/mimalloc C-dep against non-determinism.
+reproduce:
+    @echo "Building the suite twice under SOURCE_DATE_EPOCH=1700000000..."
+    cargo clean
+    SOURCE_DATE_EPOCH=1700000000 cargo build --workspace --release
+    rm -rf /tmp/bismark_repro1 && cp -R target/release /tmp/bismark_repro1
+    cargo clean
+    SOURCE_DATE_EPOCH=1700000000 cargo build --workspace --release
+    rm -rf /tmp/bismark_repro2 && cp -R target/release /tmp/bismark_repro2
+    @for b in bismark_rs deduplicate_bismark_rs bismark_methylation_extractor_rs \
+              bismark2bedGraph_rs coverage2cytosine_rs bismark_genome_preparation_rs \
+              bam2nuc_rs NOMe_filtering_rs filter_non_conversion_rs \
+              methylation_consistency_rs bismark2report_rs bismark2summary_rs; do \
+        if cmp -s /tmp/bismark_repro1/$b /tmp/bismark_repro2/$b; then echo "✓ $b bit-identical"; \
+        else echo "✗ $b DIFFERS"; fi; \
+    done
+
+# Show all recipes.
+help:
+    @just --list

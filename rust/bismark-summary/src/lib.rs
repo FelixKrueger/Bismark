@@ -52,7 +52,7 @@ pub const BISMARK_VERSION: &str = "0.25.1";
 pub fn version_string() -> String {
     format!(
         "bismark2summary_rs {} ({}/{})",
-        env!("CARGO_PKG_VERSION"),
+        bismark_meta::SUITE_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )

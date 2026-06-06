@@ -18,6 +18,7 @@ name = "coverage2cytosine_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
 # Genome FASTA reading (mirrors bismark-io/src/cram_ref.rs pins).

@@ -1,0 +1,16 @@
+# Keep the Docker build context small + reproducible (the Dockerfile does
+# `COPY . .` then builds `rust/Cargo.toml --locked`). Exclude build output, VCS,
+# and dev/plan artifacts that don't affect the build.
+rust/target/
+**/target/
+.git/
+.github/
+plans/
+Docs/
+docs/
+*.bam
+*.fq.gz
+*.fastq.gz
+**/*.md
+!rust/README.md
+!rust/THIRD-PARTY-NOTICES.md

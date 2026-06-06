@@ -1,7 +1,7 @@
 //! End-to-end Phase C smoke test.
 //!
 //! Builds a synthetic PE BAM in-test (no Perl toolchain required), runs the
-//! `bismark-methylation-extractor-rs` binary on it, and asserts:
+//! `bismark_methylation_extractor_rs` binary on it, and asserts:
 //! - exit code 0,
 //! - all 12 split files present,
 //! - splitting report contains "Processed N lines in total" matching the
@@ -144,7 +144,7 @@ fn smoke_pe_auto_detect_produces_all_12_files_and_report() {
     let output_dir = workdir.path().join("out");
 
     // No --single-end / --paired-end → AutoDetect via @PG ID:Bismark.
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(&bam_path)
         .arg("--output_dir")
         .arg(&output_dir)
@@ -217,7 +217,7 @@ fn smoke_pe_explicit_paired_end_flag_works() {
     write_pe_directional_bam(&bam_path);
 
     let output_dir = workdir.path().join("out");
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(&bam_path)
         .arg("--paired-end")
         .arg("--output_dir")

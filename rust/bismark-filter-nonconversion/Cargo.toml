@@ -19,6 +19,7 @@ name = "filter_non_conversion_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 # Used ONLY for `detect_paired_from_header` (the @PG SE/PE auto-detect). All
 # BAM record I/O goes through noodles directly (raw RecordBuf passthrough),
 # NOT bismark-io's BismarkRecord reader — that reader drops unmapped reads and

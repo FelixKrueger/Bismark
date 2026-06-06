@@ -19,6 +19,7 @@ name = "bismark2bedGraph_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
 # Multithreaded global allocator (see src/main.rs). The parallel per-file parse

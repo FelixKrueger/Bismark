@@ -15,10 +15,11 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "bismark-methylation-extractor-rs"
+name = "bismark_methylation_extractor_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 # Inline-streaming epic Phase 2: the extractor drives bedGraph + cytosine_report
 # IN-PROCESS via these crates' `Cli`/`run()` (no fork/exec, no Perl subprocess).

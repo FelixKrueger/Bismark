@@ -1,4 +1,4 @@
-//! Command-line interface for `bismark-methylation-extractor-rs`.
+//! Command-line interface for `bismark_methylation_extractor_rs`.
 //!
 //! All 35 Perl flags from [SPEC §3](../../SPEC.md) are mapped to clap-derived
 //! fields below. [`Cli::validate`] returns a [`ResolvedConfig`] after
@@ -23,7 +23,7 @@ use crate::error::BismarkExtractorError;
 /// [`ResolvedConfig`] after parsing.
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark-methylation-extractor-rs",
+    name = "bismark_methylation_extractor_rs",
     about = "Extract methylation calls from Bismark-aligned BAM/SAM/CRAM files",
     long_about = None,
     disable_version_flag = true
@@ -548,7 +548,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["bismark-methylation-extractor-rs"];
+        let mut full = vec!["bismark_methylation_extractor_rs"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

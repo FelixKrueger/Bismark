@@ -416,7 +416,7 @@ mod finalize_integration {
         let path_str = tmp_path.to_str().unwrap().to_string();
         let _ = tmp_path.keep().unwrap();
         let mut args = vec![
-            "bismark-methylation-extractor-rs",
+            "bismark_methylation_extractor_rs",
             path_str.as_str(),
             "--output_dir",
             output_dir.to_str().unwrap(),
