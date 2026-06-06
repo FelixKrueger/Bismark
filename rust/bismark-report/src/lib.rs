@@ -39,7 +39,7 @@ pub fn version_string() -> String {
          Bismark HTML Report Module (Rust port) Version: {}\n        \
          Copyright 2010-25, Felix Krueger, Altos Bioinformatics\n\n               \
          https://github.com/FelixKrueger/Bismark\n",
-        env!("CARGO_PKG_VERSION")
+        bismark_meta::SUITE_VERSION
     )
 }
 

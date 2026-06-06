@@ -18,6 +18,7 @@ name = "bismark2report_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
 # Local-time formatting for the default {{date}}/{{time}} (Perl `localtime`).

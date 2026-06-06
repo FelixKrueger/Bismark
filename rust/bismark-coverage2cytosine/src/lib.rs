@@ -85,7 +85,7 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
 pub fn version_string() -> String {
     format!(
         "coverage2cytosine_rs {} ({}/{})",
-        env!("CARGO_PKG_VERSION"),
+        bismark_meta::SUITE_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )

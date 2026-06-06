@@ -32,7 +32,7 @@ use crate::error::BismarkNomeError;
 pub fn version_string() -> String {
     format!(
         "NOMe_filtering_rs {} ({}/{})",
-        env!("CARGO_PKG_VERSION"),
+        bismark_meta::SUITE_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )
@@ -87,7 +87,8 @@ mod tests {
     fn version_string_has_binary_name_and_semver() {
         let v = version_string();
         assert!(v.starts_with("NOMe_filtering_rs "), "got: {v}");
-        assert!(v.contains(env!("CARGO_PKG_VERSION")), "got: {v}");
+        // Reports the SUITE version (single source: rust/VERSION), not the crate's own.
+        assert!(v.contains(bismark_meta::SUITE_VERSION), "got: {v}");
         assert!(v.contains(std::env::consts::OS), "got: {v}");
     }
 }

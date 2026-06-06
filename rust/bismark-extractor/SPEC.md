@@ -10,7 +10,7 @@
 
 ## 1. Goal
 
-Port the methylation extractor — the biggest single-tool rewrite in the Bismark suite — to a Rust binary `bismark-methylation-extractor-rs` in the existing workspace. **Match Perl v0.25.1 byte-for-byte** on all output streams across the full flag matrix; **eliminate the structural correctness bugs that hit Alan Hoyle's prior-art Rust port** (strand-routing splits one read across multiple files; M-bias missing CHG/CHH context tables); **replace the fork+modulo `--multicore` model with rayon** to fix the gzip-decompression bottleneck identified in profiling (16% of pipeline time, superlinear scaling on real WGBS data).
+Port the methylation extractor — the biggest single-tool rewrite in the Bismark suite — to a Rust binary `bismark_methylation_extractor_rs` in the existing workspace. **Match Perl v0.25.1 byte-for-byte** on all output streams across the full flag matrix; **eliminate the structural correctness bugs that hit Alan Hoyle's prior-art Rust port** (strand-routing splits one read across multiple files; M-bias missing CHG/CHH context tables); **replace the fork+modulo `--multicore` model with rayon** to fix the gzip-decompression bottleneck identified in profiling (16% of pipeline time, superlinear scaling on real WGBS data).
 
 ## 2. Scope
 

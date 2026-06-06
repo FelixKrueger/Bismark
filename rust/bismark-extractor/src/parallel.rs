@@ -1272,7 +1272,7 @@ mod tests {
         let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
         std::fs::write(tmp.path(), b"x").unwrap();
         let path = tmp.path().to_str().unwrap().to_string();
-        let mut args = vec!["bismark-methylation-extractor-rs"];
+        let mut args = vec!["bismark_methylation_extractor_rs"];
         args.extend(extra.iter().copied());
         args.push(&path);
         let cfg = Cli::try_parse_from(&args).unwrap().validate().unwrap();
@@ -1421,7 +1421,7 @@ mod tests {
         // valid one with parallel=4.
         let tmpfile = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
         std::fs::write(tmpfile.path(), b"x").unwrap();
-        let mut full = vec!["bismark-methylation-extractor-rs"];
+        let mut full = vec!["bismark_methylation_extractor_rs"];
         let input_path = tmpfile.path().to_str().unwrap().to_string();
         full.extend(
             ["--single-end", "--parallel", "4", &input_path]
@@ -1520,7 +1520,7 @@ mod tests {
         let input_path = tmpfile.path().to_str().unwrap().to_string();
         let cli = Cli::try_parse_from(
             [
-                "bismark-methylation-extractor-rs",
+                "bismark_methylation_extractor_rs",
                 "--single-end",
                 &input_path,
             ]

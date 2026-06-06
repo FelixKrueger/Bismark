@@ -19,6 +19,7 @@ name = "bismark_genome_preparation_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 # gzip input (.fa.gz / .fasta.gz). MultiGzDecoder handles multi-member files
 # (some genome .gz are concatenated members); a plain GzDecoder would truncate.

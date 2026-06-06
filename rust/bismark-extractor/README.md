@@ -30,10 +30,10 @@ Each phase is its own PR, dual-code-reviewed, and squash-merged to the integrati
 ## CLI surface (35 flags — names match Perl exactly)
 
 ```text
-$ bismark-methylation-extractor-rs --help
+$ bismark_methylation_extractor_rs --help
 Extract methylation calls from Bismark-aligned BAM/SAM/CRAM files
 
-Usage: bismark-methylation-extractor-rs [OPTIONS] [FILES]...
+Usage: bismark_methylation_extractor_rs [OPTIONS] [FILES]...
 
 (See `--help` for the full 35-flag list — names match Perl exactly.)
 ```
@@ -79,7 +79,7 @@ cd rust/
 cargo install --path bismark-extractor
 ```
 
-The binary installs as `bismark-methylation-extractor-rs` (with `_rs` suffix during Perl coexistence; matches `deduplicate_bismark_rs`).
+The binary installs as `bismark_methylation_extractor_rs` (with `_rs` suffix during Perl coexistence; matches `deduplicate_bismark_rs`).
 
 Byte-identical to Perl `bismark_methylation_extractor` v0.25.1 — validated for production extraction at full scale (see Status). A formal `v1.0` release tag follows final integration into the main Bismark distribution.
 

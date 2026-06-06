@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark-methylation-extractor-rs`.
+//! Binary entry point for `bismark_methylation_extractor_rs`.
 //!
 //! Dispatches on the resolved config —
 //! - `SingleEnd` → [`bismark_extractor::extract_se`].

@@ -19,6 +19,7 @@ name = "bismark2summary_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 # bismark2summary opens NO BAM/SAM/CRAM (filename-only) and writes plain-text
 # outputs — so NO bismark-io, NO noodles, NO flate2. Pure CLI + text parsers +
 # string templating.

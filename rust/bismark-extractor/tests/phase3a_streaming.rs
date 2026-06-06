@@ -179,7 +179,7 @@ fn write_non_cpg_only_bam(path: &Path) {
 // ─────────────────────────────────────────────────────────────────────────
 
 fn run_extractor(bam: &Path, out_dir: &Path, extra: &[&str]) -> assert_cmd::assert::Assert {
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam)
         .arg("--single-end")
         .arg("--output_dir")
@@ -853,7 +853,7 @@ fn streaming_pe_matches_standalone() {
 
     // Extract-only (PE) → per-context files.
     let extract_dir = work.path().join("extract");
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(&bam)
         .arg("--paired-end")
         .arg("--output_dir")
@@ -877,7 +877,7 @@ fn streaming_pe_matches_standalone() {
     );
 
     let inline_dir = work.path().join("inline");
-    let mut cmd2 = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd2 = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd2.arg(&bam)
         .arg("--paired-end")
         .arg("--bedGraph")
@@ -1236,7 +1236,7 @@ fn config_via_cli(
 ) -> bismark_extractor::ResolvedConfig {
     use clap::Parser;
     let argv: Vec<OsString> = vec![
-        "bismark-methylation-extractor-rs".into(),
+        "bismark_methylation_extractor_rs".into(),
         bam.as_os_str().to_owned(),
         "--single-end".into(),
         "--bedGraph".into(),

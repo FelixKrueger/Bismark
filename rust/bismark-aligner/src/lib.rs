@@ -75,14 +75,14 @@ pub use error::{AlignerError, Result};
 /// The Bismark version this port reproduces in `@PG`/reports/banners.
 pub const BISMARK_VERSION: &str = "v0.25.1";
 
-/// `--version` banner (uses the crate's own `CARGO_PKG_VERSION`; not byte-gated).
+/// `--version` banner (reports the SUITE version via `bismark_meta`; not byte-gated).
 pub fn version_string() -> String {
     format!(
         "\n          Bismark - Bisulfite Mapper and Methylation Caller.\n\n          \
          Bismark Aligner (Rust port) Version: {}\n        \
          Copyright 2010-25, Felix Krueger, Altos Bioinformatics\n\n               \
          https://github.com/FelixKrueger/Bismark\n",
-        env!("CARGO_PKG_VERSION")
+        bismark_meta::SUITE_VERSION
     )
 }
 

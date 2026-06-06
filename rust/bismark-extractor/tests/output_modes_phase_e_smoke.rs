@@ -1,6 +1,6 @@
 //! Phase E end-to-end smoke tests.
 //!
-//! Spawn the `bismark-methylation-extractor-rs` binary with each of the
+//! Spawn the `bismark_methylation_extractor_rs` binary with each of the
 //! Phase E output modes (`--comprehensive`, `--merge_non_CpG`, both,
 //! `--yacht`, `--mbias_only`) and `--gzip`, on a synthetic SE-directional
 //! BAM, and assert:
@@ -193,7 +193,7 @@ fn smoke_comprehensive_emits_3_files_with_context_infix() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -234,7 +234,7 @@ fn smoke_merge_non_cpg_emits_8_files_with_chg_chh_in_non_cpg() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -278,7 +278,7 @@ fn smoke_comprehensive_merge_non_cpg_emits_2_files() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -306,7 +306,7 @@ fn smoke_yacht_emits_1_file_with_8_col_rows_and_reverse_strand_swap() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -356,7 +356,7 @@ fn smoke_mbias_only_emits_no_split_files() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -390,7 +390,7 @@ fn smoke_mbias_only_invalid_xm_byte_silently_skipped() {
     write_bam_with_invalid_xm_byte(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -421,7 +421,7 @@ fn smoke_mbias_only_counters_match_default_mode() {
     let default_out = workdir.path().join("default_out");
     let mbias_out = workdir.path().join("mbias_out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -429,7 +429,7 @@ fn smoke_mbias_only_counters_match_default_mode() {
         .arg(&default_out)
         .assert()
         .success();
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -471,7 +471,7 @@ fn smoke_gzip_default_emits_12_gz_files_with_byte_identical_decompression() {
 
     let plain_out = workdir.path().join("plain");
     let gz_out = workdir.path().join("gz");
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -479,7 +479,7 @@ fn smoke_gzip_default_emits_12_gz_files_with_byte_identical_decompression() {
         .arg(&plain_out)
         .assert()
         .success();
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -534,7 +534,7 @@ fn smoke_gzip_comprehensive_emits_3_gz_files() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -561,7 +561,7 @@ fn smoke_gzip_mbias_only_emits_no_gz_files() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -590,7 +590,7 @@ fn smoke_yacht_gzip_emits_1_gz_file_with_reverse_strand_swap_after_decode() {
     write_se_directional_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -631,7 +631,7 @@ fn smoke_yacht_empty_bam_emits_header_only_file() {
     write_empty_bam(&bam_path);
     let out = workdir.path().join("out");
 
-    Command::cargo_bin("bismark-methylation-extractor-rs")
+    Command::cargo_bin("bismark_methylation_extractor_rs")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")

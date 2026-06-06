@@ -54,7 +54,7 @@ pub use report::DedupReport;
 pub fn version_string() -> String {
     format!(
         "deduplicate_bismark_rs {} ({}/{})",
-        env!("CARGO_PKG_VERSION"),
+        bismark_meta::SUITE_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )

@@ -38,14 +38,14 @@ pub use pipeline::run;
 /// It is *not* injected into any FASTA bytes (FASTA carries no version).
 pub const BISMARK_VERSION: &str = "v0.25.1";
 
-/// `--version` banner. Uses the crate's own `CARGO_PKG_VERSION` (dedup
-/// precedent); not part of the byte-identity gate.
+/// `--version` banner. Reports the SUITE version (via `bismark_meta`, single
+/// source `rust/VERSION`); not part of the byte-identity gate.
 pub fn version_string() -> String {
     format!(
         "\n          Bismark - Bisulfite Mapper and Methylation Caller.\n\n          \
          Bismark Genome Preparation (Rust port) Version: {}\n        \
          Copyright 2010-25, Felix Krueger, Altos Bioinformatics\n\n               \
          https://github.com/FelixKrueger/Bismark\n",
-        env!("CARGO_PKG_VERSION")
+        bismark_meta::SUITE_VERSION
     )
 }

@@ -768,14 +768,14 @@ fn splitting_report_emits_per_context_counts() {
     let dir = tempfile::tempdir().unwrap();
     let report_path = dir.path().join("test_splitting_report.txt");
     let input_path = std::path::PathBuf::from("/some/input.bam");
-    let cli = Cli::try_parse_from(["bismark-methylation-extractor-rs", "/tmp/x.bam"]).unwrap();
+    let cli = Cli::try_parse_from(["bismark_methylation_extractor_rs", "/tmp/x.bam"]).unwrap();
     let config = cli.validate().unwrap_or_else(|_| {
         // Validate fails because /tmp/x.bam doesn't exist, but we want a config.
         // Re-issue with a real temp file.
         let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
         std::fs::write(tmp.path(), b"x").unwrap();
         let cli = Cli::try_parse_from([
-            "bismark-methylation-extractor-rs",
+            "bismark_methylation_extractor_rs",
             tmp.path().to_str().unwrap(),
         ])
         .unwrap();
@@ -822,7 +822,7 @@ fn test_config(output_dir: &std::path::Path) -> ResolvedConfig {
     let _ = tmp_path.keep().unwrap(); // leak so path remains valid
 
     let cli = Cli::try_parse_from([
-        "bismark-methylation-extractor-rs",
+        "bismark_methylation_extractor_rs",
         &path_str,
         "--output_dir",
         output_dir.to_str().unwrap(),
@@ -1079,7 +1079,7 @@ fn main_paired_end_no_longer_rejected_phase_c() {
     // the call fails at the bismark-io reader stage (NOT at the phase-gate).
     // We assert the error message does NOT contain Phase B's old gate text.
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--paired-end")
         .assert()
@@ -1091,7 +1091,7 @@ fn main_paired_end_no_longer_rejected_phase_c() {
 fn main_rejects_multiple_input_files() {
     let bam1 = tempbam();
     let bam2 = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam1.path())
         .arg(bam2.path())
         .assert()
@@ -1106,7 +1106,7 @@ fn main_rejects_multiple_input_files() {
 #[test]
 fn main_accepts_multicore_no_longer_rejected() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--parallel")
         .arg("4")
@@ -1122,7 +1122,7 @@ fn main_accepts_multicore_no_longer_rejected() {
 #[test]
 fn main_accepts_gzip_no_longer_rejected() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--gzip")
         .assert()
@@ -1136,7 +1136,7 @@ fn main_accepts_gzip_no_longer_rejected() {
 #[test]
 fn main_accepts_comprehensive_no_longer_rejected() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--comprehensive")
         .assert()
@@ -1148,7 +1148,7 @@ fn main_accepts_comprehensive_no_longer_rejected() {
 #[test]
 fn main_accepts_merge_non_cpg_no_longer_rejected() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--merge_non_CpG")
         .assert()
@@ -1161,7 +1161,7 @@ fn main_accepts_merge_non_cpg_no_longer_rejected() {
 #[test]
 fn main_accepts_yacht_no_longer_rejected() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--yacht")
         .assert()
@@ -1173,7 +1173,7 @@ fn main_accepts_yacht_no_longer_rejected() {
 #[test]
 fn main_accepts_mbias_only_no_longer_rejected() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--mbias_only")
         .assert()
@@ -1189,7 +1189,7 @@ fn main_accepts_mbias_only_no_longer_rejected() {
 #[test]
 fn main_bedgraph_no_longer_rejected_phase_g() {
     let bam = tempbam();
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg(bam.path())
         .arg("--bedGraph")
         .assert()

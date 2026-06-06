@@ -1,6 +1,6 @@
 //! Phase A sanity tests.
 //!
-//! Spawns the `bismark-methylation-extractor-rs` binary with basic flags
+//! Spawns the `bismark_methylation_extractor_rs` binary with basic flags
 //! and asserts the binary boots correctly + `--help` lists all 35 flags
 //! + `--version` matches the provenance regex.
 
@@ -9,25 +9,25 @@ use predicates::str::is_match;
 
 #[test]
 fn version_output_matches_provenance_regex() {
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg("--version").assert().success().stdout(
-        is_match(r"^bismark-methylation-extractor-rs \d+\.\d+\.\d+(-[\w.]+)? \(\S+/\S+\)\n$")
+        is_match(r"^bismark_methylation_extractor_rs \d+\.\d+\.\d+(-[\w.]+)? \(\S+/\S+\)\n$")
             .unwrap(),
     );
 }
 
 #[test]
 fn short_version_flag_works_too() {
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.arg("-V")
         .assert()
         .success()
-        .stdout(is_match(r"^bismark-methylation-extractor-rs ").unwrap());
+        .stdout(is_match(r"^bismark_methylation_extractor_rs ").unwrap());
 }
 
 #[test]
 fn invocation_with_no_input_files_errors_with_clear_message() {
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     cmd.assert()
         .failure()
         .stderr(predicates::str::contains("no input file"));
@@ -38,7 +38,7 @@ fn invocation_with_no_input_files_errors_with_clear_message() {
 /// is present so Phase A doesn't silently drop one.
 #[test]
 fn help_text_lists_all_35_flags() {
-    let mut cmd = Command::cargo_bin("bismark-methylation-extractor-rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
     let output = cmd.arg("--help").assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout).into_owned();

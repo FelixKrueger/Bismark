@@ -19,6 +19,7 @@ name = "bam2nuc_rs"
 path = "src/main.rs"
 
 [dependencies]
+bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.0"
 # bismark-io supplies the magic-byte format sniff (AlignmentKind::from_path) for

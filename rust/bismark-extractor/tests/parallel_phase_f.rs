@@ -308,7 +308,7 @@ fn write_empty_bam(path: &Path) {
 /// Build a `ResolvedConfig` from CLI-style args. Convenient because
 /// `ResolvedConfig` has 28 fields and constructing it directly is verbose.
 fn resolved_config(args: &[&str]) -> ResolvedConfig {
-    let mut full = vec!["bismark-methylation-extractor-rs"];
+    let mut full = vec!["bismark_methylation_extractor_rs"];
     full.extend(args.iter().copied());
     let cli = Cli::try_parse_from(&full).expect("CLI should parse");
     cli.validate().expect("CLI should validate")

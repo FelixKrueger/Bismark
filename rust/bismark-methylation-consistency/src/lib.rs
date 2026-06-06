@@ -37,7 +37,7 @@ pub use report::Tally;
 pub fn version_string() -> String {
     format!(
         "methylation_consistency_rs {} ({}/{})",
-        env!("CARGO_PKG_VERSION"),
+        bismark_meta::SUITE_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )
