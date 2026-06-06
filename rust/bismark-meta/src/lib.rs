@@ -25,13 +25,10 @@ pub fn version_line(tool: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn consts_are_populated() {
-        // build.rs always sets these (with `unknown` fallbacks) — never empty.
-        assert!(!SUITE_VERSION.is_empty());
-        assert!(!GIT_SHORT_HASH.is_empty());
-        assert!(!VERSION_BODY.is_empty());
-    }
+    // (The consts' presence is compile-guaranteed: `env!()` is a compile error if
+    // build.rs didn't set the var — so a runtime `!CONST.is_empty()` assert is a
+    // tautology clippy flags as `const_is_empty`. `version_line_shape` covers the
+    // meaningful behavior at runtime.)
 
     #[test]
     fn version_line_shape() {
