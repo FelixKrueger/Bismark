@@ -1,0 +1,21 @@
+# GitHub Linguist — keep the repository language bar reflecting the actual
+# source (Perl + Rust), not vendored web assets or documentation.
+#
+# The plot.ly bundle (literally named `plot.ly`) is mis-detected as "LilyPond"
+# via its `.ly` extension, and the plotly HTML assets dominate as "HTML" — both
+# are vendored third-party report assets, not Bismark source.
+
+# Vendored web assets (plot.ly bundle + embedded HTML report templates).
+*.ly               linguist-vendored
+plotly/**          linguist-vendored
+**/plotly/**       linguist-vendored
+*.html             linguist-vendored
+
+# Documentation (not counted as a language).
+Docs/**            linguist-documentation
+docs/**            linguist-documentation
+*.md               linguist-documentation
+license.txt        linguist-documentation
+
+# Generated.
+rust/Cargo.lock    linguist-generated
