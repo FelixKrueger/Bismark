@@ -49,10 +49,10 @@ pub struct Cli {
     /// Align with Bowtie 2 (default).
     #[arg(long)]
     pub bowtie2: bool,
-    /// Align with HISAT2 (deferred to a v1.x follow-up).
+    /// Align with HISAT2 (single-core only — see the multicore reject).
     #[arg(long)]
     pub hisat2: bool,
-    /// Align with minimap2 (deferred to a v1.x follow-up).
+    /// Align with minimap2 (single-end only; paired-end is rejected).
     #[arg(long = "minimap2", visible_alias = "mm2")]
     pub minimap2: bool,
     /// Folder containing the `bowtie2` executable (not the executable itself).
@@ -206,27 +206,28 @@ pub struct Cli {
     #[arg(long = "rg_sample", value_name = "str")]
     pub rg_sample: Option<String>,
 
-    // ---- HISAT2 / minimap2 specific (parsed; deferred to v1.x) ------------
-    /// HISAT2 known splice sites (deferred).
+    // ---- HISAT2 / minimap2 specific ---------------------------------------
+    /// HISAT2 known splice sites (HISAT2 mode only).
     #[arg(long = "known-splicesite-infile", value_name = "PATH")]
     pub known_splices: Option<PathBuf>,
-    /// HISAT2: disable spliced alignment (deferred).
+    /// HISAT2: disable spliced alignment (HISAT2 mode only).
     #[arg(long = "no-spliced-alignment")]
     pub nosplice: bool,
     /// Truncate read IDs at the first space/tab instead of replacing
     /// whitespace with underscores (Bismark issue #236; affects `fix_IDs`).
     #[arg(long)]
     pub icpc: bool,
-    /// minimap2 short-read preset (deferred).
+    /// minimap2 short-read preset (`-x sr`; minimap2 mode only).
     #[arg(long = "mm2_short_reads")]
     pub mm2_short_read: bool,
-    /// minimap2 maximum read length (deferred).
+    /// minimap2 maximum read length cutoff (`100..=100000`; default 10000;
+    /// minimap2 mode only).
     #[arg(long = "mm2_maximum_length", value_name = "int")]
     pub maximum_length_cutoff: Option<u32>,
-    /// minimap2 PacBio preset (deferred).
+    /// minimap2 PacBio preset (`-x map-pb`; minimap2 mode only).
     #[arg(long = "mm2_pacbio", visible_alias = "pacbio")]
     pub mm2_pacbio: bool,
-    /// minimap2 Nanopore preset (deferred).
+    /// minimap2 Nanopore preset (`-x map-ont`; the default; minimap2 mode only).
     #[arg(long = "mm2_nanopore", visible_alias = "nanopore")]
     pub mm2_nanopore: bool,
     /// Report the strand identity (deferred).

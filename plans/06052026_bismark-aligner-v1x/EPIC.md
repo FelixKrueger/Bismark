@@ -33,8 +33,8 @@ Spike-first per aligner. 🎯 marks a byte-identity gate.
 - **Phase 2a — HISAT2 wrapper core (detection + options + discovery + naming + SE gate).** Generalize `aligner.rs` → multi-backend (pin 2.2.2); per-aligner option assembly = **Bowtie2 base + `--no-softclip --omit-sec-seq` appended LAST** (after the PE tail + `--quiet`, Perl 8314), **`--dovetail` suppressed for HISAT2** (Perl gates it `if($bowtie2)`), + splice-flag handling/fail-loud; `.ht2` discovery as an **8-suffix arity** change (`{1..8}.ht2`, no `rev.*`); naming token threaded through lib.rs **+ `parallel.rs`** (or `--multicore`+`--hisat2` fail-loud-rejected) + `ReportHeader` aligner field/report wording. 🎯 **SE** byte-identity gate (directional → non-dir/pbat SE) at 10k+1M on oxy. **Bowtie2 byte-frozen** (regression-guard, append-to-finished-string keeps it structural). Depends on #1. *(Dual review of the combined Phase 2 surface: `phase2a-hisat2-core/PLAN_REVIEW_{A,B}.md`.)*
 - **Phase 2b — HISAT2 paired-end + remaining gate.** The **PE read-1 `ZS` asymmetry fix** — read-1 second-best parsed **XS-only** for HISAT2 PE (Perl 3372-3382 has *no* `ZS` branch → `second_best_1` always undef → backfilled to `AS`; the Rust uniform parser over-captures `ZS` → wrong MAPQ → non-identical BAM). The dual review's load-bearing find; needs a post-parse `r1.second_best=None` mask + a dedicated PE-HISAT2 multi-mapper unit test. 🎯 **PE + non-dir/pbat + FastA** byte-identity gate at 10k+1M on oxy. Depends on #2a.
 - **Phase 3 — minimap2 determinism + selection spike** (oxy). The highest-risk phase (OQ3): is minimap2 2.31 deterministic run-to-run, and what does its **both-strand (no `--norc`/`--nofw`)** alignment do to the unique-vs-ambiguous / best-alignment arithmetic vs the Bowtie2/HISAT2 model? Characterizes the merge adaptation + decides byte-identity-vs-concordance reachability before committing Phase 4. (`spike` skill.)
-- **Phase 4 — minimap2 wrapper + merge adaptation + byte-identity gate.** Positional `.mmi` invocation; `-ax sr` option assembly; `/1 /2` retention in convert/ID; the no-strand-restriction merge/selection path; naming + report wording. 🎯 byte-identity gate at 10k + 1M on oxy. Bowtie2 + HISAT2 byte-frozen.
-- **Phase 5 — combined v1.x full-scale real-data gate + PR.** HISAT2 + minimap2 full-scale on oxy (human WGBS SE+PE; RRBS/mouse optional, OQ4), `rust/README.md` journal + status-row bump, fresh-branch PR → iron-chancellor (squash-merge on explicit ask).
+- **Phase 4 — minimap2 wrapper (SE) + byte-identity gate.** Plan rev 1 (dual-reviewed): the merge/MAPQ are REUSED unchanged (spike + review: minimap2's `s2` is ignored → `second_best=None`; `calc_mapq` verbatim). New = clean-slate options (`-a --MD --secondary=no -t 2 -x map-ont -K 250K`, NOT `-ax sr`); positional `.mmi` invocation; single-`.mmi` discovery; minimap2-only version parse; `--mm2_maximum_length`; `_bismark_mm2` naming. 🎯 **SE** byte-identity gate at 10k+1M on oxy. **🔴 PE-minimap2 DEFERRED out of v1.x** (Felix 2026-06-05 — the Perl PE oracle is unfinished WIP + mislabels its report; documented known gap). Bowtie2 + HISAT2 byte-frozen.
+- **Phase 5 — combined v1.x full-scale real-data gate + PR.** Full-scale on oxy: Bowtie2 + HISAT2 (SE+PE) + **minimap2 SE** (human WGBS; RRBS/mouse optional), `rust/README.md` journal + status-row bump, fresh-branch PR → iron-chancellor (squash-merge on explicit ask).
 
 ## 4. Sub-plan table
 
@@ -43,9 +43,9 @@ Spike-first per aligner. 🎯 marks a byte-identity gate.
 | 1 | HISAT2 determinism spike ✅ **premise HOLDS** | `phase1-hisat2-determinism-spike/spikes/SPIKE_hisat2_determinism.md` | — |
 | 2a | HISAT2 core (detect+options+discovery+naming+SE gate) 🎯 | `phase2a-hisat2-core/PLAN.md` | #1 |
 | 2b | HISAT2 PE (read-1 ZS fix) + PE/non-dir/pbat/FastA gate 🎯 | `phase2b-hisat2-pe/PLAN.md` | #2a |
-| 3 | minimap2 determinism + selection spike 🎯-premise | `phase3-minimap2-determinism-selection-spike/SPIKE_*.md` | #2b |
-| 4 | minimap2 wrapper + merge adaptation + gate 🎯 | _(to be written)_ | #3 |
-| 5 | Combined full-scale gate + PR 🎯 | _(to be written)_ | #2b, #4 |
+| 3 | minimap2 determinism + selection spike ✅ **premise HOLDS** | `phase3-minimap2-determinism-selection-spike/spikes/SPIKE_minimap2_determinism_selection.md` | #2b |
+| 4 | minimap2 wrapper (merge REUSED unchanged per the spike) + gate 🎯 | `phase4-minimap2-wrapper/PLAN.md` | #3 |
+| 5 | Combined gate (10M strict) + PR 🎯 ✅ **GATE PASSED** | `phase5-fullscale-gate/PLAN.md` (rev 2) + `GATE_OXY.md` | #2b, #4 |
 
 Sub-plans are written separately via `plan-writer` (spikes via the `spike` skill). When a plan is written, update its row from `_(to be written)_` to the actual filename.
 

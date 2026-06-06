@@ -277,6 +277,7 @@ fn process_se_chunk(
             IndexChoice::Ga => &config.genome.ga_index_basename,
         };
         streams.push(AlignerStream::spawn(
+            config.aligner,
             bt2,
             &config.aligner_options,
             orientation,

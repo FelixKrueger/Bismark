@@ -10,10 +10,12 @@
 //! (6849–6912: spawn, `^@` header-skip, store-first) and the field/tag
 //! extraction in `check_results_single_end` (2737/2773–2795).
 
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
 
+use crate::config::Aligner;
 use crate::error::{AlignerError, Result};
 
 /// Per-instance strand-orientation flag (the strand-instance table, Perl 7124).
@@ -93,6 +95,13 @@ impl SamRecord {
         // Optional tags, scanned in field order. Prefixes are disjoint, so
         // `second_best` is simply overwritten on each XS/ZS match (last wins) —
         // matches Perl setting it at 2780 (ZS) and 2788 (XS) as fields advance.
+        //
+        // 🔴 minimap2's within-instance second-best tag is `s2:i:` (lowercase) —
+        // it is INTENTIONALLY NOT captured here. Bismark's parse loop (Perl
+        // 2772-2796) has no `s2` branch, so `second_best` stays `None` for minimap2
+        // → `calc_mapq` takes the no-2nd-best path, byte-identical to Perl. Adding
+        // an `s2:i:` branch (as the Phase-3 spike WRONGLY suggested) would silently
+        // break MAPQ byte-identity. `minimap2_s2_tag_is_ignored` (below) guards this.
         let (mut alignment_score, mut second_best, mut md_tag) = (None, None, None);
         for fld in &f[11..] {
             if let Some(v) = fld.strip_prefix("AS:i:") {
@@ -157,41 +166,70 @@ pub struct AlignerStream {
     finished: bool,
 }
 
+/// Build the per-instance argv (excluding the binary path) for one single-end
+/// alignment. Extracted as a pure function so the per-aligner invocation shape is
+/// unit-testable without spawning a process (and so the frozen Bowtie 2 / HISAT2
+/// shape is physically separated from minimap2's).
+///
+/// - **Bowtie 2 / HISAT2** (Perl 6872-6882): `<opts…> <orient> -x <index> -U <input>`
+///   — the strand flag (`--norc`/`--nofw`) plus the `-x basename` / `-U reads` shape.
+/// - **minimap2** (Perl 7022/7025): `<opts…> <index>.mmi <input>` — the index is
+///   passed **positionally** as `<basename>.mmi` with NO strand flag and NO
+///   `-x`/`-U` (Bismark comments `--norc`/`--nofw` out, 7011-7016). The `.mmi` is a
+///   literal byte append to the basename (`$bisulfiteIndex.".mmi"`). NB: the
+///   minimap2 *options* legitimately contain `-x <preset>` (e.g. `-x map-ont`) —
+///   that is the preset, distinct from the Bowtie 2 `-x <index>` shape.
+fn build_se_argv(
+    aligner: Aligner,
+    options: &str,
+    orient: Orientation,
+    index: &Path,
+    input: &Path,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = options.split_whitespace().map(OsString::from).collect();
+    match aligner {
+        Aligner::Bowtie2 | Aligner::Hisat2 => {
+            args.push(orient.flag().into());
+            args.push("-x".into());
+            args.push(index.as_os_str().to_owned());
+            args.push("-U".into());
+            args.push(input.as_os_str().to_owned());
+        }
+        Aligner::Minimap2 => {
+            let mut mmi = index.as_os_str().to_owned();
+            mmi.push(".mmi");
+            args.push(mmi);
+            args.push(input.as_os_str().to_owned());
+        }
+    }
+    args
+}
+
 impl AlignerStream {
-    /// Spawn one Bowtie 2 instance and read up to the first alignment record.
-    ///
-    /// Args mirror Perl 6872–6882: `<aligner_options> <orient> -x <index> -U
-    /// <input>`. stdout is piped; stderr is **inherited** (Bowtie 2's summary →
-    /// terminal, as in Perl — so only stdout is piped and it is always drained).
+    /// Spawn one aligner instance (Bowtie 2 / HISAT2 / minimap2) and read up to the
+    /// first alignment record. The argv shape is per-aligner ([`build_se_argv`]).
+    /// stdout is piped; stderr is **inherited** (the aligner's summary → terminal,
+    /// as in Perl — so only stdout is piped and it is always drained).
     pub fn spawn(
-        bowtie2: &Path,
+        aligner: Aligner,
+        bin: &Path,
         options: &str,
         orient: Orientation,
         index: &Path,
         input: &Path,
     ) -> Result<Self> {
-        let mut cmd = Command::new(bowtie2);
-        for opt in options.split_whitespace() {
-            cmd.arg(opt);
-        }
-        cmd.arg(orient.flag())
-            .arg("-x")
-            .arg(index)
-            .arg("-U")
-            .arg(input)
+        let mut cmd = Command::new(bin);
+        cmd.args(build_se_argv(aligner, options, orient, index, input))
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
 
         let mut child = cmd.spawn().map_err(|e| {
-            AlignerError::Validation(format!(
-                "failed to spawn Bowtie 2 ({}): {e}",
-                bowtie2.display()
-            ))
+            AlignerError::Validation(format!("failed to spawn aligner ({}): {e}", bin.display()))
         })?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| AlignerError::Validation("Bowtie 2 stdout was not captured".into()))?;
+            .ok_or_else(|| AlignerError::Validation("aligner stdout was not captured".into()))?;
         let mut reader = BufReader::new(stdout);
 
         // Skip `@` header lines; the first non-`@` line is the first record.
@@ -580,6 +618,133 @@ mod tests {
         assert_eq!(r.raw_line, MAPPED);
     }
 
+    /// V6 (Phase 4 — guards the spike's WRONG "read s2" instruction): a real
+    /// minimap2 tag set incl. a positive `AS:i:` and an `s2:i:` second-best chaining
+    /// score must yield `second_best == None` (Bismark IGNORES `s2` — no `s2` branch
+    /// in Perl 2772-2796). Adding an `s2` branch would silently break MAPQ identity.
+    #[test]
+    fn minimap2_s2_tag_is_ignored() {
+        // minimap2 primary-record tags (incl. the lowercase `s2:i:`).
+        let line = "r\t0\tc_CT_converted\t100\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\t\
+            NM:i:0\tms:i:20\tAS:i:20\tnn:i:0\ttp:A:P\tcm:i:3\ts1:i:18\ts2:i:14\tde:f:0\trl:i:0\tMD:Z:10";
+        let r = SamRecord::parse(line).unwrap();
+        assert_eq!(r.alignment_score, Some(20)); // positive AS captured (no sign assumption)
+        assert_eq!(r.md_tag.as_deref(), Some("10")); // MD captured despite the noise tags
+        assert_eq!(r.second_best, None); // s2:i:14 IGNORED — it is neither XS nor ZS
+    }
+
+    // ---- per-aligner SE invocation shape (Phase 4; V5 / V5b) ---------------
+
+    fn argv_strings(argv: &[OsString]) -> Vec<String> {
+        argv.iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// V5b regression: the Bowtie 2 argv is byte-frozen through the refactored
+    /// builder — `<opts> <orient> -x <index> -U <input>`.
+    #[test]
+    fn se_argv_bowtie2_shape_frozen() {
+        let argv = build_se_argv(
+            Aligner::Bowtie2,
+            "-q --score-min L,0,-0.2 --ignore-quals",
+            Orientation::Norc,
+            Path::new("/idx/BS_CT"),
+            Path::new("/tmp/r_C_to_T.fastq"),
+        );
+        assert_eq!(
+            argv_strings(&argv),
+            vec![
+                "-q",
+                "--score-min",
+                "L,0,-0.2",
+                "--ignore-quals",
+                "--norc",
+                "-x",
+                "/idx/BS_CT",
+                "-U",
+                "/tmp/r_C_to_T.fastq",
+            ]
+        );
+    }
+
+    /// V5b: HISAT2 uses the SAME shape as Bowtie 2 (only the options differ); the
+    /// `--nofw` strand flag is honoured.
+    #[test]
+    fn se_argv_hisat2_same_shape_as_bowtie2() {
+        let argv = build_se_argv(
+            Aligner::Hisat2,
+            "-q --no-softclip --omit-sec-seq",
+            Orientation::Nofw,
+            Path::new("/idx/BS_GA"),
+            Path::new("/tmp/r.fastq"),
+        );
+        assert_eq!(
+            argv_strings(&argv),
+            vec![
+                "-q",
+                "--no-softclip",
+                "--omit-sec-seq",
+                "--nofw",
+                "-x",
+                "/idx/BS_GA",
+                "-U",
+                "/tmp/r.fastq",
+            ]
+        );
+    }
+
+    /// V5: minimap2 = positional `<index>.mmi <input>` — NO strand flag, NO
+    /// `-x <index>`/`-U` (the `-x map-ont` is the preset, not the index). The
+    /// orientation is ignored (Perl comments `--norc`/`--nofw` out).
+    #[test]
+    fn se_argv_minimap2_positional_mmi() {
+        let argv = build_se_argv(
+            Aligner::Minimap2,
+            "-a --MD --secondary=no -t 2 -x map-ont -K 250K",
+            Orientation::Norc, // ignored for minimap2
+            Path::new("/idx/BS_CT"),
+            Path::new("/tmp/r_C_to_T.fastq"),
+        );
+        let got = argv_strings(&argv);
+        assert_eq!(
+            got,
+            vec![
+                "-a",
+                "--MD",
+                "--secondary=no",
+                "-t",
+                "2",
+                "-x",
+                "map-ont",
+                "-K",
+                "250K",
+                "/idx/BS_CT.mmi", // positional index, literal `.mmi` append
+                "/tmp/r_C_to_T.fastq",
+            ]
+        );
+        // No strand flag, no `-U`, and the index is NOT passed as `-x <basename>`.
+        assert!(!got.contains(&"--norc".to_string()) && !got.contains(&"--nofw".to_string()));
+        assert!(!got.contains(&"-U".to_string()));
+        assert!(!got.contains(&"/idx/BS_CT".to_string())); // only the `.mmi` form
+    }
+
+    /// minimap2  orientation is irrelevant — `--norc` and `--nofw` produce the same
+    /// argv (the strand flag is never emitted).
+    #[test]
+    fn se_argv_minimap2_orientation_independent() {
+        let mk = |o| {
+            argv_strings(&build_se_argv(
+                Aligner::Minimap2,
+                "-a -x map-ont",
+                o,
+                Path::new("/idx/BS_GA"),
+                Path::new("/tmp/r.fastq"),
+            ))
+        };
+        assert_eq!(mk(Orientation::Norc), mk(Orientation::Nofw));
+    }
+
     // ---- stream over a fake bowtie2 (hermetic; no real Bowtie 2 needed) -----
 
     #[cfg(unix)]
@@ -626,6 +791,7 @@ mod tests {
         let bt2 = fake_bowtie2(dir.path(), body);
         let s = spawn_retry_etxtbsy(|| {
             AlignerStream::spawn(
+                Aligner::Bowtie2,
                 &bt2,
                 "-q --score-min L,0,-0.2 --ignore-quals",
                 Orientation::Norc,
@@ -677,6 +843,7 @@ mod tests {
     #[test]
     fn spawn_fails_on_bad_path() {
         let r = AlignerStream::spawn(
+            Aligner::Bowtie2,
             Path::new("/no/such/bowtie2"),
             "-q",
             Orientation::Norc,

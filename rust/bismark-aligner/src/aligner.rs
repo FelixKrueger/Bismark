@@ -20,6 +20,9 @@ pub const PINNED_BOWTIE2_VERSION: &str = "2.5.5";
 /// The HISAT2 version this port pins for the byte-identity gate (oxy `bismark-test`).
 pub const PINNED_HISAT2_VERSION: &str = "2.2.2";
 
+/// The minimap2 version this port pins for the byte-identity gate (oxy `bismark-test`).
+pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
+
 /// A located, working aligner.
 #[derive(Debug, Clone)]
 pub struct DetectedAligner {
@@ -29,11 +32,13 @@ pub struct DetectedAligner {
     pub version: String,
 }
 
-/// The executable name Perl invokes for `kind` (literal `bowtie2` / `hisat2`).
+/// The executable name Perl invokes for `kind` (literal `bowtie2` / `hisat2` /
+/// `minimap2`).
 fn binary_name(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => "bowtie2",
         Aligner::Hisat2 => "hisat2",
+        Aligner::Minimap2 => "minimap2",
     }
 }
 
@@ -42,6 +47,7 @@ fn pinned_version(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => PINNED_BOWTIE2_VERSION,
         Aligner::Hisat2 => PINNED_HISAT2_VERSION,
+        Aligner::Minimap2 => PINNED_MINIMAP2_VERSION,
     }
 }
 
@@ -50,6 +56,7 @@ fn path_flag(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => "--path_to_bowtie2",
         Aligner::Hisat2 => "--path_to_hisat2",
+        Aligner::Minimap2 => "--path_to_minimap2",
     }
 }
 
@@ -96,7 +103,16 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let version = parse_bowtie2_version(&stdout).unwrap_or_else(|| {
+    // Bowtie 2 / HISAT2 print a `… version x.y.z` banner; minimap2 prints ONLY the
+    // bare version number (Perl 7078-7088 — the `bowtie`/`hisat2` regex branches vs
+    // the minimap2 no-op `elsif`). The fallback (first non-empty line, trimmed) is
+    // byte-harmless since the version is warn-only — it never enters the gated BAM
+    // or report.
+    let parsed = match kind {
+        Aligner::Minimap2 => parse_minimap2_version(&stdout),
+        Aligner::Bowtie2 | Aligner::Hisat2 => parse_bowtie2_version(&stdout),
+    };
+    let version = parsed.unwrap_or_else(|| {
         stdout
             .lines()
             .next()
@@ -136,6 +152,18 @@ fn parse_bowtie2_version(stdout: &str) -> Option<String> {
     }
 }
 
+/// Parse minimap2's version output. Unlike Bowtie 2 / HISAT2, `minimap2 --version`
+/// prints **only** the bare version number (e.g. `2.31-r1302`) with no banner, so
+/// Perl (7081-7083) does no regex — the chomped output IS the version. Take the
+/// first non-empty line, trimmed.
+fn parse_minimap2_version(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
 /// `true` if `s` is `<int>.<int>.<int>`.
 fn is_version_triple(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
@@ -172,6 +200,32 @@ mod tests {
         assert_eq!(binary_name(Aligner::Hisat2), "hisat2");
         assert_eq!(pinned_version(Aligner::Hisat2), "2.2.2");
         assert_eq!(path_flag(Aligner::Hisat2), "--path_to_hisat2");
+    }
+
+    /// V (Phase 4): the minimap2 detection metadata (binary / pin / path flag).
+    #[test]
+    fn minimap2_detection_metadata() {
+        assert_eq!(binary_name(Aligner::Minimap2), "minimap2");
+        assert_eq!(pinned_version(Aligner::Minimap2), "2.31-r1302");
+        assert_eq!(path_flag(Aligner::Minimap2), "--path_to_minimap2");
+    }
+
+    /// V (Phase 4 / OQ-4a): minimap2 prints only the bare version number — the
+    /// Bowtie 2 `… version x.y.z` parser would miss it, so a minimap2-specific
+    /// parse takes the first non-empty line verbatim.
+    #[test]
+    fn parses_bare_minimap2_version() {
+        assert_eq!(
+            parse_minimap2_version("2.31-r1302\n").as_deref(),
+            Some("2.31-r1302")
+        );
+        // leading blank line tolerated; trimmed.
+        assert_eq!(
+            parse_minimap2_version("\n  2.31-r1302  \n").as_deref(),
+            Some("2.31-r1302")
+        );
+        // the Bowtie 2 banner parser must NOT match the bare number.
+        assert_eq!(parse_bowtie2_version("2.31-r1302\n"), None);
     }
 
     #[test]

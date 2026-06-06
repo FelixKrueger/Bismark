@@ -186,8 +186,61 @@ pub fn build_aligner_options(
 
     // 16. HISAT2 tail (Perl 8286-8326), appended to the FINISHED string — after
     // the PE tail, --maxins, and --quiet — so the Bowtie 2 string is unchanged.
+    // For minimap2 this still runs (the `else` branch dies on HISAT2-only splice
+    // flags, Perl 8317-8324) but the result is discarded by the clean-slate below.
     let options = apply_aligner_specific_options(opts.join(" "), cli, aligner)?;
+
+    // 17. minimap2 — CLEAN SLATE (Perl 8359 `@aligner_options = ()`). The Bowtie 2
+    // base assembled above is thrown away; minimap2 needs a completely different
+    // option set. Building (and thus validating: -N range, --score_min shape, the
+    // splice-flag dies) the base first, then substituting, mirrors Perl's
+    // build-then-wipe order — so e.g. `-N 2 --minimap2` still dies. Gap penalties
+    // are vestigial (unused by `calc_mapq`), so the defaults are returned.
+    if aligner == Aligner::Minimap2 {
+        return Ok((minimap2_options(cli)?, gp));
+    }
     Ok((options, gp))
+}
+
+/// Assemble the minimap2 `aligner_options` from a clean slate (Perl 8358-8413).
+/// Push order: `-a` → `--MD` → `--secondary=no` → `-t 2` → `-x <preset>` →
+/// `-K 250K`. The `-t 2` is hardcoded by Bismark (8372) — independent of any
+/// `--multicore`/`-p` choice (`-p`/`--reorder` were pushed to the Bowtie 2 base,
+/// which this discards). Preset (Perl 8374-8408):
+/// - `--mm2_short_reads` → `sr`,
+/// - `--mm2_pacbio` → `map-pb`,
+/// - default **or** an explicit `--mm2_nanopore` → `map-ont` (the `else` serves
+///   both — Perl sets `$mm2_nanopore=1` in the default case, 8405).
+///
+/// Preset-conflict dies (8375/8378/8391): short⊕nanopore, short⊕pacbio,
+/// pacbio⊕nanopore. (The `--mm2_*`-without-`--minimap2` dies + the max-length
+/// range/default live in `config::resolve_mm2_max_length`, mirroring Perl's
+/// separate `unless($mm2)` / `if($mm2)` blocks.)
+fn minimap2_options(cli: &Cli) -> Result<String> {
+    let preset = if cli.mm2_short_read {
+        if cli.mm2_nanopore {
+            return Err(AlignerError::Validation(
+                "Please select minimap2 in Short Read or Nanopore mode, but not both...".into(),
+            ));
+        }
+        if cli.mm2_pacbio {
+            return Err(AlignerError::Validation(
+                "Please select minimap2 in Short Read or PacBio mode, but not both...".into(),
+            ));
+        }
+        "sr"
+    } else if cli.mm2_pacbio {
+        if cli.mm2_nanopore {
+            return Err(AlignerError::Validation(
+                "Please select minimap2 in PacBio or Nanopore mode, but not both...".into(),
+            ));
+        }
+        "map-pb"
+    } else {
+        // Default OR explicit `--mm2_nanopore` → ONT (Perl 8404-8408).
+        "map-ont"
+    };
+    Ok(format!("-a --MD --secondary=no -t 2 -x {preset} -K 250K"))
 }
 
 /// Append the HISAT2-specific option tail (Perl `process_command_line` 8286-8326,
@@ -503,5 +556,90 @@ mod tests {
         assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
         let cli = cli_from(&["--known-splicesite-infile", "/no/such/splices.txt"]);
         assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+    }
+
+    // ---- minimap2 clean-slate option assembly (Phase 4) --------------------
+
+    /// V2 (hard literal): the default minimap2 string — clean-slate, `-x map-ont`
+    /// (NOT `-ax sr`), `-t 2` hardcoded (Perl 8358-8413; spike Q2).
+    #[test]
+    fn minimap2_default_option_string() {
+        let cli = cli_from(&[]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
+    }
+
+    /// V3: preset selection — `--mm2_short_reads`→`sr`, `--mm2_pacbio`→`map-pb`,
+    /// explicit `--mm2_nanopore`→`map-ont` (same as default, Perl 8404-8408).
+    #[test]
+    fn minimap2_preset_selection() {
+        let sr = cli_from(&["--mm2_short_reads"]);
+        let (opts, _) =
+            build_aligner_options(&sr, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x sr -K 250K");
+
+        let pb = cli_from(&["--mm2_pacbio"]);
+        let (opts, _) =
+            build_aligner_options(&pb, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-pb -K 250K");
+
+        let ont = cli_from(&["--mm2_nanopore"]);
+        let (opts, _) =
+            build_aligner_options(&ont, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
+    }
+
+    /// V3: preset-conflict dies (Perl 8375/8378/8391).
+    #[test]
+    fn minimap2_preset_conflicts_die() {
+        for conflict in [
+            ["--mm2_short_reads", "--mm2_nanopore"],
+            ["--mm2_short_reads", "--mm2_pacbio"],
+            ["--mm2_pacbio", "--mm2_nanopore"],
+        ] {
+            let cli = cli_from(&conflict);
+            assert!(
+                build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).is_err(),
+                "{conflict:?} should die"
+            );
+        }
+    }
+
+    /// The clean slate truly WIPES the Bowtie 2 base: `-N`/`-L`/`--rdg`/`-q` set on
+    /// the command line do NOT appear in the minimap2 string (Perl `@aligner_options=()`).
+    #[test]
+    fn minimap2_clean_slate_discards_bowtie2_flags() {
+        let cli = cli_from(&["-n", "1", "-l", "20", "--rdg", "5,3"]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
+        assert!(!opts.contains("-N") && !opts.contains("-L") && !opts.contains("--rdg"));
+        assert!(!opts.contains("--score-min") && !opts.contains("--ignore-quals"));
+    }
+
+    /// Build-then-wipe parity: a Bowtie 2-base validation (`-N 2` out of range)
+    /// STILL dies in minimap2 mode (Perl runs the base block before the wipe).
+    #[test]
+    fn minimap2_still_validates_bowtie2_base() {
+        let cli = cli_from(&["-n", "2"]);
+        assert!(build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).is_err());
+    }
+
+    /// V1 regression: the Minimap2 branch must not perturb the Bowtie 2 / HISAT2
+    /// strings (they are unchanged from the dedicated tests above — re-pinned here
+    /// alongside the new branch as a guard).
+    #[test]
+    fn bowtie2_hisat2_strings_byte_frozen_alongside_minimap2() {
+        let cli = cli_from(&[]);
+        let (bt2, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(bt2, "-q --score-min L,0,-0.2 --ignore-quals");
+        let (ht2, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+        assert_eq!(
+            ht2,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq"
+        );
     }
 }
