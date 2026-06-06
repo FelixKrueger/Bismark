@@ -193,7 +193,13 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.platform }},mode=max
       - name: Export digest
         if: needs.check-release.outputs.is_dry_run != 'true'
-        run: mkdir -p /tmp/digests && touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+        # Strip the "sha256:" prefix so the artifact filename is bare hex —
+        # actions/upload-artifact@v4 rejects ':' in paths, and the "Create
+        # manifest" step reconstructs digests as @sha256:<filename>.
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
       - uses: actions/upload-artifact@v4
         if: needs.check-release.outputs.is_dry_run != 'true'
         with:
