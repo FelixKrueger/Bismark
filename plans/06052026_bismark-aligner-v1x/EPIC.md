@@ -45,7 +45,7 @@ Spike-first per aligner. 🎯 marks a byte-identity gate.
 | 2b | HISAT2 PE (read-1 ZS fix) + PE/non-dir/pbat/FastA gate 🎯 | `phase2b-hisat2-pe/PLAN.md` | #2a |
 | 3 | minimap2 determinism + selection spike ✅ **premise HOLDS** | `phase3-minimap2-determinism-selection-spike/spikes/SPIKE_minimap2_determinism_selection.md` | #2b |
 | 4 | minimap2 wrapper (merge REUSED unchanged per the spike) + gate 🎯 | `phase4-minimap2-wrapper/PLAN.md` | #3 |
-| 5 | Combined full-scale gate + PR 🎯 | _(to be written)_ | #2b, #4 |
+| 5 | Combined gate (10M strict) + PR 🎯 ✅ **GATE PASSED** | `phase5-fullscale-gate/PLAN.md` (rev 2) + `GATE_OXY.md` | #2b, #4 |
 
 Sub-plans are written separately via `plan-writer` (spikes via the `spike` skill). When a plan is written, update its row from `_(to be written)_` to the actual filename.
 
