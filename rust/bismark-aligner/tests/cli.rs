@@ -2424,6 +2424,7 @@ awk 'NR%4==1 {
   else if (id=="r_ob")   print id "\t16\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
   else if (id=="r_spur") print id "\t0\tchr1_GA_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
   else if (id=="r_tie") { print id "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; print id "\t16\tchr1_GA_converted\t9\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }
+  else if (id=="r_keep") { print id "\t0\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; print id "\t16\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }
   else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
 }' "$inp"
 "#;
@@ -2599,6 +2600,55 @@ fn combined_index_cross_strand_tie_is_ambiguous() {
     let bam = outdir.path().join("reads_bismark_bt2.bam");
     let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
     assert_eq!(reader.records().count(), 0); // ambiguous → not written (no --ambiguous)
+}
+
+/// Phase 3 — the SAME-POSITION KEEP path end to end: a read whose OT and OB hits
+/// coincide at one locus (equal AS) is KEPT (not discarded as ambiguous), written
+/// as the OB record (FLAG 16 / XR:Z:CT / XG:Z:GA) — the faithful `chr:pos`+`>=`
+/// collapse. (The `r_tie` cell above uses pos 1 vs 9 = cross-location → Ambiguous,
+/// so this is the only cell exercising the KEEP path.)
+#[cfg(unix)]
+#[test]
+fn combined_index_same_position_collision_kept_as_ob() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_keep"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("unique best alignments:   1")
+                .and(predicate::str::contains("ambiguous (unsuitable):   0")),
+        );
+
+    // ONE record, the OB winner of the same-position collision.
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // OB
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 5);
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("CT".into()))); // OB → index 1 (not CTOB)
+    assert_eq!(v(*b"XG"), Some(Value::String("GA".into())));
 }
 
 /// Report totals + counter ownership (§9): a 4-read mix (OT, OB, spurious, miss)
