@@ -2760,16 +2760,7 @@ fn combined_index_scope_guard_rejects_unsupported() {
     make_genome(genome.path());
     let read = make_read(genome.path());
 
-    // --pbat (still deferred — no combined-index spike for PBAT)
-    bin()
-        .arg("--combined_index")
-        .arg("--pbat")
-        .arg("--genome")
-        .arg(genome.path())
-        .arg(&read)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--combined_index --pbat"));
+    // (--pbat is now SUPPORTED — Phase 7; tested in the pbat e2e cells below.)
 
     // --hisat2
     bin()
@@ -2954,4 +2945,209 @@ fn combined_index_nondir_strand_mix_records_and_counters() {
     let bam = outdir.path().join("reads_bismark_bt2.bam");
     let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
     assert_eq!(reader.records().count(), 3); // OT + CTOT + CTOB
+}
+
+// ===========================================================================
+// `--combined_index --pbat` end-to-end (phase 7). ONE both-strands pass over
+// `BS_combined` fed the G→A-converted reads → CTOT (rev+_CT_converted) / CTOB
+// (fwd+_GA_converted). The fake dispatches on the `-U` G→A input (pbat's only
+// converted file). Routes `pbat=false` + classify-supplied index 2/3.
+// ===========================================================================
+
+/// A fake `bowtie2` for the PBAT combined run: fed the G→A-converted reads, emits
+/// CTOT (`rev+_CT_converted`) / CTOB (`fwd+_GA_converted`) lines.
+#[cfg(unix)]
+fn make_fake_bowtie2_combined_pbat(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$inp" in
+  *_G_to_A*)
+    awk 'NR%4==1 {
+      id=$1; sub(/^@/,"",id);
+      if (id=="r_ctot")      print id "\t16\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_ctob") print id "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_keep") { print id "\t16\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; print id "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// A CTOB read (G→A pass, `fwd+_GA_converted`) → index 3 → FLAG 16 / XR:Z:GA /
+/// XG:Z:GA. The never-silent banner names the PBAT combined mode; the report
+/// carries the `--pbat` library line.
+#[cfg(unix)]
+#[test]
+fn combined_index_pbat_ctob_read_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_pbat(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ctob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode, PBAT")
+                .and(predicate::str::contains("unique best alignments:   1")),
+        );
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // CTOB (index 3) → FLAG 16
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("GA".into()))); // CTOB → XR:GA
+    assert_eq!(v(*b"XG"), Some(Value::String("GA".into()))); // CTOB → XG:GA
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("Combined-index mode, PBAT"));
+    assert!(report.contains("alignments to original strands (OT and OB)")); // pbat library line
+}
+
+/// A CTOT read (G→A pass, `rev+_CT_converted`) → index 2 → FLAG 0 / XR:Z:GA /
+/// XG:Z:CT (the symmetric counterpart of the CTOB cell — review B-L2).
+#[cfg(unix)]
+#[test]
+fn combined_index_pbat_ctot_read_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_pbat(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ctot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 0); // CTOT (index 2) → FLAG 0
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("GA".into()))); // CTOT → XR:GA
+    assert_eq!(v(*b"XG"), Some(Value::String("CT".into()))); // CTOT → XG:CT
+}
+
+/// The PBAT §4b analog: CTOT (rev+_CT_converted) and CTOB (fwd+_GA_converted) at the
+/// SAME locus/equal AS → KEPT, won by CTOB (index 3).
+#[cfg(unix)]
+#[test]
+fn combined_index_pbat_same_position_kept_as_ctob() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_pbat(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_keep"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("unique best alignments:   1")
+                .and(predicate::str::contains("ambiguous (unsuitable):   0")),
+        );
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // CTOB wins the same-position tie
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 5);
+}
+
+/// Strand counts + report wording: a CTOT + a CTOB + a miss → 2 records; report
+/// shows the `--pbat` line + GA/CT=1 (CTOT) + GA/GA=1 (CTOB) + CT/CT=0 (no OT).
+#[cfg(unix)]
+#[test]
+fn combined_index_pbat_strand_counts() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_pbat(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ctot", "r_ctob", "r_miss"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   2"));
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("alignments to original strands (OT and OB)")); // pbat library line
+    assert!(report.contains("Sequences analysed in total:\t3\n"));
+    assert!(report.contains("CT/CT:\t0\t((converted) top strand)")); // no OT
+    assert!(report.contains("GA/CT:\t1\t(complementary to (converted) top strand)")); // CTOT
+    assert!(report.contains("GA/GA:\t1\t(complementary to (converted) bottom strand)")); // CTOB
+    assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 2); // CTOT + CTOB
 }

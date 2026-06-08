@@ -322,11 +322,12 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     })
 }
 
-/// `--combined_index` (v2) scope guard (PLAN §3.1 + phase 5). The combined-index
-/// path is **single-end, directional or non-directional, Bowtie 2 only**; every
-/// other combination (PE, PBAT, `--multicore`, non-Bowtie2) is rejected loudly so
-/// the run never silently falls back to a path that omits the strands the combined
-/// search would have covered. Each rejection names the conflicting flag.
+/// `--combined_index` (v2) scope guard (PLAN §3.1 + phases 5–7). The combined-index
+/// path is **single-end Bowtie 2 only, for all three library types** (directional,
+/// non-directional, pbat); every other combination (PE, `--multicore`, non-Bowtie2)
+/// is rejected loudly so the run never silently falls back to a path that omits the
+/// strands the combined search would have covered. Each rejection names the
+/// conflicting flag.
 fn reject_combined_index_unsupported(
     cli: &Cli,
     aligner: Aligner,
@@ -351,18 +352,12 @@ fn reject_combined_index_unsupported(
                 .into(),
         ));
     }
+    // All three SE library types are supported (Phase 7 added pbat): directional
+    // (one C→T pass → OT/OB), non-directional (two passes → OT/OB/CTOT/CTOB union),
+    // pbat (one G→A pass → CTOT/CTOB). No library-type rejection — PE / --multicore /
+    // non-Bowtie2 are the only combined-index restrictions.
     match library {
-        // Directional (one C→T pass → OT/OB) and non-directional (two passes,
-        // C→T + G→A → OT/OB/CTOT/CTOB union, PLAN 06072026 phase 5) are both
-        // supported. PBAT stays deferred: it has no combined-index concordance/
-        // accuracy spike (the Sherman spike validated non-dir, not PBAT) — a
-        // separate follow-on phase.
-        LibraryType::Directional | LibraryType::NonDirectional => {}
-        LibraryType::Pbat => {
-            return Err(AlignerError::Unsupported(
-                "--combined_index --pbat is not yet supported. Drop one of the two flags.".into(),
-            ));
-        }
+        LibraryType::Directional | LibraryType::NonDirectional | LibraryType::Pbat => {}
     }
     if cli.multicore.unwrap_or(1) > 1 {
         return Err(AlignerError::Unsupported(
@@ -890,9 +885,10 @@ mod tests {
         );
     }
 
-    /// SE directional AND non-directional Bowtie 2 are both supported (phase 5).
+    /// SE Bowtie 2 is supported for ALL three library types (directional phase 4,
+    /// non-directional phase 5, pbat phase 7).
     #[test]
-    fn combined_index_allows_se_directional_and_non_directional() {
+    fn combined_index_allows_all_se_library_types() {
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index"]),
@@ -911,12 +907,6 @@ mod tests {
             )
             .is_ok()
         );
-    }
-
-    /// Every not-yet-supported combination is rejected loudly (never-silent).
-    #[test]
-    fn combined_index_rejects_unsupported_combinations() {
-        // pbat (deferred — no concordance/accuracy spike yet)
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--pbat"]),
@@ -924,8 +914,13 @@ mod tests {
                 LibraryType::Pbat,
                 &se()
             )
-            .is_err()
+            .is_ok()
         );
+    }
+
+    /// Every not-yet-supported combination is rejected loudly (never-silent).
+    #[test]
+    fn combined_index_rejects_unsupported_combinations() {
         // non-Bowtie2 aligners
         assert!(
             reject_combined_index_unsupported(

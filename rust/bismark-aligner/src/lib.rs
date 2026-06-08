@@ -118,13 +118,13 @@ fn pipeline(config: &RunConfig) -> Result<()> {
         ReadLayout::SingleEnd { reads } => {
             if config.combined_index {
                 // v2 opt-in combined-index path (SE only; --multicore rejected at
-                // resolve, so this is always the single-core branch). Non-directional
-                // drives two passes (C→T + G→A reads) + a per-read 4-strand union;
-                // directional drives one C→T pass.
-                if matches!(config.library, LibraryType::NonDirectional) {
-                    run_se_combined_nondir(config, reads)
-                } else {
-                    run_se_combined(config, reads)
+                // resolve, so this is always the single-core branch). Directional =
+                // one C→T pass (OT/OB); non-dir = two passes (C→T + G→A) + 4-strand
+                // union; pbat = one G→A pass (CTOT/CTOB).
+                match config.library {
+                    LibraryType::NonDirectional => run_se_combined_nondir(config, reads),
+                    LibraryType::Pbat => run_se_combined_pbat(config, reads),
+                    LibraryType::Directional => run_se_combined(config, reads),
                 }
             } else if n > 1 {
                 parallel::run_se_multicore(config, reads, n)
@@ -799,6 +799,14 @@ fn combined_aligner_options(config: &RunConfig) -> String {
     format!("{} -k 2", config.aligner_options)
 }
 
+/// The single-pass per-read combined selector — `combined::select` (directional,
+/// C→T pass → OT/OB) or `combined::select_pbat` (pbat, G→A pass → CTOT/CTOB); both
+/// single-stream, both routed `pbat=false` (the synthetic index 0/1 or 2/3 comes
+/// from the classifier). Threaded into the shared `process_se_chunk_combined` /
+/// `drive_merge_combined` so the (identical) gather loop isn't triplicated across
+/// the directional + pbat paths (the dual-driver back-port trap).
+type SelectFn = fn(&[crate::align::SamRecord], &str, f64, f64, &mut Counters) -> Result<Decision>;
+
 /// SE combined-index pipeline (single-core directional). Mirrors [`run_se`] but
 /// drives ONE both-strands instance over the combined index
 /// ([`process_se_chunk_combined`]) and announces the experimental,
@@ -872,6 +880,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
             &refid,
             Path::new(read_file),
             &opts,
+            combined::select, // directional: C→T pass → OT/OB
             &mut sinks,
             &mut counters,
         )?;
@@ -896,21 +905,124 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Convert reads (directional C→T), spawn ONE both-strands Bowtie 2 instance over
-/// the combined index with `-k 2`, and drive the combined classify→select→route
-/// per read. Returns the converted temp file(s) for cleanup.
+/// SE combined-index pipeline, **PBAT** (single-core). Mirrors [`run_se_combined`]
+/// but the single both-strands pass is fed the **G→A-converted** reads
+/// (`convert_se_files(Pbat)`) → CTOT/CTOB, selected by [`combined::select_pbat`].
+/// The report carries the `--pbat` library line (`library = Pbat`) + the 4-strand
+/// final analysis (`directional=false`, only CTOT/CTOB populated). PBAT-combined is
+/// the G→A-pass half of the non-directional path (Phase 7 of PLAN 06072026).
+fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // PBAT → the report prints the 4-strand split (only CTOT/CTOB populated).
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR).
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, PBAT (EXPERIMENTAL, concordance-gated — NOT byte-identical \
+             to the faithful 2-instance path): one both-strands Bowtie 2 pass over {} (-k 2) on \
+             the G->A-converted reads → CTOT/CTOB <<<",
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index PBAT mode.
+        writeln!(
+            report,
+            "Combined-index mode, PBAT (experimental, concordance-gated; NOT byte-identical to the \
+             faithful 2-instance per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_se_chunk_combined(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &opts,
+            combined::select_pbat, // pbat: G→A pass → CTOT/CTOB
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_single_end(&mut report, &counters, directional)?;
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary(read_file, &counters));
+    }
+    Ok(())
+}
+
+/// Convert reads (directional C→T, or pbat G→A — per `config.library` via
+/// `convert_se_files`), spawn ONE both-strands Bowtie 2 instance over the combined
+/// index with `-k 2`, and drive the single-pass classify→select→route per read
+/// with `select_fn` (`combined::select` directional / `combined::select_pbat` pbat).
+/// Returns the converted temp file(s) for cleanup.
+#[allow(clippy::too_many_arguments)]
 fn process_se_chunk_combined(
     config: &RunConfig,
     genome: &Genome,
     refid: &HashMap<String, usize>,
     input: &Path,
     opts: &convert::ConvertOptions,
+    select_fn: SelectFn,
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<Vec<convert::ConvertedReads>> {
     let bt2 = &config.detected_aligner.path;
     let read_file = input.to_string_lossy();
-    // Directional C→T conversion (one temp file) — reused unchanged.
+    // One converted temp file: directional C→T or pbat G→A (per config.library).
     let converted = convert_se_files(config, &read_file, opts)?;
     for cr in &converted {
         eprintln!(
@@ -942,7 +1054,16 @@ fn process_se_chunk_combined(
         combined_basename,
         &converted[0].path,
     )?;
-    drive_merge_combined(input, &mut stream, config, genome, refid, sinks, counters)?;
+    drive_merge_combined(
+        input,
+        &mut stream,
+        config,
+        genome,
+        refid,
+        select_fn,
+        sinks,
+        counters,
+    )?;
     stream.finish()?;
     Ok(converted)
 }
@@ -952,13 +1073,20 @@ fn process_se_chunk_combined(
 /// contiguously, PLAN §3.4), run the provisional combined selection
 /// ([`combined::select`]), and route the resulting [`Decision`] through the shared
 /// [`route_se_decision`]. Generic over [`SamStream`] so it is unit-testable with a
-/// canned stream. `pbat` is always `false` (this phase is directional).
+/// canned stream. `select_fn` is the single-pass per-read selector — `combined::select`
+/// (directional, C→T pass → OT/OB) or `combined::select_pbat` (pbat, G→A pass →
+/// CTOT/CTOB); both single-stream, both route `pbat=false` (the synthetic index 0/1
+/// or 2/3 comes straight from the classifier, NOT the faithful `+2` modifier).
+/// Parametrizing the (identical) gather loop avoids triplicating it across the
+/// directional + pbat single-stream paths (the dual-driver back-port trap).
+#[allow(clippy::too_many_arguments)]
 fn drive_merge_combined<S: SamStream>(
     read_file: &Path,
     stream: &mut S,
     config: &RunConfig,
     genome: &Genome,
     refid: &HashMap<String, usize>,
+    select_fn: SelectFn,
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
@@ -1043,7 +1171,7 @@ fn drive_merge_combined<S: SamStream>(
             stream.advance()?;
         }
 
-        let decision = combined::select(
+        let decision = select_fn(
             &records,
             &sequence,
             config.score_min_intercept,
@@ -1060,7 +1188,7 @@ fn drive_merge_combined<S: SamStream>(
             fasta,
             genome,
             refid,
-            false, // directional → pbat is always false
+            false, // directional/pbat → pbat is always false (index 0/1 or 2/3 from classify)
             config,
             sinks,
             counters,
