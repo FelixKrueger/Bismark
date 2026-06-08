@@ -17,6 +17,8 @@
 //! - **Directional** ([`select`]) runs ONE C→T pass → OT/OB (indices 0/1).
 //! - **Non-directional** ([`select_nondir`]) runs a C→T pass AND a G→A pass and
 //!   UNIONs them per read → OT/OB/CTOT/CTOB (indices 0–3).
+//! - **PBAT** ([`select_pbat`]) runs ONE G→A pass → CTOT/CTOB (indices 2/3) — the
+//!   G→A-pass half of non-dir, standalone.
 //!
 //! This module is deliberately a SIBLING of `merge.rs`, NOT a path through it:
 //! the faithful `check_results_single_end` keys off **separate strand-restricted
@@ -373,6 +375,44 @@ pub fn select_nondir(
                 .filter(|r| !r.is_unmapped())
                 .map(|r| (ReadConv::Ga, r)),
         )
+        .collect();
+    select_core(
+        mapped,
+        sequence,
+        score_min_intercept,
+        score_min_slope,
+        counters,
+    )
+}
+
+/// PBAT combined-index per-read selection over the read's `-k` line group: every
+/// line is from the G→A-converted read pass ([`ReadConv::Ga`]) → CTOT/CTOB. A thin
+/// wrapper over [`select_core`] (the shared tie machine) — the **single-pass `Ga`
+/// analog of the directional [`select`]** (which tags every line `Ct`). PBAT reads
+/// originate from the complementary strands, so a hit on the original-strand
+/// orientation (`fwd+CT` / `rev+GA`) is spurious here. A same-locus equal-`AS`
+/// CTOT×CTOB collision is KEPT, won by **CTOB (index 3)** (the later slot via the
+/// `>=` overwrite — the PBAT analog of the §4b telomeric case).
+///
+/// **NB:** the caller routes the resulting `Decision` through `route_se_decision`
+/// with `pbat = FALSE` — `classify(Ga, …)` emits the synthetic index **2/3
+/// directly**, so the faithful PBAT `+2` extraction modifier must NOT also fire
+/// (else `eff = 4/5` → "Too many Bowtie 2 result filehandles"). This mirrors the
+/// non-directional combined path, NOT the faithful 2-instance PBAT path (which
+/// uses slot indices 0/1 + `pbat=true`).
+pub fn select_pbat(
+    records: &[SamRecord],
+    sequence: &str,
+    score_min_intercept: f64,
+    score_min_slope: f64,
+    counters: &mut Counters,
+) -> Result<Decision> {
+    // Keep only mapped lines, each tagged G→A (the PBAT pass). The shared core
+    // classifies (CTOT/CTOB/spurious), resolves ties, and owns the counters.
+    let mapped: Vec<(ReadConv, &SamRecord)> = records
+        .iter()
+        .filter(|r| !r.is_unmapped())
+        .map(|r| (ReadConv::Ga, r))
         .collect();
     select_core(
         mapped,
@@ -1032,6 +1072,210 @@ mod tests {
             key(&d_comb),
             key(&oracle_nondir(ot, unmapped(), unmapped(), ctob))
         );
+        assert_eq!(key(&d_comb), Some(("chr1".to_string(), 100, 3)));
+    }
+
+    // ===================================================================
+    // Phase 7: PBAT single-pass selection (`select_pbat`)
+    // ===================================================================
+    // PBAT = the G→A pass STANDALONE → CTOT (rev+_CT_converted) / CTOB
+    // (fwd+_GA_converted). The OT/OB orientations (fwd+CT, rev+GA) are spurious
+    // here. `select_pbat` emits synthetic index 2/3 DIRECTLY (route with pbat=false).
+
+    /// Run `select_pbat` over the G→A-pass `-k` line group.
+    fn sel_pbat(records: &[SamRecord]) -> (Decision, Counters) {
+        let mut c = Counters::default();
+        let d = select_pbat(records, "ACGTAC", 0.0, -0.2, &mut c).unwrap();
+        (d, c)
+    }
+
+    /// Faithful 2-instance PBAT oracle: slot 0 = CTOT (`Nofw,Ct`), slot 1 = CTOB
+    /// (`Norc,Ga`), run NON-directional so the merge keeps them (slots are 0/1,
+    /// below the index-2/3 reject threshold anyway). The merge stores the SLOT
+    /// index 0/1 in its `Decision`; the faithful `+2` PBAT lift is applied only at
+    /// extraction — so the caller compares against [`key_lift2`] (index + 2).
+    fn oracle_pbat(ctot: SamRecord, ctob: SamRecord) -> Decision {
+        let mut streams = vec![
+            VecStream {
+                recs: vec![ctot],
+                pos: 0,
+            },
+            VecStream {
+                recs: vec![ctob],
+                pos: 0,
+            },
+        ];
+        let mut c = Counters::default();
+        crate::merge::check_results_single_end(
+            "r1",
+            "ACGTAC",
+            &mut streams,
+            false, // non-dir/pbat: don't reject the complementary strands
+            0.0,
+            -0.2,
+            false,
+            &mut c,
+        )
+        .unwrap()
+    }
+
+    /// Project a Decision to (chrom, pos, **index + 2**) — lifts the faithful merge's
+    /// SLOT index 0/1 to the effective CTOT/CTOB index 2/3 that the combined path
+    /// (and the extraction `+2` modifier) produce. Compare `key(combined)` vs
+    /// `key_lift2(oracle)`.
+    fn key_lift2(d: &Decision) -> Option<(String, u32, usize)> {
+        match d {
+            Decision::UniqueBest(b) => Some((b.chromosome.clone(), b.position, b.index + 2)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn select_pbat_ctot_only_maps_to_index_2() {
+        // rev + _CT_converted (G→A read) → CTOT.
+        let (d, c) = sel_pbat(std::slice::from_ref(&line(
+            "chr4_CT_converted",
+            16,
+            40,
+            0,
+            "6",
+        )));
+        match d {
+            Decision::UniqueBest(b) => {
+                assert_eq!(b.index, 2); // CTOT
+                assert_eq!(b.chromosome, "chr4");
+            }
+            other => panic!("expected UniqueBest CTOT, got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    #[test]
+    fn select_pbat_ctob_only_maps_to_index_3() {
+        // fwd + _GA_converted (G→A read) → CTOB.
+        let (d, c) = sel_pbat(std::slice::from_ref(&line(
+            "chr5_GA_converted",
+            0,
+            50,
+            0,
+            "6",
+        )));
+        match d {
+            Decision::UniqueBest(b) => {
+                assert_eq!(b.index, 3); // CTOB
+                assert_eq!(b.chromosome, "chr5");
+            }
+            other => panic!("expected UniqueBest CTOB, got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    /// The PBAT §4b analog: a same-locus equal-`AS` CTOT×CTOB collision is KEPT,
+    /// won by **CTOB (index 3)** (later slot via `>=`).
+    #[test]
+    fn select_pbat_same_position_ctot_ctob_kept_ctob_wins() {
+        let (d, c) = sel_pbat(&[
+            line("chr1_CT_converted", 16, 100, 0, "6"), // CTOT @ chr1:100 (rev+CT)
+            line("chr1_GA_converted", 0, 100, 0, "6"),  // CTOB @ chr1:100 (fwd+GA), equal AS
+        ]);
+        match d {
+            Decision::UniqueBest(b) => {
+                assert_eq!(b.position, 100);
+                assert_eq!(b.index, 3); // CTOB wins
+            }
+            other => panic!("expected UniqueBest (KEPT), got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
+        assert_eq!(c.unsuitable_sequence_count, 0); // NOT ambiguous
+    }
+
+    #[test]
+    fn select_pbat_cross_location_is_ambiguous() {
+        let (d, c) = sel_pbat(&[
+            line("chr1_CT_converted", 16, 10, 0, "6"), // CTOT @ chr1:10
+            line("chr2_GA_converted", 0, 25, 0, "6"),  // CTOB @ chr2:25
+        ]);
+        assert_eq!(d, Decision::Ambiguous { first_ambig: None });
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn select_pbat_same_position_foret_better_as_wins() {
+        // CTOT better → CTOT (index 2).
+        let (d, _) = sel_pbat(&[
+            line("chr1_CT_converted", 16, 100, 0, "6"), // CTOT AS 0 (better)
+            line("chr1_GA_converted", 0, 100, -6, "6"), // CTOB AS -6 (worse)
+        ]);
+        assert!(matches!(d, Decision::UniqueBest(ref b) if b.index == 2));
+        // CTOB better → CTOB (index 3).
+        let (d, _) = sel_pbat(&[
+            line("chr1_CT_converted", 16, 100, -6, "6"), // CTOT AS -6 (worse)
+            line("chr1_GA_converted", 0, 100, 0, "6"),   // CTOB AS 0 (better)
+        ]);
+        assert!(matches!(d, Decision::UniqueBest(ref b) if b.index == 3));
+    }
+
+    #[test]
+    fn select_pbat_original_strand_orientation_is_spurious() {
+        // Under the G→A (PBAT) pass, the OT/OB orientations are spurious:
+        // fwd+CT (would be OT for a C→T read) and rev+GA (would be OB).
+        let (d, c) = sel_pbat(std::slice::from_ref(&line(
+            "chr1_CT_converted",
+            0,
+            10,
+            0,
+            "6",
+        )));
+        assert_eq!(d, Decision::NoAlignment);
+        assert_eq!(c.combined_spurious_count, 1);
+        let (d, c) = sel_pbat(std::slice::from_ref(&line(
+            "chr1_GA_converted",
+            16,
+            10,
+            0,
+            "6",
+        )));
+        assert_eq!(d, Decision::NoAlignment);
+        assert_eq!(c.combined_spurious_count, 1);
+    }
+
+    // ---- mechanism-vs-oracle (PBAT): combined.index == oracle.index + 2 --------
+
+    #[test]
+    fn mechanism_pbat_matches_oracle_ctot_ctob_same_position() {
+        let ctot = line("chr1_CT_converted", 16, 100, 0, "6");
+        let ctob = line("chr1_GA_converted", 0, 100, 0, "6"); // both → chr1:100, equal AS
+        let (d_comb, _) = sel_pbat(&[ctot.clone(), ctob.clone()]);
+        let d_orac = oracle_pbat(ctot, ctob);
+        assert_eq!(key(&d_comb), key_lift2(&d_orac)); // CTOB wins, eff index 3 both
+        assert_eq!(key(&d_comb), Some(("chr1".to_string(), 100, 3)));
+    }
+
+    #[test]
+    fn mechanism_pbat_matches_oracle_cross_location() {
+        let ctot = line("chr1_CT_converted", 16, 10, 0, "6");
+        let ctob = line("chr2_GA_converted", 0, 25, 0, "6"); // distinct loci, equal AS
+        let (d_comb, _) = sel_pbat(&[ctot.clone(), ctob.clone()]);
+        assert!(matches!(d_comb, Decision::Ambiguous { .. }));
+        assert!(matches!(
+            oracle_pbat(ctot, ctob),
+            Decision::Ambiguous { .. }
+        ));
+    }
+
+    #[test]
+    fn mechanism_pbat_matches_oracle_foret_unequal_as() {
+        // CTOT better → eff index 2 both paths.
+        let ctot = line("chr1_CT_converted", 16, 100, 0, "6");
+        let ctob = line("chr1_GA_converted", 0, 100, -6, "6");
+        let (d_comb, _) = sel_pbat(&[ctot.clone(), ctob.clone()]);
+        assert_eq!(key(&d_comb), key_lift2(&oracle_pbat(ctot, ctob)));
+        assert_eq!(key(&d_comb), Some(("chr1".to_string(), 100, 2)));
+        // CTOB better → eff index 3 both paths.
+        let ctot = line("chr1_CT_converted", 16, 100, -6, "6");
+        let ctob = line("chr1_GA_converted", 0, 100, 0, "6");
+        let (d_comb, _) = sel_pbat(&[ctot.clone(), ctob.clone()]);
+        assert_eq!(key(&d_comb), key_lift2(&oracle_pbat(ctot, ctob)));
         assert_eq!(key(&d_comb), Some(("chr1".to_string(), 100, 3)));
     }
 }
