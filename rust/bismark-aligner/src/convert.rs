@@ -535,6 +535,168 @@ fn convert_fasta_impl(
     })
 }
 
+// ===========================================================================
+// Combined-index model (b) — single-pass conversion (PLAN 06072026 phase 8 §5.2).
+//
+// A NEW, dedicated interleaving core — NOT a near-copy of the single-kind
+// converters (`convert_fastq_impl`/`convert_fasta_impl`), which write ONE record
+// per input with ONE substitution. Model (b) emits, per input read, BOTH the
+// C→T record (qname-tagged `__CT`) and the G→A record (`__GA`) to ONE file,
+// interleaved CT-then-GA so each base-id's two reads are adjacent. The frozen
+// single-kind cores are left untouched (byte-freeze); only their primitives
+// (`fix_id`, `convert_seq_c_to_t`/`g_to_a`, `chomp_newline`, `temp_dir_prefix`)
+// are reused. The `__CT`/`__GA` tag perturbs Bowtie 2's read-name-seeded RNG —
+// that is the whole (validated-accurate, not-faithful) point of model (b).
+// ===========================================================================
+
+/// Model-(b) single-pass conversion for non-directional combined-index. Writes
+/// ONE temp file: per input read, the C→T record `@<id>__CT` then the G→A record
+/// `@<id>__GA` (FastA: `>` headers, 2-line records), interleaved + base-id
+/// contiguous. `skip`/`upto` gate the BASE read count `N` (NOT the `2N` emitted
+/// records — truncating at `2N` would split a pair). The returned `count` is `N`.
+/// A read whose post-`fix_id` ID already ends with the reserved `__CT`/`__GA` tag
+/// is a fatal error (it could not be split back unambiguously — never-silent).
+pub fn convert_se_tagged_interleaved(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    fasta: bool,
+) -> Result<ConvertedReads> {
+    // ---- output name + path (distinct stem so it never collides with the
+    // single-kind temp files; raw concat, Perl-style) -----------------------
+    let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
+    })?;
+    let mut name = match &opts.prefix {
+        Some(p) => format!("{p}.{basename}"),
+        None => basename.to_string(),
+    };
+    name.push_str("_CT_GA_tagged");
+    name.push_str(match (fasta, opts.gzip) {
+        (false, true) => ".fastq.gz",
+        (false, false) => ".fastq",
+        (true, true) => ".fa.gz",
+        (true, false) => ".fa",
+    });
+    let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
+    let full_path = PathBuf::from(&full);
+
+    // ---- reader / writer (gz or plain) — same as the single-kind cores -----
+    let file = File::open(input)?;
+    let mut reader: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let out = File::create(&full_path)?;
+    let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(if opts.gzip {
+        Box::new(GzEncoder::new(out, Compression::default()))
+    } else {
+        Box::new(out)
+    });
+
+    let (mut id, mut seq, mut id2, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0; // BASE reads (input records), NOT the 2N emitted
+    let mut seqid_tab_count: u64 = 0;
+
+    loop {
+        id.clear();
+        seq.clear();
+        id2.clear();
+        qual.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        if fasta {
+            if n1 == 0 || n2 == 0 {
+                break;
+            }
+        } else {
+            let n3 = reader.read_until(b'\n', &mut id2)?;
+            let n4 = reader.read_until(b'\n', &mut qual)?;
+            if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+                break;
+            }
+        }
+        count += 1;
+
+        // ID: chomp (\n only) → fix_id. The tag + \n are appended PER emitted
+        // record below (different tag for the CT vs GA half).
+        let fixed_id = fix_id(chomp_newline(&id), opts.icpc);
+
+        // skip/upto gate the BASE count (Perl falsy-0). A skipped/over-limit base
+        // read emits NEITHER tagged record (no mid-pair truncation).
+        if let Some(s) = opts.skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = opts.upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+
+        // tab-in-ID detection (byte-neutral; dead like the other cores).
+        if fixed_id.contains(&b'\t') {
+            seqid_tab_count += 1;
+        }
+
+        // Format sanity: FastA per-record `^>`; FastQ record-1-only `@`/`+`.
+        if fasta {
+            if !fixed_id.starts_with(b">") {
+                return Err(AlignerError::Validation(format!(
+                    "Input file doesn't seem to be in FastA format at sequence {count}"
+                )));
+            }
+        } else if count == 1 && (!fixed_id.starts_with(b"@") || !id2.starts_with(b"+")) {
+            return Err(AlignerError::Validation(format!(
+                "Input file doesn't seem to be in FastQ format at sequence {count}"
+            )));
+        }
+
+        // Tag-collision detect-and-die on the POST-`fix_id` ID (whitespace-collapse
+        // turns `foo __CT` into `foo___CT`, which a raw-header check would miss):
+        // a real ID ending `__CT`/`__GA` could not be split back unambiguously.
+        if fixed_id.ends_with(b"__CT") || fixed_id.ends_with(b"__GA") {
+            return Err(AlignerError::Validation(format!(
+                "Read ID at sequence {count} ends with the reserved combined-index conversion tag \
+                 (__CT/__GA): '{}'. --combined_index_single_pass cannot disambiguate the C->T and G->A \
+                 halves of such a read. Rename the read, or drop --combined_index_single_pass.",
+                String::from_utf8_lossy(&fixed_id)
+            )));
+        }
+
+        // Emit the CT record then the GA record (interleaved, contiguous).
+        // `convert_one` uppercases then substitutes, preserving the seq's own \n;
+        // id2/qual are written verbatim to BOTH halves (FastQ only).
+        for (tag, conv) in [
+            (b"__CT".as_slice(), ConvKind::Ct),
+            (b"__GA".as_slice(), ConvKind::Ga),
+        ] {
+            let mut tagged = fixed_id.clone();
+            tagged.extend_from_slice(tag);
+            tagged.push(b'\n');
+            writer.write_all(&tagged)?;
+            writer.write_all(&convert_one(&seq, conv))?;
+            if !fasta {
+                writer.write_all(&id2)?;
+                writer.write_all(&qual)?;
+            }
+        }
+    }
+
+    writer.flush()?;
+    drop(writer);
+    Ok(ConvertedReads {
+        name,
+        path: full_path,
+        count,
+        seqid_tab_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1102,5 +1264,95 @@ mod tests {
         assert!(s.contains(">r3") && s.contains(">r4"));
         assert!(!s.contains(">r1") && !s.contains(">r2") && !s.contains(">r5"));
         assert_eq!(cr.count, 5); // count runs over unskipped numbering; upto breaks at 5
+    }
+
+    // ---- model (b) tagged interleaved conversion (phase 8) -----------------
+
+    /// Write `input`, run `convert_se_tagged_interleaved`, return (ConvertedReads, bytes).
+    fn run_tagged(
+        input: &[u8],
+        name: &str,
+        o: &ConvertOptions,
+        fasta: bool,
+    ) -> (ConvertedReads, Vec<u8>) {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join(name);
+        std::fs::write(&inp, input).unwrap();
+        let td = tmp.path().join("t");
+        let cr = convert_se_tagged_interleaved(&inp, &td, o, fasta).unwrap();
+        let out = std::fs::read(&cr.path).unwrap();
+        (cr, out)
+    }
+
+    #[test]
+    fn tagged_fastq_interleaves_ct_then_ga_per_read() {
+        // 2 reads → 4 records, CT then GA per base-id; C→T / G→A seqs; id2/qual
+        // verbatim on BOTH halves; count = N base reads (NOT 2N).
+        let input = b"@r1\nACGT\n+\nIIII\n@r2\nGGCC\n+\nJJJJ\n";
+        let (cr, out) = run_tagged(input, "reads.fq", &opts(false, None, None, false), false);
+        // ACGT: C→T=ATGT, G→A=ACAT ; GGCC: C→T=GGTT, G→A=AACC
+        let expected: &[u8] = b"@r1__CT\nATGT\n+\nIIII\n@r1__GA\nACAT\n+\nIIII\n\
+                                @r2__CT\nGGTT\n+\nJJJJ\n@r2__GA\nAACC\n+\nJJJJ\n";
+        assert_eq!(out, expected);
+        assert_eq!(cr.count, 2); // base reads
+        assert_eq!(cr.name, "reads.fq_CT_GA_tagged.fastq");
+    }
+
+    #[test]
+    fn tagged_fasta_pair() {
+        let input = b">r1\nACGT\n>r2\nTTGG\n";
+        let (cr, out) = run_tagged(input, "reads.fa", &opts(false, None, None, false), true);
+        // ACGT: C→T=ATGT, G→A=ACAT ; TTGG: C→T=TTGG (no C), G→A=TTAA
+        let expected: &[u8] = b">r1__CT\nATGT\n>r1__GA\nACAT\n>r2__CT\nTTGG\n>r2__GA\nTTAA\n";
+        assert_eq!(out, expected);
+        assert_eq!(cr.count, 2);
+        assert_eq!(cr.name, "reads.fa_CT_GA_tagged.fa");
+    }
+
+    #[test]
+    fn tagged_upto_gates_base_count_no_mid_pair_truncation() {
+        // --upto 2: base reads r1,r2 each emit BOTH halves (4 complete records);
+        // r3,r4 absent. Never truncates mid-pair (skip/upto gate the BASE count).
+        let input = b"@r1\nA\n+\nI\n@r2\nC\n+\nI\n@r3\nG\n+\nI\n@r4\nT\n+\nI\n";
+        let (_cr, out) = run_tagged(input, "reads.fq", &opts(false, None, Some(2), false), false);
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("@r1__CT") && s.contains("@r1__GA"));
+        assert!(s.contains("@r2__CT") && s.contains("@r2__GA"));
+        assert!(!s.contains("@r3") && !s.contains("@r4"));
+        // exactly 4 header lines (2 base reads × 2 halves) → no half dropped.
+        assert_eq!(s.matches("__CT\n").count(), 2);
+        assert_eq!(s.matches("__GA\n").count(), 2);
+    }
+
+    #[test]
+    fn tagged_id_ending_in_reserved_tag_dies() {
+        // a read whose post-fix_id ID already ends with __CT/__GA cannot be split.
+        for bad in [
+            b"@r1__CT\nACGT\n+\nIIII\n".as_slice(),
+            b"@x__GA\nACGT\n+\nIIII\n",
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let inp = tmp.path().join("reads.fq");
+            std::fs::write(&inp, bad).unwrap();
+            let td = tmp.path().join("t");
+            let err =
+                convert_se_tagged_interleaved(&inp, &td, &opts(false, None, None, false), false)
+                    .unwrap_err();
+            assert!(format!("{err}").contains("reserved combined-index conversion tag"));
+        }
+    }
+
+    #[test]
+    fn tagged_collision_after_whitespace_collapse_dies() {
+        // `@foo __CT` → fix_id (default) collapses the space → `@foo___CT`, which
+        // ends with __CT (the post-fix_id check, A-I3). Must die.
+        let input = b"@foo __CT\nACGT\n+\nIIII\n";
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join("reads.fq");
+        std::fs::write(&inp, input).unwrap();
+        let td = tmp.path().join("t");
+        let err = convert_se_tagged_interleaved(&inp, &td, &opts(false, None, None, false), false)
+            .unwrap_err();
+        assert!(format!("{err}").contains("reserved combined-index conversion tag"));
     }
 }

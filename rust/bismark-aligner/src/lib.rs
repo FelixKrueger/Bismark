@@ -121,10 +121,17 @@ fn pipeline(config: &RunConfig) -> Result<()> {
                 // resolve, so this is always the single-core branch). Directional =
                 // one C→T pass (OT/OB); non-dir = two passes (C→T + G→A) + 4-strand
                 // union; pbat = one G→A pass (CTOT/CTOB).
-                match config.library {
-                    LibraryType::NonDirectional => run_se_combined_nondir(config, reads),
-                    LibraryType::Pbat => run_se_combined_pbat(config, reads),
-                    LibraryType::Directional => run_se_combined(config, reads),
+                if config.combined_index_single_pass {
+                    // model (b): single-pass tagged non-dir. The scope guard
+                    // (`reject_combined_index_unsupported`) guarantees the library is
+                    // NonDirectional whenever this flag is set.
+                    run_se_combined_nondir_tagged(config, reads)
+                } else {
+                    match config.library {
+                        LibraryType::NonDirectional => run_se_combined_nondir(config, reads),
+                        LibraryType::Pbat => run_se_combined_pbat(config, reads),
+                        LibraryType::Directional => run_se_combined(config, reads),
+                    }
                 }
             } else if n > 1 {
                 parallel::run_se_multicore(config, reads, n)
@@ -1499,17 +1506,11 @@ fn drive_merge_combined_nondir<S: SamStream>(
             ga_stream.advance()?;
         }
 
-        let decision = combined::select_nondir(
+        select_and_route_se_nondir(
             &ct_records,
             &ga_records,
-            &sequence,
-            config.score_min_intercept,
-            config.score_min_slope,
-            counters,
-        )?;
-        route_se_decision(
-            decision,
             &identifier,
+            &sequence,
             &seq_uc,
             &qual_bytes,
             &seq,
@@ -1517,7 +1518,389 @@ fn drive_merge_combined_nondir<S: SamStream>(
             fasta,
             genome,
             refid,
-            false, // non-directional → pbat is false (indices 2/3 come from classify)
+            config,
+            sinks,
+            counters,
+        )?;
+    }
+    Ok(())
+}
+
+/// Shared per-read TAIL of BOTH non-directional combined drivers — model (a)'s
+/// two-stream [`drive_merge_combined_nondir`] AND model (b)'s one-stream tagged
+/// [`drive_merge_combined_nondir_tagged`]. Union-selects the C→T-pass + G→A-pass
+/// record groups via [`combined::select_nondir`] and routes the [`Decision`]
+/// (`pbat=false` — the non-dir indices 2/3 come from `classify`, not the pbat `+2`
+/// modifier). Extracted so a future fix to the select/route contract touches BOTH
+/// exec models, not one (the dual-driver back-port trap — phase-8 plan-review
+/// A-I5/B-I6). ONLY the GATHER of `ct_records`/`ga_records` legitimately differs
+/// between the two drivers (two streams vs one tagged stream split by suffix); from
+/// this point on they are identical.
+#[allow(clippy::too_many_arguments)]
+fn select_and_route_se_nondir(
+    ct_records: &[crate::align::SamRecord],
+    ga_records: &[crate::align::SamRecord],
+    identifier: &str,
+    sequence: &str,
+    seq_uc: &[u8],
+    qual_bytes: &[u8],
+    seq: &[u8],
+    plus: &[u8],
+    fasta: bool,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    config: &RunConfig,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let decision = combined::select_nondir(
+        ct_records,
+        ga_records,
+        sequence,
+        config.score_min_intercept,
+        config.score_min_slope,
+        counters,
+    )?;
+    route_se_decision(
+        decision, identifier, seq_uc, qual_bytes, seq, plus, fasta, genome, refid,
+        false, // non-directional → pbat is false (indices 2/3 come from classify)
+        config, sinks, counters,
+    )
+}
+
+// ===========================================================================
+// Combined-index model (b) — single-pass tagged non-directional driver
+// (PLAN 06072026 phase 8). One Bowtie 2 pass over conversion-tagged interleaved
+// reads (one index load) instead of model (a)'s two parallel passes (two loads).
+// NON-FAITHFUL / NOT decision-equivalent (the qname tag perturbs Bowtie 2's
+// read-name RNG); ground-truth-validated (SPIKE_modelb_accuracy.md). Reuses the
+// shared `select_and_route_se_nondir` tail unchanged — only the GATHER differs.
+// ===========================================================================
+
+/// Which read-conversion pass a tagged Bowtie 2 output line came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConvTag {
+    Ct,
+    Ga,
+}
+
+/// Strip the model-(b) conversion tag (`__CT`/`__GA`) that
+/// `convert_se_tagged_interleaved` appended to a tagged read's qname, returning the
+/// base id + which pass produced the line. **Fails loud** on a qname lacking the
+/// tag — never a silent mis-partition (phase-8 plan-review A-Crit1/B-C2).
+fn strip_conv_tag(qname: &str) -> Result<(&str, ConvTag)> {
+    if let Some(base) = qname.strip_suffix("__CT") {
+        Ok((base, ConvTag::Ct))
+    } else if let Some(base) = qname.strip_suffix("__GA") {
+        Ok((base, ConvTag::Ga))
+    } else {
+        Err(AlignerError::Validation(format!(
+            "Combined-index tagged mode: Bowtie 2 output qname '{qname}' lacks the expected \
+             __CT/__GA conversion tag — cannot assign it to a read-conversion pass."
+        )))
+    }
+}
+
+/// Model-(b) non-directional combined driver: ONE Bowtie 2 pass over the
+/// conversion-tagged interleaved reads, split by tag → the shared
+/// `select_and_route_se_nondir`. Mirrors [`run_se_combined_nondir`] (model (a))
+/// but with the single-pass banner/marker + [`process_se_chunk_combined_nondir_tagged`].
+fn run_se_combined_nondir_tagged(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // Non-directional → the report prints the 4-strand (OT/OB/CTOT/CTOB) split.
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, NON-DIRECTIONAL SINGLE-PASS (model b; EXPERIMENTAL — NOT \
+             byte-identical AND NOT decision-equivalent to the model-(a) two-pass path: the \
+             conversion tag perturbs Bowtie 2's read-name RNG; ground-truth-validated, never the \
+             default): ONE both-strands Bowtie 2 pass over {} (-k 2) of conversion-tagged \
+             interleaved reads (one index load instead of two) <<<",
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index model-(b) single-pass.
+        writeln!(
+            report,
+            "Combined-index mode, non-directional SINGLE-PASS (model b; experimental, \
+             concordance-gated; NOT byte-identical AND NOT decision-equivalent to the \
+             model-(a) two-pass path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_se_chunk_combined_nondir_tagged(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_single_end(&mut report, &counters, directional)?;
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary(read_file, &counters));
+    }
+    Ok(())
+}
+
+/// Convert reads to ONE conversion-tagged interleaved temp file
+/// (`convert_se_tagged_interleaved`), spawn ONE both-strands Bowtie 2 instance over
+/// the combined index with `-k 2`, and drive the per-read split→union
+/// classify→select→route. Returns the converted temp file for cleanup. ONE
+/// subprocess → ONE combined index resident (model (b)'s −47% RSS vs model (a)'s
+/// two co-resident loads).
+fn process_se_chunk_combined_nondir_tagged(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let read_file = input.to_string_lossy();
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    // ONE interleaved tagged converted file: per read, `<id>__CT` (C→T) then
+    // `<id>__GA` (G→A). count = N base reads (2N emitted records).
+    let converted =
+        convert::convert_se_tagged_interleaved(input, &config.output.temp_dir, opts, fasta)?;
+    eprintln!(
+        "Created conversion-tagged interleaved version of {read_file} -> {} ({} base reads, 2x tagged records)",
+        converted.path.display(),
+        converted.count
+    );
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index_single_pass reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    // `-k 2`; `Orientation::Both` emits no `--norc`/`--nofw`. ONE pass over the
+    // combined index fed the tagged interleaved reads.
+    let combined_opts = combined_aligner_options(config);
+    let mut stream = AlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &converted.path,
+    )?;
+    drive_merge_combined_nondir_tagged(input, &mut stream, config, genome, refid, sinks, counters)?;
+    stream.finish()?;
+    Ok(vec![converted])
+}
+
+/// Re-read the original reads and, per read, drain the SINGLE tagged stream's
+/// contiguous same-base-id run (each base-id emits its `__CT` lines then its
+/// `__GA` lines under the `--reorder`-under-`-p` invariant), partition by the
+/// tag into `ct_records` / `ga_records` (tag stripped), then hand to the shared
+/// [`select_and_route_se_nondir`]. Generic over [`SamStream`] for unit testing.
+///
+/// Never-silent contract (phase-8 plan-review A-Crit1/B-C2 — the single-stream
+/// guard is weaker than model (a)'s two independent per-stream checks):
+/// (i) the stream head's TAG-STRIPPED qname must == `identifier` (a raw compare
+/// would always fire — the head carries a tag); (ii) after draining, BOTH
+/// `ct_records` AND `ga_records` must be non-empty — every base-id is emitted
+/// twice, so each tag MUST contribute ≥1 line (incl. a lone FLAG-4 miss); a
+/// missing half → die loud; (iii) `strip_conv_tag` dies on an untagged record.
+fn drive_merge_combined_nondir_tagged<S: SamStream>(
+    read_file: &Path,
+    stream: &mut S,
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let file = File::open(read_file)?;
+    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        id.clear();
+        seq.clear();
+        plus.clear();
+        qual.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        if fasta {
+            if n1 == 0 || n2 == 0 {
+                break;
+            }
+        } else {
+            let n3 = reader.read_until(b'\n', &mut plus)?;
+            let n4 = reader.read_until(b'\n', &mut qual)?;
+            if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+                break;
+            }
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        counters.sequences_count += 1;
+        let fixed = convert::fix_id(convert::chomp_newline(&id), icpc);
+        let prefix: &[u8] = if fasta { b">" } else { b"@" };
+        let id_bytes = fixed.strip_prefix(prefix).unwrap_or(&fixed);
+        let identifier = String::from_utf8_lossy(id_bytes).into_owned();
+        let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
+        let qual_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq_uc.len()]
+        } else {
+            convert::chomp_newline(&qual).to_vec()
+        };
+        let sequence = String::from_utf8_lossy(&seq_uc).into_owned();
+
+        // (i) desync guard on the TAG-STRIPPED head — every read emits __CT + __GA,
+        // so the head's base id MUST be this read (cf. model (a)'s per-stream guard).
+        if let Some(r) = stream.current() {
+            let (base, _) = strip_conv_tag(&r.qname)?;
+            if base != identifier {
+                return Err(AlignerError::Validation(format!(
+                    "Combined non-directional tagged desync: stream head base id is '{base}' (from \
+                     qname '{}') but expected '{identifier}'",
+                    r.qname
+                )));
+            }
+        }
+
+        // Drain the contiguous same-base-id run, partitioning by the tag. The tag
+        // is stripped from each record's qname (downstream keys on `identifier`,
+        // but keep the records clean). Borrow ends before each `advance`.
+        let mut ct_records: Vec<crate::align::SamRecord> = Vec::new();
+        let mut ga_records: Vec<crate::align::SamRecord> = Vec::new();
+        loop {
+            let parsed = match stream.current() {
+                Some(r) => {
+                    let (base, tag) = strip_conv_tag(&r.qname)?;
+                    if base != identifier {
+                        None
+                    } else {
+                        Some((base.to_string(), tag))
+                    }
+                }
+                None => None,
+            };
+            let (base, tag) = match parsed {
+                Some(p) => p,
+                None => break,
+            };
+            let mut rec = stream.current().unwrap().clone();
+            rec.qname = base;
+            match tag {
+                ConvTag::Ct => ct_records.push(rec),
+                ConvTag::Ga => ga_records.push(rec),
+            }
+            stream.advance()?;
+        }
+
+        // (ii) both halves must be present — a missing __CT or __GA half means the
+        // tagged stream desynced from the re-read input (never-silent).
+        if ct_records.is_empty() || ga_records.is_empty() {
+            return Err(AlignerError::Validation(format!(
+                "Combined non-directional tagged desync: read '{identifier}' is missing its __CT \
+                 or __GA half (ct lines={}, ga lines={}); the tagged stream did not emit both \
+                 conversion records for this read",
+                ct_records.len(),
+                ga_records.len()
+            )));
+        }
+
+        select_and_route_se_nondir(
+            &ct_records,
+            &ga_records,
+            &identifier,
+            &sequence,
+            &seq_uc,
+            &qual_bytes,
+            &seq,
+            &plus,
+            fasta,
+            genome,
+            refid,
             config,
             sinks,
             counters,
@@ -2199,4 +2582,24 @@ fn counters_summary(read_file: &str, c: &Counters) -> String {
         c.ga_ct_count,
         c.ga_ga_count,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_conv_tag_ct_ga_and_fail_loud() {
+        // happy paths: the base id + which pass.
+        assert_eq!(strip_conv_tag("read1__CT").unwrap(), ("read1", ConvTag::Ct));
+        assert_eq!(strip_conv_tag("read1__GA").unwrap(), ("read1", ConvTag::Ga));
+        // a base id that itself contains a double underscore is fine (strip ONE tag).
+        assert_eq!(
+            strip_conv_tag("r_a__b__GA").unwrap(),
+            ("r_a__b", ConvTag::Ga)
+        );
+        // fail-loud: an untagged qname is NEVER silently mis-partitioned.
+        let err = strip_conv_tag("read1").unwrap_err();
+        assert!(format!("{err}").contains("__CT/__GA conversion tag"));
+    }
 }

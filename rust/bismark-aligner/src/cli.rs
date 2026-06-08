@@ -92,6 +92,18 @@ pub struct Cli {
     #[arg(long = "combined_index")]
     pub combined_index: bool,
 
+    /// EXPERIMENTAL (v2, opt-in, never-silent): the single-pass "model (b)"
+    /// execution model for `--combined_index --non_directional`. Aligns ONE
+    /// Bowtie 2 pass over conversion-tagged interleaved reads (one combined index
+    /// load instead of two — lower peak RSS) instead of model (a)'s two parallel
+    /// passes. Requires `--combined_index --non_directional` (single-end Bowtie 2).
+    /// NOT byte-identical AND NOT decision-equivalent to model (a): the qname tag
+    /// perturbs Bowtie 2's read-name-seeded RNG, so a tiny fraction of co-optimal
+    /// reads get a different (validated-equally-accurate) alignment. Ground-truth
+    /// validated against Sherman; never the default.
+    #[arg(long = "combined_index_single_pass")]
+    pub combined_index_single_pass: bool,
+
     // ---- read trimming / quality ------------------------------------------
     /// Skip the first <int> reads/pairs.
     #[arg(short = 's', long = "skip", value_name = "int")]
