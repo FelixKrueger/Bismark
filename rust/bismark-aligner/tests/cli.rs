@@ -2948,6 +2948,281 @@ fn combined_index_nondir_strand_mix_records_and_counters() {
 }
 
 // ===========================================================================
+// `--combined_index --combined_index_single_pass --non_directional` end-to-end
+// (phase 8, model b). ONE Bowtie 2 pass over the conversion-TAGGED interleaved
+// reads (one index load). The fake keys on the READ's `__CT`/`__GA` qname tag
+// (one input file), preserving the tag in the output qname so the driver splits
+// it back into the C→T (OT/OB) and G→A (CTOT/CTOB) groups → the SAME
+// `select_nondir` union as model (a). NON-FAITHFUL (validated-accurate).
+// ===========================================================================
+
+/// A fake `bowtie2` for the model-(b) tagged run: one tagged interleaved input;
+/// dispatch on each read's `__CT`/`__GA` qname tag (KEEP the tag in the output
+/// qname). `__CT` → OT (`fwd+_CT_converted`); `__GA` → CTOT (`rev+_CT_converted`)
+/// / CTOB (`fwd+_GA_converted`). Every tagged read gets a line (FLAG-4 miss
+/// otherwise) — so both halves are always present, as real Bowtie 2 emits.
+#[cfg(unix)]
+fn make_fake_bowtie2_combined_nondir_tagged(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  q=$1; sub(/^@/,"",q);
+  base=q; sub(/__(CT|GA)$/,"",base);
+  tag=substr(q, length(q)-1);
+  if (tag=="CT") {
+    if (base=="r_ot")        print q "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    else if (base=="r_keep") print q "\t0\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    else print q "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+  } else {
+    if (base=="r_ctob")      print q "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    else if (base=="r_ctot") print q "\t16\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    else if (base=="r_keep") print q "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    else print q "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+  }
+}' "$inp"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// A lone OT read through model (b): one record, FLAG 0 / XR:Z:CT / XG:Z:CT, plus
+/// the never-silent model-(b) banner + report marker.
+#[cfg(unix)]
+#[test]
+fn combined_index_single_pass_ot_read_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir_tagged(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("SINGLE-PASS")
+                .and(predicate::str::contains("model b"))
+                .and(predicate::str::contains("unique best alignments:   1")),
+        );
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("SINGLE-PASS (model b"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 0); // OT (index 0) → FLAG 0
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 1);
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("CT".into()))); // OT → XR:CT
+    assert_eq!(v(*b"XG"), Some(Value::String("CT".into()))); // OT → XG:CT
+}
+
+/// The §4b telomeric KEEP through model (b): the single tagged stream yields an OT
+/// (`r_keep__CT`) and a CTOB (`r_keep__GA`) at the SAME locus/equal AS → KEPT (one
+/// record), won by CTOB (index 3) → FLAG 16 / XR:Z:GA / XG:Z:GA. Same outcome as
+/// model (a)'s two-stream KEEP — proves the split feeds `select_nondir` identically.
+#[cfg(unix)]
+#[test]
+fn combined_index_single_pass_same_position_ot_ctob_kept_as_ctob() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir_tagged(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_keep"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("unique best alignments:   1")
+                .and(predicate::str::contains("ambiguous (unsuitable):   0")),
+        );
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // CTOB (index 3) → FLAG 16
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 5);
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("GA".into())));
+    assert_eq!(v(*b"XG"), Some(Value::String("GA".into())));
+}
+
+/// Strand-mix through model (b): OT + CTOT + CTOB + a both-halves-miss read → 3
+/// unique / 1 no-alignment / 3 BAM records, with the 4-strand non-dir report
+/// counts + the model-(b) marker. Exercises the single-stream split for all four
+/// classes (incl. the all-miss read whose __CT AND __GA halves are both FLAG-4).
+#[cfg(unix)]
+#[test]
+fn combined_index_single_pass_strand_mix() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir_tagged(bins.path());
+    let read = write_reads_ids(
+        genome.path(),
+        "reads.fq",
+        &["r_ot", "r_ctot", "r_ctob", "r_miss"],
+    );
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   3"));
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("SINGLE-PASS (model b"));
+    assert!(report.contains("Sequences analysed in total:\t4\n"));
+    assert!(report.contains("CT/CT:\t1\t((converted) top strand)")); // OT
+    assert!(report.contains("GA/CT:\t1\t(complementary to (converted) top strand)")); // CTOT
+    assert!(report.contains("GA/GA:\t1\t(complementary to (converted) bottom strand)")); // CTOB
+    assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 3);
+}
+
+/// The model-(b) scope guard rejects loudly (never-silent): `--combined_index_single_pass`
+/// requires `--combined_index --non_directional`. Runs before genome discovery, so a
+/// plain genome suffices.
+#[cfg(unix)]
+#[test]
+fn combined_index_single_pass_scope_guard_rejects() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = make_read(genome.path());
+
+    // tagged WITHOUT --combined_index
+    bin()
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --combined_index"));
+
+    // tagged + --combined_index but DIRECTIONAL (no --non_directional)
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --non_directional"));
+}
+
+/// A malformed fake `bowtie2` that emits ONLY the `__CT` half of every tagged read
+/// (drops the `__GA` line a real Bowtie 2 would always emit). Used to TRIP the
+/// model-(b) never-silent "missing half" guard (§3.3 (ii)) — the e2e fakes above
+/// always emit both halves, so this is the only way to fire the hardened guard.
+#[cfg(unix)]
+fn make_fake_bowtie2_tagged_drop_ga_half(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  q=$1; sub(/^@/,"",q);
+  tag=substr(q, length(q)-1);
+  # __CT → an OT hit; __GA → emit NOTHING (the dropped half).
+  if (tag=="CT") print q "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+}' "$inp"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Never-silent: if the tagged stream is missing a read's `__GA` half (a desynced /
+/// malformed aligner), the model-(b) driver dies loud rather than mis-calling on a
+/// half-populated union (§3.3 (ii) — the contract the rev-1 plan-review hardened).
+#[cfg(unix)]
+#[test]
+fn combined_index_single_pass_missing_half_dies_loud() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_tagged_drop_ga_half(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_x"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing its __CT or __GA half"));
+}
+
+// ===========================================================================
 // `--combined_index --pbat` end-to-end (phase 7). ONE both-strands pass over
 // `BS_combined` fed the G→A-converted reads → CTOT (rev+_CT_converted) / CTOB
 // (fwd+_GA_converted). The fake dispatches on the `-U` G→A input (pbat's only

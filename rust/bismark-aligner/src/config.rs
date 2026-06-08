@@ -207,6 +207,14 @@ pub struct RunConfig {
     /// and `resolve` errors if the combined index is absent (it is `genome.
     /// combined_index_basename.is_some()` whenever this is `true`).
     pub combined_index: bool,
+    /// `--combined_index_single_pass` (v2, opt-in): the single-pass "model (b)" exec
+    /// model for `--combined_index --non_directional` — one Bowtie 2 pass over
+    /// conversion-tagged interleaved reads (one index load instead of two). NOT
+    /// byte-identical AND NOT decision-equivalent to model (a) (the qname tag
+    /// perturbs Bowtie 2's read-name RNG); ground-truth-validated. The
+    /// `reject_combined_index_unsupported` guard requires `combined_index &&
+    /// non_directional` (SE Bowtie 2, single-core) whenever this is `true`.
+    pub combined_index_single_pass: bool,
 }
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
@@ -319,6 +327,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         multicore: cli.multicore.unwrap_or(1),
         // v2 combined-index mode (guarded above; the combined index is present).
         combined_index: cli.combined_index,
+        // v2 model-(b) single-pass tagged exec model (guarded above: requires
+        // combined_index && non_directional, SE Bowtie 2, single-core).
+        combined_index_single_pass: cli.combined_index_single_pass,
     })
 }
 
@@ -334,6 +345,31 @@ fn reject_combined_index_unsupported(
     library: LibraryType,
     layout: &ReadLayout,
 ) -> Result<()> {
+    // --combined_index_single_pass (model (b), the single-pass tagged exec model) is
+    // ONLY meaningful for the non-directional combined path (the sole mode that
+    // loads the combined index twice). Require --combined_index --non_directional;
+    // checked BEFORE the !combined_index early return so `--combined_index_single_pass`
+    // alone is also rejected loudly. SE / Bowtie 2 / single-core follow from the
+    // required --combined_index (enforced below).
+    if cli.combined_index_single_pass {
+        if !cli.combined_index {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_single_pass requires --combined_index: it is the single-pass \
+                 execution model for the non-directional combined-index path, not a standalone \
+                 mode."
+                    .into(),
+            ));
+        }
+        if library != LibraryType::NonDirectional {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_single_pass is the single-pass NON-DIRECTIONAL execution model \
+                 (model b); it requires --non_directional. Directional and pbat combined-index \
+                 are already single-pass (one index load), so the tagged model offers no benefit \
+                 there. Drop --combined_index_single_pass."
+                    .into(),
+            ));
+        }
+    }
     if !cli.combined_index {
         return Ok(());
     }
@@ -957,6 +993,71 @@ mod tests {
                 Aligner::Bowtie2,
                 LibraryType::Directional,
                 &se()
+            )
+            .is_err()
+        );
+    }
+
+    /// `--combined_index_single_pass` (model b) requires `--combined_index --non_directional`,
+    /// SE Bowtie 2. Every other combination is rejected loudly (never-silent).
+    #[test]
+    fn combined_index_single_pass_requires_combined_index_and_non_directional() {
+        // OK: combined_index + non_directional, SE Bowtie 2.
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_single_pass"
+                ]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_ok()
+        );
+        // --combined_index_single_pass WITHOUT --combined_index → reject (checked before
+        // the !combined_index early return).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--non_directional", "--combined_index_single_pass"]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_err()
+        );
+        // directional / pbat → reject (model b is non-dir-only; the others are
+        // already single-pass).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--combined_index_single_pass"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_err()
+        );
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--pbat", "--combined_index_single_pass"]),
+                Aligner::Bowtie2,
+                LibraryType::Pbat,
+                &se()
+            )
+            .is_err()
+        );
+        // PE / multicore inherit the --combined_index rejections.
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_single_pass"
+                ]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &pe()
             )
             .is_err()
         );
