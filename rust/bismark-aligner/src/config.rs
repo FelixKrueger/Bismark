@@ -200,6 +200,13 @@ pub struct RunConfig {
     /// `cli.multicore.unwrap_or(1)`; `1` = the single-core direct path, `>1` = the
     /// order-preserving contiguous-chunk fan-out. `validate_multicore` guarantees ≥ 1.
     pub multicore: u32,
+    /// `--combined_index` (v2, opt-in, never-silent, concordance-gated): align
+    /// against the single combined CT+GA index in one both-strands pass instead of
+    /// the faithful per-strand instances. SE directional only this phase; the
+    /// `reject_combined_index_unsupported` guard rejects every other combination,
+    /// and `resolve` errors if the combined index is absent (it is `genome.
+    /// combined_index_basename.is_some()` whenever this is `true`).
+    pub combined_index: bool,
 }
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
@@ -251,7 +258,23 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ));
     }
 
+    // --combined_index (v2) scope guard: SE directional Bowtie 2 only this phase.
+    // Reject every not-yet-supported combination loudly (never silently fall back
+    // to the faithful path — that would mask which strands the combined search
+    // omits). PLAN §3.1.
+    reject_combined_index_unsupported(cli, aligner, library, &layout)?;
+
     let genome = discovery::discover_genome(aligner, &genome_arg)?;
+    // --combined_index requires the combined index to be present (built by
+    // `bismark_genome_preparation --combined_genome`); fail loudly if absent.
+    if cli.combined_index && genome.combined_index_basename.is_none() {
+        return Err(AlignerError::Validation(format!(
+            "--combined_index was requested but no combined index was found at \
+             {}/Bisulfite_Genome/Combined/BS_combined.* — build it with \
+             `bismark_genome_preparation --combined_genome <genome>`.",
+            genome.genome_dir.display()
+        )));
+    }
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
@@ -294,7 +317,64 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
         // rejected `0`; absent flag = single-core (1).
         multicore: cli.multicore.unwrap_or(1),
+        // v2 combined-index mode (guarded above; the combined index is present).
+        combined_index: cli.combined_index,
     })
+}
+
+/// `--combined_index` (v2) scope guard (PLAN §3.1). The combined-index path is
+/// **single-end directional Bowtie 2 only** in this phase; every other
+/// combination is rejected loudly so the run never silently falls back to a path
+/// that omits the strands the combined search would have covered. Each rejection
+/// names the conflicting flag and the phase that will add it.
+fn reject_combined_index_unsupported(
+    cli: &Cli,
+    aligner: Aligner,
+    library: LibraryType,
+    layout: &ReadLayout,
+) -> Result<()> {
+    if !cli.combined_index {
+        return Ok(());
+    }
+    if aligner != Aligner::Bowtie2 {
+        return Err(AlignerError::Unsupported(
+            "--combined_index requires Bowtie 2 (the combined index is a Bowtie 2 .bt2/.bt2l); it \
+             is not supported with --hisat2 or --minimap2."
+                .into(),
+        ));
+    }
+    if layout.is_paired() {
+        return Err(AlignerError::Unsupported(
+            "--combined_index is single-end only in this phase; paired-end combined alignment is a \
+             later phase. Use single-end reads, or drop --combined_index for the faithful \
+             paired-end path."
+                .into(),
+        ));
+    }
+    match library {
+        LibraryType::Directional => {}
+        LibraryType::NonDirectional => {
+            return Err(AlignerError::Unsupported(
+                "--combined_index --non_directional is not yet supported (non-directional combined \
+                 alignment is a later phase). Drop one of the two flags."
+                    .into(),
+            ));
+        }
+        LibraryType::Pbat => {
+            return Err(AlignerError::Unsupported(
+                "--combined_index --pbat is not yet supported. Drop one of the two flags.".into(),
+            ));
+        }
+    }
+    if cli.multicore.unwrap_or(1) > 1 {
+        return Err(AlignerError::Unsupported(
+            "--combined_index is not supported with --multicore/--parallel: forked chunking \
+             re-loads the large combined index once per chunk (the inefficient pattern combined \
+             mode exists to avoid). Run --combined_index single-core (the default)."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Hard-reject the output-affecting options that are out of the v1 byte-identity
@@ -770,6 +850,108 @@ mod tests {
         assert_eq!(
             resolve_mm2_max_length(&cli_from(&[]), Aligner::Bowtie2).unwrap(),
             None
+        );
+    }
+
+    // ---- --combined_index (v2) scope guard (Phase 2; §3.1) -----------------
+
+    fn se() -> ReadLayout {
+        ReadLayout::SingleEnd {
+            reads: vec!["r.fq".into()],
+        }
+    }
+    fn pe() -> ReadLayout {
+        ReadLayout::PairedEnd {
+            mates1: vec!["r1.fq".into()],
+            mates2: vec!["r2.fq".into()],
+        }
+    }
+
+    /// SE directional Bowtie 2 is the one supported combination → guard passes.
+    #[test]
+    fn combined_index_allows_se_directional_bowtie2() {
+        let cli = cli_from(&["--combined_index"]);
+        assert!(
+            reject_combined_index_unsupported(
+                &cli,
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_ok()
+        );
+    }
+
+    /// Without the flag the guard is inert (every combination passes).
+    #[test]
+    fn combined_index_guard_inert_when_flag_absent() {
+        let cli = cli_from(&[]);
+        assert!(
+            reject_combined_index_unsupported(&cli, Aligner::Hisat2, LibraryType::Pbat, &pe())
+                .is_ok()
+        );
+    }
+
+    /// Every not-yet-supported combination is rejected loudly (never-silent).
+    #[test]
+    fn combined_index_rejects_unsupported_combinations() {
+        // non-directional / pbat
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--non_directional"]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_err()
+        );
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--pbat"]),
+                Aligner::Bowtie2,
+                LibraryType::Pbat,
+                &se()
+            )
+            .is_err()
+        );
+        // non-Bowtie2 aligners
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--hisat2"]),
+                Aligner::Hisat2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_err()
+        );
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--minimap2"]),
+                Aligner::Minimap2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_err()
+        );
+        // paired-end
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &pe()
+            )
+            .is_err()
+        );
+        // multicore
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--multicore", "4"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_err()
         );
     }
 }

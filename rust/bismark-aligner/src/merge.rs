@@ -74,6 +74,13 @@ pub struct Counters {
     /// Reads rejected by `--directional` (index 2/3).
     pub alignments_rejected_count: u64,
 
+    /// v2 `--combined_index` ONLY (PLAN §3.8): reads whose provisional best
+    /// alignment classified **spurious** (`fwd+GA`/`rev+CT` — wrong sub-genome for
+    /// the orientation) and so were treated as no-alignment. Always 0 on the
+    /// faithful path (which never searches the wrong strand). Reported in the
+    /// combined-mode SE report for visibility.
+    pub combined_spurious_count: u64,
+
     // ---- Phase 5: per-strand counts (Perl 4402/4411/4426/4441) -------------
     // Incremented in genomic extraction, ONLY when no chromosome-edge guard
     // fired (so an edge read counts in `unique_best` but in no strand bucket).
@@ -133,6 +140,7 @@ impl Counters {
         self.unsuitable_sequence_count += other.unsuitable_sequence_count;
         self.no_single_alignment_found += other.no_single_alignment_found;
         self.alignments_rejected_count += other.alignments_rejected_count;
+        self.combined_spurious_count += other.combined_spurious_count;
         self.ct_ct_count += other.ct_ct_count;
         self.ct_ga_count += other.ct_ga_count;
         self.ga_ct_count += other.ga_ct_count;

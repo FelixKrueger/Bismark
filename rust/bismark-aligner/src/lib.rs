@@ -27,6 +27,7 @@ pub mod align;
 pub mod aligner;
 pub mod aux_out;
 pub mod cli;
+pub mod combined;
 pub mod config;
 pub mod convert;
 pub mod discovery;
@@ -52,7 +53,7 @@ use flate2::write::GzEncoder;
 
 use bismark_io::BamWriter;
 
-use crate::align::{AlignerStream, Orientation, PairedAlignerStream};
+use crate::align::{AlignerStream, Orientation, PairedAlignerStream, SamStream};
 use crate::aux_out::AuxKind;
 use crate::config::{LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
@@ -115,7 +116,11 @@ fn pipeline(config: &RunConfig) -> Result<()> {
     let n = config.multicore;
     match &config.layout {
         ReadLayout::SingleEnd { reads } => {
-            if n > 1 {
+            if config.combined_index {
+                // v2 opt-in combined-index path (SE directional; --multicore
+                // rejected at resolve, so this is always the single-core branch).
+                run_se_combined(config, reads)
+            } else if n > 1 {
                 parallel::run_se_multicore(config, reads, n)
             } else {
                 run_se(config, reads)
@@ -661,84 +666,399 @@ fn drive_merge(
             counters,
         )?;
 
-        // Route each read to its sink (Perl 2451–2465 + the per-outcome return codes).
-        match decision {
-            // Unique best → genomic-seq + XM call + BAM record (Phase 5).
-            Decision::UniqueBest(best) => {
-                let ext = extract_corresponding_genomic_sequence_single_end(
-                    &best, genome, pbat, counters,
-                )?;
-                // Length guard (Perl 3127): the window must be read_len + 2; a
-                // shorter one means a chromosome-edge guard fired → skip (not written).
-                if ext.unmodified_genomic_sequence.len() != seq_uc.len() + 2 {
-                    eprintln!(
-                        "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
-                        best.chromosome, best.position
-                    );
-                    counters.genomic_sequence_could_not_be_extracted_count += 1;
-                    continue;
-                }
-                let methcall = methylation_call(
-                    &seq_uc,
-                    &ext.unmodified_genomic_sequence,
-                    ext.read_conversion,
-                    counters,
+        // Route each read to its sink (Perl 2451–2465 + the per-outcome return
+        // codes). Shared with the combined-index drive (`drive_merge_combined`).
+        route_se_decision(
+            decision,
+            &identifier,
+            &seq_uc,
+            &qual_bytes,
+            &seq,
+            &plus,
+            fasta,
+            genome,
+            refid,
+            pbat,
+            config,
+            sinks,
+            counters,
+        )?;
+    }
+    Ok(())
+}
+
+/// Route one SE [`Decision`] to its sink (Perl 2451–2465 + the per-outcome return
+/// codes). Extracted verbatim from [`drive_merge`]'s per-read body so the
+/// combined-index drive ([`drive_merge_combined`]) reuses the **byte-frozen**
+/// output arm (genomic extraction → `XM` call → BAM, and the
+/// `--ambig_bam`/`--ambiguous`/`--unmapped` routing) unchanged. `seq`/`plus` are
+/// the raw (un-chomped) FastQ/FastA line buffers; `seq_uc` is the chomped
+/// upper-cased read; `qual_bytes` the chomped quality. (The faithful default
+/// path's behavior is unchanged — this is a pure relocation, covered by the
+/// existing end-to-end tests + the oxy gate.)
+#[allow(clippy::too_many_arguments)]
+fn route_se_decision(
+    decision: Decision,
+    identifier: &str,
+    seq_uc: &[u8],
+    qual_bytes: &[u8],
+    seq: &[u8],
+    plus: &[u8],
+    fasta: bool,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    pbat: bool,
+    config: &RunConfig,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    match decision {
+        // Unique best → genomic-seq + XM call + BAM record (Phase 5).
+        Decision::UniqueBest(best) => {
+            let ext =
+                extract_corresponding_genomic_sequence_single_end(&best, genome, pbat, counters)?;
+            // Length guard (Perl 3127): the window must be read_len + 2; a
+            // shorter one means a chromosome-edge guard fired → skip (not written).
+            if ext.unmodified_genomic_sequence.len() != seq_uc.len() + 2 {
+                eprintln!(
+                    "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
+                    best.chromosome, best.position
                 );
-                let record = single_end_sam_output(
-                    &identifier,
-                    &seq_uc,
-                    &qual_bytes,
-                    &best,
-                    &ext,
-                    &methcall,
-                    refid,
-                    config.phred64,
-                )?;
-                write_record(&mut sinks.bam, &record)?;
+                counters.genomic_sequence_could_not_be_extracted_count += 1;
+                return Ok(());
             }
-            // Ambiguous → the within-thread path's first alignment to --ambig_bam
-            // (Perl 2976), then the FastQ aux with precedence --ambiguous else
-            // --unmapped (Perl 2979–2987).
-            Decision::Ambiguous { first_ambig } => {
-                if let Some(ab) = sinks.ambig_bam.as_mut()
-                    && let Some(line) = first_ambig.as_deref()
-                {
-                    write_raw_sam_line_to_bam(ab, line, refid)?;
-                }
-                let route = if sinks.ambiguous.is_some() {
-                    sinks.ambiguous.as_mut()
-                } else {
-                    sinks.unmapped.as_mut()
-                };
-                if let Some(w) = route {
-                    let seq_orig = convert::chomp_newline(&seq).to_vec();
-                    write_se_aux_record(
-                        w,
-                        fasta,
-                        identifier.as_bytes(),
-                        &seq_orig,
-                        &plus,
-                        &qual_bytes,
-                    )?;
-                }
-            }
-            // No alignment → --unmapped FastQ (Perl 2995–2999).
-            Decision::NoAlignment => {
-                if let Some(w) = sinks.unmapped.as_mut() {
-                    let seq_orig = convert::chomp_newline(&seq).to_vec();
-                    write_se_aux_record(
-                        w,
-                        fasta,
-                        identifier.as_bytes(),
-                        &seq_orig,
-                        &plus,
-                        &qual_bytes,
-                    )?;
-                }
-            }
-            // Directional wrong-strand rejection: counted only, written nowhere (Perl 3116).
-            Decision::Rejected => {}
+            let methcall = methylation_call(
+                seq_uc,
+                &ext.unmodified_genomic_sequence,
+                ext.read_conversion,
+                counters,
+            );
+            let record = single_end_sam_output(
+                identifier,
+                seq_uc,
+                qual_bytes,
+                &best,
+                &ext,
+                &methcall,
+                refid,
+                config.phred64,
+            )?;
+            write_record(&mut sinks.bam, &record)?;
         }
+        // Ambiguous → the within-thread path's first alignment to --ambig_bam
+        // (Perl 2976), then the FastQ aux with precedence --ambiguous else
+        // --unmapped (Perl 2979–2987).
+        Decision::Ambiguous { first_ambig } => {
+            if let Some(ab) = sinks.ambig_bam.as_mut()
+                && let Some(line) = first_ambig.as_deref()
+            {
+                write_raw_sam_line_to_bam(ab, line, refid)?;
+            }
+            let route = if sinks.ambiguous.is_some() {
+                sinks.ambiguous.as_mut()
+            } else {
+                sinks.unmapped.as_mut()
+            };
+            if let Some(w) = route {
+                let seq_orig = convert::chomp_newline(seq).to_vec();
+                write_se_aux_record(w, fasta, identifier.as_bytes(), &seq_orig, plus, qual_bytes)?;
+            }
+        }
+        // No alignment → --unmapped FastQ (Perl 2995–2999).
+        Decision::NoAlignment => {
+            if let Some(w) = sinks.unmapped.as_mut() {
+                let seq_orig = convert::chomp_newline(seq).to_vec();
+                write_se_aux_record(w, fasta, identifier.as_bytes(), &seq_orig, plus, qual_bytes)?;
+            }
+        }
+        // Directional wrong-strand rejection: counted only, written nowhere (Perl 3116).
+        Decision::Rejected => {}
+    }
+    Ok(())
+}
+
+// ===========================================================================
+// `--combined_index` (v2) single-end directional path. Opt-in, never-silent,
+// concordance-gated (NOT byte-identical). One both-strands Bowtie 2 pass over the
+// combined CT+GA index → `combined::classify`/`select` → the shared
+// `route_se_decision` (the byte-frozen output arm). PLAN 06072026 phase 2.
+// ===========================================================================
+
+/// The aligner options for the combined-index instance: the faithful options
+/// plus `-k 2` (so the cross-sub-genome runner-up is visible to the classifier,
+/// PLAN §3.4). The SINGLE source of truth, used both for the spawn and for the
+/// report's "Bismark was run with…" line — so the report never under-reports what
+/// Bowtie 2 was actually run with (code-review L1).
+fn combined_aligner_options(config: &RunConfig) -> String {
+    format!("{} -k 2", config.aligner_options)
+}
+
+/// SE combined-index pipeline (single-core directional). Mirrors [`run_se`] but
+/// drives ONE both-strands instance over the combined index
+/// ([`process_se_chunk_combined`]) and announces the experimental,
+/// concordance-gated mode (never-silent) on STDERR + in the report.
+fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let directional = matches!(config.library, LibraryType::Directional);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    // The actual options Bowtie 2 is run with (faithful + `-k 2`) — shown in the
+    // report header so it does not under-report the reporting mode (L1).
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode (EXPERIMENTAL, concordance-gated — NOT byte-identical to the \
+             faithful per-strand path): one both-strands Bowtie 2 pass over {} (-k 2) <<<",
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index mode.
+        writeln!(
+            report,
+            "Combined-index mode (experimental, concordance-gated; NOT byte-identical to the \
+             faithful per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_se_chunk_combined(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_single_end(&mut report, &counters, directional)?;
+        // Combined-mode extra: the spurious-discard tally (PLAN §3.8).
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary(read_file, &counters));
+    }
+    Ok(())
+}
+
+/// Convert reads (directional C→T), spawn ONE both-strands Bowtie 2 instance over
+/// the combined index with `-k 2`, and drive the combined classify→select→route
+/// per read. Returns the converted temp file(s) for cleanup.
+fn process_se_chunk_combined(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let read_file = input.to_string_lossy();
+    // Directional C→T conversion (one temp file) — reused unchanged.
+    let converted = convert_se_files(config, &read_file, opts)?;
+    for cr in &converted {
+        eprintln!(
+            "Created {} converted version of {read_file} -> {} ({} sequences)",
+            conv_label(&cr.name),
+            cr.path.display(),
+            cr.count
+        );
+    }
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    // `-k 2` so the cross-sub-genome runner-up is visible to the classifier
+    // (PLAN §3.4); `Orientation::Both` emits no `--norc`/`--nofw`. One instance.
+    // Same option string the report header advertises (`combined_aligner_options`).
+    let combined_opts = combined_aligner_options(config);
+    let mut stream = AlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &converted[0].path,
+    )?;
+    drive_merge_combined(input, &mut stream, config, genome, refid, sinks, counters)?;
+    stream.finish()?;
+    Ok(converted)
+}
+
+/// Re-read the original reads and, per read, gather the combined stream's `-k`
+/// line group (consecutive same-QNAME lines — Bowtie 2 emits a read's k lines
+/// contiguously, PLAN §3.4), run the provisional combined selection
+/// ([`combined::select`]), and route the resulting [`Decision`] through the shared
+/// [`route_se_decision`]. Generic over [`SamStream`] so it is unit-testable with a
+/// canned stream. `pbat` is always `false` (this phase is directional).
+fn drive_merge_combined<S: SamStream>(
+    read_file: &Path,
+    stream: &mut S,
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let file = File::open(read_file)?;
+    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        id.clear();
+        seq.clear();
+        plus.clear();
+        qual.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        if fasta {
+            if n1 == 0 || n2 == 0 {
+                break;
+            }
+        } else {
+            let n3 = reader.read_until(b'\n', &mut plus)?;
+            let n4 = reader.read_until(b'\n', &mut qual)?;
+            if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+                break;
+            }
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        counters.sequences_count += 1;
+        let fixed = convert::fix_id(convert::chomp_newline(&id), icpc);
+        let prefix: &[u8] = if fasta { b">" } else { b"@" };
+        let id_bytes = fixed.strip_prefix(prefix).unwrap_or(&fixed);
+        let identifier = String::from_utf8_lossy(id_bytes).into_owned();
+        let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
+        let qual_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq_uc.len()]
+        } else {
+            convert::chomp_newline(&qual).to_vec()
+        };
+        let sequence = String::from_utf8_lossy(&seq_uc).into_owned();
+
+        // Gather this read's `-k` alignment line group from the single combined
+        // stream — all CONSECUTIVE same-QNAME lines (Bowtie 2 emits a read's k
+        // alignments contiguously, PLAN §3.4). A miss is one FLAG-4 line (filtered
+        // by `combined::select`). A read with no line — which Bowtie 2 never
+        // produces — yields an empty group → NoAlignment, leaving the stream head
+        // for the next read (no mis-assignment, no infinite loop).
+        //
+        // No desync sentinel is needed (cf. the faithful merge's flag-4-then-same-
+        // id `die`, merge.rs ~200): that guard catches a SINGLE instance reporting a
+        // read as both unmapped and mapped, whereas here we drain the WHOLE
+        // contiguous same-QNAME run in one pass, so a read's lines cannot reappear
+        // at the head after we move on. A stream-exhaustion assert at EOF is
+        // deliberately NOT added either — it would false-positive under `--upto`
+        // (the FastQ loop breaks early while the stream still holds later reads).
+        // Output order/lockstep rests on the same Bowtie 2 `--reorder`-under-`-p`
+        // invariant the faithful path relies on.
+        let mut records: Vec<crate::align::SamRecord> = Vec::new();
+        while stream.current().is_some_and(|r| r.qname == identifier) {
+            records.push(stream.current().unwrap().clone());
+            stream.advance()?;
+        }
+
+        let decision = combined::select(
+            &records,
+            &sequence,
+            config.score_min_intercept,
+            config.score_min_slope,
+            counters,
+        )?;
+        route_se_decision(
+            decision,
+            &identifier,
+            &seq_uc,
+            &qual_bytes,
+            &seq,
+            &plus,
+            fasta,
+            genome,
+            refid,
+            false, // directional → pbat is always false
+            config,
+            sinks,
+            counters,
+        )?;
     }
     Ok(())
 }

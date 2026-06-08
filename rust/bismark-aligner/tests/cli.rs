@@ -2382,3 +2382,450 @@ fn minimap2_max_length_drop_counts_as_no_alignment() {
         bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_mm2.bam")).unwrap();
     assert_eq!(reader.records().count(), 1);
 }
+
+// ===========================================================================
+// `--combined_index` (v2) — opt-in combined-index alignment (PLAN 06072026 ph2).
+// Hermetic: a fake `bowtie2` emits combined-style SAM (RNAME `_CT_converted`/
+// `_GA_converted` suffix × FLAG orientation) so the classifier sees OT / OB /
+// spurious / tie / miss deterministically — no real Bowtie 2 or index needed.
+// ===========================================================================
+
+/// A genome dir with the small CT/GA index, a 16 bp chr1, AND a complete combined
+/// `Bisulfite_Genome/Combined/BS_combined.*.bt2` index.
+#[cfg(unix)]
+fn make_genome_combined(dir: &Path) {
+    let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+    let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+    let comb = dir.join("Bisulfite_Genome").join("Combined");
+    fs::create_dir_all(&ct).unwrap();
+    fs::create_dir_all(&ga).unwrap();
+    fs::create_dir_all(&comb).unwrap();
+    for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+        fs::write(ct.join(format!("BS_CT.{s}.bt2")), b"x").unwrap();
+        fs::write(ga.join(format!("BS_GA.{s}.bt2")), b"x").unwrap();
+        fs::write(comb.join(format!("BS_combined.{s}.bt2")), b"x").unwrap();
+    }
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACGTACGTACGT\n").unwrap(); // 16 bp
+}
+
+/// A fake `bowtie2` for the COMBINED index (one both-strands instance). Per input
+/// read it emits combined-style SAM keyed on the read id, so the combined
+/// classifier sees a deterministic OT / OB / spurious / tie / miss.
+#[cfg(unix)]
+fn make_fake_bowtie2_combined(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  id=$1; sub(/^@/,"",id);
+  if (id=="r_ot")        print id "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  else if (id=="r_ob")   print id "\t16\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  else if (id=="r_spur") print id "\t0\tchr1_GA_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  else if (id=="r_tie") { print id "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; print id "\t16\tchr1_GA_converted\t9\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }
+  else if (id=="r_keep") { print id "\t0\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; print id "\t16\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }
+  else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+}' "$inp"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Write a FastQ with the given read ids (each a 6 bp `ACGTAC` read).
+fn write_reads_ids(dir: &Path, name: &str, ids: &[&str]) -> std::path::PathBuf {
+    let r = dir.join(name);
+    let mut s = String::new();
+    for id in ids {
+        s.push_str(&format!("@{id}\nACGTAC\n+\nFFFFFF\n"));
+    }
+    fs::write(&r, s).unwrap();
+    r
+}
+
+/// A combined-index OT read → FLAG 0, XR:Z:CT, XG:Z:CT (the byte-frozen output
+/// arm reused via synthetic index 0).
+#[cfg(unix)]
+#[test]
+fn combined_index_ot_read_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode (EXPERIMENTAL")
+                .and(predicate::str::contains("unique best alignments:   1")),
+        );
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 0); // OT → FLAG 0
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 1);
+
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("CT".into())));
+    assert_eq!(v(*b"XG"), Some(Value::String("CT".into())));
+}
+
+/// THE OB→1 REGRESSION: a combined-index OB read (rev + `_GA_converted`) must map
+/// to the OB strand (FLAG 16, **XR:Z:CT**, XG:Z:GA). The DRAFT's wrong synthetic
+/// index `OB→3` (CTOB) would emit XR:Z:GA — so `XR=="CT"` is the discriminator.
+#[cfg(unix)]
+#[test]
+fn combined_index_ob_read_maps_to_ob_strand_with_xr_ct() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // OB → '-' strand → FLAG 16
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 5);
+
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("CT".into()))); // OB→1 (not 3 → would be GA)
+    assert_eq!(v(*b"XG"), Some(Value::String("GA".into())));
+}
+
+/// A spurious-only best (fwd + `_GA_converted`) → no alignment (counted, header-
+/// only BAM), and the report carries the combined-mode spurious tally.
+#[cfg(unix)]
+#[test]
+fn combined_index_spurious_only_is_no_alignment() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_spur"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no alignment found:       1"));
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains(
+        "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t1\n"
+    ));
+    // No valid alignment → header-only BAM.
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 0);
+}
+
+/// An OT/OB cross-strand tie at the best AS → ambiguous (header-only BAM).
+#[cfg(unix)]
+#[test]
+fn combined_index_cross_strand_tie_is_ambiguous() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_tie"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("ambiguous (unsuitable):   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 0); // ambiguous → not written (no --ambiguous)
+}
+
+/// Phase 3 — the SAME-POSITION KEEP path end to end: a read whose OT and OB hits
+/// coincide at one locus (equal AS) is KEPT (not discarded as ambiguous), written
+/// as the OB record (FLAG 16 / XR:Z:CT / XG:Z:GA) — the faithful `chr:pos`+`>=`
+/// collapse. (The `r_tie` cell above uses pos 1 vs 9 = cross-location → Ambiguous,
+/// so this is the only cell exercising the KEEP path.)
+#[cfg(unix)]
+#[test]
+fn combined_index_same_position_collision_kept_as_ob() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_keep"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("unique best alignments:   1")
+                .and(predicate::str::contains("ambiguous (unsuitable):   0")),
+        );
+
+    // ONE record, the OB winner of the same-position collision.
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // OB
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 5);
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("CT".into()))); // OB → index 1 (not CTOB)
+    assert_eq!(v(*b"XG"), Some(Value::String("GA".into())));
+}
+
+/// Report totals + counter ownership (§9): a 4-read mix (OT, OB, spurious, miss)
+/// → 2 unique / 2 no-alignment / 1 spurious / 4 analysed, and 2 BAM records.
+/// Guards against `combined::select` writing a BAM but forgetting the counters.
+#[cfg(unix)]
+#[test]
+fn combined_index_report_totals_and_counter_ownership() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(
+        genome.path(),
+        "reads.fq",
+        &["r_ot", "r_ob", "r_spur", "r_miss"],
+    );
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   2"));
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("Combined-index mode (experimental"));
+    // Never-silent (L1): the report advertises the real options incl. `-k 2`.
+    assert!(report.contains("-k 2"));
+    assert!(report.contains("Sequences analysed in total:\t4\n"));
+    assert!(report.contains(
+        "Number of alignments with a unique best hit from the different alignments:\t2\n"
+    ));
+    assert!(report.contains("Sequences with no alignments under any condition:\t2\n"));
+    assert!(report.contains(
+        "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t1\n"
+    ));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 2); // r_ot + r_ob
+}
+
+/// `--ambig_bam` + `--combined_index`: never-silent note that ambig records are
+/// not populated in this phase (the run still succeeds).
+#[cfg(unix)]
+#[test]
+fn combined_index_ambig_bam_emits_note() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--ambig_bam")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "combined-index mode does not populate --ambig_bam",
+        ));
+}
+
+/// Missing combined index → a clear, actionable error (points at genome-prep).
+#[test]
+fn combined_index_missing_index_errors() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // CT/GA + fasta, but NO Combined index
+    let read = make_read(genome.path());
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("no combined index was found")
+                .and(predicate::str::contains("--combined_genome")),
+        );
+}
+
+/// Scope guard (§3.1): every not-yet-supported combination is rejected loudly.
+#[test]
+fn combined_index_scope_guard_rejects_unsupported() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = make_read(genome.path());
+
+    // --non_directional
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--combined_index --non_directional",
+        ));
+
+    // --pbat
+    bin()
+        .arg("--combined_index")
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--combined_index --pbat"));
+
+    // --hisat2
+    bin()
+        .arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires Bowtie 2"));
+
+    // --multicore
+    bin()
+        .arg("--combined_index")
+        .arg("--multicore")
+        .arg("4")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported with --multicore"));
+}
+
+/// Scope guard: `--combined_index` with paired-end input is rejected (SE only).
+#[test]
+fn combined_index_paired_end_is_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    fs::write(&r1, b"@a/1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@a/2\nACGTAC\n+\nFFFFFF\n").unwrap();
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("single-end only"));
+}

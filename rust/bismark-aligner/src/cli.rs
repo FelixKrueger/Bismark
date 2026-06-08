@@ -84,6 +84,13 @@ pub struct Cli {
     /// SLAM-seq mode.
     #[arg(long)]
     pub slam: bool,
+    /// EXPERIMENTAL (v2, opt-in, never-silent): align against a single combined
+    /// CT+GA index (`Bisulfite_Genome/Combined/BS_combined`) in one both-strands
+    /// Bowtie 2 pass instead of separate per-strand instances, recovering strand
+    /// from the RNAME suffix × FLAG. Concordance-gated, NOT byte-identical to the
+    /// faithful default. This phase: single-end directional only.
+    #[arg(long = "combined_index")]
+    pub combined_index: bool,
 
     // ---- read trimming / quality ------------------------------------------
     /// Skip the first <int> reads/pairs.

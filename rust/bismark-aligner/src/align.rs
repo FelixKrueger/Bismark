@@ -25,14 +25,20 @@ pub enum Orientation {
     Norc,
     /// `--nofw` — CTreadGAgenome / GAreadCTgenome.
     Nofw,
+    /// No strand restriction (`--combined_index`, v2): one both-strands search
+    /// over the combined CT+GA index — emits NEITHER `--norc` nor `--nofw`.
+    Both,
 }
 
 impl Orientation {
-    /// The Bowtie 2 flag.
-    pub fn flag(self) -> &'static str {
+    /// The Bowtie 2 strand flag, or `None` for [`Orientation::Both`] (the combined
+    /// search restricts no strand → emits no token; callers must NOT push an empty
+    /// argument for `None`).
+    pub fn flag(self) -> Option<&'static str> {
         match self {
-            Orientation::Norc => "--norc",
-            Orientation::Nofw => "--nofw",
+            Orientation::Norc => Some("--norc"),
+            Orientation::Nofw => Some("--nofw"),
+            Orientation::Both => None,
         }
     }
 }
@@ -189,7 +195,11 @@ fn build_se_argv(
     let mut args: Vec<OsString> = options.split_whitespace().map(OsString::from).collect();
     match aligner {
         Aligner::Bowtie2 | Aligner::Hisat2 => {
-            args.push(orient.flag().into());
+            // `Orientation::Both` (combined index) emits no strand flag — push the
+            // token only when there is one (never an empty arg).
+            if let Some(f) = orient.flag() {
+                args.push(f.into());
+            }
             args.push("-x".into());
             args.push(index.as_os_str().to_owned());
             args.push("-U".into());
@@ -401,8 +411,12 @@ impl PairedAlignerStream {
         for opt in options.split_whitespace() {
             cmd.arg(opt);
         }
-        cmd.arg(orient.flag())
-            .arg("-x")
+        // PE always uses Norc/Nofw (`Both` is SE-combined only), so `flag()` is
+        // `Some` here; guard for the `Option` return without an empty arg.
+        if let Some(f) = orient.flag() {
+            cmd.arg(f);
+        }
+        cmd.arg("-x")
             .arg(index)
             .arg("-1")
             .arg(input1)
@@ -727,6 +741,40 @@ mod tests {
         assert!(!got.contains(&"--norc".to_string()) && !got.contains(&"--nofw".to_string()));
         assert!(!got.contains(&"-U".to_string()));
         assert!(!got.contains(&"/idx/BS_CT".to_string())); // only the `.mmi` form
+    }
+
+    /// `--combined_index` (v2): `Orientation::Both` emits NO strand flag (neither
+    /// `--norc` nor `--nofw`) and — critically — does NOT push an empty argument
+    /// before `-x`. The combined argv carries `-k 2` (added by the combined drive)
+    /// so the runner-up is visible to the classifier.
+    #[test]
+    fn se_argv_bowtie2_orientation_both_emits_no_strand_flag() {
+        let argv = build_se_argv(
+            Aligner::Bowtie2,
+            "-q --score-min L,0,-0.2 --ignore-quals -k 2",
+            Orientation::Both,
+            Path::new("/idx/Combined/BS_combined"),
+            Path::new("/tmp/r_C_to_T.fastq"),
+        );
+        let got = argv_strings(&argv);
+        assert_eq!(
+            got,
+            vec![
+                "-q",
+                "--score-min",
+                "L,0,-0.2",
+                "--ignore-quals",
+                "-k",
+                "2",
+                "-x",
+                "/idx/Combined/BS_combined",
+                "-U",
+                "/tmp/r_C_to_T.fastq",
+            ]
+        );
+        assert!(!got.contains(&"--norc".to_string()) && !got.contains(&"--nofw".to_string()));
+        assert!(!got.iter().any(|a| a.is_empty())); // no empty arg pushed for `Both`
+        assert_eq!(Orientation::Both.flag(), None);
     }
 
     /// minimap2  orientation is irrelevant — `--norc` and `--nofw` produce the same

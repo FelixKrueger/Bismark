@@ -79,6 +79,13 @@ pub struct GenomeIndexes {
     pub ga_index_basename: PathBuf,
     /// `true` if the large (`.bt2l`) index was found instead of the small one.
     pub large_index: bool,
+    /// `<genome>/Bisulfite_Genome/Combined/BS_combined` (index basename) — the v2
+    /// combined CT+GA index. `Some` iff a complete set (small `.bt2` OR large
+    /// `.bt2l`) is present; probed best-effort for **every** run (the cost is a
+    /// directory stat). `--combined_index` runs require it (the `resolve` guard
+    /// errors when this is `None`); faithful runs ignore it. Deviates from the
+    /// PLAN §7 `PathBuf` (it must be optional — most genomes have no combined index).
+    pub combined_index_basename: Option<PathBuf>,
     /// Raw FASTA file(s), in byte-significant order (sets `@SQ` order, Phase 5).
     pub fastas: Vec<PathBuf>,
     /// Which extension category the FASTA(s) came from.
@@ -157,6 +164,21 @@ pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeInde
         }
     };
 
+    // v2 combined CT+GA index (`Bisulfite_Genome/Combined/BS_combined`), probed
+    // best-effort: `Some` iff a complete small OR large set exists. Its large-ness
+    // is independent of the CT/GA index (Bowtie 2 `-x <basename>` auto-detects
+    // .bt2 vs .bt2l), so only the basename is stored. No error here — the
+    // `--combined_index` presence requirement is enforced in `config::resolve`.
+    let combined_dir = genome_dir.join("Bisulfite_Genome").join("Combined");
+    let combined_index_basename = if combined_dir.is_dir()
+        && (first_missing(aligner, &combined_dir, "BS_combined", false).is_none()
+            || first_missing(aligner, &combined_dir, "BS_combined", true).is_none())
+    {
+        Some(combined_dir.join("BS_combined"))
+    } else {
+        None
+    };
+
     let (fastas, fasta_kind) = discover_fastas(&genome_dir)?;
 
     Ok(GenomeIndexes {
@@ -164,6 +186,7 @@ pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeInde
         ga_index_basename: ga_dir.join("BS_GA"),
         genome_dir,
         large_index,
+        combined_index_basename,
         fastas,
         fasta_kind,
     })
@@ -251,6 +274,56 @@ mod tests {
         assert_eq!(names, vec!["a.fa".to_string(), "B.fa".to_string()]);
         assert!(g.ct_index_basename.ends_with("CT_conversion/BS_CT"));
         assert!(g.ga_index_basename.ends_with("GA_conversion/BS_GA"));
+    }
+
+    /// v2: a complete `Combined/BS_combined.*.bt2` set is discovered as
+    /// `combined_index_basename = Some(...)`; a genome without it stays `None`.
+    #[test]
+    fn discovers_combined_index_when_present() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+
+        // No Combined dir yet → None.
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
+        assert!(g.combined_index_basename.is_none());
+
+        // Build the combined small index → Some.
+        let comb = tmp.path().join("Bisulfite_Genome").join("Combined");
+        fs::create_dir_all(&comb).unwrap();
+        for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+            fs::write(comb.join(format!("BS_combined.{s}.bt2")), b"x").unwrap();
+        }
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
+        // Compare against the CANONICALISED genome_dir (macOS resolves
+        // /var → /private/var), not the raw tmp path.
+        let expected = g
+            .genome_dir
+            .join("Bisulfite_Genome")
+            .join("Combined")
+            .join("BS_combined");
+        assert_eq!(
+            g.combined_index_basename.as_deref(),
+            Some(expected.as_path())
+        );
+    }
+
+    /// v2: an INCOMPLETE combined set (missing one file) is NOT accepted → None
+    /// (so the `--combined_index` resolve guard errors clearly rather than the run
+    /// failing later on a missing Bowtie 2 index file).
+    #[test]
+    fn incomplete_combined_index_is_none() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+        let comb = tmp.path().join("Bisulfite_Genome").join("Combined");
+        fs::create_dir_all(&comb).unwrap();
+        // Only 5 of the 6 required files.
+        for s in ["1", "2", "3", "4", "rev.1"] {
+            fs::write(comb.join(format!("BS_combined.{s}.bt2")), b"x").unwrap();
+        }
+        let g = discover_genome(Aligner::Bowtie2, tmp.path()).unwrap();
+        assert!(g.combined_index_basename.is_none());
     }
 
     #[test]
