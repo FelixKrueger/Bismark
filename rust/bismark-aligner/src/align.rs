@@ -11,6 +11,7 @@
 //! extraction in `check_results_single_end` (2737/2773–2795).
 
 use std::ffi::OsString;
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -307,6 +308,86 @@ impl Drop for AlignerStream {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+}
+
+/// A file-backed [`SamStream`]: replays SAM records (one per line) from a spilled
+/// alignment file, presenting the same peek/advance interface as [`AlignerStream`].
+///
+/// Used by the **sequential** non-directional combined-index path (v2 phase 9): pass
+/// 1's Bowtie 2 output is spilled to a temp file, its process exits (freeing the
+/// combined index), then pass 2 runs while this stream replays pass 1's records —
+/// letting the (signature-widened) two-stream `drive_merge_combined_nondir` merge a
+/// disk-backed C→T stream against a live G→A stream, one index resident at a time.
+///
+/// Reads **line-by-line over a `BufReader` with a reused buffer** (NOT a slurp) so
+/// peak memory stays O(1) in the file size — the whole point of spilling to disk is
+/// to NOT hold pass 1's records in RAM. `@` header lines are skipped for symmetry
+/// with [`AlignerStream`] (the spill writes only records, so in practice there are
+/// none, but a header would be tolerated).
+pub struct FileSamStream {
+    reader: BufReader<File>,
+    current: Option<SamRecord>,
+    line_buf: String,
+}
+
+impl FileSamStream {
+    /// Open a spilled SAM-record file and read up to the first record (`@` lines
+    /// skipped; `None` at EOF / empty file). Mirrors [`AlignerStream::spawn`]'s
+    /// header-skip + store-first.
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path).map_err(|e| {
+            AlignerError::Validation(format!(
+                "failed to open spilled alignment file ({}): {e}",
+                path.display()
+            ))
+        })?;
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let current = loop {
+            line.clear();
+            let n = reader.read_line(&mut line)?;
+            if n == 0 {
+                break None; // empty / header-only
+            }
+            if line.starts_with('@') {
+                continue;
+            }
+            break Some(SamRecord::parse(&line)?);
+        };
+        Ok(FileSamStream {
+            reader,
+            current,
+            line_buf: String::new(),
+        })
+    }
+
+    /// Peek the current record without consuming it (`None` at EOF).
+    pub fn current(&self) -> Option<&SamRecord> {
+        self.current.as_ref()
+    }
+
+    /// Advance to the next record (sets `current` to `None` at EOF). The spill
+    /// writes only records, so unlike [`open`](Self::open) there is no header to
+    /// skip mid-stream.
+    pub fn advance(&mut self) -> Result<()> {
+        self.line_buf.clear();
+        let n = self.reader.read_line(&mut self.line_buf)?;
+        self.current = if n == 0 {
+            None
+        } else {
+            Some(SamRecord::parse(&self.line_buf)?)
+        };
+        Ok(())
+    }
+}
+
+impl SamStream for FileSamStream {
+    fn current(&self) -> Option<&SamRecord> {
+        FileSamStream::current(self)
+    }
+    fn advance(&mut self) -> Result<()> {
+        FileSamStream::advance(self)
     }
 }
 
@@ -630,6 +711,49 @@ mod tests {
         assert_eq!(r.qual, "IIIIIIIIII"); // no trailing \r on QUAL
         assert!(!r.raw_line.ends_with('\r') && !r.raw_line.ends_with('\n'));
         assert_eq!(r.raw_line, MAPPED);
+    }
+
+    // ---- FileSamStream (v2 phase 9 — sequential combined-index spill replay) ----
+
+    /// Replays a spilled file (a mapped record + a FLAG-4 miss) through the same
+    /// peek/advance interface as a live `AlignerStream`, then EOF.
+    #[test]
+    fn file_sam_stream_replays_records_incl_unmapped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam");
+        let miss = "r2\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+        std::fs::write(&p, format!("{MAPPED}\n{miss}\n")).unwrap();
+
+        let mut s = FileSamStream::open(&p).unwrap();
+        assert_eq!(s.current().unwrap().qname, "r1");
+        assert_eq!(s.current().unwrap().raw_line, MAPPED); // lossless
+        s.advance().unwrap();
+        assert_eq!(s.current().unwrap().qname, "r2");
+        assert!(s.current().unwrap().is_unmapped()); // FLAG-4 survives the round-trip
+        s.advance().unwrap();
+        assert!(s.current().is_none()); // EOF
+    }
+
+    /// An empty file → immediately `None`; a header-only file → `None` (the `@`
+    /// skip); a header-then-record file → the record is found.
+    #[test]
+    fn file_sam_stream_empty_and_header_skip() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let empty = dir.path().join("empty.sam");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(FileSamStream::open(&empty).unwrap().current().is_none());
+
+        let hdr = dir.path().join("hdronly.sam");
+        std::fs::write(&hdr, b"@HD\tVN:1.0\n").unwrap();
+        assert!(FileSamStream::open(&hdr).unwrap().current().is_none());
+
+        let mix = dir.path().join("mix.sam");
+        std::fs::write(&mix, format!("@HD\tVN:1.0\n{MAPPED}\n")).unwrap();
+        assert_eq!(
+            FileSamStream::open(&mix).unwrap().current().unwrap().qname,
+            "r1"
+        );
     }
 
     /// V6 (Phase 4 — guards the spike's WRONG "read s2" instruction): a real

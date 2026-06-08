@@ -53,7 +53,7 @@ use flate2::write::GzEncoder;
 
 use bismark_io::BamWriter;
 
-use crate::align::{AlignerStream, Orientation, PairedAlignerStream, SamStream};
+use crate::align::{AlignerStream, FileSamStream, Orientation, PairedAlignerStream, SamStream};
 use crate::aux_out::AuxKind;
 use crate::config::{LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
@@ -126,6 +126,11 @@ fn pipeline(config: &RunConfig) -> Result<()> {
                     // (`reject_combined_index_unsupported`) guarantees the library is
                     // NonDirectional whenever this flag is set.
                     run_se_combined_nondir_tagged(config, reads)
+                } else if config.combined_index_sequential {
+                    // model (a) SEQUENTIAL low-RSS variant: two passes one at a time.
+                    // The scope guard guarantees NonDirectional (and rejects it
+                    // together with --combined_index_single_pass) whenever this is set.
+                    run_se_combined_nondir_sequential(config, reads)
                 } else {
                     match config.library {
                         LibraryType::NonDirectional => run_se_combined_nondir(config, reads),
@@ -1397,11 +1402,15 @@ fn process_se_chunk_combined_nondir(
 /// modifier). Generic over [`SamStream`] so it is unit-testable with canned streams.
 // Two streams (one extra vs the directional `drive_merge_combined`) push this one
 // arg over clippy's threshold; the args are all distinct read-only context.
+// Two stream type params (NOT one `<S>`): the sequential exec model (v2 phase 9)
+// passes `ct_stream = FileSamStream` (pass 1 replayed from disk) + `ga_stream =
+// AlignerStream` (live pass 2) — DIFFERENT concrete types. Parallel model (a) infers
+// `C = G = AlignerStream`. The body is unchanged from the single-`<S>` version.
 #[allow(clippy::too_many_arguments)]
-fn drive_merge_combined_nondir<S: SamStream>(
+fn drive_merge_combined_nondir<C: SamStream, G: SamStream>(
     read_file: &Path,
-    ct_stream: &mut S,
-    ga_stream: &mut S,
+    ct_stream: &mut C,
+    ga_stream: &mut G,
     config: &RunConfig,
     genome: &Genome,
     refid: &HashMap<String, usize>,
@@ -1566,6 +1575,238 @@ fn select_and_route_se_nondir(
         false, // non-directional → pbat is false (indices 2/3 come from classify)
         config, sinks, counters,
     )
+}
+
+// ===========================================================================
+// Combined-index SEQUENTIAL non-directional driver (model (a) RSS variant)
+// (PLAN 06072026 phase 9). Model (a)'s two both-strands passes run ONE AT A TIME:
+// pass 1 (C->T) spills its records to a temp file and its Bowtie 2 EXITS (freeing
+// the combined index) before pass 2 (G->A) spawns → one index resident at a time,
+// ~half the peak RSS. BYTE-IDENTICAL to parallel model (a) (each pass sees the same
+// untagged converted file + index regardless of when it runs — exec-model spike C2);
+// reuses `drive_merge_combined_nondir` (signature-widened only) + the shared
+// `select_and_route_se_nondir` tail UNCHANGED. The trade is wall time (no overlap).
+// ===========================================================================
+
+/// Drain a [`SamStream`] to `path`, writing each record's verbatim `raw_line` + `\n`
+/// (bounded memory — one record held at a time). Returns the number of records
+/// written. Records are written in stream order (Bowtie 2's output order = the
+/// converted-input order), so a [`FileSamStream`] replays them in the same order a
+/// live stream would, preserving the per-read lockstep `drive_merge_combined_nondir`
+/// relies on. Generic over [`SamStream`] so it is unit-testable with a canned stream.
+fn spill_stream_to_file<S: SamStream>(stream: &mut S, path: &Path) -> Result<u64> {
+    let mut w = BufWriter::new(File::create(path)?);
+    let mut n: u64 = 0;
+    while let Some(r) = stream.current() {
+        writeln!(w, "{}", r.raw_line)?;
+        n += 1;
+        stream.advance()?;
+    }
+    w.flush()?;
+    Ok(n)
+}
+
+/// SEQUENTIAL non-directional combined driver (model (a) low-RSS variant): runs the
+/// two both-strands passes one at a time (pass 1 exits before pass 2 spawns), unioned
+/// per read via the shared `select_and_route_se_nondir`. Mirrors
+/// [`run_se_combined_nondir`] (parallel model (a)) but with the sequential
+/// banner/marker + [`process_se_chunk_combined_nondir_sequential`]. BYTE-IDENTICAL to
+/// model (a) (see the section header).
+fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // Non-directional → the report prints the 4-strand (OT/OB/CTOT/CTOB) split.
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, concordance-gated — \
+             byte-identical to the default PARALLEL combined non-dir path, NOT to the faithful \
+             4-instance path): two both-strands Bowtie 2 passes (C->T then G->A) over {} (-k 2) run \
+             ONE AT A TIME — pass 1 exits before pass 2 starts, so one combined index is resident at \
+             a time (~half the peak RSS, ~2x the wall), unioned per read <<<",
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index non-directional SEQUENTIAL.
+        writeln!(
+            report,
+            "Combined-index mode, non-directional SEQUENTIAL (experimental, concordance-gated; \
+             byte-identical to the default parallel combined non-dir path, one index resident at a \
+             time; NOT byte-identical to the faithful 4-instance per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_se_chunk_combined_nondir_sequential(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_single_end(&mut report, &counters, directional)?;
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary(read_file, &counters));
+    }
+    Ok(())
+}
+
+/// Convert reads to BOTH the C→T and G→A temp files (as parallel model (a)), then run
+/// the two both-strands Bowtie 2 passes SEQUENTIALLY: spawn pass 1 (C→T), **spill its
+/// records to a temp file and `finish()` it** (its Bowtie 2 exits → the combined index
+/// is freed), THEN spawn pass 2 (G→A) and drive the per-read union with pass 1
+/// replayed from disk (`FileSamStream`) against the live pass-2 stream. ONE combined
+/// index resident at a time (the ~−50% RSS win vs model (a)'s two co-resident loads).
+/// Returns the converted temp files for cleanup (the pass-1 spill is deleted here).
+fn process_se_chunk_combined_nondir_sequential(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let read_file = input.to_string_lossy();
+    // Non-directional conversion → [C→T (idx 0), G→A (idx 1)] (convert_se_files) —
+    // the SAME untagged files parallel model (a) produces.
+    let converted = convert_se_files(config, &read_file, opts)?;
+    for cr in &converted {
+        eprintln!(
+            "Created {} converted version of {read_file} -> {} ({} sequences)",
+            conv_label(&cr.name),
+            cr.path.display(),
+            cr.count
+        );
+    }
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index_sequential reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    let combined_opts = combined_aligner_options(config);
+
+    // Spill path: a sibling of the C→T converted file (already in the resolved
+    // temp_dir — reusing its path sidesteps the empty default `temp_dir`).
+    let mut spill_path = converted[0].path.clone();
+    let mut spill_name = spill_path.file_name().unwrap_or_default().to_os_string();
+    spill_name.push(".ct_pass.sam");
+    spill_path.set_file_name(spill_name);
+
+    // ---- PASS 1 (C→T → OT/OB) ------------------------------------------------
+    // Spawn ONE both-strands pass over the C→T file, drain it to the spill file,
+    // then FINISH it — `finish()` -> `child.wait()` blocks until pass-1 Bowtie 2
+    // EXITS, freeing the combined index. THE RSS INVARIANT: pass 2 must NOT spawn
+    // before this returns (the `?` also aborts here on a non-zero pass-1 exit,
+    // before any pass-2 process exists). The gate's RSS ceiling is the primary
+    // guard; the co-residency sampler corroborates.
+    let mut ct_stream = AlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &converted[0].path,
+    )?;
+    let spilled = spill_stream_to_file(&mut ct_stream, &spill_path)?;
+    ct_stream.finish()?;
+    eprintln!(
+        "Sequential combined-index: spilled {spilled} pass-1 (C->T) alignment lines to {} and freed \
+         the combined index before the G->A pass",
+        spill_path.display()
+    );
+
+    // ---- PASS 2 (G→A → CTOT/CTOB) -------------------------------------------
+    // Now (and only now) spawn the second pass; replay pass 1 from disk against it.
+    let mut ga_stream = AlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &converted[1].path,
+    )?;
+    let mut ct_file_stream = FileSamStream::open(&spill_path)?;
+    // The byte-frozen (body-unchanged, signature-widened) model-(a) driver, with the
+    // C→T stream sourced from disk and the G→A stream live.
+    drive_merge_combined_nondir(
+        input,
+        &mut ct_file_stream,
+        &mut ga_stream,
+        config,
+        genome,
+        refid,
+        sinks,
+        counters,
+    )?;
+    ga_stream.finish()?;
+
+    // The spill is internal scratch (not a `ConvertedReads`) — clean it up here;
+    // `converted` is returned for the caller's cleanup loop.
+    let _ = std::fs::remove_file(&spill_path);
+    Ok(converted)
 }
 
 // ===========================================================================
@@ -2601,5 +2842,71 @@ mod tests {
         // fail-loud: an untagged qname is NEVER silently mis-partitioned.
         let err = strip_conv_tag("read1").unwrap_err();
         assert!(format!("{err}").contains("__CT/__GA conversion tag"));
+    }
+
+    /// A canned [`SamStream`] over a fixed record list — for `spill_stream_to_file`.
+    struct VecStream {
+        recs: Vec<crate::align::SamRecord>,
+        idx: usize,
+    }
+    impl crate::align::SamStream for VecStream {
+        fn current(&self) -> Option<&crate::align::SamRecord> {
+            self.recs.get(self.idx)
+        }
+        fn advance(&mut self) -> Result<()> {
+            self.idx += 1;
+            Ok(())
+        }
+    }
+
+    /// `spill_stream_to_file` writes every record's `raw_line` in stream order, and a
+    /// `FileSamStream` replays them byte-identically — INCLUDING a FLAG-4 miss line
+    /// (the common ~50%-per-pass case). This is the round-trip the sequential exec
+    /// model relies on (pass 1 spilled to disk == pass 1 live).
+    #[test]
+    fn spill_stream_to_file_round_trips_incl_unmapped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam");
+        let lines = [
+            "r1\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            "r2\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF", // FLAG-4 miss
+            "r3\t16\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+        ];
+        let recs: Vec<_> = lines
+            .iter()
+            .map(|l| crate::align::SamRecord::parse(l).unwrap())
+            .collect();
+        let mut stream = VecStream {
+            recs: recs.clone(),
+            idx: 0,
+        };
+        let n = spill_stream_to_file(&mut stream, &p).unwrap();
+        assert_eq!(n, 3);
+
+        let mut replay = crate::align::FileSamStream::open(&p).unwrap();
+        for orig in &recs {
+            assert_eq!(replay.current().unwrap(), orig);
+            replay.advance().unwrap();
+        }
+        assert!(replay.current().is_none());
+    }
+
+    /// An empty stream spills a zero-record (empty) file → the replay is immediately
+    /// at EOF (the empty-input edge of the sequential path).
+    #[test]
+    fn spill_stream_to_file_empty_stream() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam");
+        let mut stream = VecStream {
+            recs: Vec::new(),
+            idx: 0,
+        };
+        assert_eq!(spill_stream_to_file(&mut stream, &p).unwrap(), 0);
+        assert!(
+            crate::align::FileSamStream::open(&p)
+                .unwrap()
+                .current()
+                .is_none()
+        );
     }
 }

@@ -3426,3 +3426,309 @@ fn combined_index_pbat_strand_counts() {
     let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
     assert_eq!(reader.records().count(), 2); // CTOT + CTOB
 }
+
+// ===========================================================================
+// `--combined_index --non_directional --combined_index_sequential` end-to-end
+// (phase 9, model (a) SEQUENTIAL low-RSS variant). Same two-pass union as model
+// (a), but pass 1 (C→T) is spilled to disk and its Bowtie 2 exits before pass 2
+// (G→A) spawns. BYTE-IDENTICAL to parallel model (a) — both feed Bowtie 2 the SAME
+// untagged converted files (exec-model spike C2). Reuses `make_fake_bowtie2_combined
+// _nondir` (dispatches on the `-U` input tag — unchanged by the exec model).
+// ===========================================================================
+
+/// Collect a combined-non-dir BAM's alignment records (header/@PG excluded) for a
+/// run with or without `--combined_index_sequential`, optionally `--upto`-limited.
+#[cfg(unix)]
+fn run_combined_nondir_records(
+    sequential: bool,
+    upto: Option<&str>,
+    ids: &[&str],
+) -> Vec<noodles_sam::alignment::RecordBuf> {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", ids);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let mut cmd = bin();
+    cmd.arg("--combined_index").arg("--non_directional");
+    if sequential {
+        cmd.arg("--combined_index_sequential");
+    }
+    if let Some(u) = upto {
+        cmd.arg("--upto").arg(u);
+    }
+    cmd.arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    // No leftover spill temp file after a successful run (sequential cleans it up).
+    if sequential {
+        let leftover = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+        assert!(!leftover, "sequential spill temp file must be cleaned up");
+    }
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    reader
+        .records()
+        .map(|r| r.unwrap().inner().clone())
+        .collect()
+}
+
+/// THE byte-identity property: the sequential variant's BAM records are identical to
+/// parallel model (a)'s on the same strand-mix inputs (OT + CTOT + CTOB; a both-miss
+/// dropped). Decision-equivalence is structural (exec-model spike C2), so this is the
+/// local proof the gate scales to real data.
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_byte_identical_to_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a = run_combined_nondir_records(false, None, &ids);
+    let sequential = run_combined_nondir_records(true, None, &ids);
+    assert_eq!(model_a.len(), 3); // OT + CTOT + CTOB; r_miss → no record
+    assert_eq!(
+        model_a, sequential,
+        "sequential combined BAM must be byte-identical to parallel model (a)"
+    );
+}
+
+/// Byte-identity holds under `--upto` early-break too (the sequential drive loop
+/// leaves the file-backed C→T stream + the live G→A stream non-exhausted; the run
+/// exits cleanly with the spill cleaned up).
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_upto_early_break_matches_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a = run_combined_nondir_records(false, Some("2"), &ids);
+    let sequential = run_combined_nondir_records(true, Some("2"), &ids);
+    assert_eq!(model_a.len(), 2); // first two reads (r_ot, r_ctot) → 2 records
+    assert_eq!(
+        model_a, sequential,
+        "sequential --upto must match model (a) --upto byte-for-byte"
+    );
+}
+
+/// The never-silent SEQUENTIAL banner (STDERR) + report marker + the 4-strand
+/// non-dir counts (mirrors the model-(a) strand-mix cell).
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_banner_and_report_marker() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir(bins.path());
+    let read = write_reads_ids(
+        genome.path(),
+        "reads.fq",
+        &["r_ot", "r_ctot", "r_ctob", "r_miss"],
+    );
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("NON-DIRECTIONAL SEQUENTIAL")
+                .and(predicate::str::contains(
+                    "one combined index is resident at a time",
+                ))
+                .and(predicate::str::contains("unique best alignments:   3")),
+        );
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("non-directional SEQUENTIAL"));
+    assert!(report.contains("byte-identical to the default parallel combined non-dir path"));
+    assert!(report.contains("Sequences analysed in total:\t4\n"));
+    assert!(report.contains("CT/CT:\t1\t((converted) top strand)"));
+    assert!(report.contains("GA/CT:\t1\t(complementary to (converted) top strand)"));
+    assert!(report.contains("GA/GA:\t1\t(complementary to (converted) bottom strand)"));
+    assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+}
+
+/// A read that misses BOTH passes → `NoAlignment` → 0 BAM records (the double-miss
+/// edge; both passes emit a lone FLAG-4 line that `select_nondir` filters).
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_double_miss_no_alignment() {
+    let recs = run_combined_nondir_records(true, None, &["r_miss"]);
+    assert!(recs.is_empty());
+}
+
+/// A fake `bowtie2` whose C→T (pass 1) invocation EXITS NON-ZERO (the G→A path is
+/// normal). Used to prove the sequential driver fails closed at `ct.finish()?` —
+/// before pass 2 is ever spawned.
+#[cfg(unix)]
+fn make_fake_bowtie2_combined_nondir_ct_fails(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$inp" in
+  *_C_to_T*) exit 3 ;;   # pass 1 (C->T) fails after emitting only the header
+  *_G_to_A*)
+    awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF"; }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Never-silent fail-closed: a non-zero pass-1 (C→T) Bowtie 2 exit aborts the run at
+/// `ct_stream.finish()?` (the §3 edge / RSS-boundary guard), not silently.
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_pass1_nonzero_exit_dies() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir_ct_fails(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exited unsuccessfully"));
+}
+
+/// Scope guard (never-silent): `--combined_index_sequential` requires `--combined_index
+/// --non_directional` and is mutually exclusive with `--combined_index_single_pass`.
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_scope_guard_rejects() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = make_read(genome.path());
+
+    // sequential WITHOUT --combined_index
+    bin()
+        .arg("--combined_index_sequential")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --combined_index"));
+
+    // sequential + --combined_index but DIRECTIONAL (no --non_directional)
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --non_directional"));
+
+    // sequential + single_pass together → competing exec models
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--combined_index_single_pass")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("competing"));
+}
+
+/// A fake `bowtie2` whose C→T (pass 1) invocation emits a record with a qname that
+/// matches NO input read (the G→A path is a normal miss). Used to TRIP the inherited
+/// desync guard through a DISK-REPLAYED `FileSamStream`: the spilled pass-1 record's
+/// head qname won't equal the re-read input id.
+#[cfg(unix)]
+fn make_fake_bowtie2_combined_nondir_ct_wrong_qname(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$inp" in
+  *_C_to_T*)
+    awk 'NR%4==1 { print "ghost_qname\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6"; }' "$inp" ;;
+  *_G_to_A*)
+    awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF"; }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Never-silent: the desync guard in `drive_merge_combined_nondir` still fires loud
+/// when the C→T stream is a DISK-REPLAYED `FileSamStream` (the sequential exec model),
+/// not just a live process. The pass-1 fake spills a record whose qname ≠ the re-read
+/// input id → the run dies loudly rather than silently mis-pairing the union.
+#[cfg(unix)]
+#[test]
+fn combined_index_sequential_desync_dies_loud() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir_ct_wrong_qname(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("desync")
+                .and(predicate::str::contains("C->T pass stream head")),
+        );
+}

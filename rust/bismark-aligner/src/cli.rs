@@ -104,6 +104,18 @@ pub struct Cli {
     #[arg(long = "combined_index_single_pass")]
     pub combined_index_single_pass: bool,
 
+    /// EXPERIMENTAL (v2, opt-in, never-silent): the SEQUENTIAL low-memory
+    /// execution model for `--combined_index --non_directional`. Runs model (a)'s
+    /// two both-strands Bowtie 2 passes ONE AT A TIME (pass 1's Bowtie 2 exits,
+    /// freeing the index, before pass 2 starts) instead of concurrently — one
+    /// combined index resident at a time (~half the peak RSS). BYTE-IDENTICAL to
+    /// the default parallel path (Bowtie 2 output is independent of when each pass
+    /// runs); the trade is wall time (the passes no longer overlap). Requires
+    /// `--combined_index --non_directional` (single-end Bowtie 2); mutually
+    /// exclusive with `--combined_index_single_pass`.
+    #[arg(long = "combined_index_sequential")]
+    pub combined_index_sequential: bool,
+
     // ---- read trimming / quality ------------------------------------------
     /// Skip the first <int> reads/pairs.
     #[arg(short = 's', long = "skip", value_name = "int")]
