@@ -215,6 +215,16 @@ pub struct RunConfig {
     /// `reject_combined_index_unsupported` guard requires `combined_index &&
     /// non_directional` (SE Bowtie 2, single-core) whenever this is `true`.
     pub combined_index_single_pass: bool,
+    /// `--combined_index_sequential` (v2, opt-in): the SEQUENTIAL low-memory exec
+    /// model for `--combined_index --non_directional` — model (a)'s two both-strands
+    /// passes run ONE AT A TIME (pass 1's Bowtie 2 exits, freeing the index, before
+    /// pass 2 spawns), so only one combined index is resident at a time (~half the
+    /// peak RSS). **BYTE-IDENTICAL** to the default parallel model (a) (each pass sees
+    /// the same untagged converted file + index regardless of when it runs); the trade
+    /// is wall time. The `reject_combined_index_unsupported` guard requires
+    /// `combined_index && non_directional` (SE Bowtie 2, single-core) and rejects it
+    /// together with `combined_index_single_pass` (competing exec models).
+    pub combined_index_sequential: bool,
 }
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
@@ -330,6 +340,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // v2 model-(b) single-pass tagged exec model (guarded above: requires
         // combined_index && non_directional, SE Bowtie 2, single-core).
         combined_index_single_pass: cli.combined_index_single_pass,
+        // v2 sequential low-memory exec model (guarded above: requires
+        // combined_index && non_directional, SE Bowtie 2, single-core; mutually
+        // exclusive with combined_index_single_pass).
+        combined_index_sequential: cli.combined_index_sequential,
     })
 }
 
@@ -366,6 +380,40 @@ fn reject_combined_index_unsupported(
                  (model b); it requires --non_directional. Directional and pbat combined-index \
                  are already single-pass (one index load), so the tagged model offers no benefit \
                  there. Drop --combined_index_single_pass."
+                    .into(),
+            ));
+        }
+    }
+    // --combined_index_sequential (the faithful sequential low-memory exec model) is,
+    // like model (b), ONLY meaningful for the non-directional combined path (the sole
+    // mode that loads the combined index twice) — but unlike model (b) it is
+    // BYTE-IDENTICAL to the default parallel model (a) (a pure RSS/wall trade). It is
+    // mutually exclusive with --combined_index_single_pass (competing exec models for
+    // the same mode). Checked BEFORE the !combined_index early return so the flag alone
+    // is also rejected loudly. SE / Bowtie 2 / single-core follow from --combined_index.
+    if cli.combined_index_sequential {
+        if cli.combined_index_single_pass {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_sequential and --combined_index_single_pass are competing \
+                 execution models for --combined_index --non_directional (faithful sequential vs \
+                 single-pass tagged); choose at most one."
+                    .into(),
+            ));
+        }
+        if !cli.combined_index {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_sequential requires --combined_index: it is the sequential \
+                 low-memory execution model for the non-directional combined-index path, not a \
+                 standalone mode."
+                    .into(),
+            ));
+        }
+        if library != LibraryType::NonDirectional {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_sequential is the sequential NON-DIRECTIONAL execution model; it \
+                 requires --non_directional. Directional and pbat combined-index are already \
+                 single-pass (one index load), so the sequential model offers no benefit there. \
+                 Drop --combined_index_sequential."
                     .into(),
             ));
         }
@@ -1058,6 +1106,104 @@ mod tests {
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
                 &pe()
+            )
+            .is_err()
+        );
+    }
+
+    /// `--combined_index_sequential` (the faithful sequential exec model) requires
+    /// `--combined_index --non_directional`, SE Bowtie 2, and is mutually exclusive
+    /// with `--combined_index_single_pass`. Every other combination is rejected
+    /// loudly (never-silent). Mirrors the model-(b) guard test above.
+    #[test]
+    fn combined_index_sequential_requires_combined_index_and_non_directional() {
+        // OK: combined_index + non_directional, SE Bowtie 2.
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_sequential"
+                ]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_ok()
+        );
+        // --combined_index_sequential WITHOUT --combined_index → reject (checked
+        // before the !combined_index early return).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--non_directional", "--combined_index_sequential"]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_err()
+        );
+        // directional / pbat → reject (sequential is non-dir-only; the others are
+        // already single-pass / one index load).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--combined_index_sequential"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_err()
+        );
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
+                Aligner::Bowtie2,
+                LibraryType::Pbat,
+                &se()
+            )
+            .is_err()
+        );
+        // mutual exclusion: --combined_index_sequential + --combined_index_single_pass
+        // → reject (competing execution models), regardless of the rest being valid.
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_sequential",
+                    "--combined_index_single_pass"
+                ]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_err()
+        );
+        // PE / multicore inherit the --combined_index rejections.
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_sequential"
+                ]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &pe()
+            )
+            .is_err()
+        );
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_sequential",
+                    "--multicore",
+                    "4"
+                ]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
             )
             .is_err()
         );
