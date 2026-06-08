@@ -117,9 +117,15 @@ fn pipeline(config: &RunConfig) -> Result<()> {
     match &config.layout {
         ReadLayout::SingleEnd { reads } => {
             if config.combined_index {
-                // v2 opt-in combined-index path (SE directional; --multicore
-                // rejected at resolve, so this is always the single-core branch).
-                run_se_combined(config, reads)
+                // v2 opt-in combined-index path (SE only; --multicore rejected at
+                // resolve, so this is always the single-core branch). Non-directional
+                // drives two passes (C→T + G→A reads) + a per-read 4-strand union;
+                // directional drives one C→T pass.
+                if matches!(config.library, LibraryType::NonDirectional) {
+                    run_se_combined_nondir(config, reads)
+                } else {
+                    run_se_combined(config, reads)
+                }
             } else if n > 1 {
                 parallel::run_se_multicore(config, reads, n)
             } else {
@@ -1055,6 +1061,335 @@ fn drive_merge_combined<S: SamStream>(
             genome,
             refid,
             false, // directional → pbat is always false
+            config,
+            sinks,
+            counters,
+        )?;
+    }
+    Ok(())
+}
+
+// ===========================================================================
+// `--combined_index` (v2) single-end NON-DIRECTIONAL path. Opt-in, never-silent,
+// concordance-gated (NOT byte-identical). TWO both-strands Bowtie 2 passes over
+// the combined CT+GA index — C→T-converted reads (→ OT/OB) + G→A-converted reads
+// (→ CTOT/CTOB) — unioned per read → `combined::select_nondir` → the shared
+// `route_se_decision`. Model (a) (two parallel passes + per-read streaming union)
+// of PLAN 06072026 phase 5. (Model (b), the single conversion-tagged invocation,
+// is the exec-model spike's alternative — not implemented here.)
+// ===========================================================================
+
+/// SE combined-index pipeline, **non-directional** (single-core). Mirrors
+/// [`run_se_combined`] but drives TWO both-strands Bowtie 2 passes over the
+/// combined index — one on the C→T-converted reads (→ OT/OB) and one on the
+/// G→A-converted reads (→ CTOT/CTOB) — unioned per read
+/// ([`process_se_chunk_combined_nondir`]). Announces the experimental,
+/// concordance-gated non-directional mode (never-silent); the report prints the
+/// 4-strand (OT/OB/CTOT/CTOB) split (`directional=false`).
+fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // Non-directional → the report prints the 4-strand (OT/OB/CTOT/CTOB) split.
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    // The actual options each Bowtie 2 pass is run with (faithful + `-k 2`).
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, NON-DIRECTIONAL (EXPERIMENTAL, concordance-gated — NOT \
+             byte-identical to the faithful 4-instance path): two both-strands Bowtie 2 passes \
+             (C->T + G->A reads) over {} (-k 2), unioned per read <<<",
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index non-directional mode.
+        writeln!(
+            report,
+            "Combined-index mode, non-directional (experimental, concordance-gated; NOT \
+             byte-identical to the faithful 4-instance per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_se_chunk_combined_nondir(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_single_end(&mut report, &counters, directional)?;
+        // Combined-mode extra: the spurious-discard tally (PLAN §3.8).
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary(read_file, &counters));
+    }
+    Ok(())
+}
+
+/// Convert reads to BOTH the C→T and G→A temp files (non-directional —
+/// `convert_se_files` returns `[C→T (idx 0), G→A (idx 1)]`), spawn TWO both-strands
+/// Bowtie 2 instances over the combined index with `-k 2` (one per converted file),
+/// and drive the per-read UNION classify→select→route. Returns the converted temp
+/// files for cleanup. The two passes run concurrently (two subprocesses, ~2× the
+/// combined index resident — model (a)'s known memory cost vs the single-invocation
+/// model (b)).
+fn process_se_chunk_combined_nondir(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let read_file = input.to_string_lossy();
+    // Non-directional conversion → [C→T (idx 0), G→A (idx 1)] (convert_se_files).
+    let converted = convert_se_files(config, &read_file, opts)?;
+    for cr in &converted {
+        eprintln!(
+            "Created {} converted version of {read_file} -> {} ({} sequences)",
+            conv_label(&cr.name),
+            cr.path.display(),
+            cr.count
+        );
+    }
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    // `-k 2` per pass (so each pass's cross-sub-genome runner-up is visible);
+    // `Orientation::Both` emits no `--norc`/`--nofw`. Two passes over the SAME
+    // combined index, differing only by the converted-read input file:
+    // converted[0] = C→T (→ OT/OB), converted[1] = G→A (→ CTOT/CTOB).
+    let combined_opts = combined_aligner_options(config);
+    let mut ct_stream = AlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &converted[0].path,
+    )?;
+    let mut ga_stream = AlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &converted[1].path,
+    )?;
+    drive_merge_combined_nondir(
+        input,
+        &mut ct_stream,
+        &mut ga_stream,
+        config,
+        genome,
+        refid,
+        sinks,
+        counters,
+    )?;
+    ct_stream.finish()?;
+    ga_stream.finish()?;
+    Ok(converted)
+}
+
+/// Re-read the original reads and, per read, gather the C→T pass's `-k` line group
+/// AND the G→A pass's `-k` line group (each a contiguous same-QNAME run — Bowtie 2
+/// emits a read's k lines contiguously), union-select ([`combined::select_nondir`]),
+/// and route the resulting [`Decision`] through the shared [`route_se_decision`]
+/// (`pbat=false` — the non-dir indices 2/3 come from `classify`, not the pbat +2
+/// modifier). Generic over [`SamStream`] so it is unit-testable with canned streams.
+// Two streams (one extra vs the directional `drive_merge_combined`) push this one
+// arg over clippy's threshold; the args are all distinct read-only context.
+#[allow(clippy::too_many_arguments)]
+fn drive_merge_combined_nondir<S: SamStream>(
+    read_file: &Path,
+    ct_stream: &mut S,
+    ga_stream: &mut S,
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let file = File::open(read_file)?;
+    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        id.clear();
+        seq.clear();
+        plus.clear();
+        qual.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        if fasta {
+            if n1 == 0 || n2 == 0 {
+                break;
+            }
+        } else {
+            let n3 = reader.read_until(b'\n', &mut plus)?;
+            let n4 = reader.read_until(b'\n', &mut qual)?;
+            if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+                break;
+            }
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        counters.sequences_count += 1;
+        let fixed = convert::fix_id(convert::chomp_newline(&id), icpc);
+        let prefix: &[u8] = if fasta { b">" } else { b"@" };
+        let id_bytes = fixed.strip_prefix(prefix).unwrap_or(&fixed);
+        let identifier = String::from_utf8_lossy(id_bytes).into_owned();
+        let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
+        let qual_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq_uc.len()]
+        } else {
+            convert::chomp_newline(&qual).to_vec()
+        };
+        let sequence = String::from_utf8_lossy(&seq_uc).into_owned();
+
+        // Never-silent desync guard (PLAN §3.9): each pass emits exactly one line
+        // per input read (mapped or a single FLAG-4 miss), and both converted files
+        // preserve the original read order + the same skip/upto (applied at
+        // conversion), so each stream's head must be THIS read. A mismatch means the
+        // two streams desynced from the re-read input — die loudly rather than
+        // silently mis-pair every downstream read (the two-stream gather has a larger
+        // blast radius than the directional single stream).
+        if let Some(r) = ct_stream.current()
+            && r.qname != identifier
+        {
+            return Err(AlignerError::Validation(format!(
+                "Combined non-directional desync: C->T pass stream head is '{}' but expected '{identifier}'",
+                r.qname
+            )));
+        }
+        if let Some(r) = ga_stream.current()
+            && r.qname != identifier
+        {
+            return Err(AlignerError::Validation(format!(
+                "Combined non-directional desync: G->A pass stream head is '{}' but expected '{identifier}'",
+                r.qname
+            )));
+        }
+
+        // Drain BOTH passes' contiguous same-QNAME runs for this read (incl. a lone
+        // FLAG-4 miss — the common ~50%-per-pass case, filtered by `select_nondir`).
+        // Draining both before advancing keeps the streams in lockstep with the
+        // re-read input.
+        let mut ct_records: Vec<crate::align::SamRecord> = Vec::new();
+        while ct_stream.current().is_some_and(|r| r.qname == identifier) {
+            ct_records.push(ct_stream.current().unwrap().clone());
+            ct_stream.advance()?;
+        }
+        let mut ga_records: Vec<crate::align::SamRecord> = Vec::new();
+        while ga_stream.current().is_some_and(|r| r.qname == identifier) {
+            ga_records.push(ga_stream.current().unwrap().clone());
+            ga_stream.advance()?;
+        }
+
+        let decision = combined::select_nondir(
+            &ct_records,
+            &ga_records,
+            &sequence,
+            config.score_min_intercept,
+            config.score_min_slope,
+            counters,
+        )?;
+        route_se_decision(
+            decision,
+            &identifier,
+            &seq_uc,
+            &qual_bytes,
+            &seq,
+            &plus,
+            fasta,
+            genome,
+            refid,
+            false, // non-directional → pbat is false (indices 2/3 come from classify)
             config,
             sinks,
             counters,
