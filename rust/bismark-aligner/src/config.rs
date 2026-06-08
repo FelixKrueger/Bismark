@@ -258,10 +258,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ));
     }
 
-    // --combined_index (v2) scope guard: SE directional Bowtie 2 only this phase.
-    // Reject every not-yet-supported combination loudly (never silently fall back
-    // to the faithful path — that would mask which strands the combined search
-    // omits). PLAN §3.1.
+    // --combined_index (v2) scope guard: SE (directional OR non-directional)
+    // Bowtie 2 only. Reject every not-yet-supported combination loudly (never
+    // silently fall back to the faithful path — that would mask which strands the
+    // combined search omits). PLAN §3.1 + phase 5.
     reject_combined_index_unsupported(cli, aligner, library, &layout)?;
 
     let genome = discovery::discover_genome(aligner, &genome_arg)?;
@@ -322,11 +322,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     })
 }
 
-/// `--combined_index` (v2) scope guard (PLAN §3.1). The combined-index path is
-/// **single-end directional Bowtie 2 only** in this phase; every other
-/// combination is rejected loudly so the run never silently falls back to a path
-/// that omits the strands the combined search would have covered. Each rejection
-/// names the conflicting flag and the phase that will add it.
+/// `--combined_index` (v2) scope guard (PLAN §3.1 + phase 5). The combined-index
+/// path is **single-end, directional or non-directional, Bowtie 2 only**; every
+/// other combination (PE, PBAT, `--multicore`, non-Bowtie2) is rejected loudly so
+/// the run never silently falls back to a path that omits the strands the combined
+/// search would have covered. Each rejection names the conflicting flag.
 fn reject_combined_index_unsupported(
     cli: &Cli,
     aligner: Aligner,
@@ -352,14 +352,12 @@ fn reject_combined_index_unsupported(
         ));
     }
     match library {
-        LibraryType::Directional => {}
-        LibraryType::NonDirectional => {
-            return Err(AlignerError::Unsupported(
-                "--combined_index --non_directional is not yet supported (non-directional combined \
-                 alignment is a later phase). Drop one of the two flags."
-                    .into(),
-            ));
-        }
+        // Directional (one C→T pass → OT/OB) and non-directional (two passes,
+        // C→T + G→A → OT/OB/CTOT/CTOB union, PLAN 06072026 phase 5) are both
+        // supported. PBAT stays deferred: it has no combined-index concordance/
+        // accuracy spike (the Sherman spike validated non-dir, not PBAT) — a
+        // separate follow-on phase.
+        LibraryType::Directional | LibraryType::NonDirectional => {}
         LibraryType::Pbat => {
             return Err(AlignerError::Unsupported(
                 "--combined_index --pbat is not yet supported. Drop one of the two flags.".into(),
@@ -892,10 +890,18 @@ mod tests {
         );
     }
 
-    /// Every not-yet-supported combination is rejected loudly (never-silent).
+    /// SE directional AND non-directional Bowtie 2 are both supported (phase 5).
     #[test]
-    fn combined_index_rejects_unsupported_combinations() {
-        // non-directional / pbat
+    fn combined_index_allows_se_directional_and_non_directional() {
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &se()
+            )
+            .is_ok()
+        );
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--non_directional"]),
@@ -903,8 +909,14 @@ mod tests {
                 LibraryType::NonDirectional,
                 &se()
             )
-            .is_err()
+            .is_ok()
         );
+    }
+
+    /// Every not-yet-supported combination is rejected loudly (never-silent).
+    #[test]
+    fn combined_index_rejects_unsupported_combinations() {
+        // pbat (deferred — no concordance/accuracy spike yet)
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--pbat"]),

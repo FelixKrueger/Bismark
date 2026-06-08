@@ -2760,20 +2760,7 @@ fn combined_index_scope_guard_rejects_unsupported() {
     make_genome(genome.path());
     let read = make_read(genome.path());
 
-    // --non_directional
-    bin()
-        .arg("--combined_index")
-        .arg("--non_directional")
-        .arg("--genome")
-        .arg(genome.path())
-        .arg(&read)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "--combined_index --non_directional",
-        ));
-
-    // --pbat
+    // --pbat (still deferred — no combined-index spike for PBAT)
     bin()
         .arg("--combined_index")
         .arg("--pbat")
@@ -2828,4 +2815,143 @@ fn combined_index_paired_end_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("single-end only"));
+}
+
+// ===========================================================================
+// `--combined_index --non_directional` end-to-end (phase 5, model (a)).
+// TWO passes over the SAME `BS_combined` index: the fake `bowtie2` dispatches on
+// the `-U` INPUT-FILE conversion tag (`*_C_to_T*` → OT/(none), `*_G_to_A*` →
+// CTOT/CTOB) — NOT the index basename, since both passes share one index. This is
+// the axis the directional `make_fake_bowtie2_combined` cannot model.
+// ===========================================================================
+
+/// A fake `bowtie2` for the non-directional combined run: the C→T pass aligns OT
+/// reads; the G→A pass aligns CTOT (`rev+_CT_converted`) / CTOB (`fwd+_GA_converted`)
+/// reads. Dispatch is on the converted-read input file (`_C_to_T` vs `_G_to_A`).
+#[cfg(unix)]
+fn make_fake_bowtie2_combined_nondir(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$inp" in
+  *_C_to_T*)
+    awk 'NR%4==1 {
+      id=$1; sub(/^@/,"",id);
+      if (id=="r_ot")        print id "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_keep") print id "\t0\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+  *_G_to_A*)
+    awk 'NR%4==1 {
+      id=$1; sub(/^@/,"",id);
+      if (id=="r_ctob")      print id "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_ctot") print id "\t16\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_keep") print id "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// THE §4b telomeric KEEP cell: an OT hit (C→T pass) and a CTOB hit (G→A pass) at
+/// the SAME locus/equal AS → KEPT (one record), won by **CTOB (index 3)** →
+/// FLAG 16 / XR:Z:GA / XG:Z:GA. Report: unique_best=1, unsuitable=0.
+#[cfg(unix)]
+#[test]
+fn combined_index_nondir_same_position_ot_ctob_kept_as_ctob() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_keep"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("NON-DIRECTIONAL")
+                .and(predicate::str::contains("unique best alignments:   1"))
+                .and(predicate::str::contains("ambiguous (unsuitable):   0")),
+        );
+
+    // ONE record: the CTOB winner of the OT×CTOB same-position collision.
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(u16::from(r.flags()), 16); // CTOB (index 3) → FLAG 16
+    assert_eq!(usize::from(r.alignment_start().unwrap()), 5);
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
+    assert_eq!(v(*b"XR"), Some(Value::String("GA".into()))); // CTOB → XR:GA
+    assert_eq!(v(*b"XG"), Some(Value::String("GA".into()))); // CTOB → XG:GA
+}
+
+/// Strand-mix + counter ownership: OT (C→T pass), CTOT + CTOB (G→A pass), and a
+/// both-passes-miss read → 3 unique / 1 no-alignment / 3 BAM records, and the NEW
+/// non-dir counters (`GA/CT`=CTOT, `GA/GA`=CTOB) populated in the report. Also
+/// exercises the common single-pass-hit path (each read hits exactly one pass).
+#[cfg(unix)]
+#[test]
+fn combined_index_nondir_strand_mix_records_and_counters() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined_nondir(bins.path());
+    let read = write_reads_ids(
+        genome.path(),
+        "reads.fq",
+        &["r_ot", "r_ctot", "r_ctob", "r_miss"],
+    );
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   3"));
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("Combined-index mode, non-directional"));
+    assert!(report.contains("Sequences analysed in total:\t4\n"));
+    // The 4-strand split: OT + CTOT + CTOB each once; OB none (non-dir newly
+    // populates the GA/CT + GA/GA rows).
+    assert!(report.contains("CT/CT:\t1\t((converted) top strand)"));
+    assert!(report.contains("CT/GA:\t0\t((converted) bottom strand)"));
+    assert!(report.contains("GA/CT:\t1\t(complementary to (converted) top strand)"));
+    assert!(report.contains("GA/GA:\t1\t(complementary to (converted) bottom strand)"));
+    assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 3); // OT + CTOT + CTOB
 }
