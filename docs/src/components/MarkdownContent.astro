@@ -1,0 +1,9 @@
+---
+/* On the home page, render the custom Home hero instead of markdown body.
+   Everywhere else, the default markdown content. */
+import Default from '@astrojs/starlight/components/MarkdownContent.astro';
+import Home from './Home.astro';
+import { isHomePage } from '../site';
+const isHome = isHomePage(Astro.locals.starlightRoute);
+---
+{isHome ? <Home /> : <Default><slot /></Default>}
