@@ -12,7 +12,7 @@ Bismark is a program to map bisulfite treated sequencing reads to a genome of in
 - Alignment seed length, number of mismatches etc. are adjustable
 - Output discriminates between cytosine methylation in `CpG`, `CHG` and `CHH` context
 
-> **Rust rewrite in progress:** Bismark's post-alignment tools are being ported from Perl to Rust — faster, with byte-identical output. See [`rust/`](rust/) for the workspace and a per-tool status table.
+> **Rust rewrite in progress:** Bismark's post-alignment tools are being ported from Perl to Rust — faster, with byte-identical output. See [`rust/`](rust/) for the workspace and a per-tool status table, and [Installing](rust/README.md#installing) to get the Rust suite (prebuilt binaries, container, or `cargo install`).
 
 ## Documentation
 

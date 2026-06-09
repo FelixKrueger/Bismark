@@ -4,6 +4,11 @@
 # `just <target>` for an individual check. Install just: `cargo install just`.
 # All targets run from the workspace root (`rust/`); `just` cd's here.
 
+# Install/update config for the `install-suite*` recipes (bump `suite_tag` on release).
+repo := "https://github.com/FelixKrueger/Bismark"
+suite_tag := "bismark-rust-v2.0.0-beta.3"
+suite_crates := "bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc bismark-report bismark-summary"
+
 # Default: the portable CI check suite (lint + tests, both profiles).
 default: ci
 
@@ -36,6 +41,14 @@ test-release:
 # Build all 12 release binaries (target/release/*_rs).
 build:
     cargo build --workspace --release
+
+# Install all 12 `*_rs` binaries from the pinned release tag into ~/.cargo/bin.
+install-suite:
+    cargo install --git {{repo}} --tag {{suite_tag}} --locked {{suite_crates}}
+
+# Install all 12 from the latest dev branch; re-run to update (no --force needed).
+install-suite-dev:
+    cargo install --git {{repo}} --branch rust/iron-chancellor {{suite_crates}}
 
 # Print every suite binary's --version (provenance + suite-version check).
 version: build
