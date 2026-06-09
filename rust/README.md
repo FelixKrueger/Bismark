@@ -23,6 +23,8 @@ Rust binaries take an `_rs` suffix through approximately v0.26 → v1.0 so they 
 
 After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries become the default `deduplicate_bismark` etc., and the Perl scripts move to a `legacy/` directory.
 
+**Inside the published container image** the tools are *additionally* exposed under their **canonical names** (`bismark`, `deduplicate_bismark`, `coverage2cytosine`, …): a container has no Perl Bismark to collide with, so canonical names make it a drop-in for pipelines that call the tools by name (e.g. nf-core/methylseq). The `bismark` canonical name is a thin wrapper that answers `-v`/`--version` with a `Bismark v0.25.1`-compatible banner (so the pipeline's version capture is byte-identical to the Perl oracle) and otherwise execs `bismark_rs`; the rest are symlinks. Host installs keep the `_rs` suffix for Perl coexistence.
+
 ## Architecture decisions
 
 - **BAM/SAM/CRAM I/O via pure-Rust `noodles`** — no `rust-htslib` (no htslib C build-time dep), no `samtools` subprocess (no external runtime dep).
