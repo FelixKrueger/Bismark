@@ -1,66 +1,75 @@
-# Core-scaling results — Bismark Rust aligner (time · CPU · RAM vs threads)
+# Core-scaling results — Bismark aligner: time · CPU · RAM vs total cores
 
 > Companion to [`BENCHMARK_RESULTS_alignment_modes.md`](BENCHMARK_RESULTS_alignment_modes.md).
-> How two Rust alignment **execution strategies** scale with Bowtie 2 threads (`-p`).
-> **Run:** 2026-06-09 on oxy (`dockyard-oxy-0`, shared K8s node), `bismark_rs 2.0.0-beta.1` (shipped `0b6bb8b`),
-> Bowtie 2 2.5.5, GRCh38, **10,000,000 real WGBS SE reads**. Slug `plans/06092026_bismark-beta/`. Feeds [[project_full_beta_nfcore_announcement]].
+> How Rust vs Perl 0.25.1 alignment modes scale with the cores you give them, on a **32-CPU** budget.
+> **Run:** 2026-06-09 on oxy (`dockyard-oxy-0`, **32-CPU pod allocation**), `bismark_rs 2.0.0-beta.1` (shipped `0b6bb8b`),
+> Bowtie 2 2.5.5, GRCh38, 10M SE reads. Slug `plans/06092026_bismark-beta/`. Feeds [[project_full_beta_nfcore_announcement]].
 
-## ⚠️ Read first — the two series are different library types / workloads
-This is **not** a like-for-like race; it's each mode's **intrinsic thread-scaling**. The x-axis is `-p` (threads *per Bowtie 2 instance*):
-
-| Series | Library | Bowtie 2 instances | Reads aligned | Total cores at `-p` |
-|---|---|---|---|---|
-| **faithful_dir** | directional | **2** (CT + GA, concurrent) | 10M (2 strands) | **2 × p** |
-| **comb1pass** | non-directional, single-pass (model b) | **1** | **20M** (conversion-tagged interleaved, 2× base) | **p** |
-
-So at the same x (`-p`), **faithful uses 2× the total cores** *and* **combined aligns 2× the reads** (the interleaved CT/GA-tagged set). Compare each curve to *itself* across threads; cross-mode gaps reflect those structural differences, not efficiency.
+## Axis & method (read first)
+- **x = total cores allocated = (Bowtie 2 instances) × `-p`.** Directional faithful/Perl use **2** instances, non-dir faithful/Perl use **4**, the combined modes use **1**. So "total cores", not `-p`, is the fair variable — at the same `-p` the modes would use wildly different core counts.
+- Everything is **capped at 32 cores** (the pod's CPU allocation); no point oversubscribes. Modes line up at the shared **8 / 16 / 32-core** budgets → a fair equal-budget comparison.
+- Per cell: wall (`SECONDS`), CPU core-seconds (`/usr/bin/time -v` User+System), peak **process-tree** RSS (descendant-PID sampler), max concurrent `bowtie2-align*`. No concordance (correctness already gate-proven; this is pure perf).
 
 ## Graphs
-![core-scaling: wall, RAM, CPU vs -p](scaling.png)
+**Directional** (10M real WGBS SE) — `faithful_dir` vs `perl_dir` vs `comb_dir`:
+![directional core scaling](directional.png)
 
-## Data (10 cells, all exit 0)
+**Non-directional** (10M Sherman-simulated SE, 64 bp, gzipped) — `faithful_nondir` vs `perl_nondir` vs `comb1pass`:
+![non-directional core scaling](nondir.png)
 
-| Mode | `-p` | Total cores | Wall (s) | CPU core-s | Peak RSS (GB) | Idx loads |
-|------|----:|----:|----:|----:|----:|----:|
-| faithful_dir | 2 | 4 | 787 | 3087.2 | 9.51 | 2 |
-| faithful_dir | 4 | 8 | 414 | 3095.4 | 9.57 | 2 |
-| faithful_dir | 8 | 16 | 228 | 3155.9 | 9.74 | 2 |
-| faithful_dir | 12 | 24 | 165 | 3182.0 | 9.91 | 2 |
-| faithful_dir | 16 | 32 | 135 | 3251.0 | 10.09 | 2 |
-| comb1pass | 2 | 2 | 2688 | 5442.4 | 10.75 | 1 |
-| comb1pass | 4 | 4 | 1352 | 5412.4 | 10.81 | 1 |
-| comb1pass | 8 | 8 | 707 | 5496.1 | 10.91 | 1 |
-| comb1pass | 12 | 12 | 489 | 5541.4 | 11.02 | 1 |
-| comb1pass | 16 | 16 | 378 | 5604.6 | 11.13 | 1 |
+## Headline findings
 
-## Analysis
+### 1. Perl's `-p` saturates; the Rust port keeps scaling
+Adding cores past ~16 does **nothing** for Perl wall time, in *both* library types, while its CPU cost balloons:
 
-### Wall time — both scale strongly; the single instance scales *better*
-| | p2 | p16 | speedup (p2→p16, 8× threads) | parallel efficiency |
-|---|---:|---:|---:|---:|
-| faithful_dir | 787 s | 135 s | **5.83×** | 73 % |
-| comb1pass | 2688 s | 378 s | **7.11×** | **89 %** |
+| Directional, wall (s) @ total cores | 4 | 8 | 16 | 24 | 32 |
+|---|--:|--:|--:|--:|--:|
+| Perl 0.25.1 | 797 | 603 | 610 | 596 | **613** ← flat |
+| Rust faithful | 787 | 414 | 228 | 165 | **135** |
+| Rust combined | (586@4) | 321 | 181 | 227@12 | **116** |
 
-Combined single-pass (one Bowtie 2 instance) scales closer to linear (89 %) than faithful directional (73 %). Faithful runs **two** instances that share the box and a wrapper with some serial sections, so its returns flatten earlier (most of its gain is already in by `-p 8`: 787→228 = 3.4× over the first 4× of threads, then only 228→135 = 1.7× over the next 4×). Both show the usual diminishing returns past ~8 threads.
+| Perl directional CPU core-s | 3586 | 4657 | 8759 | 12719 | **17229** |
+|---|--:|--:|--:|--:|--:|
 
-### Peak RAM — index-dominated, ~flat in threads; 1 index vs 2
-RSS barely moves with `-p` (the loaded Bowtie 2 index dominates; per-thread buffers add only ~0.4–0.6 GB across the whole sweep). The level difference is the index story:
-- **comb1pass holds ONE combined index** (~10.8–11.1 GB).
-- **faithful_dir holds TWO per-strand indices** (~9.5–10.1 GB).
+`★` Bowtie 2 `-p` only parallelises *alignment*; Bismark's per-read wrapper work (in-silico bisulfite conversion, methylation tagging) is serial. In **Perl** that wrapper is the bottleneck, so extra Bowtie 2 threads finish faster then **spin idle** (CPU core-s explodes, wall flat) — which is exactly why Perl needs **`--multicore`** to use more cores. In **Rust** the wrapper is cheap (~3.1k core-s, flat), so plain `-p`/more-cores keeps paying off to the full 32-core budget. **Answer to "is `-p` enough / is `--parallel` still needed":** for the Rust port `-p` (more cores) is a genuine lever up to your allocation; for Perl it saturates at ~16 cores and you need `--multicore`.
 
-Here the single fat combined index is ~1 GB *more* than two thin directional indices (it contains both genomes). The combined-index RAM **win** appears against *non-directional* faithful (4 indices, ~16.3 GB) — see the companion results doc; it's out of this directional-vs-single-pass sweep.
+### 2. The combined modes are the fastest at every budget — fewer instances use cores better
+At equal total cores, **one** Bowtie 2 instance scales better than 2–4 instances splitting the same cores:
 
-### CPU core-seconds — constant work per mode; the gap is workload, not waste
-Total CPU work is **near-constant across thread counts** within each mode (faithful ~3.09–3.25k; combined ~5.41–5.60k) — adding threads spreads the same work, with only a few-percent rise from thread-coordination overhead. The **~1.78× gap** between the modes is exactly the workload: comb1pass aligns **20M** conversion-tagged reads (non-directional) vs faithful's **10M** (directional). It is *not* combined-mode inefficiency.
+| @ 32 cores | wall (s) | CPU core-s | peak RSS | indices |
+|---|--:|--:|--:|--:|
+| **Directional** | | | | |
+| Perl 0.25.1 | 613 | 17229 | 10.36 GB | 2 |
+| Rust faithful | 135 | 3251 | 10.09 GB | 2 |
+| **Rust combined (comb_dir)** | **116** | **2605** | 11.59 GB | **1** |
+| **Non-directional** | | | | |
+| Perl 0.25.1 | 682 | 18542 | 16.93 GB | 4 |
+| Rust faithful | 278 | 7156 | 16.67 GB | 4 |
+| **Rust combined single-pass (comb1pass)** | **226** | **6040** | **11.54 GB** | **1** |
 
-## Takeaways
-1. **Both Rust modes parallelise well**; the single-instance combined single-pass scales more efficiently (89 % vs 73 % over p2→p16) — fewer instances contending, cleaner thread utilisation.
-2. **RAM is set by index layout, not threads**: 1 combined index (~11 GB) vs 2 directional indices (~10 GB). The headline combined RAM win is vs the 4-instance *non-directional* faithful (16.3 GB), not the directional baseline here.
-3. **Total CPU work is flat in threads**; the combined/faithful CPU gap is the 2× tagged-read (non-directional) workload.
-4. Practical: give a single combined single-pass run as many threads as you have (it keeps paying off to 16); for faithful directional, returns flatten past ~`-p 8` per instance (~16 total cores).
+- **Directional:** combined is ~5.3× faster than Perl and even edges out faithful (116 vs 135s) with the **least CPU** (one combined-index search replaces two per-strand ones). It costs ~1.5 GB more RAM (1 fat index vs 2 thin).
+- **Non-directional:** combined single-pass is fastest (3.0× Perl, 1.2× faithful), uses the **least CPU** *despite* aligning 20M conversion-tagged reads (one combined-index search beats four per-strand instances), **and** cuts peak RAM **~32%** (one ~11.5 GB index vs four totalling ~16.7 GB). This is where the single-pass memory trick legitimately pays off.
+
+### 3. RAM is index-dominated and flat in cores
+Peak RSS barely moves with core count (the loaded index dominates; per-thread buffers add ~1–1.5 GB across the sweep). The level is set by index *layout*: 1 combined index (~11–12 GB) vs 2 directional (~10 GB) vs 4 non-dir (~16–17 GB). The combined single-pass's single index is the non-directional RAM win.
+
+## Scaling efficiency (wall, total-core span)
+| mode | span (cores) | speedup | 
+|---|---|--:|
+| Rust faithful directional | 4→32 (8×) | 5.8× |
+| Rust combined directional | 4→32 (8×) | 5.1× (9.9× over 2→32) |
+| Perl directional | 4→32 (8×) | **1.3× (plateau)** |
+| Rust faithful non-dir | 8→32 (4×) | 3.3× |
+| Rust combined single-pass | 8→32 (4×) | 3.3× |
+| Perl non-dir | 8→32 (4×) | **1.3× (plateau)** |
+
+## Caveats & method notes
+- **32-CPU pod cap.** 4-instance non-dir modes max at `-p 8` (= 32 cores); 2-instance at `-p 16`; 1-instance at `-p 32`. All cells ≤ 32 cores — earlier `-p 12/16` non-dir runs (48/64 cores) were oversubscribed and discarded.
+- **Non-dir reads are Sherman-simulated** (10M, 64 bp, 0% error, 100% conversion — clean reads, ideal for a scaling curve; gzipped to match the real directional set's input format). The earlier mistake of running `comb1pass` (a non-directional, read-doubling mode) on the *directional* set — where half its work is wasted — has been dropped; the directional combined curve is now `comb_dir` (`--combined_index`, no tagging, 10M reads).
+- Summed process-tree RSS over-counts shared mmap'd index pages (an upper bound); ratios and single-index figures are sound.
+- Shared K8s node: co-tenant load adds (unavoidable, prior-gate-consistent) wall noise.
 
 ## Reproduce / artifacts
-- Harness: `run_bench_core_scaling.sh <reads> <tag>` (sweeps `-p {2,4,8,12,16}` for both modes; tree-RSS sampler; no concordance — perf only).
-- Plot: `MPLCONFIGDIR=<tmp> python3 plot_scaling.py scaling_summary.tsv scaling` → `scaling.png`.
-- Raw: `full10M_scaling_summary.tsv`, `full10M_scaling.log` (captured off-box from oxy `~/v2spike_out/bench_align_modes/full10M_scaling/`).
-- Shared K8s node caveat (node load from co-tenants) applies as in the companion doc.
+- Harnesses: `run_scaling_rust.sh <reads> <tag> <mode>` (modes: faithful_dir, comb_dir, faithful_nondir, comb1pass; `PS_LIST` env overrides the `-p` set), `run_scaling_perl.sh <reads> <tag> {perl_dir,perl_nondir}`; orchestrated by `master_remaining.sh` + `master2_capped.sh`.
+- Plot: `MPLCONFIGDIR=<tmp> python3 plot_scaling.py scaling_all_total_cores.tsv <out_dir>` → `directional.png` + `nondir.png`.
+- Raw merged data: `scaling_all_total_cores.tsv` (25 cells; captured off-box from oxy `~/v2spike_out/bench_align_modes/`).
