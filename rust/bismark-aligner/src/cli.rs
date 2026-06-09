@@ -195,6 +195,13 @@ pub struct Cli {
     /// Prefix prepended to the output file name.
     #[arg(long = "prefix", value_name = "str")]
     pub prefix: Option<String>,
+    /// Write BAM output — the DEFAULT. Accepted as a no-op for Bismark-CLI /
+    /// pipeline compatibility (Perl `bismark` has `--bam`; nf-core/methylseq's
+    /// `BISMARK_ALIGN` passes it). BAM is already the default here, so this just
+    /// makes the flag accepted rather than rejected; `--sam`/`--cram` (below)
+    /// still select those formats if given.
+    #[arg(long)]
+    pub bam: bool,
     /// Write SAM instead of BAM (deferred in v1).
     #[arg(long)]
     pub sam: bool,

@@ -832,6 +832,17 @@ mod tests {
     }
 
     #[test]
+    fn bam_flag_is_accepted_as_default_confirming_noop() {
+        // Perl `bismark` has `--bam`; nf-core/methylseq's BISMARK_ALIGN passes it.
+        // The modernized CLI makes BAM the default, so `--bam` must be ACCEPTED
+        // (not rejected) — a no-op. Without the flag defined, clap would error here.
+        assert!(cli_from(&["--bam"]).bam);
+        // and it doesn't perturb the format default (no --sam/--cram → BAM).
+        let c = cli_from(&["--bam"]);
+        assert!(!c.sam && !c.cram);
+    }
+
+    #[test]
     fn resolve_aligner_selects_hisat2() {
         assert_eq!(
             resolve_aligner(&cli_from(&["--hisat2"])).unwrap(),
