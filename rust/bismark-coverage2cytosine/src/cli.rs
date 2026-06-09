@@ -40,8 +40,11 @@ pub struct Cli {
     #[arg(long = "dir")]
     pub dir: Option<PathBuf>,
 
-    /// Genome FASTA directory (mandatory; no hardcoded default).
-    #[arg(short = 'g', long = "genome_folder")]
+    /// Genome FASTA directory (mandatory; no hardcoded default). `--genome` is
+    /// accepted as an alias: Perl `coverage2cytosine` takes `--genome` via
+    /// Getopt::Long prefix-matching of `--genome_folder`, and nf-core/methylseq's
+    /// `BISMARK_COVERAGE2CYTOSINE` passes `--genome` — clap needs the alias explicitly.
+    #[arg(short = 'g', long = "genome_folder", visible_alias = "genome")]
     pub genome_folder: Option<PathBuf>,
 
     /// Base directory to resolve relative paths against (default: cwd).
@@ -306,6 +309,26 @@ mod tests {
     fn cx_long_and_alias_both_parse() {
         assert!(cli(&["-o", "x", "-g", "gdir", "--CX_context", "in.cov"]).cx_context);
         assert!(cli(&["-o", "x", "-g", "gdir", "--CX", "in.cov"]).cx_context);
+    }
+
+    #[test]
+    fn genome_long_short_and_alias_all_parse() {
+        // `--genome_folder`, `-g`, and the `--genome` alias all set the genome dir.
+        // The alias exists because Perl c2c takes `--genome` (Getopt prefix-match)
+        // and nf-core/methylseq passes it; clap needs it explicitly.
+        use std::path::PathBuf;
+        assert_eq!(
+            cli(&["-o", "x", "--genome_folder", "gdir", "in.cov"]).genome_folder,
+            Some(PathBuf::from("gdir"))
+        );
+        assert_eq!(
+            cli(&["-o", "x", "-g", "gdir", "in.cov"]).genome_folder,
+            Some(PathBuf::from("gdir"))
+        );
+        assert_eq!(
+            cli(&["-o", "x", "--genome", "gdir", "in.cov"]).genome_folder,
+            Some(PathBuf::from("gdir"))
+        );
     }
 
     #[test]

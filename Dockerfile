@@ -44,6 +44,15 @@ RUN micromamba install -y -n base -c bioconda -c conda-forge \
     && micromamba clean --all --yes
 ENV PATH=/opt/conda/bin:$PATH
 
+# `procps` (provides `ps`) — REQUIRED by Nextflow/nf-core: the task wrapper shells
+# out to `ps` to collect per-task CPU/RSS metrics on every process (even without
+# `-with-trace`). The bioconda bismark image gets it transitively; this slim image
+# does not, so a pipeline (e.g. nf-core/methylseq) fails without it. From Debian
+# (apt) rather than conda — it is a base-OS tool. (Found by the methylseq proof run.)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
+
 # The 12 suite binaries (uniform `_rs` names during the beta/Perl-coexistence track).
 COPY --from=builder \
     /build/rust/target/release/bismark_rs \
