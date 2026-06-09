@@ -32,6 +32,55 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 - **Byte-equal output to Perl Bismark v0.25.1** is a CI gate for the tools we have validated.
 - Edition 2024; MSRV pinned in the workspace manifest.
 
+## Installing
+
+<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.3` / `beta.3` literal in this
+     section (the pinned `docker pull` tag + the `cargo install --tag`) AND `suite_tag` in `rust/justfile`.
+     The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
+
+Three ways to get the suite, easiest first — pick **one**.
+
+### 1. Prebuilt binaries (no Rust toolchain needed)
+
+Each [release](https://github.com/FelixKrueger/Bismark/releases) attaches prebuilt binaries for common Linux/macOS platforms. Download the archive for your platform, extract it, and put the binaries on your `PATH`. The Rust tools carry an `_rs` suffix (see [Binary naming during coexistence](#binary-naming-during-coexistence)).
+
+### 2. Container image (nothing to install)
+
+A multi-arch image is published to the GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.3  # pinned
+```
+
+Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
+
+### 3. Build from source with `cargo install` (whole suite, one command)
+
+Requires a Rust toolchain (see Prerequisites below). This installs **all 12** binaries into `~/.cargo/bin` in a single invocation:
+
+```bash
+cargo install --git https://github.com/FelixKrueger/Bismark \
+  --tag bismark-rust-v2.0.0-beta.3 --locked \
+  bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
+  bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
+  bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
+  bismark-report bismark-summary
+```
+
+For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.3` for `--branch rust/iron-chancellor`.
+
+> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.4`), or add `--force` to reinstall in place.
+
+Compiling 12 crates from source is a non-trivial one-time build; cargo does not fully share dependency compilation across the listed packages.
+
+#### Prerequisites (cargo path)
+
+- **Rust** — latest stable recommended (`rustup update`). The workspace MSRV is **1.89**; the one-command install above was verified on **cargo 1.95** (older cargo may not resolve packages inside the `rust/` subdirectory).
+- A working **C linker** (`cc`) for a few transitive build dependencies.
+- **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**. `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
+- Ensure **`~/.cargo/bin` is on your `PATH`** to run the installed `*_rs` binaries.
+
 ## Building
 
 ```bash
