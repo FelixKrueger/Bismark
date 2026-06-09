@@ -1,0 +1,38 @@
+[09:31:24] READS=/home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz  TAG=full10M_scaling
+[09:31:24] BR=/home/fkrueger/Bismark-bench/rust/target/release/bismark_rs ( Bismark Aligner (Rust port) Version: 2.0.0-beta.1)
+[09:31:24] bowtie2=/home/fkrueger/micromamba/envs/bismark-test/bin/bowtie2-align-s version 2.5.5
+[09:31:24] OUTROOT=/var/tmp/bench_core_scaling/full10M_scaling  DURABLE=/home/fkrueger/v2spike_out/bench_align_modes/full10M_scaling
+[09:31:24] === MODE 1: faithful directional (2 instances; total cores = 2*p) ===
+[09:31:24] >>> faithful_dir_p2 (total_cores=4): --genome /home/fkrueger/bismark_benchmarks/genome -p 2 -o /var/tmp/bench_core_scaling/full10M_scaling/faithful_dir_p2 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[09:44:31]     faithful_dir_p2  exit=0  wall=787s  cpu_core_s=3087.2  peak_rss=9.51GB  max_concurrent_align=2
+[09:44:31] >>> faithful_dir_p4 (total_cores=8): --genome /home/fkrueger/bismark_benchmarks/genome -p 4 -o /var/tmp/bench_core_scaling/full10M_scaling/faithful_dir_p4 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[09:51:25]     faithful_dir_p4  exit=0  wall=414s  cpu_core_s=3095.4  peak_rss=9.57GB  max_concurrent_align=2
+[09:51:25] >>> faithful_dir_p8 (total_cores=16): --genome /home/fkrueger/bismark_benchmarks/genome -p 8 -o /var/tmp/bench_core_scaling/full10M_scaling/faithful_dir_p8 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[09:55:13]     faithful_dir_p8  exit=0  wall=228s  cpu_core_s=3155.9  peak_rss=9.74GB  max_concurrent_align=2
+[09:55:13] >>> faithful_dir_p12 (total_cores=24): --genome /home/fkrueger/bismark_benchmarks/genome -p 12 -o /var/tmp/bench_core_scaling/full10M_scaling/faithful_dir_p12 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[09:57:58]     faithful_dir_p12  exit=0  wall=165s  cpu_core_s=3182.0  peak_rss=9.91GB  max_concurrent_align=2
+[09:57:58] >>> faithful_dir_p16 (total_cores=32): --genome /home/fkrueger/bismark_benchmarks/genome -p 16 -o /var/tmp/bench_core_scaling/full10M_scaling/faithful_dir_p16 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[10:00:13]     faithful_dir_p16  exit=0  wall=135s  cpu_core_s=3251.0  peak_rss=10.09GB  max_concurrent_align=2
+[10:00:13] === MODE 2: combined single-pass (b) (1 instance; total cores = p) ===
+[10:00:13] >>> comb1pass_p2 (total_cores=2): --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_single_pass -p 2 -o /var/tmp/bench_core_scaling/full10M_scaling/comb1pass_p2 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[10:45:01]     comb1pass_p2  exit=0  wall=2688s  cpu_core_s=5442.4  peak_rss=10.75GB  max_concurrent_align=1
+[10:45:01] >>> comb1pass_p4 (total_cores=4): --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_single_pass -p 4 -o /var/tmp/bench_core_scaling/full10M_scaling/comb1pass_p4 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[11:07:34]     comb1pass_p4  exit=0  wall=1352s  cpu_core_s=5412.4  peak_rss=10.81GB  max_concurrent_align=1
+[11:07:34] >>> comb1pass_p8 (total_cores=8): --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_single_pass -p 8 -o /var/tmp/bench_core_scaling/full10M_scaling/comb1pass_p8 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[11:19:21]     comb1pass_p8  exit=0  wall=707s  cpu_core_s=5496.1  peak_rss=10.92GB  max_concurrent_align=1
+[11:19:21] >>> comb1pass_p12 (total_cores=12): --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_single_pass -p 12 -o /var/tmp/bench_core_scaling/full10M_scaling/comb1pass_p12 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[11:27:30]     comb1pass_p12  exit=0  wall=489s  cpu_core_s=5541.4  peak_rss=11.02GB  max_concurrent_align=1
+[11:27:30] >>> comb1pass_p16 (total_cores=16): --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_single_pass -p 16 -o /var/tmp/bench_core_scaling/full10M_scaling/comb1pass_p16 /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[11:33:48]     comb1pass_p16  exit=0  wall=378s  cpu_core_s=5604.6  peak_rss=11.13GB  max_concurrent_align=1
+[11:33:48] === SCALING SWEEP DONE (full10M_scaling) — scaling_summary.tsv ===
+mode	p	total_cores	exit	wall_s	user_s	sys_s	cpu_core_s	peak_rss_kb	max_concurrent_align
+faithful_dir	2	4	0	787	2997.47	89.75	3087.2	9976884	2
+faithful_dir	4	8	0	414	2983.73	111.70	3095.4	10036712	2
+faithful_dir	8	16	0	228	3051.79	104.10	3155.9	10213648	2
+faithful_dir	12	24	0	165	3074.50	107.52	3182.0	10394288	2
+faithful_dir	16	32	0	135	3160.84	90.19	3251.0	10582516	2
+comb1pass	2	2	0	2688	5344.68	97.70	5442.4	11275548	1
+comb1pass	4	4	0	1352	5339.08	73.36	5412.4	11331972	1
+comb1pass	8	8	0	707	5427.63	68.44	5496.1	11445956	1
+comb1pass	12	12	0	489	5475.02	66.40	5541.4	11559940	1
+comb1pass	16	16	0	378	5543.78	60.78	5604.6	11671552	1
