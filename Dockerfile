@@ -31,7 +31,7 @@ LABEL org.opencontainers.image.source="https://github.com/FelixKrueger/Bismark"
 LABEL org.opencontainers.image.description="Bismark Rust suite (beta) — bisulfite aligner + methylation tools, byte-identical to Perl v0.25.1"
 LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 
-# The micromamba base ends on `USER mambauser` (UID 1000); installing into the
+# The micromamba base ends on `USER mambauser` (an unprivileged user); installing into the
 # base env + copying binaries into root-owned /usr/local/* needs root.
 USER root
 
@@ -60,6 +60,34 @@ COPY --from=builder \
     /build/rust/target/release/bismark2summary_rs \
     /usr/local/bin/
 
+# ── Canonical tool names (nf-core/methylseq drop-in) ─────────
+# methylseq calls the Bismark tools by canonical name (no `_rs`) and captures the
+# suite version from the `bismark` binary via `bismark -v`/`--version`. Exposing
+# canonical names lets a methylseq container-swap PR use only a `withName` override
+# (no module script edits):
+#   - `bismark` is a version-probe WRAPPER — its `-v`/`--version` output is kept
+#     byte-identical to the Perl v0.25.1 oracle so methylseq's versions.yml + the
+#     bismark nf-test snapshots are unchanged (docker/bismark-canonical-wrapper.sh).
+#   - the other 11 are plain symlinks (methylseq scrapes ONLY `bismark`, so their
+#     `--version` stays the truthful Rust-suite banner).
+ARG BISMARK_SUITE_VERSION=unknown
+COPY docker/bismark-canonical-wrapper.sh /tmp/bismark-wrapper.sh
+RUN set -eu; \
+    sed "s|__SUITE_VERSION__|${BISMARK_SUITE_VERSION}|" /tmp/bismark-wrapper.sh \
+        > /usr/local/bin/bismark; \
+    chmod +x /usr/local/bin/bismark; \
+    rm /tmp/bismark-wrapper.sh; \
+    for t in deduplicate_bismark bismark_methylation_extractor bismark2bedGraph \
+             coverage2cytosine bismark_genome_preparation bam2nuc NOMe_filtering \
+             filter_non_conversion methylation_consistency bismark2report bismark2summary; do \
+      ln -s "${t}_rs" "/usr/local/bin/${t}"; \
+    done
+
 # License + third-party notices.
 COPY license.txt /usr/local/share/bismark/LICENSE
 COPY rust/THIRD-PARTY-NOTICES.md /usr/local/share/bismark/THIRD-PARTY-NOTICES.md
+
+# Drop back to the non-root base user (nf-core/Apptainer convention). The binaries
+# in /usr/local/bin + the conda env in /opt/conda are world-executable, so the
+# unprivileged base user (`mambauser`) runs them fine.
+USER mambauser

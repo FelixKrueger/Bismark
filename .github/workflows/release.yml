@@ -252,6 +252,23 @@ jobs:
           docker run --rm "$IMG" bismark_methylation_extractor_rs --version
           docker run --rm "$IMG" bowtie2 --version
           docker run --rm "$IMG" samtools --version | head -1
+          # Canonical names (methylseq drop-in) resolve to the _rs binaries.
+          docker run --rm "$IMG" bismark --help >/dev/null
+          docker run --rm "$IMG" coverage2cytosine --help >/dev/null
+          docker run --rm "$IMG" deduplicate_bismark --help >/dev/null
+          # Version probe: BOTH methylseq parser shapes must capture EXACTLY 0.25.1
+          # from `bismark` (the provenance line must NOT leak — the contract that
+          # keeps methylseq's versions.yml + nf-test snapshots unchanged).
+          p1=$(docker run --rm "$IMG" bismark --version | grep Version | sed -e 's/Bismark Version: v//' | xargs)
+          p2=$(echo $(docker run --rm "$IMG" bismark -v 2>&1) | sed 's/^.*Bismark Version: v//; s/Copyright.*$//' | xargs)
+          echo "version capture: parser1='$p1' parser2='$p2'"
+          [ "$p1" = "0.25.1" ] || { echo "FAIL: align-module parser captured '$p1'"; exit 1; }
+          [ "$p2" = "0.25.1" ] || { echo "FAIL: versions.yml parser captured '$p2' (provenance leak?)"; exit 1; }
+          # Tools methylseq shells out to (genomeprep → *-build; extractor → gzip).
+          # NB assert each individually — `command -v a b c` only resolves the FIRST
+          # operand (POSIX), so a single multi-arg call would silently pass.
+          docker run --rm "$IMG" sh -c 'for t in gzip sed printf bowtie2-build hisat2-build samtools; do command -v "$t" >/dev/null || { echo "missing: $t"; exit 1; }; done' \
+            || { echo "FAIL: a required co-resident tool is missing"; exit 1; }
 
   # Create the tag + a DRAFT release (gated on the image building OK). Drafting
   # means no PUBLIC release exists until binaries are uploaded + the image is
