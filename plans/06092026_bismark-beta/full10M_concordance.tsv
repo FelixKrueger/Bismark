@@ -1,0 +1,7 @@
+row	metric	value	detail
+row4(rust_dir)	md5_vs_perl_dir	byte-identical	bd2df4bd3501b586e65e8ed88c8b35b4 vs bd2df4bd3501b586e65e8ed88c8b35b4
+row5(rust_nondir)	md5_vs_perl_nondir	byte-identical	728d4030e2dbc2a8c2fc89b10ab3a418 vs 728d4030e2dbc2a8c2fc89b10ab3a418
+row9(comb_nondir_seq)	md5_vs_parA	byte-identical	bf813fcd55d3e074614db15b5c23930d vs bf813fcd55d3e074614db15b5c23930d
+row7(comb_dir)	churn_vs_rust_dir	churn=0.0999% (oracle_unique=8501508 changed=8494 [absent=8079 moved=415]) combined_unique=8498745 gained=5316
+row8(comb_nondir_parA)	churn_vs_rust_nondir	churn=0.1324% (oracle_unique=8494541 changed=11250 [absent=10699 moved=551]) combined_unique=8489238 gained=5396
+row10(comb_nondir_1pass)	churn_vs_comb_nondir_parA	churn=0.0000% (oracle_unique=8489238 changed=0 [absent=0 moved=0]) combined_unique=8489238 gained=0

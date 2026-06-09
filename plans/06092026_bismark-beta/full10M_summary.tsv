@@ -1,0 +1,9 @@
+label	engine	exit	wall_s	user_s	sys_s	cpu_core_s	peak_rss_kb	max_concurrent_align
+perl_dir	perl	0	604	6058.58	2542.25	8600.8	10513704	2
+perl_nondir	perl	0	665	7814.44	1593.13	9407.6	17381228	4
+rust_dir	rust	0	229	3051.28	93.75	3145.0	10233420	2
+rust_nondir	rust	0	477	6494.20	416.14	6910.3	17112804	4
+comb_dir	rust	0	176	2365.19	41.09	2406.3	11675356	1
+comb_nondir_parA	rust	0	434	5746.91	491.81	6238.7	19898124	2
+comb_nondir_seq	rust	0	400	5525.32	83.80	5609.1	11676920	1
+comb_nondir_1pass	rust	0	377	5533.91	68.53	5602.4	11665548	1

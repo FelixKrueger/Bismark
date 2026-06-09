@@ -1,0 +1,49 @@
+[07:23:56] READS=/home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz (100000+ reads sampled-count; full count skipped)
+[07:23:56] BR=/home/fkrueger/Bismark-bench/rust/target/release/bismark_rs ( Bismark Aligner (Rust port) Version: 2.0.0-beta.1)
+[07:23:56] PERL_BM=/home/fkrueger/micromamba/envs/bismark-test/bin/bismark ( Bismark Version: v0.25.1)
+[07:23:56] bowtie2=/home/fkrueger/micromamba/envs/bismark-test/bin/bowtie2-align-s version 2.5.5
+[07:23:56] OUTROOT=/var/tmp/bench_align_modes/full10M  DURABLE=/home/fkrueger/v2spike_out/bench_align_modes/full10M
+[07:23:56] >>> CELL perl_dir (perl): /home/fkrueger/micromamba/envs/bismark-test/bin/bismark --genome /home/fkrueger/bismark_benchmarks/genome --samtools_path /home/fkrueger/micromamba/envs/bismark-test/bin -p 8 -o /var/tmp/bench_align_modes/full10M/perl_dir /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[07:34:00]     perl_dir  exit=0  wall=604s  cpu_core_s=8600.8  peak_rss=10.03GB  max_concurrent_align=2
+[07:34:00] >>> CELL perl_nondir (perl): /home/fkrueger/micromamba/envs/bismark-test/bin/bismark --genome /home/fkrueger/bismark_benchmarks/genome --samtools_path /home/fkrueger/micromamba/envs/bismark-test/bin --non_directional -p 4 -o /var/tmp/bench_align_modes/full10M/perl_nondir /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[07:45:05]     perl_nondir  exit=0  wall=665s  cpu_core_s=9407.6  peak_rss=16.58GB  max_concurrent_align=4
+[07:45:05] >>> CELL rust_dir (rust): /home/fkrueger/Bismark-bench/rust/target/release/bismark_rs --genome /home/fkrueger/bismark_benchmarks/genome -p 8 -o /var/tmp/bench_align_modes/full10M/rust_dir /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[07:48:54]     rust_dir  exit=0  wall=229s  cpu_core_s=3145.0  peak_rss=9.76GB  max_concurrent_align=2
+[07:48:54] >>> CELL rust_nondir (rust): /home/fkrueger/Bismark-bench/rust/target/release/bismark_rs --genome /home/fkrueger/bismark_benchmarks/genome --non_directional -p 4 -o /var/tmp/bench_align_modes/full10M/rust_nondir /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[07:56:51]     rust_nondir  exit=0  wall=477s  cpu_core_s=6910.3  peak_rss=16.32GB  max_concurrent_align=4
+[07:56:51] >>> CELL comb_dir (rust): /home/fkrueger/Bismark-bench/rust/target/release/bismark_rs --genome /home/fkrueger/bismark_benchmarks/genome --combined_index -p 16 -o /var/tmp/bench_align_modes/full10M/comb_dir /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[07:59:48]     comb_dir  exit=0  wall=176s  cpu_core_s=2406.3  peak_rss=11.13GB  max_concurrent_align=1
+[07:59:48] >>> CELL comb_nondir_parA (rust): /home/fkrueger/Bismark-bench/rust/target/release/bismark_rs --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional -p 8 -o /var/tmp/bench_align_modes/full10M/comb_nondir_parA /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[08:07:02]     comb_nondir_parA  exit=0  wall=434s  cpu_core_s=6238.7  peak_rss=18.98GB  max_concurrent_align=2
+[08:07:02] >>> CELL comb_nondir_seq (rust): /home/fkrueger/Bismark-bench/rust/target/release/bismark_rs --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_sequential -p 16 -o /var/tmp/bench_align_modes/full10M/comb_nondir_seq /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[08:13:43]     comb_nondir_seq  exit=0  wall=400s  cpu_core_s=5609.1  peak_rss=11.14GB  max_concurrent_align=1
+[08:13:43] >>> CELL comb_nondir_1pass (rust): /home/fkrueger/Bismark-bench/rust/target/release/bismark_rs --genome /home/fkrueger/bismark_benchmarks/genome --combined_index --non_directional --combined_index_single_pass -p 16 -o /var/tmp/bench_align_modes/full10M/comb_nondir_1pass /home/fkrueger/bismark_benchmarks/10M_SE/directional_10M_R1_val_1.fq.gz
+[08:20:00]     comb_nondir_1pass  exit=0  wall=377s  cpu_core_s=5602.4  peak_rss=11.13GB  max_concurrent_align=1
+[08:20:00] === ALL CELLS DONE — summary.tsv ===
+label	engine	exit	wall_s	user_s	sys_s	cpu_core_s	peak_rss_kb	max_concurrent_align
+perl_dir	perl	0	604	6058.58	2542.25	8600.8	10513704	2
+perl_nondir	perl	0	665	7814.44	1593.13	9407.6	17381228	4
+rust_dir	rust	0	229	3051.28	93.75	3145.0	10233420	2
+rust_nondir	rust	0	477	6494.20	416.14	6910.3	17112804	4
+comb_dir	rust	0	176	2365.19	41.09	2406.3	11675356	1
+comb_nondir_parA	rust	0	434	5746.91	491.81	6238.7	19898124	2
+comb_nondir_seq	rust	0	400	5525.32	83.80	5609.1	11676920	1
+comb_nondir_1pass	rust	0	377	5533.91	68.53	5602.4	11665548	1
+[08:20:00] === concordance: faithful rows vs Perl (expect byte-identical) ===
+[08:20:13]     row4 rust_dir vs perl_dir: byte-identical (bd2df4bd3501b586e65e8ed88c8b35b4 / bd2df4bd3501b586e65e8ed88c8b35b4)
+[08:20:26]     row5 rust_nondir vs perl_nondir: byte-identical (728d4030e2dbc2a8c2fc89b10ab3a418 / 728d4030e2dbc2a8c2fc89b10ab3a418)
+[08:20:26] === concordance: sequential vs parallel-a (expect byte-identical) ===
+[08:20:39]     row9 seq vs parA: byte-identical (bf813fcd55d3e074614db15b5c23930d / bf813fcd55d3e074614db15b5c23930d)
+[08:20:39] === concordance: combined churn vs matching faithful (final-BAM, oracle-unique-stays-unique) ===
+[08:21:04]     row7 comb_dir vs rust_dir: churn=0.0999% (oracle_unique=8501508 changed=8494 [absent=8079 moved=415]) combined_unique=8498745 gained=5316
+[08:21:29]     row8 comb_nondir_parA vs rust_nondir: churn=0.1324% (oracle_unique=8494541 changed=11250 [absent=10699 moved=551]) combined_unique=8489238 gained=5396
+[08:21:53]     row10 comb_nondir_1pass vs comb_nondir_parA: churn=0.0000% (oracle_unique=8489238 changed=0 [absent=0 moved=0]) combined_unique=8489238 gained=0
+[08:21:53] === concordance.tsv ===
+row	metric	value	detail
+row4(rust_dir)	md5_vs_perl_dir	byte-identical	bd2df4bd3501b586e65e8ed88c8b35b4 vs bd2df4bd3501b586e65e8ed88c8b35b4
+row5(rust_nondir)	md5_vs_perl_nondir	byte-identical	728d4030e2dbc2a8c2fc89b10ab3a418 vs 728d4030e2dbc2a8c2fc89b10ab3a418
+row9(comb_nondir_seq)	md5_vs_parA	byte-identical	bf813fcd55d3e074614db15b5c23930d vs bf813fcd55d3e074614db15b5c23930d
+row7(comb_dir)	churn_vs_rust_dir	churn=0.0999% (oracle_unique=8501508 changed=8494 [absent=8079 moved=415]) combined_unique=8498745 gained=5316
+row8(comb_nondir_parA)	churn_vs_rust_nondir	churn=0.1324% (oracle_unique=8494541 changed=11250 [absent=10699 moved=551]) combined_unique=8489238 gained=5396
+row10(comb_nondir_1pass)	churn_vs_comb_nondir_parA	churn=0.0000% (oracle_unique=8489238 changed=0 [absent=0 moved=0]) combined_unique=8489238 gained=0
+[08:21:53] === BENCHMARK COMPLETE (full10M) ===
