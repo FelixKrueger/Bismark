@@ -8,6 +8,7 @@
 ## Axis & method (read first)
 - **x = total cores allocated = (Bowtie 2 instances) × `-p`.** Directional faithful/Perl use **2** instances, non-dir faithful/Perl use **4**, the combined modes use **1**. So "total cores", not `-p`, is the fair variable — at the same `-p` the modes would use wildly different core counts.
 - Everything is **capped at 32 cores** (the pod's CPU allocation); no point oversubscribes. Modes line up at the shared **8 / 16 / 32-core** budgets → a fair equal-budget comparison.
+- **Leftmost point of each curve = the single-threaded *default* (no `-p`)**: 1 core for the 1-instance combined modes, 2 cores for the 2-instance directional faithful/Perl, 4 cores for the 4-instance non-dir. This is the config a user gets running `bismark` with no threading flags (see §"-p handling" — explicit `-p 1` is rejected by *both* tools; the default is single-threaded Bowtie 2).
 - Per cell: wall (`SECONDS`), CPU core-seconds (`/usr/bin/time -v` User+System), peak **process-tree** RSS (descendant-PID sampler), max concurrent `bowtie2-align*`. No concordance (correctness already gate-proven; this is pure perf).
 
 ## Graphs
@@ -53,6 +54,23 @@ At equal total cores, **one** Bowtie 2 instance scales better than 2–4 instanc
 ### 3. RAM is index-dominated and flat in cores
 Peak RSS barely moves with core count (the loaded index dominates; per-thread buffers add ~1–1.5 GB across the sweep). The level is set by index *layout*: 1 combined index (~11–12 GB) vs 2 directional (~10 GB) vs 4 non-dir (~16–17 GB). The combined single-pass's single index is the non-directional RAM win.
 
+### 4. `-p` handling — the Rust port is faithful to Perl; the default is single-threaded
+The leftmost point of every curve is the **single-threaded default** (no `-p`). On `-p` handling the Rust port is a **faithful replication of Perl**, verified directly:
+- **Explicit `-p 1` is rejected by *both* tools, verbatim** — Perl `bismark` line 7994 `die "Please select a value for -p of 2 or more!\n" unless ($parallel > 1)` and Rust `options.rs:130` raise the same message. So `-p 1` cannot anchor a graph point in either.
+- **`-p ≥ 2`** → that many Bowtie 2 threads per instance.
+- **No `-p` (default)** → single-threaded Bowtie 2 (Perl line 8257 *"Setting parallelization to single-threaded (default)"*); the Rust port does the same and produces an **identical 854-record BAM** to Perl on the smoke set. *That* is the true "`-p 1`" baseline, and it's what the leftmost points measure.
+
+| single-threaded default (no `-p`) | total cores | wall (s) | CPU core-s | RSS |
+|---|--:|--:|--:|--:|
+| Rust faithful directional | 2 | 1656 | 3302 | 9.47 GB |
+| Perl directional | 2 | 1581 | 3671 | 9.70 GB |
+| Rust combined directional | 1 | 2354 | 2435 | 10.72 GB |
+| Rust faithful non-dir | 4 | 1725 | 6711 | 16.07 GB |
+| Perl non-dir | 4 | 1796 | 7373 | 16.34 GB |
+| Rust combined single-pass | 1 | 5869 | 6008 | 10.72 GB |
+
+At the single-threaded floor **Perl ≈ Rust** (directional 1581 vs 1656s; non-dir 1796 vs 1725s) — both fully alignment-bound — and the curves *fan apart* as cores rise (Perl plateaus, Rust scales). **Caveat on `comb1pass` at 1 core (5869s):** single-threaded it's the *slowest* point on the non-dir graph — one thread over 20M conversion-tagged reads — yet it's the *fastest* mode at ≥ 8 cores (226s at 32). The combined single-pass needs threads to pay off; given a normal core budget it wins on both speed and RAM. *(Minor port nit found en route: the config-summary still prints a stale "no alignment performed" line from Phase-1 dev — cosmetic, alignment runs regardless.)*
+
 ## Scaling efficiency (wall, total-core span)
 | mode | span (cores) | speedup | 
 |---|---|--:|
@@ -70,6 +88,6 @@ Peak RSS barely moves with core count (the loaded index dominates; per-thread bu
 - Shared K8s node: co-tenant load adds (unavoidable, prior-gate-consistent) wall noise.
 
 ## Reproduce / artifacts
-- Harnesses: `run_scaling_rust.sh <reads> <tag> <mode>` (modes: faithful_dir, comb_dir, faithful_nondir, comb1pass; `PS_LIST` env overrides the `-p` set), `run_scaling_perl.sh <reads> <tag> {perl_dir,perl_nondir}`; orchestrated by `master_remaining.sh` + `master2_capped.sh`.
+- Harnesses: `run_scaling_rust.sh <reads> <tag> <mode>` (modes: faithful_dir, comb_dir, faithful_nondir, comb1pass; `PS_LIST` env overrides the `-p` set — `PS_LIST=1` ⇒ single-threaded default, no `-p`), `run_scaling_perl.sh <reads> <tag> {perl_dir,perl_nondir}`; orchestrated by `master_remaining.sh` (comb_dir + Sherman sim + non-dir sweeps), `master2_capped.sh` (32-core-capped totals), `master3_default.sh`/`master3b_default.sh` (single-threaded default baseline).
 - Plot: `MPLCONFIGDIR=<tmp> python3 plot_scaling.py scaling_all_total_cores.tsv <out_dir>` → `directional.png` + `nondir.png`.
-- Raw merged data: `scaling_all_total_cores.tsv` (25 cells; captured off-box from oxy `~/v2spike_out/bench_align_modes/`).
+- Raw merged data: `scaling_all_total_cores.tsv` (**31 cells**: 25 multi-thread + 6 single-threaded defaults; captured off-box from oxy `~/v2spike_out/bench_align_modes/`).

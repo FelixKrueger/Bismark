@@ -27,7 +27,7 @@ SECTIONS = {
             "perl_dir":     ("Perl 0.25.1 directional (2 inst)",   "#2ca02c", "^", "--"),
             "comb_dir":     ("Rust combined directional (1 inst)",  "#d62728", "s", "-"),
         },
-        "xticks": [2, 4, 8, 12, 16, 24, 32],
+        "xticks": [1, 2, 4, 8, 12, 16, 24, 32],
     },
     "nondir": {
         "title": "NON-DIRECTIONAL (10M Sherman-simulated SE)",
@@ -36,7 +36,7 @@ SECTIONS = {
             "perl_nondir":     ("Perl 0.25.1 non-dir (4 inst)",              "#2ca02c", "^", "--"),
             "comb1pass":       ("Rust combined single-pass non-dir (1 inst)", "#d62728", "s", "-"),
         },
-        "xticks": [8, 16, 32],
+        "xticks": [4, 8, 16, 32],
     },
 }
 

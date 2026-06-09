@@ -63,9 +63,13 @@ run_cell(){
   local label="${mode}_p${p}" od="$OUTROOT/${mode}_p${p}"
   mkdir -p "$od"; local tf="$od/time.txt" rf="$od/rss.txt" stop="$od/stop"
   rm -f "$stop" "$od"/*_bismark_bt2.bam 2>/dev/null
-  log ">>> $label (total_cores=$total): $* -p $p"
+  # p>=2 => explicit -p; p==1 => single-threaded DEFAULT (omit -p; Bowtie 2 uses 1 thread).
+  # (Explicit -p 1 is rejected by both Perl and the Rust port — "value of 2 or more".)
+  local pflag=() pdesc="(default single-threaded, no -p)"
+  if [ "$p" -ge 2 ]; then pflag=(-p "$p"); pdesc="-p $p"; fi
+  log ">>> $label (total_cores=$total): $* $pdesc"
   local t0=$SECONDS
-  /usr/bin/time -v -o "$tf" "$BR" "$@" -p "$p" --path_to_bowtie2 "$ENV" -o "$od" "$READS" > "$od/run.log" 2>&1 &
+  /usr/bin/time -v -o "$tf" "$BR" "$@" "${pflag[@]}" --path_to_bowtie2 "$ENV" -o "$od" "$READS" > "$od/run.log" 2>&1 &
   local timepid=$!; sampler "$timepid" "$rf" "$stop" & local sp=$!
   wait "$timepid"; local rc=$?; local wall=$((SECONDS - t0))
   touch "$stop"; wait "$sp" 2>/dev/null
