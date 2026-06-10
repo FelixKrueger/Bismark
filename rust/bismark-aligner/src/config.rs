@@ -796,8 +796,7 @@ impl RunConfig {
                large index:    {}\n\
                FASTA(s):       {} file(s) ({:?})\n\
                aligner_options: {}\n\
-               output:         BAM, dir={:?}, basename={:?}\n\
-             (Phase 1: parse + discover + detect only — no alignment performed.)",
+               output:         BAM, dir={:?}, basename={:?}",
             self.aligner.name(),
             self.detected_aligner.version,
             self.detected_aligner.path.display(),
