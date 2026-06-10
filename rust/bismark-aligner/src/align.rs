@@ -492,8 +492,10 @@ impl PairedAlignerStream {
         for opt in options.split_whitespace() {
             cmd.arg(opt);
         }
-        // PE always uses Norc/Nofw (`Both` is SE-combined only), so `flag()` is
-        // `Some` here; guard for the `Option` return without an empty arg.
+        // Bowtie 2 orientation flag: the faithful directional/pbat/non-dir PE slots
+        // pass `Norc`/`Nofw` (`flag()` → `Some`); the v2.x combined-index PE pass
+        // uses `Orientation::Both` (`flag()` → `None`) so ONE pass searches both
+        // sub-genomes. Guard the `Option` so `Both` adds no orientation arg.
         if let Some(f) = orient.flag() {
             cmd.arg(f);
         }

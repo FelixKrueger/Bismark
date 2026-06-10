@@ -2801,9 +2801,13 @@ fn combined_index_scope_guard_rejects_unsupported() {
         .stderr(predicate::str::contains("not supported with --multicore"));
 }
 
-/// Scope guard: `--combined_index` with paired-end input is rejected (SE only).
+/// Scope guard: paired-end `--combined_index` is lifted ONLY for directional Bowtie 2
+/// (v2.x Phase 2 — one both-strands C→T pass → OT/OB). Non-directional PE combined is
+/// still a later phase → rejected loudly (never-silent). Directional PE acceptance is
+/// covered by the `config` unit test `combined_index_allows_pe_directional_bowtie2`
+/// (the guard) + the oxy concordance gate (a full run).
 #[test]
-fn combined_index_paired_end_is_rejected() {
+fn combined_index_paired_end_nondir_is_rejected() {
     let genome = TempDir::new().unwrap();
     make_genome(genome.path());
     let r1 = genome.path().join("r1.fq");
@@ -2812,6 +2816,7 @@ fn combined_index_paired_end_is_rejected() {
     fs::write(&r2, b"@a/2\nACGTAC\n+\nFFFFFF\n").unwrap();
     bin()
         .arg("--combined_index")
+        .arg("--non_directional")
         .arg("--genome")
         .arg(genome.path())
         .arg("-1")
@@ -2820,7 +2825,139 @@ fn combined_index_paired_end_is_rejected() {
         .arg(&r2)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("single-end only"));
+        .stderr(predicate::str::contains(
+            "supported only for directional libraries with Bowtie 2",
+        ));
+}
+
+// ===========================================================================
+// `--combined_index` (v2.x Phase 2) paired-end directional end-to-end. Hermetic:
+// a fake `bowtie2` reads the `-1` (CT R1) temp file and emits ONE both-strands
+// combined-style PE pair per read id (OT 99/147 on `_CT_converted`, OB 83/163 on
+// `_GA_converted`), so the combined PE driver (process_pe_chunk_combined →
+// drive_merge_combined_pe → select_pe → route_pe_decision) runs end-to-end with no
+// real Bowtie 2 or index.
+// ===========================================================================
+
+/// A combined-index PE fake `bowtie2` (ONE both-strands instance, `-1 CT_R1 -2
+/// GA_R2`). Emits a pair per base id: `r_ot` → OT (R1 99 / R2 147 on
+/// `_CT_converted` at chr1:1); `r_ob` → OB (R1 83 rev / R2 163 on `_GA_converted`
+/// at chr1:5); anything else → an unmapped (77/141) pair. Strips the `/1/1` tag the
+/// PE conversion adds, then re-emits `/1`,`/2` as Bowtie 2 would.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_combined(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+  if (id=="r_ot") {
+    print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  } else if (id=="r_ob") {
+    print id "/1\t83\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print id "/2\t163\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  } else {
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+  }
+}' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// A combined-index directional PE OT pair → 2 BAM records, R1 FLAG 99 / R2 FLAG
+/// 147 (the byte-frozen PE output arm reused via synthetic PE index 0).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_ot_pair_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    // No mate suffix: the PE conversion inserts the `/1/1`,`/2/2` tag (Bowtie 2
+    // strips the outer one). Both mates share the base id.
+    fs::write(&r1, b"@r_ot\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r_ot\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode, paired-end (EXPERIMENTAL")
+                .and(predicate::str::contains("unique best alignments:   1")),
+        );
+
+    let bam = outdir.path().join("r1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2); // two records per pair
+    assert_eq!(u16::from(recs[0].inner().flags()), 99); // R1 → OT FLAG 99
+    assert_eq!(u16::from(recs[1].inner().flags()), 147); // R2 → OT FLAG 147
+}
+
+/// THE OB→3 PE REGRESSION (end-to-end): a combined-index OB pair (R1 rev +
+/// `_GA_converted`) must map to OB → PE synthetic index **3** → R1 FLAG **83** / R2
+/// FLAG **163**. The SE `to_index` numbering (OB→1 = CTOB) would emit FLAG 163/83
+/// instead — so R1 FLAG 83 is the discriminator that locks `to_index_pe`.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_ob_pair_maps_to_ob_index_3() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    // No mate suffix: the PE conversion inserts the `/1/1`,`/2/2` tag.
+    fs::write(&r1, b"@r_ob\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r_ob\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("r1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2);
+    // OB → PE index 3 → R1 FLAG 83, R2 FLAG 163 (NOT CTOB's 163/83).
+    assert_eq!(u16::from(recs[0].inner().flags()), 83);
+    assert_eq!(u16::from(recs[1].inner().flags()), 163);
 }
 
 // ===========================================================================

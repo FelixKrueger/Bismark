@@ -40,10 +40,12 @@
 
 use std::collections::HashMap;
 
-use crate::align::SamRecord;
+use crate::align::{SamPair, SamRecord};
 use crate::error::{AlignerError, Result};
 use crate::mapq::calc_mapq;
-use crate::merge::{BestAlignment, Counters, Decision};
+use crate::merge::{
+    BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired, deconvert,
+};
 
 /// Which converted read pass an alignment came from — i.e. which converted read
 /// file Bowtie 2 was fed. This selects the strand-classification table
@@ -92,6 +94,27 @@ impl CombinedClass {
             CombinedClass::Ob => Some(1),
             CombinedClass::Ctot => Some(2),
             CombinedClass::Ctob => Some(3),
+            CombinedClass::Spurious => None,
+        }
+    }
+
+    /// The **paired-end** synthetic instance index for the byte-frozen PE output
+    /// arm. **PE numbering DIFFERS from SE `to_index`** — OB and CTOB swap slots
+    /// 1↔3: the PE arm interprets `index` as `0 → OT`, `1 → CTOB`, `2 → CTOT`,
+    /// `3 → OB` (the `pe_instance_plan` order, `lib.rs`; the PE strand/conversion
+    /// switch `methylation.rs:421-425`; the PE FLAG switch `output.rs:469-473`
+    /// where index 3 → FLAG 83/163 = OB). **OB MUST map to 3** here: if it reused
+    /// the SE `to_index` (OB→1), the faithful PE directional reject (chosen index
+    /// 1/2, `merge.rs:725`) would silently drop EVERY OB pair, and the FLAG /
+    /// methylation arm would treat it as CTOB. For the directional C→T pass only OT
+    /// (→0) and OB (→3) are reachable, so neither hits the 1/2 reject. Spurious has
+    /// no valid index.
+    fn to_index_pe(self) -> Option<usize> {
+        match self {
+            CombinedClass::Ot => Some(0),
+            CombinedClass::Ctob => Some(1),
+            CombinedClass::Ctot => Some(2),
+            CombinedClass::Ob => Some(3),
             CombinedClass::Spurious => None,
         }
     }
@@ -421,6 +444,251 @@ pub fn select_pbat(
         score_min_slope,
         counters,
     )
+}
+
+// ===========================================================================
+// Paired-end combined-index selection (v2.x Phase 2). The PE analog of
+// `select`/`select_core`: a read pair's `-k 2` group is gathered into candidate
+// pairs, each classified on its **R1 mate** (orientation × sub-genome suffix —
+// the same `classify` table SE uses on the single read), scored by the **sum of
+// both mates' AS**, and resolved by the same Bismark-faithful tie machine, this
+// time emitting a [`DecisionPaired`]/[`BestAlignmentPaired`] so the byte-frozen PE
+// output arm (`extract_corresponding_genomic_sequence_paired_end` →
+// `methylation_call` ×2 → `paired_end_sam_output`) is reused UNCHANGED. The oracle
+// is `merge::check_results_paired_end`; the `select_core_pe` mechanism is
+// cross-checked against it in the tests. Phase 2 ships only the directional
+// [`select_pe`]; Phases 3/4 add the non-dir/pbat wrappers over the same core.
+// ===========================================================================
+
+/// One valid PE alignment kept for the `chr:pos1:pos2` map — the PE analog of
+/// [`Cand`] (mirrors `merge::StoredPair`, which is private to `merge.rs`).
+struct CandPe {
+    chromosome: String,
+    position_1: u32,
+    position_2: u32,
+    index: usize,
+    sum: i64,
+    md_tag_1: String,
+    md_tag_2: String,
+    cigar_1: String,
+    cigar_2: String,
+    bowtie_sequence_1: String,
+    bowtie_sequence_2: String,
+    flag_1: u16,
+    flag_2: u16,
+}
+
+/// Directional PE combined-index per-pair selection over the pair's `-k 2` group:
+/// every candidate pair is from the C→T-converted read pass ([`ReadConv::Ct`],
+/// `-1 C→T_R1 -2 G→A_R2`) → OT/OB. A thin wrapper over [`select_core_pe`] (the
+/// shared PE tie machine) — the PE analog of the directional [`select`]. `pairs`
+/// are the (≤ k) `SamPair`s Bowtie 2 emitted for one read pair; `sequence_1`/`_2`
+/// are the original (uc) reads (their lengths feed `calc_mapq`).
+pub fn select_pe(
+    pairs: &[SamPair],
+    sequence_1: &str,
+    sequence_2: &str,
+    score_min_intercept: f64,
+    score_min_slope: f64,
+    counters: &mut Counters,
+) -> Result<DecisionPaired> {
+    // Drop the PE no-alignment marker (FLAG 77/141 — Bowtie 2 emits one such pair
+    // for a miss); tag every surviving pair C→T (the directional pass). The shared
+    // core does the rest.
+    let mapped: Vec<(ReadConv, &SamPair)> = pairs
+        .iter()
+        .filter(|p| !p.is_unmapped_pair())
+        .map(|p| (ReadConv::Ct, p))
+        .collect();
+    select_core_pe(
+        mapped,
+        sequence_1,
+        sequence_2,
+        score_min_intercept,
+        score_min_slope,
+        counters,
+    )
+}
+
+/// The shared **Bismark-faithful PE tie machine** — `select_core` doubled for two
+/// mates (PLAN 06102026 phase 2; the oracle is `merge::check_results_paired_end`).
+/// `mapped` is the pair's FULL set of mapped candidate pairs, each tagged with the
+/// [`ReadConv`] of the pass that produced it (directional [`select_pe`] tags every
+/// pair `Ct`; Phases 3/4 will tag `Ga` / union both). OWNS the alignment-outcome
+/// counters the bypassed merge would bump.
+///
+/// Decision precedence (mirrors [`select_core`], summed over both mates):
+/// 1. no mapped pair → `NoAlignment`.
+/// 2. AS mandatory on BOTH mates of every pair (Perl 3405–3406); `sum = AS_1 +
+///    AS_2`. Sort highest-sum first → the GLOBAL best sum + the Phase-2 MAPQ
+///    runner-up (`mapped[1]`'s sum, over the FULL set).
+/// 3. `top` = pairs at the best sum, each classified on **R1** (`classify(rc,
+///    r1.flag, r1.rname)` → orientation × sub-genome) and mapped to the **PE**
+///    index via [`CombinedClass::to_index_pe`]; both mates must de-convert to the
+///    SAME chromosome (Perl 3351–3364, [`deconvert`]).
+/// 4. if `top` has any spurious pair (wrong sub-genome/pass at the best sum):
+///    also-valid → `Ambiguous`; all-spurious → `NoAlignment` (+`combined_spurious_count`).
+/// 5. else build a `chr:pos1:pos2` map over `top`, inserting in the oracle's
+///    **literal scan order `[0,3,1,2]`** with `>=` overwrite (NOT an ascending-index
+///    sort — they agree for directional's {0,3} but DIVERGE for the 4-slot reuse in
+///    Phase 3; `merge::SCAN_ORDER`). A same-locus equal-sum collision collapses to ONE
+///    entry won by the scan-order-last index (directional: OB(3) over OT(0)). Key is
+///    RAW `chr:pos1:pos2` (the no-second-best branch, Perl 3593) — the combined path
+///    never tracks a per-pair within-XS second-best, so the oracle's `chr:min:max`
+///    second-best key never applies. 1 entry → `UniqueBest`; ≥2 distinct loci →
+///    `Ambiguous`; `>4` → the verbatim too-many-hits guard (unreachable under `-k 2`).
+///
+/// MAPQ second-best is the Phase-2 rule (runner-up pair sum, or `None`) — it
+/// legitimately differs from the merge's per-mate `XS`/`ZS`, so it is excluded from
+/// the mechanism-vs-oracle test.
+fn select_core_pe(
+    mut mapped: Vec<(ReadConv, &SamPair)>,
+    sequence_1: &str,
+    sequence_2: &str,
+    score_min_intercept: f64,
+    score_min_slope: f64,
+    counters: &mut Counters,
+) -> Result<DecisionPaired> {
+    if mapped.is_empty() {
+        counters.no_single_alignment_found += 1;
+        return Ok(DecisionPaired::NoAlignment);
+    }
+
+    // AS mandatory on BOTH mates of every pair (Perl 3405–3406; merge.rs:555–566).
+    for (_, p) in &mapped {
+        if p.read1.alignment_score.is_none() {
+            return Err(AlignerError::Validation(format!(
+                "Failed to extract alignment score 1 from line {}",
+                p.read1.raw_line
+            )));
+        }
+        if p.read2.alignment_score.is_none() {
+            return Err(AlignerError::Validation(format!(
+                "Failed to extract alignment score 2 from line {}",
+                p.read2.raw_line
+            )));
+        }
+    }
+    // Sum of both mates' AS per pair; sort highest-sum first → GLOBAL best sum + the
+    // Phase-2 MAPQ runner-up (`mapped[1]`'s sum, over the FULL set, not `top`).
+    let pair_sum = |p: &SamPair| -> i64 {
+        p.read1.alignment_score.unwrap() + p.read2.alignment_score.unwrap()
+    };
+    mapped.sort_by_key(|(_, p)| std::cmp::Reverse(pair_sum(p)));
+    let best_sum = pair_sum(mapped[0].1);
+    let second_best = mapped.get(1).map(|(_, p)| pair_sum(p));
+
+    // `top` = pairs at the global best sum; classify each on R1 (orientation ×
+    // sub-genome) → PE index, requiring both mates on the same chromosome.
+    let mut valid_top: Vec<(String, u32, u32, usize, &SamPair)> = Vec::new();
+    let mut any_spurious = false;
+    for (rc, p) in mapped.iter().filter(|(_, p)| pair_sum(p) == best_sum) {
+        let (chrom, class) = classify(*rc, p.read1.flag, &p.read1.rname)?;
+        let chrom2 = deconvert(&p.read2.rname)?;
+        if chrom != chrom2 {
+            return Err(AlignerError::Validation(
+                "Paired-end alignments need to be on the same chromosome".into(),
+            ));
+        }
+        match class.to_index_pe() {
+            Some(index) => valid_top.push((chrom, p.read1.pos, p.read2.pos, index, p)),
+            None => any_spurious = true,
+        }
+    }
+
+    // §spurious branch (on the GLOBAL best sum — never a silent rescue).
+    if any_spurious {
+        if valid_top.is_empty() {
+            counters.no_single_alignment_found += 1;
+            counters.combined_spurious_count += 1;
+            return Ok(DecisionPaired::NoAlignment);
+        }
+        counters.unsuitable_sequence_count += 1;
+        return Ok(DecisionPaired::Ambiguous { first_ambig: None });
+    }
+
+    // §all-valid → build a `chr:pos1:pos2` map, inserting in the oracle's literal
+    // scan order [0,3,1,2] with `>=` overwrite (later-equal wins) so a same-locus
+    // equal-sum collision is won by the scan-order-last index. MD mandatory on both
+    // mates of every entered pair (Perl 3405–3406).
+    const SCAN_ORDER: [usize; 4] = [0, 3, 1, 2];
+    let mut map: HashMap<String, CandPe> = HashMap::new();
+    for &slot in &SCAN_ORDER {
+        for (chrom, pos1, pos2, index, p) in
+            valid_top.iter().filter(|(_, _, _, idx, _)| *idx == slot)
+        {
+            let md1 = p.read1.md_tag.clone().ok_or_else(|| {
+                AlignerError::Validation(format!(
+                    "Failed to extract MD tag 1 from line {}",
+                    p.read1.raw_line
+                ))
+            })?;
+            let md2 = p.read2.md_tag.clone().ok_or_else(|| {
+                AlignerError::Validation(format!(
+                    "Failed to extract MD tag 2 from line {}",
+                    p.read2.raw_line
+                ))
+            })?;
+            map.insert(
+                format!("{chrom}:{pos1}:{pos2}"),
+                CandPe {
+                    chromosome: chrom.clone(),
+                    position_1: *pos1,
+                    position_2: *pos2,
+                    index: *index,
+                    sum: best_sum,
+                    md_tag_1: md1,
+                    md_tag_2: md2,
+                    cigar_1: p.read1.cigar.clone(),
+                    cigar_2: p.read2.cigar.clone(),
+                    bowtie_sequence_1: p.read1.seq.clone(),
+                    bowtie_sequence_2: p.read2.seq.clone(),
+                    flag_1: p.read1.flag,
+                    flag_2: p.read2.flag,
+                },
+            );
+        }
+    }
+
+    let mut entries: Vec<CandPe> = map.into_values().collect();
+    if entries.len() > 4 {
+        return Err(AlignerError::Validation(format!(
+            "There are too many potential hits for this sequence pair (1-4 expected, but found: {})",
+            entries.len()
+        )));
+    }
+    if entries.len() >= 2 {
+        counters.unsuitable_sequence_count += 1;
+        return Ok(DecisionPaired::Ambiguous { first_ambig: None });
+    }
+    let best = entries.pop().expect("top all-valid → ≥1 map entry");
+
+    let mapq = calc_mapq(
+        sequence_1.len(),
+        Some(sequence_2.len()),
+        best.sum,
+        second_best,
+        score_min_intercept,
+        score_min_slope,
+    );
+    counters.unique_best_alignment_count += 1;
+    Ok(DecisionPaired::UniqueBest(BestAlignmentPaired {
+        chromosome: best.chromosome,
+        index: best.index,
+        position_1: best.position_1,
+        position_2: best.position_2,
+        cigar_1: best.cigar_1,
+        cigar_2: best.cigar_2,
+        md_tag_1: best.md_tag_1,
+        md_tag_2: best.md_tag_2,
+        bowtie_sequence_1: best.bowtie_sequence_1,
+        bowtie_sequence_2: best.bowtie_sequence_2,
+        flag_1: best.flag_1,
+        flag_2: best.flag_2,
+        sum_of_alignment_scores: best.sum,
+        sum_of_alignment_scores_second_best: second_best,
+        mapq,
+    }))
 }
 
 #[cfg(test)]
@@ -1277,5 +1545,382 @@ mod tests {
         let (d_comb, _) = sel_pbat(&[ctot.clone(), ctob.clone()]);
         assert_eq!(key(&d_comb), key_lift2(&oracle_pbat(ctot, ctob)));
         assert_eq!(key(&d_comb), Some(("chr1".to_string(), 100, 3)));
+    }
+
+    // ===================================================================
+    // Paired-end combined-index selection (Phase 2) — select_pe /
+    // select_core_pe, cross-checked against check_results_paired_end.
+    // ===================================================================
+
+    /// One PE SAM line (10bp read, CIGAR 10M, MD:Z:10) — the happy form.
+    fn pe_line(id: &str, mate: u8, flag: u16, rname: &str, pos: u32, as_i: i64) -> String {
+        format!(
+            "{id}/{mate}\t{flag}\t{rname}\t{pos}\t40\t10M\t=\t{pos}\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:{as_i}\tMD:Z:10"
+        )
+    }
+
+    /// Build a `SamPair` from R1/R2 (flag, rname, pos, AS); `from_lines` IDs R1 by `/1`.
+    #[allow(clippy::too_many_arguments)]
+    fn mk_pair(
+        flag1: u16,
+        rname1: &str,
+        pos1: u32,
+        as1: i64,
+        flag2: u16,
+        rname2: &str,
+        pos2: u32,
+        as2: i64,
+    ) -> SamPair {
+        SamPair::from_lines(
+            &pe_line("r1", 1, flag1, rname1, pos1, as1),
+            &pe_line("r1", 2, flag2, rname2, pos2, as2),
+        )
+        .unwrap()
+    }
+
+    /// OT-shaped pair: R1 fwd (flag 99) + R2 rev (147) on the CT sub-genome.
+    fn ot_pair(pos1: u32, pos2: u32, as1: i64, as2: i64) -> SamPair {
+        mk_pair(
+            99,
+            "chr1_CT_converted",
+            pos1,
+            as1,
+            147,
+            "chr1_CT_converted",
+            pos2,
+            as2,
+        )
+    }
+    /// OB-shaped pair: R1 rev (flag 83) + R2 fwd (163) on the GA sub-genome.
+    fn ob_pair(pos1: u32, pos2: u32, as1: i64, as2: i64) -> SamPair {
+        mk_pair(
+            83,
+            "chr1_GA_converted",
+            pos1,
+            as1,
+            163,
+            "chr1_GA_converted",
+            pos2,
+            as2,
+        )
+    }
+
+    /// Run directional `select_pe` over the candidate pairs.
+    fn sel_pe(pairs: &[SamPair]) -> (DecisionPaired, Counters) {
+        let mut c = Counters::default();
+        let d = select_pe(pairs, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap();
+        (d, c)
+    }
+
+    /// Project a `DecisionPaired` to the tie-relevant identity (mapq + 2nd-best excluded).
+    fn key_pe(d: &DecisionPaired) -> Option<(String, u32, u32, usize)> {
+        match d {
+            DecisionPaired::UniqueBest(b) => {
+                Some((b.chromosome.clone(), b.position_1, b.position_2, b.index))
+            }
+            _ => None,
+        }
+    }
+
+    /// Canned `PairedSamStream` double over fixed pairs (no subprocess).
+    struct VecPairStream {
+        pairs: Vec<SamPair>,
+        pos: usize,
+    }
+    impl crate::align::PairedSamStream for VecPairStream {
+        fn current_pair(&self) -> Option<&SamPair> {
+            self.pairs.get(self.pos)
+        }
+        fn advance_pair(&mut self) -> Result<()> {
+            self.pos += 1;
+            Ok(())
+        }
+    }
+
+    /// The faithful PE oracle with OT in slot 0 and OB in slot 3 (the directional
+    /// `pe_instance_plan`). Cross-checked against `select_core_pe`.
+    fn oracle_pe(ot: Option<SamPair>, ob: Option<SamPair>) -> DecisionPaired {
+        let mk = |p: Option<SamPair>| {
+            p.map(|pp| VecPairStream {
+                pairs: vec![pp],
+                pos: 0,
+            })
+        };
+        let mut streams: Vec<Option<VecPairStream>> = vec![mk(ot), None, None, mk(ob)];
+        let mut c = Counters::default();
+        crate::merge::check_results_paired_end(
+            "r1",
+            "ACGTACGTAC",
+            "ACGTACGTAC",
+            &mut streams,
+            true, // directional
+            0.0,
+            -0.2,
+            false,
+            crate::config::Aligner::Bowtie2,
+            &mut c,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn to_index_pe_uses_pe_numbering_and_differs_from_se_on_ob_ctob() {
+        // PE numbering (the `pe_instance_plan` / `methylation.rs:421` / `output.rs:469`
+        // order): OT=0, CTOB=1, CTOT=2, OB=3; Spurious has no index.
+        assert_eq!(CombinedClass::Ot.to_index_pe(), Some(0));
+        assert_eq!(CombinedClass::Ctob.to_index_pe(), Some(1));
+        assert_eq!(CombinedClass::Ctot.to_index_pe(), Some(2));
+        assert_eq!(CombinedClass::Ob.to_index_pe(), Some(3));
+        assert_eq!(CombinedClass::Spurious.to_index_pe(), None);
+        // OB and CTOB swap slots 1↔3 vs the SE `to_index` — the reconciliation that
+        // keeps OB (PE index 3) out of the PE directional reject (index 1/2).
+        assert_ne!(
+            CombinedClass::Ob.to_index(),
+            CombinedClass::Ob.to_index_pe()
+        );
+        assert_ne!(
+            CombinedClass::Ctob.to_index(),
+            CombinedClass::Ctob.to_index_pe()
+        );
+        assert_eq!(CombinedClass::Ob.to_index(), Some(1)); // SE
+        assert_eq!(CombinedClass::Ob.to_index_pe(), Some(3)); // PE
+        // OT and CTOT are identical in both numberings.
+        assert_eq!(
+            CombinedClass::Ot.to_index(),
+            CombinedClass::Ot.to_index_pe()
+        );
+        assert_eq!(
+            CombinedClass::Ctot.to_index(),
+            CombinedClass::Ctot.to_index_pe()
+        );
+    }
+
+    #[test]
+    fn select_pe_unique_ot_maps_to_index_0() {
+        let (d, c) = sel_pe(&[ot_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 0)));
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    #[test]
+    fn select_pe_unique_ob_maps_to_index_3() {
+        // THE reconciliation test: OB → PE index 3 (NOT the SE `to_index` 1).
+        let (d, _) = sel_pe(&[ob_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 3)));
+    }
+
+    #[test]
+    fn select_pe_runner_up_sets_second_best() {
+        // Best OT (sum -4) + a lower hit (sum -8): unique best; MAPQ second-best =
+        // the runner-up's sum (the AS runner-up over ALL mapped, not just `top`).
+        let best = ot_pair(100, 200, -2, -2); // sum -4
+        let lo = ot_pair(500, 600, -4, -4); // sum -8
+        match sel_pe(&[best, lo]).0 {
+            DecisionPaired::UniqueBest(b) => {
+                assert_eq!((b.position_1, b.position_2, b.index), (100, 200, 0));
+                assert_eq!(b.sum_of_alignment_scores, -4);
+                assert_eq!(b.sum_of_alignment_scores_second_best, Some(-8));
+            }
+            other => panic!("expected UniqueBest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn select_pe_cross_location_tie_is_ambiguous() {
+        let (d, c) = sel_pe(&[ot_pair(100, 200, -2, -2), ot_pair(500, 600, -2, -2)]);
+        assert!(matches!(d, DecisionPaired::Ambiguous { .. }));
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn select_pe_valid_and_spurious_tie_is_ambiguous() {
+        // OT (valid) + a spurious pair (C→T read, R1 fwd on the GA sub-genome) at the
+        // same best sum → Ambiguous (never a silent rescue of the valid hit).
+        let ot = ot_pair(100, 200, -2, -2);
+        let spur = mk_pair(
+            99,
+            "chr1_GA_converted",
+            300,
+            -2,
+            147,
+            "chr1_GA_converted",
+            400,
+            -2,
+        );
+        let (d, c) = sel_pe(&[ot, spur]);
+        assert!(matches!(d, DecisionPaired::Ambiguous { .. }));
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn select_pe_all_spurious_is_no_alignment() {
+        let spur = mk_pair(
+            99,
+            "chr1_GA_converted",
+            300,
+            -2,
+            147,
+            "chr1_GA_converted",
+            400,
+            -2,
+        );
+        let (d, c) = sel_pe(&[spur]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.combined_spurious_count, 1);
+    }
+
+    #[test]
+    fn select_pe_spurious_strictly_better_is_no_alignment() {
+        // A spurious pair STRICTLY better (sum -2) than a valid OT (sum -8): the best
+        // sum is the spurious one → top all-spurious → NoAlignment (never rescue the
+        // worse valid hit).
+        let spur = mk_pair(
+            99,
+            "chr1_GA_converted",
+            300,
+            -1,
+            147,
+            "chr1_GA_converted",
+            400,
+            -1,
+        ); // sum -2
+        let ot = ot_pair(100, 200, -4, -4); // sum -8
+        let (d, c) = sel_pe(&[spur, ot]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.combined_spurious_count, 1);
+    }
+
+    #[test]
+    fn select_pe_same_locus_ot_ob_collision_kept_ob_wins() {
+        // OT and OB at the SAME chr:pos1:pos2 + equal sum → ONE entry, won by OB
+        // (index 3, the scan-order-last of {0,3}).
+        let (d, _) = sel_pe(&[ot_pair(100, 200, -2, -2), ob_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 3)));
+    }
+
+    #[test]
+    fn select_core_pe_uses_literal_scan_order_not_ascending() {
+        // Lock the literal [0,3,1,2] order: an OB (Ct→index 3) and a CTOB (Ga→index
+        // 1) at the SAME locus + sum. The scan order visits 3 then 1 → CTOB(1) wins
+        // (the faithful answer). An ascending-index sort would visit 1 then 3 →
+        // OB(3), which is WRONG. Only reachable via the non-dir union, so this calls
+        // `select_core_pe` directly with mixed Ct/Ga tags.
+        let ob = ob_pair(100, 200, -2, -2); // Ct → OB → index 3
+        let ctob = mk_pair(
+            99,
+            "chr1_GA_converted",
+            100,
+            -2,
+            147,
+            "chr1_GA_converted",
+            200,
+            -2,
+        ); // Ga → CTOB → index 1
+        let mut c = Counters::default();
+        let d = select_core_pe(
+            vec![(ReadConv::Ct, &ob), (ReadConv::Ga, &ctob)],
+            "ACGTACGTAC",
+            "ACGTACGTAC",
+            0.0,
+            -0.2,
+            &mut c,
+        )
+        .unwrap();
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn select_pe_unmapped_only_is_no_alignment() {
+        // The PE no-alignment marker (77,141) is filtered → empty → NoAlignment.
+        let miss = SamPair::from_lines(
+            "r1/1\t77\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII",
+            "r1/2\t141\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII",
+        )
+        .unwrap();
+        let (d, c) = sel_pe(&[miss]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.no_single_alignment_found, 1);
+    }
+
+    #[test]
+    fn select_pe_empty_is_no_alignment() {
+        let (d, c) = sel_pe(&[]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.no_single_alignment_found, 1);
+    }
+
+    #[test]
+    fn select_pe_missing_as_errors() {
+        let r1 =
+            "r1/1\t99\tchr1_CT_converted\t100\t40\t10M\t=\t100\t0\tACGTACGTAC\tIIIIIIIIII\tMD:Z:10"; // no AS
+        let p =
+            SamPair::from_lines(r1, &pe_line("r1", 2, 147, "chr1_CT_converted", 200, -2)).unwrap();
+        let mut c = Counters::default();
+        let err = select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap_err();
+        assert!(format!("{err}").contains("alignment score"));
+    }
+
+    #[test]
+    fn select_pe_missing_md_errors() {
+        let r1 =
+            "r1/1\t99\tchr1_CT_converted\t100\t40\t10M\t=\t100\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:-2"; // no MD
+        let p =
+            SamPair::from_lines(r1, &pe_line("r1", 2, 147, "chr1_CT_converted", 200, -2)).unwrap();
+        let mut c = Counters::default();
+        let err = select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap_err();
+        assert!(format!("{err}").contains("MD tag"));
+    }
+
+    #[test]
+    fn select_pe_different_chromosome_errors() {
+        let p = mk_pair(
+            99,
+            "chr1_CT_converted",
+            100,
+            -2,
+            147,
+            "chr2_CT_converted",
+            200,
+            -2,
+        );
+        let mut c = Counters::default();
+        let err = select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap_err();
+        assert!(format!("{err}").contains("same chromosome"));
+    }
+
+    #[test]
+    fn mechanism_pe_unique_best_matches_oracle() {
+        // OT clear winner (sum -2) over OB (sum -8): combined picks OT idx 0; the
+        // oracle (OT slot 0, OB slot 3) picks the same.
+        let ot = ot_pair(100, 200, -1, -1);
+        let ob = ob_pair(300, 400, -4, -4);
+        let (d_comb, _) = sel_pe(&[ot.clone(), ob.clone()]);
+        let d_orac = oracle_pe(Some(ot), Some(ob));
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 0)));
+    }
+
+    #[test]
+    fn mechanism_pe_same_locus_collision_matches_oracle() {
+        // OT and OB at the same locus + sum: combined → OB(3); the oracle (slot 0
+        // OT, slot 3 OB, `>=` overwrite in scan order [0,3,1,2]) → OB(3).
+        let ot = ot_pair(100, 200, -2, -2);
+        let ob = ob_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe(&[ot.clone(), ob.clone()]);
+        let d_orac = oracle_pe(Some(ot), Some(ob));
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 3)));
+    }
+
+    #[test]
+    fn mechanism_pe_cross_location_matches_oracle() {
+        // OT and OB at different loci, equal sum → both paths Ambiguous.
+        let ot = ot_pair(100, 200, -2, -2);
+        let ob = ob_pair(300, 400, -2, -2);
+        let (d_comb, _) = sel_pe(&[ot.clone(), ob.clone()]);
+        let d_orac = oracle_pe(Some(ot), Some(ob));
+        assert!(matches!(d_comb, DecisionPaired::Ambiguous { .. }));
+        assert!(matches!(d_orac, DecisionPaired::Ambiguous { .. }));
     }
 }

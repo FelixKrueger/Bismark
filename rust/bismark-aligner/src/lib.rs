@@ -53,7 +53,9 @@ use flate2::write::GzEncoder;
 
 use bismark_io::BamWriter;
 
-use crate::align::{AlignerStream, FileSamStream, Orientation, PairedAlignerStream, SamStream};
+use crate::align::{
+    AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedSamStream, SamStream,
+};
 use crate::aux_out::AuxKind;
 use crate::config::{LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
@@ -145,7 +147,14 @@ fn pipeline(config: &RunConfig) -> Result<()> {
             }
         }
         ReadLayout::PairedEnd { mates1, mates2 } => {
-            if n > 1 {
+            if config.combined_index {
+                // v2.x opt-in PE combined-index path. The scope guard
+                // (`reject_combined_index_unsupported`) restricts this to directional
+                // Bowtie 2 (PE non-dir/pbat/HISAT2 + --multicore are rejected at
+                // resolve), so this is always the single-core directional branch:
+                // one both-strands C→T pass → OT/OB.
+                run_pe_combined(config, mates1, mates2)
+            } else if n > 1 {
                 parallel::run_pe_multicore(config, mates1, mates2, n)
             } else {
                 run_pe(config, mates1, mates2)
@@ -2655,100 +2664,495 @@ fn drive_merge_pe(
             counters,
         )?;
 
-        match decision {
-            DecisionPaired::UniqueBest(best) => {
-                let ext =
-                    extract_corresponding_genomic_sequence_paired_end(&best, genome, counters)?;
-                // R1 length guard first; on failure return (continue) BEFORE checking R2
-                // (Perl 3864→3867), each bumping the count by exactly 1.
-                if ext.unmodified_genomic_sequence_1.len() != seq1_uc.len() + 2 {
-                    eprintln!(
-                        "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
-                        best.chromosome, best.position_1
-                    );
-                    counters.genomic_sequence_could_not_be_extracted_count += 1;
-                    continue;
-                }
-                if ext.unmodified_genomic_sequence_2.len() != seq2_uc.len() + 2 {
-                    eprintln!(
-                        "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
-                        best.chromosome, best.position_2
-                    );
-                    counters.genomic_sequence_could_not_be_extracted_count += 1;
-                    continue;
-                }
-                let mc1 = methylation_call(
-                    &seq1_uc,
-                    &ext.unmodified_genomic_sequence_1,
-                    ext.read_conversion_1,
-                    counters,
+        // Route each pair to its sink (Perl 2649–2674 + the per-outcome return
+        // codes). Shared with the combined-index PE drive (`drive_merge_combined_pe`).
+        route_pe_decision(
+            decision,
+            &identifier,
+            &id2_stripped,
+            &seq1_uc,
+            &seq2_uc,
+            &qual1_bytes,
+            &qual2_bytes,
+            &seq1,
+            &plus1,
+            &seq2,
+            &plus2,
+            fasta,
+            genome,
+            refid,
+            dovetail,
+            config,
+            sinks,
+            counters,
+        )?;
+    }
+    Ok(())
+}
+
+/// Route one PE [`DecisionPaired`] to its sink (Perl 2649–2674 + the per-outcome
+/// return codes). Extracted verbatim from [`drive_merge_pe`]'s per-pair body so the
+/// combined-index PE drive ([`drive_merge_combined_pe`]) reuses the **byte-frozen**
+/// output arm (PE genomic extraction → two `XM` calls → two BAM records, and the
+/// `--ambig_bam`/`--ambiguous`/`--unmapped` routing) unchanged. `seq1`/`plus1`/`seq2`/
+/// `plus2` are the raw (un-chomped) FastQ/FastA line buffers; `seq{1,2}_uc` the chomped
+/// upper-cased reads; `qual{1,2}_bytes` the chomped qualities; `id2_stripped` the
+/// `@`/`>`-stripped read-2 id for the aux files. (The faithful default path is
+/// unchanged — a pure relocation, covered by the existing PE end-to-end tests + the
+/// oxy gate, exactly as `route_se_decision` was extracted.)
+#[allow(clippy::too_many_arguments)]
+fn route_pe_decision(
+    decision: DecisionPaired,
+    identifier: &str,
+    id2_stripped: &str,
+    seq1_uc: &[u8],
+    seq2_uc: &[u8],
+    qual1_bytes: &[u8],
+    qual2_bytes: &[u8],
+    seq1: &[u8],
+    plus1: &[u8],
+    seq2: &[u8],
+    plus2: &[u8],
+    fasta: bool,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    dovetail: bool,
+    config: &RunConfig,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    match decision {
+        DecisionPaired::UniqueBest(best) => {
+            let ext = extract_corresponding_genomic_sequence_paired_end(&best, genome, counters)?;
+            // R1 length guard first; on failure return BEFORE checking R2 (Perl
+            // 3864→3867), each bumping the count by exactly 1.
+            if ext.unmodified_genomic_sequence_1.len() != seq1_uc.len() + 2 {
+                eprintln!(
+                    "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
+                    best.chromosome, best.position_1
                 );
-                let mc2 = methylation_call(
-                    &seq2_uc,
-                    &ext.unmodified_genomic_sequence_2,
-                    ext.read_conversion_2,
-                    counters,
+                counters.genomic_sequence_could_not_be_extracted_count += 1;
+                return Ok(());
+            }
+            if ext.unmodified_genomic_sequence_2.len() != seq2_uc.len() + 2 {
+                eprintln!(
+                    "Chromosomal sequence could not be extracted for\t{identifier}\t{}\t{}",
+                    best.chromosome, best.position_2
                 );
-                let (rec1, rec2) = paired_end_sam_output(
-                    &identifier,
-                    &seq1_uc,
-                    &seq2_uc,
-                    &qual1_bytes,
-                    &qual2_bytes,
-                    &best,
-                    &ext,
-                    &mc1,
-                    &mc2,
-                    refid,
-                    config.phred64,
-                    dovetail,
-                )?;
-                write_record(&mut sinks.bam, &rec1)?;
-                write_record(&mut sinks.bam, &rec2)?;
+                counters.genomic_sequence_could_not_be_extracted_count += 1;
+                return Ok(());
             }
-            DecisionPaired::Ambiguous { first_ambig } => {
-                if let Some(ab) = sinks.ambig_bam.as_mut()
-                    && let Some((l1, l2)) = first_ambig.as_ref()
-                {
-                    write_raw_pe_ambig_lines(ab, l1, l2, refid)?;
-                }
-                // precedence: --ambiguous else --unmapped (Perl 2649/2663).
-                let (route1, route2) = if sinks.ambiguous_1.is_some() {
-                    (sinks.ambiguous_1.as_mut(), sinks.ambiguous_2.as_mut())
-                } else {
-                    (sinks.unmapped_1.as_mut(), sinks.unmapped_2.as_mut())
-                };
-                write_pe_aux(
-                    route1,
-                    route2,
-                    fasta,
-                    &identifier,
-                    &id2_stripped,
-                    &seq1,
-                    &plus1,
-                    &qual1_bytes,
-                    &seq2,
-                    &plus2,
-                    &qual2_bytes,
-                )?;
-            }
-            DecisionPaired::NoAlignment => {
-                write_pe_aux(
-                    sinks.unmapped_1.as_mut(),
-                    sinks.unmapped_2.as_mut(),
-                    fasta,
-                    &identifier,
-                    &id2_stripped,
-                    &seq1,
-                    &plus1,
-                    &qual1_bytes,
-                    &seq2,
-                    &plus2,
-                    &qual2_bytes,
-                )?;
-            }
-            DecisionPaired::Rejected => {}
+            let mc1 = methylation_call(
+                seq1_uc,
+                &ext.unmodified_genomic_sequence_1,
+                ext.read_conversion_1,
+                counters,
+            );
+            let mc2 = methylation_call(
+                seq2_uc,
+                &ext.unmodified_genomic_sequence_2,
+                ext.read_conversion_2,
+                counters,
+            );
+            let (rec1, rec2) = paired_end_sam_output(
+                identifier,
+                seq1_uc,
+                seq2_uc,
+                qual1_bytes,
+                qual2_bytes,
+                &best,
+                &ext,
+                &mc1,
+                &mc2,
+                refid,
+                config.phred64,
+                dovetail,
+            )?;
+            write_record(&mut sinks.bam, &rec1)?;
+            write_record(&mut sinks.bam, &rec2)?;
         }
+        DecisionPaired::Ambiguous { first_ambig } => {
+            if let Some(ab) = sinks.ambig_bam.as_mut()
+                && let Some((l1, l2)) = first_ambig.as_ref()
+            {
+                write_raw_pe_ambig_lines(ab, l1, l2, refid)?;
+            }
+            // precedence: --ambiguous else --unmapped (Perl 2649/2663).
+            let (route1, route2) = if sinks.ambiguous_1.is_some() {
+                (sinks.ambiguous_1.as_mut(), sinks.ambiguous_2.as_mut())
+            } else {
+                (sinks.unmapped_1.as_mut(), sinks.unmapped_2.as_mut())
+            };
+            write_pe_aux(
+                route1,
+                route2,
+                fasta,
+                identifier,
+                id2_stripped,
+                seq1,
+                plus1,
+                qual1_bytes,
+                seq2,
+                plus2,
+                qual2_bytes,
+            )?;
+        }
+        DecisionPaired::NoAlignment => {
+            write_pe_aux(
+                sinks.unmapped_1.as_mut(),
+                sinks.unmapped_2.as_mut(),
+                fasta,
+                identifier,
+                id2_stripped,
+                seq1,
+                plus1,
+                qual1_bytes,
+                seq2,
+                plus2,
+                qual2_bytes,
+            )?;
+        }
+        DecisionPaired::Rejected => {}
+    }
+    Ok(())
+}
+
+// ===========================================================================
+// `--combined_index` (v2.x) paired-end directional path. Opt-in, never-silent,
+// concordance-gated (NOT byte-identical). ONE both-strands Bowtie 2 `-1/-2` pass
+// over the combined CT+GA index (`-k 2`, `Orientation::Both`) → `combined::select_pe`
+// → the shared `route_pe_decision` (the byte-frozen PE output arm). PLAN
+// 06102026_combined-index-v2x phase 2. Mirrors the SE combined block (run_se_combined
+// / process_se_chunk_combined / drive_merge_combined) doubled for two mates.
+// ===========================================================================
+
+/// PE combined-index pipeline (single-core, directional Bowtie 2). Mirrors [`run_pe`]
+/// but drives ONE both-strands instance over the combined index
+/// ([`process_pe_chunk_combined`]) and announces the experimental, concordance-gated
+/// mode (never-silent) on STDERR + in the report. The scope guard
+/// (`reject_combined_index_unsupported`) guarantees directional Bowtie 2 here.
+fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let directional = matches!(config.library, LibraryType::Directional);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    // The actual options Bowtie 2 is run with (faithful + `-k 2`) — shown in the
+    // report header so it does not under-report the reporting mode.
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, paired-end (EXPERIMENTAL, concordance-gated — NOT \
+             byte-identical to the faithful per-strand path): one both-strands {} pass over \
+             {} (-k 2) <<<",
+            config.aligner.name(),
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index mode.
+        writeln!(
+            report,
+            "Combined-index mode (experimental, concordance-gated; NOT byte-identical to the \
+             faithful per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_pe_chunk_combined(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_1),
+            Path::new(read_2),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, directional)?;
+        // Combined-mode extra: the spurious-discard tally.
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+
+        // Per-mode temp cleanup: delete both converted temp files (C→T R1, G→A R2).
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+    }
+    Ok(())
+}
+
+/// Convert R1→C→T and R2→G→A (the directional PE convention — `pe_instance_plan`'s
+/// `k1=Ct, k2=Ga`, the `-1 C→T_R1 -2 G→A_R2` both faithful directional slots read),
+/// spawn ONE both-strands Bowtie 2 instance over the combined index with `-k 2`, and
+/// drive the per-pair classify→select→route with [`combined::select_pe`]. Returns the
+/// converted temp files for cleanup. Mirrors [`process_se_chunk_combined`] doubled.
+#[allow(clippy::too_many_arguments)]
+fn process_pe_chunk_combined(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let td = &config.output.temp_dir;
+
+    let cr1 = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
+    eprintln!(
+        "Created {} converted version of {} -> {} ({} sequences)",
+        conv_label(&cr1.name),
+        read_1.display(),
+        cr1.path.display(),
+        cr1.count
+    );
+    let cr2 = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
+    eprintln!(
+        "Created {} converted version of {} -> {} ({} sequences)",
+        conv_label(&cr2.name),
+        read_2.display(),
+        cr2.path.display(),
+        cr2.count
+    );
+
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    // Same option string the report header advertises (`combined_aligner_options`).
+    let combined_opts = combined_aligner_options(config);
+
+    // ONE both-strands PE instance: `Orientation::Both` emits no `--norc`/`--nofw`, so
+    // the single pass searches both sub-genomes; `-k 2` surfaces the cross-sub-genome
+    // runner-up for MAPQ + the spurious/ambiguity gate (PLAN §select_core_pe).
+    let mut stream = PairedAlignerStream::spawn(
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &cr1.path,
+        &cr2.path,
+    )?;
+    // `$dovetail` from config (NOT a scan of aligner_options — Bowtie 2 here, so they
+    // agree, but be consistent with the faithful `process_pe_chunk`).
+    let dovetail = config.dovetail;
+    drive_merge_combined_pe(
+        read_1,
+        read_2,
+        &mut stream,
+        config,
+        genome,
+        refid,
+        dovetail,
+        sinks,
+        counters,
+    )?;
+    stream.finish()?;
+    Ok(vec![cr1, cr2])
+}
+
+/// Re-read both original read files in lockstep and, per pair, gather the combined PE
+/// stream's `-k` group (consecutive same-`seq_id` [`SamPair`]s — Bowtie 2 emits a
+/// pair's k alignments contiguously), run [`combined::select_pe`], and route the
+/// [`DecisionPaired`] through the shared [`route_pe_decision`]. Generic over
+/// [`PairedSamStream`] so it is unit-testable with a canned pair stream. Mirrors
+/// [`drive_merge_combined`] (SE) doubled for two mates; the FastQ/FastA read loop +
+/// `skip`/`upto`/`icpc`/per-mate-quality handling is copied from [`drive_merge_pe`].
+///
+/// No desync sentinel (cf. [`drive_merge_combined`]): the whole contiguous same-id
+/// run is drained in one pass, so a pair's lines cannot reappear at the head after we
+/// move on; output order rests on the same Bowtie 2 `--reorder`-under-`-p` invariant
+/// the faithful path relies on. A miss is one `(77,141)` pair, filtered by `select_pe`.
+#[allow(clippy::too_many_arguments)]
+fn drive_merge_combined_pe<S: PairedSamStream>(
+    read_1: &Path,
+    read_2: &Path,
+    stream: &mut S,
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    dovetail: bool,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let mut r1 = open_reader(read_1)?;
+    let mut r2 = open_reader(read_2)?;
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+
+    let (mut id1, mut seq1, mut plus1, mut qual1) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut id2, mut seq2, mut plus2, mut qual2) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        for v in [
+            &mut id1, &mut seq1, &mut plus1, &mut qual1, &mut id2, &mut seq2, &mut plus2,
+            &mut qual2,
+        ] {
+            v.clear();
+        }
+        let n_id1 = r1.read_until(b'\n', &mut id1)?;
+        let n_seq1 = r1.read_until(b'\n', &mut seq1)?;
+        if !fasta {
+            let _ = r1.read_until(b'\n', &mut plus1)?;
+            let _ = r1.read_until(b'\n', &mut qual1)?;
+        }
+        let n_id2 = r2.read_until(b'\n', &mut id2)?;
+        let n_seq2 = r2.read_until(b'\n', &mut seq2)?;
+        if !fasta {
+            let _ = r2.read_until(b'\n', &mut plus2)?;
+            let _ = r2.read_until(b'\n', &mut qual2)?;
+        }
+        let incomplete = if fasta {
+            n_id1 == 0 || n_seq1 == 0 || n_id2 == 0 || n_seq2 == 0
+        } else {
+            n_id1 == 0
+                || n_seq1 == 0
+                || qual1.is_empty()
+                || n_id2 == 0
+                || n_seq2 == 0
+                || qual2.is_empty()
+        };
+        if incomplete {
+            break;
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        counters.sequences_count += 1;
+
+        let id1_fixed = convert::fix_id(convert::chomp_newline(&id1), icpc);
+        let id2_fixed = convert::fix_id(convert::chomp_newline(&id2), icpc);
+        let id_prefix: &[u8] = if fasta { b">" } else { b"@" };
+        let identifier =
+            String::from_utf8_lossy(id1_fixed.strip_prefix(id_prefix).unwrap_or(&id1_fixed))
+                .into_owned();
+        let id2_stripped =
+            String::from_utf8_lossy(id2_fixed.strip_prefix(id_prefix).unwrap_or(&id2_fixed))
+                .into_owned();
+        let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
+        let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
+        let qual1_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq1_uc.len()]
+        } else {
+            convert::chomp_newline(&qual1).to_vec()
+        };
+        let qual2_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq2_uc.len()]
+        } else {
+            convert::chomp_newline(&qual2).to_vec()
+        };
+        let s1 = String::from_utf8_lossy(&seq1_uc).into_owned();
+        let s2 = String::from_utf8_lossy(&seq2_uc).into_owned();
+
+        // Gather this pair's `-k` group: all consecutive same-`seq_id` pairs.
+        let mut pairs: Vec<crate::align::SamPair> = Vec::new();
+        while stream
+            .current_pair()
+            .is_some_and(|p| p.seq_id == identifier)
+        {
+            pairs.push(stream.current_pair().unwrap().clone());
+            stream.advance_pair()?;
+        }
+
+        let decision = combined::select_pe(
+            &pairs,
+            &s1,
+            &s2,
+            config.score_min_intercept,
+            config.score_min_slope,
+            counters,
+        )?;
+        route_pe_decision(
+            decision,
+            &identifier,
+            &id2_stripped,
+            &seq1_uc,
+            &seq2_uc,
+            &qual1_bytes,
+            &qual2_bytes,
+            &seq1,
+            &plus1,
+            &seq2,
+            &plus2,
+            fasta,
+            genome,
+            refid,
+            dovetail,
+            config,
+            sinks,
+            counters,
+        )?;
     }
     Ok(())
 }

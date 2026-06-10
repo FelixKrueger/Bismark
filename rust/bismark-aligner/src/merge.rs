@@ -484,8 +484,10 @@ struct StoredPair {
     flag_2: u16,
 }
 
-/// De-convert an RNAME (`s/_(CT|GA)_converted$//`, Perl 3351–3362).
-fn deconvert(rname: &str) -> Result<String> {
+/// De-convert an RNAME (`s/_(CT|GA)_converted$//`, Perl 3351–3362). `pub(crate)`
+/// so the combined-index PE selector (`combined::select_core_pe`) can reuse it for
+/// read-2's chromosome in the same-chromosome guard.
+pub(crate) fn deconvert(rname: &str) -> Result<String> {
     rname
         .strip_suffix("_CT_converted")
         .or_else(|| rname.strip_suffix("_GA_converted"))
