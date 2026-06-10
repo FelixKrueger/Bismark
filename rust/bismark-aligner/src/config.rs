@@ -363,8 +363,10 @@ fn reject_combined_index_unsupported(
     // ONLY meaningful for the non-directional combined path (the sole mode that
     // loads the combined index twice). Require --combined_index --non_directional;
     // checked BEFORE the !combined_index early return so `--combined_index_single_pass`
-    // alone is also rejected loudly. SE / Bowtie 2 / single-core follow from the
-    // required --combined_index (enforced below).
+    // alone is also rejected loudly. SE / single-core follow from the required
+    // --combined_index (enforced below); Bowtie 2 is required by the explicit guard
+    // below (v2.x lifted --combined_index itself to HISAT2 SE, but this exec model
+    // stays Bowtie-2-specific).
     if cli.combined_index_single_pass {
         if !cli.combined_index {
             return Err(AlignerError::Unsupported(
@@ -398,7 +400,9 @@ fn reject_combined_index_unsupported(
     // BYTE-IDENTICAL to the default parallel model (a) (a pure RSS/wall trade). It is
     // mutually exclusive with --combined_index_single_pass (competing exec models for
     // the same mode). Checked BEFORE the !combined_index early return so the flag alone
-    // is also rejected loudly. SE / Bowtie 2 / single-core follow from --combined_index.
+    // is also rejected loudly. SE / single-core follow from --combined_index; Bowtie 2
+    // is required by the explicit guard below (v2.x lifted --combined_index itself to
+    // HISAT2 SE, but this exec model stays Bowtie-2-specific).
     if cli.combined_index_sequential {
         if cli.combined_index_single_pass {
             return Err(AlignerError::Unsupported(
@@ -1031,7 +1035,10 @@ mod tests {
         );
         // Phase 1 (v2.x): HISAT2 SE combined-index accepted for all 3 library types.
         for (args, lib) in [
-            (vec!["--combined_index", "--hisat2"], LibraryType::Directional),
+            (
+                vec!["--combined_index", "--hisat2"],
+                LibraryType::Directional,
+            ),
             (
                 vec!["--combined_index", "--hisat2", "--non_directional"],
                 LibraryType::NonDirectional,
