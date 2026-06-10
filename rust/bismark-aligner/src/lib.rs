@@ -840,7 +840,8 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
             ">>> Combined-index mode (EXPERIMENTAL, concordance-gated — NOT byte-identical to the \
-             faithful per-strand path): one both-strands Bowtie 2 pass over {} (-k 2) <<<",
+             faithful per-strand path): one both-strands {} pass over {} (-k 2) <<<",
+            config.aligner.name(),
             combined_basename.display()
         );
     }
@@ -939,8 +940,9 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
             ">>> Combined-index mode, PBAT (EXPERIMENTAL, concordance-gated — NOT byte-identical \
-             to the faithful 2-instance path): one both-strands Bowtie 2 pass over {} (-k 2) on \
+             to the faithful 2-instance path): one both-strands {} pass over {} (-k 2) on \
              the G->A-converted reads → CTOT/CTOB <<<",
+            config.aligner.name(),
             combined_basename.display()
         );
     }
@@ -1243,8 +1245,9 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
             ">>> Combined-index mode, NON-DIRECTIONAL (EXPERIMENTAL, concordance-gated — NOT \
-             byte-identical to the faithful 4-instance path): two both-strands Bowtie 2 passes \
+             byte-identical to the faithful 4-instance path): two both-strands {} passes \
              (C->T + G->A reads) over {} (-k 2), unioned per read <<<",
+            config.aligner.name(),
             combined_basename.display()
         );
     }
