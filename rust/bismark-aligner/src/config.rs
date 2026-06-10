@@ -363,8 +363,10 @@ fn reject_combined_index_unsupported(
     // ONLY meaningful for the non-directional combined path (the sole mode that
     // loads the combined index twice). Require --combined_index --non_directional;
     // checked BEFORE the !combined_index early return so `--combined_index_single_pass`
-    // alone is also rejected loudly. SE / Bowtie 2 / single-core follow from the
-    // required --combined_index (enforced below).
+    // alone is also rejected loudly. SE / single-core follow from the required
+    // --combined_index (enforced below); Bowtie 2 is required by the explicit guard
+    // below (v2.x lifted --combined_index itself to HISAT2 SE, but this exec model
+    // stays Bowtie-2-specific).
     if cli.combined_index_single_pass {
         if !cli.combined_index {
             return Err(AlignerError::Unsupported(
@@ -383,6 +385,14 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
+        if aligner != Aligner::Bowtie2 {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_single_pass requires Bowtie 2: it is the Bowtie-2-specific \
+                 single-pass tagged execution model. HISAT2 non-directional combined-index uses \
+                 the default parallel model (a) — drop --combined_index_single_pass."
+                    .into(),
+            ));
+        }
     }
     // --combined_index_sequential (the faithful sequential low-memory exec model) is,
     // like model (b), ONLY meaningful for the non-directional combined path (the sole
@@ -390,7 +400,9 @@ fn reject_combined_index_unsupported(
     // BYTE-IDENTICAL to the default parallel model (a) (a pure RSS/wall trade). It is
     // mutually exclusive with --combined_index_single_pass (competing exec models for
     // the same mode). Checked BEFORE the !combined_index early return so the flag alone
-    // is also rejected loudly. SE / Bowtie 2 / single-core follow from --combined_index.
+    // is also rejected loudly. SE / single-core follow from --combined_index; Bowtie 2
+    // is required by the explicit guard below (v2.x lifted --combined_index itself to
+    // HISAT2 SE, but this exec model stays Bowtie-2-specific).
     if cli.combined_index_sequential {
         if cli.combined_index_single_pass {
             return Err(AlignerError::Unsupported(
@@ -417,14 +429,24 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
+        if aligner != Aligner::Bowtie2 {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_sequential requires Bowtie 2: it is the Bowtie-2-specific \
+                 sequential low-memory execution model. HISAT2 non-directional combined-index uses \
+                 the default parallel model (a) — drop --combined_index_sequential."
+                    .into(),
+            ));
+        }
     }
     if !cli.combined_index {
         return Ok(());
     }
-    if aligner != Aligner::Bowtie2 {
+    if aligner == Aligner::Minimap2 {
         return Err(AlignerError::Unsupported(
-            "--combined_index requires Bowtie 2 (the combined index is a Bowtie 2 .bt2/.bt2l); it \
-             is not supported with --hisat2 or --minimap2."
+            "--combined_index is not supported with --minimap2: a single both-strands minimap2 \
+             pass cannot reproduce Bismark's per-strand model, and minimap2 paired-end has no \
+             trustworthy oracle. Use Bowtie 2 or HISAT2 (both build a combined index via \
+             `bismark_genome_preparation --combined_genome`)."
                 .into(),
         ));
     }
@@ -1010,18 +1032,39 @@ mod tests {
             )
             .is_ok()
         );
+        // Phase 1 (v2.x): HISAT2 SE combined-index accepted for all 3 library types.
+        for (args, lib) in [
+            (
+                vec!["--combined_index", "--hisat2"],
+                LibraryType::Directional,
+            ),
+            (
+                vec!["--combined_index", "--hisat2", "--non_directional"],
+                LibraryType::NonDirectional,
+            ),
+            (
+                vec!["--combined_index", "--hisat2", "--pbat"],
+                LibraryType::Pbat,
+            ),
+        ] {
+            assert!(
+                reject_combined_index_unsupported(&cli_from(&args), Aligner::Hisat2, lib, &se())
+                    .is_ok(),
+                "HISAT2 SE combined should be accepted: {args:?}"
+            );
+        }
     }
 
     /// Every not-yet-supported combination is rejected loudly (never-silent).
     #[test]
     fn combined_index_rejects_unsupported_combinations() {
-        // non-Bowtie2 aligners
+        // HISAT2 paired-end combined → still rejected (PE is a later phase; HISAT2 SE is accepted above).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--hisat2"]),
                 Aligner::Hisat2,
                 LibraryType::Directional,
-                &se()
+                &pe()
             )
             .is_err()
         );
@@ -1119,6 +1162,21 @@ mod tests {
             )
             .is_err()
         );
+        // HISAT2 → reject: single-pass is the Bowtie-2-specific tagged exec model (v2.x C2 guard;
+        // HISAT2 non-dir combined uses the default parallel model (a)).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_single_pass"
+                ]),
+                Aligner::Hisat2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_err()
+        );
     }
 
     /// `--combined_index_sequential` (the faithful sequential exec model) requires
@@ -1212,6 +1270,20 @@ mod tests {
                     "4"
                 ]),
                 Aligner::Bowtie2,
+                LibraryType::NonDirectional,
+                &se()
+            )
+            .is_err()
+        );
+        // HISAT2 → reject: sequential is the Bowtie-2-specific low-memory exec model (v2.x C2 guard).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_sequential"
+                ]),
+                Aligner::Hisat2,
                 LibraryType::NonDirectional,
                 &se()
             )
