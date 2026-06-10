@@ -2762,9 +2762,24 @@ fn combined_index_scope_guard_rejects_unsupported() {
 
     // (--pbat is now SUPPORTED — Phase 7; tested in the pbat e2e cells below.)
 
-    // --hisat2
+    // --minimap2 (combined-index unsupported). NB: --hisat2 SE is now ACCEPTED
+    // (Phase 1, v2.x) — covered by config unit tests + the oxy concordance gate.
     bin()
         .arg("--combined_index")
+        .arg("--minimap2")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported with --minimap2"));
+
+    // C2 guard: the single-pass exec model stays Bowtie-2-only (HISAT2 non-dir
+    // combined uses the default parallel model (a)).
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_single_pass")
         .arg("--hisat2")
         .arg("--genome")
         .arg(genome.path())
