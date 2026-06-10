@@ -35,7 +35,8 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 ## Installing
 
 <!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.3` / `beta.3` literal in this
-     section (the pinned `docker pull` tag + the `cargo install --tag`) AND `suite_tag` in `rust/justfile`.
+     section (the pinned `docker pull` tag + the `cargo install --tag`), `suite_tag` in `rust/justfile`,
+     AND the matching section in the docs site (`docs/src/content/docs/installation.md`).
      The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
 
 Three ways to get the suite, easiest first — pick **one**.

@@ -9,9 +9,6 @@ Bismark is written in Perl and is executed from the command line. To install Bis
 tar xzf bismark_v0.X.Y.tar.gz
 ```
 
-<!-- maintainer: on a Bismark-Rust suite bump, update the `2.0.0-beta.3` literals below AND
-     rust/README.md "## Installing" + rust/justfile `suite_tag` (keep all three consistent). -->
-
 ## Bismark Rust suite (beta)
 
 A faster, lower-memory reimplementation of the Bismark tools in Rust is available as a public beta, producing **byte-identical** output to Perl Bismark `v0.25.1`. There are three ways to install it.
