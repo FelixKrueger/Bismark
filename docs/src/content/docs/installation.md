@@ -9,6 +9,42 @@ Bismark is written in Perl and is executed from the command line. To install Bis
 tar xzf bismark_v0.X.Y.tar.gz
 ```
 
+## Bismark Rust suite (beta)
+
+A faster, lower-memory reimplementation of the Bismark tools in Rust is available as a public beta, producing **byte-identical** output to Perl Bismark `v0.25.1`. There are three ways to install it.
+
+### Prebuilt binaries (no toolchain)
+
+Each [release](https://github.com/FelixKrueger/Bismark/releases) attaches prebuilt binaries for common Linux/macOS platforms — download the archive for your platform, extract it, and put the binaries on your `PATH`. The Rust tools carry an `_rs` suffix (e.g. `bismark_rs`, `deduplicate_bismark_rs`) so they sit alongside the Perl scripts on the same `PATH` without clashing.
+
+### Container image
+
+A multi-arch image is published to the GitHub Container Registry, exposing the tools under their **canonical** names — so it is a drop-in for pipelines such as nf-core/methylseq:
+
+```bash
+docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.3  # pinned
+```
+
+### Install from source with `cargo`
+
+Installs all 12 binaries into `~/.cargo/bin` in a single command (requires a Rust toolchain — see Prerequisites):
+
+```bash
+cargo install --git https://github.com/FelixKrueger/Bismark \
+  --tag bismark-rust-v2.0.0-beta.3 --locked \
+  bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
+  bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
+  bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
+  bismark-report bismark-summary
+```
+
+For the latest development build instead of a pinned release, replace `--tag bismark-rust-v2.0.0-beta.3` with `--branch rust/iron-chancellor`. **Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; to move between pinned releases, bump the `--tag` (re-running the same `--tag` is a no-op — add `--force` to reinstall in place).
+
+**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89, the one-command install verified on cargo 1.95); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**. No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
+
+> The `_rs` suffix on host installs lets the Rust binaries coexist with the Perl Bismark scripts; inside the container they are exposed under the canonical names. At the v1.0 release the `_rs` suffix is dropped and the Rust binaries become the defaults.
+
 ## Dependencies
 
 Bismark requires a working of Perl and [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)) to be installed on your machine. Bismark will assume that the Bowtie 2/ HISAT2 executable is in your path unless the path to Bowtie/ HISAT2 is specified manually with:
