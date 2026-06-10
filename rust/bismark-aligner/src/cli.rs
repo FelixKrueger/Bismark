@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// The Bismark aligner wrapper (Rust port). Phase 1: parse + discover + detect.
+/// The Bismark aligner wrapper (Rust port): parse + discover + detect, then convert, align, and merge.
 #[derive(Parser, Debug)]
 #[command(
     name = "bismark_rs",
