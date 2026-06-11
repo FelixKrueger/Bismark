@@ -150,23 +150,17 @@ fn pipeline(config: &RunConfig) -> Result<()> {
             if config.combined_index {
                 // v2.x opt-in PE combined-index path. The scope guard
                 // (`reject_combined_index_unsupported`) restricts this to Bowtie 2
-                // directional or non-directional (PE pbat/HISAT2 + --multicore +
-                // single_pass/sequential are rejected at resolve), so the library is
-                // Directional or NonDirectional here:
-                //  - Directional   → one both-strands C→T pass → OT/OB.
+                // (PE HISAT2 + --multicore + single_pass/sequential are rejected at
+                // resolve), so all three library types are reachable here:
+                //  - Directional    → one both-strands C→T pass → OT/OB.
                 //  - NonDirectional → two both-strands passes (C→T + G→A) → 4 strands,
                 //    parallel model (a) (PE low-RAM variants are Phase 6).
+                //  - Pbat            → one both-strands G→A pass → CTOT/CTOB (the
+                //    non-dir G→A half standalone).
                 match config.library {
                     LibraryType::Directional => run_pe_combined(config, mates1, mates2),
                     LibraryType::NonDirectional => run_pe_combined_nondir(config, mates1, mates2),
-                    // PE pbat combined is rejected at resolve (Phase 4). Reaching here means
-                    // the config gate regressed — fail loud rather than silently run the
-                    // directional driver (never-silent; review A).
-                    LibraryType::Pbat => Err(AlignerError::Unsupported(
-                        "internal error: paired-end pbat --combined_index reached dispatch but is \
-                         not supported in this phase (it must be rejected at resolve)"
-                            .into(),
-                    )),
+                    LibraryType::Pbat => run_pe_combined_pbat(config, mates1, mates2),
                 }
             } else if n > 1 {
                 parallel::run_pe_multicore(config, mates1, mates2, n)
@@ -841,6 +835,16 @@ fn combined_aligner_options(config: &RunConfig) -> String {
 /// `drive_merge_combined` so the (identical) gather loop isn't triplicated across
 /// the directional + pbat paths (the dual-driver back-port trap).
 type SelectFn = fn(&[crate::align::SamRecord], &str, f64, f64, &mut Counters) -> Result<Decision>;
+
+/// The single-pass per-PAIR combined selector — `combined::select_pe` (directional,
+/// C→T pass → OT/OB) or `combined::select_pe_pbat` (pbat, G→A pass → CTOT/CTOB); both
+/// single-stream over ONE both-strands PE pass. Threaded into the shared
+/// `process_pe_chunk_combined` / `drive_merge_combined_pe` so the (identical) PE gather
+/// loop isn't duplicated across the directional + pbat paths (the dual-driver back-port
+/// trap). NB the non-directional selector (`select_pe_nondir`) takes TWO pair slices
+/// (one per pass) and so is NOT a `SelectFnPe` — it has its own two-stream driver.
+type SelectFnPe =
+    fn(&[crate::align::SamPair], &str, &str, f64, f64, &mut Counters) -> Result<DecisionPaired>;
 
 /// SE combined-index pipeline (single-core directional). Mirrors [`run_se`] but
 /// drives ONE both-strands instance over the combined index
@@ -2910,6 +2914,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
         )?;
 
         let mut counters = Counters::default();
+        // Directional PE combined: `-1 C→T_R1 -2 G→A_R2` (Ct, Ga) → OT/OB via select_pe.
         let converted = process_pe_chunk_combined(
             config,
             &genome,
@@ -2917,6 +2922,9 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
             Path::new(read_1),
             Path::new(read_2),
             &opts,
+            convert::ConvKind::Ct,
+            convert::ConvKind::Ga,
+            combined::select_pe,
             &mut sinks,
             &mut counters,
         )?;
@@ -2941,11 +2949,120 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
     Ok(())
 }
 
-/// Convert R1→C→T and R2→G→A (the directional PE convention — `pe_instance_plan`'s
-/// `k1=Ct, k2=Ga`, the `-1 C→T_R1 -2 G→A_R2` both faithful directional slots read),
-/// spawn ONE both-strands Bowtie 2 instance over the combined index with `-k 2`, and
-/// drive the per-pair classify→select→route with [`combined::select_pe`]. Returns the
-/// converted temp files for cleanup. Mirrors [`process_se_chunk_combined`] doubled.
+/// PE combined-index pipeline, **PBAT** (single-core, Bowtie 2). Mirrors
+/// [`run_pe_combined`] but the single both-strands PE pass is fed the **G→A-converted**
+/// reads (`-1 G→A_R1 -2 C→T_R2`, `(Ga, Ct)`) → CTOT/CTOB, selected by
+/// [`combined::select_pe_pbat`]. The report carries the `--pbat` library line
+/// (`library = Pbat`) + the 4-strand final analysis (`directional=false`, only CTOT/CTOB
+/// populated). PBAT-combined is the G→A-pass half of the non-directional PE path
+/// (Phase 3) standalone — ONE pass, no union, no cross-pass desync guard. The scope
+/// guard (`reject_combined_index_unsupported`) guarantees Bowtie 2 pbat here.
+fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // PBAT → the report prints the 4-strand split (only CTOT/CTOB populated).
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let combined_opts = combined_aligner_options(config);
+
+    // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, paired-end PBAT (EXPERIMENTAL, concordance-gated — NOT \
+             byte-identical to the faithful 2-instance path): one both-strands {} PE pass over \
+             {} (-k 2) on the G->A-converted reads (-1 G->A_R1 -2 C->T_R2) → CTOT/CTOB <<<",
+            config.aligner.name(),
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index PBAT mode.
+        writeln!(
+            report,
+            "Combined-index mode, PBAT (experimental, concordance-gated; NOT byte-identical to the \
+             faithful 2-instance per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        // PBAT PE combined: `-1 G→A_R1 -2 C→T_R2` (Ga, Ct) → CTOT/CTOB via select_pe_pbat.
+        let converted = process_pe_chunk_combined(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_1),
+            Path::new(read_2),
+            &opts,
+            convert::ConvKind::Ga,
+            convert::ConvKind::Ct,
+            combined::select_pe_pbat,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, directional)?;
+        // Combined-mode extra: the spurious-discard tally.
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+
+        // Per-mode temp cleanup: delete both converted temp files (G→A R1, C→T R2).
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+    }
+    Ok(())
+}
+
+/// Convert R1 and R2 per the given `(k1, k2)` conversion kinds, spawn ONE both-strands
+/// Bowtie 2 instance over the combined index with `-k 2`, and drive the per-pair
+/// classify→select→route with the given `select_fn`. Returns the converted temp files
+/// for cleanup. Mirrors [`process_se_chunk_combined`] (also `SelectFn`-parametrized)
+/// doubled for two mates. The two single-stream PE library types pass:
+/// - **directional**: `(Ct, Ga)` + [`combined::select_pe`] — `-1 C→T_R1 -2 G→A_R2` → OT/OB;
+/// - **pbat**: `(Ga, Ct)` + [`combined::select_pe_pbat`] — `-1 G→A_R1 -2 C→T_R2` → CTOT/CTOB.
 #[allow(clippy::too_many_arguments)]
 fn process_pe_chunk_combined(
     config: &RunConfig,
@@ -2954,6 +3071,9 @@ fn process_pe_chunk_combined(
     read_1: &Path,
     read_2: &Path,
     opts: &convert::ConvertOptions,
+    k1: convert::ConvKind,
+    k2: convert::ConvKind,
+    select_fn: SelectFnPe,
     sinks: &mut PeSinks,
     counters: &mut Counters,
 ) -> Result<Vec<convert::ConvertedReads>> {
@@ -2961,7 +3081,7 @@ fn process_pe_chunk_combined(
     let fasta = matches!(config.format, ReadFormat::FastA);
     let td = &config.output.temp_dir;
 
-    let cr1 = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
+    let cr1 = convert_pe_kind(fasta, read_1, td, opts, 1, k1)?;
     eprintln!(
         "Created {} converted version of {} -> {} ({} sequences)",
         conv_label(&cr1.name),
@@ -2969,7 +3089,7 @@ fn process_pe_chunk_combined(
         cr1.path.display(),
         cr1.count
     );
-    let cr2 = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
+    let cr2 = convert_pe_kind(fasta, read_2, td, opts, 2, k2)?;
     eprintln!(
         "Created {} converted version of {} -> {} ({} sequences)",
         conv_label(&cr2.name),
@@ -3013,6 +3133,7 @@ fn process_pe_chunk_combined(
         genome,
         refid,
         dovetail,
+        select_fn,
         sinks,
         counters,
     )?;
@@ -3022,16 +3143,19 @@ fn process_pe_chunk_combined(
 
 /// Re-read both original read files in lockstep and, per pair, gather the combined PE
 /// stream's `-k` group (consecutive same-`seq_id` [`SamPair`]s — Bowtie 2 emits a
-/// pair's k alignments contiguously), run [`combined::select_pe`], and route the
+/// pair's k alignments contiguously), run the provided `select_fn` (`combined::select_pe`
+/// for directional, `combined::select_pe_pbat` for pbat), and route the
 /// [`DecisionPaired`] through the shared [`route_pe_decision`]. Generic over
 /// [`PairedSamStream`] so it is unit-testable with a canned pair stream. Mirrors
-/// [`drive_merge_combined`] (SE) doubled for two mates; the FastQ/FastA read loop +
-/// `skip`/`upto`/`icpc`/per-mate-quality handling is copied from [`drive_merge_pe`].
+/// [`drive_merge_combined`] (SE, also `SelectFn`-parametrized) doubled for two mates;
+/// the FastQ/FastA read loop + `skip`/`upto`/`icpc`/per-mate-quality handling is copied
+/// from [`drive_merge_pe`]. Parametrizing `select_fn` lets the directional + pbat
+/// single-stream PE paths share this gather loop (the dual-driver back-port trap).
 ///
 /// No desync sentinel (cf. [`drive_merge_combined`]): the whole contiguous same-id
 /// run is drained in one pass, so a pair's lines cannot reappear at the head after we
 /// move on; output order rests on the same Bowtie 2 `--reorder`-under-`-p` invariant
-/// the faithful path relies on. A miss is one `(77,141)` pair, filtered by `select_pe`.
+/// the faithful path relies on. A miss is one `(77,141)` pair, filtered by the selector.
 #[allow(clippy::too_many_arguments)]
 fn drive_merge_combined_pe<S: PairedSamStream>(
     read_1: &Path,
@@ -3041,6 +3165,7 @@ fn drive_merge_combined_pe<S: PairedSamStream>(
     genome: &Genome,
     refid: &HashMap<String, usize>,
     dovetail: bool,
+    select_fn: SelectFnPe,
     sinks: &mut PeSinks,
     counters: &mut Counters,
 ) -> Result<()> {
@@ -3139,7 +3264,7 @@ fn drive_merge_combined_pe<S: PairedSamStream>(
             stream.advance_pair()?;
         }
 
-        let decision = combined::select_pe(
+        let decision = select_fn(
             &pairs,
             &s1,
             &s2,
