@@ -2311,6 +2311,7 @@ fn process_pe_chunk(
         let m1 = pe_lookup(&converted, 1, k1);
         let m2 = pe_lookup(&converted, 2, k2);
         streams[slot] = Some(PairedAlignerStream::spawn(
+            config.aligner,
             bt2,
             &config.aligner_options,
             orientation,
@@ -3115,6 +3116,7 @@ fn process_pe_chunk_combined(
     // the single pass searches both sub-genomes; `-k 2` surfaces the cross-sub-genome
     // runner-up for MAPQ + the spurious/ambiguity gate (PLAN §select_core_pe).
     let mut stream = PairedAlignerStream::spawn(
+        config.aligner,
         bt2,
         &combined_opts,
         Orientation::Both,
@@ -3463,6 +3465,7 @@ fn process_pe_chunk_combined_nondir(
     // by the converted-read inputs: ct_stream = C→T reads (→ OT/OB), ga_stream = G→A reads
     // (→ CTOT/CTOB). Two concurrent subprocesses → ~2× the combined index resident.
     let mut ct_stream = PairedAlignerStream::spawn(
+        config.aligner,
         bt2,
         &combined_opts,
         Orientation::Both,
@@ -3471,6 +3474,7 @@ fn process_pe_chunk_combined_nondir(
         &r2_ga.path,
     )?;
     let mut ga_stream = PairedAlignerStream::spawn(
+        config.aligner,
         bt2,
         &combined_opts,
         Orientation::Both,

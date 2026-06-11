@@ -216,6 +216,42 @@ fn build_se_argv(
     args
 }
 
+/// Build the per-instance argv (excluding the binary path) for one paired-end
+/// alignment — the PE analog of [`build_se_argv`]. Bowtie 2 + HISAT2 share the shape
+/// `<opts…> <orient> -x <index> -1 <input1> -2 <input2>` (Perl 6474); the argv is
+/// **identical** for the two backends (only the options string differs), so this is
+/// byte-neutral vs the previous inline Bowtie-2-named spawn. minimap2 paired-end is
+/// rejected at resolve (no trustworthy oracle, `config.rs`), so it is unreachable here.
+fn build_pe_argv(
+    aligner: Aligner,
+    options: &str,
+    orient: Orientation,
+    index: &Path,
+    input1: &Path,
+    input2: &Path,
+) -> Vec<OsString> {
+    match aligner {
+        Aligner::Bowtie2 | Aligner::Hisat2 => {
+            let mut args: Vec<OsString> = options.split_whitespace().map(OsString::from).collect();
+            // `Orientation::Both` (combined index) emits no strand flag.
+            if let Some(f) = orient.flag() {
+                args.push(f.into());
+            }
+            args.push("-x".into());
+            args.push(index.as_os_str().to_owned());
+            args.push("-1".into());
+            args.push(input1.as_os_str().to_owned());
+            args.push("-2".into());
+            args.push(input2.as_os_str().to_owned());
+            args
+        }
+        Aligner::Minimap2 => unreachable!(
+            "minimap2 paired-end is rejected at resolve (no trustworthy oracle); \
+             build_pe_argv must not be reached for minimap2"
+        ),
+    }
+}
+
 impl AlignerStream {
     /// Spawn one aligner instance (Bowtie 2 / HISAT2 / minimap2) and read up to the
     /// first alignment record. The argv shape is per-aligner ([`build_se_argv`]).
@@ -465,59 +501,55 @@ impl PairedSamStream for PairedAlignerStream {
     }
 }
 
-/// A live paired-end Bowtie 2 instance, presenting a peek/advance pair stream.
-/// Each pair is two consecutive SAM lines (R1 + R2, in Bowtie 2's leftmost-first
-/// order); [`SamPair::from_lines`] canonicalises them to (read1, read2).
+/// A live paired-end aligner instance (Bowtie 2 / HISAT2), presenting a peek/advance
+/// pair stream. Each pair is two consecutive SAM lines (R1 + R2, in the aligner's
+/// leftmost-first order); [`SamPair::from_lines`] canonicalises them to (read1, read2).
+/// (minimap2 PE is rejected at resolve, so it never reaches here.)
 pub struct PairedAlignerStream {
     child: Child,
     reader: BufReader<ChildStdout>,
     current: Option<SamPair>,
     finished: bool,
+    /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
+    /// must not report "Bowtie 2").
+    aligner: Aligner,
 }
 
 impl PairedAlignerStream {
-    /// Spawn one paired Bowtie 2 instance and read the first pair.
+    /// Spawn one paired aligner instance (Bowtie 2 / HISAT2) and read the first pair.
     ///
     /// Args mirror Perl 6474: `<aligner_options> <orient> -x <index> -1 <input1>
-    /// -2 <input2>`. stdout piped; stderr inherited (only stdout is drained).
+    /// -2 <input2>` ([`build_pe_argv`]) — identical for Bowtie 2 and HISAT2. stdout
+    /// piped; stderr inherited (only stdout is drained).
     pub fn spawn(
-        bowtie2: &Path,
+        aligner: Aligner,
+        bin: &Path,
         options: &str,
         orient: Orientation,
         index: &Path,
         input1: &Path,
         input2: &Path,
     ) -> Result<Self> {
-        let mut cmd = Command::new(bowtie2);
-        for opt in options.split_whitespace() {
-            cmd.arg(opt);
-        }
-        // Bowtie 2 orientation flag: the faithful directional/pbat/non-dir PE slots
-        // pass `Norc`/`Nofw` (`flag()` → `Some`); the v2.x combined-index PE pass
-        // uses `Orientation::Both` (`flag()` → `None`) so ONE pass searches both
-        // sub-genomes. Guard the `Option` so `Both` adds no orientation arg.
-        if let Some(f) = orient.flag() {
-            cmd.arg(f);
-        }
-        cmd.arg("-x")
-            .arg(index)
-            .arg("-1")
-            .arg(input1)
-            .arg("-2")
-            .arg(input2)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+        // Orientation flag: the faithful directional/pbat/non-dir PE slots pass
+        // `Norc`/`Nofw` (`flag()` → `Some`); the v2.x combined-index PE pass uses
+        // `Orientation::Both` (`flag()` → `None`) so ONE pass searches both sub-genomes.
+        let mut cmd = Command::new(bin);
+        cmd.args(build_pe_argv(
+            aligner, options, orient, index, input1, input2,
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
 
         let mut child = cmd.spawn().map_err(|e| {
             AlignerError::Validation(format!(
-                "failed to spawn Bowtie 2 ({}): {e}",
-                bowtie2.display()
+                "failed to spawn {} ({}): {e}",
+                aligner.name(),
+                bin.display()
             ))
         })?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AlignerError::Validation("Bowtie 2 stdout was not captured".into()))?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
+        })?;
         let mut reader = BufReader::new(stdout);
 
         // Skip `@` header lines; the first non-`@` line is the first record of
@@ -533,6 +565,7 @@ impl PairedAlignerStream {
                     reader,
                     current: None,
                     finished: false,
+                    aligner,
                 });
             }
             if !line1.starts_with('@') {
@@ -552,6 +585,7 @@ impl PairedAlignerStream {
             reader,
             current,
             finished: false,
+            aligner,
         })
     }
 
@@ -587,7 +621,8 @@ impl PairedAlignerStream {
             Ok(())
         } else {
             Err(AlignerError::Validation(format!(
-                "Bowtie 2 exited unsuccessfully ({status})"
+                "{} exited unsuccessfully ({status})",
+                self.aligner.name()
             )))
         }
     }
@@ -869,6 +904,111 @@ mod tests {
         assert!(!got.contains(&"/idx/BS_CT".to_string())); // only the `.mmi` form
     }
 
+    // ---- build_pe_argv (v2.x Phase 5: HISAT2 PE shares the Bowtie 2 PE shape) ------
+    #[test]
+    fn pe_argv_bowtie2_shape_frozen() {
+        let argv = build_pe_argv(
+            Aligner::Bowtie2,
+            "-q --score-min L,0,-0.2 --no-mixed",
+            Orientation::Norc,
+            Path::new("/idx/BS_CT"),
+            Path::new("/tmp/r1_C_to_T.fastq"),
+            Path::new("/tmp/r2_G_to_A.fastq"),
+        );
+        assert_eq!(
+            argv_strings(&argv),
+            vec![
+                "-q",
+                "--score-min",
+                "L,0,-0.2",
+                "--no-mixed",
+                "--norc",
+                "-x",
+                "/idx/BS_CT",
+                "-1",
+                "/tmp/r1_C_to_T.fastq",
+                "-2",
+                "/tmp/r2_G_to_A.fastq",
+            ]
+        );
+    }
+
+    /// Phase 5: HISAT2 PE uses the SAME argv shape as Bowtie 2 PE (only the options
+    /// string differs) — the basis for reusing the PE machinery with `--hisat2`.
+    #[test]
+    fn pe_argv_hisat2_same_shape_as_bowtie2() {
+        let argv = build_pe_argv(
+            Aligner::Hisat2,
+            "-q --no-softclip --omit-sec-seq -k 2",
+            Orientation::Nofw,
+            Path::new("/idx/BS_combined"),
+            Path::new("/tmp/r1_G_to_A.fastq"),
+            Path::new("/tmp/r2_C_to_T.fastq"),
+        );
+        assert_eq!(
+            argv_strings(&argv),
+            vec![
+                "-q",
+                "--no-softclip",
+                "--omit-sec-seq",
+                "-k",
+                "2",
+                "--nofw",
+                "-x",
+                "/idx/BS_combined",
+                "-1",
+                "/tmp/r1_G_to_A.fastq",
+                "-2",
+                "/tmp/r2_C_to_T.fastq",
+            ]
+        );
+    }
+
+    /// `--combined_index` PE: `Orientation::Both` emits NO strand flag (no empty arg
+    /// before `-x`); `-1`/`-2` follow `-x <index>`.
+    #[test]
+    fn pe_argv_combined_both_no_strand_flag() {
+        let argv = build_pe_argv(
+            Aligner::Hisat2,
+            "-q -k 2",
+            Orientation::Both,
+            Path::new("/idx/BS_combined"),
+            Path::new("/tmp/r1_G_to_A.fastq"),
+            Path::new("/tmp/r2_C_to_T.fastq"),
+        );
+        let got = argv_strings(&argv);
+        assert_eq!(
+            got,
+            vec![
+                "-q",
+                "-k",
+                "2",
+                "-x",
+                "/idx/BS_combined",
+                "-1",
+                "/tmp/r1_G_to_A.fastq",
+                "-2",
+                "/tmp/r2_C_to_T.fastq",
+            ]
+        );
+        assert!(!got.contains(&"--norc".to_string()) && !got.contains(&"--nofw".to_string()));
+        assert!(!got.iter().any(|a| a.is_empty())); // never an empty arg before -x
+    }
+
+    #[test]
+    #[should_panic(expected = "minimap2 paired-end")]
+    fn pe_argv_minimap2_is_unreachable() {
+        // minimap2 PE is rejected at resolve → build_pe_argv must never see it.
+        let _ = build_pe_argv(
+            Aligner::Minimap2,
+            "-a --MD",
+            Orientation::Both,
+            Path::new("/idx/BS_combined"),
+            Path::new("/tmp/r1.fastq"),
+            Path::new("/tmp/r2.fastq"),
+        );
+    }
+
     /// `--combined_index` (v2): `Orientation::Both` emits NO strand flag (neither
     /// `--norc` nor `--nofw`) and — critically — does NOT push an empty argument
     /// before `-x`. The combined argv carries `-k 2` (added by the combined drive)
@@ -1091,6 +1231,7 @@ mod tests {
         let bt2 = fake_bowtie2(dir.path(), body);
         let s = spawn_retry_etxtbsy(|| {
             PairedAlignerStream::spawn(
+                Aligner::Bowtie2,
                 &bt2,
                 "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500",
                 Orientation::Norc,
