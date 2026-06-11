@@ -20,7 +20,7 @@
 
 use std::path::Path;
 
-use bismark_io::{BismarkPair, ReadIdentity, open_reader};
+use bismark_io::{BismarkPair, ReadIdentity, open_reader, open_reader_without_sort_check};
 
 use crate::call::extract_calls;
 use crate::cli::ResolvedConfig;
@@ -70,8 +70,13 @@ pub fn derive_basename(path: &Path) -> String {
 /// extract calls → route each call → tally records. On any error before
 /// `finalize`, runs `state.cleanup_partial_outputs()` to remove all 12
 /// files before propagating.
+///
+/// Uses `open_reader_without_sort_check`: single-end calls are
+/// order-independent, so coordinate-sorted input is valid (faithful to
+/// Perl, which only sort-checks paired-end). Mirrors the SE arm of
+/// `parallel.rs::run_pipeline`.
 pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
-    let mut reader = open_reader(input, /*cram_ref=*/ None)?;
+    let mut reader = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
     // Rev 2: build chr_table from `&reader.header()` directly — no Header
     // clone (Reviewer B E2). The borrow is released before `reader.records()`
     // takes its own mutable borrow further down.

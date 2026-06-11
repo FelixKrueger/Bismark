@@ -73,7 +73,7 @@ use std::sync::Arc;
 
 use bismark_io::{
     AlignmentKind, BismarkIoError, BismarkPair, BismarkRecord, BismarkStrand, ThreadedBamReader,
-    open_reader,
+    open_reader, open_reader_without_sort_check,
 };
 use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 
@@ -240,13 +240,32 @@ fn run_pipeline(
     // `DECODE_THREADS`). Single-threaded BGZF decode was the ~19 s pipeline
     // ceiling; 2 decode threads drop the `--mbias_only` wall 18.8→12.3 s and the
     // plain `.txt` wall 20.0→17.6 s, so even `--parallel 1` benefits. SAM/CRAM are not
-    // BGZF → keep the single-threaded reader. `ThreadedBamReader::from_path`
-    // applies the SAME coordinate-sort rejection as `open_reader`, so the
-    // read-order contract (PE adjacent-pairing) is unchanged.
+    // BGZF → keep the single-threaded reader.
+    //
+    // Coordinate-sort policy (v1.x): the SE/PE distinction IS the policy —
+    // `is_paired` is already in scope here. For PAIRED-END we use the
+    // checking constructors (`ThreadedBamReader::from_path` / `open_reader`):
+    // coordinate-sorted PE input breaks adjacent-mate pairing and is rejected
+    // with `UnsortedInput`. For SINGLE-END we use the `*_without_sort_check`
+    // constructors: SE methylation calls are order-independent, so
+    // coordinate-sorted input is valid — faithful to Perl
+    // `bismark_methylation_extractor`, which only sort-checks paired-end input
+    // (`test_positional_sorting` is gated `if ($paired)`).
     let reader = if is_bam {
-        ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
-    } else {
+        if is_paired {
+            ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
+        } else {
+            ProducerReader::Threaded(ThreadedBamReader::from_path_without_sort_check(
+                input,
+                DECODE_THREADS,
+            )?)
+        }
+    } else if is_paired {
         ProducerReader::Any(open_reader(input, /*cram_ref=*/ None)?)
+    } else {
+        ProducerReader::Any(open_reader_without_sort_check(
+            input, /*cram_ref=*/ None,
+        )?)
     };
     let chr_table: Arc<[String]> = Arc::from(build_chr_name_table(reader.header())?);
 

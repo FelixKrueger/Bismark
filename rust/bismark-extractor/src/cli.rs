@@ -30,6 +30,11 @@ use crate::error::BismarkExtractorError;
 )]
 pub struct Cli {
     /// Bismark BAM/SAM/CRAM file(s) to extract methylation calls from.
+    /// Multiple files are processed independently, in order, with per-file
+    /// outputs (no pooling). Single-end coordinate-sorted input is accepted;
+    /// paired-end coordinate-sorted input is rejected (it breaks adjacent-mate
+    /// pairing). Note: explicit -s/-p applies that mode to ALL files, while
+    /// auto-detection (neither flag) is per-file.
     pub files: Vec<PathBuf>,
 
     // ─── Library mode (SPEC §3 rows 2-3, Perl 960-961) ───

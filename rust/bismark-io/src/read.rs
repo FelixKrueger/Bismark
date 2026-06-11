@@ -226,6 +226,18 @@ impl BamReader<BufReader<File>> {
         let reader = BufReader::new(file);
         Self::new(reader)
     }
+
+    /// Open a BAM file from a path WITHOUT rejecting coordinate-sorted
+    /// input. For SE-only callers (single-end methylation extraction does
+    /// not depend on record order, so coordinate-sorted input is valid —
+    /// faithful to Perl `bismark_methylation_extractor`, which only
+    /// sort-checks paired-end input). Used as the BAM arm of
+    /// [`open_reader_without_sort_check`].
+    pub fn from_path_without_sort_check(path: &Path) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        Self::without_sort_check(reader)
+    }
 }
 
 impl<R: BufRead> BamReader<R> {
@@ -298,7 +310,7 @@ impl<R: BufRead> BamReader<R> {
 /// the worker count.
 ///
 /// Public API mirrors [`BamReader`]'s exactly: `header()`, `records()`,
-/// `without_sort_check`-equivalent via a separate constructor.
+/// and a no-sort-check variant via [`Self::from_path_without_sort_check`].
 ///
 /// Added in `bismark-io` v1.0.0-beta.2 to support `bismark-dedup`'s
 /// `--parallel N` flag (parallel-BAM-I/O variant).
@@ -380,6 +392,16 @@ impl SamReader<BufReader<File>> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Self::new(reader)
+    }
+
+    /// Open a SAM file from a path WITHOUT rejecting coordinate-sorted
+    /// input. For SE-only callers (see
+    /// [`BamReader::from_path_without_sort_check`]). Used as the SAM arm
+    /// of [`open_reader_without_sort_check`].
+    pub fn from_path_without_sort_check(path: &Path) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        Self::without_sort_check(reader)
     }
 }
 
@@ -557,8 +579,8 @@ impl<R: BufRead, RC: Read + Seek> AnyReader<R, RC> {
 ///
 /// The returned `AnyReader` enforces the coordinate-sort check by default
 /// (`UnsortedInput` error for coordinate-sorted input). SE-only callers
-/// that need to opt out should construct the concrete reader directly via
-/// its `without_sort_check` constructor.
+/// that need to accept coordinate-sorted input should use
+/// [`open_reader_without_sort_check`] instead.
 pub fn open_reader(
     path: &Path,
     cram_ref: Option<&Path>,
@@ -570,6 +592,35 @@ pub fn open_reader(
             let cram_ref =
                 cram_ref.ok_or_else(|| BismarkIoError::MissingCramReference(path.to_path_buf()))?;
             Ok(AnyReader::Cram(CramReader::from_path(path, cram_ref)?))
+        }
+    }
+}
+
+/// As [`open_reader`] but WITHOUT rejecting coordinate-sorted input.
+///
+/// For SE-only callers: single-end methylation extraction is independent
+/// of record order, so coordinate-sorted input is valid — this mirrors
+/// Perl `bismark_methylation_extractor`, whose positional-sorting check is
+/// gated on paired-end input only. Paired-end callers must use
+/// [`open_reader`] (the checking variant) so coordinate-sorted PE input —
+/// which breaks adjacent-mate pairing — is rejected with `UnsortedInput`.
+pub fn open_reader_without_sort_check(
+    path: &Path,
+    cram_ref: Option<&Path>,
+) -> Result<AnyReader<BufReader<File>, File>, BismarkIoError> {
+    match AlignmentKind::from_path(path)? {
+        AlignmentKind::Bam => Ok(AnyReader::Bam(BamReader::from_path_without_sort_check(
+            path,
+        )?)),
+        AlignmentKind::Sam => Ok(AnyReader::Sam(SamReader::from_path_without_sort_check(
+            path,
+        )?)),
+        AlignmentKind::Cram => {
+            let cram_ref =
+                cram_ref.ok_or_else(|| BismarkIoError::MissingCramReference(path.to_path_buf()))?;
+            Ok(AnyReader::Cram(CramReader::from_path_without_sort_check(
+                path, cram_ref,
+            )?))
         }
     }
 }
@@ -944,6 +995,100 @@ mod tests {
         // A header with no @HD record at all (Default header).
         let header = noodles_sam::Header::default();
         assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    // ─────────── no-check constructors / dispatcher (SE coord-sorted) ───────────
+
+    /// Write a header-only BAM (with the given SO) to `path`. The readers
+    /// under test read only the header, so zero records is sufficient.
+    fn write_bam_header_only(path: &Path, so: Option<&[u8]>) {
+        let header = header_with_sort_order(so);
+        let file = File::create(path).unwrap();
+        let mut w = noodles_bam::io::Writer::new(file);
+        w.write_header(&header).unwrap();
+        w.try_finish().unwrap();
+    }
+
+    /// A header-only SAM with the given SO line.
+    fn sam_header_bytes(so: &str) -> Vec<u8> {
+        format!("@HD\tVN:1.6\tSO:{so}\n@SQ\tSN:chr1\tLN:1000\n").into_bytes()
+    }
+
+    #[test]
+    fn bam_from_path_without_sort_check_accepts_coordinate() {
+        let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        write_bam_header_only(tmp.path(), Some(b"coordinate"));
+        // The checking constructor rejects it ...
+        assert!(matches!(
+            BamReader::from_path(tmp.path()),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        // ... the no-check constructor accepts it.
+        assert!(BamReader::from_path_without_sort_check(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn sam_from_path_without_sort_check_accepts_coordinate() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), sam_header_bytes("coordinate")).unwrap();
+        assert!(matches!(
+            SamReader::from_path(tmp.path()),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        assert!(SamReader::from_path_without_sort_check(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn open_reader_without_sort_check_accepts_coordinate_bam() {
+        let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        write_bam_header_only(tmp.path(), Some(b"coordinate"));
+        // open_reader (checking) rejects; the no-check dispatcher accepts.
+        assert!(matches!(
+            open_reader(tmp.path(), None),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        assert!(open_reader_without_sort_check(tmp.path(), None).is_ok());
+    }
+
+    #[test]
+    fn open_reader_without_sort_check_accepts_coordinate_sam() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), sam_header_bytes("coordinate")).unwrap();
+        assert!(matches!(
+            open_reader(tmp.path(), None),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        assert!(open_reader_without_sort_check(tmp.path(), None).is_ok());
+    }
+
+    /// Parity: the no-check path must NOT change classification of
+    /// non-coordinate headers — queryname / unsorted / unknown / no-SO all
+    /// still open successfully (same as the checking path).
+    #[test]
+    fn no_check_path_unchanged_for_non_coordinate_headers() {
+        for so in ["queryname", "unsorted", "unknown"] {
+            // BAM
+            let bam = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+            write_bam_header_only(bam.path(), Some(so.as_bytes()));
+            assert!(
+                BamReader::from_path(bam.path()).is_ok(),
+                "checking BAM open should accept SO:{so}"
+            );
+            assert!(
+                BamReader::from_path_without_sort_check(bam.path()).is_ok(),
+                "no-check BAM open should accept SO:{so}"
+            );
+            // SAM
+            let sam = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(sam.path(), sam_header_bytes(so)).unwrap();
+            assert!(open_reader(sam.path(), None).is_ok());
+            assert!(open_reader_without_sort_check(sam.path(), None).is_ok());
+        }
+        // No @HD/SO at all (header-only BAM with no SO field).
+        let bam = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        write_bam_header_only(bam.path(), None);
+        assert!(BamReader::from_path(bam.path()).is_ok());
+        assert!(BamReader::from_path_without_sort_check(bam.path()).is_ok());
     }
 
     /// Minimal SAM bytes with a single mapped record carrying valid Bismark
