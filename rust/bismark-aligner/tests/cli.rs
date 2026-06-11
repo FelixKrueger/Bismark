@@ -3132,6 +3132,244 @@ fn combined_index_pe_pbat_strands_end_to_end() {
 }
 
 // ===========================================================================
+// `--combined_index --hisat2` (v2.x Phase 5) paired-end end-to-end. HISAT2 PE reuses
+// the EXACT Bowtie 2 PE-combined machinery (the spawn runs the hisat2 binary; the PE
+// argv shape is identical), so the only HISAT2-specific behaviour to exercise is the
+// runner-up surfacing as a contiguous **secondary pair** (FLAG 0x100, with AS on both
+// mates) — the combined gather must collect it and `select_core_pe` must consume it as
+// the MAPQ runner-up (not write it as a spurious extra alignment). Uses a `.ht2`
+// combined fixture (NOT `.bt2`) so discovery finds the HISAT2 combined index.
+// ===========================================================================
+
+/// A genome dir with a combined HISAT2 index (`.ht2`) — the HISAT2 analogue of
+/// [`make_genome_combined`]. CT/GA/Combined each get 8 `.ht2` files (no `rev.*`).
+fn make_genome_combined_hisat2(dir: &Path) {
+    let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
+    let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
+    let comb = dir.join("Bisulfite_Genome").join("Combined");
+    fs::create_dir_all(&ct).unwrap();
+    fs::create_dir_all(&ga).unwrap();
+    fs::create_dir_all(&comb).unwrap();
+    for n in 1..=8 {
+        fs::write(ct.join(format!("BS_CT.{n}.ht2")), b"x").unwrap();
+        fs::write(ga.join(format!("BS_GA.{n}.ht2")), b"x").unwrap();
+        fs::write(comb.join(format!("BS_combined.{n}.ht2")), b"x").unwrap();
+    }
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACGTACGTACGT\n").unwrap(); // 16 bp
+}
+
+/// A fake combined-index PE **`hisat2`** (banner `hisat2-align-s version 2.2.2`). Per
+/// base read id it emits a primary pair followed by a CONTIGUOUS secondary pair (FLAG
+/// `0x100` on both mates, with its own `AS:i:`) — the HISAT2 `-k 2` runner-up shape:
+/// - `r_ot`   → primary OT (R1 99 / R2 147 on `_CT`, AS 0) + a lower-AS spurious secondary
+///   (R1 355 / R2 403 on `_GA`, AS −6, `SEQ=*` as `--omit-sec-seq`, but `MD:Z:` present)
+///   → UniqueBest OT, the secondary consumed as the MAPQ runner-up (NOT written).
+/// - `r_md`   → primary OT (AS 0, MD present) + a **tied VALID OB** secondary (R1 339 /
+///   R2 419 on `_GA`, AS 0, **MD ABSENT**) → both enter the best-sum MD path → the
+///   secondary's missing MD aborts loud ("Failed to extract MD tag") — the PE C1 trip-wire.
+/// - else     → unmapped (77/141).
+#[cfg(unix)]
+fn make_fake_hisat2_pe_combined(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+  if (id=="r_ot") {
+    print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-6\tMD:Z:6";
+    print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-6\tMD:Z:6";
+    print id "/1\t355\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\t*\tFFFFFF\tAS:i:-6\tMD:Z:6";
+    print id "/2\t403\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\t*\tFFFFFF\tAS:i:-6\tMD:Z:6";
+  } else if (id=="r_md") {
+    print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print id "/1\t339\tchr1_GA_converted\t9\t42\t6M\t=\t9\t-6\t*\tFFFFFF\tAS:i:0";
+    print id "/2\t419\tchr1_GA_converted\t9\t42\t6M\t=\t9\t6\t*\tFFFFFF\tAS:i:0";
+  } else {
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+  } }' "$m1"
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// Phase 5: `--hisat2 --combined_index` PE (directional) runs end-to-end over the
+/// combined `.ht2` index. The HISAT2 secondary pair (FLAG 0x100) is gathered + consumed
+/// as the runner-up — the OT pair is the unique best (R1 FLAG 99), exactly 2 records
+/// written (the secondary is NOT a spurious extra), and the report says HISAT2.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_directional_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_pe_combined(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    fs::write(&r1, b"@r_ot\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r_ot\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode, paired-end")
+                .and(predicate::str::contains("HISAT2"))
+                .and(predicate::str::contains("unique best alignments:   1")),
+        );
+
+    let bam = outdir.path().join("r1_bismark_hisat2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2); // ONLY the winning OT pair — the secondary is consumed, not written
+    assert_eq!(u16::from(recs[0].inner().flags()), 99); // R1 → OT
+    assert_eq!(u16::from(recs[1].inner().flags()), 147); // R2 → OT
+}
+
+/// Phase 5 C1 trip-wire: a HISAT2 secondary pair that is VALID and TIES the primary at
+/// the best sum enters the MD-required path (`select_core_pe` extracts MD for every
+/// best-sum pair, not just the winner). If that secondary's `MD:Z:` is absent the run
+/// MUST abort loud — never silently drop it. (Real HISAT2 `--omit-sec-seq` keeps `MD:Z:`,
+/// the gate confirms; this proves the never-silent failure if it ever did not.)
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_tied_secondary_missing_md_aborts() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_pe_combined(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    fs::write(&r1, b"@r_md\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r_md\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Failed to extract MD tag"));
+}
+
+/// A NON-DIRECTIONAL combined-index PE fake **`hisat2`** — the HISAT2 analogue of
+/// `make_fake_bowtie2_pe_combined_nondir`: discriminates the two both-strands passes by
+/// the `-1` converted-input suffix (`*_C_to_T*` → OT; `*_G_to_A*` → CTOT/CTOB). Proves
+/// the non-dir 2-stream driver threads `config.aligner = Hisat2` into BOTH spawns and
+/// produces the G→A-pass strands under HISAT2.
+#[cfg(unix)]
+fn make_fake_hisat2_pe_combined_nondir(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$m1" in
+  *_C_to_T*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      if (id=="r_ot") {
+        print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else {
+        print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      } }' "$m1" ;;
+  *_G_to_A*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      if (id=="r_ctot") {
+        print id "/1\t83\tchr1_CT_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t163\tchr1_CT_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else if (id=="r_ctob") {
+        print id "/1\t99\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t147\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else {
+        print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      } }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// Phase 5: `--hisat2 --combined_index --non_directional` PE end-to-end (parallel model
+/// (a), two both-strands HISAT2 passes). Produces OT (C→T pass) + CTOT/CTOB (G→A pass) —
+/// the same per-strand R1 FLAGs as the Bowtie 2 non-dir e2e (OT→99, CTOT→147, CTOB→163),
+/// proving the 2-stream driver runs HISAT2 on both passes.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_nondir_strands_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_pe_combined_nondir(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    let reads =
+        b"@r_ot\nACGTAC\n+\nFFFFFF\n@r_ctot\nACGTAC\n+\nFFFFFF\n@r_ctob\nACGTAC\n+\nFFFFFF\n";
+    fs::write(&r1, reads).unwrap();
+    fs::write(&r2, reads).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode, paired-end")
+                .and(predicate::str::contains("HISAT2"))
+                .and(predicate::str::contains("unique best alignments:   3")),
+        );
+
+    let bam = outdir.path().join("r1_bismark_hisat2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 6); // 3 pairs in input order: r_ot, r_ctot, r_ctob
+    assert_eq!(u16::from(recs[0].inner().flags()), 99); // r_ot   → OT   (index 0)
+    assert_eq!(u16::from(recs[2].inner().flags()), 147); // r_ctot → CTOT (index 2)
+    assert_eq!(u16::from(recs[4].inner().flags()), 163); // r_ctob → CTOB (index 1)
+}
+
+// ===========================================================================
 // `--combined_index --non_directional` end-to-end (phase 5, model (a)).
 // TWO passes over the SAME `BS_combined` index: the fake `bowtie2` dispatches on
 // the `-U` INPUT-FILE conversion tag (`*_C_to_T*` → OT/(none), `*_G_to_A*` →

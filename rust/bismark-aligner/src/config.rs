@@ -473,27 +473,31 @@ fn reject_combined_index_unsupported(
                 .into(),
         ));
     }
-    // v2.x: paired-end combined-index is lifted for Bowtie 2 across ALL THREE library
-    // types — **directional** (Phase 2, one both-strands C->T pass -> OT/OB),
+    // v2.x: paired-end combined-index is lifted for **Bowtie 2 AND HISAT2** across ALL
+    // THREE library types — **directional** (Phase 2, one both-strands C->T pass -> OT/OB),
     // **non-directional** (Phase 3, two both-strands passes C->T + G->A -> 4 strands,
     // parallel model (a)), and **pbat** (Phase 4, one both-strands G->A pass -> CTOT/CTOB,
-    // the non-dir G->A half standalone). The `aligner == Bowtie2` conjunct is load-bearing,
-    // NOT redundant: Phase 1 lifted HISAT2 for SE combined (the Minimap2-only reject above
-    // lets HISAT2 fall through), so without it a PE-HISAT2 request would be accepted and
-    // routed into the PE combined driver, which spawns Bowtie 2 — a silent backend swap.
-    // PE HISAT2 combined is a later phase.
+    // the non-dir G->A half standalone). HISAT2 PE combined (Phase 5) reuses the identical
+    // PE machinery — `PairedAlignerStream::spawn` runs whichever `detected_aligner` binary
+    // is resolved, and the per-pair classify/select/route is aligner-agnostic. The
+    // `matches!(aligner, Bowtie2 | Hisat2)` conjunct is load-bearing, NOT redundant: it
+    // keeps **minimap2** PE combined rejected (the Minimap2-only reject above only covers
+    // SE fall-through; a single both-strands minimap2 pass cannot do the 4-strand dispatch,
+    // and PE-minimap2 has no trustworthy oracle). minimap2 PE is also double-rejected at the
+    // global `aligner == Minimap2 && layout.is_paired()` guard above.
     if layout.is_paired()
-        && !(aligner == Aligner::Bowtie2
+        && !(matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2)
             && matches!(
                 library,
                 LibraryType::Directional | LibraryType::NonDirectional | LibraryType::Pbat
             ))
     {
         return Err(AlignerError::Unsupported(
-            "paired-end --combined_index is currently supported only with Bowtie 2 (Phases 2-4 \
-             cover directional, non-directional, and pbat). HISAT2 paired-end combined is \
-             Bowtie 2-only for now. Use single-end reads, a Bowtie 2 paired-end run, or drop \
-             --combined_index for the faithful paired-end path."
+            "paired-end --combined_index is supported with Bowtie 2 or HISAT2 (directional, \
+             non-directional, and pbat). It is not supported with minimap2 (a single \
+             both-strands minimap2 pass cannot reproduce Bismark's per-strand model, and \
+             minimap2 paired-end has no trustworthy oracle). Use Bowtie 2 / HISAT2, single-end \
+             reads, or drop --combined_index for the faithful paired-end path."
                 .into(),
         ));
     }
@@ -1124,7 +1128,8 @@ mod tests {
     /// Every not-yet-supported combination is rejected loudly (never-silent).
     #[test]
     fn combined_index_rejects_unsupported_combinations() {
-        // HISAT2 paired-end combined → still rejected (PE is a later phase; HISAT2 SE is accepted above).
+        // HISAT2 paired-end combined directional → ACCEPTED (Phase 5; reuses the PE machinery
+        // over the combined `.ht2` index — all 3 HISAT2 PE library types are now lifted).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--hisat2"]),
@@ -1132,7 +1137,7 @@ mod tests {
                 LibraryType::Directional,
                 &pe()
             )
-            .is_err()
+            .is_ok()
         );
         assert!(
             reject_combined_index_unsupported(
@@ -1154,8 +1159,7 @@ mod tests {
             )
             .is_ok()
         );
-        // paired-end pbat HISAT2 → rejected (PE combined is Bowtie 2-only — the
-        // `aligner == Bowtie2` conjunct keeps PE-HISAT2 out for every library type).
+        // paired-end pbat HISAT2 → ACCEPTED (Phase 5).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--hisat2", "--pbat"]),
@@ -1163,16 +1167,27 @@ mod tests {
                 LibraryType::Pbat,
                 &pe()
             )
-            .is_err()
+            .is_ok()
         );
-        // paired-end non-directional HISAT2 → rejected (PE combined is Bowtie 2-only).
-        // (PE single-pass / sequential rejection — now via the SE-only C2 guard — is
-        // covered by `combined_index_{single_pass,sequential}_requires_*` below.)
+        // paired-end non-directional HISAT2 → ACCEPTED (Phase 5; parallel model (a),
+        // two both-strands HISAT2 PE passes). (PE single-pass / sequential stay Bowtie-2-
+        // only via the SE-only C2 guard — covered by `combined_index_{single_pass,
+        // sequential}_requires_*` below.)
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--hisat2", "--non_directional"]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
+                &pe()
+            )
+            .is_ok()
+        );
+        // paired-end minimap2 combined → still rejected (no 4-strand dispatch / no PE oracle).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--minimap2"]),
+                Aligner::Minimap2,
+                LibraryType::Directional,
                 &pe()
             )
             .is_err()
