@@ -1087,17 +1087,12 @@ fn main_paired_end_no_longer_rejected_phase_c() {
         .stderr(predicates::str::contains("paired-end extraction; arrives in Phase C").not());
 }
 
-#[test]
-fn main_rejects_multiple_input_files() {
-    let bam1 = tempbam();
-    let bam2 = tempbam();
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
-    cmd.arg(bam1.path())
-        .arg(bam2.path())
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("multiple input files"));
-}
+// NOTE: multiple input files are now SUPPORTED (v1.x) — processed per-file
+// with no pooling, faithful to Perl's `foreach my $filename`. The end-to-end
+// per-file behavior (incl. coordinate-sorted SE acceptance, fail-fast, and
+// no cross-file bleed) is exercised in `tests/multifile_coordsorted.rs`. The
+// former `main_rejects_multiple_input_files` rejection test was removed when
+// the `files.len() != 1` gate was lifted in `main::run`.
 
 /// Phase F (per plan §7.1): `--parallel N` is no longer phase-gated. The
 /// run still fails because `tempbam()` writes junk content, but the

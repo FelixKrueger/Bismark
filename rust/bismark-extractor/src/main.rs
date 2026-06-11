@@ -1,19 +1,27 @@
 //! Binary entry point for `bismark_methylation_extractor_rs`.
 //!
-//! Dispatches on the resolved config —
-//! - `SingleEnd` → [`bismark_extractor::extract_se`].
-//! - `PairedEnd` → [`bismark_extractor::extract_pe`].
+//! Processes EACH input file independently (per-file outputs, no
+//! cross-file pooling — faithful to Perl's `foreach my $filename`), then
+//! dispatches each on the resolved config —
+//! - `SingleEnd` → [`bismark_extractor::extract_se_parallel`].
+//! - `PairedEnd` → [`bismark_extractor::extract_pe_parallel`].
 //! - `AutoDetect` → header-probe via `bismark_io::detect_paired_from_header`
-//!   to pick `extract_se` / `extract_pe`. Errors with `AutoDetectFailed`
+//!   to pick SE / PE. Errors with `AutoDetectFailed`
 //!   if the BAM has no `@PG ID:Bismark*` line.
+//!
+//! Coordinate-sorted input: accepted for SINGLE-END (SE calls are
+//! order-independent — faithful to Perl, which only sort-checks paired-end),
+//! rejected for PAIRED-END with `UnsortedInput` (coordinate sorting breaks
+//! adjacent-mate pairing). The AutoDetect probe opens without the sort check
+//! so a coordinate-sorted SE file can be inspected; the PE branch re-opens
+//! WITH the check.
 //!
 //! This build supports all 6 output modes
 //! (`Default` / `Comprehensive` / `MergeNonCpG` /
 //! `ComprehensiveMergeNonCpG` / `Yacht` / `MbiasOnly`), `--gzip`,
-//! `--parallel > 1` (Phase F), and `--bedGraph` / `--cytosine_report`
-//! (inline-streaming epic Phase 2 — driven in-process from `state.finalize`).
-//! Multiple input files are still rejected with
-//! [`BismarkExtractorError::PhaseNotYetImplemented`].
+//! `--parallel > 1` (Phase F), `--bedGraph` / `--cytosine_report`
+//! (inline-streaming epic Phase 2 — driven in-process from `state.finalize`),
+//! and multiple input files (v1.x — looped per-file).
 //!
 //! Exit codes:
 //! - `0` — success
@@ -24,10 +32,12 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use bismark_extractor::cli::{Cli, PairedMode};
+use std::path::Path;
+
+use bismark_extractor::cli::{Cli, PairedMode, ResolvedConfig};
 use bismark_extractor::error::BismarkExtractorError;
 use bismark_extractor::{extract_pe_parallel, extract_se_parallel, version_string};
-use bismark_io::{detect_paired_from_header, open_reader};
+use bismark_io::{detect_paired_from_header, open_reader_without_sort_check};
 
 // Multithreaded global allocator (#884). The parallel pipeline's worker threads
 // allocate heavily per record (record parsing, call Vecs, batch Vecs); under the
@@ -62,48 +72,42 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
     let config = cli.validate()?;
 
-    // Phase B dispatches on the supported subset. Anything outside the
-    // subset is rejected with `PhaseNotYetImplemented` naming the phase
-    // that will land it. This avoids silent acceptance of half-implemented
-    // code paths.
-
-    // Multiple input files: deferred (would mirror dedup's --multiple).
-    if config.files.len() != 1 {
-        return Err(BismarkExtractorError::PhaseNotYetImplemented {
-            feature: format!(
-                "multiple input files ({} given); v1.x feature",
-                config.files.len()
-            ),
-        });
+    // Multiple input files (v1.x): process EACH file independently, in
+    // command-line order, with full per-file state — faithful to Perl's
+    // `foreach my $filename (@filenames)` loop (no cross-file pooling; each
+    // file's split files / M-bias / splitting report / bedGraph / cytosine
+    // report are named from that file's basename). Fail-fast: the first
+    // file that errors aborts the run (propagate via `?`), matching Perl's
+    // `die`; files already completed keep their outputs. The empty-file-list
+    // case is handled earlier by `validate()` (`NoInputFiles`), so this loop
+    // always runs at least once.
+    for input in &config.files {
+        process_one_file(input, &config)?;
     }
+    Ok(())
+}
 
-    // Phase F (this build): all 6 output modes + --gzip + --multicore N are
-    // supported. The parallel pipeline is byte-identical to N=1 for any N
-    // by construction (per SPEC §9 + PHASE_F_PLAN.md).
-    //
-    // Inline-streaming epic Phase 2: --bedGraph / --cytosine_report are now
-    // driven IN-PROCESS from inside `state.finalize` (no main::run
-    // orchestration is added here) — the prior `PhaseNotYetImplemented` gate
-    // was removed.
-
-    // Phase F dispatch (parallel pipeline; --parallel N for any N >= 1).
-    // PairedMode dispatch:
-    //   - SingleEnd → extract_se_parallel.
-    //   - PairedEnd → extract_pe_parallel.
-    //   - AutoDetect → probe the SAM header's @PG ID:Bismark line; dispatch.
-    //
-    // The legacy single-threaded `extract_se` / `extract_pe` remain available
-    // via `bismark_extractor::{extract_se, extract_pe}` as the byte-identity
-    // reference for the test suite (see lib.rs invariant comment).
-    let input = config.files[0].clone();
+/// Extract one input file end-to-end. Dispatches on `paired_mode`:
+///   - `SingleEnd` → `extract_se_parallel` (accepts coordinate-sorted input).
+///   - `PairedEnd` → `extract_pe_parallel` (rejects coordinate-sorted input).
+///   - `AutoDetect` → probe the `@PG ID:Bismark` header (without the sort
+///     check, so a coordinate-sorted SE file can be inspected), then
+///     dispatch. The PE branch re-opens WITH the sort check, so a
+///     coordinate-sorted PE file is still rejected with `UnsortedInput`.
+///
+/// The parallel pipeline is byte-identical to `--parallel 1` for any N by
+/// construction (SPEC §9). The legacy single-threaded `extract_se` /
+/// `extract_pe` remain the byte-identity reference for the test suite.
+fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
     match config.paired_mode {
-        PairedMode::SingleEnd => extract_se_parallel(&input, &config),
-        PairedMode::PairedEnd => extract_pe_parallel(&input, &config),
+        PairedMode::SingleEnd => extract_se_parallel(input, config),
+        PairedMode::PairedEnd => extract_pe_parallel(input, config),
         PairedMode::AutoDetect => {
-            // Open reader once for header inspection. The reader is dropped
-            // before extract_*_parallel re-opens the file — ~50 ms overhead
-            // per run, OS caches the BAM header bytes.
-            let probe = open_reader(&input, /*cram_ref=*/ None)?;
+            // Open reader once for header inspection, WITHOUT the
+            // coordinate-sort check (detection must work on a coord-sorted
+            // SE file). The probe is dropped before extract_*_parallel
+            // re-opens the file — OS caches the header bytes.
+            let probe = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
             let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
                 BismarkExtractorError::AutoDetectFailed {
                     message: format!(
@@ -115,9 +119,11 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
             })?;
             drop(probe);
             if is_paired {
-                extract_pe_parallel(&input, &config)
+                // PE re-opens with the checking constructor → coordinate-sorted
+                // PE input is rejected here with `UnsortedInput`.
+                extract_pe_parallel(input, config)
             } else {
-                extract_se_parallel(&input, &config)
+                extract_se_parallel(input, config)
             }
         }
     }
