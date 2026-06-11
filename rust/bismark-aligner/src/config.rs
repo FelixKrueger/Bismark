@@ -385,6 +385,19 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
+        // v2.x Phase 3: PE non-dir combined ships parallel model (a) only — the low-memory
+        // exec models are single-end until the data-gated Phase 6. Without this the flag
+        // would pass validation and then be silently ignored by the PE dispatch arm (it
+        // never reads it), i.e. the user asks for the low-RAM model and gets model (a).
+        if layout.is_paired() {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_single_pass is single-end only: the single-pass low-memory \
+                 execution model is not available for paired-end yet (PE low-RAM variants are a \
+                 later phase). Drop --combined_index_single_pass for the default parallel \
+                 paired-end non-directional combined run."
+                    .into(),
+            ));
+        }
         if aligner != Aligner::Bowtie2 {
             return Err(AlignerError::Unsupported(
                 "--combined_index_single_pass requires Bowtie 2: it is the Bowtie-2-specific \
@@ -429,6 +442,16 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
+        // v2.x Phase 3: SE only until the data-gated Phase 6 (see the single_pass guard).
+        if layout.is_paired() {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_sequential is single-end only: the sequential low-memory \
+                 execution model is not available for paired-end yet (PE low-RAM variants are a \
+                 later phase). Drop --combined_index_sequential for the default parallel \
+                 paired-end non-directional combined run."
+                    .into(),
+            ));
+        }
         if aligner != Aligner::Bowtie2 {
             return Err(AlignerError::Unsupported(
                 "--combined_index_sequential requires Bowtie 2: it is the Bowtie-2-specific \
@@ -450,19 +473,25 @@ fn reject_combined_index_unsupported(
                 .into(),
         ));
     }
-    // v2.x Phase 2: paired-end combined-index is lifted ONLY for directional Bowtie 2
-    // (one both-strands C->T pass -> OT/OB). The `aligner == Bowtie2` conjunct is
-    // load-bearing, NOT redundant: Phase 1 lifted HISAT2 for SE combined (the
-    // Minimap2-only reject above lets HISAT2 fall through), so without it a directional
-    // PE-HISAT2 request would be accepted and routed into `run_pe_combined`, which
-    // spawns Bowtie 2 — a silent backend swap. Non-directional / pbat PE and HISAT2 PE
-    // are later phases.
-    if layout.is_paired() && !(aligner == Aligner::Bowtie2 && library == LibraryType::Directional) {
+    // v2.x: paired-end combined-index is lifted for Bowtie 2 **directional** (Phase 2,
+    // one both-strands C->T pass -> OT/OB) and **non-directional** (Phase 3, two
+    // both-strands passes C->T + G->A -> 4 strands, parallel model (a)). The `aligner ==
+    // Bowtie2` conjunct is load-bearing, NOT redundant: Phase 1 lifted HISAT2 for SE
+    // combined (the Minimap2-only reject above lets HISAT2 fall through), so without it a
+    // PE-HISAT2 request would be accepted and routed into the PE combined driver, which
+    // spawns Bowtie 2 — a silent backend swap. PE pbat and PE HISAT2 are later phases.
+    if layout.is_paired()
+        && !(aligner == Aligner::Bowtie2
+            && matches!(
+                library,
+                LibraryType::Directional | LibraryType::NonDirectional
+            ))
+    {
         return Err(AlignerError::Unsupported(
-            "paired-end --combined_index is currently supported only for directional libraries \
-             with Bowtie 2 (one both-strands C->T pass -> OT/OB). Non-directional and pbat \
-             paired-end combined alignment are later phases, and HISAT2 paired-end combined is \
-             Bowtie 2-only for now. Use single-end reads, a directional Bowtie 2 paired-end run, \
+            "paired-end --combined_index is currently supported only for directional or \
+             non-directional libraries with Bowtie 2 (Phases 2-3). PBAT paired-end combined \
+             alignment is a later phase, and HISAT2 paired-end combined is Bowtie 2-only for \
+             now. Use single-end reads, a directional/non-directional Bowtie 2 paired-end run, \
              or drop --combined_index for the faithful paired-end path."
                 .into(),
         ));
@@ -1004,12 +1033,23 @@ mod tests {
     /// (one both-strands C→T pass → OT/OB). PE non-dir/pbat/HISAT2 stay rejected
     /// (see `combined_index_rejects_unsupported_combinations`).
     #[test]
-    fn combined_index_allows_pe_directional_bowtie2() {
+    fn combined_index_allows_pe_directional_and_nondir_bowtie2() {
+        // Phase 2: directional PE Bowtie 2 combined.
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
+                &pe()
+            )
+            .is_ok()
+        );
+        // Phase 3: non-directional PE Bowtie 2 combined (parallel model (a)).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--non_directional"]),
+                Aligner::Bowtie2,
+                LibraryType::NonDirectional,
                 &pe()
             )
             .is_ok()
@@ -1102,23 +1142,25 @@ mod tests {
             )
             .is_err()
         );
-        // paired-end non-directional Bowtie 2 → rejected (a later phase; only
-        // directional PE Bowtie 2 is lifted in Phase 2).
-        assert!(
-            reject_combined_index_unsupported(
-                &cli_from(&["--combined_index", "--non_directional"]),
-                Aligner::Bowtie2,
-                LibraryType::NonDirectional,
-                &pe()
-            )
-            .is_err()
-        );
-        // paired-end pbat Bowtie 2 → rejected (a later phase).
+        // paired-end pbat Bowtie 2 → rejected (a later phase; directional + non-dir PE
+        // Bowtie 2 are accepted — Phases 2-3).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--pbat"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
+                &pe()
+            )
+            .is_err()
+        );
+        // paired-end non-directional HISAT2 → rejected (PE combined is Bowtie 2-only).
+        // (PE single-pass / sequential rejection — now via the SE-only C2 guard — is
+        // covered by `combined_index_{single_pass,sequential}_requires_*` below.)
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--hisat2", "--non_directional"]),
+                Aligner::Hisat2,
+                LibraryType::NonDirectional,
                 &pe()
             )
             .is_err()
@@ -1184,7 +1226,8 @@ mod tests {
             )
             .is_err()
         );
-        // PE / multicore inherit the --combined_index rejections.
+        // PE → rejected by the SE-only low-RAM-exec-model C2 guard (Phase 3; PE non-dir
+        // combined itself is now accepted); multicore inherits the --combined_index reject.
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1282,7 +1325,8 @@ mod tests {
             )
             .is_err()
         );
-        // PE / multicore inherit the --combined_index rejections.
+        // PE → rejected by the SE-only low-RAM-exec-model C2 guard (Phase 3; PE non-dir
+        // combined itself is now accepted); multicore inherits the --combined_index reject.
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
