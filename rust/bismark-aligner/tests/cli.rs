@@ -2801,13 +2801,18 @@ fn combined_index_scope_guard_rejects_unsupported() {
         .stderr(predicate::str::contains("not supported with --multicore"));
 }
 
-/// Scope guard: paired-end `--combined_index` is lifted ONLY for directional Bowtie 2
-/// (v2.x Phase 2 — one both-strands C→T pass → OT/OB). Non-directional PE combined is
-/// still a later phase → rejected loudly (never-silent). Directional PE acceptance is
-/// covered by the `config` unit test `combined_index_allows_pe_directional_bowtie2`
-/// (the guard) + the oxy concordance gate (a full run).
+/// Scope guard: paired-end `--combined_index` is lifted for directional (v2.x Phase 2 —
+/// one both-strands C→T pass → OT/OB) and non-directional (Phase 3) Bowtie 2. PBAT PE
+/// combined is still a later phase → rejected loudly (never-silent). Directional/non-dir
+/// PE acceptance is covered by the `config` unit test
+/// `combined_index_allows_pe_directional_and_nondir_bowtie2` (the guard) + the oxy
+/// concordance gate (a full run).
 #[test]
-fn combined_index_paired_end_nondir_is_rejected() {
+fn combined_index_paired_end_pbat_is_rejected() {
+    // PE combined-index is lifted for Bowtie 2 directional (Phase 2) + non-directional
+    // (Phase 3); PBAT PE combined is still a later phase → rejected loudly. (PE non-dir
+    // acceptance is covered by `combined_index_pe_nondir_strands_end_to_end` + the config
+    // unit test; the directional one by `combined_index_pe_ot_pair_end_to_end`.)
     let genome = TempDir::new().unwrap();
     make_genome(genome.path());
     let r1 = genome.path().join("r1.fq");
@@ -2816,7 +2821,7 @@ fn combined_index_paired_end_nondir_is_rejected() {
     fs::write(&r2, b"@a/2\nACGTAC\n+\nFFFFFF\n").unwrap();
     bin()
         .arg("--combined_index")
-        .arg("--non_directional")
+        .arg("--pbat")
         .arg("--genome")
         .arg(genome.path())
         .arg("-1")
@@ -2826,7 +2831,7 @@ fn combined_index_paired_end_nondir_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "supported only for directional libraries with Bowtie 2",
+            "PBAT paired-end combined alignment is a later phase",
         ));
 }
 
@@ -2958,6 +2963,97 @@ fn combined_index_pe_ob_pair_maps_to_ob_index_3() {
     // OB → PE index 3 → R1 FLAG 83, R2 FLAG 163 (NOT CTOB's 163/83).
     assert_eq!(u16::from(recs[0].inner().flags()), 83);
     assert_eq!(u16::from(recs[1].inner().flags()), 163);
+}
+
+/// A NON-DIRECTIONAL combined-index PE fake `bowtie2`: discriminates the TWO both-
+/// strands passes by the **`-1` converted-input filename suffix** (`*_C_to_T*` = the
+/// C→T-reads pass → OT/OB; `*_G_to_A*` = the G→A-reads pass → CTOT/CTOB) — NOT by `-x`
+/// (both passes share the SAME combined index). Per base read id: `r_ot` → OT (99/147
+/// on `_CT` at chr1:1) on the C→T pass; `r_ctot` → CTOT (R1 83 rev / R2 163 on `_CT` at
+/// chr1:5) and `r_ctob` → CTOB (R1 99 / R2 147 on `_GA` at chr1:5) on the G→A pass;
+/// everything else → an unmapped (77/141) pair on each pass.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_combined_nondir(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$m1" in
+  *_C_to_T*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      if (id=="r_ot") {
+        print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else {
+        print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      } }' "$m1" ;;
+  *_G_to_A*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      if (id=="r_ctot") {
+        print id "/1\t83\tchr1_CT_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t163\tchr1_CT_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else if (id=="r_ctob") {
+        print id "/1\t99\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t147\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else {
+        print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      } }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// `--combined_index --non_directional` PE end-to-end: the two both-strands passes
+/// produce OT (C→T pass) + CTOT/CTOB (G→A pass) — the G→A-pass strands the directional
+/// Phase-2 path could not exercise. Asserts the per-strand R1 FLAGs (PE output arm):
+/// OT→99 (index 0), CTOT→147 (index 2), CTOB→163 (index 1).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_nondir_strands_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined_nondir(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    // 3 pairs (no mate suffix — conversion inserts /1/1,/2/2): r_ot (C→T pass → OT),
+    // r_ctot + r_ctob (G→A pass → CTOT/CTOB).
+    let reads =
+        b"@r_ot\nACGTAC\n+\nFFFFFF\n@r_ctot\nACGTAC\n+\nFFFFFF\n@r_ctob\nACGTAC\n+\nFFFFFF\n";
+    fs::write(&r1, reads).unwrap();
+    fs::write(&r2, reads).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode, paired-end NON-DIRECTIONAL")
+                .and(predicate::str::contains("unique best alignments:   3")),
+        );
+
+    let bam = outdir.path().join("r1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 6); // 3 pairs, in input order: r_ot, r_ctot, r_ctob
+    // R1 FLAG per pair (the PE output-arm strand discriminator):
+    assert_eq!(u16::from(recs[0].inner().flags()), 99); // r_ot   → OT   (index 0)
+    assert_eq!(u16::from(recs[2].inner().flags()), 147); // r_ctot → CTOT (index 2)
+    assert_eq!(u16::from(recs[4].inner().flags()), 163); // r_ctob → CTOB (index 1)
 }
 
 // ===========================================================================

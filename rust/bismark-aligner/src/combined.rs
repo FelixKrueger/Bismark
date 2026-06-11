@@ -510,6 +510,52 @@ pub fn select_pe(
     )
 }
 
+/// Non-directional PE combined-index per-pair selection over the UNION of the two
+/// passes' `-k 2` pair groups (PLAN 06102026 phase 3): the C→T-converted-read pass
+/// (`ct_pairs`, `-1 C→T_R1 -2 G→A_R2` → OT/OB) and the G→A-converted-read pass
+/// (`ga_pairs`, `-1 G→A_R1 -2 C→T_R2` → CTOT/CTOB). Each pass's mapped pairs are
+/// tagged with its [`ReadConv`], unioned, and fed to the shared [`select_core_pe`]
+/// tie machine across all four slots (OT=0, CTOB=1, CTOT=2, OB=3 via
+/// [`CombinedClass::to_index_pe`]). A same-locus equal-sum cross-strand collision is
+/// KEPT, won by the scan-order-last (`[0,3,1,2]`) slot: **OT×CTOB → CTOB (index 1)**,
+/// **OB×CTOT → CTOT (index 2)**. The PE analog of the SE [`select_nondir`];
+/// `select_core_pe` is reused UNCHANGED — it was built 4-slot-ready in Phase 2 (the
+/// `select_core_pe_uses_literal_scan_order_not_ascending` test locks the only-non-dir-
+/// reachable OB×CTOB collision). `sequence_1`/`_2` are the original (uc) reads.
+pub fn select_pe_nondir(
+    ct_pairs: &[SamPair],
+    ga_pairs: &[SamPair],
+    sequence_1: &str,
+    sequence_2: &str,
+    score_min_intercept: f64,
+    score_min_slope: f64,
+    counters: &mut Counters,
+) -> Result<DecisionPaired> {
+    // Drop each pass's PE no-alignment marker (FLAG 77/141), tag the C→T pass's pairs
+    // `Ct` (→ OT/OB) and the G→A pass's pairs `Ga` (→ CTOT/CTOB), and union. The
+    // shared core computes the global best sum + the MAPQ runner-up over the union and
+    // resolves ties across all four slots in the `[0,3,1,2]` scan order.
+    let mapped: Vec<(ReadConv, &SamPair)> = ct_pairs
+        .iter()
+        .filter(|p| !p.is_unmapped_pair())
+        .map(|p| (ReadConv::Ct, p))
+        .chain(
+            ga_pairs
+                .iter()
+                .filter(|p| !p.is_unmapped_pair())
+                .map(|p| (ReadConv::Ga, p)),
+        )
+        .collect();
+    select_core_pe(
+        mapped,
+        sequence_1,
+        sequence_2,
+        score_min_intercept,
+        score_min_slope,
+        counters,
+    )
+}
+
 /// The shared **Bismark-faithful PE tie machine** — `select_core` doubled for two
 /// mates (PLAN 06102026 phase 2; the oracle is `merge::check_results_paired_end`).
 /// `mapped` is the pair's FULL set of mapped candidate pairs, each tagged with the
@@ -1922,5 +1968,204 @@ mod tests {
         let d_orac = oracle_pe(Some(ot), Some(ob));
         assert!(matches!(d_comb, DecisionPaired::Ambiguous { .. }));
         assert!(matches!(d_orac, DecisionPaired::Ambiguous { .. }));
+    }
+
+    // ===================================================================
+    // Non-directional PE combined selection (Phase 3) — select_pe_nondir,
+    // cross-checked against check_results_paired_end(directional=false).
+    // ===================================================================
+
+    /// CTOT-shaped pair (G→A pass): R1 rev (flag 83) + R2 fwd (163) on the CT
+    /// sub-genome → `classify(Ga, rev, _CT)` = CTOT → `to_index_pe` 2.
+    fn ctot_pair(pos1: u32, pos2: u32, as1: i64, as2: i64) -> SamPair {
+        mk_pair(
+            83,
+            "chr1_CT_converted",
+            pos1,
+            as1,
+            163,
+            "chr1_CT_converted",
+            pos2,
+            as2,
+        )
+    }
+    /// CTOB-shaped pair (G→A pass): R1 fwd (flag 99) + R2 rev (147) on the GA
+    /// sub-genome → `classify(Ga, fwd, _GA)` = CTOB → `to_index_pe` 1.
+    fn ctob_pair(pos1: u32, pos2: u32, as1: i64, as2: i64) -> SamPair {
+        mk_pair(
+            99,
+            "chr1_GA_converted",
+            pos1,
+            as1,
+            147,
+            "chr1_GA_converted",
+            pos2,
+            as2,
+        )
+    }
+
+    /// Run non-dir `select_pe_nondir` over the C→T pass pairs + G→A pass pairs.
+    fn sel_pe_nondir(ct: &[SamPair], ga: &[SamPair]) -> (DecisionPaired, Counters) {
+        let mut c = Counters::default();
+        let d = select_pe_nondir(ct, ga, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap();
+        (d, c)
+    }
+
+    /// The faithful 4-instance PE oracle, slots 0=OT 1=CTOB 2=CTOT 3=OB (the
+    /// non-dir `pe_instance_plan` numbering), `directional=false` (the index-1/2
+    /// reject is off). Each pair is placed in the slot its `classify` index maps to,
+    /// so the oracle scan assigns the same index the mechanism does.
+    fn oracle_pe_nondir(
+        ot: Option<SamPair>,
+        ctob: Option<SamPair>,
+        ctot: Option<SamPair>,
+        ob: Option<SamPair>,
+    ) -> DecisionPaired {
+        let mk = |p: Option<SamPair>| {
+            p.map(|pp| VecPairStream {
+                pairs: vec![pp],
+                pos: 0,
+            })
+        };
+        let mut streams: Vec<Option<VecPairStream>> = vec![mk(ot), mk(ctob), mk(ctot), mk(ob)];
+        let mut c = Counters::default();
+        crate::merge::check_results_paired_end(
+            "r1",
+            "ACGTACGTAC",
+            "ACGTACGTAC",
+            &mut streams,
+            false, // non-directional → index-1/2 reject OFF
+            0.0,
+            -0.2,
+            false,
+            crate::config::Aligner::Bowtie2,
+            &mut c,
+        )
+        .unwrap()
+    }
+
+    /// The PE no-alignment marker pair (FLAG 77/141).
+    fn miss_pair() -> SamPair {
+        SamPair::from_lines(
+            "r1/1\t77\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII",
+            "r1/2\t141\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn select_pe_nondir_unique_ctot_maps_to_index_2() {
+        // G→A pass only → CTOT → PE index 2 (a slot the directional select_pe can't reach).
+        let (d, c) = sel_pe_nondir(&[], &[ctot_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 2)));
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    #[test]
+    fn select_pe_nondir_unique_ctob_maps_to_index_1() {
+        let (d, _) = sel_pe_nondir(&[], &[ctob_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn select_pe_nondir_same_locus_ot_ctob_kept_ctob_wins() {
+        // OT (C→T pass, index 0) and CTOB (G→A pass, index 1) at the SAME locus + sum
+        // → ONE map entry (same `chr:pos1:pos2` key), won by CTOB (index 1, scan-order-
+        // last of {0,1} in [0,3,1,2]). The same-locus-in-both-passes collapse.
+        let (d, _) = sel_pe_nondir(&[ot_pair(100, 200, -2, -2)], &[ctob_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn select_pe_nondir_same_locus_ob_ctot_kept_ctot_wins() {
+        // OB (index 3) and CTOT (index 2) at the same locus → CTOT (index 2, scan-order-
+        // last of {3,2} in [0,3,1,2]).
+        let (d, _) = sel_pe_nondir(&[ob_pair(100, 200, -2, -2)], &[ctot_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 2)));
+    }
+
+    #[test]
+    fn select_pe_nondir_cross_location_is_ambiguous() {
+        // OT at one locus + CTOT at another, equal sum → 2 map entries → Ambiguous.
+        let (d, c) = sel_pe_nondir(&[ot_pair(100, 200, -2, -2)], &[ctot_pair(500, 600, -2, -2)]);
+        assert!(matches!(d, DecisionPaired::Ambiguous { .. }));
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn select_pe_nondir_all_spurious_is_no_alignment() {
+        // A spurious pair in each pass (C→T fwd on GA = spurious; G→A fwd on CT = spurious).
+        let ct_spur = mk_pair(
+            99,
+            "chr1_GA_converted",
+            100,
+            -2,
+            147,
+            "chr1_GA_converted",
+            200,
+            -2,
+        );
+        let ga_spur = mk_pair(
+            99,
+            "chr1_CT_converted",
+            300,
+            -2,
+            147,
+            "chr1_CT_converted",
+            400,
+            -2,
+        );
+        let (d, c) = sel_pe_nondir(&[ct_spur], &[ga_spur]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.combined_spurious_count, 1);
+    }
+
+    #[test]
+    fn select_pe_nondir_both_passes_miss_is_no_alignment() {
+        let (d, c) = sel_pe_nondir(&[miss_pair()], &[miss_pair()]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.no_single_alignment_found, 1);
+    }
+
+    #[test]
+    fn mechanism_pe_nondir_ctot_matches_oracle() {
+        // CTOT clear winner: combined picks index 2; oracle (CTOT in slot 2,
+        // directional=false) picks index 2.
+        let ctot = ctot_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe_nondir(&[], std::slice::from_ref(&ctot));
+        let d_orac = oracle_pe_nondir(None, None, Some(ctot), None);
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 2)));
+    }
+
+    #[test]
+    fn mechanism_pe_nondir_ctob_matches_oracle() {
+        let ctob = ctob_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe_nondir(&[], std::slice::from_ref(&ctob));
+        let d_orac = oracle_pe_nondir(None, Some(ctob), None, None);
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn mechanism_pe_nondir_same_locus_ot_ctob_matches_oracle() {
+        // The headline cross-strand collision: combined → CTOB(1); oracle (OT slot 0 +
+        // CTOB slot 1, same locus/sum, scan [0,3,1,2] → slot 1 overwrites slot 0) → CTOB(1).
+        let ot = ot_pair(100, 200, -2, -2);
+        let ctob = ctob_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe_nondir(std::slice::from_ref(&ot), std::slice::from_ref(&ctob));
+        let d_orac = oracle_pe_nondir(Some(ot), Some(ctob), None, None);
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn mechanism_pe_nondir_same_locus_ob_ctot_matches_oracle() {
+        let ob = ob_pair(100, 200, -2, -2);
+        let ctot = ctot_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe_nondir(std::slice::from_ref(&ob), std::slice::from_ref(&ctot));
+        let d_orac = oracle_pe_nondir(None, None, Some(ctot), Some(ob));
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 2)));
     }
 }
