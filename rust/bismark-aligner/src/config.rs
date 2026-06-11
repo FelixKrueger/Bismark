@@ -450,11 +450,20 @@ fn reject_combined_index_unsupported(
                 .into(),
         ));
     }
-    if layout.is_paired() {
+    // v2.x Phase 2: paired-end combined-index is lifted ONLY for directional Bowtie 2
+    // (one both-strands C->T pass -> OT/OB). The `aligner == Bowtie2` conjunct is
+    // load-bearing, NOT redundant: Phase 1 lifted HISAT2 for SE combined (the
+    // Minimap2-only reject above lets HISAT2 fall through), so without it a directional
+    // PE-HISAT2 request would be accepted and routed into `run_pe_combined`, which
+    // spawns Bowtie 2 — a silent backend swap. Non-directional / pbat PE and HISAT2 PE
+    // are later phases.
+    if layout.is_paired() && !(aligner == Aligner::Bowtie2 && library == LibraryType::Directional) {
         return Err(AlignerError::Unsupported(
-            "--combined_index is single-end only in this phase; paired-end combined alignment is a \
-             later phase. Use single-end reads, or drop --combined_index for the faithful \
-             paired-end path."
+            "paired-end --combined_index is currently supported only for directional libraries \
+             with Bowtie 2 (one both-strands C->T pass -> OT/OB). Non-directional and pbat \
+             paired-end combined alignment are later phases, and HISAT2 paired-end combined is \
+             Bowtie 2-only for now. Use single-end reads, a directional Bowtie 2 paired-end run, \
+             or drop --combined_index for the faithful paired-end path."
                 .into(),
         ));
     }
@@ -991,6 +1000,22 @@ mod tests {
         );
     }
 
+    /// Phase 2 (v2.x): paired-end directional Bowtie 2 combined-index is ACCEPTED
+    /// (one both-strands C→T pass → OT/OB). PE non-dir/pbat/HISAT2 stay rejected
+    /// (see `combined_index_rejects_unsupported_combinations`).
+    #[test]
+    fn combined_index_allows_pe_directional_bowtie2() {
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &pe()
+            )
+            .is_ok()
+        );
+    }
+
     /// Without the flag the guard is inert (every combination passes).
     #[test]
     fn combined_index_guard_inert_when_flag_absent() {
@@ -1077,12 +1102,23 @@ mod tests {
             )
             .is_err()
         );
-        // paired-end
+        // paired-end non-directional Bowtie 2 → rejected (a later phase; only
+        // directional PE Bowtie 2 is lifted in Phase 2).
         assert!(
             reject_combined_index_unsupported(
-                &cli_from(&["--combined_index"]),
+                &cli_from(&["--combined_index", "--non_directional"]),
                 Aligner::Bowtie2,
-                LibraryType::Directional,
+                LibraryType::NonDirectional,
+                &pe()
+            )
+            .is_err()
+        );
+        // paired-end pbat Bowtie 2 → rejected (a later phase).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--pbat"]),
+                Aligner::Bowtie2,
+                LibraryType::Pbat,
                 &pe()
             )
             .is_err()
