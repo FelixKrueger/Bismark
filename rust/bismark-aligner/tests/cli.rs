@@ -2801,39 +2801,12 @@ fn combined_index_scope_guard_rejects_unsupported() {
         .stderr(predicate::str::contains("not supported with --multicore"));
 }
 
-/// Scope guard: paired-end `--combined_index` is lifted for directional (v2.x Phase 2 —
-/// one both-strands C→T pass → OT/OB) and non-directional (Phase 3) Bowtie 2. PBAT PE
-/// combined is still a later phase → rejected loudly (never-silent). Directional/non-dir
-/// PE acceptance is covered by the `config` unit test
-/// `combined_index_allows_pe_directional_and_nondir_bowtie2` (the guard) + the oxy
-/// concordance gate (a full run).
-#[test]
-fn combined_index_paired_end_pbat_is_rejected() {
-    // PE combined-index is lifted for Bowtie 2 directional (Phase 2) + non-directional
-    // (Phase 3); PBAT PE combined is still a later phase → rejected loudly. (PE non-dir
-    // acceptance is covered by `combined_index_pe_nondir_strands_end_to_end` + the config
-    // unit test; the directional one by `combined_index_pe_ot_pair_end_to_end`.)
-    let genome = TempDir::new().unwrap();
-    make_genome(genome.path());
-    let r1 = genome.path().join("r1.fq");
-    let r2 = genome.path().join("r2.fq");
-    fs::write(&r1, b"@a/1\nACGTAC\n+\nFFFFFF\n").unwrap();
-    fs::write(&r2, b"@a/2\nACGTAC\n+\nFFFFFF\n").unwrap();
-    bin()
-        .arg("--combined_index")
-        .arg("--pbat")
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "PBAT paired-end combined alignment is a later phase",
-        ));
-}
+// v2.x Phase 4: paired-end pbat `--combined_index` is now ACCEPTED for Bowtie 2 (one
+// both-strands G→A pass → CTOT/CTOB — the non-dir G→A half standalone). Acceptance is
+// covered end-to-end by `combined_index_pe_pbat_strands_end_to_end` (below) + the
+// `config` gate unit tests (PE pbat Bowtie 2 ok; PE pbat HISAT2 still rejected). PE
+// HISAT2 combined remains a later phase. (The old `combined_index_paired_end_pbat_is_
+// rejected` cli test was removed — PE pbat no longer fails loud.)
 
 // ===========================================================================
 // `--combined_index` (v2.x Phase 2) paired-end directional end-to-end. Hermetic:
@@ -3054,6 +3027,108 @@ fn combined_index_pe_nondir_strands_end_to_end() {
     assert_eq!(u16::from(recs[0].inner().flags()), 99); // r_ot   → OT   (index 0)
     assert_eq!(u16::from(recs[2].inner().flags()), 147); // r_ctot → CTOT (index 2)
     assert_eq!(u16::from(recs[4].inner().flags()), 163); // r_ctob → CTOB (index 1)
+}
+
+// ===========================================================================
+// `--combined_index --pbat` (v2.x Phase 4) paired-end end-to-end. PBAT is the G→A-pass
+// half of non-dir, STANDALONE: ONE both-strands pass with `-1 G→A_R1 -2 C→T_R2` →
+// CTOT/CTOB. The fake is G→A-only (single pass) — it does NOT model a C→T pass, since
+// `run_pe_combined_pbat` never spawns one (review B-I2: a C→T arm would be dead and
+// could mask a wrong-pass bug). OT/OB are unreachable → must be absent from the output.
+// ===========================================================================
+
+/// A PBAT combined-index PE fake `bowtie2` (ONE both-strands instance, `-1 G→A_R1
+/// -2 C→T_R2`). G→A-only: per base read id, `r_ctot` → CTOT (R1 83 rev / R2 163 on
+/// `_CT_converted` at chr1:5) and `r_ctob` → CTOB (R1 99 / R2 147 on `_GA_converted`
+/// at chr1:5); anything else → an unmapped (77/141) pair. The `-1` input is the
+/// G→A-converted R1 (`*_G_to_A*`); the fake does not branch on it (single pass) but
+/// reads it for the read ids. Strips the `/1/1` tag the PE conversion adds.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_combined_pbat(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+  if (id=="r_ctot") {
+    print id "/1\t83\tchr1_CT_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print id "/2\t163\tchr1_CT_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  } else if (id=="r_ctob") {
+    print id "/1\t99\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print id "/2\t147\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  } else {
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+  } }' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// `--combined_index --pbat` PE end-to-end: the single G→A pass produces CTOT + CTOB
+/// (the G→A-pass strands), and OT/OB are absent (the PBAT signature). Asserts the
+/// per-strand R1 FLAGs (PE output arm): CTOT→147 (index 2), CTOB→163 (index 1), and
+/// that no record carries an OT (99) or OB (83) R1 FLAG.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_pbat_strands_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined_pbat(bins.path());
+    let r1 = genome.path().join("r1.fq");
+    let r2 = genome.path().join("r2.fq");
+    // 2 pairs (no mate suffix — conversion inserts /1/1,/2/2): r_ctot, r_ctob (both
+    // map on the single G→A pass → CTOT/CTOB).
+    let reads = b"@r_ctot\nACGTAC\n+\nFFFFFF\n@r_ctob\nACGTAC\n+\nFFFFFF\n";
+    fs::write(&r1, reads).unwrap();
+    fs::write(&r2, reads).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--pbat")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Combined-index mode, paired-end PBAT (EXPERIMENTAL")
+                .and(predicate::str::contains("unique best alignments:   2")),
+        );
+
+    let bam = outdir.path().join("r1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 4); // 2 pairs, in input order: r_ctot, r_ctob
+    // R1 FLAG per pair (the PE output-arm strand discriminator):
+    assert_eq!(u16::from(recs[0].inner().flags()), 147); // r_ctot → CTOT (index 2)
+    assert_eq!(u16::from(recs[2].inner().flags()), 163); // r_ctob → CTOB (index 1)
+    // PBAT signature: OT/OB are unreachable → no PAIR leads with an OT (99) or OB (83)
+    // record. (The per-pair FIRST record carries the strand identity; the second record
+    // legitimately reuses 99/83 as the mate flag — OT=(99,147) vs CTOT=(147,99) share the
+    // two values in opposite order, so check only the even-indexed first records.)
+    for first in recs.iter().step_by(2) {
+        let f = u16::from(first.inner().flags());
+        assert_ne!(
+            f, 99,
+            "OT pair (leads with FLAG 99) must be absent under pbat"
+        );
+        assert_ne!(
+            f, 83,
+            "OB pair (leads with FLAG 83) must be absent under pbat"
+        );
+    }
 }
 
 // ===========================================================================

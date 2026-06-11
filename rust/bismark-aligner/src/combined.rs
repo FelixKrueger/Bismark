@@ -556,6 +556,52 @@ pub fn select_pe_nondir(
     )
 }
 
+/// PBAT PE combined-index per-pair selection over the pair's `-k 2` group: every
+/// candidate pair is from the G→A-converted read pass ([`ReadConv::Ga`],
+/// `-1 G→A_R1 -2 C→T_R2`) → CTOT/CTOB. A thin wrapper over the unchanged
+/// [`select_core_pe`] — the single-pass `Ga` analog of the directional [`select_pe`]
+/// (which tags every pair `Ct`), i.e. the PE analog of the SE [`select_pbat`]. PBAT
+/// reads originate from the complementary strands, so a hit in the original-strand
+/// orientation (`fwd+_CT` / `rev+_GA`) is **spurious** here (the `classify(Ga, …)`
+/// table). PBAT is the G→A-pass half of the non-directional path
+/// ([`select_pe_nondir`]) standalone (only CTOT/CTOB reachable, no C→T pass to union).
+///
+/// **NB:** the caller routes the resulting `DecisionPaired` through `route_pe_decision`,
+/// which — unlike the SE `route_se_decision(pbat)` — takes **no `pbat` parameter**:
+/// `classify(Ga, …)` emits the synthetic PE index **1/2** ([`CombinedClass::to_index_pe`]:
+/// CTOB→1, CTOT→2) directly, and `extract_corresponding_genomic_sequence_paired_end`
+/// maps strand/conversion as a pure function of that index (index 1/2 handled natively).
+/// There is no faithful `+2` extraction modifier in PE, so the SE pbat double-shift
+/// gotcha has no PE analog (nothing to disable). A same-locus equal-sum CTOT×CTOB
+/// collision is KEPT, won by the scan-order-last (`[0,3,1,2]`) of {1,2} = **CTOT
+/// (index 2)** — note this DIFFERS from SE pbat (where CTOB wins), because both the PE
+/// renumbering and the literal scan order differ from SE's ascending {2,3}.
+pub fn select_pe_pbat(
+    pairs: &[SamPair],
+    sequence_1: &str,
+    sequence_2: &str,
+    score_min_intercept: f64,
+    score_min_slope: f64,
+    counters: &mut Counters,
+) -> Result<DecisionPaired> {
+    // Drop the PE no-alignment marker (FLAG 77/141); tag every surviving pair G→A
+    // (the single PBAT pass). The shared core classifies (CTOT/CTOB/spurious),
+    // resolves ties, and owns the counters.
+    let mapped: Vec<(ReadConv, &SamPair)> = pairs
+        .iter()
+        .filter(|p| !p.is_unmapped_pair())
+        .map(|p| (ReadConv::Ga, p))
+        .collect();
+    select_core_pe(
+        mapped,
+        sequence_1,
+        sequence_2,
+        score_min_intercept,
+        score_min_slope,
+        counters,
+    )
+}
+
 /// The shared **Bismark-faithful PE tie machine** — `select_core` doubled for two
 /// mates (PLAN 06102026 phase 2; the oracle is `merge::check_results_paired_end`).
 /// `mapped` is the pair's FULL set of mapped candidate pairs, each tagged with the
@@ -2165,6 +2211,137 @@ mod tests {
         let ctot = ctot_pair(100, 200, -2, -2);
         let (d_comb, _) = sel_pe_nondir(std::slice::from_ref(&ob), std::slice::from_ref(&ctot));
         let d_orac = oracle_pe_nondir(None, None, Some(ctot), Some(ob));
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 2)));
+    }
+
+    // ===================================================================
+    // PBAT PE combined selection (Phase 4) — select_pe_pbat, the single
+    // G→A-pass half of non-dir standalone (only CTOT/CTOB reachable),
+    // cross-checked against check_results_paired_end(directional=false).
+    // ===================================================================
+
+    /// Run pbat `select_pe_pbat` over the single G→A pass's candidate pairs.
+    fn sel_pe_pbat(pairs: &[SamPair]) -> (DecisionPaired, Counters) {
+        let mut c = Counters::default();
+        let d = select_pe_pbat(pairs, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap();
+        (d, c)
+    }
+
+    #[test]
+    fn select_pe_pbat_unique_ctot_maps_to_index_2() {
+        // One G→A pass; a CTOT pair → PE index 2. (The original-strand C→T slots OT/OB
+        // are unreachable under pbat's `Ga` tag.)
+        let (d, c) = sel_pe_pbat(&[ctot_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 2)));
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    #[test]
+    fn select_pe_pbat_unique_ctob_maps_to_index_1() {
+        let (d, _) = sel_pe_pbat(&[ctob_pair(100, 200, -2, -2)]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn select_pe_pbat_original_strand_orientation_is_spurious() {
+        // An OT-shaped pair (R1 fwd on _CT) is original-strand orientation → spurious
+        // under `Ga` (only Ga+rev on CT = CTOT is valid). All-spurious → NoAlignment.
+        let (d, c) = sel_pe_pbat(&[ot_pair(100, 200, -2, -2)]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.combined_spurious_count, 1);
+    }
+
+    #[test]
+    fn select_pe_pbat_valid_and_spurious_tie_is_ambiguous() {
+        // A valid CTOT + a spurious OT-shaped pair at the same best sum → Ambiguous
+        // (never a silent rescue of the valid hit).
+        let (d, _) = sel_pe_pbat(&[ctot_pair(100, 200, -2, -2), ot_pair(500, 600, -2, -2)]);
+        assert!(matches!(d, DecisionPaired::Ambiguous { .. }));
+    }
+
+    #[test]
+    fn select_pe_pbat_same_locus_ctot_ctob_kept_ctot_wins() {
+        // CTOT (index 2) and CTOB (index 1) at the SAME locus + sum → ONE map entry, won
+        // by CTOT (index 2, scan-order-last of {1,2} in [0,3,1,2]). NOTE this is the
+        // OPPOSITE of SE pbat (where CTOB wins) — the PE renumbering + literal scan order.
+        // (review B-I1) Pre-assert the canned pairs classify to the intended slots so the
+        // divergent-from-SE result cannot pass for the wrong reason.
+        let ctot = ctot_pair(100, 200, -2, -2);
+        let ctob = ctob_pair(100, 200, -2, -2);
+        assert_eq!(
+            classify(ReadConv::Ga, ctot.read1.flag, &ctot.read1.rname)
+                .unwrap()
+                .1,
+            CombinedClass::Ctot
+        );
+        assert_eq!(
+            classify(ReadConv::Ga, ctob.read1.flag, &ctob.read1.rname)
+                .unwrap()
+                .1,
+            CombinedClass::Ctob
+        );
+        let (d, _) = sel_pe_pbat(&[ctot, ctob]);
+        assert_eq!(key_pe(&d), Some(("chr1".to_string(), 100, 200, 2)));
+    }
+
+    #[test]
+    fn select_pe_pbat_cross_location_is_ambiguous() {
+        // CTOT at one locus + CTOB at another, equal sum → 2 map entries → Ambiguous.
+        let (d, c) = sel_pe_pbat(&[ctot_pair(100, 200, -2, -2), ctob_pair(500, 600, -2, -2)]);
+        assert!(matches!(d, DecisionPaired::Ambiguous { .. }));
+        assert_eq!(c.unsuitable_sequence_count, 1);
+    }
+
+    #[test]
+    fn select_pe_pbat_miss_is_no_alignment() {
+        let (d, c) = sel_pe_pbat(&[miss_pair()]);
+        assert!(matches!(d, DecisionPaired::NoAlignment));
+        assert_eq!(c.no_single_alignment_found, 1);
+    }
+
+    #[test]
+    fn mechanism_pe_pbat_ctot_matches_oracle() {
+        // CTOT clear winner: combined → index 2; oracle (CTOT in slot 2, directional=
+        // false) → index 2. Reuses the non-dir oracle helper (pbat populates only the
+        // CTOT/CTOB slots).
+        let ctot = ctot_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe_pbat(std::slice::from_ref(&ctot));
+        let d_orac = oracle_pe_nondir(None, None, Some(ctot), None);
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 2)));
+    }
+
+    #[test]
+    fn mechanism_pe_pbat_ctob_matches_oracle() {
+        let ctob = ctob_pair(100, 200, -2, -2);
+        let (d_comb, _) = sel_pe_pbat(std::slice::from_ref(&ctob));
+        let d_orac = oracle_pe_nondir(None, Some(ctob), None, None);
+        assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
+        assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 1)));
+    }
+
+    #[test]
+    fn mechanism_pe_pbat_same_locus_ctot_ctob_matches_oracle() {
+        // The headline tie: combined → CTOT(2); oracle (CTOB slot 1 + CTOT slot 2, same
+        // locus/sum, scan [0,3,1,2] → slot 2 overwrites slot 1) → CTOT(2). (review B-I1)
+        // pre-assert the canned pairs' classes.
+        let ctot = ctot_pair(100, 200, -2, -2);
+        let ctob = ctob_pair(100, 200, -2, -2);
+        assert_eq!(
+            classify(ReadConv::Ga, ctot.read1.flag, &ctot.read1.rname)
+                .unwrap()
+                .1,
+            CombinedClass::Ctot
+        );
+        assert_eq!(
+            classify(ReadConv::Ga, ctob.read1.flag, &ctob.read1.rname)
+                .unwrap()
+                .1,
+            CombinedClass::Ctob
+        );
+        let (d_comb, _) = sel_pe_pbat(&[ctot.clone(), ctob.clone()]);
+        let d_orac = oracle_pe_nondir(None, Some(ctob), Some(ctot), None);
         assert_eq!(key_pe(&d_comb), key_pe(&d_orac));
         assert_eq!(key_pe(&d_comb), Some(("chr1".to_string(), 100, 200, 2)));
     }
