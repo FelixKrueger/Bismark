@@ -637,6 +637,92 @@ impl Drop for PairedAlignerStream {
     }
 }
 
+/// A spilled paired-end SAM-record file presented as a [`PairedSamStream`] — the PE
+/// analog of [`FileSamStream`] (Phase 6, the sequential low-RSS PE variant). Reads
+/// **two** lines per pair → [`SamPair::from_lines`] (which re-canonicalises read1/read2
+/// regardless of the spill order). The whole point of spilling pass 1 to disk is to
+/// replay it against the live pass-2 stream WITHOUT holding the index resident — so the
+/// file is streamed one pair at a time (peak memory O(1) in the file size). `@` header
+/// lines are skipped for symmetry with [`PairedAlignerStream::spawn`] (the spill writes
+/// only records, so in practice there are none, but a header would be tolerated); a
+/// **lone trailing line** (odd line count → no second mate) yields `None`, mirroring
+/// [`PairedAlignerStream::advance_pair`] (Perl 6491), NOT an error.
+pub struct PairedFileSamStream {
+    reader: BufReader<File>,
+    current: Option<SamPair>,
+}
+
+impl PairedFileSamStream {
+    /// Open a spilled PE SAM-record file and read up to the first pair (`@` lines
+    /// skipped; `None` at EOF / empty / header-only / a lone trailing line). Mirrors
+    /// [`PairedAlignerStream::spawn`]'s header-skip + first-pair read, file-backed.
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path).map_err(|e| {
+            AlignerError::Validation(format!(
+                "failed to open spilled paired-end alignment file ({}): {e}",
+                path.display()
+            ))
+        })?;
+        let mut reader = BufReader::new(file);
+        // Skip `@` header lines; the first non-`@` line is the first record of the
+        // first pair (cf. `PairedAlignerStream::spawn`).
+        let mut line1 = String::new();
+        let current = loop {
+            line1.clear();
+            let n1 = reader.read_line(&mut line1)?;
+            if n1 == 0 {
+                break None; // empty / header-only
+            }
+            if line1.starts_with('@') {
+                continue;
+            }
+            let mut line2 = String::new();
+            let n2 = reader.read_line(&mut line2)?;
+            // A lone trailing line is not a complete pair (Perl 6491) → no pairs.
+            break if n2 == 0 {
+                None
+            } else {
+                Some(SamPair::from_lines(&line1, &line2)?)
+            };
+        };
+        Ok(PairedFileSamStream { reader, current })
+    }
+
+    /// Peek the current pair without consuming it (`None` at EOF).
+    pub fn current_pair(&self) -> Option<&SamPair> {
+        self.current.as_ref()
+    }
+
+    /// Advance to the next pair (reads two lines; `None` at EOF / a lone line). The
+    /// spill writes only records, so — unlike [`open`](Self::open) — there is no header
+    /// to skip mid-stream.
+    pub fn advance_pair(&mut self) -> Result<()> {
+        let mut line1 = String::new();
+        let n1 = self.reader.read_line(&mut line1)?;
+        if n1 == 0 {
+            self.current = None;
+            return Ok(());
+        }
+        let mut line2 = String::new();
+        let n2 = self.reader.read_line(&mut line2)?;
+        self.current = if n2 == 0 {
+            None
+        } else {
+            Some(SamPair::from_lines(&line1, &line2)?)
+        };
+        Ok(())
+    }
+}
+
+impl PairedSamStream for PairedFileSamStream {
+    fn current_pair(&self) -> Option<&SamPair> {
+        PairedFileSamStream::current_pair(self)
+    }
+    fn advance_pair(&mut self) -> Result<()> {
+        PairedFileSamStream::advance_pair(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1272,5 +1358,90 @@ mod tests {
         let (_d, s) = spawn_fake_pe("printf '@HD\\tVN:1.0\\n'");
         assert!(s.current_pair().is_none());
         s.finish().unwrap();
+    }
+
+    // ---- PairedFileSamStream (Phase 6 — the spilled PE pass replay) ---------
+
+    /// Write SAM `lines` (each newline-terminated) to a fresh temp file and return
+    /// it (the TempDir keeps the file alive for the test's lifetime).
+    fn write_spill(lines: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("ct_pass.sam");
+        let mut body = String::new();
+        for l in lines {
+            body.push_str(l);
+            body.push('\n');
+        }
+        std::fs::write(&path, body).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn paired_file_sam_stream_round_trips_incl_miss() {
+        // Two pairs, two lines each: a normal pair (read2-first, to exercise the
+        // canonicalising re-pair) + a (77,141) miss pair. Replays identically.
+        let (_d, path) = write_spill(&[
+            &pe_line("a/2", 147, 20),
+            &pe_line("a/1", 99, 10),
+            &pe_line("b/1", 77, 0),
+            &pe_line("b/2", 141, 0),
+        ]);
+        let mut s = PairedFileSamStream::open(&path).unwrap();
+        let a = s.current_pair().unwrap();
+        assert_eq!(a.seq_id, "a");
+        assert_eq!(a.read1.qname, "a/1"); // canonicalised despite read2-first spill order
+        assert_eq!(a.read1.pos, 10);
+        assert!(!a.is_unmapped_pair());
+        s.advance_pair().unwrap();
+        let b = s.current_pair().unwrap();
+        assert_eq!(b.seq_id, "b");
+        assert!(b.is_unmapped_pair()); // the (77,141) miss round-trips
+        s.advance_pair().unwrap();
+        assert!(s.current_pair().is_none()); // EOF
+    }
+
+    #[test]
+    fn paired_file_sam_stream_skips_header() {
+        let (_d, path) = write_spill(&[
+            "@HD\tVN:1.0",
+            &pe_line("a/1", 99, 10),
+            &pe_line("a/2", 147, 20),
+        ]);
+        let s = PairedFileSamStream::open(&path).unwrap();
+        assert_eq!(s.current_pair().unwrap().seq_id, "a");
+    }
+
+    #[test]
+    fn paired_file_sam_stream_lone_trailing_line_is_none() {
+        // An odd line count: a complete pair followed by a single dangling record →
+        // the dangling line has no second mate, so the second `advance` yields None
+        // (mirrors PairedAlignerStream::advance_pair — NOT an error).
+        let (_d, path) = write_spill(&[
+            &pe_line("a/1", 99, 10),
+            &pe_line("a/2", 147, 20),
+            &pe_line("b/1", 99, 30),
+        ]);
+        let mut s = PairedFileSamStream::open(&path).unwrap();
+        assert_eq!(s.current_pair().unwrap().seq_id, "a");
+        s.advance_pair().unwrap();
+        assert!(s.current_pair().is_none()); // lone trailing b/1 → no pair
+    }
+
+    #[test]
+    fn paired_file_sam_stream_empty_and_header_only_none() {
+        let (_d, empty) = write_spill(&[]);
+        assert!(
+            PairedFileSamStream::open(&empty)
+                .unwrap()
+                .current_pair()
+                .is_none()
+        );
+        let (_d2, header) = write_spill(&["@HD\tVN:1.0", "@SQ\tSN:chr1_CT_converted\tLN:16"]);
+        assert!(
+            PairedFileSamStream::open(&header)
+                .unwrap()
+                .current_pair()
+                .is_none()
+        );
     }
 }

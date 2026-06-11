@@ -363,10 +363,10 @@ fn reject_combined_index_unsupported(
     // ONLY meaningful for the non-directional combined path (the sole mode that
     // loads the combined index twice). Require --combined_index --non_directional;
     // checked BEFORE the !combined_index early return so `--combined_index_single_pass`
-    // alone is also rejected loudly. SE / single-core follow from the required
-    // --combined_index (enforced below); Bowtie 2 is required by the explicit guard
-    // below (v2.x lifted --combined_index itself to HISAT2 SE, but this exec model
-    // stays Bowtie-2-specific).
+    // alone is also rejected loudly. Single-core follows from --combined_index (which
+    // rejects --multicore below); v2.x Phase 6 lifted this to PE non-dir too (SE + PE
+    // both valid). Bowtie 2 is required by the explicit guard below (v2.x lifted
+    // --combined_index itself to HISAT2, but this exec model stays Bowtie-2-specific).
     if cli.combined_index_single_pass {
         if !cli.combined_index {
             return Err(AlignerError::Unsupported(
@@ -385,19 +385,10 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 3: PE non-dir combined ships parallel model (a) only — the low-memory
-        // exec models are single-end until the data-gated Phase 6. Without this the flag
-        // would pass validation and then be silently ignored by the PE dispatch arm (it
-        // never reads it), i.e. the user asks for the low-RAM model and gets model (a).
-        if layout.is_paired() {
-            return Err(AlignerError::Unsupported(
-                "--combined_index_single_pass is single-end only: the single-pass low-memory \
-                 execution model is not available for paired-end yet (PE low-RAM variants are a \
-                 later phase). Drop --combined_index_single_pass for the default parallel \
-                 paired-end non-directional combined run."
-                    .into(),
-            ));
-        }
+        // v2.x Phase 6: PE non-directional combined now supports this low-RAM exec model
+        // (the `layout.is_paired()` reject that used to live here is lifted — both SE and
+        // PE non-dir single-pass are valid targets). It stays Bowtie 2-only (next guard);
+        // PE-HISAT2 + this flag is therefore rejected by the aligner guard below.
         if aligner != Aligner::Bowtie2 {
             return Err(AlignerError::Unsupported(
                 "--combined_index_single_pass requires Bowtie 2: it is the Bowtie-2-specific \
@@ -413,9 +404,10 @@ fn reject_combined_index_unsupported(
     // BYTE-IDENTICAL to the default parallel model (a) (a pure RSS/wall trade). It is
     // mutually exclusive with --combined_index_single_pass (competing exec models for
     // the same mode). Checked BEFORE the !combined_index early return so the flag alone
-    // is also rejected loudly. SE / single-core follow from --combined_index; Bowtie 2
-    // is required by the explicit guard below (v2.x lifted --combined_index itself to
-    // HISAT2 SE, but this exec model stays Bowtie-2-specific).
+    // is also rejected loudly. Single-core follows from --combined_index; v2.x Phase 6
+    // lifted this to PE non-dir too (SE + PE both valid). Bowtie 2 is required by the
+    // explicit guard below (v2.x lifted --combined_index itself to HISAT2, but this exec
+    // model stays Bowtie-2-specific).
     if cli.combined_index_sequential {
         if cli.combined_index_single_pass {
             return Err(AlignerError::Unsupported(
@@ -442,16 +434,10 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 3: SE only until the data-gated Phase 6 (see the single_pass guard).
-        if layout.is_paired() {
-            return Err(AlignerError::Unsupported(
-                "--combined_index_sequential is single-end only: the sequential low-memory \
-                 execution model is not available for paired-end yet (PE low-RAM variants are a \
-                 later phase). Drop --combined_index_sequential for the default parallel \
-                 paired-end non-directional combined run."
-                    .into(),
-            ));
-        }
+        // v2.x Phase 6: PE non-directional combined now supports this faithful sequential
+        // low-RAM exec model too (the `layout.is_paired()` reject that used to live here is
+        // lifted — both SE and PE non-dir sequential are valid targets). Bowtie 2-only
+        // (next guard); PE-HISAT2 + this flag is therefore rejected by the aligner guard.
         if aligner != Aligner::Bowtie2 {
             return Err(AlignerError::Unsupported(
                 "--combined_index_sequential requires Bowtie 2: it is the Bowtie-2-specific \
@@ -1205,7 +1191,8 @@ mod tests {
     }
 
     /// `--combined_index_single_pass` (model b) requires `--combined_index --non_directional`,
-    /// SE Bowtie 2. Every other combination is rejected loudly (never-silent).
+    /// Bowtie 2 (SE or PE — v2.x Phase 6 lifted PE). Every other combination is rejected
+    /// loudly (never-silent).
     #[test]
     fn combined_index_single_pass_requires_combined_index_and_non_directional() {
         // OK: combined_index + non_directional, SE Bowtie 2.
@@ -1253,8 +1240,8 @@ mod tests {
             )
             .is_err()
         );
-        // PE → rejected by the SE-only low-RAM-exec-model C2 guard (Phase 3; PE non-dir
-        // combined itself is now accepted); multicore inherits the --combined_index reject.
+        // v2.x Phase 6: PE non-dir Bowtie 2 + single_pass is now ACCEPTED (the SE-only
+        // reject was lifted); multicore still inherits the --combined_index reject.
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1266,10 +1253,21 @@ mod tests {
                 LibraryType::NonDirectional,
                 &pe()
             )
+            .is_ok()
+        );
+        // PE directional + single_pass → reject (non-dir-only; the library guard fires
+        // regardless of layout).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--combined_index_single_pass"]),
+                Aligner::Bowtie2,
+                LibraryType::Directional,
+                &pe()
+            )
             .is_err()
         );
-        // HISAT2 → reject: single-pass is the Bowtie-2-specific tagged exec model (v2.x C2 guard;
-        // HISAT2 non-dir combined uses the default parallel model (a)).
+        // SE HISAT2 → reject: single-pass is the Bowtie-2-specific tagged exec model (v2.x
+        // C2 guard; HISAT2 non-dir combined uses the default parallel model (a)).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1283,12 +1281,27 @@ mod tests {
             )
             .is_err()
         );
+        // PE HISAT2 + single_pass → reject too (Bowtie 2-only — the aligner guard fires
+        // after the lifted PE check, so PE-HISAT2 does not silently route to the BT2 driver).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_single_pass"
+                ]),
+                Aligner::Hisat2,
+                LibraryType::NonDirectional,
+                &pe()
+            )
+            .is_err()
+        );
     }
 
     /// `--combined_index_sequential` (the faithful sequential exec model) requires
-    /// `--combined_index --non_directional`, SE Bowtie 2, and is mutually exclusive
-    /// with `--combined_index_single_pass`. Every other combination is rejected
-    /// loudly (never-silent). Mirrors the model-(b) guard test above.
+    /// `--combined_index --non_directional`, Bowtie 2 (SE or PE — v2.x Phase 6 lifted PE),
+    /// and is mutually exclusive with `--combined_index_single_pass`. Every other
+    /// combination is rejected loudly (never-silent). Mirrors the model-(b) guard test above.
     #[test]
     fn combined_index_sequential_requires_combined_index_and_non_directional() {
         // OK: combined_index + non_directional, SE Bowtie 2.
@@ -1352,8 +1365,8 @@ mod tests {
             )
             .is_err()
         );
-        // PE → rejected by the SE-only low-RAM-exec-model C2 guard (Phase 3; PE non-dir
-        // combined itself is now accepted); multicore inherits the --combined_index reject.
+        // v2.x Phase 6: PE non-dir Bowtie 2 + sequential is now ACCEPTED (the SE-only
+        // reject was lifted).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1365,8 +1378,9 @@ mod tests {
                 LibraryType::NonDirectional,
                 &pe()
             )
-            .is_err()
+            .is_ok()
         );
+        // --multicore still inherits the --combined_index reject (SE or PE).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1382,7 +1396,17 @@ mod tests {
             )
             .is_err()
         );
-        // HISAT2 → reject: sequential is the Bowtie-2-specific low-memory exec model (v2.x C2 guard).
+        // PE pbat + sequential → reject (non-dir-only; library guard, layout-independent).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
+                Aligner::Bowtie2,
+                LibraryType::Pbat,
+                &pe()
+            )
+            .is_err()
+        );
+        // SE HISAT2 → reject: sequential is the Bowtie-2-specific low-memory exec model.
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1393,6 +1417,21 @@ mod tests {
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
                 &se()
+            )
+            .is_err()
+        );
+        // PE HISAT2 + sequential → reject too (Bowtie 2-only; the aligner guard fires
+        // after the lifted PE check).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&[
+                    "--combined_index",
+                    "--non_directional",
+                    "--combined_index_sequential"
+                ]),
+                Aligner::Hisat2,
+                LibraryType::NonDirectional,
+                &pe()
             )
             .is_err()
         );

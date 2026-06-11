@@ -4293,3 +4293,399 @@ fn combined_index_sequential_desync_dies_loud() {
                 .and(predicate::str::contains("C->T pass stream head")),
         );
 }
+
+// ===========================================================================
+// `--combined_index` (v2.x) PAIRED-END NON-DIRECTIONAL low-RAM variants (PLAN 06102026
+// phase 6): SEQUENTIAL (faithful, byte-identical to model (a)) + SINGLE-PASS model (b)
+// (non-faithful tagged). Bowtie 2-only (the config guard enforces it). The SE analogs are
+// #959 (sequential) + #958 (single-pass). The SEQUENTIAL byte-identity reuses
+// `make_fake_bowtie2_pe_combined_nondir` (dispatches on the `-1` `*_C_to_T*`/`*_G_to_A*`
+// tag — unchanged by the exec model); the SINGLE-PASS path needs a tagged-qname PE fake.
+// ===========================================================================
+
+/// Write a matched PE FastQ pair (R1 == R2, each `ACGTAC`) for the given base ids.
+fn write_pe_reads_ids(dir: &Path, ids: &[&str]) -> (std::path::PathBuf, std::path::PathBuf) {
+    let r1 = dir.join("reads_1.fq");
+    let r2 = dir.join("reads_2.fq");
+    let mut s = String::new();
+    for id in ids {
+        s.push_str(&format!("@{id}\nACGTAC\n+\nFFFFFF\n"));
+    }
+    fs::write(&r1, &s).unwrap();
+    fs::write(&r2, &s).unwrap();
+    (r1, r2)
+}
+
+/// Collect a combined-non-dir PE BAM's alignment records for a run with or without
+/// `--combined_index_sequential`, optionally `--upto`-limited. Asserts the sequential
+/// spill temp file is cleaned up.
+#[cfg(unix)]
+fn run_combined_pe_nondir_records(
+    sequential: bool,
+    upto: Option<&str>,
+    ids: &[&str],
+) -> Vec<noodles_sam::alignment::RecordBuf> {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined_nondir(bins.path());
+    let (r1, r2) = write_pe_reads_ids(genome.path(), ids);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let mut cmd = bin();
+    cmd.arg("--combined_index").arg("--non_directional");
+    if sequential {
+        cmd.arg("--combined_index_sequential");
+    }
+    if let Some(u) = upto {
+        cmd.arg("--upto").arg(u);
+    }
+    cmd.arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    if sequential {
+        let leftover = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+        assert!(
+            !leftover,
+            "sequential PE spill temp file must be cleaned up"
+        );
+    }
+
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    reader
+        .records()
+        .map(|r| r.unwrap().inner().clone())
+        .collect()
+}
+
+/// THE byte-identity property (PE): the sequential variant's BAM records are identical to
+/// parallel model (a)'s on the same strand-mix inputs (OT + CTOT + CTOB; a both-miss
+/// dropped). Decision-equivalence is structural (same untagged converted files; exec-model
+/// spike C2), so this is the local proof the oxy md5-gate scales to real data.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_sequential_byte_identical_to_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a = run_combined_pe_nondir_records(false, None, &ids);
+    let sequential = run_combined_pe_nondir_records(true, None, &ids);
+    assert_eq!(model_a.len(), 6); // 3 mapped pairs × 2 records; r_miss → none
+    assert_eq!(
+        model_a, sequential,
+        "sequential PE combined BAM must be byte-identical to parallel model (a)"
+    );
+}
+
+/// Byte-identity holds under `--upto` early-break too — the PE two-line-per-pair drive
+/// loop leaves the file-backed C→T stream + the live G→A stream non-exhausted; the run
+/// exits cleanly with the spill cleaned up (the SE `--upto` test's PE analog).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_sequential_upto_early_break_matches_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a = run_combined_pe_nondir_records(false, Some("2"), &ids);
+    let sequential = run_combined_pe_nondir_records(true, Some("2"), &ids);
+    assert_eq!(model_a.len(), 4); // first two pairs (r_ot, r_ctot) → 4 records
+    assert_eq!(
+        model_a, sequential,
+        "sequential PE --upto must match model (a) --upto byte-for-byte"
+    );
+}
+
+/// A pair that misses BOTH passes → `NoAlignment` → 0 BAM records (the double-miss edge;
+/// both passes emit a lone (77,141) pair that `select_pe_nondir` filters).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_sequential_double_miss_no_alignment() {
+    let recs = run_combined_pe_nondir_records(true, None, &["r_miss"]);
+    assert!(recs.is_empty());
+}
+
+/// The never-silent SEQUENTIAL banner (STDERR) + report marker + the 4-strand non-dir
+/// counts (mirrors the SE sequential banner test, PE wording).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_sequential_banner_and_report_marker() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined_nondir(bins.path());
+    let (r1, r2) = write_pe_reads_ids(genome.path(), &["r_ot", "r_ctot", "r_ctob", "r_miss"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("paired-end NON-DIRECTIONAL SEQUENTIAL")
+                .and(predicate::str::contains(
+                    "one combined index is resident at a time",
+                ))
+                .and(predicate::str::contains("unique best alignments:   3")),
+        );
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
+    assert!(report.contains("non-directional SEQUENTIAL"));
+    assert!(report.contains("byte-identical to the default parallel combined non-dir path"));
+}
+
+/// A PE fake `bowtie2` for the model-(b) tagged run: one tagged interleaved input pair
+/// (`-1`/`-2`); per `-1` record strip the outer `/1/1` → `<base>__CT`/`<base>__GA`,
+/// dispatch on the tag (KEEP the tag in the output qname so the driver splits it back).
+/// `__CT` → OT (R1 99 / R2 147 on `_CT` @1); `__GA` → CTOT (`r_ctot`: R1 83 / R2 163 on
+/// `_CT` @5) / CTOB (`r_ctob`: R1 99 / R2 147 on `_GA` @5). Everything else → a (77,141)
+/// miss — so both halves are always present (as real Bowtie 2 emits).
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_combined_nondir_tagged(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  q=$1; sub(/^@/,"",q); sub(/\/1\/1$/,"",q);   # q = <base>__CT or <base>__GA
+  base=q; sub(/__(CT|GA)$/,"",base);
+  tag=substr(q, length(q)-1);
+  if (tag=="CT") {
+    if (base=="r_ot") {
+      print q "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      print q "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    } else {
+      print q "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print q "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    }
+  } else {
+    if (base=="r_ctot") {
+      print q "/1\t83\tchr1_CT_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      print q "/2\t163\tchr1_CT_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    } else if (base=="r_ctob") {
+      print q "/1\t99\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      print q "/2\t147\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    } else {
+      print q "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print q "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    }
+  }
+}' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// `--combined_index --combined_index_single_pass --non_directional` PE end-to-end (model
+/// b): ONE PE pass over the conversion-tagged interleaved reads (one index load). Split by
+/// the qname tag → the SAME `select_pe_nondir` union as model (a) → R1 FLAGs OT 99 / CTOT
+/// 147 / CTOB 163 (identical to the model-(a) e2e), plus the never-silent model-(b) banner.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_single_pass_strands_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_combined_nondir_tagged(bins.path());
+    let (r1, r2) = write_pe_reads_ids(genome.path(), &["r_ot", "r_ctot", "r_ctob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("paired-end NON-DIRECTIONAL SINGLE-PASS")
+                .and(predicate::str::contains("model b"))
+                .and(predicate::str::contains("unique best alignments:   3")),
+        );
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
+    assert!(report.contains("SINGLE-PASS (model b"));
+
+    let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 6); // 3 pairs in input order: r_ot, r_ctot, r_ctob
+    assert_eq!(u16::from(recs[0].inner().flags()), 99); // r_ot   → OT   (index 0)
+    assert_eq!(u16::from(recs[2].inner().flags()), 147); // r_ctot → CTOT (index 2)
+    assert_eq!(u16::from(recs[4].inner().flags()), 163); // r_ctob → CTOB (index 1)
+
+    // M-1 (review A): the model-(b) `__CT`/`__GA` qname tag is INERT to output — every
+    // record's read name is the ORIGINAL id (the route uses `identifier`, not the tagged
+    // aligner qname), never a tagged form. Locks the documented deviation end-to-end.
+    let name = |i: usize| recs[i].inner().name().map(|n| n.to_vec());
+    assert_eq!(name(0), Some(b"r_ot".to_vec())); // R1
+    assert_eq!(name(1), Some(b"r_ot".to_vec())); // R2 of the same pair
+    assert_eq!(name(2), Some(b"r_ctot".to_vec()));
+    assert_eq!(name(4), Some(b"r_ctob".to_vec()));
+    for i in 0..6 {
+        let n = name(i).unwrap();
+        assert!(
+            !n.windows(4).any(|w| w == b"__CT" || w == b"__GA"),
+            "output qname must be tag-free, got: {}",
+            String::from_utf8_lossy(&n)
+        );
+    }
+}
+
+/// Run the model-(b) PE path against a given fake and return the assertable command (for
+/// the never-silent die tests). Always 1 base pair `r_ot`.
+#[cfg(unix)]
+fn run_pe_single_pass_with_fake(make_fake: fn(&Path)) -> assert_cmd::assert::Assert {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake(bins.path());
+    let (r1, r2) = write_pe_reads_ids(genome.path(), &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_single_pass")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+}
+
+/// A tagged PE fake that emits UNTAGGED output qnames (`<base>/1`, `<base>/2` — the tag
+/// dropped) → the driver's `strip_conv_tag` on the head `seq_id` fails loud (guard iii).
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_tagged_untagged_output(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  q=$1; sub(/^@/,"",q); sub(/\/1\/1$/,"",q); base=q; sub(/__(CT|GA)$/,"",base);
+  print base "/1\t0\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  print base "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+}' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// A tagged PE fake that emits ONLY the `__CT` half (skips `__GA`) → the base id is
+/// missing its `__GA` half → the driver dies loud (guard ii).
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_tagged_ct_half_only(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  q=$1; sub(/^@/,"",q); sub(/\/1\/1$/,"",q); tag=substr(q, length(q)-1);
+  if (tag=="CT") {
+    print q "/1\t0\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+    print q "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  }
+}' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// A tagged PE fake that emits a GHOST base id (`ghost__CT`) for every pair → the head's
+/// tag-stripped `seq_id` ≠ the re-read identifier → the desync guard fires loud (guard i).
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_tagged_ghost_qname(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {
+  print "ghost__CT/1\t0\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+  print "ghost__CT/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+}' "$m1"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Never-silent (model b, guard iii): an UNTAGGED output record → `strip_conv_tag` dies
+/// loud rather than silently mis-partitioning the union.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_single_pass_untagged_record_dies() {
+    run_pe_single_pass_with_fake(make_fake_bowtie2_pe_tagged_untagged_output)
+        .failure()
+        .stderr(predicate::str::contains("__CT/__GA conversion tag"));
+}
+
+/// Never-silent (model b, guard ii): a base id missing its `__GA` half → die loud.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_single_pass_missing_tag_half_dies() {
+    run_pe_single_pass_with_fake(make_fake_bowtie2_pe_tagged_ct_half_only)
+        .failure()
+        .stderr(
+            predicate::str::contains("missing its __CT or __GA half")
+                .or(predicate::str::contains("missing its")),
+        );
+}
+
+/// Never-silent (model b, guard i): a ghost head base id ≠ the re-read identifier → the
+/// desync guard fires loud (the e2e of `assert_pe_tag_in_sync`).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_single_pass_desync_dies_loud() {
+    run_pe_single_pass_with_fake(make_fake_bowtie2_pe_tagged_ghost_qname)
+        .failure()
+        .stderr(
+            predicate::str::contains("desync").and(predicate::str::contains("stream head base id")),
+        );
+}
