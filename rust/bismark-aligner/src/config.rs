@@ -473,26 +473,27 @@ fn reject_combined_index_unsupported(
                 .into(),
         ));
     }
-    // v2.x: paired-end combined-index is lifted for Bowtie 2 **directional** (Phase 2,
-    // one both-strands C->T pass -> OT/OB) and **non-directional** (Phase 3, two
-    // both-strands passes C->T + G->A -> 4 strands, parallel model (a)). The `aligner ==
-    // Bowtie2` conjunct is load-bearing, NOT redundant: Phase 1 lifted HISAT2 for SE
-    // combined (the Minimap2-only reject above lets HISAT2 fall through), so without it a
-    // PE-HISAT2 request would be accepted and routed into the PE combined driver, which
-    // spawns Bowtie 2 — a silent backend swap. PE pbat and PE HISAT2 are later phases.
+    // v2.x: paired-end combined-index is lifted for Bowtie 2 across ALL THREE library
+    // types — **directional** (Phase 2, one both-strands C->T pass -> OT/OB),
+    // **non-directional** (Phase 3, two both-strands passes C->T + G->A -> 4 strands,
+    // parallel model (a)), and **pbat** (Phase 4, one both-strands G->A pass -> CTOT/CTOB,
+    // the non-dir G->A half standalone). The `aligner == Bowtie2` conjunct is load-bearing,
+    // NOT redundant: Phase 1 lifted HISAT2 for SE combined (the Minimap2-only reject above
+    // lets HISAT2 fall through), so without it a PE-HISAT2 request would be accepted and
+    // routed into the PE combined driver, which spawns Bowtie 2 — a silent backend swap.
+    // PE HISAT2 combined is a later phase.
     if layout.is_paired()
         && !(aligner == Aligner::Bowtie2
             && matches!(
                 library,
-                LibraryType::Directional | LibraryType::NonDirectional
+                LibraryType::Directional | LibraryType::NonDirectional | LibraryType::Pbat
             ))
     {
         return Err(AlignerError::Unsupported(
-            "paired-end --combined_index is currently supported only for directional or \
-             non-directional libraries with Bowtie 2 (Phases 2-3). PBAT paired-end combined \
-             alignment is a later phase, and HISAT2 paired-end combined is Bowtie 2-only for \
-             now. Use single-end reads, a directional/non-directional Bowtie 2 paired-end run, \
-             or drop --combined_index for the faithful paired-end path."
+            "paired-end --combined_index is currently supported only with Bowtie 2 (Phases 2-4 \
+             cover directional, non-directional, and pbat). HISAT2 paired-end combined is \
+             Bowtie 2-only for now. Use single-end reads, a Bowtie 2 paired-end run, or drop \
+             --combined_index for the faithful paired-end path."
                 .into(),
         ));
     }
@@ -1142,12 +1143,23 @@ mod tests {
             )
             .is_err()
         );
-        // paired-end pbat Bowtie 2 → rejected (a later phase; directional + non-dir PE
-        // Bowtie 2 are accepted — Phases 2-3).
+        // paired-end pbat Bowtie 2 → ACCEPTED (Phase 4; one both-strands G→A pass →
+        // CTOT/CTOB — all three PE Bowtie 2 library types are now lifted, Phases 2-4).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&["--combined_index", "--pbat"]),
                 Aligner::Bowtie2,
+                LibraryType::Pbat,
+                &pe()
+            )
+            .is_ok()
+        );
+        // paired-end pbat HISAT2 → rejected (PE combined is Bowtie 2-only — the
+        // `aligner == Bowtie2` conjunct keeps PE-HISAT2 out for every library type).
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--hisat2", "--pbat"]),
+                Aligner::Hisat2,
                 LibraryType::Pbat,
                 &pe()
             )
