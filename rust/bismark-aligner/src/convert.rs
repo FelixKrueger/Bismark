@@ -697,6 +697,244 @@ pub fn convert_se_tagged_interleaved(
     })
 }
 
+/// Model-(b) single-pass **paired-end** conversion for non-directional combined-index —
+/// the PE analog of [`convert_se_tagged_interleaved`]. Writes TWO conversion-tagged
+/// interleaved temp files (one `-1`, one `-2`); per input read PAIR it emits, base-id
+/// contiguous, the `__CT` pair (the C→T-reads pass → OT/OB) then the `__GA` pair (the
+/// G→A-reads pass → CTOT/CTOB):
+///   - `-1` file: `<id1>__CT/1/1` (mate 1 → **C→T**) then `<id1>__GA/1/1` (mate 1 → **G→A**).
+///   - `-2` file: `<id2>__CT/2/2` (mate 2 → **G→A**) then `<id2>__GA/2/2` (mate 2 → **C→T**).
+///
+/// Bowtie 2 reads the two files in lockstep → pair 1 = (`__CT/1/1`, `__CT/2/2`) [C→T-reads
+/// pass: `-1 C→T -2 G→A` → OT/OB], pair 2 = (`__GA/1/1`, `__GA/2/2`) [G→A-reads pass:
+/// `-1 G→A -2 C→T` → CTOT/CTOB] — exactly the per-pass mate conversions parallel model (a)
+/// produces (`process_pe_chunk_combined_nondir`).
+///
+/// **⚠️ TAG PLACEMENT — LOAD-BEARING (rev-1 / reviews A-I1 + B-I1, both caught it).** The
+/// `__CT`/`__GA` tag is inserted on the base id **BEFORE** the `/1/1`,`/2/2` mate suffix
+/// `pe_id_suffix` appends — so the emitted qname is `<base>__CT/1/1`, NOT `<base>/1/1__CT`.
+/// Bowtie 2 strips the OUTER `/1` → `<base>__CT/1`; [`crate::align::SamPair::from_lines`]
+/// detects read 1 by `.strip_suffix("/1")` → `seq_id = <base>__CT`; the driver then strips
+/// the tag off the `seq_id` to recover `(<base>, Ct)`. Tag-AFTER-suffix (`<base>/1/1__CT`)
+/// would leave `/1` not the qname tail → `from_lines` fails to pair → dies on every read.
+/// SE has no mate suffix, so this is a genuinely PE-new detail (the literal-qname
+/// round-trip test in `lib.rs` locks it).
+///
+/// `skip`/`upto` gate the BASE pair count `N` (NOT the `2N` emitted pairs — no mid-pair
+/// truncation). A post-`fix_id` id (either mate) already ending `__CT`/`__GA` is a fatal
+/// error (un-splittable — never-silent). The returned `count` is `N` on both files.
+/// **PE FastA never gzips** (Perl 5311-5314; cf. [`bisulfite_convert_fasta_pe_kind`]);
+/// FastQ honors `--gzip`. Both temps are intermediate, fed straight to Bowtie 2.
+pub fn convert_pe_tagged_interleaved(
+    input1: &Path,
+    input2: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    fasta: bool,
+) -> Result<(ConvertedReads, ConvertedReads)> {
+    // PE FastA never gzips (mirror `bisulfite_convert_fasta_pe_kind`); FastQ honors --gzip.
+    let gz = opts.gzip && !fasta;
+    let ext = match (fasta, gz) {
+        (false, true) => ".fastq.gz",
+        (false, false) => ".fastq",
+        (true, _) => ".fa",
+    };
+    let td_prefix = temp_dir_prefix(temp_dir)?;
+    let build_name = |input: &Path| -> Result<(String, PathBuf)> {
+        let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
+        })?;
+        let mut name = match &opts.prefix {
+            Some(p) => format!("{p}.{basename}"),
+            None => basename.to_string(),
+        };
+        name.push_str("_CT_GA_tagged");
+        name.push_str(ext);
+        Ok((name.clone(), PathBuf::from(format!("{td_prefix}{name}"))))
+    };
+    let (name1, path1) = build_name(input1)?;
+    let (name2, path2) = build_name(input2)?;
+
+    let open_reader = |input: &Path| -> Result<Box<dyn BufRead>> {
+        let file = File::open(input)?;
+        Ok(if input.to_string_lossy().ends_with(".gz") {
+            Box::new(BufReader::new(MultiGzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        })
+    };
+    let mut r1 = open_reader(input1)?;
+    let mut r2 = open_reader(input2)?;
+    let make_writer = |path: &Path| -> Result<BufWriter<Box<dyn Write>>> {
+        let out = File::create(path)?;
+        Ok(BufWriter::new(if gz {
+            Box::new(GzEncoder::new(out, Compression::default()))
+        } else {
+            Box::new(out)
+        }))
+    };
+    let mut w1 = make_writer(&path1)?;
+    let mut w2 = make_writer(&path2)?;
+
+    let suffix1 = pe_id_suffix(1)?; // /1/1
+    let suffix2 = pe_id_suffix(2)?; // /2/2
+
+    let (mut id1, mut seq1, mut plus1, mut qual1) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut id2, mut seq2, mut plus2, mut qual2) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0; // BASE pairs, NOT the 2N emitted pairs
+    let mut tab1: u64 = 0;
+    let mut tab2: u64 = 0;
+
+    loop {
+        for v in [
+            &mut id1, &mut seq1, &mut plus1, &mut qual1, &mut id2, &mut seq2, &mut plus2,
+            &mut qual2,
+        ] {
+            v.clear();
+        }
+        // Mate 1 (2-line FastA / 4-line FastQ).
+        let n_id1 = r1.read_until(b'\n', &mut id1)?;
+        let n_seq1 = r1.read_until(b'\n', &mut seq1)?;
+        let mate1_ok = if fasta {
+            n_id1 != 0 && n_seq1 != 0
+        } else {
+            let n3 = r1.read_until(b'\n', &mut plus1)?;
+            let n4 = r1.read_until(b'\n', &mut qual1)?;
+            n_id1 != 0 && n_seq1 != 0 && n3 != 0 && n4 != 0
+        };
+        // Mate 2.
+        let n_id2 = r2.read_until(b'\n', &mut id2)?;
+        let n_seq2 = r2.read_until(b'\n', &mut seq2)?;
+        let mate2_ok = if fasta {
+            n_id2 != 0 && n_seq2 != 0
+        } else {
+            let n3 = r2.read_until(b'\n', &mut plus2)?;
+            let n4 = r2.read_until(b'\n', &mut qual2)?;
+            n_id2 != 0 && n_seq2 != 0 && n3 != 0 && n4 != 0
+        };
+        // A truncated record on either mate ends the loop (Perl `last unless …`).
+        if !mate1_ok || !mate2_ok {
+            break;
+        }
+        count += 1;
+
+        // IDs: chomp (\n only) → fix_id. The tag + mate suffix + \n are appended PER
+        // emitted record below (different tag for the CT vs GA half).
+        let fixed_id1 = fix_id(chomp_newline(&id1), opts.icpc);
+        let fixed_id2 = fix_id(chomp_newline(&id2), opts.icpc);
+
+        // skip/upto gate the BASE count (Perl falsy-0). A skipped/over-limit base pair
+        // emits NEITHER tagged pair (no mid-pair truncation).
+        if let Some(s) = opts.skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = opts.upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+
+        // tab-in-ID detection (byte-neutral counters; dead like the other cores).
+        if fixed_id1.contains(&b'\t') {
+            tab1 += 1;
+        }
+        if fixed_id2.contains(&b'\t') {
+            tab2 += 1;
+        }
+
+        // Format sanity: FastA per-record `^>` (both mates); FastQ record-1-only `@`/`+`.
+        if fasta {
+            if !fixed_id1.starts_with(b">") || !fixed_id2.starts_with(b">") {
+                return Err(AlignerError::Validation(format!(
+                    "Input file doesn't seem to be in FastA format at sequence {count}"
+                )));
+            }
+        } else if count == 1
+            && (!fixed_id1.starts_with(b"@")
+                || !plus1.starts_with(b"+")
+                || !fixed_id2.starts_with(b"@")
+                || !plus2.starts_with(b"+"))
+        {
+            return Err(AlignerError::Validation(format!(
+                "Input file doesn't seem to be in FastQ format at sequence {count}"
+            )));
+        }
+
+        // Tag-collision detect-and-die on the POST-`fix_id` ID of EITHER mate
+        // (whitespace-collapse turns `foo __CT` into `foo___CT`, which a raw-header
+        // check would miss): a real ID ending `__CT`/`__GA` could not be split back.
+        for fid in [&fixed_id1, &fixed_id2] {
+            if fid.ends_with(b"__CT") || fid.ends_with(b"__GA") {
+                return Err(AlignerError::Validation(format!(
+                    "Read ID at sequence {count} ends with the reserved combined-index conversion \
+                     tag (__CT/__GA): '{}'. --combined_index_single_pass cannot disambiguate the \
+                     C->T and G->A halves of such a read pair. Rename the read, or drop \
+                     --combined_index_single_pass.",
+                    String::from_utf8_lossy(fid)
+                )));
+            }
+        }
+
+        // Emit the `__CT` pair then the `__GA` pair (base-id contiguous). Per tag: mate 1
+        // → `-1` file, mate 2 → `-2` file. The tag goes BEFORE the mate suffix (the
+        // load-bearing placement — see the doc comment). `convert_one` uppercases then
+        // substitutes, preserving the seq's own \n; plus/qual are written verbatim (FastQ).
+        //   __CT pass: mate1 C→T, mate2 G→A (→ OT/OB).
+        //   __GA pass: mate1 G→A, mate2 C→T (→ CTOT/CTOB).
+        for (tag, kind1, kind2) in [
+            (b"__CT".as_slice(), ConvKind::Ct, ConvKind::Ga),
+            (b"__GA".as_slice(), ConvKind::Ga, ConvKind::Ct),
+        ] {
+            let mut tagged1 = fixed_id1.clone();
+            tagged1.extend_from_slice(tag);
+            tagged1.extend_from_slice(suffix1);
+            tagged1.push(b'\n');
+            w1.write_all(&tagged1)?;
+            w1.write_all(&convert_one(&seq1, kind1))?;
+            if !fasta {
+                w1.write_all(&plus1)?;
+                w1.write_all(&qual1)?;
+            }
+
+            let mut tagged2 = fixed_id2.clone();
+            tagged2.extend_from_slice(tag);
+            tagged2.extend_from_slice(suffix2);
+            tagged2.push(b'\n');
+            w2.write_all(&tagged2)?;
+            w2.write_all(&convert_one(&seq2, kind2))?;
+            if !fasta {
+                w2.write_all(&plus2)?;
+                w2.write_all(&qual2)?;
+            }
+        }
+    }
+
+    w1.flush()?;
+    w2.flush()?;
+    drop(w1);
+    drop(w2);
+    Ok((
+        ConvertedReads {
+            name: name1,
+            path: path1,
+            count,
+            seqid_tab_count: tab1,
+        },
+        ConvertedReads {
+            name: name2,
+            path: path2,
+            count,
+            seqid_tab_count: tab2,
+        },
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,5 +1592,164 @@ mod tests {
         let err = convert_se_tagged_interleaved(&inp, &td, &opts(false, None, None, false), false)
             .unwrap_err();
         assert!(format!("{err}").contains("reserved combined-index conversion tag"));
+    }
+
+    // ---- PE tagged interleaved (Phase 6, model (b) PE) ----------------------
+
+    /// Write `input1`/`input2`, run `convert_pe_tagged_interleaved`, return
+    /// `((cr1, bytes1), (cr2, bytes2))` for the `-1` and `-2` tagged files.
+    fn run_pe_tagged(
+        input1: &[u8],
+        name1: &str,
+        input2: &[u8],
+        name2: &str,
+        o: &ConvertOptions,
+        fasta: bool,
+    ) -> ((ConvertedReads, Vec<u8>), (ConvertedReads, Vec<u8>)) {
+        let tmp = TempDir::new().unwrap();
+        let inp1 = tmp.path().join(name1);
+        let inp2 = tmp.path().join(name2);
+        std::fs::write(&inp1, input1).unwrap();
+        std::fs::write(&inp2, input2).unwrap();
+        let td = tmp.path().join("t");
+        let (cr1, cr2) = convert_pe_tagged_interleaved(&inp1, &inp2, &td, o, fasta).unwrap();
+        let out1 = std::fs::read(&cr1.path).unwrap();
+        let out2 = std::fs::read(&cr2.path).unwrap();
+        ((cr1, out1), (cr2, out2))
+    }
+
+    #[test]
+    fn pe_tagged_interleaves_ct_then_ga_per_pair_fastq() {
+        // 2 base pairs → 4 emitted pairs (2N), CT then GA per base id, base-id
+        // contiguous. -1 file: mate1 C→T (__CT) then mate1 G→A (__GA); -2 file: mate2
+        // G→A (__CT) then mate2 C→T (__GA). Tag goes BEFORE the /1/1,/2/2 mate suffix.
+        let r1 = b"@a\nACGT\n+\nIIII\n@b\nGGCC\n+\nJJJJ\n";
+        let r2 = b"@a\nTTAA\n+\nKKKK\n@b\nCCGG\n+\nLLLL\n";
+        let ((cr1, out1), (cr2, out2)) = run_pe_tagged(
+            r1,
+            "reads_1.fq",
+            r2,
+            "reads_2.fq",
+            &opts(false, None, None, false),
+            false,
+        );
+        // -1 file (mate 1): ACGT C→T=ATGT / G→A=ACAT ; GGCC C→T=GGTT / G→A=AACC.
+        let exp1: &[u8] = b"@a__CT/1/1\nATGT\n+\nIIII\n@a__GA/1/1\nACAT\n+\nIIII\n\
+                            @b__CT/1/1\nGGTT\n+\nJJJJ\n@b__GA/1/1\nAACC\n+\nJJJJ\n";
+        // -2 file (mate 2): __CT → G→A, __GA → C→T. TTAA G→A=TTAA / C→T=TTAA ;
+        // CCGG G→A=CCAA(? no G→A: C→C,C→C,G→A,G→A = CCAA) / C→T=TTGG.
+        let exp2: &[u8] = b"@a__CT/2/2\nTTAA\n+\nKKKK\n@a__GA/2/2\nTTAA\n+\nKKKK\n\
+                            @b__CT/2/2\nCCAA\n+\nLLLL\n@b__GA/2/2\nTTGG\n+\nLLLL\n";
+        assert_eq!(out1, exp1, "-1 tagged file");
+        assert_eq!(out2, exp2, "-2 tagged file");
+        assert_eq!(cr1.count, 2); // BASE pairs (not 2N)
+        assert_eq!(cr2.count, 2);
+        assert_eq!(cr1.name, "reads_1.fq_CT_GA_tagged.fastq");
+        assert_eq!(cr2.name, "reads_2.fq_CT_GA_tagged.fastq");
+    }
+
+    #[test]
+    fn pe_tagged_tag_goes_before_the_mate_suffix() {
+        // The LOAD-BEARING placement (reviews A-I1/B-I1): the emitted qname is
+        // `<base>__CT/1/1`, NOT `<base>/1/1__CT` — so Bowtie 2's `/1` strip leaves
+        // `<base>__CT/1`, which SamPair::from_lines pairs and strip_conv_tag splits.
+        let r1 = b"@base\nACGT\n+\nIIII\n";
+        let r2 = b"@base\nACGT\n+\nIIII\n";
+        let ((_c1, out1), (_c2, out2)) = run_pe_tagged(
+            r1,
+            "r_1.fq",
+            r2,
+            "r_2.fq",
+            &opts(false, None, None, false),
+            false,
+        );
+        let s1 = String::from_utf8(out1).unwrap();
+        let s2 = String::from_utf8(out2).unwrap();
+        assert!(s1.contains("@base__CT/1/1\n"), "got: {s1}");
+        assert!(s1.contains("@base__GA/1/1\n"), "got: {s1}");
+        assert!(s2.contains("@base__CT/2/2\n"), "got: {s2}");
+        assert!(s2.contains("@base__GA/2/2\n"), "got: {s2}");
+        // never the broken tag-after-suffix shape.
+        assert!(!s1.contains("/1/1__CT"), "tag must precede the mate suffix");
+        assert!(!s2.contains("/2/2__GA"), "tag must precede the mate suffix");
+    }
+
+    #[test]
+    fn pe_tagged_fasta_pair_no_gzip() {
+        // FastA: 2-line records, `>` headers, NO +/qual; PE FastA never gzips even with
+        // gzip requested → `.fa` ext (cf. bisulfite_convert_fasta_pe_kind).
+        let r1 = b">a\nACGT\n>b\nTTGG\n";
+        let r2 = b">a\nCCAA\n>b\nGGTT\n";
+        let ((cr1, out1), (cr2, out2)) = run_pe_tagged(
+            r1,
+            "reads_1.fa",
+            r2,
+            "reads_2.fa",
+            &opts(true, None, None, false),
+            true,
+        );
+        let exp1: &[u8] =
+            b">a__CT/1/1\nATGT\n>a__GA/1/1\nACAT\n>b__CT/1/1\nTTGG\n>b__GA/1/1\nTTAA\n";
+        // mate2: __CT→G→A, __GA→C→T. CCAA G→A=CCAA / C→T=TTAA ; GGTT G→A=AATT / C→T=GGTT.
+        let exp2: &[u8] =
+            b">a__CT/2/2\nCCAA\n>a__GA/2/2\nTTAA\n>b__CT/2/2\nAATT\n>b__GA/2/2\nGGTT\n";
+        assert_eq!(out1, exp1);
+        assert_eq!(out2, exp2);
+        assert_eq!(cr1.name, "reads_1.fa_CT_GA_tagged.fa"); // never .fa.gz
+        assert_eq!(cr2.name, "reads_2.fa_CT_GA_tagged.fa");
+    }
+
+    #[test]
+    fn pe_tagged_upto_gates_base_pair_count_no_mid_pair_truncation() {
+        // --upto 2: base pairs a,b each emit BOTH tagged pairs on BOTH mate files;
+        // c,d absent. skip/upto gate the BASE count N (NOT 2N), never mid-pair.
+        let r1 = b"@a\nA\n+\nI\n@b\nC\n+\nI\n@c\nG\n+\nI\n@d\nT\n+\nI\n";
+        let r2 = b"@a\nT\n+\nI\n@b\nG\n+\nI\n@c\nC\n+\nI\n@d\nA\n+\nI\n";
+        let ((_c1, out1), (_c2, out2)) = run_pe_tagged(
+            r1,
+            "reads_1.fq",
+            r2,
+            "reads_2.fq",
+            &opts(false, None, Some(2), false),
+            false,
+        );
+        for s in [
+            String::from_utf8(out1).unwrap(),
+            String::from_utf8(out2).unwrap(),
+        ] {
+            assert!(s.contains("@a__CT/") && s.contains("@a__GA/"));
+            assert!(s.contains("@b__CT/") && s.contains("@b__GA/"));
+            assert!(!s.contains("@c") && !s.contains("@d"));
+            assert_eq!(s.matches("__CT/").count(), 2); // exactly 2 base pairs × 1 half
+            assert_eq!(s.matches("__GA/").count(), 2);
+        }
+    }
+
+    #[test]
+    fn pe_tagged_id_ending_in_reserved_tag_dies() {
+        // a read pair whose post-fix_id ID (either mate) already ends with __CT/__GA
+        // cannot be split back → fatal (never-silent). Covers the R1-collision and the
+        // whitespace-collapse `foo __GA`→`foo___GA` R2-collision.
+        let cases: [(&[u8], &[u8]); 2] = [
+            (b"@a__CT\nACGT\n+\nIIII\n", b"@a\nACGT\n+\nIIII\n"),
+            (b"@a\nACGT\n+\nIIII\n", b"@a __GA\nACGT\n+\nIIII\n"),
+        ];
+        for (r1, r2) in cases {
+            let tmp = TempDir::new().unwrap();
+            let inp1 = tmp.path().join("reads_1.fq");
+            let inp2 = tmp.path().join("reads_2.fq");
+            std::fs::write(&inp1, r1).unwrap();
+            std::fs::write(&inp2, r2).unwrap();
+            let td = tmp.path().join("t");
+            let err = convert_pe_tagged_interleaved(
+                &inp1,
+                &inp2,
+                &td,
+                &opts(false, None, None, false),
+                false,
+            )
+            .unwrap_err();
+            assert!(format!("{err}").contains("reserved combined-index conversion tag"));
+        }
     }
 }

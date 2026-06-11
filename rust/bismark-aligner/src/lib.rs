@@ -54,7 +54,8 @@ use flate2::write::GzEncoder;
 use bismark_io::BamWriter;
 
 use crate::align::{
-    AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedSamStream, SamStream,
+    AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
+    PairedSamStream, SamStream,
 };
 use crate::aux_out::AuxKind;
 use crate::config::{LibraryType, ReadFormat, ReadLayout};
@@ -149,18 +150,31 @@ fn pipeline(config: &RunConfig) -> Result<()> {
         ReadLayout::PairedEnd { mates1, mates2 } => {
             if config.combined_index {
                 // v2.x opt-in PE combined-index path. The scope guard
-                // (`reject_combined_index_unsupported`) restricts this to Bowtie 2
-                // (PE HISAT2 + --multicore + single_pass/sequential are rejected at
-                // resolve), so all three library types are reachable here:
-                //  - Directional    → one both-strands C→T pass → OT/OB.
-                //  - NonDirectional → two both-strands passes (C→T + G→A) → 4 strands,
-                //    parallel model (a) (PE low-RAM variants are Phase 6).
-                //  - Pbat            → one both-strands G→A pass → CTOT/CTOB (the
+                // (`reject_combined_index_unsupported`) restricts HISAT2 + --multicore to
+                // the default parallel model (a) and the two low-RAM flags to
+                // NON-DIRECTIONAL + Bowtie 2; PE-HISAT2 + a low-RAM flag is rejected at
+                // resolve. As in the SE arm, the low-RAM flags are checked BEFORE the
+                // library match (Phase 6):
+                //  - single_pass  → ONE PE pass over conversion-tagged interleaved reads
+                //    (model b; non-faithful, one index load). Guaranteed non-dir Bowtie 2.
+                //  - sequential   → model (a)'s two PE passes run ONE AT A TIME (faithful,
+                //    byte-identical to model (a); one index resident at a time). Same guard.
+                //  - else by library: Directional → one both-strands C→T pass → OT/OB;
+                //    NonDirectional → two both-strands passes (C→T + G→A) → 4 strands,
+                //    parallel model (a); Pbat → one both-strands G→A pass → CTOT/CTOB (the
                 //    non-dir G→A half standalone).
-                match config.library {
-                    LibraryType::Directional => run_pe_combined(config, mates1, mates2),
-                    LibraryType::NonDirectional => run_pe_combined_nondir(config, mates1, mates2),
-                    LibraryType::Pbat => run_pe_combined_pbat(config, mates1, mates2),
+                if config.combined_index_single_pass {
+                    run_pe_combined_nondir_tagged(config, mates1, mates2)
+                } else if config.combined_index_sequential {
+                    run_pe_combined_nondir_sequential(config, mates1, mates2)
+                } else {
+                    match config.library {
+                        LibraryType::Directional => run_pe_combined(config, mates1, mates2),
+                        LibraryType::NonDirectional => {
+                            run_pe_combined_nondir(config, mates1, mates2)
+                        }
+                        LibraryType::Pbat => run_pe_combined_pbat(config, mates1, mates2),
+                    }
                 }
             } else if n > 1 {
                 parallel::run_pe_multicore(config, mates1, mates2, n)
@@ -1631,6 +1645,28 @@ fn spill_stream_to_file<S: SamStream>(stream: &mut S, path: &Path) -> Result<u64
         writeln!(w, "{}", r.raw_line)?;
         n += 1;
         stream.advance()?;
+    }
+    w.flush()?;
+    Ok(n)
+}
+
+/// Drain a [`PairedSamStream`] to `path`, writing each pair's two verbatim `raw_line`s
+/// (read1 then read2) one `\n`-terminated line each — the PE analog of
+/// [`spill_stream_to_file`] (Phase 6, the sequential low-RSS PE variant). Returns the
+/// number of PAIRS written. Bounded memory: one pair held at a time. The spill order is
+/// always read1-then-read2 (the canonicalised order, NOT Bowtie 2's leftmost-first
+/// emission order), but [`PairedFileSamStream`] replays via [`SamPair::from_lines`],
+/// which re-canonicalises — so the replay yields identical pairs regardless of the
+/// on-disk line order, preserving the per-pair lockstep `drive_merge_combined_pe_nondir`
+/// relies on. Generic over [`PairedSamStream`] so it is unit-testable with a canned stream.
+fn spill_pe_stream_to_file<S: PairedSamStream>(stream: &mut S, path: &Path) -> Result<u64> {
+    let mut w = BufWriter::new(File::create(path)?);
+    let mut n: u64 = 0;
+    while let Some(p) = stream.current_pair() {
+        writeln!(w, "{}", p.read1.raw_line)?;
+        writeln!(w, "{}", p.read2.raw_line)?;
+        n += 1;
+        stream.advance_pair()?;
     }
     w.flush()?;
     Ok(n)
@@ -3820,6 +3856,640 @@ fn counters_summary(read_file: &str, c: &Counters) -> String {
     )
 }
 
+// ===========================================================================
+// `--combined_index` (v2.x) paired-end NON-DIRECTIONAL **low-RAM variants** (PLAN
+// 06102026 phase 6). Both cut model (a)'s two-co-resident-index peak RSS (~15.71 GB)
+// to ~half (one index resident at a time). NON-DIRECTIONAL + Bowtie 2-only (the config
+// guard enforces both). PE analogs of the shipped SE variants:
+//   1. SEQUENTIAL (`run_pe_combined_nondir_sequential`) — the FAITHFUL model: run model
+//      (a)'s two both-strands PE passes one at a time (pass 1 spills + EXITS, freeing the
+//      index, before pass 2 spawns), replaying pass 1 from disk. BYTE-IDENTICAL to model
+//      (a) (the aligner's output for a pass is independent of *when* it runs; both feed
+//      the SAME untagged converted files). PE analog of SE #959.
+//   2. SINGLE-PASS model (b) (below) — ONE PE pass over conversion-TAGGED interleaved
+//      reads. NON-FAITHFUL (the qname tag perturbs Bowtie 2's read-name RNG). PE analog
+//      of SE #958.
+// Both reuse the byte-frozen `drive_merge_combined_pe_nondir` (already generic over two
+// `PairedSamStream`s — Phase-3 foresight) / `select_pe_nondir` / `select_and_route_pe_
+// nondir` / `route_pe_decision` unchanged. Only the GATHER differs.
+// ===========================================================================
+
+/// PE combined-index pipeline, **non-directional SEQUENTIAL** (faithful low-RSS variant).
+/// Mirrors [`run_pe_combined_nondir`] (parallel model (a)) but with the sequential
+/// banner/marker + [`process_pe_chunk_combined_nondir_sequential`]. BYTE-IDENTICAL to
+/// model (a) — its BAM gate is "same md5 as model (a)" + the RSS measurement, NOT a fresh
+/// accuracy gate (see the section header / the PLAN assumptions).
+fn run_pe_combined_nondir_sequential(
+    config: &RunConfig,
+    mates1: &[String],
+    mates2: &[String],
+) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // Non-directional → the report prints the 4-strand (OT/OB/CTOT/CTOB) split.
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let combined_opts = combined_aligner_options(config);
+
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, paired-end NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, \
+             concordance-gated — byte-identical to the default PARALLEL combined non-dir path, \
+             NOT to the faithful 4-instance path): two both-strands {} PE passes (C->T then G->A \
+             reads) over {} (-k 2) run ONE AT A TIME — pass 1 exits before pass 2 starts, so one \
+             combined index is resident at a time (~half the peak RSS, ~2x the wall), unioned per \
+             pair <<<",
+            config.aligner.name(),
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index non-directional SEQUENTIAL.
+        writeln!(
+            report,
+            "Combined-index mode, non-directional SEQUENTIAL (experimental, concordance-gated; \
+             byte-identical to the default parallel combined non-dir path, one index resident at a \
+             time; NOT byte-identical to the faithful 4-instance per-strand path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_pe_chunk_combined_nondir_sequential(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_1),
+            Path::new(read_2),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, directional)?;
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+    }
+    Ok(())
+}
+
+/// Convert the 4 `(mate,kind)` files model (a) needs (the SAME untagged files, so
+/// byte-identity holds), then run the two both-strands PE passes SEQUENTIALLY: spawn
+/// **pass 1 (C→T reads)** `-1 (R1,Ct) -2 (R2,Ga)`, **spill its pairs to a temp file and
+/// `finish()` it** (its Bowtie 2 exits → the combined index is freed), THEN spawn
+/// **pass 2 (G→A reads)** `-1 (R1,Ga) -2 (R2,Ct)` and drive the per-pair union with pass
+/// 1 replayed from disk ([`PairedFileSamStream`]) against the live pass-2 stream — via the
+/// byte-frozen (Phase-3-widened) [`drive_merge_combined_pe_nondir`]. ONE combined index
+/// resident at a time (the ~−50% RSS win vs model (a)'s two co-resident loads). Returns
+/// the 4 converted temp files for cleanup (the pass-1 spill is deleted here). The PE
+/// analog of [`process_se_chunk_combined_nondir_sequential`] doubled.
+#[allow(clippy::too_many_arguments)]
+fn process_pe_chunk_combined_nondir_sequential(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let td = &config.output.temp_dir;
+
+    // 4 converted files: pass 1 = (R1 C→T, R2 G→A); pass 2 = (R1 G→A, R2 C→T) — IDENTICAL
+    // to parallel model (a) (`process_pe_chunk_combined_nondir`), so the alignments — and
+    // thus the BAM — are byte-identical regardless of the exec model.
+    let r1_ct = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
+    let r2_ga = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
+    let r1_ga = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ga)?;
+    let r2_ct = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ct)?;
+    for (cr, src) in [
+        (&r1_ct, read_1),
+        (&r2_ga, read_2),
+        (&r1_ga, read_1),
+        (&r2_ct, read_2),
+    ] {
+        eprintln!(
+            "Created {} converted version of {} -> {} ({} sequences)",
+            conv_label(&cr.name),
+            src.display(),
+            cr.path.display(),
+            cr.count
+        );
+    }
+
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index_sequential reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    let combined_opts = combined_aligner_options(config);
+
+    // Spill path: a sibling of the C→T `-1` converted file (already in the resolved
+    // temp_dir — reusing its path sidesteps the empty default `temp_dir`).
+    let mut spill_path = r1_ct.path.clone();
+    let mut spill_name = spill_path.file_name().unwrap_or_default().to_os_string();
+    spill_name.push(".ct_pass.sam");
+    spill_path.set_file_name(spill_name);
+
+    // ---- PASS 1 (C→T reads → OT/OB) -----------------------------------------
+    // Spawn ONE both-strands PE pass over the C→T mate files, drain it to the spill file,
+    // then FINISH it — `finish()` -> `child.wait()` blocks until pass-1 Bowtie 2 EXITS,
+    // freeing the combined index. THE RSS INVARIANT: pass 2 must NOT spawn before this
+    // returns (the `?` also aborts here on a non-zero pass-1 exit, before any pass-2
+    // process exists). The gate's RSS ceiling is the primary guard; the co-residency
+    // sampler corroborates.
+    let mut ct_stream = PairedAlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &r1_ct.path,
+        &r2_ga.path,
+    )?;
+    let spilled = spill_pe_stream_to_file(&mut ct_stream, &spill_path)?;
+    ct_stream.finish()?;
+    eprintln!(
+        "Sequential combined-index: spilled {spilled} pass-1 (C->T) alignment pairs to {} and freed \
+         the combined index before the G->A pass",
+        spill_path.display()
+    );
+
+    // ---- PASS 2 (G→A reads → CTOT/CTOB) -------------------------------------
+    // Now (and only now) spawn the second pass; replay pass 1 from disk against it.
+    let mut ga_stream = PairedAlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &r1_ga.path,
+        &r2_ct.path,
+    )?;
+    let mut ct_file_stream = PairedFileSamStream::open(&spill_path)?;
+    let dovetail = config.dovetail;
+    // The byte-frozen (body-unchanged, Phase-3-widened-generic) model-(a) PE driver, with
+    // the C→T stream sourced from disk and the G→A stream live.
+    drive_merge_combined_pe_nondir(
+        read_1,
+        read_2,
+        &mut ct_file_stream,
+        &mut ga_stream,
+        config,
+        genome,
+        refid,
+        dovetail,
+        sinks,
+        counters,
+    )?;
+    ga_stream.finish()?;
+
+    // The spill is internal scratch (not a `ConvertedReads`) — clean it up here;
+    // `converted` is returned for the caller's cleanup loop.
+    let _ = std::fs::remove_file(&spill_path);
+    Ok(vec![r1_ct, r2_ga, r1_ga, r2_ct])
+}
+
+/// PE combined-index pipeline, **non-directional SINGLE-PASS** (model (b), the
+/// non-faithful low-RSS variant). Mirrors [`run_pe_combined_nondir`] but drives ONE
+/// both-strands PE pass over the conversion-TAGGED interleaved reads
+/// ([`process_pe_chunk_combined_nondir_tagged`]); the report prints the 4-strand split
+/// (`directional=false`). NOT byte-identical AND NOT decision-equivalent (the qname tag
+/// perturbs Bowtie 2's read-name RNG) → opt-in, never the default, own ground-truth gate.
+fn run_pe_combined_nondir_tagged(
+    config: &RunConfig,
+    mates1: &[String],
+    mates2: &[String],
+) -> Result<()> {
+    let started = Instant::now();
+    let opts = convert::ConvertOptions::from_config(config);
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    // Non-directional → the report prints the 4-strand (OT/OB/CTOT/CTOB) split.
+    let directional = false;
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let combined_opts = combined_aligner_options(config);
+
+    if let Some(combined_basename) = &config.genome.combined_index_basename {
+        eprintln!(
+            ">>> Combined-index mode, paired-end NON-DIRECTIONAL SINGLE-PASS (model b; EXPERIMENTAL \
+             — NOT byte-identical AND NOT decision-equivalent to the model-(a) two-pass path: the \
+             conversion tag perturbs Bowtie 2's read-name RNG; ground-truth-validated, never the \
+             default): ONE both-strands {} PE pass over {} (-k 2) of conversion-tagged interleaved \
+             read pairs (one index load instead of two) <<<",
+            config.aligner.name(),
+            combined_basename.display()
+        );
+    }
+    if config.ambig_bam {
+        eprintln!(
+            "Note: combined-index mode does not populate --ambig_bam records in this phase \
+             (ambiguous reads are still written to --ambiguous/--unmapped if requested)."
+        );
+    }
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
+        eprintln!(
+            ">>> Writing bisulfite mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &combined_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+        // Never-silent: mark the report as combined-index model-(b) single-pass.
+        writeln!(
+            report,
+            "Combined-index mode, non-directional SINGLE-PASS (model b; experimental, \
+             concordance-gated; NOT byte-identical AND NOT decision-equivalent to the \
+             model-(a) two-pass path)"
+        )?;
+
+        let mut counters = Counters::default();
+        let converted = process_pe_chunk_combined_nondir_tagged(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_1),
+            Path::new(read_2),
+            &opts,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, directional)?;
+        writeln!(
+            report,
+            "Spurious alignments discarded (combined-index; wrong sub-genome for the orientation):\t{}",
+            counters.combined_spurious_count
+        )?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+
+        for cr in &converted {
+            let _ = std::fs::remove_file(&cr.path);
+        }
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+    }
+    Ok(())
+}
+
+/// Convert the read pairs to TWO conversion-tagged interleaved temp files (`-1`/`-2`,
+/// [`convert::convert_pe_tagged_interleaved`]), spawn ONE both-strands PE instance over
+/// the combined index with `-k 2`, and drive the per-pair split→union classify→select→
+/// route. Returns the two converted temp files for cleanup. ONE subprocess → ONE combined
+/// index resident (model (b)'s −50% RSS vs model (a)'s two co-resident loads). The PE
+/// analog of [`process_se_chunk_combined_nondir_tagged`].
+#[allow(clippy::too_many_arguments)]
+fn process_pe_chunk_combined_nondir_tagged(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let bt2 = &config.detected_aligner.path;
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    // TWO interleaved tagged converted files (-1/-2): per pair, `<id>__CT` (C→T-reads
+    // pass) then `<id>__GA` (G→A-reads pass). count = N base pairs (2N emitted pairs).
+    let (tagged1, tagged2) = convert::convert_pe_tagged_interleaved(
+        read_1,
+        read_2,
+        &config.output.temp_dir,
+        opts,
+        fasta,
+    )?;
+    eprintln!(
+        "Created conversion-tagged interleaved versions of {} / {} -> {} , {} ({} base pairs, 2x tagged pairs)",
+        read_1.display(),
+        read_2.display(),
+        tagged1.path.display(),
+        tagged2.path.display(),
+        tagged1.count
+    );
+    let combined_basename = config
+        .genome
+        .combined_index_basename
+        .as_ref()
+        .ok_or_else(|| {
+            AlignerError::Validation(
+                "internal error: --combined_index_single_pass reached alignment without a combined index"
+                    .into(),
+            )
+        })?;
+    // `-k 2`; `Orientation::Both` emits no `--norc`/`--nofw`. ONE PE pass over the
+    // combined index fed the tagged interleaved mate files.
+    let combined_opts = combined_aligner_options(config);
+    let mut stream = PairedAlignerStream::spawn(
+        config.aligner,
+        bt2,
+        &combined_opts,
+        Orientation::Both,
+        combined_basename,
+        &tagged1.path,
+        &tagged2.path,
+    )?;
+    let dovetail = config.dovetail;
+    drive_merge_combined_pe_nondir_tagged(
+        read_1,
+        read_2,
+        &mut stream,
+        config,
+        genome,
+        refid,
+        dovetail,
+        sinks,
+        counters,
+    )?;
+    stream.finish()?;
+    Ok(vec![tagged1, tagged2])
+}
+
+/// Never-silent desync check for the model-(b) single tagged PE stream: the stream's
+/// current head pair (if any) MUST belong to `identifier` AFTER its tag is stripped —
+/// keyed on the TAG-STRIPPED [`SamPair::seq_id`] (NOT the raw qname; the Phase-3 B-1
+/// lesson, and the tag must be stripped BEFORE the compare since the head always carries
+/// one). A `None` head is in-sync. `strip_conv_tag` itself dies on an untagged record
+/// (guard iii). Extracted from [`drive_merge_combined_pe_nondir_tagged`] so it is
+/// unit-testable without a `PeSinks` mock (the Phase-3 `assert_pe_pass_in_sync` approach).
+fn assert_pe_tag_in_sync(head: Option<&crate::align::SamPair>, identifier: &str) -> Result<()> {
+    if let Some(p) = head {
+        let (base, _) = strip_conv_tag(&p.seq_id)?;
+        if base != identifier {
+            return Err(AlignerError::Validation(format!(
+                "Combined non-directional tagged PE desync: stream head base id is '{base}' (from \
+                 seq_id '{}') but expected '{identifier}'",
+                p.seq_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Re-read both original read files in lockstep and, per pair, drain the SINGLE tagged
+/// stream's contiguous same-base-id run (each base id emits its `__CT` pairs then its
+/// `__GA` pairs under the `--reorder`-under-`-p` invariant), partition by the
+/// tag-stripped `seq_id` into `ct_pairs` / `ga_pairs`, then hand to the shared
+/// [`select_and_route_pe_nondir`]. Generic over [`PairedSamStream`] for unit testing. The
+/// PE analog of [`drive_merge_combined_nondir_tagged`] doubled; the read loop is copied
+/// from [`drive_merge_combined_pe_nondir`].
+///
+/// **Never-silent contract** (the single-stream guard is weaker than model (a)'s two
+/// per-stream checks — phase-8 A-Crit1/B-C2 analog): (i) the head pair's TAG-STRIPPED
+/// `seq_id` must == `identifier` ([`assert_pe_tag_in_sync`]; a raw compare always fires —
+/// the head carries a tag); (ii) after draining, BOTH `ct_pairs` AND `ga_pairs` must be
+/// non-empty (every base id emits both tags, ≥1 pair each incl. a `(77,141)` miss) — a
+/// missing half → die loud; (iii) `strip_conv_tag` dies on an untagged record.
+#[allow(clippy::too_many_arguments)]
+fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
+    read_1: &Path,
+    read_2: &Path,
+    stream: &mut S,
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    dovetail: bool,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let mut r1 = open_reader(read_1)?;
+    let mut r2 = open_reader(read_2)?;
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+
+    let (mut id1, mut seq1, mut plus1, mut qual1) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut id2, mut seq2, mut plus2, mut qual2) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        for v in [
+            &mut id1, &mut seq1, &mut plus1, &mut qual1, &mut id2, &mut seq2, &mut plus2,
+            &mut qual2,
+        ] {
+            v.clear();
+        }
+        let n_id1 = r1.read_until(b'\n', &mut id1)?;
+        let n_seq1 = r1.read_until(b'\n', &mut seq1)?;
+        if !fasta {
+            let _ = r1.read_until(b'\n', &mut plus1)?;
+            let _ = r1.read_until(b'\n', &mut qual1)?;
+        }
+        let n_id2 = r2.read_until(b'\n', &mut id2)?;
+        let n_seq2 = r2.read_until(b'\n', &mut seq2)?;
+        if !fasta {
+            let _ = r2.read_until(b'\n', &mut plus2)?;
+            let _ = r2.read_until(b'\n', &mut qual2)?;
+        }
+        let incomplete = if fasta {
+            n_id1 == 0 || n_seq1 == 0 || n_id2 == 0 || n_seq2 == 0
+        } else {
+            n_id1 == 0
+                || n_seq1 == 0
+                || qual1.is_empty()
+                || n_id2 == 0
+                || n_seq2 == 0
+                || qual2.is_empty()
+        };
+        if incomplete {
+            break;
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        counters.sequences_count += 1;
+
+        let id1_fixed = convert::fix_id(convert::chomp_newline(&id1), icpc);
+        let id2_fixed = convert::fix_id(convert::chomp_newline(&id2), icpc);
+        let id_prefix: &[u8] = if fasta { b">" } else { b"@" };
+        let identifier =
+            String::from_utf8_lossy(id1_fixed.strip_prefix(id_prefix).unwrap_or(&id1_fixed))
+                .into_owned();
+        let id2_stripped =
+            String::from_utf8_lossy(id2_fixed.strip_prefix(id_prefix).unwrap_or(&id2_fixed))
+                .into_owned();
+        let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
+        let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
+        let qual1_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq1_uc.len()]
+        } else {
+            convert::chomp_newline(&qual1).to_vec()
+        };
+        let qual2_bytes: Vec<u8> = if fasta {
+            vec![b'I'; seq2_uc.len()]
+        } else {
+            convert::chomp_newline(&qual2).to_vec()
+        };
+        let s1 = String::from_utf8_lossy(&seq1_uc).into_owned();
+        let s2 = String::from_utf8_lossy(&seq2_uc).into_owned();
+
+        // (i) desync guard on the TAG-STRIPPED head seq_id — every pair emits __CT + __GA,
+        // so the head's base id MUST be this pair (cf. model (a)'s per-stream guard).
+        assert_pe_tag_in_sync(stream.current_pair(), &identifier)?;
+
+        // Drain the contiguous same-base-id run, partitioning by the tag. The tag is
+        // stripped off the cloned pair's seq_id (cosmetic — downstream keys on
+        // `identifier`, and `select_core_pe` classifies on flag/rname, never seq_id; the
+        // read1/read2 qnames are likewise never read in combined mode, so the BAM is
+        // tag-free regardless). Borrow ends before each `advance_pair`.
+        let mut ct_pairs: Vec<crate::align::SamPair> = Vec::new();
+        let mut ga_pairs: Vec<crate::align::SamPair> = Vec::new();
+        loop {
+            let parsed: Option<(String, ConvTag)> = match stream.current_pair() {
+                Some(p) => {
+                    let (base, tag) = strip_conv_tag(&p.seq_id)?;
+                    if base != identifier {
+                        None
+                    } else {
+                        Some((base.to_string(), tag))
+                    }
+                }
+                None => None,
+            };
+            let (base, tag) = match parsed {
+                Some(p) => p,
+                None => break,
+            };
+            let mut pair = stream.current_pair().unwrap().clone();
+            pair.seq_id = base;
+            match tag {
+                ConvTag::Ct => ct_pairs.push(pair),
+                ConvTag::Ga => ga_pairs.push(pair),
+            }
+            stream.advance_pair()?;
+        }
+
+        // (ii) both halves must be present — a missing __CT or __GA half means the
+        // tagged stream desynced from the re-read input (never-silent).
+        if ct_pairs.is_empty() || ga_pairs.is_empty() {
+            return Err(AlignerError::Validation(format!(
+                "Combined non-directional tagged PE desync: read pair '{identifier}' is missing its \
+                 __CT or __GA half (ct pairs={}, ga pairs={}); the tagged stream did not emit both \
+                 conversion records for this read pair",
+                ct_pairs.len(),
+                ga_pairs.len()
+            )));
+        }
+
+        select_and_route_pe_nondir(
+            &ct_pairs,
+            &ga_pairs,
+            &identifier,
+            &id2_stripped,
+            &s1,
+            &s2,
+            &seq1_uc,
+            &seq2_uc,
+            &qual1_bytes,
+            &qual2_bytes,
+            &seq1,
+            &plus1,
+            &seq2,
+            &plus2,
+            fasta,
+            genome,
+            refid,
+            dovetail,
+            config,
+            sinks,
+            counters,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3905,6 +4575,56 @@ mod tests {
         );
     }
 
+    /// A canned [`PairedSamStream`] over a fixed pair list — for `spill_pe_stream_to_file`.
+    struct VecPairStream {
+        pairs: Vec<crate::align::SamPair>,
+        idx: usize,
+    }
+    impl PairedSamStream for VecPairStream {
+        fn current_pair(&self) -> Option<&crate::align::SamPair> {
+            self.pairs.get(self.idx)
+        }
+        fn advance_pair(&mut self) -> Result<()> {
+            self.idx += 1;
+            Ok(())
+        }
+    }
+
+    /// `spill_pe_stream_to_file` writes both `raw_line`s of every pair (read1 then
+    /// read2), and a `PairedFileSamStream` replays the identical pairs — INCLUDING a
+    /// (77,141) miss pair. The PE analog of `spill_stream_to_file_round_trips_incl_
+    /// unmapped`; the round-trip the sequential PE exec model relies on.
+    #[test]
+    fn spill_pe_stream_to_file_round_trips_incl_miss() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam");
+        let mk = |l1: &str, l2: &str| crate::align::SamPair::from_lines(l1, l2).unwrap();
+        let pairs = vec![
+            mk(
+                "a/1\t99\tchr1_CT_converted\t1\t40\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+                "a/2\t147\tchr1_CT_converted\t1\t40\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            ),
+            // a (77,141) miss pair — the common ~50%-per-pass case.
+            mk(
+                "b/1\t77\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF",
+                "b/2\t141\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF",
+            ),
+        ];
+        let mut stream = VecPairStream {
+            pairs: pairs.clone(),
+            idx: 0,
+        };
+        let n = spill_pe_stream_to_file(&mut stream, &p).unwrap();
+        assert_eq!(n, 2);
+
+        let mut replay = PairedFileSamStream::open(&p).unwrap();
+        for orig in &pairs {
+            assert_eq!(replay.current_pair().unwrap(), orig);
+            replay.advance_pair().unwrap();
+        }
+        assert!(replay.current_pair().is_none());
+    }
+
     /// The non-directional PE desync guard: in-sync (head `seq_id` == identifier) and a
     /// `None` head both pass; a mismatched head fails loud with the pass label. (Covers
     /// `drive_merge_combined_pe_nondir`'s guard without a `PeSinks` mock — review B-2.)
@@ -3923,5 +4643,73 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("desync"), "got: {msg}");
         assert!(msg.contains("G->A"), "got: {msg}");
+    }
+
+    /// The model-(b) PE desync guard: a head whose TAG-STRIPPED `seq_id` matches the
+    /// identifier passes; a `None` head passes; a tag-stripped mismatch fails loud; and
+    /// an UNTAGGED head fails loud via `strip_conv_tag` (guard iii). The tag must be
+    /// stripped BEFORE the compare — the head always carries one.
+    #[test]
+    fn assert_pe_tag_in_sync_fires_on_mismatch_and_untagged() {
+        // tagged head, base id == identifier → Ok.
+        let tagged = crate::align::SamPair::from_lines(
+            "rX__CT/1\t99\tchr1_CT_converted\t1\t40\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            "rX__CT/2\t147\tchr1_CT_converted\t1\t40\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+        )
+        .unwrap();
+        assert_eq!(tagged.seq_id, "rX__CT"); // seq_id carries the tag (from_lines strips only /1)
+        assert!(assert_pe_tag_in_sync(Some(&tagged), "rX").is_ok());
+        assert!(assert_pe_tag_in_sync(None, "rX").is_ok());
+        // tag-stripped mismatch → fail loud.
+        let err = assert_pe_tag_in_sync(Some(&tagged), "rY").unwrap_err();
+        assert!(format!("{err}").contains("desync"), "got: {err}");
+        // untagged head → `strip_conv_tag` fails loud (guard iii).
+        let untagged = crate::align::SamPair::from_lines(
+            "rX/1\t99\tchr1_CT_converted\t1\t40\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            "rX/2\t147\tchr1_CT_converted\t1\t40\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+        )
+        .unwrap();
+        let err = assert_pe_tag_in_sync(Some(&untagged), "rX").unwrap_err();
+        assert!(
+            format!("{err}").contains("__CT/__GA conversion tag"),
+            "got: {err}"
+        );
+    }
+
+    /// THE load-bearing tag-placement round-trip (rev-1 / reviews A-I1 + B-I1): the
+    /// model-(b) PE qname `<base>__CT/1/1` survives the full path. Bowtie 2 strips the
+    /// OUTER `/1`,`/2` (here we feed `<base>__CT/1` + `<base>__CT/2`, the post-strip
+    /// form); `SamPair::from_lines` pairs by `.strip_suffix("/1")` → `seq_id =
+    /// <base>__CT`; `strip_conv_tag(seq_id)` recovers `(<base>, Ct)`. A tag-AFTER-suffix
+    /// qname (`<base>/1/1__CT` → post-strip `<base>/1__CT`) would have NO `/1` tail →
+    /// `from_lines` would fail to identify read 1.
+    #[test]
+    fn modelb_pe_tag_before_suffix_round_trips() {
+        // The post-Bowtie-strip form of `<base>__CT/1/1` / `<base>__CT/2/2`.
+        let pair = crate::align::SamPair::from_lines(
+            "base__CT/1\t99\tchr1_CT_converted\t1\t40\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            "base__CT/2\t147\tchr1_CT_converted\t1\t40\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+        )
+        .unwrap();
+        assert_eq!(pair.seq_id, "base__CT");
+        assert_eq!(strip_conv_tag(&pair.seq_id).unwrap(), ("base", ConvTag::Ct));
+
+        // The GA half likewise round-trips, regardless of which mate Bowtie 2 emits first.
+        let ga = crate::align::SamPair::from_lines(
+            "base__GA/2\t147\tchr1_CT_converted\t5\t40\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            "base__GA/1\t83\tchr1_CT_converted\t5\t40\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+        )
+        .unwrap();
+        assert_eq!(ga.seq_id, "base__GA");
+        assert_eq!(strip_conv_tag(&ga.seq_id).unwrap(), ("base", ConvTag::Ga));
+
+        // The BROKEN tag-after-suffix shape: `<base>/1/1__CT` post-Bowtie-strip is
+        // `<base>/1__CT` — its tail is NOT `/1`, so neither line is identified as read 1
+        // → from_lines dies (the failure mode the placement avoids).
+        let broken = crate::align::SamPair::from_lines(
+            "base/1__CT\t99\tchr1_CT_converted\t1\t40\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+            "base/2__CT\t147\tchr1_CT_converted\t1\t40\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+        );
+        assert!(broken.is_err(), "tag-after-suffix must fail to pair");
     }
 }
