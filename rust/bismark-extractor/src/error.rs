@@ -117,10 +117,13 @@ pub enum BismarkExtractorError {
     #[error("--ucsc is only valid with --bedGraph")]
     UcscRequiresBedgraph,
 
-    /// `--CX` (`--CX_context`) is only valid with `--cytosine_report`.
-    /// `--CX` extends the genome-walk to all C-contexts (default is CpG only).
-    #[error("--CX (--CX_context) is only valid with --cytosine_report")]
-    CxRequiresCytosineReport,
+    /// `--CX` (`--CX_context`) is only valid with `--bedGraph` or
+    /// `--cytosine_report`. `--CX` extends the coverage/bedGraph (and the
+    /// genome-walk cytosine report, when requested) to all C-contexts instead
+    /// of CpG only. Mirrors Perl `bismark_methylation_extractor`'s
+    /// `die … unless ($cytosine_report or $bedGraph)`.
+    #[error("--CX (--CX_context) is only valid with --bedGraph or --cytosine_report")]
+    CxRequiresBedgraphOrCytosineReport,
 
     /// `--split_by_chromosome` is only valid with `--cytosine_report`.
     #[error("--split_by_chromosome is only valid with --cytosine_report")]
