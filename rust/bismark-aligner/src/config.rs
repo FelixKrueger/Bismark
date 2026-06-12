@@ -405,9 +405,11 @@ fn reject_combined_index_unsupported(
     // mutually exclusive with --combined_index_single_pass (competing exec models for
     // the same mode). Checked BEFORE the !combined_index early return so the flag alone
     // is also rejected loudly. Single-core follows from --combined_index; v2.x Phase 6
-    // lifted this to PE non-dir too (SE + PE both valid). Bowtie 2 is required by the
-    // explicit guard below (v2.x lifted --combined_index itself to HISAT2, but this exec
-    // model stays Bowtie-2-specific).
+    // lifted this to PE non-dir too (SE + PE both valid), and v2.x Phase 7 lifted it to
+    // HISAT2 (the sequential model is faithful + aligner-agnostic — it just runs the two
+    // passes serially). Bowtie 2 OR HISAT2 (the explicit guard below); minimap2 stays
+    // rejected. (--combined_index_single_pass, model (b), stays Bowtie-2-specific — its
+    // qname-tag RNG mechanism is Bowtie-2-only.)
     if cli.combined_index_sequential {
         if cli.combined_index_single_pass {
             return Err(AlignerError::Unsupported(
@@ -434,15 +436,18 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 6: PE non-directional combined now supports this faithful sequential
-        // low-RAM exec model too (the `layout.is_paired()` reject that used to live here is
-        // lifted — both SE and PE non-dir sequential are valid targets). Bowtie 2-only
-        // (next guard); PE-HISAT2 + this flag is therefore rejected by the aligner guard.
-        if aligner != Aligner::Bowtie2 {
+        // v2.x Phase 6: PE non-directional combined supports this faithful sequential
+        // low-RAM exec model (the `layout.is_paired()` reject is lifted — SE + PE both
+        // valid). v2.x Phase 7: HISAT2 supports it too (the sequential model is faithful +
+        // aligner-agnostic — it spawns whichever `config.aligner` resolves and just runs
+        // the two passes serially). minimap2 stays rejected (next guard + the global
+        // minimap2 reject below). (--combined_index_single_pass stays Bowtie-2-only — its
+        // own guard above; the tag-RNG mechanism is Bowtie-2-specific.)
+        if !matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
             return Err(AlignerError::Unsupported(
-                "--combined_index_sequential requires Bowtie 2: it is the Bowtie-2-specific \
-                 sequential low-memory execution model. HISAT2 non-directional combined-index uses \
-                 the default parallel model (a) — drop --combined_index_sequential."
+                "--combined_index_sequential requires Bowtie 2 or HISAT2: it is the faithful \
+                 sequential low-memory execution model for the non-directional combined-index path. \
+                 minimap2 combined-index is not supported — drop --combined_index_sequential."
                     .into(),
             ));
         }
@@ -1299,9 +1304,10 @@ mod tests {
     }
 
     /// `--combined_index_sequential` (the faithful sequential exec model) requires
-    /// `--combined_index --non_directional`, Bowtie 2 (SE or PE — v2.x Phase 6 lifted PE),
-    /// and is mutually exclusive with `--combined_index_single_pass`. Every other
-    /// combination is rejected loudly (never-silent). Mirrors the model-(b) guard test above.
+    /// `--combined_index --non_directional`, Bowtie 2 or HISAT2 (SE or PE — v2.x Phase 6
+    /// lifted PE, Phase 7 lifted HISAT2), and is mutually exclusive with
+    /// `--combined_index_single_pass`. Every other combination is rejected loudly
+    /// (never-silent). Mirrors the model-(b) guard test above.
     #[test]
     fn combined_index_sequential_requires_combined_index_and_non_directional() {
         // OK: combined_index + non_directional, SE Bowtie 2.
@@ -1406,7 +1412,24 @@ mod tests {
             )
             .is_err()
         );
-        // SE HISAT2 → reject: sequential is the Bowtie-2-specific low-memory exec model.
+        // v2.x Phase 7: HISAT2 non-dir sequential is now ACCEPTED — SE and PE (the
+        // sequential model is faithful + aligner-agnostic).
+        for layout in [se(), pe()] {
+            assert!(
+                reject_combined_index_unsupported(
+                    &cli_from(&[
+                        "--combined_index",
+                        "--non_directional",
+                        "--combined_index_sequential"
+                    ]),
+                    Aligner::Hisat2,
+                    LibraryType::NonDirectional,
+                    &layout
+                )
+                .is_ok()
+            );
+        }
+        // minimap2 sequential → still REJECTED (combined-index is Bowtie 2 / HISAT2 only).
         assert!(
             reject_combined_index_unsupported(
                 &cli_from(&[
@@ -1414,23 +1437,28 @@ mod tests {
                     "--non_directional",
                     "--combined_index_sequential"
                 ]),
-                Aligner::Hisat2,
+                Aligner::Minimap2,
                 LibraryType::NonDirectional,
                 &se()
             )
             .is_err()
         );
-        // PE HISAT2 + sequential → reject too (Bowtie 2-only; the aligner guard fires
-        // after the lifted PE check).
+        // HISAT2 directional / pbat + sequential → REJECT (non-dir-only; the library guard
+        // fires before the aligner guard, layout-independent).
         assert!(
             reject_combined_index_unsupported(
-                &cli_from(&[
-                    "--combined_index",
-                    "--non_directional",
-                    "--combined_index_sequential"
-                ]),
+                &cli_from(&["--combined_index", "--combined_index_sequential"]),
                 Aligner::Hisat2,
-                LibraryType::NonDirectional,
+                LibraryType::Directional,
+                &pe()
+            )
+            .is_err()
+        );
+        assert!(
+            reject_combined_index_unsupported(
+                &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
+                Aligner::Hisat2,
+                LibraryType::Pbat,
                 &pe()
             )
             .is_err()

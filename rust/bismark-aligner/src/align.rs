@@ -164,13 +164,19 @@ impl SamStream for AlignerStream {
     }
 }
 
-/// A live single Bowtie 2 instance, presenting a peek/advance SAM stream.
+/// A live single aligner instance (Bowtie 2 / HISAT2 / minimap2), presenting a
+/// peek/advance SAM stream.
 pub struct AlignerStream {
     child: Child,
     reader: BufReader<ChildStdout>,
     current: Option<SamRecord>,
     line_buf: String,
     finished: bool,
+    /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
+    /// must not report "Bowtie 2"). Mirrors [`PairedAlignerStream`]'s field — the SE
+    /// sibling lagged until the v2.x combined-index sequential path drove HISAT2 SE
+    /// through this stream (PLAN 06102026 phase 7).
+    aligner: Aligner,
 }
 
 /// Build the per-instance argv (excluding the binary path) for one single-end
@@ -271,12 +277,15 @@ impl AlignerStream {
             .stderr(Stdio::inherit());
 
         let mut child = cmd.spawn().map_err(|e| {
-            AlignerError::Validation(format!("failed to spawn aligner ({}): {e}", bin.display()))
+            AlignerError::Validation(format!(
+                "failed to spawn {} ({}): {e}",
+                aligner.name(),
+                bin.display()
+            ))
         })?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AlignerError::Validation("aligner stdout was not captured".into()))?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
+        })?;
         let mut reader = BufReader::new(stdout);
 
         // Skip `@` header lines; the first non-`@` line is the first record.
@@ -299,6 +308,7 @@ impl AlignerStream {
             current,
             line_buf: String::new(),
             finished: false,
+            aligner,
         })
     }
 
@@ -331,7 +341,8 @@ impl AlignerStream {
             Ok(())
         } else {
             Err(AlignerError::Validation(format!(
-                "Bowtie 2 exited unsuccessfully ({status})"
+                "{} exited unsuccessfully ({status})",
+                self.aligner.name()
             )))
         }
     }
@@ -1237,6 +1248,34 @@ mod tests {
         let body = "printf 'a\\t0\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tA\\tI\\tAS:i:0\\tMD:Z:1\\n'; exit 1";
         let (_d, s) = spawn_fake(body);
         assert!(s.finish().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finish_error_names_the_resolved_aligner_not_bowtie2() {
+        // Never-silent (PLAN 06102026 phase 7 / review A-I1): the SE stream's finish()
+        // error must name the RESOLVED aligner — a HISAT2 instance that exits non-zero
+        // reports "HISAT2", not the old hardcoded "Bowtie 2". (The SE sibling lagged the
+        // PE PairedAlignerStream until HISAT2 SE was driven through this path.)
+        let dir = tempfile::TempDir::new().unwrap();
+        let h2 = fake_bowtie2(
+            dir.path(),
+            "printf 'a\\t0\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tA\\tI\\tAS:i:0\\tMD:Z:1\\n'; exit 1",
+        );
+        let s = spawn_retry_etxtbsy(|| {
+            AlignerStream::spawn(
+                Aligner::Hisat2,
+                &h2,
+                "-q",
+                Orientation::Norc,
+                Path::new("idx"),
+                Path::new("reads.fq"),
+            )
+        })
+        .unwrap();
+        let msg = format!("{}", s.finish().unwrap_err());
+        assert!(msg.contains("HISAT2"), "got: {msg}");
+        assert!(!msg.contains("Bowtie 2"), "got: {msg}");
     }
 
     #[cfg(unix)]

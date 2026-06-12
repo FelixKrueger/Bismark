@@ -150,15 +150,16 @@ fn pipeline(config: &RunConfig) -> Result<()> {
         ReadLayout::PairedEnd { mates1, mates2 } => {
             if config.combined_index {
                 // v2.x opt-in PE combined-index path. The scope guard
-                // (`reject_combined_index_unsupported`) restricts HISAT2 + --multicore to
-                // the default parallel model (a) and the two low-RAM flags to
-                // NON-DIRECTIONAL + Bowtie 2; PE-HISAT2 + a low-RAM flag is rejected at
-                // resolve. As in the SE arm, the low-RAM flags are checked BEFORE the
-                // library match (Phase 6):
+                // (`reject_combined_index_unsupported`) restricts --multicore to the
+                // default parallel model (a); the low-RAM flags are NON-DIRECTIONAL-only.
+                // single_pass (model b) is Bowtie 2-only (tag-RNG); sequential is Bowtie 2
+                // OR HISAT2 (v2.x Phase 7 — faithful + aligner-agnostic). As in the SE arm,
+                // the low-RAM flags are checked BEFORE the library match (Phase 6):
                 //  - single_pass  → ONE PE pass over conversion-tagged interleaved reads
                 //    (model b; non-faithful, one index load). Guaranteed non-dir Bowtie 2.
                 //  - sequential   → model (a)'s two PE passes run ONE AT A TIME (faithful,
-                //    byte-identical to model (a); one index resident at a time). Same guard.
+                //    byte-identical to model (a); one index resident at a time). Non-dir
+                //    Bowtie 2 or HISAT2 — spawns whichever `config.aligner` resolves.
                 //  - else by library: Directional → one both-strands C→T pass → OT/OB;
                 //    NonDirectional → two both-strands passes (C→T + G→A) → 4 strands,
                 //    parallel model (a); Pbat → one both-strands G→A pass → CTOT/CTOB (the
@@ -1695,9 +1696,10 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
         eprintln!(
             ">>> Combined-index mode, NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, concordance-gated — \
              byte-identical to the default PARALLEL combined non-dir path, NOT to the faithful \
-             4-instance path): two both-strands Bowtie 2 passes (C->T then G->A) over {} (-k 2) run \
+             4-instance path): two both-strands {} passes (C->T then G->A) over {} (-k 2) run \
              ONE AT A TIME — pass 1 exits before pass 2 starts, so one combined index is resident at \
              a time (~half the peak RSS, ~2x the wall), unioned per read <<<",
+            config.aligner.name(),
             combined_basename.display()
         );
     }
