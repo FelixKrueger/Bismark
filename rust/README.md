@@ -82,6 +82,47 @@ Compiling 12 crates from source is a non-trivial one-time build; cargo does not 
 - **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**. `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
 - Ensure **`~/.cargo/bin` is on your `PATH`** to run the installed `*_rs` binaries.
 
+## Combined-index alignment (v2, opt-in — beta)
+
+`bismark_rs` can align against a **single combined CT+GA index** instead of the faithful 2 (directional) / 4
+(non-directional) separate per-strand aligner instances. It is **opt-in, never-silent, and concordance-gated —
+NOT byte-identical** to the faithful default (a small benign churn vs the per-strand oracle: directional ~0.013 %,
+non-directional ~0.022–0.044 %, pbat ~0.044 %, almost all unique↔ambiguous flips). The faithful default path is
+unchanged; use combined mode only when you opt in.
+
+**Prerequisite — build the combined index once** (genome-prep adds `Bisulfite_Genome/Combined/`):
+
+```bash
+bismark_genome_preparation_rs --combined_genome /path/to/genome/   # add --hisat2 for a HISAT2 combined index
+```
+
+**Coverage:** single-end **and** paired-end · **Bowtie 2 and HISAT2** · directional / non-directional / pbat — all
+concordance-gated against the faithful per-strand path. (minimap2-combined and `--multicore` + combined are **not**
+supported and fail loud.)
+
+**The flags:**
+
+| Flag | What it does | Scope |
+|------|--------------|-------|
+| `--combined_index` | One both-strands pass per read-conversion over the combined index. Non-directional uses the default **parallel** model (a) (two concurrent passes). | SE+PE · Bowtie 2+HISAT2 · dir/non-dir/pbat |
+| `--combined_index_sequential` | **Faithful** low-RAM variant for non-directional: run the two both-strands passes **one at a time** (pass 1 spills + its aligner exits, freeing the index, before pass 2 starts) — one index resident → ~½ the peak RSS. **Byte-identical** to model (a). | non-dir only · SE+PE · Bowtie 2+HISAT2 |
+| `--combined_index_single_pass` | Model (b): ONE pass over conversion-tagged interleaved reads (one index load). **NOT byte-identical / NOT decision-equivalent** to model (a) (the qname tag perturbs Bowtie 2's read-name RNG) — opt-in, ground-truth-validated, never the default. | non-dir only · SE+PE · **Bowtie 2 only** |
+
+```bash
+# directional, combined index, one both-strands pass (16 threads):
+bismark_rs --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
+
+# non-directional, faithful low-RAM (one index resident at a time):
+bismark_rs --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
+```
+
+**Memory characteristics** (real 10M WGBS SE, GRCh38, 16-core budget — see
+`plans/06092026_bismark-beta/BENCHMARK_RESULTS_alignment_modes.md`): the combined index is one *large* index
+(~9.5 GB resident), so the **RAM win is the low-RAM non-directional variants**, not combined-parallel: non-dir
+faithful **16.3 GB** / 4 small indices · combined parallel (a) **19.0 GB** / 2 large · combined
+**sequential / single-pass 11.1 GB / 1 large** (−32 % vs faithful, −41 % vs parallel (a)). Combined directional /
+pbat are one index load (fastest walls) but ~11 GB ≈/> the faithful 2-small-index layout, so they are not a RAM win.
+
 ## Building
 
 ```bash

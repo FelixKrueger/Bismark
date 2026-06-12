@@ -85,10 +85,13 @@ pub struct Cli {
     #[arg(long)]
     pub slam: bool,
     /// EXPERIMENTAL (v2, opt-in, never-silent): align against a single combined
-    /// CT+GA index (`Bisulfite_Genome/Combined/BS_combined`) in one both-strands
-    /// Bowtie 2 pass instead of separate per-strand instances, recovering strand
+    /// CT+GA index (`Bisulfite_Genome/Combined/BS_combined`, built by
+    /// `bismark_genome_preparation --combined_genome`) in one both-strands pass per
+    /// read-conversion instead of separate per-strand instances, recovering strand
     /// from the RNAME suffix × FLAG. Concordance-gated, NOT byte-identical to the
-    /// faithful default. This phase: single-end directional only.
+    /// faithful default (a small benign churn). Supports single-end + paired-end,
+    /// Bowtie 2 + HISAT2, directional / non-directional / pbat. minimap2-combined and
+    /// `--multicore` + combined are not supported (fail loud).
     #[arg(long = "combined_index")]
     pub combined_index: bool,
 
@@ -96,7 +99,8 @@ pub struct Cli {
     /// execution model for `--combined_index --non_directional`. Aligns ONE
     /// Bowtie 2 pass over conversion-tagged interleaved reads (one combined index
     /// load instead of two — lower peak RSS) instead of model (a)'s two parallel
-    /// passes. Requires `--combined_index --non_directional` (single-end Bowtie 2).
+    /// passes. Requires `--combined_index --non_directional`; single-end or
+    /// paired-end; **Bowtie 2 only** (the qname-tag mechanism is Bowtie-2-specific).
     /// NOT byte-identical AND NOT decision-equivalent to model (a): the qname tag
     /// perturbs Bowtie 2's read-name-seeded RNG, so a tiny fraction of co-optimal
     /// reads get a different (validated-equally-accurate) alignment. Ground-truth
@@ -106,13 +110,13 @@ pub struct Cli {
 
     /// EXPERIMENTAL (v2, opt-in, never-silent): the SEQUENTIAL low-memory
     /// execution model for `--combined_index --non_directional`. Runs model (a)'s
-    /// two both-strands Bowtie 2 passes ONE AT A TIME (pass 1's Bowtie 2 exits,
-    /// freeing the index, before pass 2 starts) instead of concurrently — one
-    /// combined index resident at a time (~half the peak RSS). BYTE-IDENTICAL to
-    /// the default parallel path (Bowtie 2 output is independent of when each pass
-    /// runs); the trade is wall time (the passes no longer overlap). Requires
-    /// `--combined_index --non_directional` (single-end Bowtie 2); mutually
-    /// exclusive with `--combined_index_single_pass`.
+    /// two both-strands passes ONE AT A TIME (pass 1's aligner exits, freeing the
+    /// index, before pass 2 starts) instead of concurrently — one combined index
+    /// resident at a time (~half the peak RSS). BYTE-IDENTICAL to the default
+    /// parallel path (the aligner's output is independent of when each pass runs);
+    /// the trade is wall time (the passes no longer overlap). Requires
+    /// `--combined_index --non_directional`; single-end or paired-end; Bowtie 2 or
+    /// HISAT2; mutually exclusive with `--combined_index_single_pass`.
     #[arg(long = "combined_index_sequential")]
     pub combined_index_sequential: bool,
 

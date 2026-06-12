@@ -45,6 +45,8 @@ For the latest development build instead of a pinned release, replace `--tag bis
 
 > The `_rs` suffix on host installs lets the Rust binaries coexist with the Perl Bismark scripts; inside the container they are exposed under the canonical names. At the v1.0 release the `_rs` suffix is dropped and the Rust binaries become the defaults.
 
+The Rust aligner also adds an opt-in, lower-memory [combined-index alignment mode](/Bismark/usage/alignment/) (one combined C→T + G→A index instead of separate per-strand instances) — see the Alignment page.
+
 ## Dependencies
 
 Bismark requires a working of Perl and [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)) to be installed on your machine. Bismark will assume that the Bowtie 2/ HISAT2 executable is in your path unless the path to Bowtie/ HISAT2 is specified manually with:

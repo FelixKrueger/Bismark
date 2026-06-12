@@ -121,3 +121,33 @@ Expanding on our observation that single-cell BS-seq, or PBAT libraries in gener
 
 **Please note** that we still do not recommend using local alignments as a means to _magically_ increase mapping efficiencies (please see [here](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/)), but we do acknowledge that PBAT/scBSs-seq/scNMT-seq are exceptional applications where local alignments might indeed make a difference (there is only so much data to be had from a single cell...).
 We didn't have the time yet to set more appropriate or stringent default values for local alignments (suggestions welcome), nor did we investigate whether the methylation extraction will require an additional `--ignore` flag if a read was found to the be soft-clipped (the so called 'micro-homology domains'). This might be added in the near future.
+
+## Combined-index alignment (Rust suite beta, opt-in)
+
+The [Bismark Rust suite](/Bismark/installation/) adds an opt-in **combined-index** alignment mode to `bismark_rs`. Instead of running 2 (directional) or 4 (non-directional) separate per-strand aligner instances, it aligns against a **single combined C→T + G→A index** in one both-strands pass per read-conversion.
+
+It is **opt-in, never-silent, and concordance-gated — NOT byte-identical** to the faithful per-strand default (a small, benign churn vs the per-strand oracle: directional ~0.013%, non-directional ~0.022–0.044%, pbat ~0.044%, almost all unique↔ambiguous flips). The faithful default path is unchanged; combined mode is used only when you ask for it. minimap2 and `--multicore` are not supported in combined mode (they fail loudly).
+
+**Build the combined index once** (genome preparation adds a `Bisulfite_Genome/Combined/` directory):
+
+```bash
+bismark_genome_preparation_rs --combined_genome /path/to/genome/   # add --hisat2 for a HISAT2 combined index
+```
+
+**Coverage:** single-end and paired-end · Bowtie 2 and HISAT2 · directional / non-directional / pbat.
+
+| Flag | What it does | Scope |
+|------|--------------|-------|
+| `--combined_index` | One both-strands pass per read-conversion. Non-directional uses the default parallel model (two concurrent passes). | SE+PE · Bowtie 2+HISAT2 · dir/non-dir/pbat |
+| `--combined_index_sequential` | Faithful low-memory variant for non-directional: the two both-strands passes run **one at a time** (one index resident → ~½ the peak memory). **Byte-identical** to the default parallel combined run. | non-dir · SE+PE · Bowtie 2+HISAT2 |
+| `--combined_index_single_pass` | One pass over conversion-tagged interleaved reads (one index load). **Not byte-identical / not decision-equivalent** to the parallel run (the read-name tag perturbs Bowtie 2's RNG) — ground-truth-validated, never the default. | non-dir · SE+PE · Bowtie 2 only |
+
+```bash
+# directional, combined index, one both-strands pass:
+bismark_rs --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
+
+# non-directional, faithful low-memory (one index resident at a time):
+bismark_rs --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
+```
+
+**Memory.** At human-genome scale the combined index is one *large* index, so the memory saving comes specifically from the **low-memory non-directional variants** (`--combined_index_sequential` / `--combined_index_single_pass`): on a real 10M-read WGBS GRCh38 run they held peak RSS to ~11 GB (one index resident) versus ~16 GB for the faithful 4-instance non-directional run and ~19 GB for the parallel combined run — roughly a third to two-fifths less. Combined directional/pbat use a single index load (and the fastest wall times) but are not themselves a memory win, since one large combined index is comparable to the two small per-strand indices they replace.
