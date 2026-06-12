@@ -472,6 +472,102 @@ fn streaming_cytosine_report_cx_matches_standalone() {
     );
 }
 
+/// `--CX --bedGraph` WITHOUT `--cytosine_report` (the nf-core/methylseq drop-in
+/// case fixed on 2026-06-12). Perl accepts this and emits an all-C-context
+/// coverage/bedGraph; the Rust CLI previously rejected it. This asserts:
+///   5a — the all-context cov/bedGraph are byte-identical to the standalone
+///        `bismark_bedgraph --CX` oracle over the kept per-context files;
+///   5b — the cov genuinely carries non-CpG (CHG @35, CHH @41) rows, not just
+///        CpG (guards against an all-context regression an order-equivalent
+///        oracle could mask);
+///   5c — skipping the trailing c2c step does NOT perturb the cov: the
+///        `--CX --bedGraph` cov equals the `--CX --cytosine_report` cov on the
+///        same input (c2c only READS the cov). Combined with
+///        `streaming_cytosine_report_cx_matches_standalone` (which pins the c2c
+///        path to the same oracle), this re-confirms Perl-identity in-repo.
+#[test]
+fn streaming_cx_bedgraph_without_cytosine_report_matches_standalone() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("cxbg.bam");
+    write_bridge_bam(&bam);
+    let genome = work.path().join("genome");
+    write_genome_dir(&genome);
+
+    // Oracle: extract per-context files, then run the STANDALONE bismark_bedgraph
+    // --CX over them (independent of the extractor's in-memory tee).
+    let extract_dir = work.path().join("extract");
+    run_extractor(&bam, &extract_dir, &[]).success();
+    let kept = kept_split_files(&extract_dir);
+    assert!(!kept.is_empty(), "extract produced no per-context files");
+
+    let oracle_dir = work.path().join("oracle");
+    fs::create_dir_all(&oracle_dir).unwrap();
+    oracle_bedgraph(
+        &kept,
+        "cxbg.bedGraph",
+        &oracle_dir,
+        1,
+        /*cx=*/ true,
+        false,
+        false,
+        false,
+    );
+
+    // Actual: --CX --bedGraph (NO --cytosine_report, NO --genome_folder).
+    let inline_dir = work.path().join("inline");
+    run_extractor(&bam, &inline_dir, &["--CX", "--bedGraph"]).success();
+
+    // 5a — byte-identity to the standalone-bedgraph --CX oracle.
+    let inline_cov = read_gz(&inline_dir.join("cxbg.bismark.cov.gz"));
+    assert_eq!(
+        inline_cov,
+        read_gz(&oracle_dir.join("cxbg.bismark.cov.gz")),
+        "--CX --bedGraph coverage differs from standalone bismark_bedgraph --CX oracle"
+    );
+    assert_eq!(
+        read_gz(&inline_dir.join("cxbg.bedGraph.gz")),
+        read_gz(&oracle_dir.join("cxbg.bedGraph.gz")),
+        "--CX --bedGraph bedGraph differs from standalone bismark_bedgraph --CX oracle"
+    );
+
+    // 5b — all-context content: the cov must carry the CHG (pos 35) and CHH
+    // (pos 41) rows from the fixture, not just CpG (5/10/15). Column 2 of the
+    // bismark cov is the 1-based position.
+    let cov_text = String::from_utf8(inline_cov).expect("cov is UTF-8");
+    let positions: std::collections::HashSet<&str> = cov_text
+        .lines()
+        .filter_map(|l| l.split('\t').nth(1))
+        .collect();
+    assert!(
+        positions.contains("35"),
+        "--CX cov missing the CHG position 35 — all-context capture broken; positions={positions:?}"
+    );
+    assert!(
+        positions.contains("41"),
+        "--CX cov missing the CHH position 41 — all-context capture broken; positions={positions:?}"
+    );
+
+    // 5c — skipping c2c does not perturb the cov: --CX --bedGraph cov ==
+    // --CX --cytosine_report cov on the same input.
+    let c2c_dir = work.path().join("c2c");
+    run_extractor(
+        &bam,
+        &c2c_dir,
+        &[
+            "--CX",
+            "--cytosine_report",
+            "--genome_folder",
+            genome.to_str().unwrap(),
+        ],
+    )
+    .success();
+    assert_eq!(
+        read_gz(&c2c_dir.join("cxbg.bismark.cov.gz")),
+        read_gz(&inline_dir.join("cxbg.bismark.cov.gz")),
+        "--CX --bedGraph cov must equal --CX --cytosine_report cov (c2c only reads the cov)"
+    );
+}
+
 #[test]
 fn streaming_cutoff_two_matches_standalone() {
     let work = tempfile::tempdir().unwrap();

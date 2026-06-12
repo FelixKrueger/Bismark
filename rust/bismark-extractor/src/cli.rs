@@ -186,8 +186,9 @@ pub struct Cli {
     #[arg(short = 'g', long = "genome_folder")]
     pub genome_folder: Option<PathBuf>,
 
-    /// Report all C-contexts (not just CpG) in cytosine_report.
-    /// --cytosine_report only; significant runtime increase.
+    /// Report all C-contexts (not just CpG) in the coverage/bedGraph and the
+    /// cytosine_report. Valid with --bedGraph or --cytosine_report; significant
+    /// runtime increase.
     #[arg(long = "CX", visible_alias = "CX_context")]
     pub cx_context: bool,
 
@@ -322,7 +323,8 @@ pub struct ResolvedConfig {
     pub counts: bool,
     /// 0-based half-open coordinates (--bedGraph/--cytosine_report only).
     pub zero_based: bool,
-    /// All-C-context cytosine report (--cytosine_report only).
+    /// All C-contexts (not just CpG) in the coverage/bedGraph and the
+    /// cytosine report (--bedGraph or --cytosine_report).
     pub cx_context: bool,
     /// Per-chromosome cytosine report (--cytosine_report only).
     pub split_by_chromosome: bool,
@@ -432,8 +434,8 @@ impl Cli {
         if self.ucsc && !self.bedgraph {
             return Err(BismarkExtractorError::UcscRequiresBedgraph);
         }
-        if self.cx_context && !self.cytosine_report {
-            return Err(BismarkExtractorError::CxRequiresCytosineReport);
+        if self.cx_context && !self.bedgraph && !self.cytosine_report {
+            return Err(BismarkExtractorError::CxRequiresBedgraphOrCytosineReport);
         }
         if self.split_by_chromosome && !self.cytosine_report {
             return Err(BismarkExtractorError::SplitByChromosomeRequiresCytosineReport);
@@ -732,13 +734,60 @@ mod tests {
         ));
     }
 
+    /// `--CX` requires `--bedGraph` OR `--cytosine_report` (mirrors Perl
+    /// `bismark_methylation_extractor`'s `die … unless ($cytosine_report or
+    /// $bedGraph)`), exactly like the `--zero_based` sibling. The accept/reject
+    /// matrix:
+    ///   - `--CX --bedGraph` (no `--cytosine_report`)            → accepted
+    ///   - `--CX --cytosine_report --genome_folder DIR`          → accepted
+    ///   - `--CX` alone (no `--bedGraph`, no `--cytosine_report`) → rejected
     #[test]
-    fn validate_rejects_cx_without_cytosine_report() {
+    fn validate_cx_requires_bedgraph_or_cytosine_report() {
+        // ── accept: --CX --bedGraph (the methylseq drop-in case) ──
+        let f = temp_input();
+        let cli = parse(&["--CX", "--bedGraph", f.path().to_str().unwrap()]).unwrap();
+        assert!(
+            cli.validate().is_ok(),
+            "--CX --bedGraph must be accepted (all-context coverage/bedGraph)"
+        );
+
+        // ── accept: --CX --bedGraph --paired-end (the gate is library-agnostic;
+        //    PE routes through the same write_call funnel as SE) ──
+        let f = temp_input();
+        let cli = parse(&[
+            "--CX",
+            "--bedGraph",
+            "--paired-end",
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(
+            cli.validate().is_ok(),
+            "--CX --bedGraph --paired-end must be accepted"
+        );
+
+        // ── accept: --CX --cytosine_report --genome_folder DIR ──
+        let f = temp_input();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let cli = parse(&[
+            "--CX",
+            "--cytosine_report",
+            "--genome_folder",
+            tmp_dir.path().to_str().unwrap(),
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(
+            cli.validate().is_ok(),
+            "--CX --cytosine_report --genome_folder must remain accepted"
+        );
+
+        // ── reject: --CX alone (no output stream to apply it to) ──
         let f = temp_input();
         let cli = parse(&["--CX", f.path().to_str().unwrap()]).unwrap();
         assert!(matches!(
             cli.validate(),
-            Err(BismarkExtractorError::CxRequiresCytosineReport)
+            Err(BismarkExtractorError::CxRequiresBedgraphOrCytosineReport)
         ));
     }
 
