@@ -4689,3 +4689,375 @@ fn combined_index_pe_single_pass_desync_dies_loud() {
             predicate::str::contains("desync").and(predicate::str::contains("stream head base id")),
         );
 }
+
+// ===========================================================================
+// `--combined_index --hisat2 --combined_index_sequential` (v2.x Phase 7) — the faithful
+// sequential low-RAM model extended to HISAT2 (SE + PE). The sequential machinery is
+// aligner-agnostic, so these assert HISAT2 sequential is BYTE-IDENTICAL to HISAT2
+// parallel model (a) — INCLUDING round-tripping HISAT2's contiguous FLAG-0x100 SECONDARY
+// records through the pass-1 (C→T) spill (the one HISAT2-specific record shape the Bowtie 2
+// gate never exercised). Single-pass model (b) stays Bowtie 2-only (unchanged).
+// ===========================================================================
+
+/// Collect a combined-non-dir PE BAM's records for a HISAT2 run (model (a) or sequential),
+/// using the given fake-maker. Asserts the sequential spill is cleaned up.
+#[cfg(unix)]
+fn run_combined_pe_hisat2_records(
+    sequential: bool,
+    upto: Option<&str>,
+    make_fake: fn(&Path),
+    ids: &[&str],
+) -> Vec<noodles_sam::alignment::RecordBuf> {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake(bins.path());
+    let (r1, r2) = write_pe_reads_ids(genome.path(), ids);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let mut cmd = bin();
+    cmd.arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--non_directional");
+    if sequential {
+        cmd.arg("--combined_index_sequential");
+    }
+    if let Some(u) = upto {
+        cmd.arg("--upto").arg(u);
+    }
+    cmd.arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    if sequential {
+        let leftover = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+        assert!(!leftover, "sequential HISAT2 PE spill must be cleaned up");
+    }
+
+    let bam = outdir.path().join("reads_1_bismark_hisat2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    reader
+        .records()
+        .map(|r| r.unwrap().inner().clone())
+        .collect()
+}
+
+/// SE analog of [`run_combined_pe_hisat2_records`].
+#[cfg(unix)]
+fn run_combined_se_hisat2_records(
+    sequential: bool,
+    make_fake: fn(&Path),
+    ids: &[&str],
+) -> Vec<noodles_sam::alignment::RecordBuf> {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", ids);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let mut cmd = bin();
+    cmd.arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--non_directional");
+    if sequential {
+        cmd.arg("--combined_index_sequential");
+    }
+    cmd.arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    if sequential {
+        let leftover = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+        assert!(!leftover, "sequential HISAT2 SE spill must be cleaned up");
+    }
+
+    let bam = outdir.path().join("reads_bismark_hisat2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    reader
+        .records()
+        .map(|r| r.unwrap().inner().clone())
+        .collect()
+}
+
+/// HISAT2 PE non-dir fake that, for `r_ot` on the C→T (pass-1, **spilled**) stream, emits
+/// a primary OT pair FOLLOWED BY a contiguous lower-AS FLAG-0x100 SECONDARY pair (the
+/// HISAT2 `-k 2` runner-up shape) — so the sequential spill/replay MUST preserve the
+/// secondary or the MAPQ runner-up (and thus the BAM) diverges from model (a). The G→A
+/// pass = the usual CTOT/CTOB; else a (77,141) miss. (vs `make_fake_hisat2_pe_combined_
+/// nondir`, which emits no secondaries — this is the HISAT2-specific spill coverage.)
+#[cfg(unix)]
+fn make_fake_hisat2_pe_combined_nondir_secondary(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+m1=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$m1" in
+  *_C_to_T*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      if (id=="r_ot") {
+        print id "/1\t99\tchr1_CT_converted\t1\t42\t6M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-6\tMD:Z:6";
+        print id "/2\t147\tchr1_CT_converted\t1\t42\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-6\tMD:Z:6";
+        print id "/1\t355\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\t*\tFFFFFF\tAS:i:-6\tMD:Z:6";
+        print id "/2\t403\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\t*\tFFFFFF\tAS:i:-6\tMD:Z:6";
+      } else {
+        print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      } }' "$m1" ;;
+  *_G_to_A*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      if (id=="r_ctot") {
+        print id "/1\t83\tchr1_CT_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t163\tchr1_CT_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else if (id=="r_ctob") {
+        print id "/1\t99\tchr1_GA_converted\t5\t42\t6M\t=\t5\t6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+        print id "/2\t147\tchr1_GA_converted\t5\t42\t6M\t=\t5\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      } else {
+        print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      } }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// HISAT2 **SE** non-dir fake (pass-discriminating on the `-U` `*_C_to_T*`/`*_G_to_A*`
+/// suffix) — the SE analog of `make_fake_hisat2_pe_combined_nondir`. Did NOT exist before
+/// Phase 7 (review B-3). `r_ot` → OT on the C→T pass; `r_ctot`/`r_ctob` → CTOT/CTOB on the
+/// G→A pass; else a FLAG-4 miss.
+#[cfg(unix)]
+fn make_fake_hisat2_combined_nondir(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$inp" in
+  *_C_to_T*)
+    awk 'NR%4==1 { id=$1; sub(/^@/,"",id);
+      if (id=="r_ot") print id "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+  *_G_to_A*)
+    awk 'NR%4==1 { id=$1; sub(/^@/,"",id);
+      if (id=="r_ctob")      print id "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_ctot") print id "\t16\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// HISAT2 SE non-dir fake with a contiguous FLAG-0x100 SECONDARY for `r_ot` on the C→T
+/// (pass-1, **spilled**) stream — the SE secondary-spill-round-trip coverage (distinct
+/// gather from PE; review A-I2).
+#[cfg(unix)]
+fn make_fake_hisat2_combined_nondir_secondary(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+case "$inp" in
+  *_C_to_T*)
+    awk 'NR%4==1 { id=$1; sub(/^@/,"",id);
+      if (id=="r_ot") {
+        print id "\t0\tchr1_CT_converted\t1\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-6\tMD:Z:6";
+        print id "\t256\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\t*\tFFFFFF\tAS:i:-6\tMD:Z:6";
+      } else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+  *_G_to_A*)
+    awk 'NR%4==1 { id=$1; sub(/^@/,"",id);
+      if (id=="r_ctob")      print id "\t0\tchr1_GA_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else if (id=="r_ctot") print id "\t16\tchr1_CT_converted\t5\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6";
+      else print id "\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
+    }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// THE byte-identity property for HISAT2 PE: sequential == parallel model (a) on the same
+/// strand-mix (OT + CTOT + CTOB; a both-miss dropped) — the local proof the oxy md5-gate
+/// scales (HISAT2 sequential feeds the same untagged converted files one pass at a time).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_sequential_byte_identical_to_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a =
+        run_combined_pe_hisat2_records(false, None, make_fake_hisat2_pe_combined_nondir, &ids);
+    let sequential =
+        run_combined_pe_hisat2_records(true, None, make_fake_hisat2_pe_combined_nondir, &ids);
+    assert_eq!(model_a.len(), 6); // 3 mapped pairs × 2 records
+    assert_eq!(
+        model_a, sequential,
+        "HISAT2 PE sequential must be byte-identical to model (a)"
+    );
+}
+
+/// `--upto` early-break holds for HISAT2 PE sequential too.
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_sequential_upto_matches_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a =
+        run_combined_pe_hisat2_records(false, Some("2"), make_fake_hisat2_pe_combined_nondir, &ids);
+    let sequential =
+        run_combined_pe_hisat2_records(true, Some("2"), make_fake_hisat2_pe_combined_nondir, &ids);
+    assert_eq!(model_a.len(), 4); // first two pairs → 4 records
+    assert_eq!(model_a, sequential);
+}
+
+/// THE HISAT2-specific coverage: a contiguous FLAG-0x100 secondary pair **on the C→T /
+/// pass-1 / spilled stream** round-trips through the spill — sequential == model (a). A
+/// dropped/reordered secondary would change the MAPQ runner-up → divergent BAM (review B-4).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_sequential_secondary_spill_round_trip() {
+    let ids = ["r_ot", "r_ctot", "r_ctob"];
+    let model_a = run_combined_pe_hisat2_records(
+        false,
+        None,
+        make_fake_hisat2_pe_combined_nondir_secondary,
+        &ids,
+    );
+    let sequential = run_combined_pe_hisat2_records(
+        true,
+        None,
+        make_fake_hisat2_pe_combined_nondir_secondary,
+        &ids,
+    );
+    assert_eq!(model_a.len(), 6); // OT + CTOT + CTOB (the secondary is consumed, not written)
+    assert_eq!(
+        model_a, sequential,
+        "the C→T-pass FLAG-0x100 secondary pair must survive the spill (MAPQ runner-up)"
+    );
+}
+
+/// The sequential banner + report marker say **HISAT2**, not "Bowtie 2" (the never-silent
+/// SE-banner parametrization — the PE banner shares `config.aligner.name()`).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_hisat2_sequential_banner_says_hisat2() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_pe_combined_nondir(bins.path());
+    let (r1, r2) = write_pe_reads_ids(genome.path(), &["r_ot", "r_ctot", "r_ctob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("paired-end NON-DIRECTIONAL SEQUENTIAL")
+                .and(predicate::str::contains("HISAT2"))
+                .and(predicate::str::contains("Bowtie 2").not()),
+        );
+}
+
+/// THE byte-identity property for HISAT2 SE: sequential == parallel model (a).
+#[cfg(unix)]
+#[test]
+fn combined_index_se_hisat2_sequential_byte_identical_to_model_a() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let model_a = run_combined_se_hisat2_records(false, make_fake_hisat2_combined_nondir, &ids);
+    let sequential = run_combined_se_hisat2_records(true, make_fake_hisat2_combined_nondir, &ids);
+    assert_eq!(model_a.len(), 3); // OT + CTOT + CTOB; r_miss → no record
+    assert_eq!(
+        model_a, sequential,
+        "HISAT2 SE sequential must be byte-identical to model (a)"
+    );
+}
+
+/// SE secondary-spill round-trip (the SE gather is a distinct code path from PE).
+#[cfg(unix)]
+#[test]
+fn combined_index_se_hisat2_sequential_secondary_spill_round_trip() {
+    let ids = ["r_ot", "r_ctot", "r_ctob"];
+    let model_a =
+        run_combined_se_hisat2_records(false, make_fake_hisat2_combined_nondir_secondary, &ids);
+    let sequential =
+        run_combined_se_hisat2_records(true, make_fake_hisat2_combined_nondir_secondary, &ids);
+    assert_eq!(model_a.len(), 3);
+    assert_eq!(
+        model_a, sequential,
+        "SE C→T-pass FLAG-0x100 secondary must survive the spill"
+    );
+}
+
+/// The SE sequential banner says **HISAT2** — directly locks the `lib.rs` SE-banner
+/// parametrization (the literal "Bowtie 2" → `config.aligner.name()` fix).
+#[cfg(unix)]
+#[test]
+fn combined_index_se_hisat2_sequential_banner_says_hisat2() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined_hisat2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_combined_nondir(bins.path());
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot", "r_ctot", "r_ctob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--combined_index")
+        .arg("--hisat2")
+        .arg("--non_directional")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("NON-DIRECTIONAL SEQUENTIAL")
+                .and(predicate::str::contains("HISAT2"))
+                .and(predicate::str::contains("Bowtie 2").not()),
+        );
+}
