@@ -177,13 +177,14 @@ fn methylseq_align_accept_rows_parse() {
     }
 }
 
-/// Tier 3 / GAP-1 (KnownUnsupported, flip-detecting). `params.local_alignment`
-/// emits `--local`; the Rust aligner rejects it (v1 is end-to-end only).
-/// Asserted via the pub `build_aligner_options` (fixture-free — mirrors the
-/// crate's own `rejects_local_in_v1`). When a future `--local` epic lands, this
-/// fails → forces a deliberate update + opening the gap.
+/// GAP-1 RESOLVED — `params.local_alignment` → `--local` is now **supported**
+/// for Bowtie 2 (plan `plans/06132026_aligner-local-mode/`; the flip-detector
+/// formerly here fired when the implementation landed). methylseq's `--local`
+/// command now parses AND `build_aligner_options` accepts it, emitting
+/// `--local --score-min G,20,8`. (HISAT2/minimap2-local + `--local`+combined-index
+/// are still rejected — that reject lives in `config::resolve`, not here.)
 #[test]
-fn methylseq_align_local_known_unsupported() {
+fn methylseq_align_local_now_accepted() {
     let cli = Cli::try_parse_from([
         "bismark",
         "reads.fq.gz",
@@ -192,15 +193,12 @@ fn methylseq_align_local_known_unsupported() {
         "--bam",
         "--local",
     ])
-    .expect("--local PARSES (it is rejected at build time, not at parse time)");
-    let err = build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false)
-        .expect_err("--local must be rejected (KnownUnsupported GAP-1)");
-    let msg = err.to_string();
-    // Message-specific: GAP-1 and GAP-2 share AlignerError::Unsupported, so the
-    // variant alone is insufficient (the two rows would alias each other).
+    .expect("--local parses");
+    let (opts, _gp) = build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false)
+        .expect("--local is now supported for Bowtie 2 (GAP-1 closed)");
     assert!(
-        msg.contains("local mode is not supported"),
-        "GAP-1 must reject with the --local-specific message; got: {msg}"
+        opts.contains("--local") && opts.contains("--score-min G,20,8"),
+        "Bowtie 2 --local must emit `--local --score-min G,20,8`: {opts}"
     );
 }
 

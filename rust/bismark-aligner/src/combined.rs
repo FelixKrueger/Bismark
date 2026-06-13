@@ -185,6 +185,7 @@ pub fn select(
     sequence: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
     // Keep only mapped lines (Bowtie 2 emits a single FLAG-4 line for a miss),
@@ -199,6 +200,7 @@ pub fn select(
         sequence,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         counters,
     )
 }
@@ -241,6 +243,7 @@ fn select_core(
     sequence: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
     if mapped.is_empty() {
@@ -350,6 +353,7 @@ fn select_core(
         second_best,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
     );
     counters.unique_best_alignment_count += 1;
     Ok(Decision::UniqueBest(BestAlignment {
@@ -381,6 +385,7 @@ pub fn select_nondir(
     sequence: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
     // Keep only mapped lines from each pass (Bowtie 2 emits one FLAG-4 line for a
@@ -404,6 +409,7 @@ pub fn select_nondir(
         sequence,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         counters,
     )
 }
@@ -428,6 +434,7 @@ pub fn select_pbat(
     sequence: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
     // Keep only mapped lines, each tagged G→A (the PBAT pass). The shared core
@@ -442,6 +449,7 @@ pub fn select_pbat(
         sequence,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         counters,
     )
 }
@@ -490,6 +498,7 @@ pub fn select_pe(
     sequence_2: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<DecisionPaired> {
     // Drop the PE no-alignment marker (FLAG 77/141 — Bowtie 2 emits one such pair
@@ -506,6 +515,7 @@ pub fn select_pe(
         sequence_2,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         counters,
     )
 }
@@ -522,6 +532,7 @@ pub fn select_pe(
 /// `select_core_pe` is reused UNCHANGED — it was built 4-slot-ready in Phase 2 (the
 /// `select_core_pe_uses_literal_scan_order_not_ascending` test locks the only-non-dir-
 /// reachable OB×CTOB collision). `sequence_1`/`_2` are the original (uc) reads.
+#[allow(clippy::too_many_arguments)] // +score_min_local pushed this to 8 (the score-min trio rides together)
 pub fn select_pe_nondir(
     ct_pairs: &[SamPair],
     ga_pairs: &[SamPair],
@@ -529,6 +540,7 @@ pub fn select_pe_nondir(
     sequence_2: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<DecisionPaired> {
     // Drop each pass's PE no-alignment marker (FLAG 77/141), tag the C→T pass's pairs
@@ -552,6 +564,7 @@ pub fn select_pe_nondir(
         sequence_2,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         counters,
     )
 }
@@ -582,6 +595,7 @@ pub fn select_pe_pbat(
     sequence_2: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<DecisionPaired> {
     // Drop the PE no-alignment marker (FLAG 77/141); tag every surviving pair G→A
@@ -598,6 +612,7 @@ pub fn select_pe_pbat(
         sequence_2,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         counters,
     )
 }
@@ -639,6 +654,7 @@ fn select_core_pe(
     sequence_2: &str,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     counters: &mut Counters,
 ) -> Result<DecisionPaired> {
     if mapped.is_empty() {
@@ -762,6 +778,7 @@ fn select_core_pe(
         second_best,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
     );
     counters.unique_best_alignment_count += 1;
     Ok(DecisionPaired::UniqueBest(BestAlignmentPaired {
@@ -883,7 +900,7 @@ mod tests {
     }
     fn sel(records: &[SamRecord]) -> (Decision, Counters) {
         let mut c = Counters::default();
-        let d = select(records, "ACGTAC", 0.0, -0.2, &mut c).unwrap();
+        let d = select(records, "ACGTAC", 0.0, -0.2, false, &mut c).unwrap();
         (d, c)
     }
 
@@ -1110,6 +1127,7 @@ mod tests {
             0.0,
             -0.2,
             false,
+            false,
             &mut c,
         )
         .unwrap()
@@ -1184,7 +1202,7 @@ mod tests {
         match d {
             Decision::UniqueBest(b) => {
                 assert_eq!(b.alignment_score_second_best, None);
-                assert_eq!(b.mapq, calc_mapq(6, None, 0, None, 0.0, -0.2));
+                assert_eq!(b.mapq, calc_mapq(6, None, 0, None, 0.0, -0.2, false));
             }
             other => panic!("expected UniqueBest, got {other:?}"),
         }
@@ -1202,7 +1220,7 @@ mod tests {
     /// Run `select_nondir` over the C→T-pass group `ct` + the G→A-pass group `ga`.
     fn sel_nondir(ct: &[SamRecord], ga: &[SamRecord]) -> (Decision, Counters) {
         let mut c = Counters::default();
-        let d = select_nondir(ct, ga, "ACGTAC", 0.0, -0.2, &mut c).unwrap();
+        let d = select_nondir(ct, ga, "ACGTAC", 0.0, -0.2, false, &mut c).unwrap();
         (d, c)
     }
 
@@ -1378,6 +1396,7 @@ mod tests {
             0.0,
             -0.2,
             false,
+            false,
             &mut c,
         )
         .unwrap()
@@ -1445,7 +1464,7 @@ mod tests {
     /// Run `select_pbat` over the G→A-pass `-k` line group.
     fn sel_pbat(records: &[SamRecord]) -> (Decision, Counters) {
         let mut c = Counters::default();
-        let d = select_pbat(records, "ACGTAC", 0.0, -0.2, &mut c).unwrap();
+        let d = select_pbat(records, "ACGTAC", 0.0, -0.2, false, &mut c).unwrap();
         (d, c)
     }
 
@@ -1473,6 +1492,7 @@ mod tests {
             false, // non-dir/pbat: don't reject the complementary strands
             0.0,
             -0.2,
+            false,
             false,
             &mut c,
         )
@@ -1700,7 +1720,7 @@ mod tests {
     /// Run directional `select_pe` over the candidate pairs.
     fn sel_pe(pairs: &[SamPair]) -> (DecisionPaired, Counters) {
         let mut c = Counters::default();
-        let d = select_pe(pairs, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap();
+        let d = select_pe(pairs, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, false, &mut c).unwrap();
         (d, c)
     }
 
@@ -1748,6 +1768,7 @@ mod tests {
             true, // directional
             0.0,
             -0.2,
+            false,
             false,
             crate::config::Aligner::Bowtie2,
             &mut c,
@@ -1916,6 +1937,7 @@ mod tests {
             "ACGTACGTAC",
             0.0,
             -0.2,
+            false,
             &mut c,
         )
         .unwrap();
@@ -1949,7 +1971,8 @@ mod tests {
         let p =
             SamPair::from_lines(r1, &pe_line("r1", 2, 147, "chr1_CT_converted", 200, -2)).unwrap();
         let mut c = Counters::default();
-        let err = select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap_err();
+        let err =
+            select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, false, &mut c).unwrap_err();
         assert!(format!("{err}").contains("alignment score"));
     }
 
@@ -1960,7 +1983,8 @@ mod tests {
         let p =
             SamPair::from_lines(r1, &pe_line("r1", 2, 147, "chr1_CT_converted", 200, -2)).unwrap();
         let mut c = Counters::default();
-        let err = select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap_err();
+        let err =
+            select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, false, &mut c).unwrap_err();
         assert!(format!("{err}").contains("MD tag"));
     }
 
@@ -1977,7 +2001,8 @@ mod tests {
             -2,
         );
         let mut c = Counters::default();
-        let err = select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap_err();
+        let err =
+            select_pe(&[p], "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, false, &mut c).unwrap_err();
         assert!(format!("{err}").contains("same chromosome"));
     }
 
@@ -2053,7 +2078,8 @@ mod tests {
     /// Run non-dir `select_pe_nondir` over the C→T pass pairs + G→A pass pairs.
     fn sel_pe_nondir(ct: &[SamPair], ga: &[SamPair]) -> (DecisionPaired, Counters) {
         let mut c = Counters::default();
-        let d = select_pe_nondir(ct, ga, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap();
+        let d =
+            select_pe_nondir(ct, ga, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, false, &mut c).unwrap();
         (d, c)
     }
 
@@ -2083,6 +2109,7 @@ mod tests {
             false, // non-directional → index-1/2 reject OFF
             0.0,
             -0.2,
+            false,
             false,
             crate::config::Aligner::Bowtie2,
             &mut c,
@@ -2224,7 +2251,8 @@ mod tests {
     /// Run pbat `select_pe_pbat` over the single G→A pass's candidate pairs.
     fn sel_pe_pbat(pairs: &[SamPair]) -> (DecisionPaired, Counters) {
         let mut c = Counters::default();
-        let d = select_pe_pbat(pairs, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, &mut c).unwrap();
+        let d =
+            select_pe_pbat(pairs, "ACGTACGTAC", "ACGTACGTAC", 0.0, -0.2, false, &mut c).unwrap();
         (d, c)
     }
 

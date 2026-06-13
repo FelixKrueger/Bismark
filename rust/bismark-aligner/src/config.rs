@@ -175,6 +175,9 @@ pub struct RunConfig {
     pub score_min_intercept: f64,
     /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
     pub score_min_slope: f64,
+    /// `--local` mode (= `cli.local`): `calc_mapq` uses `ln(readLen)` scMin + the
+    /// local MAPQ ladder; the `--score_min` defaults are `(20.0, 8.0)` (G-form).
+    pub score_min_local: bool,
     /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
     /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
     /// pushed to the *aligner options*, NOT this variable). Consumed by the PE
@@ -258,6 +261,27 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ));
     }
 
+    // `--local` scope (the single authoritative home; `build_aligner_options` may
+    // then assume `local ⟹ Bowtie 2`). v1.x supports Bowtie 2 `--local` only:
+    // HISAT2-`--local` is experimental in Perl (`--omit-sec-seq` only) and
+    // minimap2 has no local concept; the combined-index is a separate v2 mode.
+    if cli.local {
+        if aligner != Aligner::Bowtie2 {
+            return Err(AlignerError::Unsupported(
+                "--local is only supported with Bowtie 2 (the default aligner); HISAT2/minimap2 \
+                 local alignment is not supported in this version."
+                    .into(),
+            ));
+        }
+        if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
+            return Err(AlignerError::Unsupported(
+                "--local is not supported with --combined_index (a separate alignment model); \
+                 run --local against the faithful per-strand index."
+                    .into(),
+            ));
+        }
+    }
+
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
@@ -302,6 +326,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (aligner_options, gap_penalties) =
         options::build_aligner_options(cli, aligner, format, layout.is_paired())?;
     let (score_min_intercept, score_min_slope) = options::score_min_params(cli)?;
+    let score_min_local = cli.local; // --local: ln() scMin + the local MAPQ ladder
     reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {
@@ -324,6 +349,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         gap_penalties,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
         // Perl 8047: `$dovetail = 1 unless $no_dovetail` — independent of the aligner.
         dovetail: !cli.no_dovetail,
         phred64: cli.phred64,
@@ -927,6 +953,35 @@ mod tests {
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--bowtie2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--minimap2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
+    }
+
+    // ---- --local scope (Bowtie 2 only; rejected for HISAT2/minimap2 + combined-index) ----
+    // The rejects fire early in `resolve` (before genome discovery), so they're
+    // testable without an on-disk index.
+    #[test]
+    fn resolve_rejects_local_with_non_bowtie2() {
+        let err = resolve(&cli_from(&["--local", "--hisat2"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--local is only supported with Bowtie 2")
+        );
+        assert!(resolve(&cli_from(&["--local", "--minimap2"]), "cmd".into()).is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_local_with_combined_index() {
+        for flag in [
+            "--combined_index",
+            "--combined_index_sequential",
+            "--combined_index_single_pass",
+        ] {
+            let err = resolve(&cli_from(&["--local", flag]), "cmd".into()).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("--local is not supported with --combined_index"),
+                "{flag}: {err}"
+            );
+        }
     }
 
     // ---- minimap2 preset/length flag gating (Phase 4) ----------------------

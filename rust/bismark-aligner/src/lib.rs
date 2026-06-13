@@ -712,6 +712,7 @@ fn drive_merge(
             directional,
             config.score_min_intercept,
             config.score_min_slope,
+            config.score_min_local,
             config.ambig_bam,
             counters,
         )?;
@@ -849,7 +850,8 @@ fn combined_aligner_options(config: &RunConfig) -> String {
 /// from the classifier). Threaded into the shared `process_se_chunk_combined` /
 /// `drive_merge_combined` so the (identical) gather loop isn't triplicated across
 /// the directional + pbat paths (the dual-driver back-port trap).
-type SelectFn = fn(&[crate::align::SamRecord], &str, f64, f64, &mut Counters) -> Result<Decision>;
+type SelectFn =
+    fn(&[crate::align::SamRecord], &str, f64, f64, bool, &mut Counters) -> Result<Decision>;
 
 /// The single-pass per-PAIR combined selector — `combined::select_pe` (directional,
 /// C→T pass → OT/OB) or `combined::select_pe_pbat` (pbat, G→A pass → CTOT/CTOB); both
@@ -858,8 +860,15 @@ type SelectFn = fn(&[crate::align::SamRecord], &str, f64, f64, &mut Counters) ->
 /// loop isn't duplicated across the directional + pbat paths (the dual-driver back-port
 /// trap). NB the non-directional selector (`select_pe_nondir`) takes TWO pair slices
 /// (one per pass) and so is NOT a `SelectFnPe` — it has its own two-stream driver.
-type SelectFnPe =
-    fn(&[crate::align::SamPair], &str, &str, f64, f64, &mut Counters) -> Result<DecisionPaired>;
+type SelectFnPe = fn(
+    &[crate::align::SamPair],
+    &str,
+    &str,
+    f64,
+    f64,
+    bool,
+    &mut Counters,
+) -> Result<DecisionPaired>;
 
 /// SE combined-index pipeline (single-core directional). Mirrors [`run_se`] but
 /// drives ONE both-strands instance over the combined index
@@ -1232,6 +1241,7 @@ fn drive_merge_combined<S: SamStream>(
             &sequence,
             config.score_min_intercept,
             config.score_min_slope,
+            config.score_min_local,
             counters,
         )?;
         route_se_decision(
@@ -1613,6 +1623,7 @@ fn select_and_route_se_nondir(
         sequence,
         config.score_min_intercept,
         config.score_min_slope,
+        config.score_min_local,
         counters,
     )?;
     route_se_decision(
@@ -2716,6 +2727,7 @@ fn drive_merge_pe(
             directional,
             config.score_min_intercept,
             config.score_min_slope,
+            config.score_min_local,
             config.ambig_bam,
             config.aligner,
             counters,
@@ -3310,6 +3322,7 @@ fn drive_merge_combined_pe<S: PairedSamStream>(
             &s2,
             config.score_min_intercept,
             config.score_min_slope,
+            config.score_min_local,
             counters,
         )?;
         route_pe_decision(
@@ -3759,6 +3772,7 @@ fn select_and_route_pe_nondir(
         s2,
         config.score_min_intercept,
         config.score_min_slope,
+        config.score_min_local,
         counters,
     )?;
     route_pe_decision(

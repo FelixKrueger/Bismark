@@ -184,6 +184,7 @@ pub fn check_results_single_end<S: SamStream>(
     directional: bool,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     want_ambig: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
@@ -362,6 +363,7 @@ pub fn check_results_single_end<S: SamStream>(
         second_for_mapq,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
     );
 
     Ok(Decision::UniqueBest(BestAlignment {
@@ -512,6 +514,7 @@ pub fn check_results_paired_end<S: PairedSamStream>(
     directional: bool,
     score_min_intercept: f64,
     score_min_slope: f64,
+    score_min_local: bool,
     want_ambig: bool,
     aligner: Aligner,
     counters: &mut Counters,
@@ -737,6 +740,7 @@ pub fn check_results_paired_end<S: PairedSamStream>(
         second_for_mapq,
         score_min_intercept,
         score_min_slope,
+        score_min_local,
     );
 
     Ok(DecisionPaired::UniqueBest(BestAlignmentPaired {
@@ -868,6 +872,7 @@ mod tests {
             directional,
             0.0,
             -0.2,
+            false,
             want_ambig,
             &mut c,
         )
@@ -1014,6 +1019,7 @@ mod tests {
             0.0,
             -0.2,
             false,
+            false,
             &mut c,
         );
         assert!(r.is_err());
@@ -1038,6 +1044,7 @@ mod tests {
             0.0,
             -0.2,
             false,
+            false,
             &mut c,
         );
         assert!(r.is_err());
@@ -1060,6 +1067,7 @@ mod tests {
             true,
             0.0,
             -0.2,
+            false,
             false,
             &mut c,
         )
@@ -1084,6 +1092,7 @@ mod tests {
             false,
             0.0,
             -0.2,
+            false,
             false,
             &mut c,
         )
@@ -1114,6 +1123,7 @@ mod tests {
             false,
             0.0,
             -0.2,
+            false,
             false,
             &mut c,
         )
@@ -1147,6 +1157,7 @@ mod tests {
             false,
             0.0,
             -0.2,
+            false,
             false,
             &mut c,
         );
@@ -1339,6 +1350,7 @@ mod tests {
             directional,
             0.0,
             -0.2,
+            false,
             want_ambig,
             aligner,
             &mut c,
@@ -1720,6 +1732,7 @@ mod tests {
             false,
             0.0,
             -0.2,
+            false,
             false,
             Aligner::Bowtie2,
             &mut c,
