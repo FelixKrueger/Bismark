@@ -9,7 +9,7 @@
 //!   193–201).
 //!
 //! Both share the same internal machinery (chr-name interning, SE/PE
-//! streaming, empty-input detection). `run_single` is the
+//! streaming, graceful empty-input handling). `run_single` is the
 //! single-file specialisation; `run_multiple` extends to N files with
 //! `@SQ` name-set validation across inputs.
 //!
@@ -293,12 +293,13 @@ fn stream_pe<W: WriteBismark>(
 ///
 /// # Behaviour
 /// 1. Open reader (BAM/SAM/CRAM auto-detected from extension).
-/// 2. Peek the first record. If `None`, return [`BismarkDedupError::EmptyInput`]
-///    **before** any writer or report file is created.
-/// 3. Clone the header; build chr-name intern + refid table.
-/// 4. Open writer (output format mirrors input format).
-/// 5. Stream records (SE or PE per `is_paired`).
-/// 6. Finalize writer; return [`DedupReport`].
+/// 2. Clone the header; build chr-name intern + refid table.
+/// 3. Open writer (output format mirrors input format).
+/// 4. Stream records (SE or PE per `is_paired`). Zero records is fine — the
+///    output is a valid header-only file and the report shows count=0
+///    (`0 (0.00%)`). This is a deliberate divergence from Perl, which dies on
+///    empty input; see plans/06132026_dedup-empty-input/PLAN.md.
+/// 5. Finalize writer; return [`DedupReport`].
 pub fn run_single(
     input: &Path,
     output: &Path,
@@ -309,11 +310,13 @@ pub fn run_single(
     let mut reader = bismark_io::open_reader(input, cram_ref)?;
     let header = reader.header().clone();
 
-    // Peek first record before opening writer.
-    let mut records = reader.records().peekable();
-    if records.peek().is_none() {
-        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
-    }
+    // Zero alignment records (header-only BAM, e.g. nothing aligned) is handled
+    // GRACEFULLY: the stream loop below is a no-op, `open_writer` + `finish`
+    // still emit a valid header-only output, and `into_report` yields count=0
+    // → `0 (0.00%)`. Deliberate divergence from Perl (which dies on empty input)
+    // so nf-core/methylseq does not crash on no-alignment samples.
+    // See plans/06132026_dedup-empty-input/PLAN.md.
+    let records = reader.records();
 
     let intern = build_chr_intern(&header);
     let refid_table = build_refid_table(&header, &intern);
@@ -386,46 +389,41 @@ pub fn run_multiple(
         .collect();
 
     // ────────────────────────────────────────────────────────────────
-    // Peek file1's first record BEFORE opening the writer.
+    // Open the writer with file1's header, then stream every reader in
+    // order. An empty file1 (or all files empty) is handled GRACEFULLY:
+    // a valid header-only output + a count=0 report + exit 0 — so
+    // nf-core/methylseq does not crash on no-alignment samples.
     //
-    // Both dual reviewers (Phase E) flagged that opening the writer
-    // first leaves a header-only output BAM on disk if file1 is empty
-    // — violating PLAN §10.9's "no output files left behind on
-    // EmptyInput error" invariant.
-    //
-    // We can't use the `Peekable` pattern here the way `run_single`
-    // does, because dropping a `Peekable` after peeking consumes the
-    // record from the underlying reader — re-calling `reader.records()`
-    // later starts at the second record. Instead we use the
-    // `iter::once(first).chain(rest)` pattern: stash the peeked record
-    // outside the borrow, drop the iterator borrow, open the writer,
-    // then prepend the stashed record to a fresh iterator borrow.
+    // We removed ONLY the former first-record peek-stash error path. The
+    // pop-first structure + the subsequent-files `i = i_zero_based + 1`
+    // indexing below are UNCHANGED, so `refid_tables[i]` stays aligned
+    // with each reader (critical for reordered-@SQ multi-file inputs —
+    // do not restructure to "iterate all readers from index 0" or the
+    // `+1` would become an off-by-one). Deliberate divergence from Perl,
+    // which dies on empty input; see
+    // plans/06132026_dedup-empty-input/PLAN.md.
     // ────────────────────────────────────────────────────────────────
+    let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
+    let mut state = DedupState::new();
+
     let mut readers_iter = readers.into_iter();
     let mut first_reader = readers_iter
         .next()
         .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    let first_record: BismarkRecord = {
-        let mut peek_iter = first_reader.records();
-        match peek_iter.next() {
-            Some(Ok(r)) => r,
-            Some(Err(e)) => return Err(e.into()),
-            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
-        }
-        // `peek_iter` (and the borrow on `first_reader`) dropped here.
-    };
-
-    // Now safe to open the writer — file1 is not empty.
-    let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
-    let mut state = DedupState::new();
-
-    // Stream file1 starting from the stashed first record.
-    let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
-        .chain(first_reader.records());
     if is_paired {
-        stream_pe(combined, &refid_tables[0], &mut state, &mut writer)?;
+        stream_pe(
+            first_reader.records(),
+            &refid_tables[0],
+            &mut state,
+            &mut writer,
+        )?;
     } else {
-        stream_se(combined, &refid_tables[0], &mut state, &mut writer)?;
+        stream_se(
+            first_reader.records(),
+            &refid_tables[0],
+            &mut state,
+            &mut writer,
+        )?;
     }
 
     // Stream subsequent files (empty is OK — they just contribute no records).
@@ -452,7 +450,7 @@ pub fn run_multiple(
 // - Accept BAM input + BAM output ONLY (caller must dispatch SAM and CRAM
 //   to the single-threaded `run_single` / `run_multiple`).
 // - Take a `parallel: NonZero<usize>` worker count.
-// - Reuse all of: peek-before-writer-open, chr-name interning,
+// - Reuse all of: graceful empty-input handling, chr-name interning,
 //   stream_se / stream_pe, DedupState semantics. The ONLY difference
 //   from `run_single` / `run_multiple` is the reader/writer construction
 //   (`ThreadedBamReader::from_path` + `ThreadedBamWriter::from_path`).
@@ -467,7 +465,7 @@ pub fn run_multiple(
 /// dispatch SAM / CRAM to the single-threaded [`run_single`].
 ///
 /// All other semantics are identical to [`run_single`]:
-/// - Peek-before-writer-open empty-input detection
+/// - Graceful empty-input handling (header-only output + zero-count report)
 /// - Chr-name interning by BString
 /// - PE pair adjacency via [`BismarkPair::from_mates`]
 /// - Same report bytes
@@ -483,11 +481,9 @@ pub fn run_single_parallel(
     let mut reader = bismark_io::ThreadedBamReader::from_path(input, parallel)?;
     let header = reader.header().clone();
 
-    // Peek first record before opening writer.
-    let mut records = reader.records().peekable();
-    if records.peek().is_none() {
-        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
-    }
+    // Zero records (header-only BAM) is handled gracefully — header-only output
+    // + count=0 report + exit 0. See run_single / PLAN.md.
+    let records = reader.records();
 
     let intern = build_chr_intern(&header);
     let refid_table = build_refid_table(&header, &intern);
@@ -553,31 +549,34 @@ pub fn run_multiple_parallel(
         .map(|h| build_refid_table(h, &intern))
         .collect();
 
-    // Peek file1's first record BEFORE opening the writer (matches the
-    // single-threaded run_multiple's no-output-on-empty-file1 invariant).
-    let mut readers_iter = readers.drain(..);
-    let mut first_reader = readers_iter
-        .next()
-        .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    let first_record: BismarkRecord = {
-        let mut peek_iter = first_reader.records();
-        match peek_iter.next() {
-            Some(Ok(r)) => r,
-            Some(Err(e)) => return Err(e.into()),
-            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
-        }
-    };
-
+    // Open the writer with file1's header, then stream every reader in order.
+    // Empty input (file1 or all files) → header-only output + count=0 report +
+    // exit 0. Only the former first-record peek-stash error path was removed;
+    // the pop-first + subsequent-files `i = i_zero_based + 1` indexing below is
+    // UNCHANGED so `refid_tables[i]` stays aligned with each reader. See
+    // run_multiple / plans/06132026_dedup-empty-input/PLAN.md.
     let mut writer =
         bismark_io::ThreadedBamWriter::from_path(output, headers[0].clone(), parallel)?;
     let mut state = DedupState::new();
 
-    let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
-        .chain(first_reader.records());
+    let mut readers_iter = readers.drain(..);
+    let mut first_reader = readers_iter
+        .next()
+        .expect("inputs.is_empty() checked above; readers has ≥1 element");
     if is_paired {
-        stream_pe(combined, &refid_tables[0], &mut state, &mut writer)?;
+        stream_pe(
+            first_reader.records(),
+            &refid_tables[0],
+            &mut state,
+            &mut writer,
+        )?;
     } else {
-        stream_se(combined, &refid_tables[0], &mut state, &mut writer)?;
+        stream_se(
+            first_reader.records(),
+            &refid_tables[0],
+            &mut state,
+            &mut writer,
+        )?;
     }
 
     for (i_zero_based, mut reader) in readers_iter.enumerate() {
@@ -819,10 +818,9 @@ pub fn run_single_umi(
     let mut reader = bismark_io::open_reader(input, cram_ref)?;
     let header = reader.header().clone();
 
-    let mut records = reader.records_with_umi(extractor).peekable();
-    if records.peek().is_none() {
-        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
-    }
+    // Zero records (header-only BAM) is handled gracefully — header-only output
+    // + count=0 report + exit 0. See run_single / PLAN.md.
+    let records = reader.records_with_umi(extractor);
 
     let intern = build_chr_intern(&header);
     let refid_table = build_refid_table(&header, &intern);
@@ -887,30 +885,25 @@ pub fn run_multiple_umi(
         .map(|h| build_refid_table(h, &intern))
         .collect();
 
+    let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
+    let mut state = UmiDedupState::new();
+
     let mut readers_iter = readers.into_iter();
     let mut first_reader = readers_iter
         .next()
         .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    let first_record: BismarkRecord = {
-        let mut peek_iter = first_reader.records_with_umi(extractor);
-        match peek_iter.next() {
-            Some(Ok(r)) => r,
-            Some(Err(e)) => return Err(e.into()),
-            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
-        }
-    };
 
-    let mut writer = bismark_io::open_writer(output, headers[0].clone(), cram_ref)?;
-    let mut state = UmiDedupState::new();
-
-    // Stream all inputs into a single inner block so a single `?`
-    // controls early-exit on any per-file error.
+    // Stream all inputs into a single inner block so a single `?` controls
+    // early-exit on any per-file error. Empty input is handled gracefully
+    // (header-only output + count=0 report + exit 0); only the former
+    // first-record peek-stash error path was removed. The
+    // `cleanup_partial_output_on_err` wrapper below still unlinks the output on
+    // a genuine mid-stream error. The `i = i_zero_based + 1` indexing is
+    // UNCHANGED so `refid_tables[i]` stays aligned. See PLAN.md.
     let stream_result: Result<(), BismarkDedupError> = (|| {
-        let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
-            .chain(first_reader.records_with_umi(extractor));
         if is_paired {
             stream_pe_umi(
-                combined,
+                first_reader.records_with_umi(extractor),
                 &refid_tables[0],
                 umi_mode,
                 &mut state,
@@ -918,7 +911,7 @@ pub fn run_multiple_umi(
             )?;
         } else {
             stream_se_umi(
-                combined,
+                first_reader.records_with_umi(extractor),
                 &refid_tables[0],
                 umi_mode,
                 &mut state,
@@ -959,10 +952,9 @@ pub fn run_single_parallel_umi(
     let mut reader = bismark_io::ThreadedBamReader::from_path(input, parallel)?;
     let header = reader.header().clone();
 
-    let mut records = reader.records_with_umi(extractor).peekable();
-    if records.peek().is_none() {
-        return Err(BismarkDedupError::EmptyInput(input.to_path_buf()));
-    }
+    // Zero records (header-only BAM) is handled gracefully — header-only output
+    // + count=0 report + exit 0. See run_single / PLAN.md.
+    let records = reader.records_with_umi(extractor);
 
     let intern = build_chr_intern(&header);
     let refid_table = build_refid_table(&header, &intern);
@@ -1027,29 +1019,24 @@ pub fn run_multiple_parallel_umi(
         .map(|h| build_refid_table(h, &intern))
         .collect();
 
-    let mut readers_iter = readers.drain(..);
-    let mut first_reader = readers_iter
-        .next()
-        .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    let first_record: BismarkRecord = {
-        let mut peek_iter = first_reader.records_with_umi(extractor);
-        match peek_iter.next() {
-            Some(Ok(r)) => r,
-            Some(Err(e)) => return Err(e.into()),
-            None => return Err(BismarkDedupError::EmptyInput(inputs[0].clone())),
-        }
-    };
-
     let mut writer =
         bismark_io::ThreadedBamWriter::from_path(output, headers[0].clone(), parallel)?;
     let mut state = UmiDedupState::new();
 
+    let mut readers_iter = readers.drain(..);
+    let mut first_reader = readers_iter
+        .next()
+        .expect("inputs.is_empty() checked above; readers has ≥1 element");
+
+    // Empty input handled gracefully (header-only output + count=0 report +
+    // exit 0); only the former peek-stash error path was removed. The
+    // `cleanup_partial_output_on_err` wrapper still unlinks on a genuine
+    // mid-stream error; the `i = i_zero_based + 1` indexing is UNCHANGED so
+    // `refid_tables[i]` stays aligned. See PLAN.md.
     let stream_result: Result<(), BismarkDedupError> = (|| {
-        let combined = std::iter::once(Ok::<_, bismark_io::BismarkIoError>(first_record))
-            .chain(first_reader.records_with_umi(extractor));
         if is_paired {
             stream_pe_umi(
-                combined,
+                first_reader.records_with_umi(extractor),
                 &refid_tables[0],
                 umi_mode,
                 &mut state,
@@ -1057,7 +1044,7 @@ pub fn run_multiple_parallel_umi(
             )?;
         } else {
             stream_se_umi(
-                combined,
+                first_reader.records_with_umi(extractor),
                 &refid_tables[0],
                 umi_mode,
                 &mut state,

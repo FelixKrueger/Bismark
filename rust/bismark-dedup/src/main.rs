@@ -180,6 +180,12 @@ fn process_one(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkDedup
             file_label,
         )?,
     };
+    if report.count() == 0 {
+        eprintln!(
+            "Input contained no alignments — wrote an empty (header-only) deduplicated file \
+             and a zero-count report (exit 0)."
+        );
+    }
     report.write_to(&report_path)?;
     eprintln!("{}", report.format_stderr());
     Ok(())
@@ -264,6 +270,12 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
             file_label,
         )?,
     };
+    if report.count() == 0 {
+        eprintln!(
+            "Input contained no alignments — wrote an empty (header-only) deduplicated file \
+             and a zero-count report (exit 0)."
+        );
+    }
     report.write_to(&report_path)?;
     eprintln!("{}", report.format_stderr());
     Ok(())
@@ -292,7 +304,7 @@ fn check_bclconvert_format_conflict(
             .map(|n| AsRef::<[u8]>::as_ref(n).to_vec())
             .unwrap_or_default(),
         Some(Err(e)) => return Err(e.into()),
-        None => return Ok(()), // Empty input — let downstream EmptyInput fire.
+        None => return Ok(()), // Empty input — downstream handles it gracefully (zero-count report).
     };
 
     if bismark_io::umi::extract_bclconvert(&first_qname).is_some() {
