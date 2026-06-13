@@ -6,7 +6,7 @@
 
 # Install/update config for the `install-suite*` recipes (bump `suite_tag` on release).
 repo := "https://github.com/FelixKrueger/Bismark"
-suite_tag := "bismark-rust-v2.0.0-beta.5"
+suite_tag := "bismark-rust-v2.0.0-beta.6"
 suite_crates := "bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc bismark-report bismark-summary"
 
 # Default: the portable CI check suite (lint + tests, both profiles).
