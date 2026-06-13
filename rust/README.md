@@ -173,6 +173,7 @@ Versions are the crate manifests on `rust/iron-chancellor` (a release **git tag*
 
 Reverse-chronological log of the main Rust-rewrite shipping events (merges into `rust/iron-chancellor`). One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-06-13** — `deduplicate_bismark` **graceful zero-alignment input** — fixes an nf-core/methylseq drop-in crash. A header-only BAM (e.g. a sample where nothing aligned) made the Rust dedup exit non-zero (`input file is empty`), aborting the pipeline at `BISMARK_DEDUPLICATE`. It now emits a valid header-only deduplicated BAM + a zero-count `deduplication_report.txt` (rendering `0 (0.00%)`, not `N/A%`) and exits 0, uniformly across all 8 entry points (SE/PE × single/`--multiple` × `--parallel` × UMI). A **deliberate, documented divergence from Perl v0.25.1**, which itself dies on empty input (`bam_isEmpty`) — acceptable standalone, but it must not crash methylseq. The downstream Rust extractor already handles a header-only BAM gracefully, so the chain survives. Plan + reviews: `plans/06132026_dedup-empty-input/`.
 - **2026-06-13** — `bismark` aligner **v1.x: Bowtie 2 `--local` mode** — un-rejects `--local`
   (the documented `params.local_alignment`), byte-identical to Perl Bismark v0.25.1 `--local`. A
   faithful port of a different Perl mode (Bowtie 2 does the local alignment; the Rust work is the

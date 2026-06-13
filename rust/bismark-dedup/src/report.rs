@@ -104,8 +104,14 @@ impl DedupReport {
     #[must_use]
     pub fn format(&self) -> String {
         let leftover = self.leftover();
+        // count == 0 only happens on a zero-alignment input (header-only BAM).
+        // Render `0.00%` rather than computing `0/0` (NaN). Deliberate divergence
+        // from Perl, which dies on empty input and so emits no zero-count report
+        // — there is no Perl oracle to match here. `0.00%` keeps the percentage
+        // field numeric for downstream parsers (e.g. MultiQC). See
+        // plans/06132026_dedup-empty-input/PLAN.md (Open Q-2).
         let (pct_removed, pct_leftover) = if self.count == 0 {
-            (String::from("N/A"), String::from("N/A"))
+            (String::from("0.00"), String::from("0.00"))
         } else {
             let count_f = self.count as f64;
             (
@@ -197,13 +203,17 @@ mod tests {
         assert_eq!(r.format(), EXPECTED_TYPICAL);
     }
 
+    /// Zero-alignment input (header-only BAM) renders `0 (0.00%)` — NOT `N/A%`
+    /// (rev 1, plans/06132026_dedup-empty-input). Deliberate divergence from
+    /// Perl (which dies on empty input). Keeps the percent field numeric for
+    /// downstream parsers (MultiQC).
     #[test]
-    fn format_uses_na_when_count_is_zero() {
+    fn format_renders_zero_pct_when_count_is_zero() {
         let r = DedupReport::new("/path/empty.bam".to_string(), 0, 0, 0, false);
         let expected = "\nTotal number of alignments analysed in /path/empty.bam:\t0\n\
-            Total number duplicated alignments removed:\t0 (N/A%)\n\
+            Total number duplicated alignments removed:\t0 (0.00%)\n\
             Duplicated alignments were found at:\t0 different position(s)\n\n\
-            Total count of deduplicated leftover sequences: 0 (N/A% of total)\n\n";
+            Total count of deduplicated leftover sequences: 0 (0.00% of total)\n\n";
         assert_eq!(r.format(), expected);
     }
 

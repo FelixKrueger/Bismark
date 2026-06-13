@@ -17,9 +17,16 @@ pub enum BismarkDedupError {
     #[error(transparent)]
     Io(#[from] BismarkIoError),
 
-    /// The input file contained zero alignment records after the unmapped
-    /// filter. Mirrors Perl's `bam_isEmpty` check (lines 995–1017): error
-    /// before any output file is created.
+    /// The `--multiple` input file **list** was empty (defensive; normally
+    /// blocked upstream by [`BismarkDedupError::NoInputFiles`] in
+    /// `Cli::validate`).
+    ///
+    /// NOTE (rev 1, plans/06132026_dedup-empty-input): a file with zero
+    /// *alignment records* (header-only BAM, e.g. nothing aligned) is **NOT**
+    /// an error. It is handled gracefully — a header-only deduplicated output +
+    /// a zero-count report (`0 (0.00%)`) + exit 0 — so nf-core/methylseq does
+    /// not crash on no-alignment samples. This is a deliberate divergence from
+    /// Perl, which dies on empty input (`bam_isEmpty`, deduplicate_bismark:1014).
     #[error("input file is empty: {0}")]
     EmptyInput(PathBuf),
 
