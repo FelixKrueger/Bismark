@@ -68,29 +68,51 @@ pub fn build_aligner_options(
         opts.push(format!("-R {r}"));
     }
 
-    // 7. --score-min (always). v1 is end-to-end only — reject --local.
+    // 7. --local / --score-min. `--local` (Bowtie 2 only — the requires-Bowtie 2
+    // reject lives in `config::resolve`, so `debug_assert` here) emits
+    // `--local --score-min G,<i>,<s>` (default `G,20,8`, Perl 7926/7942-44);
+    // end-to-end emits `--score-min L,<i>,<s>` (default `L,0,-0.2`). The form is
+    // validated per mode (G vs L); the original string is pushed (byte-equivalent
+    // to Perl's `$1,$2` reconstruction).
     if cli.local {
-        return Err(AlignerError::Unsupported(
-            "Bowtie 2 --local mode is not supported in this version (off the byte-identity spine); \
-             use end-to-end (default)."
-                .into(),
-        ));
-    }
-    let score_min = match &cli.score_min {
-        Some(s) => {
-            if !valid_score_min_l(s) {
-                return Err(AlignerError::Validation(
-                    "In end-to-end mode (default) the option '--score_min <func>' needs to be in the \
-                     format <L,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
-                     manual for further information"
-                        .into(),
-                ));
+        debug_assert_eq!(
+            aligner,
+            Aligner::Bowtie2,
+            "config::resolve rejects --local for non-Bowtie 2"
+        );
+        opts.push("--local".into());
+        let score_min = match &cli.score_min {
+            Some(s) => {
+                if !valid_score_min_g(s) {
+                    return Err(AlignerError::Validation(
+                        "In Bowtie 2 --local mode, the option '--score_min <func>' needs to be in the \
+                         format <G,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
+                         manual for further information"
+                            .into(),
+                    ));
+                }
+                s.clone()
             }
-            s.clone()
-        }
-        None => "L,0,-0.2".to_string(),
-    };
-    opts.push(format!("--score-min {score_min}"));
+            None => "G,20,8".to_string(),
+        };
+        opts.push(format!("--score-min {score_min}"));
+    } else {
+        let score_min = match &cli.score_min {
+            Some(s) => {
+                if !valid_score_min_l(s) {
+                    return Err(AlignerError::Validation(
+                        "In end-to-end mode (default) the option '--score_min <func>' needs to be in the \
+                         format <L,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
+                         manual for further information"
+                            .into(),
+                    ));
+                }
+                s.clone()
+            }
+            None => "L,0,-0.2".to_string(),
+        };
+        opts.push(format!("--score-min {score_min}"));
+    }
 
     // 8/9. rdg / rfg (validate int,int). Defaults 5,3 are internal scalars only.
     let mut gp = GapPenalties {
@@ -310,23 +332,28 @@ fn require_fastq(format: ReadFormat) -> Result<()> {
     }
 }
 
-/// Parse `--score_min` into the numeric `(intercept, slope)` for `calc_mapq`
-/// (default `(0.0, -0.2)`). Splits on the LAST comma (Perl's greedy
-/// `^L,(.+),(.+)$`). `--local` (G-form) is rejected in `build_aligner_options`,
-/// so only the end-to-end `L` form reaches here.
+/// Parse `--score_min` into the numeric `(intercept, slope)` for `calc_mapq`.
+/// End-to-end: `L,<i>,<s>`, default `(0.0, -0.2)`. Local (`cli.local`): `G,<i>,<s>`,
+/// default `(20.0, 8.0)` (Perl 7942). Splits on the LAST comma (Perl's greedy
+/// `^[LG],(.+),(.+)$`). The form is `G` iff `cli.local`.
 pub fn score_min_params(cli: &Cli) -> Result<(f64, f64)> {
+    let (prefix, default) = if cli.local {
+        ("G,", (20.0, 8.0))
+    } else {
+        ("L,", (0.0, -0.2))
+    };
     match &cli.score_min {
-        None => Ok((0.0, -0.2)),
+        None => Ok(default),
         Some(s) => {
-            let rest = s.strip_prefix("L,").ok_or_else(|| {
-                AlignerError::Validation(
-                    "--score_min must be of the form L,<intercept>,<slope>".into(),
-                )
+            let rest = s.strip_prefix(prefix).ok_or_else(|| {
+                AlignerError::Validation(format!(
+                    "--score_min must be of the form {prefix}<intercept>,<slope>"
+                ))
             })?;
             let (i, sl) = rest.rsplit_once(',').ok_or_else(|| {
-                AlignerError::Validation(
-                    "--score_min must be of the form L,<intercept>,<slope>".into(),
-                )
+                AlignerError::Validation(format!(
+                    "--score_min must be of the form {prefix}<intercept>,<slope>"
+                ))
             })?;
             let intercept = i.parse::<f64>().map_err(|_| {
                 AlignerError::Validation(format!("bad --score_min intercept '{i}'"))
@@ -345,6 +372,16 @@ pub fn score_min_params(cli: &Cli) -> Result<(f64, f64)> {
 /// Perl's `L,$1,$2` reconstruction.
 fn valid_score_min_l(s: &str) -> bool {
     match s.strip_prefix("L,").and_then(|rest| rest.split_once(',')) {
+        Some((a, b)) => !a.is_empty() && !b.is_empty(),
+        None => false,
+    }
+}
+
+/// Shape-only validation of `--score_min` for Bowtie 2 `--local` mode: `G,<a>,<b>`
+/// with non-empty `a`/`b` (the G-form analog of [`valid_score_min_l`]; Perl
+/// `^G,(.+),(.+)$`, `:7899`).
+fn valid_score_min_g(s: &str) -> bool {
+    match s.strip_prefix("G,").and_then(|rest| rest.split_once(',')) {
         Some((a, b)) => !a.is_empty() && !b.is_empty(),
         None => false,
     }
@@ -428,9 +465,47 @@ mod tests {
     }
 
     #[test]
-    fn rejects_local_in_v1() {
+    fn accepts_local_for_bowtie2_emits_local_and_g_score_min() {
+        // Bowtie 2 --local is now supported (the requires-Bowtie 2 reject lives in
+        // config::resolve). Default emits `--local --score-min G,20,8` (Perl 7926/7942-44).
         let cli = cli_from(&["--local"]);
+        let (opts, _gp) = build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false)
+            .expect("Bowtie 2 --local is supported");
+        assert!(opts.contains("--local"), "must emit --local: {opts}");
+        assert!(
+            opts.contains("--score-min G,20,8"),
+            "must emit the local default G-form: {opts}"
+        );
+        assert!(
+            !opts.contains("--score-min L,"),
+            "must NOT emit the end-to-end L-form in local mode: {opts}"
+        );
+    }
+
+    #[test]
+    fn local_custom_g_score_min_accepted_l_rejected() {
+        // A user G-form is accepted in local mode.
+        let cli = cli_from(&["--local", "--score_min", "G,10,5"]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+        assert!(opts.contains("--score-min G,10,5"), "{opts}");
+        // An L-form with --local is rejected (mirrors Perl :7900).
+        let cli = cli_from(&["--local", "--score_min", "L,0,-0.2"]);
         assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        // A G-form WITHOUT --local is rejected (end-to-end wants L; Perl :7908).
+        let cli = cli_from(&["--score_min", "G,20,8"]);
+        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+    }
+
+    #[test]
+    fn score_min_params_local_defaults_and_parses_g() {
+        // local default (20, 8); end-to-end default (0, -0.2); custom G parses.
+        let cli = cli_from(&["--local"]);
+        assert_eq!(score_min_params(&cli).unwrap(), (20.0, 8.0));
+        let cli = cli_from(&["--local", "--score_min", "G,10,5"]);
+        assert_eq!(score_min_params(&cli).unwrap(), (10.0, 5.0));
+        let cli = cli_from(&[]);
+        assert_eq!(score_min_params(&cli).unwrap(), (0.0, -0.2));
     }
 
     #[test]
