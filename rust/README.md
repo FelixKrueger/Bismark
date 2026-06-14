@@ -34,7 +34,7 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 
 ## Installing
 
-<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.8` / `beta.8` literal in this
+<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.9` / `beta.9` literal in this
      section (the pinned `docker pull` tag + the `cargo install --tag`), `suite_tag` in `rust/justfile`,
      AND the matching section in the docs site (`docs/src/content/docs/installation.md`).
      The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
@@ -51,7 +51,7 @@ A multi-arch image is published to the GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
-docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.8  # pinned
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.9  # pinned
 ```
 
 Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
@@ -76,16 +76,16 @@ Requires a Rust toolchain (see Prerequisites below). This installs **all 12** bi
 
 ```bash
 cargo install --git https://github.com/FelixKrueger/Bismark \
-  --tag bismark-rust-v2.0.0-beta.8 --locked \
+  --tag bismark-rust-v2.0.0-beta.9 --locked \
   bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
   bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
   bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
   bismark-report bismark-summary
 ```
 
-For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.8` for `--branch rust/iron-chancellor`.
+For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.9` for `--branch rust/iron-chancellor`.
 
-> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.8`), or add `--force` to reinstall in place.
+> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.9`), or add `--force` to reinstall in place.
 
 Compiling 12 crates from source is a non-trivial one-time build; cargo does not fully share dependency compilation across the listed packages.
 
@@ -150,7 +150,7 @@ One headline per module — current state at a glance. Per-crate detail lives in
 
 | Perl tool | Rust crate (binary) | Version | State |
 |---|---|---|---|
-| _(shared library)_ | `bismark-io` | 1.0.0-beta.8 | ✅ noodles BAM/SAM/CRAM I/O + `ThreadedBam{Reader,Writer}` (parallel BGZF); byte-equal output is a CI invariant for consumers |
+| _(shared library)_ | `bismark-io` | 1.0.0-beta.9 | ✅ noodles BAM/SAM/CRAM I/O + `ThreadedBam{Reader,Writer}` (parallel BGZF); byte-equal output is a CI invariant for consumers |
 | `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-beta.1 | ✅ Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 + `--genomic_composition`; all 3 aligners (Bowtie2 / HISAT2 / minimap2), indexing delegated to the external indexer |
 | `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | 1.0.0-alpha.1 | ✅ **All 10 phases complete** (#930 = Ph 1–8, #942 = Ph 9a, #945 = Ph 9b; **Ph 10 full-scale real-data gate PASSED**, #948). Bowtie 2 backend, **SE + PE, FastQ + FastA, all 3 library types (directional / non-directional / pbat)** — read-conversion → 2–4 instances → lockstep merge/scoring/MAPQ → `XM`/`XR`/`XG` → BAM + report + `--unmapped`/`--ambiguous`/`--ambig_bam`, **byte-identical** to Perl v0.25.1 + Bowtie 2 2.5.5 at 1M reads/pairs and **content byte-identical at full real-data scale** (Ph 10 on oxy: 84M SE / 84M PE / 46.7M mouse-RRBS GRCm39 / pbat; 173/181/52 contigs; + V13 cross-check vs the pre-existing Perl `--parallel 4` BAMs). **Order-preserving `--multicore`/`--parallel`** (worker-count-invariant). The ~74% runtime "big beast" — **faithful (Bowtie 2) port complete**. **v1.x backend set COMPLETE** — **HISAT2** (SE+PE, FastQ+FastA, all 3 libraries, byte-identical to Perl v0.25.1 + HISAT2 2.2.2; `--hisat2 --multicore N` = single instance `-p N` threading, byte-identical to Perl `--hisat2 -p N` — fork model not faithful, splice discovery is input-batch-global; #949) **and minimap2 SE** (byte-identical to Perl v0.25.1 + minimap2 2.31-r1302, clean-slate `-x map-ont` options + positional `.mmi`; SE only — PE deferred, no trustworthy Perl oracle; worker-invariant; #950). **Phase-5 combined 10M gate: all 13 cells byte-identical** (Bowtie 2 + HISAT2 SE+PE + minimap2 SE × {dir, non-dir, pbat} + mouse **GRCm39** RRBS). epic `plans/06052026_bismark-aligner-v1x/` |
 | `deduplicate_bismark` | `bismark-dedup` (`deduplicate_bismark_rs`) | 1.2.1-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 on real-data WGBS (10M + ~55M PE); UMI/RRBS modes; optional `--parallel N` BGZF threading |
