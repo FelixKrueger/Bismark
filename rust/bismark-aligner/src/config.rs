@@ -175,8 +175,9 @@ pub struct RunConfig {
     pub score_min_intercept: f64,
     /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
     pub score_min_slope: f64,
-    /// `--local` mode (= `cli.local`): `calc_mapq` uses `ln(readLen)` scMin + the
-    /// local MAPQ ladder; the `--score_min` defaults are `(20.0, 8.0)` (G-form).
+    /// `--local` mode (= `cli.local`): `calc_mapq` uses `ln(readLen)` scMin + the local
+    /// MAPQ ladder. The `--score_min` defaults are aligner-dependent: Bowtie 2-local =
+    /// `(20.0, 8.0)` (G-form); HISAT2-local = `(0.0, -0.2)` (L-form) — see `score_min_params`.
     pub score_min_local: bool,
     /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
     /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
@@ -288,15 +289,18 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ));
     }
 
-    // `--local` scope (the single authoritative home; `build_aligner_options` may
-    // then assume `local ⟹ Bowtie 2`). v1.x supports Bowtie 2 `--local` only:
-    // HISAT2-`--local` is experimental in Perl (`--omit-sec-seq` only) and
-    // minimap2 has no local concept; the combined-index is a separate v2 mode.
+    // `--local` scope. Bowtie 2 AND HISAT2 support `--local` (faithful to Perl v0.25.1):
+    // Bowtie 2 pushes `--local` + G-form `--score-min G,20,8`; HISAT2-local instead drops
+    // `--no-softclip` (allows soft-clipping) + emits L-form `--score-min L,0,-0.2` and does
+    // NOT push `--local` (Perl 7904 "does not work with HISAT2" / 8309-8311 / 7946-7948).
+    // minimap2 is REJECTED: it performs local (soft-clipping) alignment **by design** —
+    // there is no end-to-end vs local distinction to toggle. Combined-index = a v2 mode.
     if cli.local {
-        if aligner != Aligner::Bowtie2 {
+        if aligner == Aligner::Minimap2 {
             return Err(AlignerError::Unsupported(
-                "--local is only supported with Bowtie 2 (the default aligner); HISAT2/minimap2 \
-                 local alignment is not supported in this version."
+                "--local is not supported with --minimap2: minimap2 performs local \
+                 (soft-clipping) alignment by design — there is no end-to-end vs local \
+                 distinction to toggle. Use --bowtie2 or --hisat2 for --local."
                     .into(),
             ));
         }
@@ -357,7 +361,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         layout.is_paired(),
         hisat2_multicore_remap,
     )?;
-    let (score_min_intercept, score_min_slope) = options::score_min_params(cli)?;
+    let (score_min_intercept, score_min_slope) = options::score_min_params(cli, aligner)?;
     let score_min_local = cli.local; // --local: ln() scMin + the local MAPQ ladder
     reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
@@ -1057,13 +1061,24 @@ mod tests {
     // The rejects fire early in `resolve` (before genome discovery), so they're
     // testable without an on-disk index.
     #[test]
-    fn resolve_rejects_local_with_non_bowtie2() {
-        let err = resolve(&cli_from(&["--local", "--hisat2"]), "cmd".into()).unwrap_err();
+    fn resolve_local_aligner_scope() {
+        // HISAT2 --local is now SUPPORTED — resolve no longer rejects it on the --local scope
+        // gate. With these fixture-free args it falls through to a *different* pre-I/O error
+        // ("No genome folder specified"), NOT a --local reject (the GAP would be the reject).
+        if let Err(e) = resolve(&cli_from(&["--local", "--hisat2"]), "cmd".into()) {
+            let m = e.to_string();
+            assert!(
+                !m.contains("not supported with --minimap2") && !m.contains("local alignment"),
+                "HISAT2 --local must not be rejected by the --local scope gate; got: {m}"
+            );
+        }
+        // minimap2 --local stays REJECTED, stating minimap2 is local "by design" (Q3).
+        let err = resolve(&cli_from(&["--local", "--minimap2"]), "cmd".into()).unwrap_err();
+        let m = err.to_string();
         assert!(
-            err.to_string()
-                .contains("--local is only supported with Bowtie 2")
+            m.contains("--minimap2") && m.contains("by design"),
+            "minimap2 --local must reject with the 'local by design' rationale; got: {m}"
         );
-        assert!(resolve(&cli_from(&["--local", "--minimap2"]), "cmd".into()).is_err());
     }
 
     #[test]

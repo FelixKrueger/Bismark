@@ -1,5 +1,6 @@
-//! MAPQ computation — a verbatim port of Perl `calc_mapq` (3923–4186),
-//! **end-to-end branch only** (`--local` is rejected in v1).
+//! MAPQ computation — a verbatim port of Perl `calc_mapq` (3923–4186), both the
+//! **end-to-end** and **`--local`** branches (the local ladder, `4082-4178`, ships for
+//! Bowtie 2 since #981 and HISAT2 since the HISAT2-`--local` work).
 //!
 //! The returned MAPQ integers are **byte-identity-critical** — they land in the
 //! BAM MAPQ column (Phase 5). Reviewer A verified Perl 5 and rustc 1.95 produce
@@ -380,5 +381,40 @@ mod tests {
             calc_mapq(50, None, 100, None, 20.0, 8.0, true),
             calc_mapq(50, None, 100, None, 20.0, 8.0, false)
         );
+    }
+
+    /// HISAT2-`--local` default params `(0, -0.2)` → `scMin = -0.2·ln(readLen)`, a SUB-UNITY
+    /// `|diff|` (~0.78 @50bp), unlike Bowtie 2-local's `(20,8)` (diff ~51). Expectations are the
+    /// Perl local ladder (`bismark:4082-4178`) hand-applied to the `ln()` scMin — NOT
+    /// self-consistency. Targets the `ln()`-ULP-sensitive regime the `(20,8)` tests never reach.
+    #[test]
+    fn local_hisat2_default_params_mapq() {
+        let (i, s) = (0.0, -0.2);
+        // No-second-best @50bp (diff 0.7824): best_over = as_best + diff. as_best 0 → best_over==diff
+        // (≥0.8·diff) → 44; as_best -1 → best_over ≈ -0.218 (< 0.3·diff) → 22. (Sub-unity diff ⇒ ONLY
+        // 44/22 reachable in the no-secBest ladder — the interior buckets need diff ≥ ~1; B1's finding.)
+        assert_eq!(calc_mapq(50, None, 0, None, i, s, true), 44);
+        assert_eq!(calc_mapq(50, None, -1, None, i, s, true), 22);
+        assert_eq!(calc_mapq(150, None, 0, None, i, s, true), 44); // readLen-invariant for as_best 0
+        // Second-best, as_best 0 @50bp (best_over==diff): best_diff = |second| = 1 ≥ 0.9·diff (0.704)
+        // → flat top bucket 40.
+        assert_eq!(calc_mapq(50, None, 0, Some(-1), i, s, true), 40);
+        assert_eq!(calc_mapq(50, None, -1, Some(-1), i, s, true), 0); // best_over<0, best_diff 0
+        // 🔴 PE summed-ln interior `==diff` leaf — the ln()-DERIVED bucket boundary: readLen
+        // 150+150 → scMin = -0.4·ln(150) = -2.004254…, diff = 2.004254…; diff·0.5 = 1.002127, so
+        // best_diff 1 falls in the 0.4 bucket (NOT 0.5) and best_over==diff → 34. The bucket is
+        // selected by an ln()-derived threshold (an L-form `--score_min` that lowered |slope| could
+        // drop diff·0.5 below 1 → 35), so it pins the local ladder against the real ln() scMin — the
+        // regime the (20,8) tests (diff=10/integer boundaries) never reach. (Margin to the boundary
+        // here is ~0.002, not 1 ULP — the value is robust across platforms.)
+        assert_eq!(calc_mapq(150, Some(150), 0, Some(-1), i, s, true), 34);
+        // Routing: calc_mapq(local=true) delegates to the local ladder fed the ln() scMin, for (0,-0.2).
+        for len in [40usize, 50, 75, 100, 150] {
+            let sc = i + s * (len as f64).ln();
+            assert_eq!(
+                calc_mapq(len, None, 0, Some(-1), i, s, true),
+                calc_mapq_local(0.0 - sc, sc.abs(), 0, Some(-1))
+            );
+        }
     }
 }

@@ -73,18 +73,13 @@ pub fn build_aligner_options(
         opts.push(format!("-R {r}"));
     }
 
-    // 7. --local / --score-min. `--local` (Bowtie 2 only — the requires-Bowtie 2
-    // reject lives in `config::resolve`, so `debug_assert` here) emits
-    // `--local --score-min G,<i>,<s>` (default `G,20,8`, Perl 7926/7942-44);
-    // end-to-end emits `--score-min L,<i>,<s>` (default `L,0,-0.2`). The form is
-    // validated per mode (G vs L); the original string is pushed (byte-equivalent
-    // to Perl's `$1,$2` reconstruction).
-    if cli.local {
-        debug_assert_eq!(
-            aligner,
-            Aligner::Bowtie2,
-            "config::resolve rejects --local for non-Bowtie 2"
-        );
+    // 7. --local / --score-min (Perl 7896-7948). Branches:
+    //  - Bowtie 2 --local: push `--local` + G-form `--score-min G,<i>,<s>` (default G,20,8).
+    //  - HISAT2 --local OR end-to-end (any aligner): L-form `--score-min L,<i>,<s>` (default
+    //    L,0,-0.2), NO `--local`. HISAT2-local uses the SAME L-form as end-to-end (Perl
+    //    7912/7947) — its local-ness is the dropped `--no-softclip` in the HISAT2 tail + the
+    //    ln() MAPQ scMin, NOT this option. minimap2-local is rejected in `config::resolve`.
+    if cli.local && aligner == Aligner::Bowtie2 {
         opts.push("--local".into());
         let score_min = match &cli.score_min {
             Some(s) => {
@@ -105,12 +100,18 @@ pub fn build_aligner_options(
         let score_min = match &cli.score_min {
             Some(s) => {
                 if !valid_score_min_l(s) {
-                    return Err(AlignerError::Validation(
-                        "In end-to-end mode (default) the option '--score_min <func>' needs to be in the \
-                         format <L,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
+                    // HISAT2-local and end-to-end both take the L-form; name the mode so the
+                    // message isn't mislabelled (Perl 7909 vs 7918 — error text, not gated).
+                    let mode = if cli.local {
+                        "HISAT2 --local"
+                    } else {
+                        "end-to-end (default)"
+                    };
+                    return Err(AlignerError::Validation(format!(
+                        "In {mode} mode, the option '--score_min <func>' needs to be in the format \
+                         <L,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
                          manual for further information"
-                            .into(),
-                    ));
+                    )));
                 }
                 s.clone()
             }
@@ -281,10 +282,10 @@ fn minimap2_options(cli: &Cli) -> Result<String> {
 /// aligner the splice flags are a hard error (Perl 8319-8324 — closes a
 /// pre-existing Bowtie 2 silent-no-op gap).
 ///
-/// NB: `--local` is rejected upstream for every aligner (off the v1 byte-identity
-/// spine), so Perl's experimental HISAT2+`--local` path (`--omit-sec-seq` only,
-/// 8310-8312) is intentionally not reproduced — the default endToEnd tail
-/// (`--no-softclip --omit-sec-seq`) is the only HISAT2 path v1 supports.
+/// NB: the HISAT2 softclip tail is mode-dependent (Perl 8309-8315): end-to-end emits
+/// `--no-softclip --omit-sec-seq`; HISAT2 `--local` emits `--omit-sec-seq` only (allowing
+/// soft-clipping). minimap2-`--local` is rejected upstream (`config::resolve`); Bowtie 2-local
+/// is handled in `build_aligner_options` (the `--local` + G-form push), not here.
 fn apply_aligner_specific_options(base: String, cli: &Cli, aligner: Aligner) -> Result<String> {
     if aligner != Aligner::Hisat2 {
         if cli.nosplice {
@@ -324,8 +325,13 @@ fn apply_aligner_specific_options(base: String, cli: &Cli, aligner: Aligner) -> 
         }
         tail.push(format!("--known-splicesite-infile {}", infile.display()));
     }
-    // endToEnd alignments (default) — Perl 8314.
-    tail.push("--no-softclip --omit-sec-seq".into());
+    // Softclip delta (Perl 8309-8315): end-to-end forces `--no-softclip`; HISAT2 `--local`
+    // OMITS `--no-softclip` (allowing soft-clipping) and emits `--omit-sec-seq` only.
+    if cli.local {
+        tail.push("--omit-sec-seq".into());
+    } else {
+        tail.push("--no-softclip --omit-sec-seq".into());
+    }
 
     Ok(format!("{base} {}", tail.join(" ")))
 }
@@ -341,11 +347,16 @@ fn require_fastq(format: ReadFormat) -> Result<()> {
 }
 
 /// Parse `--score_min` into the numeric `(intercept, slope)` for `calc_mapq`.
-/// End-to-end: `L,<i>,<s>`, default `(0.0, -0.2)`. Local (`cli.local`): `G,<i>,<s>`,
-/// default `(20.0, 8.0)` (Perl 7942). Splits on the LAST comma (Perl's greedy
-/// `^[LG],(.+),(.+)$`). The form is `G` iff `cli.local`.
-pub fn score_min_params(cli: &Cli) -> Result<(f64, f64)> {
-    let (prefix, default) = if cli.local {
+/// Form + defaults depend on mode AND aligner (Perl 7896-7948):
+/// - end-to-end (any aligner): `L,<i>,<s>`, default `(0.0, -0.2)`.
+/// - **Bowtie 2 `--local`**: `G,<i>,<s>`, default `(20.0, 8.0)` (Perl 7942).
+/// - **HISAT2 `--local`**: `L,<i>,<s>`, default `(0.0, -0.2)` (Perl 7912/7947 — HISAT2 uses
+///   the L-form even in local mode; the local-ness is the `ln()` scMin, not the form).
+///
+/// Splits on the LAST comma (Perl's greedy `^[LG],(.+),(.+)$`). The form is `G` iff
+/// `cli.local && aligner == Bowtie2`.
+pub fn score_min_params(cli: &Cli, aligner: Aligner) -> Result<(f64, f64)> {
+    let (prefix, default) = if cli.local && aligner == Aligner::Bowtie2 {
         ("G,", (20.0, 8.0))
     } else {
         ("L,", (0.0, -0.2))
@@ -513,14 +524,42 @@ mod tests {
     }
 
     #[test]
-    fn score_min_params_local_defaults_and_parses_g() {
-        // local default (20, 8); end-to-end default (0, -0.2); custom G parses.
+    fn score_min_params_aligner_and_mode_defaults() {
+        // Bowtie 2 --local: G-form default (20, 8); custom G parses.
         let cli = cli_from(&["--local"]);
-        assert_eq!(score_min_params(&cli).unwrap(), (20.0, 8.0));
+        assert_eq!(
+            score_min_params(&cli, Aligner::Bowtie2).unwrap(),
+            (20.0, 8.0)
+        );
         let cli = cli_from(&["--local", "--score_min", "G,10,5"]);
-        assert_eq!(score_min_params(&cli).unwrap(), (10.0, 5.0));
+        assert_eq!(
+            score_min_params(&cli, Aligner::Bowtie2).unwrap(),
+            (10.0, 5.0)
+        );
+        // HISAT2 --local: L-form default (0, -0.2) — NOT the Bowtie 2 (20,8) (Perl 7947);
+        // accepts an L-form override, REJECTS a G-form.
+        let cli = cli_from(&["--local"]);
+        assert_eq!(
+            score_min_params(&cli, Aligner::Hisat2).unwrap(),
+            (0.0, -0.2)
+        );
+        let cli = cli_from(&["--local", "--score_min", "L,0,-0.6"]);
+        assert_eq!(
+            score_min_params(&cli, Aligner::Hisat2).unwrap(),
+            (0.0, -0.6)
+        );
+        let cli = cli_from(&["--local", "--score_min", "G,20,8"]);
+        assert!(score_min_params(&cli, Aligner::Hisat2).is_err());
+        // end-to-end (any aligner): L-form default (0, -0.2).
         let cli = cli_from(&[]);
-        assert_eq!(score_min_params(&cli).unwrap(), (0.0, -0.2));
+        assert_eq!(
+            score_min_params(&cli, Aligner::Bowtie2).unwrap(),
+            (0.0, -0.2)
+        );
+        assert_eq!(
+            score_min_params(&cli, Aligner::Hisat2).unwrap(),
+            (0.0, -0.2)
+        );
     }
 
     #[test]
@@ -560,6 +599,46 @@ mod tests {
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq"
         );
+    }
+
+    /// HISAT2 `--local`: drops `--no-softclip` (allows soft-clipping), keeps `--omit-sec-seq`,
+    /// emits the SAME L-form `--score-min L,0,-0.2` as end-to-end, and does NOT push `--local`
+    /// (Perl 7904 / 7946-48 / 8311). Bowtie 2-local stays byte-frozen (`--local` + G-form).
+    #[test]
+    fn hisat2_local_option_string() {
+        // SE: no `--local`, no `--no-softclip`; L-form score-min; `--omit-sec-seq` only.
+        let cli = cli_from(&["--local"]);
+        let (se, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).unwrap();
+        assert_eq!(se, "-q --score-min L,0,-0.2 --ignore-quals --omit-sec-seq");
+        assert!(!se.contains("--local") && !se.contains("--no-softclip"));
+        // PE: same delta (drop `--no-softclip`), PE flags retained.
+        let (pe, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, true, None).unwrap();
+        assert_eq!(
+            pe,
+            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --omit-sec-seq"
+        );
+        // HISAT2-local accepts an L-form override (still no `--local`).
+        let cli_ov = cli_from(&["--local", "--score_min", "L,0,-0.6"]);
+        let (ov, _) =
+            build_aligner_options(&cli_ov, Aligner::Hisat2, ReadFormat::FastQ, false, None)
+                .unwrap();
+        assert!(ov.contains("--score-min L,0,-0.6") && !ov.contains("--local"));
+        // HISAT2-local REJECTS a G-form `--score_min`, with the HISAT2-local-specific message
+        // (not the "end-to-end" text — Perl 7909).
+        let cli_g = cli_from(&["--local", "--score_min", "G,20,8"]);
+        let err = build_aligner_options(&cli_g, Aligner::Hisat2, ReadFormat::FastQ, false, None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("HISAT2 --local") && err.contains("<L,value,value>"),
+            "got: {err}"
+        );
+        // REGRESSION: Bowtie 2-local stays byte-frozen (`--local` + G-form).
+        let (bt2, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
+        assert!(bt2.contains("--local") && bt2.contains("--score-min G,20,8"));
     }
 
     /// HISAT2 Approach B-faithful (`--hisat2 --multicore N` → `-p N`): the remap

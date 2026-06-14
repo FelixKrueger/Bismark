@@ -1,0 +1,18 @@
+### gate start Sun Jun 14 19:48:12 UTC 2026; rust=
+### [19:48:45] se se_dir : rust() vs perl() 
+[se_dir] PASS rust==perl (847947 rec / 28222 soft-clipped / md5 cf306dfa3bcb02313463779fdce4fc0f)
+### [19:52:19] se se_nondir : rust(--non_directional) vs perl(--non_directional) 
+[se_nondir] PASS rust==perl (847544 rec / 28412 soft-clipped / md5 06d072fcb2e5d6dd71abec576ca84cec)
+### [19:57:07] se se_pbat : rust(--pbat) vs perl(--pbat) 
+[se_pbat] PASS rust==perl (7444 rec / 3431 soft-clipped / md5 482146289266fd0dfcd0791f75a97c01)
+### [20:00:45] se se_dir_mc : rust(--multicore 4) vs perl(-p 4) 
+[se_dir_mc] PASS rust==perl (847981 rec / 28224 soft-clipped / md5 2619a578439399324983d41557d521c8)
+### [20:03:11] pe pe_dir
+[pe_dir] PASS rust==perl (1638254 rec / 52696 soft-clipped / md5 dc76efed1df9da1ce949c3adfcc1b89c)
+### non-vacuity: --hisat2 (end-to-end) vs --hisat2 --local on the same SE reads
+### soft-clips: local=28222  end-to-end=0
+[non-vacuity] PASS (local soft-clips=28222 > end-to-end=0 — the --no-softclip drop is exercised)
+[Q4] PASS Perl --hisat2 --local is run-to-run deterministic (cf306dfa3bcb02313463779fdce4fc0f)
+
+=== GATE SUMMARY: PASS=7 FAIL=0 ===
+### gate done Sun Jun 14 20:12:57 UTC 2026

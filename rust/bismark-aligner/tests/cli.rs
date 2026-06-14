@@ -1990,6 +1990,173 @@ esac
     write_exec(&dir.join("hisat2"), script);
 }
 
+/// Fake HISAT2 for the `--local` soft-clip path: emits a SOFT-CLIPPED CIGAR (`2S4M`,
+/// the 8 bp test genome) on the CT instance — HISAT2-local drops `--no-softclip`, so the
+/// aligner may soft-clip. Mirrors `make_fake_hisat2_mapped` but with `2S4M` + `MD:Z:4`.
+fn make_fake_hisat2_local_softclip(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t2S4M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:4" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// `--hisat2 --local` end-to-end: the report echoes the HISAT2-local option delta
+/// (`--score-min L,0,-0.2 … --omit-sec-seq`, **no `--local`, no `--no-softclip`**), and a
+/// soft-clipped (`2S4M`) alignment round-trips through methylation calling into the BAM
+/// (the `S` op is handled like `I`, `methylation.rs:174`) without crashing.
+#[cfg(unix)]
+#[test]
+fn hisat2_local_softclip_roundtrip_and_options() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_local_softclip(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--local")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    // Report echoes the HISAT2-local delta: L-form score-min + `--omit-sec-seq`, and
+    // NEITHER `--local` NOR `--no-softclip`.
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_hisat2_SE_report.txt")).unwrap();
+    assert!(report.contains("-q --score-min L,0,-0.2 --ignore-quals --omit-sec-seq"));
+    assert!(!report.contains("--local"));
+    assert!(!report.contains("--no-softclip"));
+
+    // The soft-clipped CIGAR round-trips into the BAM (SEQ retains the full read for `S`).
+    let bam = outdir.path().join("reads_bismark_hisat2.bam");
+    assert!(bam.is_file());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let r = recs[0].inner();
+    assert_eq!(r.sequence().as_ref(), b"ACGTAC"); // soft-clip retains SEQ
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    let has_softclip = r
+        .cigar()
+        .as_ref()
+        .iter()
+        .any(|op| op.kind() == Kind::SoftClip);
+    assert!(
+        has_softclip,
+        "the --local soft-clipped CIGAR (2S4M) must round-trip into the BAM"
+    );
+}
+
+/// PE fake HISAT2 for the `--local` soft-clip path — a soft-clipped (`2S4M`) proper pair
+/// (FLAG 99/147) on the CT instance. Mirrors `make_fake_hisat2_pe` with `2S4M` + `MD:Z:4`.
+fn make_fake_hisat2_pe_local_softclip(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "hisat2-align-s version 2.2.2"; exit 0;; esac
+m1=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t99\tchr1_CT_converted\t1\t42\t2S4M\t=\t1\t6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-2\tMD:Z:4";
+      print id "/2\t147\tchr1_CT_converted\t1\t42\t2S4M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tZS:i:-2\tMD:Z:4" }' "$m1" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+      print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1" ;;
+esac
+"#;
+    write_exec(&dir.join("hisat2"), script);
+}
+
+/// `--hisat2 --local` PAIRED-END: the PE report echoes the HISAT2-local option delta
+/// (no `--local`, no `--no-softclip`; `--omit-sec-seq`), and a soft-clipped (`2S4M`) pair
+/// round-trips through per-mate methylation calling into the `_pe.bam` (both mates).
+#[cfg(unix)]
+#[test]
+fn hisat2_local_pe_softclip_roundtrip() {
+    let genome = TempDir::new().unwrap();
+    make_genome_ht2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_pe_local_softclip(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--hisat2")
+        .arg("--local")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_hisat2_PE_report.txt")).unwrap();
+    assert!(report.contains(
+        "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --omit-sec-seq"
+    ));
+    assert!(!report.contains("--local"));
+    assert!(!report.contains("--no-softclip"));
+
+    let bam = outdir.path().join("reads_1_bismark_hisat2_pe.bam");
+    assert!(bam.is_file());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2, "two soft-clipped mate records");
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    for r in &recs {
+        let has_softclip = r
+            .inner()
+            .cigar()
+            .as_ref()
+            .iter()
+            .any(|op| op.kind() == Kind::SoftClip);
+        assert!(
+            has_softclip,
+            "each PE --local mate's 2S4M CIGAR must round-trip"
+        );
+    }
+}
+
 /// V7: `--hisat2` SE end-to-end — the output BAM + report carry the `hisat2`
 /// naming token (not `bt2`) and the report says "Bismark was run with HISAT2"
 /// and echoes the `--no-softclip --omit-sec-seq` option delta.

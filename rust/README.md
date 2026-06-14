@@ -58,9 +58,11 @@ Inside the container the tools are *additionally* exposed under their **canonica
 
 > **nf-core/methylseq drop-in — one known limitation + one behavior note** (the CLI surface is
 > otherwise conformance-tested against methylseq 4.2.0; see each crate's `tests/methylseq_conformance.rs`):
-> - **`--local` alignment** (`params.local_alignment` / `--local`) is supported for **Bowtie 2**
->   (byte-identical to Perl `--local`). HISAT2/minimap2 local alignment and `--local` with
->   `--combined_index` are not supported (rejected fail-loud).
+> - **`--local` alignment** (`params.local_alignment` / `--local`) is supported for **Bowtie 2 and
+>   HISAT2** (byte-identical to Perl `--local`; HISAT2-local drops `--no-softclip` + uses the L-form
+>   `--score-min L,0,-0.2` + the local `ln()` MAPQ, faithful to Perl). **minimap2-`--local` is rejected
+>   — minimap2 performs local (soft-clipping) alignment _by design_** (no end-to-end vs local distinction
+>   to toggle); `--local` with `--combined_index` is also rejected (fail-loud).
 > - **HISAT2 (`--aligner bismark_hisat`) + `--multicore N`** runs as a **single HISAT2 instance with
 >   `-p N` threading** (`--reorder`), byte-identical to Perl `--hisat2 -p N`. ⚠️ This is a deliberate
 >   remap (`--multicore`→`-p`, **HISAT2 only**): the fork+chunk model is *not* faithful for HISAT2
