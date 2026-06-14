@@ -34,7 +34,7 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 
 ## Installing
 
-<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.9` / `beta.9` literal in this
+<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.10` / `beta.10` literal in this
      section (the pinned `docker pull` tag + the `cargo install --tag`), `suite_tag` in `rust/justfile`,
      AND the matching section in the docs site (`docs/src/content/docs/installation.md`).
      The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
@@ -51,7 +51,7 @@ A multi-arch image is published to the GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
-docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.9  # pinned
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.10  # pinned
 ```
 
 Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
@@ -78,16 +78,16 @@ Requires a Rust toolchain (see Prerequisites below). This installs **all 12** bi
 
 ```bash
 cargo install --git https://github.com/FelixKrueger/Bismark \
-  --tag bismark-rust-v2.0.0-beta.9 --locked \
+  --tag bismark-rust-v2.0.0-beta.10 --locked \
   bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
   bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
   bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
   bismark-report bismark-summary
 ```
 
-For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.9` for `--branch rust/iron-chancellor`.
+For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.10` for `--branch rust/iron-chancellor`.
 
-> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.9`), or add `--force` to reinstall in place.
+> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.10`), or add `--force` to reinstall in place.
 
 Compiling 12 crates from source is a non-trivial one-time build; cargo does not fully share dependency compilation across the listed packages.
 
@@ -174,6 +174,7 @@ Versions are the crate manifests on `rust/iron-chancellor` (a release **git tag*
 
 Reverse-chronological log of the main Rust-rewrite shipping events (merges into `rust/iron-chancellor`). One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-06-14** — `bismark` aligner **v1.x: HISAT2 `--local` mode** — extends the Bowtie 2 `--local` epic (#981) to the **HISAT2** backend, byte-identical to Perl v0.25.1 `--hisat2 --local`. HISAT2-local is **not** a `--local` passthrough (Perl 7904: "does not work with HISAT2") — it is defined by *subtraction*: drop `--no-softclip` (soft-clipping allowed) + the **same** L-form `--score-min L,0,-0.2` as end-to-end + the local `ln()` MAPQ with the `(0,−0.2)` L-form intercept/slope, and does **not** push `--local`. The load-bearing edit is `score_min_params(cli, aligner)` (G-form `(20,8)` only for `--local`+Bowtie 2, else L-form `(0,−0.2)`); `calc_mapq` is byte-frozen (sign-agnostic). Reuses #981's local MAPQ ladder + the proven `ln()` Perl≡Rust parity (no new spike). **minimap2-`--local` stays rejected — minimap2 is local (soft-clipping) by design** (no end-to-end vs local distinction). **oxy gate PASS 7/7** byte-identical to Perl `--hisat2 --local` (SE dir/non-dir/pbat + `--local --multicore` + PE, 1M GRCh38, HISAT2 2.2.2); the `--no-softclip`-drop is exercised live — end-to-end produces **0** soft-clips vs local's **28,222**. Bowtie 2-local + HISAT2 end-to-end byte-frozen. Plan + spike-reuse + gate: `plans/06142026_aligner-hisat2-local/`.
 - **2026-06-14** — `bismark` aligner **v1.x: HISAT2 `--multicore N`** — un-rejects `--hisat2` with `--multicore N > 1` (the conformance suite's GAP-2). The fork+chunk `--multicore` model is **not faithful for HISAT2** (splice-site discovery is not chunk-invariant — Perl is not worker-invariant either: single-core 1310 spliced vs `--multicore 8` 1219 on a 1M oxy subset), so `--hisat2 --multicore N` is instead routed to a **single HISAT2 instance with `-p N --reorder`** (Approach B-faithful), reusing the existing `-p`/`--reorder` plumbing: **byte-identical to Perl `--hisat2 -p N`** per N (a Phase-0 oxy spike confirmed `-p N` is deterministic run-to-run but ≠ single-core — records 844,267→844,316 / spliced 1310→1298 as N grows; HISAT2 builds its splice DB in thread order). Deterministic per N but **N-/node-dependent** (HISAT2's nature) — a **deliberate, documented `--multicore`→`-p` remap for HISAT2 only**, announced by a never-silent run notice; methylseq's auto-derived `--multicore = cpus/3` now works directly (no cpus-cap workaround). An explicit `-p` alongside `--multicore` fails loud (ambiguous). Bowtie 2 `--multicore` (worker-invariant fork, Phase 9b) and single-core HISAT2 are byte-frozen. **oxy gate PASS 7/7** byte-identical to Perl `--hisat2 -p N` (SE dir N=2/4/8 + non-dir + pbat + `--ambig_bam` main&ambig + PE, 1M GRCh38, HISAT2 2.2.2). Closes conformance GAP-2 (the `KnownUnsupported` row flips to accept). Plan + spike + gate: `plans/06132026_aligner-hisat2-multicore/`.
 - **2026-06-14** — `bismark_methylation_extractor` + `coverage2cytosine` **graceful no-alignment sample** — the follow-on to the dedup fix below. A header-only/no-alignment sample (zero methylation calls) flowed past the fixed dedup but then crashed nf-core/methylseq at `BISMARK_METHYLATIONEXTRACTOR` (`Missing output file(s) *.bedGraph.gz`) and would next die at `BISMARK_COVERAGE2CYTOSINE`. On **zero total calls** the extractor now emits an empty `.bedGraph.gz` + `.cov.gz` and force-creates the empty per-context `.txt.gz` (instead of skipping/deleting), satisfying methylseq's required-output globs across SE/PE and `--multicore`; coverage2cytosine now produces a genome-wide **all-zero** report on a validly-read empty `.cov` (instead of erroring), scoped to the standard path (`--nome-seq`/`--gc`/`threshold>0` still guard). Both are **deliberate, gated divergences from Perl v0.25.1** (verified: Perl extractor skips/deletes, Perl c2c dies on empty `.cov`) — non-empty runs stay byte-identical; a has-calls-but-no-CpG run still legitimately skips. Full local cascade (dedup→extractor→c2c) exits 0 with every required output. Plan + reviews: `plans/06142026_empty-sample-extractor-c2c/`.
 - **2026-06-13** — `deduplicate_bismark` **graceful zero-alignment input** — fixes an nf-core/methylseq drop-in crash. A header-only BAM (e.g. a sample where nothing aligned) made the Rust dedup exit non-zero (`input file is empty`), aborting the pipeline at `BISMARK_DEDUPLICATE`. It now emits a valid header-only deduplicated BAM + a zero-count `deduplication_report.txt` (rendering `0 (0.00%)`, not `N/A%`) and exits 0, uniformly across all 8 entry points (SE/PE × single/`--multiple` × `--parallel` × UMI). A **deliberate, documented divergence from Perl v0.25.1**, which itself dies on empty input (`bam_isEmpty`) — acceptable standalone, but it must not crash methylseq. The downstream Rust extractor already handles a header-only BAM gracefully, so the chain survives. Plan + reviews: `plans/06132026_dedup-empty-input/`.
