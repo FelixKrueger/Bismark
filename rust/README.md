@@ -34,7 +34,7 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 
 ## Installing
 
-<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.5` / `beta.5` literal in this
+<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.7` / `beta.7` literal in this
      section (the pinned `docker pull` tag + the `cargo install --tag`), `suite_tag` in `rust/justfile`,
      AND the matching section in the docs site (`docs/src/content/docs/installation.md`).
      The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
@@ -51,7 +51,7 @@ A multi-arch image is published to the GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
-docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.5  # pinned
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.7  # pinned
 ```
 
 Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
@@ -76,16 +76,16 @@ Requires a Rust toolchain (see Prerequisites below). This installs **all 12** bi
 
 ```bash
 cargo install --git https://github.com/FelixKrueger/Bismark \
-  --tag bismark-rust-v2.0.0-beta.5 --locked \
+  --tag bismark-rust-v2.0.0-beta.7 --locked \
   bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
   bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
   bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
   bismark-report bismark-summary
 ```
 
-For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.5` for `--branch rust/iron-chancellor`.
+For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.7` for `--branch rust/iron-chancellor`.
 
-> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.5`), or add `--force` to reinstall in place.
+> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.7`), or add `--force` to reinstall in place.
 
 Compiling 12 crates from source is a non-trivial one-time build; cargo does not fully share dependency compilation across the listed packages.
 
@@ -172,6 +172,8 @@ Versions are the crate manifests on `rust/iron-chancellor` (a release **git tag*
 
 Reverse-chronological log of the main Rust-rewrite shipping events (merges into `rust/iron-chancellor`). One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-06-14** — `bismark_methylation_extractor` + `coverage2cytosine` **graceful no-alignment sample** — the follow-on to the dedup fix below. A header-only/no-alignment sample (zero methylation calls) flowed past the fixed dedup but then crashed nf-core/methylseq at `BISMARK_METHYLATIONEXTRACTOR` (`Missing output file(s) *.bedGraph.gz`) and would next die at `BISMARK_COVERAGE2CYTOSINE`. On **zero total calls** the extractor now emits an empty `.bedGraph.gz` + `.cov.gz` and force-creates the empty per-context `.txt.gz` (instead of skipping/deleting), satisfying methylseq's required-output globs across SE/PE and `--multicore`; coverage2cytosine now produces a genome-wide **all-zero** report on a validly-read empty `.cov` (instead of erroring), scoped to the standard path (`--nome-seq`/`--gc`/`threshold>0` still guard). Both are **deliberate, gated divergences from Perl v0.25.1** (verified: Perl extractor skips/deletes, Perl c2c dies on empty `.cov`) — non-empty runs stay byte-identical; a has-calls-but-no-CpG run still legitimately skips. Full local cascade (dedup→extractor→c2c) exits 0 with every required output. Plan + reviews: `plans/06142026_empty-sample-extractor-c2c/`.
+- **2026-06-13** — `deduplicate_bismark` **graceful zero-alignment input** — fixes an nf-core/methylseq drop-in crash. A header-only BAM (e.g. a sample where nothing aligned) made the Rust dedup exit non-zero (`input file is empty`), aborting the pipeline at `BISMARK_DEDUPLICATE`. It now emits a valid header-only deduplicated BAM + a zero-count `deduplication_report.txt` (rendering `0 (0.00%)`, not `N/A%`) and exits 0, uniformly across all 8 entry points (SE/PE × single/`--multiple` × `--parallel` × UMI). A **deliberate, documented divergence from Perl v0.25.1**, which itself dies on empty input (`bam_isEmpty`) — acceptable standalone, but it must not crash methylseq. The downstream Rust extractor already handles a header-only BAM gracefully, so the chain survives. Plan + reviews: `plans/06132026_dedup-empty-input/`.
 - **2026-06-13** — `bismark` aligner **v1.x: Bowtie 2 `--local` mode** — un-rejects `--local`
   (the documented `params.local_alignment`), byte-identical to Perl Bismark v0.25.1 `--local`. A
   faithful port of a different Perl mode (Bowtie 2 does the local alignment; the Rust work is the

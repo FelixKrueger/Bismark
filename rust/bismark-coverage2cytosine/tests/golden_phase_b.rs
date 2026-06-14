@@ -126,7 +126,160 @@ fn non_contiguous_chromosome_re_emits() {
 }
 
 #[test]
-fn empty_coverage_input_errors() {
+fn empty_coverage_input_standard_path_emits_all_zero_report() {
+    // REWRITTEN (was `empty_coverage_input_errors`): plan
+    // 06142026_empty-sample-extractor-c2c makes a cleanly-read but EMPTY
+    // coverage file on the STANDARD path (threshold 0, no --nome-seq/--gc) a
+    // graceful all-zero genome-wide report (exit 0) instead of erroring — so a
+    // no-alignment methylseq sample survives. DELIBERATE divergence from Perl.
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("g");
+    std::fs::create_dir(&gdir).unwrap();
+    // chrA "ACGT": one CpG dinucleotide → C@pos2 (+) and G@pos3 (-) = 2 Cs.
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    let cov = tmp.path().join("empty.cov");
+    std::fs::write(&cov, "").unwrap();
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg("-o")
+        .arg("s")
+        .arg("-g")
+        .arg(&gdir)
+        .arg("--dir")
+        .arg(tmp.path())
+        .arg(&cov)
+        .assert()
+        .success();
+
+    // All-zero report: every genome cytosine emitted with 0/0 counts.
+    let report = std::fs::read_to_string(tmp.path().join("s.CpG_report.txt")).unwrap();
+    let rows: Vec<&str> = report.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "row count must equal the genome CpG cytosine count (2); got {rows:?}"
+    );
+    assert!(report.contains("chrA\t2\t+\t0\t0\tCG"));
+    assert!(report.contains("chrA\t3\t-\t0\t0\tCG"));
+    // The context summary must also exist.
+    assert!(
+        tmp.path().join("s.cytosine_context_summary.txt").exists(),
+        "cytosine_context_summary.txt must exist on the graceful-empty path"
+    );
+}
+
+#[test]
+fn empty_coverage_gzipped_standard_path_emits_gzipped_all_zero_report() {
+    // Task #4: an empty (validly-gzipped) `.cov.gz` + `--gzip` on the standard
+    // path → exit 0; `*report.txt.gz` (GZIPPED, all-zero rows) + summary exist;
+    // row count == genome cytosine count. Mirrors methylseq's c2c shape.
+    use std::io::Write;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("g");
+    std::fs::create_dir(&gdir).unwrap();
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    // A VALID empty gzip stream (0 data bytes) named `.cov.gz`.
+    let cov = tmp.path().join("empty.cov.gz");
+    let f = std::fs::File::create(&cov).unwrap();
+    let mut enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
+    enc.write_all(b"").unwrap();
+    enc.finish().unwrap();
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg("-o")
+        .arg("s")
+        .arg("-g")
+        .arg(&gdir)
+        .arg("--dir")
+        .arg(tmp.path())
+        .arg("--gzip")
+        .arg(&cov)
+        .assert()
+        .success();
+
+    let report_gz = tmp.path().join("s.CpG_report.txt.gz");
+    assert!(
+        report_gz.exists(),
+        "gzipped report *report.txt.gz must exist"
+    );
+    // Decompress + assert all-zero rows == genome cytosine count (2).
+    let bytes = std::fs::read(&report_gz).unwrap();
+    let mut d = flate2::read::MultiGzDecoder::new(&bytes[..]);
+    let mut report = String::new();
+    std::io::Read::read_to_string(&mut d, &mut report).unwrap();
+    let rows: Vec<&str> = report.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "row count must equal genome C count; got {rows:?}"
+    );
+    assert!(report.contains("chrA\t2\t+\t0\t0\tCG"));
+    assert!(report.contains("chrA\t3\t-\t0\t0\tCG"));
+    assert!(
+        tmp.path().join("s.cytosine_context_summary.txt").exists(),
+        "context summary must exist"
+    );
+}
+
+#[test]
+fn empty_coverage_missing_file_errors() {
+    // A genuine read failure (the cov file does not exist) must STILL error —
+    // graceful-empty is ONLY for a cleanly-read but empty file.
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("g");
+    std::fs::create_dir(&gdir).unwrap();
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    let missing = tmp.path().join("does_not_exist.cov");
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg("-o")
+        .arg("s")
+        .arg("-g")
+        .arg(&gdir)
+        .arg("--dir")
+        .arg(tmp.path())
+        .arg(&missing)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn empty_coverage_corrupt_gzip_with_gz_name_errors() {
+    // A `.gz`-named file with non-gzip (corrupt) content must STILL error: the
+    // read fails (propagated via `?`) BEFORE the empty-but-valid `None` arm, so
+    // graceful-empty never engages. Guards against the relax masking a genuine
+    // decompression failure.
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("g");
+    std::fs::create_dir(&gdir).unwrap();
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    let cov = tmp.path().join("corrupt.cov.gz");
+    // Not a valid gzip stream — open_cov sees the `.gz` name and tries to
+    // decompress, which fails.
+    std::fs::write(&cov, b"this is not gzip data at all\n").unwrap();
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg("-o")
+        .arg("s")
+        .arg("-g")
+        .arg(&gdir)
+        .arg("--dir")
+        .arg(tmp.path())
+        .arg(&cov)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn empty_coverage_threshold_still_errors() {
+    // GUARD: graceful-empty is standard-path-only. With `--coverage_threshold`
+    // the uncovered pass is skipped (no all-zero report), so an empty cov must
+    // STILL error — unchanged.
     let tmp = tempfile::tempdir().unwrap();
     let gdir = tmp.path().join("g");
     std::fs::create_dir(&gdir).unwrap();
@@ -142,6 +295,63 @@ fn empty_coverage_input_errors() {
         .arg(&gdir)
         .arg("--dir")
         .arg(tmp.path())
+        .args(["--coverage_threshold", "1"])
+        .arg(&cov)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("no data found"));
+}
+
+#[test]
+fn empty_coverage_nome_still_errors() {
+    // GUARD: `--nome-seq` relies on the EmptyCoverageInput guard (NOMe reports
+    // covered positions only — no uncovered all-zero pass). An empty cov must
+    // STILL error.
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("g");
+    std::fs::create_dir(&gdir).unwrap();
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    let cov = tmp.path().join("empty.cov");
+    std::fs::write(&cov, "").unwrap();
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg("-o")
+        .arg("s")
+        .arg("-g")
+        .arg(&gdir)
+        .arg("--dir")
+        .arg(tmp.path())
+        .arg("--nome-seq")
+        .arg(&cov)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("no data found"));
+}
+
+#[test]
+fn empty_coverage_gc_still_errors() {
+    // GUARD: `--gc` reaches gpc::run_gpc which documents it relies on the guard
+    // firing first (no uncovered pass; covered chromosomes only). An empty cov
+    // must STILL error.
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("g");
+    std::fs::create_dir(&gdir).unwrap();
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    let cov = tmp.path().join("empty.cov");
+    std::fs::write(&cov, "").unwrap();
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg("-o")
+        .arg("s")
+        .arg("-g")
+        .arg(&gdir)
+        .arg("--dir")
+        .arg(tmp.path())
+        .arg("--gc")
         .arg(&cov)
         .assert()
         .failure()

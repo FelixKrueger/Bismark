@@ -557,13 +557,86 @@ fn multiple_mode_accumulates_dedup_state_across_inputs() {
     );
 }
 
-/// Empty input (header-only BAM, zero records) → `EmptyInput` error AND
-/// no output BAM or report file should be created.
+/// Assert a deduplicated output BAM is a valid, readable, header-only file
+/// (zero records, `@SQ` entries preserved). Used by the graceful-empty tests.
+fn assert_header_only_output(out_bam: &Path) {
+    assert!(
+        out_bam.exists(),
+        "graceful empty input must write an output BAM: {}",
+        out_bam.display()
+    );
+    assert!(
+        read_records(out_bam).is_empty(),
+        "graceful empty-input output BAM must contain 0 records"
+    );
+    let reader = bismark_io::open_reader(out_bam, None).unwrap();
+    assert!(
+        !reader.header().reference_sequences().is_empty(),
+        "output header must preserve the input @SQ entries"
+    );
+}
+
+/// Assert a deduplication report shows the zero-count rendering: count 0,
+/// `0 (0.00%)` removed, `0 (0.00% of total)` leftover. (rev 1: `0.00%`, not
+/// `N/A%`.) Path-agnostic (the `analysed in <path>` line embeds the temp path).
+fn assert_zero_count_report(report_path: &Path) {
+    let report = std::fs::read_to_string(report_path).unwrap();
+    assert!(
+        report.contains("Total number of alignments analysed in"),
+        "report missing analysed line: {report}"
+    );
+    assert!(
+        report.contains(":\t0\n"),
+        "analysed count should be 0: {report}"
+    );
+    assert!(
+        report.contains("Total number duplicated alignments removed:\t0 (0.00%)\n"),
+        "removed line should be `0 (0.00%)`: {report}"
+    );
+    assert!(
+        report.contains("Duplicated alignments were found at:\t0 different position(s)\n"),
+        "positions line should be 0: {report}"
+    );
+    assert!(
+        report.contains("Total count of deduplicated leftover sequences: 0 (0.00% of total)\n"),
+        "leftover line should be `0 (0.00% of total)`: {report}"
+    );
+}
+
+/// rev 1 (plans/06132026_dedup-empty-input): a zero-alignment input
+/// (header-only BAM — e.g. nothing aligned) is handled **gracefully** — a
+/// valid header-only deduplicated BAM + a zero-count report + exit 0 —
+/// instead of erroring. Deliberate divergence from Perl (which dies via
+/// `bam_isEmpty`) so nf-core/methylseq does not crash on no-alignment
+/// samples. SE path (`-s`) — the actual methylseq invocation.
+///
+/// (Inverts the former `empty_input_errors_before_any_output_file_is_created`.)
 #[test]
-fn empty_input_errors_before_any_output_file_is_created() {
+fn empty_input_se_is_graceful() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("empty.bam");
     write_bam(&input, &[]); // header only, no records
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--single")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    assert_header_only_output(&dir.path().join("empty.deduplicated.bam"));
+    assert_zero_count_report(&dir.path().join("empty.deduplication_report.txt"));
+}
+
+/// PE counterpart of [`empty_input_se_is_graceful`]: header-only input with
+/// `-p` must not raise `UnpairedFinalRecord` — the empty stream loop is never
+/// entered. exit 0 + header-only output + zero-count report.
+#[test]
+fn empty_input_pe_is_graceful() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("empty.bam");
+    write_bam(&input, &[]);
 
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
     cmd.arg("--paired")
@@ -571,22 +644,76 @@ fn empty_input_errors_before_any_output_file_is_created() {
         .arg(dir.path())
         .arg(&input)
         .assert()
-        .failure()
-        .stderr(predicates::str::contains("input file is empty"));
+        .success();
 
-    // Verify no output BAM or report was created.
-    let out_bam = dir.path().join("empty.deduplicated.bam");
-    let out_report = dir.path().join("empty.deduplication_report.txt");
-    assert!(
-        !out_bam.exists(),
-        "EmptyInput error should leave no output BAM behind, found: {}",
-        out_bam.display()
-    );
-    assert!(
-        !out_report.exists(),
-        "EmptyInput error should leave no report behind, found: {}",
-        out_report.display()
-    );
+    assert_header_only_output(&dir.path().join("empty.deduplicated.bam"));
+    assert_zero_count_report(&dir.path().join("empty.deduplication_report.txt"));
+}
+
+/// Graceful empty handling on the threaded path (`--parallel 2`, BAM).
+#[test]
+fn empty_input_parallel_is_graceful() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("empty.bam");
+    write_bam(&input, &[]);
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--single")
+        .arg("--parallel")
+        .arg("2")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    assert_header_only_output(&dir.path().join("empty.deduplicated.bam"));
+}
+
+/// Graceful empty handling on the UMI path (`--barcode`). On a header-only
+/// BAM there are no records, so no UMI is extracted — the run still succeeds
+/// with a header-only output.
+#[test]
+fn empty_input_umi_is_graceful() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("empty.bam");
+    write_bam(&input, &[]);
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--single")
+        .arg("--barcode")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    assert_header_only_output(&dir.path().join("empty.deduplicated.bam"));
+}
+
+/// Defensive: an all-unmapped BAM (FLAG 0x4 records) is filtered to zero
+/// records by `bismark_io` on read, so dedup sees an empty stream and handles
+/// it gracefully. (Bismark never emits FLAG-4 reads — this documents the
+/// filtered-to-empty divergence from Perl, which dies at line 317 on the
+/// missing XR/XG of an unmapped read.)
+#[test]
+fn all_unmapped_input_is_graceful() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("unmapped.bam");
+    // FLAG 0x4 = unmapped. The reader filters these before dedup sees them.
+    let rec = build_record("r1", b"CT", b"CT", 0x4, 0, 1, 50);
+    write_bam(&input, &[rec]);
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--single")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    assert_header_only_output(&dir.path().join("unmapped.deduplicated.bam"));
+    assert_zero_count_report(&dir.path().join("unmapped.deduplication_report.txt"));
 }
 
 /// `--multiple` with cross-file `@SQ` mismatch errors at startup before
@@ -633,25 +760,118 @@ fn multiple_mode_rejects_different_sq_name_sets_across_inputs() {
         .stderr(predicates::str::contains("\"chr1\""));
 }
 
-/// `--multiple` with empty file1 errors out AND leaves no output BAM
-/// or report file behind. This is the headline regression test for the
-/// Phase E rev-2 writer-before-peek fix.
+/// rev 1 (plans/06132026_dedup-empty-input): `--multiple` with an empty
+/// file1 + a non-empty file2 must NOT error — it streams file2's records
+/// into the output and reports the actually-analysed count. This is the
+/// `--multiple` counterpart of the graceful-empty handling.
 ///
-/// Both Phase E reviewers (A-H1 and B-M3) independently found that
-/// `run_multiple` opened the writer BEFORE the file1 empty-peek, leaving
-/// a header-only output BAM on disk if file1 was empty. The rev-2 fix
-/// moves the peek before the writer-open via the `iter::once+chain`
-/// pattern (PLAN.md rev 1's original design — confirmed correct here).
+/// (Inverts the former `multiple_mode_empty_file1_leaves_no_output_files_behind`,
+/// which asserted `EmptyInput` + no output. The fix removed only the
+/// first-record peek-stash error path; the subsequent-files `i = i_zero_based
+/// + 1` / `refid_tables[i]` indexing is preserved unchanged.)
 #[test]
-fn multiple_mode_empty_file1_leaves_no_output_files_behind() {
+fn multiple_mode_empty_file1_still_processes_file2() {
     let dir = TempDir::new().unwrap();
     let input1 = dir.path().join("empty1.bam");
     let input2 = dir.path().join("nonempty2.bam");
 
-    // file1: header only, no records.
+    write_bam(&input1, &[]); // file1: header only
+    write_bam(&input2, &ot_pair("u0", 1000, 1100)); // file2: one PE pair
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--multiple")
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input1)
+        .arg(&input2)
+        .assert()
+        .success();
+
+    // file2's pair (2 records) must flow through into the output.
+    let out_bam = dir.path().join("empty1.multiple.deduplicated.bam");
+    assert!(
+        out_bam.exists(),
+        "graceful --multiple must write an output BAM"
+    );
+    assert_eq!(
+        read_records(&out_bam).len(),
+        2,
+        "file2's pair must be written to the output"
+    );
+    assert_eq!(read_qnames(&out_bam), vec!["u0".to_string()]);
+
+    // Report: 1 pair analysed, 0 removed, 1 leftover.
+    let report =
+        std::fs::read_to_string(dir.path().join("empty1.multiple.deduplication_report.txt"))
+            .unwrap();
+    assert!(
+        report.contains(":\t1\n"),
+        "count should be 1 pair: {report}"
+    );
+    assert!(
+        report.contains("Total number duplicated alignments removed:\t0 (0.00%)\n"),
+        "0 removed: {report}"
+    );
+    assert!(
+        report.contains("Total count of deduplicated leftover sequences: 1 (100.00% of total)\n"),
+        "1 leftover pair: {report}"
+    );
+}
+
+/// rev 1: `--multiple` with ALL files empty → graceful header-only output +
+/// zero-count report + exit 0.
+#[test]
+fn multiple_mode_all_files_empty_is_graceful() {
+    let dir = TempDir::new().unwrap();
+    let input1 = dir.path().join("empty1.bam");
+    let input2 = dir.path().join("empty2.bam");
     write_bam(&input1, &[]);
-    // file2: one PE pair.
-    write_bam(&input2, &ot_pair("u0", 1000, 1100));
+    write_bam(&input2, &[]);
+
+    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    cmd.arg("--multiple")
+        .arg("--single")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input1)
+        .arg(&input2)
+        .assert()
+        .success();
+
+    assert_header_only_output(&dir.path().join("empty1.multiple.deduplicated.bam"));
+    assert_zero_count_report(&dir.path().join("empty1.multiple.deduplication_report.txt"));
+}
+
+/// rev 1 (B-#3): cross-file `@SQ`-name-set validation runs BEFORE any record
+/// peek, so it must still fire even when the offending file is header-only.
+/// Guards against a regression that lets emptiness bypass the consistency
+/// check. (file1 empty with `chr1`; file2 non-empty with `chr2` → mismatch.)
+#[test]
+fn multiple_mode_sq_mismatch_fires_when_file1_is_empty() {
+    let dir = TempDir::new().unwrap();
+    let input1 = dir.path().join("empty1.bam");
+    let input2 = dir.path().join("f2.bam");
+
+    // file1: header only (synth_header → chr1), no records.
+    write_bam(&input1, &[]);
+
+    // file2: a chr2 header (different @SQ name set) + one PE pair.
+    let mut header2 = Header::default();
+    header2.reference_sequences_mut().insert(
+        BString::from("chr2"),
+        Map::<ReferenceSequence>::new(NonZeroUsize::try_from(1_000_000).unwrap()),
+    );
+    let mut writer = BamWriter::from_path(&input2, header2).unwrap();
+    let r1 = build_record("u0", b"CT", b"CT", 0x41, 0, 1000, 50);
+    let r2 = build_record("u0", b"GA", b"CT", 0x81, 0, 1100, 50);
+    writer
+        .write_record(&BismarkRecord::from_noodles_record(r1).unwrap())
+        .unwrap();
+    writer
+        .write_record(&BismarkRecord::from_noodles_record(r2).unwrap())
+        .unwrap();
+    writer.finish().unwrap();
 
     let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
     cmd.arg("--multiple")
@@ -662,22 +882,7 @@ fn multiple_mode_empty_file1_leaves_no_output_files_behind() {
         .arg(&input2)
         .assert()
         .failure()
-        .stderr(predicates::str::contains("input file is empty"));
-
-    // Critical: no output BAM, no report file — the writer must NOT have
-    // been opened before the empty-peek detected file1's emptiness.
-    let out_bam = dir.path().join("empty1.multiple.deduplicated.bam");
-    let out_report = dir.path().join("empty1.multiple.deduplication_report.txt");
-    assert!(
-        !out_bam.exists(),
-        "empty file1 should not leave a header-only output BAM behind: {}",
-        out_bam.display()
-    );
-    assert!(
-        !out_report.exists(),
-        "empty file1 should not leave a report behind: {}",
-        out_report.display()
-    );
+        .stderr(predicates::str::contains("non-identical @SQ name sets"));
 }
 
 /// `--multiple` with mixed input formats (one BAM + one SAM) errors out

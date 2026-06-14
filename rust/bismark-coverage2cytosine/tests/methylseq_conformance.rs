@@ -62,3 +62,54 @@ fn methylseq_coverage2cytosine_accept_rows() {
         );
     }
 }
+
+/// Tier 3 — runtime: methylseq's c2c shape (`--genome <idx> --output <prefix>
+/// --gzip`) on an EMPTY `.cov.gz` (the no-alignment sample) must exit 0 AND
+/// produce the module-required `*report.txt.gz` + `*cytosine_context_summary.txt`.
+/// Guards the graceful-empty fix (plan 06142026_empty-sample-extractor-c2c) at
+/// the binary level — the exact `BISMARK_COVERAGE2CYTOSINE` contract.
+#[test]
+fn methylseq_coverage2cytosine_empty_runtime_emits_required_outputs() {
+    use assert_cmd::Command;
+    use std::io::Write;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let gdir = tmp.path().join("idx");
+    std::fs::create_dir(&gdir).unwrap();
+    std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
+    // A valid empty gzip stream named `.cov.gz`.
+    let cov = tmp.path().join("sample.cov.gz");
+    let f = std::fs::File::create(&cov).unwrap();
+    let mut enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
+    enc.write_all(b"").unwrap();
+    enc.finish().unwrap();
+
+    Command::cargo_bin("coverage2cytosine_rs")
+        .unwrap()
+        .arg(&cov)
+        .arg("--genome")
+        .arg(&gdir)
+        .arg("--output")
+        .arg("sample")
+        .arg("--gzip")
+        .arg("--dir")
+        .arg(tmp.path())
+        .assert()
+        .success();
+
+    let has_suffix = |suffix: &str| {
+        std::fs::read_dir(tmp.path()).unwrap().any(|e| {
+            e.ok()
+                .and_then(|e| e.file_name().into_string().ok())
+                .is_some_and(|n| n.ends_with(suffix))
+        })
+    };
+    assert!(
+        has_suffix("report.txt.gz"),
+        "methylseq-required *report.txt.gz missing for a no-alignment c2c sample"
+    );
+    assert!(
+        has_suffix("cytosine_context_summary.txt"),
+        "methylseq-required *cytosine_context_summary.txt missing"
+    );
+}
