@@ -2068,43 +2068,69 @@ fn hisat2_no_spliced_alignment_echoed_in_report() {
     ));
 }
 
-/// `--multicore`/`--parallel N>1` is hard-rejected in `--hisat2` mode (Phase-2a
-/// oxy-gate finding): HISAT2's splice-site discovery is input-batch-global, so
-/// chunking the reads changes the alignments and the output is not byte-identical
-/// to Perl. (This also subsumes the `--ambig_bam`+multicore case.)
+/// GAP-2 RESOLVED — `--hisat2 --multicore N` is now SUPPORTED (Approach B-faithful, plan
+/// `06132026_aligner-hisat2-multicore`): it routes to a SINGLE HISAT2 instance with
+/// `-p N --reorder` (the fork model is not faithful for HISAT2 — splice discovery is not
+/// chunk-invariant). The run succeeds, the report echoes `-p N --reorder`, and a
+/// never-silent notice is emitted. The `--parallel` alias routes the same way.
 #[cfg(unix)]
 #[test]
-fn multicore_with_hisat2_is_rejected() {
+fn multicore_with_hisat2_routes_to_p_threading() {
     let genome = TempDir::new().unwrap();
     make_genome_ht2(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_hisat2_mapped(bins.path());
     let read = genome.path().join("reads.fq");
     fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
 
-    // Plain --multicore + --hisat2 (no --ambig_bam) is rejected.
+    // --hisat2 --multicore 2 SUCCEEDS and prints the never-silent remap notice.
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--hisat2")
         .arg("--multicore")
         .arg("2")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
         .arg(&read)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("--hisat2").and(predicate::str::contains("splice")));
+        .success()
+        .stderr(
+            predicate::str::contains("--hisat2").and(predicate::str::contains("-p 2 threading")),
+        );
 
-    // The --parallel alias is caught too.
+    // Single-instance output (the hisat2 token; no multicore-merged rename).
+    assert!(outdir.path().join("reads_bismark_hisat2.bam").is_file());
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_hisat2_SE_report.txt")).unwrap();
+    // The remapped `-p 2 --reorder` is echoed in the report's aligner_options line.
+    assert!(report.contains("-p 2 --reorder"), "report: {report}");
+
+    // The --parallel alias routes the same way (also succeeds).
+    let temp2 = TempDir::new().unwrap();
+    let outdir2 = TempDir::new().unwrap();
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--hisat2")
         .arg("--parallel")
         .arg("4")
+        .arg("--path_to_hisat2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp2.path())
+        .arg("--output_dir")
+        .arg(outdir2.path())
         .arg(&read)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not supported with --hisat2"));
+        .success();
+    assert!(outdir2.path().join("reads_bismark_hisat2.bam").is_file());
 }
 
 /// Single-core `--ambig_bam` + `--hisat2` IS supported and names the ambig BAM

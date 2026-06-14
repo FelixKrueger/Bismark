@@ -193,7 +193,8 @@ pub struct RunConfig {
     /// `--ambiguous`: write ambiguously-mapping reads to `<name>_ambiguous_reads.fq.gz`. Phase 6.
     pub ambiguous: bool,
     /// `--ambig_bam`: write the first ambiguous alignment to
-    /// `<name>_bismark_<aligner>.ambig.bam`. Phase 6 (single-core only for HISAT2).
+    /// `<name>_bismark_<aligner>.ambig.bam`. Phase 6. For HISAT2 `--multicore N` (the
+    /// `-p N` remap) this stays the single-instance path, so `--ambig_bam` works.
     pub ambig_bam: bool,
     /// Output target.
     pub output: OutputTarget,
@@ -202,7 +203,16 @@ pub struct RunConfig {
     /// `--multicore`/`--parallel`: file-level worker count (Phase 9b). Resolved to
     /// `cli.multicore.unwrap_or(1)`; `1` = the single-core direct path, `>1` = the
     /// order-preserving contiguous-chunk fan-out. `validate_multicore` guarantees ≥ 1.
+    /// For HISAT2 this is forced to `1` when `--multicore N` is remapped to `-p N`
+    /// (see `hisat2_multicore_remap`) — the fork model is not faithful for HISAT2.
     pub multicore: u32,
+    /// HISAT2 Approach B-faithful (`--hisat2 --multicore N`): when set, `--multicore N`
+    /// was interpreted as a single HISAT2 instance with `-p N --reorder` (NOT the fork
+    /// model — HISAT2 splice discovery is not chunk-invariant; the `-p N` threading is
+    /// deterministic per N and byte-identical to Perl `--hisat2 -p N`). `Some(N)` here
+    /// means the remap fired: `multicore` is `1`, `aligner_options` carries `-p N
+    /// --reorder`, and the run emits a never-silent notice. `None` for every other case.
+    pub hisat2_multicore_remap: Option<u32>,
     /// `--combined_index` (v2, opt-in, never-silent, concordance-gated): align
     /// against the single combined CT+GA index in one both-strands pass instead of
     /// the faithful per-strand instances. SE directional only this phase; the
@@ -230,6 +240,18 @@ pub struct RunConfig {
     pub combined_index_sequential: bool,
 }
 
+/// HISAT2 Approach B-faithful: for HISAT2, `--multicore N` (N > 1) is interpreted as a
+/// single instance with `-p N` intra-instance threading (NOT the fork+chunk model — see
+/// `resolve`). Returns the `-p` thread count to inject (`Some(N)`), or `None` for every
+/// other aligner and for single-core. Pure (no I/O) so it is unit-testable fixture-free.
+fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Option<u32> {
+    if aligner == Aligner::Hisat2 && cli_multicore.unwrap_or(1) > 1 {
+        cli_multicore
+    } else {
+        None
+    }
+}
+
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
@@ -241,22 +263,27 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let library = resolve_library(cli)?;
     let format = resolve_format(cli)?;
     validate_multicore(cli)?;
-    // `--multicore`/`--parallel` is NOT supported with `--hisat2` (Phase-2a oxy
-    // gate finding): HISAT2 discovers splice sites across the WHOLE input read
-    // set, so splitting the reads into chunks changes the discovered splice sites
-    // and the resulting spliced alignments — the chunked output is not
-    // byte-identical to Perl Bismark (Perl itself is not worker-invariant here:
-    // single-core 1310 spliced vs `--multicore 8` 1219 on the 1M oxy subset).
-    // The faithful HISAT2 path is single-core, so fail loudly rather than ship
-    // non-faithful output. (This subsumes the `--ambig_bam`+multicore case: Perl's
-    // multicore temp-name builder is Bowtie 2-only, 676–684, so multicore HISAT2
-    // would drop the ambiguous BAM anyway.) Single-core `--hisat2` is unaffected.
-    if aligner == Aligner::Hisat2 && cli.multicore.unwrap_or(1) > 1 {
-        return Err(AlignerError::Unsupported(
-            "--multicore/--parallel is not supported with --hisat2: HISAT2 discovers splice sites \
-             across the whole input read set, so splitting the reads into chunks changes the \
-             alignments and the output is not byte-identical to Perl Bismark. Run --hisat2 \
-             single-core (the default)."
+    // HISAT2 + `--multicore N` (Approach B-faithful, plan 06132026_aligner-hisat2-multicore).
+    // The fork+chunk model is NOT faithful for HISAT2 — splice-site discovery is not
+    // chunk-invariant (Perl itself is not worker-invariant: single-core 1310 spliced vs
+    // `--multicore 8` 1219 on the 1M oxy subset). The Phase-0 spike showed a SINGLE HISAT2
+    // instance with `-p N` is deterministic per N (byte-identical run-to-run) though NOT
+    // equal to single-core (records 844,267→844,316, spliced 1310→1298 as N grows — HISAT2
+    // accumulates a splice-site DB in thread order). So `--hisat2 --multicore N` is
+    // interpreted as ONE instance with `-p N --reorder` (Perl's `-p` mode, `bismark:7998-7999`):
+    // deterministic and byte-identical to Perl `--hisat2 -p N`, lower memory than N forks.
+    // This is a semantic remap (`--multicore`→`-p`, HISAT2 only) — announced loudly by the
+    // run (`lib.rs`). Bowtie 2 `--multicore` (the fork path, Phase 9b) and single-core
+    // HISAT2 are unaffected. `--ambig_bam` works under B (one instance, the single-instance
+    // path — Perl's Bowtie-2-only multicore ambig temp machinery is never reached).
+    let hisat2_multicore_remap = hisat2_multicore_threads(aligner, cli.multicore);
+    // An explicit `-p M` AND the remapped `--multicore N` both set is ambiguous (both
+    // would drive HISAT2's `-p`) → fail loud rather than silently pick one.
+    if hisat2_multicore_remap.is_some() && cli.bowtie_threads.is_some() {
+        return Err(AlignerError::Validation(
+            "--hisat2 with both --multicore N and -p M is ambiguous: for HISAT2, --multicore is \
+             interpreted as `-p` intra-instance threading, so it conflicts with an explicit -p. \
+             Pass only one."
                 .into(),
         ));
     }
@@ -323,8 +350,13 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         Aligner::Minimap2 => cli.path_to_minimap2.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
-    let (aligner_options, gap_penalties) =
-        options::build_aligner_options(cli, aligner, format, layout.is_paired())?;
+    let (aligner_options, gap_penalties) = options::build_aligner_options(
+        cli,
+        aligner,
+        format,
+        layout.is_paired(),
+        hisat2_multicore_remap,
+    )?;
     let (score_min_intercept, score_min_slope) = options::score_min_params(cli)?;
     let score_min_local = cli.local; // --local: ln() scMin + the local MAPQ ladder
     reject_unsupported_output_flags(cli)?;
@@ -359,8 +391,16 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         output,
         read_processing,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
-        // rejected `0`; absent flag = single-core (1).
-        multicore: cli.multicore.unwrap_or(1),
+        // rejected `0`; absent flag = single-core (1). For HISAT2 the `--multicore N`
+        // remap routes to ONE instance with `-p N` (the threading lives in
+        // `aligner_options`), so force single-core dispatch (`lib.rs` takes the
+        // `run_se`/`run_pe` direct path, NOT `parallel::run_*_multicore`).
+        multicore: if hisat2_multicore_remap.is_some() {
+            1
+        } else {
+            cli.multicore.unwrap_or(1)
+        },
+        hisat2_multicore_remap,
         // v2 combined-index mode (guarded above; the combined index is present).
         combined_index: cli.combined_index,
         // v2 model-(b) single-pass tagged exec model (guarded above: requires
@@ -929,6 +969,64 @@ mod tests {
             resolve_aligner(&cli_from(&["--hisat2"])).unwrap(),
             Aligner::Hisat2
         );
+    }
+
+    // ---- HISAT2 `--multicore N` → `-p N` remap (Approach B-faithful) -----------
+
+    #[test]
+    fn hisat2_multicore_threads_maps_only_for_hisat2_with_n_gt_1() {
+        // HISAT2 + multicore>1 → Some(N) (the `-p N` threads to inject).
+        assert_eq!(hisat2_multicore_threads(Aligner::Hisat2, Some(4)), Some(4));
+        assert_eq!(hisat2_multicore_threads(Aligner::Hisat2, Some(2)), Some(2));
+        // single-core / absent → None (no remap).
+        assert_eq!(hisat2_multicore_threads(Aligner::Hisat2, Some(1)), None);
+        assert_eq!(hisat2_multicore_threads(Aligner::Hisat2, None), None);
+        // never for Bowtie 2 (keeps the fork model, Phase 9b) or minimap2.
+        assert_eq!(hisat2_multicore_threads(Aligner::Bowtie2, Some(4)), None);
+        assert_eq!(hisat2_multicore_threads(Aligner::Minimap2, Some(4)), None);
+    }
+
+    #[test]
+    fn hisat2_multicore_plus_explicit_p_is_rejected() {
+        // The remap drives HISAT2's `-p`, so an explicit `-p M` alongside is ambiguous.
+        let cli = cli_from(&[
+            "reads.fq.gz",
+            "--genome",
+            "idx",
+            "--bam",
+            "--hisat2",
+            "--multicore",
+            "4",
+            "-p",
+            "2",
+        ]);
+        let err = resolve(&cli, "cmd".to_string())
+            .expect_err("--hisat2 --multicore N + -p M must be rejected as ambiguous");
+        assert!(err.to_string().contains("ambiguous"), "got: {err}");
+    }
+
+    #[test]
+    fn bowtie2_multicore_plus_p_is_not_rejected_by_the_hisat2_guard() {
+        // The ambiguity guard is HISAT2-only: Bowtie 2 `--multicore` (fork) + `-p`
+        // (per-instance threads) is a legitimate combination and must not trip it.
+        // (Resolve will still fail later on the fake `idx` genome dir — but NOT with
+        // the "ambiguous" message.)
+        let cli = cli_from(&[
+            "reads.fq.gz",
+            "--genome",
+            "idx",
+            "--bam",
+            "--multicore",
+            "4",
+            "-p",
+            "2",
+        ]);
+        if let Err(e) = resolve(&cli, "cmd".to_string()) {
+            assert!(
+                !e.to_string().contains("ambiguous"),
+                "Bowtie 2 --multicore + -p must NOT trip the HISAT2 ambiguity guard; got: {e}"
+            );
+        }
     }
 
     /// V11: `--minimap2` is no longer deferred — it now resolves to the Minimap2

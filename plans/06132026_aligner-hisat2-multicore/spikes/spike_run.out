@@ -1,0 +1,57 @@
+### spike start: Sat Jun 13 22:48:24 UTC 2026  host nproc=128
+### bismark: /home/fkrueger/micromamba/envs/bismark-test/bin/bismark | hisat2: /home/fkrueger/micromamba/envs/bismark-test/bin/hisat2-align-s version 2.2.2
+### subsampling 1000000 reads...
+### reads file: /var/tmp/hisat2_mc_spike/reads_1000000.fq.gz  (4000000 lines = 1000000 reads)
+### [22:48:36] run sc_a : bismark --hisat2  ...
+###   sc_a exit=0 : /var/tmp/hisat2_mc_spike/out_sc_a/reads_1000000_bismark_hisat2.bam
+### [22:50:41] run sc_b : bismark --hisat2  ...
+###   sc_b exit=0 : /var/tmp/hisat2_mc_spike/out_sc_b/reads_1000000_bismark_hisat2.bam
+### [22:52:48] run p2_a : bismark --hisat2 -p 2 ...
+###   p2_a exit=0 : /var/tmp/hisat2_mc_spike/out_p2_a/reads_1000000_bismark_hisat2.bam
+### [22:54:37] run p2_b : bismark --hisat2 -p 2 ...
+###   p2_b exit=0 : /var/tmp/hisat2_mc_spike/out_p2_b/reads_1000000_bismark_hisat2.bam
+### [22:56:21] run p4_a : bismark --hisat2 -p 4 ...
+###   p4_a exit=0 : /var/tmp/hisat2_mc_spike/out_p4_a/reads_1000000_bismark_hisat2.bam
+### [22:57:59] run p4_b : bismark --hisat2 -p 4 ...
+###   p4_b exit=0 : /var/tmp/hisat2_mc_spike/out_p4_b/reads_1000000_bismark_hisat2.bam
+### [22:59:35] run p8_a : bismark --hisat2 -p 8 ...
+###   p8_a exit=0 : /var/tmp/hisat2_mc_spike/out_p8_a/reads_1000000_bismark_hisat2.bam
+### [23:01:10] run p8_b : bismark --hisat2 -p 8 ...
+###   p8_b exit=0 : /var/tmp/hisat2_mc_spike/out_p8_b/reads_1000000_bismark_hisat2.bam
+### [23:02:46] run mc4 : bismark --hisat2 --multicore 4 ...
+###   mc4 exit=0 : /var/tmp/hisat2_mc_spike/out_mc4/reads_1000000_bismark_hisat2.bam
+
+=== RESULTS (label / nrec / in-order-body-md5 / sorted-body-md5 / spliced / spliced-md5) ===
+sc_a    844267    io:7036903f5fcf74b0464823ea3c40739b   so:c2c02006fb46dad2676992e6ee7d6232   spl:1310     splmd5:7f467d802bb53d8eb938c943cf09729c  
+sc_b    844267    io:7036903f5fcf74b0464823ea3c40739b   so:c2c02006fb46dad2676992e6ee7d6232   spl:1310     splmd5:7f467d802bb53d8eb938c943cf09729c  
+p2_a    844296    io:f05ee7e586257a5348043e81cc9cf891   so:93c79cb850670fa0a5ed2beedbb4bb48   spl:1307     splmd5:ff59893bd37215fdca74dc669f458af2  
+p2_b    844296    io:f05ee7e586257a5348043e81cc9cf891   so:93c79cb850670fa0a5ed2beedbb4bb48   spl:1307     splmd5:ff59893bd37215fdca74dc669f458af2  
+p4_a    844305    io:3bc6b7da5aff78aa6c026bbd88ae75d4   so:fd64ebe9b9ef476086b71ef4b432def7   spl:1303     splmd5:db3161a6b065b22c766d32acd51d10d1  
+p4_b    844305    io:3bc6b7da5aff78aa6c026bbd88ae75d4   so:fd64ebe9b9ef476086b71ef4b432def7   spl:1303     splmd5:db3161a6b065b22c766d32acd51d10d1  
+p8_a    844316    io:bfbf38b091434be38f70136a0f72ffcd   so:b461748cffb804181f9f66e3d07f8d78   spl:1298     splmd5:380ee3ea80c38ea357b3fddbbade4ee9  
+p8_b    844316    io:bfbf38b091434be38f70136a0f72ffcd   so:b461748cffb804181f9f66e3d07f8d78   spl:1298     splmd5:380ee3ea80c38ea357b3fddbbade4ee9  
+mc4     844296    io:d50a0553bf01c2244989ded0458306d3   so:cbb2177bf40dc81c56c18fda4592ee54   spl:1237     splmd5:fff801b8e952afe675d6071b77a61631  
+
+=== VERDICT CHECKS ===
+baseline determinism (sc_a==sc_b in-order): YES
+-p 2 determinism (a==b in-order):      YES
+-p 2 == single-core (in-order):         NO
+-p 2 == single-core (sorted/content):   NO
+-p 2 spliced subset == single-core:     NO
+-p 4 determinism (a==b in-order):      YES
+-p 4 == single-core (in-order):         NO
+-p 4 == single-core (sorted/content):   NO
+-p 4 spliced subset == single-core:     NO
+-p 8 determinism (a==b in-order):      YES
+-p 8 == single-core (in-order):         NO
+-p 8 == single-core (sorted/content):   NO
+-p 8 spliced subset == single-core:     NO
+--multicore 4 == single-core (sorted):     NO  (expect NO = worker-variance)
+
+=== timings (wall) ===
+sc_a: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:05.58
+p2_a: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:48.26
+p4_a: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:38.52
+p8_a: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:35.51
+mc4: 	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:13.75
+### spike done: Sat Jun 13 23:04:56 UTC 2026

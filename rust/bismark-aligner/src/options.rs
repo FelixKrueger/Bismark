@@ -21,6 +21,11 @@ pub fn build_aligner_options(
     aligner: Aligner,
     format: ReadFormat,
     is_paired: bool,
+    // HISAT2 Approach B-faithful: when `--hisat2 --multicore N` is remapped to a single
+    // instance with `-p N` (see `config::resolve`), this carries that `N`. The `-p` block
+    // below falls back to the explicit `cli.bowtie_threads` when this is `None`. `None`
+    // for every other path (Bowtie 2, minimap2, single-core HISAT2).
+    hisat2_multicore_threads: Option<u32>,
 ) -> Result<(String, GapPenalties)> {
     let mut opts: Vec<String> = Vec::new();
 
@@ -146,8 +151,11 @@ pub fn build_aligner_options(
         opts.push(format!("--rfg {rfg}"));
     }
 
-    // 10. -p + --reorder (Bowtie 2 intra-instance threads)
-    if let Some(p) = cli.bowtie_threads {
+    // 10. -p + --reorder (Bowtie 2 / HISAT2 intra-instance threads, Perl 7993-8007).
+    // Explicit `-p` (`cli.bowtie_threads`) takes precedence; otherwise, for HISAT2 the
+    // `--multicore N` remap (`config::resolve`) supplies `N` here. `--reorder` is
+    // mandatory with `-p` (it restores input order — Perl 7999).
+    if let Some(p) = cli.bowtie_threads.or(hisat2_multicore_threads) {
         if p < 2 {
             return Err(AlignerError::Validation(
                 "Please select a value for -p of 2 or more!".into(),
@@ -415,7 +423,7 @@ mod tests {
     fn default_se_options_match_phase0_spike() {
         let cli = cli_from(&[]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-q --score-min L,0,-0.2 --ignore-quals");
     }
 
@@ -424,7 +432,7 @@ mod tests {
         // Bismark input flags `-n`/`-l` map to Bowtie 2 output flags `-N`/`-L`.
         let cli = cli_from(&["-n", "1", "-l", "20", "--quiet"]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(
             opts,
             "-q -N 1 -L 20 --score-min L,0,-0.2 --ignore-quals --quiet"
@@ -435,7 +443,7 @@ mod tests {
     fn score_min_override_substituted() {
         let cli = cli_from(&["--score_min", "L,0,-0.4"]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-q --score-min L,0,-0.4 --ignore-quals");
     }
 
@@ -443,7 +451,7 @@ mod tests {
     fn paired_end_tail_and_default_maxins() {
         let cli = cli_from(&[]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, true).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, true, None).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500"
@@ -454,14 +462,16 @@ mod tests {
     fn fasta_uses_dash_f() {
         let cli = cli_from(&["-f"]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastA, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastA, false, None).unwrap();
         assert_eq!(opts, "-f --score-min L,0,-0.2 --ignore-quals");
     }
 
     #[test]
     fn rejects_bad_seedmms() {
         let cli = cli_from(&["-n", "2"]);
-        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     #[test]
@@ -469,8 +479,9 @@ mod tests {
         // Bowtie 2 --local is now supported (the requires-Bowtie 2 reject lives in
         // config::resolve). Default emits `--local --score-min G,20,8` (Perl 7926/7942-44).
         let cli = cli_from(&["--local"]);
-        let (opts, _gp) = build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false)
-            .expect("Bowtie 2 --local is supported");
+        let (opts, _gp) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None)
+                .expect("Bowtie 2 --local is supported");
         assert!(opts.contains("--local"), "must emit --local: {opts}");
         assert!(
             opts.contains("--score-min G,20,8"),
@@ -487,14 +498,18 @@ mod tests {
         // A user G-form is accepted in local mode.
         let cli = cli_from(&["--local", "--score_min", "G,10,5"]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
         assert!(opts.contains("--score-min G,10,5"), "{opts}");
         // An L-form with --local is rejected (mirrors Perl :7900).
         let cli = cli_from(&["--local", "--score_min", "L,0,-0.2"]);
-        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).is_err()
+        );
         // A G-form WITHOUT --local is rejected (end-to-end wants L; Perl :7908).
         let cli = cli_from(&["--score_min", "G,20,8"]);
-        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     #[test]
@@ -511,21 +526,25 @@ mod tests {
     #[test]
     fn phred_without_fastq_errors() {
         let cli = cli_from(&["--phred33-quals", "-f"]);
-        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastA, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastA, false, None).is_err()
+        );
     }
 
     #[test]
     fn rdg_rfg_appended_and_validated() {
         let cli = cli_from(&["--rdg", "5,3", "--rfg", "5,3"]);
         let (opts, gp) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --rdg 5,3 --rfg 5,3 --ignore-quals"
         );
         assert_eq!((gp.deletion_open, gp.insertion_open), (5, 5));
         let bad = cli_from(&["--rdg", "5"]);
-        assert!(build_aligner_options(&bad, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&bad, Aligner::Bowtie2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     // ---- HISAT2 option assembly (Phase 2a) ---------------------------------
@@ -536,11 +555,49 @@ mod tests {
     fn hisat2_se_option_string() {
         let cli = cli_from(&[]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq"
         );
+    }
+
+    /// HISAT2 Approach B-faithful (`--hisat2 --multicore N` → `-p N`): the remap
+    /// injects `-p N --reorder` at the standard `-p` position (step 10, before
+    /// `--ignore-quals`), byte-identical to Perl `--hisat2 -p N` (the softclip delta
+    /// still lands last). `config::resolve` supplies the `N`.
+    #[test]
+    fn hisat2_multicore_remap_emits_p_reorder() {
+        let cli = cli_from(&[]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, Some(4))
+                .unwrap();
+        assert_eq!(
+            opts,
+            "-q --score-min L,0,-0.2 -p 4 --reorder --ignore-quals --no-softclip --omit-sec-seq"
+        );
+        // No remap (None) → no `-p`/`--reorder` from this param.
+        let (sc, _) =
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).unwrap();
+        assert!(!sc.contains("-p ") && !sc.contains("--reorder"));
+        // An explicit `-p` takes precedence over the remap (`cli.bowtie_threads.or(..)`);
+        // `config::resolve` rejects passing BOTH, so this only documents the fallback order.
+        let cli_p = cli_from(&["-p", "8"]);
+        let (opts_p, _) =
+            build_aligner_options(&cli_p, Aligner::Hisat2, ReadFormat::FastQ, false, Some(4))
+                .unwrap();
+        assert!(opts_p.contains("-p 8 --reorder") && !opts_p.contains("-p 4"));
+    }
+
+    /// The remap param is HISAT2-specific in practice, but `build_aligner_options` is
+    /// backend-agnostic: a Bowtie 2 caller always passes `None` (the fork model handles
+    /// multicore), so no `-p` leaks in from this param for Bowtie 2.
+    #[test]
+    fn bowtie2_never_gets_p_from_the_remap_param() {
+        let cli = cli_from(&[]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
+        assert!(!opts.contains("-p ") && !opts.contains("--reorder"));
     }
 
     /// V3 (hard literal): the default PE HISAT2 string — the softclip delta lands
@@ -550,7 +607,7 @@ mod tests {
     fn hisat2_pe_option_string_has_no_dovetail() {
         let cli = cli_from(&[]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, true).unwrap();
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, true, None).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq"
@@ -564,7 +621,7 @@ mod tests {
     fn bowtie2_pe_string_byte_frozen_with_aligner_param() {
         let cli = cli_from(&[]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, true).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, true, None).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500"
@@ -576,7 +633,7 @@ mod tests {
     fn hisat2_nosplice_appends_before_softclip() {
         let cli = cli_from(&["--no-spliced-alignment"]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(
             opts,
             "-q --score-min L,0,-0.2 --ignore-quals --no-spliced-alignment --no-softclip --omit-sec-seq"
@@ -592,7 +649,7 @@ mod tests {
         std::fs::write(&infile, b"x").unwrap();
         let cli = cli_from(&["--known-splicesite-infile", infile.to_str().unwrap()]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(
             opts,
             format!(
@@ -613,14 +670,18 @@ mod tests {
             "--known-splicesite-infile",
             infile.to_str().unwrap(),
         ]);
-        assert!(build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     /// V8: HISAT2 + a missing known-splicesite infile dies (Perl 8304).
     #[test]
     fn hisat2_known_splices_missing_file_dies() {
         let cli = cli_from(&["--known-splicesite-infile", "/no/such/splices.txt"]);
-        assert!(build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     /// V8: the splice flags are HISAT2-only — they die in Bowtie 2 mode (Perl
@@ -628,9 +689,13 @@ mod tests {
     #[test]
     fn non_hisat2_splice_flags_die() {
         let cli = cli_from(&["--no-spliced-alignment"]);
-        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).is_err()
+        );
         let cli = cli_from(&["--known-splicesite-infile", "/no/such/splices.txt"]);
-        assert!(build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     // ---- minimap2 clean-slate option assembly (Phase 4) --------------------
@@ -641,7 +706,7 @@ mod tests {
     fn minimap2_default_option_string() {
         let cli = cli_from(&[]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
     }
 
@@ -651,17 +716,17 @@ mod tests {
     fn minimap2_preset_selection() {
         let sr = cli_from(&["--mm2_short_reads"]);
         let (opts, _) =
-            build_aligner_options(&sr, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&sr, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x sr -K 250K");
 
         let pb = cli_from(&["--mm2_pacbio"]);
         let (opts, _) =
-            build_aligner_options(&pb, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&pb, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-pb -K 250K");
 
         let ont = cli_from(&["--mm2_nanopore"]);
         let (opts, _) =
-            build_aligner_options(&ont, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&ont, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
     }
 
@@ -675,7 +740,8 @@ mod tests {
         ] {
             let cli = cli_from(&conflict);
             assert!(
-                build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).is_err(),
+                build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None)
+                    .is_err(),
                 "{conflict:?} should die"
             );
         }
@@ -687,7 +753,7 @@ mod tests {
     fn minimap2_clean_slate_discards_bowtie2_flags() {
         let cli = cli_from(&["-n", "1", "-l", "20", "--rdg", "5,3"]);
         let (opts, _) =
-            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
         assert!(!opts.contains("-N") && !opts.contains("-L") && !opts.contains("--rdg"));
         assert!(!opts.contains("--score-min") && !opts.contains("--ignore-quals"));
@@ -698,7 +764,9 @@ mod tests {
     #[test]
     fn minimap2_still_validates_bowtie2_base() {
         let cli = cli_from(&["-n", "2"]);
-        assert!(build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false).is_err());
+        assert!(
+            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None).is_err()
+        );
     }
 
     /// V1 regression: the Minimap2 branch must not perturb the Bowtie 2 / HISAT2
@@ -708,10 +776,10 @@ mod tests {
     fn bowtie2_hisat2_strings_byte_frozen_alongside_minimap2() {
         let cli = cli_from(&[]);
         let (bt2, _) =
-            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(bt2, "-q --score-min L,0,-0.2 --ignore-quals");
         let (ht2, _) =
-            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false).unwrap();
+            build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(
             ht2,
             "-q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq"
