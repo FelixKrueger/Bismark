@@ -476,11 +476,22 @@ impl OutputFileMap {
     /// Returns `Ok` regardless; the function's signature retains
     /// `Result<_, io::Error>` for forward-compat with any future
     /// non-`remove_file` IO needs.
+    /// `force_create_empty` (plan 06142026_empty-sample-extractor-c2c): on a
+    /// zero-total-calls run that still expects downstream outputs
+    /// (`--bedGraph`/`--cytosine_report`), the empty per-context files are
+    /// **force-created + kept** (valid empty gzip streams iff `self.gzip`)
+    /// rather than swept — a DELIBERATE divergence from Perl so methylseq's
+    /// required `*.txt.gz` glob matches. When `false`, the EXACT Perl-faithful
+    /// remove+swept behavior is preserved.
     pub fn finalize_with_empty_sweep(
         &mut self,
         logger: crate::logging::Logger,
+        force_create_empty: bool,
     ) -> Result<FinalizationReport, std::io::Error> {
         let entries: Vec<_> = self.files.drain().collect();
+        // Captured before the loop: `force_create_empty` needs it to open a
+        // valid empty (gzipped iff `self.gzip`) file for a never-created strand.
+        let gzip = self.gzip;
         let mut kept: Vec<PathBuf> = Vec::new();
         let mut swept: Vec<PathBuf> = Vec::new();
         // #889 item 2: a footer-flush error on a kept gzip file is collected
@@ -523,6 +534,27 @@ impl OutputFileMap {
                 // Finish any writer, remove any file (fail-open; a never-created
                 // file gives NotFound, which is expected), log + record swept.
                 // Matches Perl's end-of-run `was empty -> deleted`.
+                maybe_writer if force_create_empty => {
+                    // Plan 06142026_empty-sample-extractor-c2c — DELIBERATE
+                    // divergence from Perl: a zero-total-calls run that expects
+                    // downstream outputs KEEPS a valid empty per-context file so
+                    // methylseq's required `*.txt.gz` glob matches. If a writer
+                    // was opened (header-only, no rows) it already created the
+                    // file — just finish it; otherwise (lazy-open: never created)
+                    // open a fresh writer and finish it to produce a valid empty
+                    // (gzipped iff `gzip`) file. Record as `kept`, NOT `swept`.
+                    let finish_res = match maybe_writer {
+                        Some(w) => w.finish(),
+                        None => open_split_writer(&path, gzip).and_then(SplitWriter::finish),
+                    };
+                    if let Err(e) = finish_res {
+                        first_err.get_or_insert(e);
+                    }
+                    logger.note(&format!(
+                        "{path_str} created empty (no methylation calls) ->\tkept"
+                    ));
+                    kept.push(abs_path);
+                }
                 maybe_writer => {
                     if let Some(w) = maybe_writer
                         && let Err(e) = w.finish()
@@ -1118,7 +1150,7 @@ mod tests {
         };
         // finalize collects the finish error and returns it after the sweep loop
         // (#889 item 2) — instead of panicking.
-        let result = map.finalize_with_empty_sweep(crate::logging::Logger::new(true, false));
+        let result = map.finalize_with_empty_sweep(crate::logging::Logger::new(true, false), false);
         assert!(
             result.is_err(),
             "finalize must surface the kept-file finish error as Err"

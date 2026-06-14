@@ -150,6 +150,16 @@ impl ExtractState {
         //   3. write_splitting_report
         //   4. write_mbias_txt (unless --mbias_off)
         let logger = crate::logging::Logger::from_config(config);
+        // Empty-sample handling (plan 06142026_empty-sample-extractor-c2c):
+        // a no-alignment sample has zero total methylation calls
+        // (Z+z+X+x+H+h == SplittingReport.calls_total). On that condition,
+        // when a downstream chain is expected (`--bedGraph`/`--cytosine_report`,
+        // which methylseq always passes) we DELIBERATELY diverge from Perl:
+        // force-create the empty per-context `.txt.gz` files (instead of
+        // sweep-deleting them) and let the empty input flow through the
+        // bedGraph/cov writer + c2c so methylseq's required output globs match.
+        // A bare extraction with no `--bedGraph` keeps the Perl-faithful delete.
+        let is_empty_run = self.report.calls_total == 0;
         self.fhs.flush_all()?;
         // Phase C.2 code-review B H2: gate the sweep on `!mbias_only` to
         // mirror Perl `:319 unless ($mbias_only) { delete_unused_files; }`.
@@ -166,7 +176,12 @@ impl ExtractState {
         // kept set is empty by construction — we still build an empty
         // FinalizationReport for uniformity.
         let finalization = if !self.mbias_only {
-            self.fhs.finalize_with_empty_sweep(logger)?
+            // `force_create_empty` only fires when downstream outputs are
+            // expected (a zero-call run with `--bedGraph`/`--cytosine_report`),
+            // so a bare extraction keeps Perl's empty-file delete.
+            let force_create_empty = is_empty_run && config.bedgraph;
+            self.fhs
+                .finalize_with_empty_sweep(logger, force_create_empty)?
         } else {
             crate::output::FinalizationReport::default()
         };
@@ -224,6 +239,7 @@ impl ExtractState {
                 &config.output_dir,
                 &finalization.kept,
                 &sorted,
+                is_empty_run,
             )?;
         }
 

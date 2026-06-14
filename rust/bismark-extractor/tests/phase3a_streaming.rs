@@ -1476,14 +1476,33 @@ fn streaming_parallel_multibatch_equals_single_threaded() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// T5 — empty / no-CpG pre-check: warn + skip downstream + exit 0 (F3)
+// Empty-sample graceful outputs through the inline --cytosine_report chain
+// (plan 06142026_empty-sample-extractor-c2c). A zero-total-calls run must
+// flow through bedGraph + the inline c2c feed instead of skipping.
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Files in `dir` whose name matches a simple `*suffix` glob, sorted.
+fn glob_suffix(dir: &Path, suffix: &str) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(suffix))
+        })
+        .collect();
+    v.sort();
+    v
+}
+
 #[test]
-fn empty_input_skips_downstream_exit_zero() {
-    // Zero-call BAM + --cytosine_report: no usable input → warn + skip + exit 0.
-    // No bedGraph/cov/report files appear. The kept-set pre-check (F3) fires
-    // BEFORE any write_outputs_from_sorted call (the aggregator is empty too).
+fn empty_input_emits_graceful_outputs_with_cytosine_report() {
+    // REWRITTEN (was `empty_input_skips_downstream_exit_zero`): a zero-call BAM
+    // with --cytosine_report now flows through the full inline chain — empty
+    // bedGraph/cov + force-created per-context files, and the inline c2c feed
+    // produces a genome-wide ALL-ZERO CpG report (the standard-path graceful
+    // empty). Exit 0. DELIBERATE divergence from Perl.
     let work = tempfile::tempdir().unwrap();
     let bam = work.path().join("empty.bam");
     write_zero_call_bam(&bam);
@@ -1500,21 +1519,43 @@ fn empty_input_skips_downstream_exit_zero() {
             genome.to_str().unwrap(),
         ],
     )
-    .success()
-    .stderr(predicates::str::contains(
-        "no methylation calls usable for bedGraph",
-    ));
+    .success();
 
-    for name in [
-        "empty.bedGraph.gz",
-        "empty.bismark.cov.gz",
-        "empty.CpG_report.txt",
-    ] {
-        assert!(
-            !inline_dir.join(name).exists(),
-            "downstream file {name} must NOT exist for a zero-call BAM"
-        );
-    }
+    // bedGraph + cov emitted (0 data rows).
+    assert_eq!(
+        glob_suffix(&inline_dir, ".bedGraph.gz").len(),
+        1,
+        "empty bedGraph must be emitted"
+    );
+    assert_eq!(
+        glob_suffix(&inline_dir, ".bismark.cov.gz").len(),
+        1,
+        "empty cov must be emitted"
+    );
+    // ≥1 retained per-context split file.
+    assert!(
+        !kept_split_files(&inline_dir).is_empty(),
+        "≥1 per-context file must be retained on the zero-call --cytosine_report path"
+    );
+    // The inline c2c produced an all-zero genome-wide CpG report (not gzipped:
+    // --cytosine_report inline does not pass --gzip to c2c by default).
+    let cx = glob_suffix(&inline_dir, "CpG_report.txt");
+    assert_eq!(
+        cx.len(),
+        1,
+        "the inline c2c must produce a CpG_report.txt on the graceful-empty path"
+    );
+    let report = std::fs::read_to_string(&cx[0]).unwrap();
+    // Genome chr1 (CHR1_SEQ) has cytosines; all rows are 0/0 (no coverage).
+    let data_rows: Vec<&str> = report.lines().filter(|l| !l.is_empty()).collect();
+    assert!(
+        !data_rows.is_empty(),
+        "all-zero CpG report must contain genome cytosine rows"
+    );
+    assert!(
+        data_rows.iter().all(|l| l.contains("\t0\t0\t")),
+        "every CpG report row must be all-zero (0/0) on the empty path; got {data_rows:?}"
+    );
 }
 
 #[test]
