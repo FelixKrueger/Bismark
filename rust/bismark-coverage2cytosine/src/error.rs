@@ -118,9 +118,17 @@ pub enum BismarkC2cError {
         len: usize,
     },
 
-    /// The coverage file contained no data lines. Mirrors Perl's
-    /// "No last chromosome was defined" die (`:472-474`) — raised before any
-    /// uncovered-chromosome pass, even when `--coverage_threshold == 0`.
+    /// Historically raised when the coverage file contained no data lines
+    /// (Perl's "No last chromosome was defined" die, `:472-474`).
+    ///
+    /// **No longer constructed (plan 06142026, NOMe follow-up):** an empty-but-
+    /// validly-read coverage file is now handled GRACEFULLY in every mode (the
+    /// report writers produce the correct empty/all-zero output, exit 0) so
+    /// nf-core/methylseq survives a no-alignment sample. A genuine read failure
+    /// (missing file, corrupt gzip, malformed line) surfaces via `Io`/
+    /// `MalformedCovLine` *before* the empty check could fire, so this variant
+    /// is retained (public API; a `.gz`-without-extension mishap could still
+    /// reasonably map here in future) but is currently unreachable.
     #[error(
         "no data found in the coverage file — something went wrong reading it (wrong path, or a gzipped file given without a .gz extension?)"
     )]

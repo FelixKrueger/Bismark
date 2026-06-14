@@ -275,11 +275,29 @@ fn empty_coverage_corrupt_gzip_with_gz_name_errors() {
         .failure();
 }
 
+/// Assert a graceful empty c2c run produced a report file + a cytosine-context
+/// summary (methylseq's required outputs) in `dir`.
+fn assert_report_and_summary_present(dir: &std::path::Path) {
+    let names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    assert!(
+        names.iter().any(|n| n.contains("report")),
+        "expected a c2c report file in {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.contains("cytosine_context_summary")),
+        "expected a cytosine_context_summary file in {names:?}"
+    );
+}
+
 #[test]
-fn empty_coverage_threshold_still_errors() {
-    // GUARD: graceful-empty is standard-path-only. With `--coverage_threshold`
-    // the uncovered pass is skipped (no all-zero report), so an empty cov must
-    // STILL error — unchanged.
+fn empty_coverage_threshold_emits_empty_report() {
+    // NOMe follow-up (plan 06142026): graceful-empty now covers EVERY mode
+    // except `--gc`. With `--coverage_threshold` the uncovered pass is skipped,
+    // so an empty cov yields a correct EMPTY report (no position meets the
+    // threshold) + summary at exit 0 — instead of erroring.
     let tmp = tempfile::tempdir().unwrap();
     let gdir = tmp.path().join("g");
     std::fs::create_dir(&gdir).unwrap();
@@ -298,16 +316,18 @@ fn empty_coverage_threshold_still_errors() {
         .args(["--coverage_threshold", "1"])
         .arg(&cov)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicates::str::contains("no data found"));
+        .success();
+    assert_report_and_summary_present(tmp.path());
 }
 
 #[test]
-fn empty_coverage_nome_still_errors() {
-    // GUARD: `--nome-seq` relies on the EmptyCoverageInput guard (NOMe reports
-    // covered positions only — no uncovered all-zero pass). An empty cov must
-    // STILL error.
+fn empty_coverage_nome_emits_empty_report() {
+    // NOMe follow-up (plan 06142026): `--nome-seq` on an empty cov is now
+    // GRACEFUL. NOMe reports covered positions only (the uncovered pass is
+    // skipped), so zero coverage → a correct EMPTY report + summary at exit 0.
+    // This is methylseq's NOMe-seq c2c step (the `--nome-seq` wall) — the fix
+    // that unblocks a no-alignment GpC/NOMe sample. Deliberate divergence from
+    // Perl (which dies "No last chromosome was defined").
     let tmp = tempfile::tempdir().unwrap();
     let gdir = tmp.path().join("g");
     std::fs::create_dir(&gdir).unwrap();
@@ -326,16 +346,17 @@ fn empty_coverage_nome_still_errors() {
         .arg("--nome-seq")
         .arg(&cov)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicates::str::contains("no data found"));
+        .success();
+    assert_report_and_summary_present(tmp.path());
 }
 
 #[test]
-fn empty_coverage_gc_still_errors() {
-    // GUARD: `--gc` reaches gpc::run_gpc which documents it relies on the guard
-    // firing first (no uncovered pass; covered chromosomes only). An empty cov
-    // must STILL error.
+fn empty_coverage_gc_emits_empty_report() {
+    // NOMe follow-up (plan 06142026): `--gc` on an empty cov is now GRACEFUL.
+    // run_report produces the all-zero core report + summary (uncovered pass runs:
+    // threshold 0, non-NOMe), and the GpC pass (gpc.rs) is itself empty-graceful
+    // (no guard — its loop no-ops + finishes empty writers). exit 0. The stale
+    // "gpc relies on the guard" doc was over-cautious; gpc handles empty fine.
     let tmp = tempfile::tempdir().unwrap();
     let gdir = tmp.path().join("g");
     std::fs::create_dir(&gdir).unwrap();
@@ -354,9 +375,8 @@ fn empty_coverage_gc_still_errors() {
         .arg("--gc")
         .arg(&cov)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicates::str::contains("no data found"));
+        .success();
+    assert_report_and_summary_present(tmp.path());
 }
 
 #[test]
