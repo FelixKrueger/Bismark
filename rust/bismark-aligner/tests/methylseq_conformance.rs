@@ -182,8 +182,9 @@ fn methylseq_align_accept_rows_parse() {
 /// for Bowtie 2 (plan `plans/06132026_aligner-local-mode/`; the flip-detector
 /// formerly here fired when the implementation landed). methylseq's `--local`
 /// command now parses AND `build_aligner_options` accepts it, emitting
-/// `--local --score-min G,20,8`. (HISAT2/minimap2-local + `--local`+combined-index
-/// are still rejected — that reject lives in `config::resolve`, not here.)
+/// `--local --score-min G,20,8`. (HISAT2-`--local` is also supported now — L-form +
+/// dropped `--no-softclip`; only minimap2-`--local` [local by design] + `--local`+combined-index
+/// are rejected — those rejects live in `config::resolve`, not here.)
 #[test]
 fn methylseq_align_local_now_accepted() {
     let cli = Cli::try_parse_from([

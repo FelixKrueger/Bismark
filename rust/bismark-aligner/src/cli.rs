@@ -166,8 +166,9 @@ pub struct Cli {
     /// Deprecated (-M); no effect.
     #[arg(long = "most_valid_alignments", value_name = "int")]
     pub most_valid_alignments: Option<i64>,
-    /// Bowtie 2 local-alignment mode (soft-clipped ends; `--score-min G,20,8`
-    /// default). Bowtie 2 only — HISAT2/minimap2 and `--combined_index` reject it.
+    /// Local-alignment mode (soft-clipped ends). Bowtie 2 (`--local` + `--score-min G,20,8`)
+    /// and HISAT2 (drops `--no-softclip` + L-form `--score-min L,0,-0.2`, no `--local` flag).
+    /// minimap2 rejects it (local by design); `--combined_index` rejects it too.
     #[arg(long)]
     pub local: bool,
     /// Allow a non-bisulfite mismatch.
