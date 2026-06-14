@@ -49,7 +49,8 @@ pub struct Cli {
     /// Align with Bowtie 2 (default).
     #[arg(long)]
     pub bowtie2: bool,
-    /// Align with HISAT2 (single-core only — see the multicore reject).
+    /// Align with HISAT2. `--multicore N` is interpreted as `-p N` single-instance
+    /// threading (Approach B-faithful — HISAT2 splice discovery is not chunk-invariant).
     #[arg(long)]
     pub hisat2: bool,
     /// Align with minimap2 (single-end only; paired-end is rejected).

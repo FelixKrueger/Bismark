@@ -56,20 +56,19 @@ docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.5  # pinned
 
 Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
 
-> **nf-core/methylseq drop-in — two known limitations** (the CLI surface is otherwise
-> conformance-tested against methylseq 4.2.0; see each crate's `tests/methylseq_conformance.rs`):
+> **nf-core/methylseq drop-in — one known limitation + one behavior note** (the CLI surface is
+> otherwise conformance-tested against methylseq 4.2.0; see each crate's `tests/methylseq_conformance.rs`):
 > - **`--local` alignment** (`params.local_alignment` / `--local`) is supported for **Bowtie 2**
 >   (byte-identical to Perl `--local`). HISAT2/minimap2 local alignment and `--local` with
 >   `--combined_index` are not supported (rejected fail-loud).
-> - **HISAT2 (`--aligner bismark_hisat`) must run single-core.** The Rust aligner rejects
->   `--hisat2` with `--multicore > 1` (HISAT2 splice discovery is not chunk-invariant, so it
->   would not be byte-identical). methylseq auto-derives `--multicore = cpus/3` and only adds it
->   when that is `> 1` (i.e. the align step has ≥ 6 CPUs) — so the clean stop-gap is to **cap the
->   align step below 6 CPUs** so no `--multicore` is added, e.g.
->   `process { withName:'.*:BISMARK_ALIGN' { cpus = 4 } }`. Do **not** override `ext.args` to add
->   `--multicore 1`: Nextflow `ext.args` is last-wins, so that would *replace* the align config
->   closure and silently drop `--hisat2`/`--pbat`/etc. Single-core HISAT2 and all Bowtie 2 modes
->   are unaffected; multi-core HISAT2 is a deferred follow-up.
+> - **HISAT2 (`--aligner bismark_hisat`) + `--multicore N`** runs as a **single HISAT2 instance with
+>   `-p N` threading** (`--reorder`), byte-identical to Perl `--hisat2 -p N`. ⚠️ This is a deliberate
+>   remap (`--multicore`→`-p`, **HISAT2 only**): the fork+chunk model is *not* faithful for HISAT2
+>   (splice-site discovery is not chunk-invariant), so the result is deterministic per N but
+>   **depends on the thread count** — it is NOT identical to single-core HISAT2 (HISAT2's nature; Perl
+>   has the same behaviour). The run prints a never-silent notice. methylseq's auto-derived
+>   `--multicore = cpus/3` now works directly — **no cpus-cap workaround needed.** Bowtie 2
+>   `--multicore` (the worker-invariant fork path) and single-core HISAT2 are unaffected.
 
 ### 3. Build from source with `cargo install` (whole suite, one command)
 
@@ -153,7 +152,7 @@ One headline per module — current state at a glance. Per-crate detail lives in
 |---|---|---|---|
 | _(shared library)_ | `bismark-io` | 1.0.0-beta.8 | ✅ noodles BAM/SAM/CRAM I/O + `ThreadedBam{Reader,Writer}` (parallel BGZF); byte-equal output is a CI invariant for consumers |
 | `bismark_genome_preparation` | `bismark-genome-preparation` (`bismark_genome_preparation_rs`) | 1.0.0-beta.1 | ✅ Converted CT/GA FASTA **byte-identical** to Perl v0.25.1 + `--genomic_composition`; all 3 aligners (Bowtie2 / HISAT2 / minimap2), indexing delegated to the external indexer |
-| `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | 1.0.0-alpha.1 | ✅ **All 10 phases complete** (#930 = Ph 1–8, #942 = Ph 9a, #945 = Ph 9b; **Ph 10 full-scale real-data gate PASSED**, #948). Bowtie 2 backend, **SE + PE, FastQ + FastA, all 3 library types (directional / non-directional / pbat)** — read-conversion → 2–4 instances → lockstep merge/scoring/MAPQ → `XM`/`XR`/`XG` → BAM + report + `--unmapped`/`--ambiguous`/`--ambig_bam`, **byte-identical** to Perl v0.25.1 + Bowtie 2 2.5.5 at 1M reads/pairs and **content byte-identical at full real-data scale** (Ph 10 on oxy: 84M SE / 84M PE / 46.7M mouse-RRBS GRCm39 / pbat; 173/181/52 contigs; + V13 cross-check vs the pre-existing Perl `--parallel 4` BAMs). **Order-preserving `--multicore`/`--parallel`** (worker-count-invariant). The ~74% runtime "big beast" — **faithful (Bowtie 2) port complete**. **v1.x backend set COMPLETE** — **HISAT2** (SE+PE, FastQ+FastA, all 3 libraries, byte-identical to Perl v0.25.1 + HISAT2 2.2.2; `--multicore`+`--hisat2` rejected — splice-site discovery is input-batch-global; #949) **and minimap2 SE** (byte-identical to Perl v0.25.1 + minimap2 2.31-r1302, clean-slate `-x map-ont` options + positional `.mmi`; SE only — PE deferred, no trustworthy Perl oracle; worker-invariant; #950). **Phase-5 combined 10M gate: all 13 cells byte-identical** (Bowtie 2 + HISAT2 SE+PE + minimap2 SE × {dir, non-dir, pbat} + mouse **GRCm39** RRBS). epic `plans/06052026_bismark-aligner-v1x/` |
+| `bismark` (aligner) | `bismark-aligner` (`bismark_rs`) | 1.0.0-alpha.1 | ✅ **All 10 phases complete** (#930 = Ph 1–8, #942 = Ph 9a, #945 = Ph 9b; **Ph 10 full-scale real-data gate PASSED**, #948). Bowtie 2 backend, **SE + PE, FastQ + FastA, all 3 library types (directional / non-directional / pbat)** — read-conversion → 2–4 instances → lockstep merge/scoring/MAPQ → `XM`/`XR`/`XG` → BAM + report + `--unmapped`/`--ambiguous`/`--ambig_bam`, **byte-identical** to Perl v0.25.1 + Bowtie 2 2.5.5 at 1M reads/pairs and **content byte-identical at full real-data scale** (Ph 10 on oxy: 84M SE / 84M PE / 46.7M mouse-RRBS GRCm39 / pbat; 173/181/52 contigs; + V13 cross-check vs the pre-existing Perl `--parallel 4` BAMs). **Order-preserving `--multicore`/`--parallel`** (worker-count-invariant). The ~74% runtime "big beast" — **faithful (Bowtie 2) port complete**. **v1.x backend set COMPLETE** — **HISAT2** (SE+PE, FastQ+FastA, all 3 libraries, byte-identical to Perl v0.25.1 + HISAT2 2.2.2; `--hisat2 --multicore N` = single instance `-p N` threading, byte-identical to Perl `--hisat2 -p N` — fork model not faithful, splice discovery is input-batch-global; #949) **and minimap2 SE** (byte-identical to Perl v0.25.1 + minimap2 2.31-r1302, clean-slate `-x map-ont` options + positional `.mmi`; SE only — PE deferred, no trustworthy Perl oracle; worker-invariant; #950). **Phase-5 combined 10M gate: all 13 cells byte-identical** (Bowtie 2 + HISAT2 SE+PE + minimap2 SE × {dir, non-dir, pbat} + mouse **GRCm39** RRBS). epic `plans/06052026_bismark-aligner-v1x/` |
 | `deduplicate_bismark` | `bismark-dedup` (`deduplicate_bismark_rs`) | 1.2.1-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 on real-data WGBS (10M + ~55M PE); UMI/RRBS modes; optional `--parallel N` BGZF threading |
 | `filter_non_conversion` | `bismark-filter-nonconversion` (`filter_non_conversion_rs`) | 1.0.0-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 (9 golden cells + oxy 10M SE + PE × 4 decision modes) |
 | `NOMe_filtering` | `bismark-nome-filtering` (`NOMe_filtering_rs`) | 1.0.0-beta.1 | ✅ **Byte-identical** to Perl v0.25.1 (synthetic goldens + full 10M SE oxy gate); **~3.4×** |

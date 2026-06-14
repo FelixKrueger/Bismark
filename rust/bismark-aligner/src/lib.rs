@@ -90,6 +90,17 @@ pub fn version_string() -> String {
     )
 }
 
+/// Never-silent notice for the HISAT2 `--multicore N` → `-p N` semantic remap (Approach
+/// B-faithful). Pure so it is unit-testable; emitted by `run` when the remap fires.
+fn hisat2_multicore_remap_notice(n: u32) -> String {
+    format!(
+        "Note: --hisat2 with --multicore {n} is interpreted as a single HISAT2 instance with \
+         -p {n} threading (--reorder), NOT the fork model: HISAT2 splice-site discovery is not \
+         chunk-invariant. This is deterministic and byte-identical to Perl `--hisat2 -p {n}`, but \
+         the result depends on the thread count (it is NOT identical to single-core HISAT2)."
+    )
+}
+
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
@@ -101,6 +112,9 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
              (wired in a later phase): {}",
             deferred.join(", ")
         );
+    }
+    if let Some(n) = config.hisat2_multicore_remap {
+        eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
     eprintln!("{}", config.summary());
     pipeline(&config)?;

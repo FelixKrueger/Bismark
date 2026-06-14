@@ -19,8 +19,9 @@
 //!
 //! **Tiers** (see plan): Tier 1 = clap parse for the accept rows (the aligner has
 //! no `Cli::validate()`; its checks live in `config::resolve`/`build_aligner_options`).
-//! Tier 3 = the two deliberate v1 rejects (`--local`, `--hisat2`+multicore), asserted
-//! via the pub inner fns — fixture-free (no on-disk index, no `bowtie2` subprocess).
+//! Tier 3 (the two former v1 rejects, `--local` = GAP-1 and `--hisat2`+multicore =
+//! GAP-2) are **both now RESOLVED** — each flipped to an accept-row assertion below
+//! when its feature landed (fixture-free: no on-disk index, no aligner subprocess).
 //!
 //! **Re-scout** the align module + config on any methylseq version bump (pinned 4.2.0).
 
@@ -194,7 +195,7 @@ fn methylseq_align_local_now_accepted() {
         "--local",
     ])
     .expect("--local parses");
-    let (opts, _gp) = build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false)
+    let (opts, _gp) = build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None)
         .expect("--local is now supported for Bowtie 2 (GAP-1 closed)");
     assert!(
         opts.contains("--local") && opts.contains("--score-min G,20,8"),
@@ -202,13 +203,15 @@ fn methylseq_align_local_now_accepted() {
     );
 }
 
-/// Tier 3 / GAP-2 (KnownUnsupported, flip-detecting). `BISMARK_ALIGN` auto-derives
-/// `--multicore` on big (`process_high`) nodes; the Rust aligner rejects
-/// `--hisat2` with multicore>1 (HISAT2 splice discovery is not chunk-invariant).
-/// The reject (`config.rs:251`) fires BEFORE any disk I/O / `bowtie2 --version`
-/// subprocess inside `resolve()`, so this is fixture-free.
+/// GAP-2 RESOLVED — `BISMARK_ALIGN` auto-derives `--multicore` on big (`process_high`)
+/// nodes; the Rust aligner now **supports** `--hisat2 --multicore N` by interpreting it
+/// as a single HISAT2 instance with `-p N --reorder` (Approach B-faithful, plan
+/// `06132026_aligner-hisat2-multicore`): deterministic and byte-identical to Perl
+/// `--hisat2 -p N` (NOT the fork model — HISAT2 splice discovery is not chunk-invariant).
+/// The reject formerly here flipped when the route landed. (HISAT2 single-core +
+/// Bowtie 2 `--multicore` fork are unaffected.)
 #[test]
-fn methylseq_align_hisat2_multicore_known_unsupported() {
+fn methylseq_align_hisat2_multicore_now_accepted_via_p_threading() {
     let cli = Cli::try_parse_from([
         "bismark",
         "reads.fq.gz",
@@ -220,14 +223,24 @@ fn methylseq_align_hisat2_multicore_known_unsupported() {
         "2",
     ])
     .expect("--hisat2 --multicore 2 parses");
-    let err = config::resolve(
+    // The GAP-2 reject is GONE: resolve no longer fails with the "not supported with
+    // --hisat2" message. It now proceeds past the multicore check (failing later only on
+    // the fake `idx` genome dir — a different, expected error, not the GAP-2 reject).
+    if let Err(e) = config::resolve(
         &cli,
         "bismark reads.fq.gz --genome idx --bam --hisat2 --multicore 2".to_string(),
-    )
-    .expect_err("--hisat2 + multicore>1 must be rejected (KnownUnsupported GAP-2)");
-    let msg = err.to_string();
+    ) {
+        assert!(
+            !e.to_string().contains("not supported with --hisat2"),
+            "GAP-2 must no longer reject --hisat2 + multicore; got: {e}"
+        );
+    }
+    // And the route emits `-p N --reorder` (fixture-free; mirrors the GAP-1 `--local` flip):
+    let (opts, _gp) =
+        build_aligner_options(&cli, Aligner::Hisat2, ReadFormat::FastQ, false, Some(2))
+            .expect("HISAT2 --multicore route builds options");
     assert!(
-        msg.contains("not supported with --hisat2"),
-        "GAP-2 must reject with the --hisat2-specific message; got: {msg}"
+        opts.contains("-p 2") && opts.contains("--reorder"),
+        "HISAT2 --multicore 2 must emit `-p 2 --reorder`: {opts}"
     );
 }
