@@ -446,8 +446,21 @@ fn run_single(
         }
         buffer.insert(start, (meth, nonmeth));
     }
+    // Plan 06142026_empty-sample-extractor-c2c — DELIBERATE divergence from
+    // Perl's "No last chromosome was defined" die. A genuine read error
+    // (corrupt gzip, missing file, I/O) has ALREADY propagated via `?` on
+    // `read_until`/`parse_cov_line` above; reaching `None` here means a
+    // cleanly-read but EMPTY coverage file. On the STANDARD report path
+    // (`threshold == 0`, NOT `--nome-seq`, NOT `--gc`) we fall through (do
+    // nothing) so control reaches the uncovered-chromosome pass below — which,
+    // with `seen` empty, writes all-zero rows for EVERY genome chromosome (the
+    // genome-wide all-zero report methylseq needs). On every other path
+    // (`--nome-seq`/`--gc`/`threshold>0`), which RELIES on this guard, still
+    // error.
+    let empty_standard_path = config.threshold == 0 && !config.nome && !config.gc_context;
     match cur_chr.take() {
-        None => return Err(BismarkC2cError::EmptyCoverageInput),
+        None if !empty_standard_path => return Err(BismarkC2cError::EmptyCoverageInput),
+        None => { /* empty + standard path: fall through to the uncovered pass */ }
         Some(prev) => {
             let (bytes, cov_bytes) =
                 chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
@@ -523,12 +536,26 @@ fn run_split(
         }
         buffer.insert(start, (meth, nonmeth));
     }
-    // The final cov chromosome is flushed here (never in the loop); empty input
-    // → error before the uncovered pass. This is the first definite value of
-    // `last_summary_path` (a `PathBuf`, not an `Option` — there is always ≥1 chr).
-    let mut last_summary_path = match cur_chr.take() {
-        None => return Err(BismarkC2cError::EmptyCoverageInput),
-        Some(prev) => flush_split_chromosome(&prev, genome, &buffer, config, true, summary)?,
+    // The final cov chromosome is flushed here (never in the loop). On a
+    // cleanly-read but EMPTY coverage file, `cur_chr` is `None`.
+    //
+    // Plan 06142026_empty-sample-extractor-c2c — DELIBERATE divergence from
+    // Perl's "No last chromosome was defined" die (same as `run_single`): on
+    // the STANDARD path (`threshold == 0`, NOT `--nome-seq`, NOT `--gc`) an
+    // empty cov falls through so the uncovered pass below flushes EVERY genome
+    // chromosome (all-zero rows) and sets the summary path. `last_summary_path`
+    // is now `Option<PathBuf>` — `None` only when empty + standard path AND the
+    // genome has zero chromosomes (degenerate); the summary is then skipped.
+    // On every other path (`--nome-seq`/`--gc`/`threshold>0`) an empty cov
+    // still errors. (methylseq uses the standard non-split path, so this branch
+    // is not on the critical path, but it is kept consistent with `run_single`.)
+    let empty_standard_path = config.threshold == 0 && !config.nome && !config.gc_context;
+    let mut last_summary_path: Option<PathBuf> = match cur_chr.take() {
+        None if !empty_standard_path => return Err(BismarkC2cError::EmptyCoverageInput),
+        None => None,
+        Some(prev) => Some(flush_split_chromosome(
+            &prev, genome, &buffer, config, true, summary,
+        )?),
     };
     // Uncovered-chromosome pass — same gate as `run_single`: only at the default
     // threshold 0 in non-NOMe mode (Perl's 3-way branch :708-718).
@@ -536,16 +563,20 @@ fn run_split(
         let empty: HashMap<u32, (u32, u32)> = HashMap::new();
         for name in genome.names_sorted() {
             if !seen.contains(name) {
-                last_summary_path =
-                    flush_split_chromosome(name, genome, &empty, config, false, summary)?;
+                last_summary_path = Some(flush_split_chromosome(
+                    name, genome, &empty, config, false, summary,
+                )?);
             }
         }
     }
 
     // Full summary → only the LAST chromosome reopened (others stay empty).
-    let mut sw = BufWriter::new(File::create(&last_summary_path)?);
-    summary.write_to(&mut sw)?;
-    sw.flush()?;
+    // `None` only on the degenerate empty + standard + zero-chromosome genome.
+    if let Some(last_summary_path) = last_summary_path {
+        let mut sw = BufWriter::new(File::create(&last_summary_path)?);
+        summary.write_to(&mut sw)?;
+        sw.flush()?;
+    }
     Ok(())
 }
 

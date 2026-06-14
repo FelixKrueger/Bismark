@@ -26,6 +26,7 @@
 
 use bismark_extractor::cli::Cli;
 use clap::Parser;
+use std::path::Path;
 
 /// A temp `.bam` so `validate()`'s input-existence check (cli.rs ~:456) passes.
 /// Content is irrelevant — `validate()` does not open/parse the file (that happens
@@ -220,6 +221,72 @@ fn methylseq_extractor_validate_accept_rows() {
         assert!(
             cli.validate().is_ok(),
             "extractor methylseq command must validate [{label}]: {argv:?}"
+        );
+    }
+}
+
+/// Write a header-only BAM (a single `chr1` reference, zero records) — a
+/// no-alignment sample, the empty-sample case beta.6 dedup now produces.
+#[cfg(unix)]
+fn write_header_only_bam(path: &Path) {
+    use bismark_io::BamWriter;
+    use bstr::BString;
+    use noodles_sam::Header;
+    use noodles_sam::header::record::value::Map;
+    use noodles_sam::header::record::value::map::ReferenceSequence;
+    use std::num::NonZeroUsize;
+
+    let mut header = Header::default();
+    header.reference_sequences_mut().insert(
+        BString::from(b"chr1".to_vec()),
+        Map::<ReferenceSequence>::new(NonZeroUsize::new(60).unwrap()),
+    );
+    let writer = BamWriter::from_path(path, header).unwrap();
+    writer.finish().unwrap();
+}
+
+/// Tier 3 — runtime: the methylseq no-alignment command shape (`--bedGraph
+/// --counts --gzip --report -s --CX`) on a header-only (zero-call) BAM must
+/// exit 0 AND produce the module-required outputs. Guards the empty-sample
+/// graceful-output fix (plan 06142026_empty-sample-extractor-c2c) at the
+/// binary level — the exact `BISMARK_METHYLATIONEXTRACTOR` contract.
+#[cfg(unix)]
+#[test]
+fn methylseq_extractor_no_alignment_runtime_emits_required_outputs() {
+    use assert_cmd::Command;
+
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("noalign.bam");
+    write_header_only_bam(&bam);
+    let out_dir = work.path().join("out");
+
+    Command::cargo_bin("bismark_methylation_extractor_rs")
+        .unwrap()
+        .arg(&bam)
+        .args(["--bedGraph", "--counts", "--gzip", "--report", "-s", "--CX"])
+        .arg("--output_dir")
+        .arg(&out_dir)
+        .assert()
+        .success();
+
+    // The 5 methylseq-required output globs (none optional).
+    let has_suffix = |suffix: &str| {
+        std::fs::read_dir(&out_dir).unwrap().any(|e| {
+            e.ok()
+                .and_then(|e| e.file_name().into_string().ok())
+                .is_some_and(|n| n.ends_with(suffix))
+        })
+    };
+    for suffix in [
+        ".bedGraph.gz",
+        ".bismark.cov.gz",
+        ".txt.gz",
+        "_splitting_report.txt",
+        "M-bias.txt",
+    ] {
+        assert!(
+            has_suffix(suffix),
+            "methylseq-required output *{suffix} missing for a no-alignment sample"
         );
     }
 }

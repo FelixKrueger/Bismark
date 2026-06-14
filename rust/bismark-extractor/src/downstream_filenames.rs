@@ -262,6 +262,7 @@ pub fn run_downstream_chain(
     output_dir: &Path,
     kept_split_files: &[PathBuf],
     sorted: &[bismark_bedgraph::aggregate::ChrPositions],
+    is_empty_run: bool,
 ) -> Result<(), BismarkExtractorError> {
     if !config.bedgraph {
         return Ok(());
@@ -277,7 +278,17 @@ pub fn run_downstream_chain(
             .iter()
             .any(|p| basename_str(p).starts_with("CpG"))
     };
-    if !usable {
+    // Plan 06142026_empty-sample-extractor-c2c — DELIBERATE divergence from
+    // Perl: a truly empty run (zero TOTAL methylation calls, `is_empty_run`)
+    // must NOT skip — it falls through so `write_outputs_from_sorted(&_, [])`
+    // emits a valid empty `<base>.bedGraph.gz` (a `track type=bedGraph` line +
+    // 0 rows) + a 0-row `<base>.bismark.cov.gz`, and the c2c block below feeds
+    // that empty `.cov` to coverage2cytosine — so methylseq's required output
+    // globs match. RATIONALE for `&& !is_empty_run` (do NOT regress): a
+    // has-calls-but-no-CpG default-bedGraph run has `is_empty_run == false` and
+    // `usable == false`, so it MUST still skip (the legitimate Perl-faithful
+    // boundary, guarded by `default_mode_no_cpg_calls_skips`).
+    if !usable && !is_empty_run {
         let logger = crate::logging::Logger::from_config(config);
         logger.note(
             "Warning: no methylation calls usable for bedGraph were produced; \

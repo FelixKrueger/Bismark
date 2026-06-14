@@ -813,45 +813,162 @@ fn no_header_inline_matches_standalone() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// T5 — empty / no-CpG pre-check: warn + skip + exit 0
+// Empty-sample graceful outputs (plan 06142026_empty-sample-extractor-c2c)
+//
+// A no-alignment sample (zero TOTAL methylation calls) must flow through
+// nf-core/methylseq instead of crashing it: with `--bedGraph` requested the
+// extractor DELIBERATELY diverges from Perl — it emits a valid empty
+// `*.bedGraph.gz` + `*.cov.gz` (0 data rows) and force-creates+keeps the empty
+// per-context `*.txt.gz` files, so methylseq's required output globs match.
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Files in `dir` whose name matches a simple `*suffix` glob, sorted.
+fn glob_suffix(dir: &Path, suffix: &str) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(suffix))
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// Count data rows (non-empty lines) in decompressed gzip bytes.
+fn gz_data_rows(path: &Path) -> usize {
+    read_gz(path)
+        .split(|&b| b == b'\n')
+        .filter(|l| !l.is_empty())
+        .count()
+}
+
 #[test]
-fn empty_input_skips_downstream_exit_zero() {
-    // A zero-call BAM with --bedGraph --cytosine_report: no usable input →
-    // warn + skip downstream + exit 0. No bedGraph/cov/report files appear.
+fn empty_input_emits_graceful_outputs_exit_zero() {
+    // REWRITTEN (was `empty_input_skips_downstream_exit_zero`): a zero-call BAM
+    // with `--bedGraph --gzip` (methylseq's shape) must now produce the
+    // methylseq-required outputs — a valid empty bedGraph/cov + retained empty
+    // per-context `.txt.gz` + splitting report + M-bias — and exit 0.
     let work = tempfile::tempdir().unwrap();
     let bam = work.path().join("empty.bam");
     write_zero_call_bam(&bam);
-    let genome = work.path().join("genome");
-    write_genome_dir(&genome);
+
+    let inline_dir = work.path().join("inline");
+    run_extractor(&bam, &inline_dir, &["--bedGraph", "--gzip"]).success();
+
+    // bedGraph + cov exist and decompress to 0 DATA rows (bedGraph carries its
+    // single `track type=bedGraph` header line; both have 0 coverage rows).
+    let bedgraph = glob_suffix(&inline_dir, ".bedGraph.gz");
+    assert_eq!(bedgraph.len(), 1, "exactly one *.bedGraph.gz expected");
+    let cov = glob_suffix(&inline_dir, ".bismark.cov.gz");
+    assert_eq!(cov.len(), 1, "exactly one *.bismark.cov.gz expected");
+    assert_eq!(
+        gz_data_rows(&cov[0]),
+        0,
+        "empty cov must have 0 coverage rows"
+    );
+    // The bedGraph has only the header `track` line — 0 numeric data rows.
+    let bedgraph_lines = read_gz(&bedgraph[0]);
+    let data_rows = bedgraph_lines
+        .split(|&b| b == b'\n')
+        .filter(|l| !l.is_empty() && !l.starts_with(b"track"))
+        .count();
+    assert_eq!(data_rows, 0, "empty bedGraph must have 0 data rows");
+
+    // ≥1 retained empty per-context `*.txt.gz`.
+    assert!(
+        !glob_suffix(&inline_dir, ".txt.gz").is_empty(),
+        "≥1 per-context *.txt.gz must be retained for a zero-call run"
+    );
+    // Splitting report + M-bias as always.
+    assert_eq!(
+        glob_suffix(&inline_dir, "_splitting_report.txt").len(),
+        1,
+        "a *_splitting_report.txt must exist"
+    );
+    assert_eq!(
+        glob_suffix(&inline_dir, "M-bias.txt").len(),
+        1,
+        "a *.M-bias.txt must exist"
+    );
+}
+
+#[test]
+fn empty_input_cx_emits_graceful_outputs_exit_zero() {
+    // The --CX variant (methylseq passes --CX): same graceful outputs.
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("empty.bam");
+    write_zero_call_bam(&bam);
+
+    let inline_dir = work.path().join("inline");
+    run_extractor(&bam, &inline_dir, &["--bedGraph", "--gzip", "--CX"]).success();
+
+    assert_eq!(glob_suffix(&inline_dir, ".bedGraph.gz").len(), 1);
+    let cov = glob_suffix(&inline_dir, ".bismark.cov.gz");
+    assert_eq!(cov.len(), 1);
+    assert_eq!(gz_data_rows(&cov[0]), 0);
+    assert!(
+        !glob_suffix(&inline_dir, ".txt.gz").is_empty(),
+        "≥1 per-context *.txt.gz must be retained on the --CX zero-call path"
+    );
+    assert_eq!(glob_suffix(&inline_dir, "_splitting_report.txt").len(), 1);
+    assert_eq!(glob_suffix(&inline_dir, "M-bias.txt").len(), 1);
+}
+
+#[test]
+fn empty_input_multicore_emits_graceful_outputs_exit_zero() {
+    // methylseq uses `--multicore 4`; prove the parallel.rs:403→finalize path
+    // also produces the graceful outputs on a zero-call run.
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("empty.bam");
+    write_zero_call_bam(&bam);
 
     let inline_dir = work.path().join("inline");
     run_extractor(
         &bam,
         &inline_dir,
-        &[
-            "--cytosine_report",
-            "--genome_folder",
-            genome.to_str().unwrap(),
-        ],
+        &["--bedGraph", "--gzip", "--CX", "--multicore", "2"],
     )
-    .success()
-    .stderr(predicates::str::contains(
-        "no methylation calls usable for bedGraph",
-    ));
+    .success();
 
-    // No downstream outputs.
-    for name in [
-        "empty.bedGraph.gz",
-        "empty.bismark.cov.gz",
-        "empty.CpG_report.txt",
-    ] {
-        assert!(
-            !inline_dir.join(name).exists(),
-            "downstream file {name} must NOT exist for a zero-call BAM"
-        );
-    }
+    assert_eq!(glob_suffix(&inline_dir, ".bedGraph.gz").len(), 1);
+    let cov = glob_suffix(&inline_dir, ".bismark.cov.gz");
+    assert_eq!(cov.len(), 1);
+    assert_eq!(gz_data_rows(&cov[0]), 0);
+    assert!(
+        !glob_suffix(&inline_dir, ".txt.gz").is_empty(),
+        "≥1 per-context *.txt.gz must be retained on the --multicore zero-call path"
+    );
+    assert_eq!(glob_suffix(&inline_dir, "_splitting_report.txt").len(), 1);
+    assert_eq!(glob_suffix(&inline_dir, "M-bias.txt").len(), 1);
+}
+
+#[test]
+fn empty_input_no_bedgraph_keeps_perl_faithful_delete() {
+    // GUARD: without `--bedGraph`, a zero-call run keeps the Perl-faithful
+    // sweep-delete (no force-create) — `force_create_empty` is gated on
+    // `config.bedgraph`. No per-context `.txt.gz` and no bedGraph/cov appear.
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("empty.bam");
+    write_zero_call_bam(&bam);
+
+    let inline_dir = work.path().join("inline");
+    run_extractor(&bam, &inline_dir, &["--gzip"]).success();
+
+    assert!(
+        glob_suffix(&inline_dir, ".bedGraph.gz").is_empty(),
+        "no bedGraph without --bedGraph"
+    );
+    assert!(
+        glob_suffix(&inline_dir, ".bismark.cov.gz").is_empty(),
+        "no cov without --bedGraph"
+    );
+    assert!(
+        glob_suffix(&inline_dir, ".txt.gz").is_empty(),
+        "empty per-context files must still be swept-deleted without --bedGraph"
+    );
 }
 
 #[test]
