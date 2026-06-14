@@ -35,9 +35,11 @@ use crate::report::{self, Context, ReportWriter, classify_context, perl_substr, 
 /// Generate the GpC-context report + cov (Perl `generate_GC_context_report`).
 ///
 /// Re-reads the coverage file and walks every `GC` dinucleotide of each covered
-/// chromosome's genome sequence. Always runs *after* the core report, so an
-/// empty coverage file has already produced [`BismarkC2cError::EmptyCoverageInput`]
-/// before this point — the GpC walk never sees one.
+/// chromosome's genome sequence. Runs *after* the core report. On an empty
+/// coverage file it is empty-graceful **by construction** — the read loop no-ops
+/// and the report/cov writers are finished empty (there is no
+/// `EmptyCoverageInput` guard here, and as of plan 06142026 the core report no
+/// longer errors on empty either, so `--gc`/`--nome-seq` complete with exit 0).
 pub fn run_gpc(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
     // Perl bumps the threshold to 1 inside this function (`:758-761`); the core
     // report already ran at the user's threshold. A LOCAL value — never mutate

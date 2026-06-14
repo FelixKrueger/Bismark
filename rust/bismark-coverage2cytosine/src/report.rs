@@ -450,17 +450,19 @@ fn run_single(
     // Perl's "No last chromosome was defined" die. A genuine read error
     // (corrupt gzip, missing file, I/O) has ALREADY propagated via `?` on
     // `read_until`/`parse_cov_line` above; reaching `None` here means a
-    // cleanly-read but EMPTY coverage file. On the STANDARD report path
-    // (`threshold == 0`, NOT `--nome-seq`, NOT `--gc`) we fall through (do
-    // nothing) so control reaches the uncovered-chromosome pass below — which,
-    // with `seen` empty, writes all-zero rows for EVERY genome chromosome (the
-    // genome-wide all-zero report methylseq needs). On every other path
-    // (`--nome-seq`/`--gc`/`threshold>0`), which RELIES on this guard, still
-    // error.
-    let empty_standard_path = config.threshold == 0 && !config.nome && !config.gc_context;
+    // cleanly-read but EMPTY coverage file — graceful on EVERY mode. Each mode
+    // yields its own SEMANTICALLY-CORRECT empty output:
+    //   - standard / `--gc` (threshold 0, non-NOMe): the uncovered pass below
+    //     runs → all-zero genome-wide report (what methylseq needs).
+    //   - `--nome-seq`: uncovered pass SKIPPED (NOMe = covered positions only) →
+    //     a correct EMPTY report; unblocks methylseq's NOMe-seq c2c step.
+    //   - `threshold>0`: uncovered pass skipped → correct empty report.
+    // The `--gc`/`--nome-seq` GpC pass (gpc.rs, run after this in lib.rs) is
+    // itself empty-graceful (its loop no-ops + finishes empty writers), so no
+    // guard is needed here. Deliberate divergence from Perl (which dies
+    // "No last chromosome was defined" on empty).
     match cur_chr.take() {
-        None if !empty_standard_path => return Err(BismarkC2cError::EmptyCoverageInput),
-        None => { /* empty + standard path: fall through to the uncovered pass */ }
+        None => { /* empty-but-valid: fall through; per-mode report path handles it */ }
         Some(prev) => {
             let (bytes, cov_bytes) =
                 chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
@@ -539,19 +541,17 @@ fn run_split(
     // The final cov chromosome is flushed here (never in the loop). On a
     // cleanly-read but EMPTY coverage file, `cur_chr` is `None`.
     //
-    // Plan 06142026_empty-sample-extractor-c2c — DELIBERATE divergence from
-    // Perl's "No last chromosome was defined" die (same as `run_single`): on
-    // the STANDARD path (`threshold == 0`, NOT `--nome-seq`, NOT `--gc`) an
-    // empty cov falls through so the uncovered pass below flushes EVERY genome
-    // chromosome (all-zero rows) and sets the summary path. `last_summary_path`
-    // is now `Option<PathBuf>` — `None` only when empty + standard path AND the
-    // genome has zero chromosomes (degenerate); the summary is then skipped.
-    // On every other path (`--nome-seq`/`--gc`/`threshold>0`) an empty cov
-    // still errors. (methylseq uses the standard non-split path, so this branch
-    // is not on the critical path, but it is kept consistent with `run_single`.)
-    let empty_standard_path = config.threshold == 0 && !config.nome && !config.gc_context;
+    // Plan 06142026_empty-sample-extractor-c2c (+ NOMe follow-up) — DELIBERATE
+    // divergence from Perl's "No last chromosome was defined" die (same as
+    // `run_single`): an empty-but-valid cov falls through on EVERY mode (a
+    // genuine read error surfaced earlier via `?`). standard/`--gc` → uncovered
+    // pass → all-zero report; `--nome-seq`/`threshold>0` → uncovered pass skipped
+    // → correct EMPTY report; the GpC pass (gpc.rs) is itself empty-graceful.
+    // `last_summary_path` is `Option<PathBuf>` — `None` when no chromosome was
+    // flushed (empty + NOMe/threshold, or the degenerate zero-chromosome genome);
+    // the summary is then written to the default path (below) so it always exists.
+    // (methylseq uses the standard non-split path; kept consistent with `run_single`.)
     let mut last_summary_path: Option<PathBuf> = match cur_chr.take() {
-        None if !empty_standard_path => return Err(BismarkC2cError::EmptyCoverageInput),
         None => None,
         Some(prev) => Some(flush_split_chromosome(
             &prev, genome, &buffer, config, true, summary,
@@ -570,13 +570,14 @@ fn run_split(
         }
     }
 
-    // Full summary → only the LAST chromosome reopened (others stay empty).
-    // `None` only on the degenerate empty + standard + zero-chromosome genome.
-    if let Some(last_summary_path) = last_summary_path {
-        let mut sw = BufWriter::new(File::create(&last_summary_path)?);
-        summary.write_to(&mut sw)?;
-        sw.flush()?;
-    }
+    // Full summary → the LAST chromosome reopened (others stay empty), or the
+    // default summary path when no chromosome was flushed (empty + NOMe/threshold,
+    // or the degenerate zero-chromosome genome) so the file always exists —
+    // matching `run_single` + methylseq's required `*cytosine_context_summary.txt`.
+    let summary_dest = last_summary_path.unwrap_or_else(|| summary_path(config, None));
+    let mut sw = BufWriter::new(File::create(&summary_dest)?);
+    summary.write_to(&mut sw)?;
+    sw.flush()?;
     Ok(())
 }
 
