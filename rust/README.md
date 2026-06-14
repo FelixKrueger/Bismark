@@ -34,7 +34,7 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 
 ## Installing
 
-<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.6` / `beta.6` literal in this
+<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.7` / `beta.7` literal in this
      section (the pinned `docker pull` tag + the `cargo install --tag`), `suite_tag` in `rust/justfile`,
      AND the matching section in the docs site (`docs/src/content/docs/installation.md`).
      The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
@@ -51,7 +51,7 @@ A multi-arch image is published to the GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
-docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.6  # pinned
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.7  # pinned
 ```
 
 Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
@@ -77,16 +77,16 @@ Requires a Rust toolchain (see Prerequisites below). This installs **all 12** bi
 
 ```bash
 cargo install --git https://github.com/FelixKrueger/Bismark \
-  --tag bismark-rust-v2.0.0-beta.6 --locked \
+  --tag bismark-rust-v2.0.0-beta.7 --locked \
   bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
   bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
   bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
   bismark-report bismark-summary
 ```
 
-For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.6` for `--branch rust/iron-chancellor`.
+For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.7` for `--branch rust/iron-chancellor`.
 
-> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.6`), or add `--force` to reinstall in place.
+> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.7`), or add `--force` to reinstall in place.
 
 Compiling 12 crates from source is a non-trivial one-time build; cargo does not fully share dependency compilation across the listed packages.
 
