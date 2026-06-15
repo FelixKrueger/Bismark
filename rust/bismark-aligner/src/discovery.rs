@@ -113,7 +113,8 @@ fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
             let ext = if large { "ht2l" } else { "ht2" };
             (1..=8).map(|n| format!("{stem}.{n}.{ext}")).collect()
         }
-        Aligner::Minimap2 => vec![format!("{stem}.mmi")],
+        // rammap is minimap-like — the same single `<stem>.mmi` (no large variant).
+        Aligner::Minimap2 | Aligner::Rammap => vec![format!("{stem}.mmi")],
     }
 }
 
@@ -484,6 +485,31 @@ mod tests {
         assert_eq!(s, vec!["BS_CT.mmi".to_string()]);
         // large flag has no effect for minimap2 (no large-index variant).
         assert_eq!(index_suffixes(Aligner::Minimap2, "BS_CT", true), s);
+    }
+
+    /// Phase 3 (T1): rammap is minimap-like — the SAME single `.mmi` suffix;
+    /// `large` is ignored (no large-index variant).
+    #[test]
+    fn rammap_suffix_is_single_mmi() {
+        assert_eq!(
+            index_suffixes(Aligner::Rammap, "BS_CT", false),
+            vec!["BS_CT.mmi".to_string()]
+        );
+        assert_eq!(
+            index_suffixes(Aligner::Rammap, "BS_CT", true),
+            vec!["BS_CT.mmi".to_string()]
+        );
+    }
+
+    /// Phase 3 (T4): a Bowtie 2 `.bt2` index is NOT accepted in rammap mode (no
+    /// `.mmi`) — mirror `bt2_index_rejected_in_minimap2_mode` with `Aligner::Rammap`.
+    #[test]
+    fn bt2_index_rejected_in_rammap_mode() {
+        let tmp = TempDir::new().unwrap();
+        make_small_index(tmp.path());
+        fs::write(tmp.path().join("g.fa"), b">c\nA\n").unwrap();
+        let err = discover_genome(Aligner::Rammap, tmp.path()).unwrap_err();
+        assert!(matches!(err, AlignerError::FaultyIndex { .. }));
     }
 
     /// V4: a complete `.mmi` index resolves; `large_index` stays false.

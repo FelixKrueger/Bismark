@@ -212,7 +212,9 @@ fn build_se_argv(
             args.push("-U".into());
             args.push(input.as_os_str().to_owned());
         }
-        Aligner::Minimap2 => {
+        // rammap is minimap-like — the identical positional `<index>.mmi <input>`
+        // invocation shape (NO strand flag, NO `-x <index>`/`-U`).
+        Aligner::Minimap2 | Aligner::Rammap => {
             let mut mmi = index.as_os_str().to_owned();
             mmi.push(".mmi");
             args.push(mmi);
@@ -251,9 +253,11 @@ fn build_pe_argv(
             args.push(input2.as_os_str().to_owned());
             args
         }
-        Aligner::Minimap2 => unreachable!(
-            "minimap2 paired-end is rejected at resolve (no trustworthy oracle); \
-             build_pe_argv must not be reached for minimap2"
+        // minimap2 + rammap (minimap-like) paired-end are both rejected at resolve
+        // (SE-only; no trustworthy oracle), so neither reaches build_pe_argv.
+        Aligner::Minimap2 | Aligner::Rammap => unreachable!(
+            "minimap2 paired-end (and the minimap-like rammap) is rejected at resolve \
+             (no trustworthy oracle); build_pe_argv must not be reached for minimap2/rammap"
         ),
     }
 }
@@ -905,6 +909,19 @@ mod tests {
         assert_eq!(r.second_best, None); // s2:i:14 IGNORED — it is neither XS nor ZS
     }
 
+    /// Phase 3 (T4, design#2): rammap's SAM tag set is identical to minimap2 — it
+    /// emits the lowercase `s2:i:` chaining second-best (NOT `XS`/`ZS`), so the
+    /// parser ignores it BY CONSTRUCTION → `second_best == None` (no parser change).
+    #[test]
+    fn rammap_s2_tag_is_ignored() {
+        let rec = SamRecord::parse(
+            "r\t0\tchr1\t100\t60\t50M\t*\t0\t0\tACGTACGT\tIIIIIIII\tAS:i:90\ts2:i:40\tMD:Z:50",
+        )
+        .unwrap();
+        assert_eq!(rec.alignment_score, Some(90));
+        assert_eq!(rec.second_best, None);
+    }
+
     // ---- per-aligner SE invocation shape (Phase 4; V5 / V5b) ---------------
 
     fn argv_strings(argv: &[OsString]) -> Vec<String> {
@@ -999,6 +1016,23 @@ mod tests {
         assert!(!got.contains(&"--norc".to_string()) && !got.contains(&"--nofw".to_string()));
         assert!(!got.contains(&"-U".to_string()));
         assert!(!got.contains(&"/idx/BS_CT".to_string())); // only the `.mmi` form
+    }
+
+    /// Phase 3 (T1): rammap is minimap-like — the SAME positional `<index>.mmi
+    /// <input>` shape as minimap2 (NO `-U`, NO strand flag, NO `-x <basename>`).
+    #[test]
+    fn se_argv_rammap_positional_mmi() {
+        let argv = build_se_argv(
+            Aligner::Rammap,
+            "-a --MD --secondary=no -t 2 -x map-ont -K 250K",
+            Orientation::Norc, // ignored for rammap (minimap-like)
+            Path::new("/g/BS_CT"),
+            Path::new("/r/reads.fq"),
+        );
+        let s = argv_strings(&argv);
+        assert!(s.contains(&"/g/BS_CT.mmi".to_string()));
+        assert!(s.contains(&"/r/reads.fq".to_string()));
+        assert!(!s.contains(&"-U".to_string()));
     }
 
     // ---- build_pe_argv (v2.x Phase 5: HISAT2 PE shares the Bowtie 2 PE shape) ------
@@ -1098,6 +1132,21 @@ mod tests {
         // minimap2 PE is rejected at resolve → build_pe_argv must never see it.
         let _ = build_pe_argv(
             Aligner::Minimap2,
+            "-a --MD",
+            Orientation::Both,
+            Path::new("/idx/BS_combined"),
+            Path::new("/tmp/r1.fastq"),
+            Path::new("/tmp/r2.fastq"),
+        );
+    }
+
+    /// Phase 3 (T4): rammap PE is rejected at resolve too (minimap-like, SE-only) →
+    /// build_pe_argv must never see it (the shared minimap2/rammap unreachable arm).
+    #[test]
+    #[should_panic(expected = "rammap")]
+    fn pe_argv_rammap_is_unreachable() {
+        let _ = build_pe_argv(
+            Aligner::Rammap,
             "-a --MD",
             Orientation::Both,
             Path::new("/idx/BS_combined"),
