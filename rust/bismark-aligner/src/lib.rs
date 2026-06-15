@@ -58,7 +58,7 @@ use crate::align::{
     PairedSamStream, SamStream,
 };
 use crate::aux_out::AuxKind;
-use crate::config::{LibraryType, ReadFormat, ReadLayout};
+use crate::config::{Aligner, LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
 use crate::merge::{
     Counters, Decision, DecisionPaired, check_results_paired_end, check_results_single_end,
@@ -115,6 +115,16 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
+    }
+    // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
+    // minimap2 reimplementation — concordance-validated, NOT byte-identical to
+    // minimap2. Emitted here (the `hisat2_multicore_remap_notice` precedent), NOT in
+    // `resolve()` (which would spam every rammap unit test).
+    if config.aligner == Aligner::Rammap {
+        eprintln!(
+            "Note: --rammap uses the rammap pure-Rust minimap2 reimplementation. \
+             Alignments are concordance-validated, NOT byte-identical to minimap2."
+        );
     }
     eprintln!("{}", config.summary());
     pipeline(&config)?;

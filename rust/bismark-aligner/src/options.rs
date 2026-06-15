@@ -227,7 +227,9 @@ pub fn build_aligner_options(
     // splice-flag dies) the base first, then substituting, mirrors Perl's
     // build-then-wipe order — so e.g. `-N 2 --minimap2` still dies. Gap penalties
     // are vestigial (unused by `calc_mapq`), so the defaults are returned.
-    if aligner == Aligner::Minimap2 {
+    // rammap is minimap-like: it reuses the identical clean-slate `map-ont`
+    // option assembly + `--mm2_*` knobs (design#2/#3), so the same branch fires.
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
         return Ok((minimap2_options(cli)?, gp));
     }
     Ok((options, gp))
@@ -786,6 +788,21 @@ mod tests {
         let cli = cli_from(&[]);
         let (opts, _) =
             build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
+    }
+
+    /// Phase 3 (T3, design#2): rammap is minimap-like — it reuses the IDENTICAL
+    /// clean-slate `map-ont` option string (the same `minimap2_options` branch).
+    #[test]
+    fn rammap_default_option_string() {
+        let (opts, _) = build_aligner_options(
+            &cli_from(&["--rammap"]),
+            Aligner::Rammap,
+            ReadFormat::FastQ,
+            false,
+            None,
+        )
+        .unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
     }
 

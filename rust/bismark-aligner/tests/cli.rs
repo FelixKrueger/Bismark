@@ -2577,6 +2577,143 @@ fn minimap2_max_length_drop_counts_as_no_alignment() {
 }
 
 // ===========================================================================
+// rammap (Phase 3) — the pure-Rust minimap2 reimplementation as a 4th backend
+// (subprocess shape). minimap-like: `.mmi`, clean-slate `map-ont`, `rammap`
+// naming, SE-only, concordance-gated (NOT byte-identical). PE rejected.
+// ===========================================================================
+
+/// A fake `rammap` (prints `rammap 1.1.1` — a BANNER prefix, unlike minimap2's bare
+/// number; reached via `--path_to_rammap`). Invoked **positionally** like minimap2
+/// (`<opts> <BS_*.mmi> <input>`, NO `-x`/`-U`/`--norc`/`--nofw`). On the CT index it
+/// maps each read at chr1:1 with the minimap2/rammap tag set (positive `AS:i:`, the
+/// ignored `s2:i:`, `MD:Z:`); UNMAPPED on GA. The read named `sup` ALSO emits a
+/// trailing **supplementary** record (flag 2048, `SA:Z:`) — the primary comes FIRST
+/// (rammap's order), so the merge must keep the primary and NOT emit an extra record.
+///
+/// 🔴 Cannot false-pass on a wrong invocation: had the Rust used the Bowtie 2 shape
+/// (`-x BS_CT -U …`) there would be no `.mmi` arg → every read routes to unmapped →
+/// the mapping-efficiency assertions fail.
+#[cfg(unix)]
+fn make_fake_rammap_mapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "rammap 1.1.1"; exit 0;; esac
+inp=""; mmi=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) inp="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 {
+             id=$1; sub(/^@/,"",id);
+             print id "\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6";
+             if (id == "sup") {
+               # trailing supplementary (flag 2048, SA:Z) — must NOT displace the primary
+               print id "\t2048\tchr1_CT_converted\t5\t60\t3M3S\t*\t0\t0\tACG\tFFF\tNM:i:0\tAS:i:-9\tSA:Z:chr1,1,+,6M,60,0;\tMD:Z:3";
+             }
+           }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("rammap"), script);
+}
+
+/// Phase 3 (T6): `--rammap` SE end-to-end — the BAM + report carry the `rammap`
+/// naming token (not `bt2`/`hisat2`/`mm2`), the report says "Bismark was run with
+/// rammap" and echoes the clean-slate `map-ont` option string; the never-silent
+/// notice ("NOT byte-identical to minimap2") is on stderr; and the BAM record count
+/// equals the reported unique-mapped count (catches a supplementary mis-pick — the
+/// `sup` read's trailing flag-2048 record must NOT add a BAM record).
+#[cfg(unix)]
+#[test]
+fn rammap_se_mapped_names_report_and_notice() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    // two reads: a plain one + `sup` (which gets a trailing supplementary record).
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n@sup\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        // never-silent opt-in notice (T5) on stderr.
+        .stderr(
+            predicate::str::contains(
+                "--rammap uses the rammap pure-Rust minimap2 reimplementation",
+            )
+            .and(predicate::str::contains("NOT byte-identical to minimap2")),
+        );
+
+    // Naming token is `rammap`, NOT bt2/hisat2/mm2.
+    let bam = outdir.path().join("reads_bismark_rammap.bam");
+    assert!(bam.is_file());
+    assert!(fs::metadata(&bam).unwrap().len() > 0);
+    assert!(!outdir.path().join("reads_bismark_bt2.bam").exists());
+    assert!(!outdir.path().join("reads_bismark_mm2.bam").exists());
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_rammap_SE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with rammap against"));
+    // The clean-slate minimap2/rammap option string is echoed (NOT the Bowtie 2 `-q …`).
+    assert!(report.contains("-a --MD --secondary=no -t 2 -x map-ont -K 250K"));
+    assert!(!report.contains("-q --score-min"));
+    assert!(report.contains("Sequences analysed in total:\t2\n"));
+    // Both reads map uniquely (the `sup` supplementary does not perturb the count).
+    assert!(report.contains(
+        "Number of alignments with a unique best hit from the different alignments:\t2\n"
+    ));
+    assert!(report.contains("Mapping efficiency:\t100.0%\n"));
+
+    // BAM record count == reported unique-mapped count (2): the trailing flag-2048
+    // supplementary on `sup` must NOT have produced an extra record.
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 2);
+}
+
+/// Phase 3 (T3): paired-end `--rammap` is rejected loudly (SE-only, minimap-like) —
+/// mirrors `minimap2_paired_end_is_rejected`, swapping `--minimap2` → `--rammap`. The
+/// real temp `-1`/`-2` files take the layout past `check_exists` so the PE reject fires.
+#[test]
+fn rammap_paired_end_is_rejected() {
+    let r1 = TempDir::new().unwrap();
+    let m1 = r1.path().join("r1.fq");
+    let m2 = r1.path().join("r2.fq");
+    fs::write(&m1, b"@r/1\nACGT\n+\nIIII\n").unwrap();
+    fs::write(&m2, b"@r/2\nACGT\n+\nIIII\n").unwrap();
+    bin()
+        .arg("--rammap")
+        .arg("some_genome")
+        .arg("-1")
+        .arg(&m1)
+        .arg("-2")
+        .arg(&m2)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(
+            predicate::str::contains("paired-end")
+                .and(predicate::str::contains("rammap"))
+                .and(predicate::str::contains("not supported")),
+        );
+}
+
+// ===========================================================================
 // `--combined_index` (v2) — opt-in combined-index alignment (PLAN 06072026 ph2).
 // Hermetic: a fake `bowtie2` emits combined-style SAM (RNAME `_CT_converted`/
 // `_GA_converted` suffix × FLAG orientation) so the classifier sees OT / OB /

@@ -56,6 +56,11 @@ pub struct Cli {
     /// Align with minimap2 (single-end only; paired-end is rejected).
     #[arg(long = "minimap2", visible_alias = "mm2")]
     pub minimap2: bool,
+    /// Align with rammap, the pure-Rust minimap2 reimplementation (single-end
+    /// only; same `map-ont`/`.mmi`/SE-only model as `--minimap2`). Opt-in,
+    /// concordance-validated — NOT byte-identical to minimap2.
+    #[arg(long = "rammap", visible_alias = "ram")]
+    pub rammap: bool,
     /// Folder containing the `bowtie2` executable (not the executable itself).
     #[arg(long = "path_to_bowtie2", value_name = "PATH")]
     pub path_to_bowtie2: Option<PathBuf>,
@@ -65,6 +70,9 @@ pub struct Cli {
     /// Folder containing `minimap2`.
     #[arg(long = "path_to_minimap2", value_name = "PATH")]
     pub path_to_minimap2: Option<PathBuf>,
+    /// Folder containing `rammap`.
+    #[arg(long = "path_to_rammap", value_name = "PATH")]
+    pub path_to_rammap: Option<PathBuf>,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

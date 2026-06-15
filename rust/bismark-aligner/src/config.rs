@@ -27,6 +27,13 @@ pub enum Aligner {
     /// Single-end only; the merge/MAPQ/XM core is reused unchanged (the within-
     /// instance second-best `s2:i:` is IGNORED by Bismark → `second_best=None`).
     Minimap2,
+    /// rammap (v2; concordance-gated) — the pure-Rust minimap2 reimplementation
+    /// (`jwanglab/rammap`), spawned as an external binary exactly like minimap2.
+    /// "minimap-like": identical SAM tag set (incl. the ignored `s2:i:`), single
+    /// `.mmi`, clean-slate `map-ont` options, SE-only, same `--local`/PE/
+    /// `--combined_index` rejects. Opt-in `--rammap`, never-silent — NOT
+    /// byte-identical to minimap2 (validated by concordance, not the gate).
+    Rammap,
 }
 
 impl Aligner {
@@ -38,6 +45,9 @@ impl Aligner {
             Aligner::Bowtie2 => "bt2",
             Aligner::Hisat2 => "hisat2",
             Aligner::Minimap2 => "mm2",
+            // Design#7: the full word `rammap` (NOT abbreviated like `mm2`) →
+            // `_bismark_rammap.bam` / `_rammap_SE_report.txt`.
+            Aligner::Rammap => "rammap",
         }
     }
 
@@ -49,6 +59,8 @@ impl Aligner {
             Aligner::Bowtie2 => "Bowtie 2",
             Aligner::Hisat2 => "HISAT2",
             Aligner::Minimap2 => "minimap2",
+            // The report "Bismark was run with rammap against …" line.
+            Aligner::Rammap => "rammap",
         }
     }
 }
@@ -296,13 +308,16 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // minimap2 is REJECTED: it performs local (soft-clipping) alignment **by design** —
     // there is no end-to-end vs local distinction to toggle. Combined-index = a v2 mode.
     if cli.local {
-        if aligner == Aligner::Minimap2 {
-            return Err(AlignerError::Unsupported(
-                "--local is not supported with --minimap2: minimap2 performs local \
+        // minimap2 AND rammap (minimap-like) are both rejected: both perform local
+        // (soft-clipping) alignment by design. The error names the actual engine
+        // (`aligner.name()`) so a `--rammap` run reads "--rammap", not "--minimap2".
+        if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
+            return Err(AlignerError::Unsupported(format!(
+                "--local is not supported with --{0}: {0} performs local \
                  (soft-clipping) alignment by design — there is no end-to-end vs local \
-                 distinction to toggle. Use --bowtie2 or --hisat2 for --local."
-                    .into(),
-            ));
+                 distinction to toggle. Use --bowtie2 or --hisat2 for --local.",
+                aligner.name()
+            )));
         }
         if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
             return Err(AlignerError::Unsupported(
@@ -322,13 +337,15 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // `warn`+`sleep(1)` twice per read pair) AND the PE report writer (1845-1850)
     // has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
     // trustworthy oracle to byte-match. Fail loudly (Bowtie 2 + HISAT2 cover PE).
-    if aligner == Aligner::Minimap2 && layout.is_paired() {
-        return Err(AlignerError::Unsupported(
-            "paired-end alignment with --minimap2 is not supported: the Perl Bismark minimap2 \
+    // minimap2 AND rammap (minimap-like) are SE-only. The error names the actual
+    // engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
+        return Err(AlignerError::Unsupported(format!(
+            "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
              paired-end path is unfinished/experimental and has no trustworthy byte-identity \
-             reference. Use --minimap2 for single-end reads, or --bowtie2/--hisat2 for paired-end."
-                .into(),
-        ));
+             reference. Use --{0} for single-end reads, or --bowtie2/--hisat2 for paired-end.",
+            aligner.name()
+        )));
     }
 
     // --combined_index (v2) scope guard: SE (directional OR non-directional)
@@ -352,6 +369,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
         Aligner::Minimap2 => cli.path_to_minimap2.as_deref(),
+        Aligner::Rammap => cli.path_to_rammap.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
     let (aligner_options, gap_penalties) = options::build_aligner_options(
@@ -514,25 +532,28 @@ fn reject_combined_index_unsupported(
         // minimap2 reject below). (--combined_index_single_pass stays Bowtie-2-only — its
         // own guard above; the tag-RNG mechanism is Bowtie-2-specific.)
         if !matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
-            return Err(AlignerError::Unsupported(
+            return Err(AlignerError::Unsupported(format!(
                 "--combined_index_sequential requires Bowtie 2 or HISAT2: it is the faithful \
                  sequential low-memory execution model for the non-directional combined-index path. \
-                 minimap2 combined-index is not supported — drop --combined_index_sequential."
-                    .into(),
-            ));
+                 {0} combined-index is not supported — drop --combined_index_sequential.",
+                aligner.name()
+            )));
         }
     }
     if !cli.combined_index {
         return Ok(());
     }
-    if aligner == Aligner::Minimap2 {
-        return Err(AlignerError::Unsupported(
-            "--combined_index is not supported with --minimap2: a single both-strands minimap2 \
-             pass cannot reproduce Bismark's per-strand model, and minimap2 paired-end has no \
+    // minimap2 AND rammap (minimap-like) are both rejected: a single both-strands
+    // minimap-family pass cannot reproduce Bismark's per-strand model. The error
+    // names the actual engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
+        return Err(AlignerError::Unsupported(format!(
+            "--combined_index is not supported with --{0}: a single both-strands {0} \
+             pass cannot reproduce Bismark's per-strand model, and {0} paired-end has no \
              trustworthy oracle. Use Bowtie 2 or HISAT2 (both build a combined index via \
-             `bismark_genome_preparation --combined_genome`)."
-                .into(),
-        ));
+             `bismark_genome_preparation --combined_genome`).",
+            aligner.name()
+        )));
     }
     // v2.x: paired-end combined-index is lifted for **Bowtie 2 AND HISAT2** across ALL
     // THREE library types — **directional** (Phase 2, one both-strands C->T pass -> OT/OB),
@@ -625,11 +646,32 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
             "You may not select both --minimap2 and --bowtie2. Make your pick! [default is Bowtie 2]".into(),
         ));
     }
+    // rammap conflicts (ordered BEFORE every `Ok` below so the conflict fires, never
+    // a silent precedence pick): --rammap is mutually exclusive with the other engines.
+    if cli.rammap && cli.bowtie2 {
+        return Err(AlignerError::Validation(
+            "You may not select both --rammap and --bowtie2. Make your pick! [default is Bowtie 2]"
+                .into(),
+        ));
+    }
+    if cli.rammap && cli.hisat2 {
+        return Err(AlignerError::Validation(
+            "You may not select both --rammap and --hisat2. Make your pick!".into(),
+        ));
+    }
+    if cli.rammap && cli.minimap2 {
+        return Err(AlignerError::Validation(
+            "You may not select both --rammap and --minimap2. Make your pick!".into(),
+        ));
+    }
     if cli.hisat2 {
         return Ok(Aligner::Hisat2);
     }
     if cli.minimap2 {
         return Ok(Aligner::Minimap2);
+    }
+    if cli.rammap {
+        return Ok(Aligner::Rammap);
     }
     Ok(Aligner::Bowtie2)
 }
@@ -648,7 +690,10 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
 /// (Preset *selection* + the preset-conflict dies live in `options::minimap2_options`,
 /// mirroring Perl's `if($mm2)` option-assembly block 8358-8413.)
 fn resolve_mm2_max_length(cli: &Cli, aligner: Aligner) -> Result<Option<u32>> {
-    if aligner != Aligner::Minimap2 {
+    // rammap is minimap-like — it honors the SAME `--mm2_*` knobs + length cutoff
+    // (design#3, for apples-to-apples fairness vs `--minimap2`). So the
+    // "outside minimap-family mode" die-block applies only when NEITHER is selected.
+    if !matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
         if cli.mm2_short_read {
             return Err(AlignerError::Validation(
                 "You cannot specify minimap2 options (--mm2_short_reads) unless you also use \
@@ -1050,11 +1095,37 @@ mod tests {
         assert_eq!(Aligner::Minimap2.name(), "minimap2");
     }
 
+    /// Phase 3 (T1, design#7): rammap's token is the full word `rammap` (NOT
+    /// abbreviated like `mm2`) → `_bismark_rammap`; name = `rammap` (report line).
+    #[test]
+    fn rammap_token_and_name() {
+        assert_eq!(Aligner::Rammap.token(), "rammap");
+        assert_eq!(Aligner::Rammap.name(), "rammap");
+    }
+
     #[test]
     fn resolve_aligner_rejects_conflicting_selections() {
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--bowtie2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--minimap2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
+    }
+
+    /// Phase 3 (T2): `--rammap` selects [`Aligner::Rammap`].
+    #[test]
+    fn resolve_aligner_selects_rammap() {
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--rammap"])).unwrap(),
+            Aligner::Rammap
+        );
+    }
+
+    /// Phase 3 (T2): `--rammap` with any other engine dies (ordered before the
+    /// `Ok`s so the conflict fires, never a silent precedence pick).
+    #[test]
+    fn resolve_aligner_rejects_rammap_with_other_engines() {
+        assert!(resolve_aligner(&cli_from(&["--rammap", "--bowtie2"])).is_err());
+        assert!(resolve_aligner(&cli_from(&["--rammap", "--hisat2"])).is_err());
+        assert!(resolve_aligner(&cli_from(&["--rammap", "--minimap2"])).is_err());
     }
 
     // ---- --local scope (Bowtie 2 only; rejected for HISAT2/minimap2 + combined-index) ----
@@ -1078,6 +1149,21 @@ mod tests {
         assert!(
             m.contains("--minimap2") && m.contains("by design"),
             "minimap2 --local must reject with the 'local by design' rationale; got: {m}"
+        );
+    }
+
+    /// Phase 3 (T3): `--rammap --local` is rejected (minimap-like, local by design).
+    /// The reject is reachable via `resolve` (it precedes `resolve_layout`/`check_exists`),
+    /// and the message names `--rammap` (NOT `--minimap2`) via `aligner.name()`.
+    #[test]
+    fn rammap_rejects_local() {
+        // The --local scope gate fires before genome discovery, so no on-disk index
+        // is needed (mirrors `resolve_local_aligner_scope`).
+        let err = resolve(&cli_from(&["--rammap", "--local"]), "cmd".into()).unwrap_err();
+        let m = err.to_string();
+        assert!(
+            m.contains("--rammap") && m.contains("by design") && !m.contains("--minimap2"),
+            "rammap --local must reject naming --rammap with the 'by design' rationale; got: {m}"
         );
     }
 
@@ -1164,6 +1250,25 @@ mod tests {
         );
     }
 
+    /// Phase 3 (T3, design#3): rammap honors the SAME `--mm2_maximum_length` cutoff
+    /// (explicit value passes through; absent → the default 10000) — for fairness vs
+    /// `--minimap2`, NOT the "unless --minimap2" die.
+    #[test]
+    fn rammap_honors_mm2_max_length() {
+        assert_eq!(
+            resolve_mm2_max_length(
+                &cli_from(&["--rammap", "--mm2_maximum_length", "50000"]),
+                Aligner::Rammap
+            )
+            .unwrap(),
+            Some(50000)
+        );
+        assert_eq!(
+            resolve_mm2_max_length(&cli_from(&["--rammap"]), Aligner::Rammap).unwrap(),
+            Some(10000)
+        );
+    }
+
     // ---- --combined_index (v2) scope guard (Phase 2; §3.1) -----------------
 
     fn se() -> ReadLayout {
@@ -1190,6 +1295,26 @@ mod tests {
                 &se()
             )
             .is_ok()
+        );
+    }
+
+    /// Phase 3 (T3): `--rammap --combined_index` is rejected. Tested via the unit fn
+    /// directly (NOT `resolve`, whose `resolve_layout`/`check_exists` runs first), and
+    /// the message names `--rammap` (NOT `--minimap2`) via `aligner.name()`.
+    #[test]
+    fn rammap_rejects_combined_index() {
+        let cli = cli_from(&["--rammap", "--combined_index"]);
+        let err = reject_combined_index_unsupported(
+            &cli,
+            Aligner::Rammap,
+            LibraryType::Directional,
+            &se(),
+        )
+        .unwrap_err();
+        let m = err.to_string();
+        assert!(
+            m.contains("--rammap") && !m.contains("--minimap2"),
+            "rammap combined-index reject must name --rammap; got: {m}"
         );
     }
 

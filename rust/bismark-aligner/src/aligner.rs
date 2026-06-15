@@ -23,6 +23,10 @@ pub const PINNED_HISAT2_VERSION: &str = "2.2.2";
 /// The minimap2 version this port pins for the byte-identity gate (oxy `bismark-test`).
 pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
 
+/// The rammap version this port pins (concordance gate, NOT byte-identity). rammap
+/// reports `rammap 1.1.1` (a `rammap ` banner prefix, unlike minimap2's bare number).
+pub const PINNED_RAMMAP_VERSION: &str = "1.1.1";
+
 /// A located, working aligner.
 #[derive(Debug, Clone)]
 pub struct DetectedAligner {
@@ -39,6 +43,7 @@ fn binary_name(kind: Aligner) -> &'static str {
         Aligner::Bowtie2 => "bowtie2",
         Aligner::Hisat2 => "hisat2",
         Aligner::Minimap2 => "minimap2",
+        Aligner::Rammap => "rammap",
     }
 }
 
@@ -48,6 +53,7 @@ fn pinned_version(kind: Aligner) -> &'static str {
         Aligner::Bowtie2 => PINNED_BOWTIE2_VERSION,
         Aligner::Hisat2 => PINNED_HISAT2_VERSION,
         Aligner::Minimap2 => PINNED_MINIMAP2_VERSION,
+        Aligner::Rammap => PINNED_RAMMAP_VERSION,
     }
 }
 
@@ -57,6 +63,7 @@ fn path_flag(kind: Aligner) -> &'static str {
         Aligner::Bowtie2 => "--path_to_bowtie2",
         Aligner::Hisat2 => "--path_to_hisat2",
         Aligner::Minimap2 => "--path_to_minimap2",
+        Aligner::Rammap => "--path_to_rammap",
     }
 }
 
@@ -110,6 +117,8 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     // or report.
     let parsed = match kind {
         Aligner::Minimap2 => parse_minimap2_version(&stdout),
+        // rammap prints `rammap 1.1.1` (a banner prefix) — take the last token.
+        Aligner::Rammap => parse_rammap_version(&stdout),
         Aligner::Bowtie2 | Aligner::Hisat2 => parse_bowtie2_version(&stdout),
     };
     let version = parsed.unwrap_or_else(|| {
@@ -162,6 +171,19 @@ fn parse_minimap2_version(stdout: &str) -> Option<String> {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(str::to_string)
+}
+
+/// Parse rammap's version output. Unlike minimap2, `rammap --version` prints a
+/// `rammap 1.1.1` banner (a `rammap ` prefix), so the version is the **last
+/// whitespace token** of the first non-empty line (design#4). Warn-only — it
+/// never enters the gated BAM or report.
+fn parse_rammap_version(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .and_then(|l| l.split_whitespace().last())
+        .map(str::to_string) // "rammap 1.1.1" -> "1.1.1"
 }
 
 /// `true` if `s` is `<int>.<int>.<int>`.
@@ -234,5 +256,27 @@ mod tests {
         assert!(!is_version_triple("2.5.x"));
         assert!(is_version_triple("2.5.5"));
         assert!(is_version_triple("10.0.123"));
+    }
+
+    /// Phase 3 (T1): the rammap detection metadata (binary / pin / path flag).
+    #[test]
+    fn rammap_detection_metadata() {
+        assert_eq!(binary_name(Aligner::Rammap), "rammap");
+        assert_eq!(pinned_version(Aligner::Rammap), "1.1.1");
+        assert_eq!(path_flag(Aligner::Rammap), "--path_to_rammap");
+    }
+
+    /// Phase 3 (T1, design#4): `rammap --version` prints `rammap 1.1.1` (a banner
+    /// prefix, unlike minimap2's bare number) → take the LAST whitespace token.
+    #[test]
+    fn parses_rammap_version_strips_prefix() {
+        assert_eq!(
+            parse_rammap_version("rammap 1.1.1\n").as_deref(),
+            Some("1.1.1")
+        );
+        assert_eq!(
+            parse_rammap_version("  rammap 1.1.1  \n").as_deref(),
+            Some("1.1.1")
+        );
     }
 }

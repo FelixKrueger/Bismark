@@ -899,6 +899,33 @@ mod tests {
         assert_eq!(c.unique_best_alignment_count, 1);
     }
 
+    /// Phase 3 (T4/I2, rammap supplementary robustness): rammap (like minimap2)
+    /// emits the PRIMARY record FIRST, then any supplementary (`flag&2048`, `SA:Z`).
+    /// The merge processes the first record per qname then drains the rest
+    /// (`advance-until-qname-changes`, merge.rs:305), so the primary is selected and
+    /// the trailing supplementary does NOT displace it (`is_unmapped()` is
+    /// `flag == 4` exactly, so neither is "unmapped"). One primary + one
+    /// supplementary on the same qname → exactly one UniqueBest at the primary's pos.
+    #[test]
+    fn rammap_supplementary_does_not_displace_primary() {
+        // primary (flag 0) at chr1:100, then a supplementary (flag 2048, SA:Z) at chr1:500.
+        let primary = mapped("r1", "chr1_CT_converted", 100, 0, "10", None);
+        let supplementary = "r1\t2048\tchr1_CT_converted\t500\t60\t10M\t*\t0\t0\t\
+            ACGTACGTAC\tIIIIIIIIII\tAS:i:-12\tMD:Z:10\tSA:Z:chr1,100,+,10M,60,0;";
+        let (d, c) = run("r1", &[&primary, supplementary], &[&unmapped("r1")], true);
+        match d {
+            Decision::UniqueBest(b) => {
+                assert_eq!(b.chromosome, "chr1");
+                assert_eq!(
+                    b.position, 100,
+                    "the PRIMARY (pos 100) must win, not the 2048 record"
+                );
+            }
+            other => panic!("expected UniqueBest at the primary, got {other:?}"),
+        }
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
     #[test]
     fn best_across_instances_by_score() {
         // instance 1 has the better (higher) AS → it wins.
