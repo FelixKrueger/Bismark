@@ -73,6 +73,14 @@ pub struct Cli {
     /// Folder containing `rammap`.
     #[arg(long = "path_to_rammap", value_name = "PATH")]
     pub path_to_rammap: Option<PathBuf>,
+    /// `[v2/experimental]` Force the subprocess `rammap` backend even when the
+    /// in-process backend is compiled in (the `rammap-inprocess` feature). With the
+    /// feature ON, `--rammap` defaults to the in-process `rammap-core` path; this flag
+    /// forces the legacy subprocess path. Its primary use is the byte-identity gate
+    /// oracle (in-process vs subprocess on the same binary) — not a long-term knob.
+    /// Requires `--rammap`. No effect on a feature-OFF binary (subprocess is the only path).
+    #[arg(long = "rammap_subprocess")]
+    pub rammap_subprocess: bool,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,
