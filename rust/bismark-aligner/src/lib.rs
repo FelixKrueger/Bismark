@@ -33,7 +33,16 @@ pub mod convert;
 pub mod discovery;
 pub mod error;
 pub mod genome;
+pub mod inprocess;
 pub mod mapq;
+
+// Phase 1 (epic 06152026): re-export the `rammap-core` crate (its lib name is
+// `rammap`) under the `rammap-inprocess` feature so integration tests (a separate
+// crate that does NOT inherit the parent crate's normal deps) can construct an
+// `Arc<rammap::Aligner>` for the record-level cross-check. Default/Mac build never
+// sees this. The extern crate is `rammap` (the package `rammap-core`'s lib name).
+#[cfg(feature = "rammap-inprocess")]
+pub use ::rammap;
 pub mod merge;
 pub mod methylation;
 pub mod options;
