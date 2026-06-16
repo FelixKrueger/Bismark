@@ -2643,6 +2643,14 @@ fn rammap_se_mapped_names_report_and_notice() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--rammap")
+        // This test validates the SUBPROCESS rammap backend (the fake `rammap` binary,
+        // its positional `.mmi` invocation, naming, option string, supplementary
+        // handling). With the `rammap-inprocess` feature ON, `--rammap` defaults to the
+        // in-process backend, which would bypass the fake binary and try to load the
+        // fake `.mmi` via real rammap-core. Force the subprocess path so this test is
+        // backend-stable on both builds (epic 06152026 Phase 2). The in-process backend
+        // is exercised by the oxy byte-identity smoke (it needs a real `.mmi`).
+        .arg("--rammap_subprocess")
         .arg("--path_to_rammap")
         .arg(bins.path())
         .arg("--temp_dir")

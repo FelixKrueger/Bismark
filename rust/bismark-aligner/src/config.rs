@@ -169,6 +169,13 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
+    /// `[v2/experimental]` `--rammap_subprocess`: force the subprocess `rammap`
+    /// backend even when the in-process backend (`rammap-inprocess` feature) is
+    /// compiled in. With the feature ON, `--rammap` defaults to the in-process path;
+    /// this flag forces the subprocess path (the Phase-3 byte-identity gate oracle).
+    /// Read on BOTH builds by `lib::use_se_inprocess_rammap` (always-compiled) so it is
+    /// never a feature-off dead field. `resolve` requires `--rammap` whenever it is set.
+    pub rammap_subprocess: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -268,6 +275,17 @@ fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Opt
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
+    // `--rammap_subprocess` (force the subprocess rammap backend even when the
+    // in-process backend is compiled in; primarily the Phase-3 byte-identity gate
+    // oracle) is meaningful only with `--rammap` — fail loud otherwise (never-silent;
+    // mirrors the rammap conflict dies in `resolve_aligner`).
+    if cli.rammap_subprocess && !cli.rammap {
+        return Err(AlignerError::Validation(
+            "--rammap_subprocess requires --rammap: it forces the subprocess rammap backend, \
+             which only applies to a --rammap run."
+                .into(),
+        ));
+    }
     // The minimap2-only preset/length flags (Perl 8329-8356): outside minimap2
     // mode every `--mm2_*` flag dies (the `unless($mm2)` block); in minimap2 mode
     // `--mm2_maximum_length` is range-checked + defaults to 10000. Returns the
@@ -394,6 +412,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     Ok(RunConfig {
         command_line,
         aligner,
+        // Phase 2 (epic 06152026): force-subprocess flag (guarded above: requires --rammap).
+        rammap_subprocess: cli.rammap_subprocess,
         library,
         layout,
         format,
@@ -1165,6 +1185,26 @@ mod tests {
             m.contains("--rammap") && m.contains("by design") && !m.contains("--minimap2"),
             "rammap --local must reject naming --rammap with the 'by design' rationale; got: {m}"
         );
+    }
+
+    /// Epic 06152026 Phase 2 (V6): `--rammap_subprocess` requires `--rammap`. The guard
+    /// fires right after `resolve_aligner` (before genome discovery), so no on-disk index
+    /// is needed (mirrors `rammap_rejects_local`).
+    #[test]
+    fn rammap_subprocess_requires_rammap() {
+        let err = resolve(&cli_from(&["--rammap_subprocess"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--rammap_subprocess requires --rammap"),
+            "got: {err}"
+        );
+    }
+
+    /// Epic 06152026 Phase 2 (V6): the `--rammap_subprocess` flag parses and is off by default.
+    #[test]
+    fn rammap_subprocess_flag_parses() {
+        assert!(cli_from(&["--rammap", "--rammap_subprocess"]).rammap_subprocess);
+        assert!(!cli_from(&["--rammap"]).rammap_subprocess);
     }
 
     #[test]

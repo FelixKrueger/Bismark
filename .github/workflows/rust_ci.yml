@@ -55,6 +55,36 @@ jobs:
       - name: cargo clippy -D warnings
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  rammap-inprocess:
+    name: cargo build/test (rammap-inprocess feature)
+    # The default `test`/`clippy` jobs build FEATURE-OFF, so the in-process rammap
+    # backend (`inprocess.rs` + the `lib.rs`/`config.rs` wiring, all
+    # `#[cfg(feature = "rammap-inprocess")]`) is otherwise NEVER compiled in CI. This
+    # job compiles + tests it (epic 06152026 Phase 2). `rammap-core` is an OPTIONAL
+    # git-dep — the runner fetches it from GitHub (network); the env-gated
+    # `rammap_inprocess_crosscheck` test auto-skips here (no `.mmi`/binary) and the
+    # oxy byte-identity gate covers the real cross-check.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build -p bismark-aligner --features rammap-inprocess
+        run: cargo build -p bismark-aligner --all-targets --features rammap-inprocess
+      - name: cargo clippy -p bismark-aligner --features rammap-inprocess -D warnings
+        run: cargo clippy -p bismark-aligner --all-targets --features rammap-inprocess -- -D warnings
+      - name: cargo test -p bismark-aligner --features rammap-inprocess
+        run: cargo test -p bismark-aligner --features rammap-inprocess
+
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest

@@ -130,10 +130,39 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // minimap2. Emitted here (the `hisat2_multicore_remap_notice` precedent), NOT in
     // `resolve()` (which would spam every rammap unit test).
     if config.aligner == Aligner::Rammap {
+        // Name the active backend by reusing the ONE selection predicate, so the
+        // printed backend can never disagree with the path actually taken (the
+        // in-process branch in `process_se_chunk` uses the same `use_se_inprocess_rammap`).
+        // It reads `config.rammap_subprocess` on both builds (feature-off → always
+        // false → "subprocess"), so the config field is never a feature-off dead field.
+        let inprocess = use_se_inprocess_rammap(&config);
+        let backend = if inprocess {
+            "in-process rammap-core backend"
+        } else {
+            "subprocess rammap binary"
+        };
         eprintln!(
-            "Note: --rammap uses the rammap pure-Rust minimap2 reimplementation. \
-             Alignments are concordance-validated, NOT byte-identical to minimap2."
+            "Note: --rammap uses the rammap pure-Rust minimap2 reimplementation \
+             ({backend}). Alignments are concordance-validated, NOT byte-identical to minimap2."
         );
+        // Never-silent fallback notices: the in-process backend is compiled in and not
+        // force-disabled (`--rammap_subprocess`), but a run condition routes to the
+        // subprocess path. Feature-gated (only reachable when in-process exists).
+        #[cfg(feature = "rammap-inprocess")]
+        if !inprocess && !config.rammap_subprocess {
+            if config.multicore > 1 {
+                eprintln!(
+                    "Note: the in-process rammap backend is single-core in this build; \
+                     --multicore {} uses the subprocess rammap backend for this run.",
+                    config.multicore
+                );
+            } else if !matches!(config.format, ReadFormat::FastQ) {
+                eprintln!(
+                    "Note: the in-process rammap backend supports FastQ input only; this \
+                     FastA run uses the subprocess rammap backend."
+                );
+            }
+        }
     }
     eprintln!("{}", config.summary());
     pipeline(&config)?;
@@ -356,6 +385,31 @@ fn process_se_chunk(
             cr.count
         );
     }
+    // Phase 2 (epic 06152026): when the in-process rammap backend is compiled in and
+    // selected (single-core SE FastQ, `--rammap` not force-subprocessed), drive the
+    // merge over `Arc<rammap::Aligner>`-backed streams (each converted `.mmi` loaded
+    // ONCE, shared across the 2/4 instances) instead of spawning 2/4 rammap
+    // subprocesses. `drive_merge` is generic over `SamStream`; the merge / XM / output
+    // arm is byte-frozen. `--multicore N>1` and FastA fall through to the subprocess
+    // path (see `use_se_inprocess_rammap` + the never-silent notices in `run`).
+    #[cfg(feature = "rammap-inprocess")]
+    if use_se_inprocess_rammap(config) {
+        let pbat = matches!(config.library, LibraryType::Pbat);
+        let mut streams = build_se_inprocess_streams(config, &converted)?;
+        drive_merge(
+            input,
+            &mut streams,
+            config,
+            genome,
+            refid,
+            pbat,
+            sinks,
+            counters,
+        )?;
+        // In-process streams own no subprocess — nothing to `finish()`; they drop here.
+        return Ok(converted);
+    }
+
     // Phase 3/8: spawn the instances per the per-mode plan, in Bismark slot order
     // so the merge's `enumerate` index == the Perl `@fhs` index.
     let mut streams = Vec::with_capacity(2);
@@ -390,6 +444,130 @@ fn process_se_chunk(
         s.finish()?;
     }
     Ok(converted)
+}
+
+/// Whether the SE single-core in-process rammap path drives this chunk (epic
+/// 06152026 Phase 2).
+///
+/// Unconditional + `cfg!`-gated (NOT `#[cfg]`-gated) on purpose, so it (a) returns
+/// `false` on the feature-off build, (b) is callable from `run`'s backend notice on
+/// BOTH builds — reusing ONE predicate so the printed backend can never disagree with
+/// the path actually taken, and (c) reads `config.rammap_subprocess` in always-compiled
+/// code so the field is never a feature-off dead field (`-D warnings`).
+///
+/// `config.multicore <= 1` is the single-core discriminator: `parallel::run_se_multicore`'s
+/// worker clone deliberately leaves `cfg.multicore = N (> 1)` (it clears only skip/upto),
+/// so a parallel chunk worker never takes this branch. That gate is load-bearing — without
+/// it, `--rammap --multicore N` would route each of the N workers through two `from_index`
+/// loads (= N × ~27 GB co-resident, an OOM regression worse than the subprocess fork). The
+/// HISAT2 `--multicore → multicore = 1` remap cannot fool it: rammap is mutually exclusive
+/// with `--hisat2`. FastQ-only because the Phase-1 `InProcessAlignerStream` reads 4-line
+/// FastQ records (FastA falls back to the subprocess path).
+fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
+    inprocess_rammap_selected(
+        config.aligner,
+        config.rammap_subprocess,
+        config.multicore,
+        config.format,
+    )
+}
+
+/// The pure selection logic behind [`use_se_inprocess_rammap`], over primitives so it
+/// is unit-testable without a full `RunConfig`. `cfg!(feature = "rammap-inprocess")` is
+/// the first conjunct → always `false` on the feature-off build.
+fn inprocess_rammap_selected(
+    aligner: Aligner,
+    force_subprocess: bool,
+    multicore: u32,
+    format: ReadFormat,
+) -> bool {
+    cfg!(feature = "rammap-inprocess")
+        && aligner == Aligner::Rammap
+        && !force_subprocess
+        && multicore <= 1
+        && matches!(format, ReadFormat::FastQ)
+}
+
+/// Build the SE in-process rammap streams (epic 06152026 Phase 2): load each converted
+/// `.mmi` the per-mode [`se_instance_plan`] references EXACTLY ONCE into an
+/// `Arc<rammap::Aligner>` and `Arc::clone` it into one [`InProcessAlignerStream`] per
+/// instance — in Bismark slot order, so the merge's `enumerate` index matches the
+/// subprocess path. Each stream reads the SAME converted temp bytes the subprocess CLI
+/// reads (with a `.gz` sniff). Orientation is ignored (rammap takes no `--norc`/`--nofw`;
+/// strand is classified by instance index in the merge).
+///
+/// All three library types reference BOTH indexes (directional: OT→CT + CTOB→GA; pbat:
+/// CTOT→CT + CTOB→GA; non-directional: all four), so this loads two indexes for every
+/// library — the EPIC's "construct 2 `Arc<Aligner>`". The per-`IndexChoice` gating below
+/// is future-proofing (load only what the plan references), NOT an RSS optimisation for
+/// any current library (PLAN rev 1, correcting the plan-review premise that directional
+/// needs only CT).
+#[cfg(feature = "rammap-inprocess")]
+fn build_se_inprocess_streams(
+    config: &RunConfig,
+    converted: &[convert::ConvertedReads],
+) -> Result<Vec<crate::inprocess::InProcessAlignerStream<Box<dyn BufRead>>>> {
+    use std::sync::Arc;
+
+    let plan = se_instance_plan(config.library);
+
+    // Load each `.mmi` the plan references, exactly once. `from_index` takes a `&str`
+    // path (cf. the Phase-1 cross-check); map non-UTF-8 / load failure to a validation
+    // error (fail-loud, never-silent).
+    let load = |basename: &Path| -> Result<Arc<::rammap::Aligner>> {
+        let mut mmi = basename.as_os_str().to_owned();
+        mmi.push(".mmi");
+        let mmi_str = mmi.to_str().ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "rammap index path is not valid UTF-8: {}",
+                Path::new(&mmi).display()
+            ))
+        })?;
+        let aligner =
+            ::rammap::Aligner::from_index(mmi_str, ::rammap::Preset::MapOnt).map_err(|e| {
+                AlignerError::Validation(format!("failed to load rammap index {mmi_str}: {e}"))
+            })?;
+        Ok(Arc::new(aligner))
+    };
+
+    let needs_ct = plan.iter().any(|(_, ic, _)| matches!(ic, IndexChoice::Ct));
+    let needs_ga = plan.iter().any(|(_, ic, _)| matches!(ic, IndexChoice::Ga));
+    let ct = if needs_ct {
+        Some(load(&config.genome.ct_index_basename)?)
+    } else {
+        None
+    };
+    let ga = if needs_ga {
+        Some(load(&config.genome.ga_index_basename)?)
+    } else {
+        None
+    };
+
+    let mut streams = Vec::with_capacity(plan.len());
+    for (_orientation, index_choice, file_idx) in plan {
+        let aligner = match index_choice {
+            IndexChoice::Ct => Arc::clone(
+                ct.as_ref()
+                    .expect("CT index loaded because the plan references it"),
+            ),
+            IndexChoice::Ga => Arc::clone(
+                ga.as_ref()
+                    .expect("GA index loaded because the plan references it"),
+            ),
+        };
+        // The converted temp the subprocess CLI would have read (`.gz` when `--gzip`).
+        let path = &converted[file_idx].path;
+        let f = File::open(path)?;
+        let reader: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
+            Box::new(BufReader::new(MultiGzDecoder::new(f)))
+        } else {
+            Box::new(BufReader::new(f))
+        };
+        streams.push(crate::inprocess::InProcessAlignerStream::new(
+            aligner, reader,
+        )?);
+    }
+    Ok(streams)
 }
 
 /// SE pipeline (single-core / `--parallel 1`, all library types): load the genome
@@ -662,9 +840,9 @@ fn strip_fastq_suffix(name: &str) -> String {
 /// BAM record. `skip`/`upto` MUST match Phase 2's conversion so the driver and
 /// the streams see the same reads.
 #[allow(clippy::too_many_arguments)]
-fn drive_merge(
+fn drive_merge<S: SamStream>(
     read_file: &Path,
-    streams: &mut [AlignerStream],
+    streams: &mut [S],
     config: &RunConfig,
     genome: &Genome,
     refid: &HashMap<String, usize>,
@@ -4556,6 +4734,66 @@ mod tests {
         // fail-loud: an untagged qname is NEVER silently mis-partitioned.
         let err = strip_conv_tag("read1").unwrap_err();
         assert!(format!("{err}").contains("__CT/__GA conversion tag"));
+    }
+
+    /// Epic 06152026 Phase 2: the SE in-process rammap selection predicate (V4 + V5).
+    /// Runs on BOTH builds — the "selected" case is true iff the feature is compiled in
+    /// (`cfg!` first conjunct); every disqualifier forces the subprocess path regardless.
+    #[test]
+    fn inprocess_rammap_predicate_truth_table() {
+        use crate::config::{Aligner, ReadFormat};
+        // rammap + not-forced + single-core + FastQ selects in-process IFF the feature is on.
+        let selected = cfg!(feature = "rammap-inprocess");
+        assert_eq!(
+            inprocess_rammap_selected(Aligner::Rammap, false, 1, ReadFormat::FastQ),
+            selected
+        );
+        // Wrong aligner → subprocess (on both builds).
+        assert!(!inprocess_rammap_selected(
+            Aligner::Bowtie2,
+            false,
+            1,
+            ReadFormat::FastQ
+        ));
+        assert!(!inprocess_rammap_selected(
+            Aligner::Hisat2,
+            false,
+            1,
+            ReadFormat::FastQ
+        ));
+        assert!(!inprocess_rammap_selected(
+            Aligner::Minimap2,
+            false,
+            1,
+            ReadFormat::FastQ
+        ));
+        // `--rammap_subprocess` forces the subprocess path.
+        assert!(!inprocess_rammap_selected(
+            Aligner::Rammap,
+            true,
+            1,
+            ReadFormat::FastQ
+        ));
+        // Multicore worker (N>1) → subprocess — the gate that prevents N×27 GB (V5).
+        assert!(!inprocess_rammap_selected(
+            Aligner::Rammap,
+            false,
+            2,
+            ReadFormat::FastQ
+        ));
+        assert!(!inprocess_rammap_selected(
+            Aligner::Rammap,
+            false,
+            8,
+            ReadFormat::FastQ
+        ));
+        // FastA → subprocess (the in-process stream is 4-line FastQ-only).
+        assert!(!inprocess_rammap_selected(
+            Aligner::Rammap,
+            false,
+            1,
+            ReadFormat::FastA
+        ));
     }
 
     /// A canned [`SamStream`] over a fixed record list — for `spill_stream_to_file`.
