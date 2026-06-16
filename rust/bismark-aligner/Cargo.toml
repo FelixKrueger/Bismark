@@ -40,6 +40,22 @@ noodles-core = "=0.20.0"
 # Pinned to bismark-io's transitive choice so the workspace links one shared noodles-bam.
 noodles-bam = "=0.89.0"
 bstr = "=1.10.0"
+# Phase 1 (epic 06152026): the in-process rammap backend (`inprocess::InProcessAlignerStream`).
+# OPTIONAL + gated behind the default-OFF `rammap-inprocess` feature (Rev 2.1, Felix
+# decision) so the default/local/Mac `cargo build` NEVER compiles rammap-core; the
+# experimental in-process backend is a compile-time opt-in (release Linux binaries ship
+# with the feature ON). Pinned to a git REV (rammap v1.1.1 = the tagged commit, matching
+# `aligner::PINNED_RAMMAP_VERSION`) for reproducibility. The crate's lib name is `rammap`
+# (workspace member `rammap-core`); imported as `rammap::{Aligner, Preset, Strand, MapOpts,
+# Mapping}`. `default-features = false` drops rammap-core's own `parallel`/`wasm-threads`
+# defaults; we re-add `parallel` explicitly. rammap pulls NO noodles (the tight noodles
+# pins are safe); its `flate2 = "1"` is satisfied by our `=1.1.9` pin (one shared flate2).
+rammap-core = { git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
+
+[features]
+# Default-OFF: compiles the in-process rammap backend (`inprocess.rs`) + its rammap-typed
+# tests. The feature-independent CIGAR-reconstruction unit test runs on ANY toolchain.
+rammap-inprocess = ["dep:rammap-core"]
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"
