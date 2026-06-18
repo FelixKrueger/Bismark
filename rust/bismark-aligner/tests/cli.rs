@@ -2645,12 +2645,10 @@ fn rammap_se_mapped_names_report_and_notice() {
         .arg("--rammap")
         // This test validates the SUBPROCESS rammap backend (the fake `rammap` binary,
         // its positional `.mmi` invocation, naming, option string, supplementary
-        // handling). With the `rammap-inprocess` feature ON, `--rammap` defaults to the
-        // in-process backend, which would bypass the fake binary and try to load the
-        // fake `.mmi` via real rammap-core. Force the subprocess path so this test is
-        // backend-stable on both builds (epic 06152026 Phase 2). The in-process backend
-        // is exercised by the oxy byte-identity smoke (it needs a real `.mmi`).
-        .arg("--rammap_subprocess")
+        // handling). Phase 4 (Option A): `--rammap` DEFAULTS to the subprocess path on
+        // both builds (the in-process path is the explicit `--rammap_inprocess` opt-in),
+        // so a plain `--rammap` run is backend-stable here — no flag needed. The
+        // in-process backend is exercised by the oxy concordance gate (needs a real `.mmi`).
         .arg("--path_to_rammap")
         .arg(bins.path())
         .arg("--temp_dir")
@@ -2665,7 +2663,11 @@ fn rammap_se_mapped_names_report_and_notice() {
             predicate::str::contains(
                 "--rammap uses the rammap pure-Rust minimap2 reimplementation",
             )
-            .and(predicate::str::contains("NOT byte-identical to minimap2")),
+            .and(predicate::str::contains("NOT byte-identical to minimap2"))
+            // V4b (Phase 4, review C2): a plain subprocess-default `--rammap` run must NOT
+            // emit any "fell back to subprocess" notice — those mention `--rammap_inprocess`
+            // and fire ONLY when the in-process backend was opted into but overridden.
+            .and(predicate::str::contains("--rammap_inprocess").not()),
         );
 
     // Naming token is `rammap`, NOT bt2/hisat2/mm2.
