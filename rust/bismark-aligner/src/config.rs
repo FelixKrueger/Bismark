@@ -169,13 +169,14 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
-    /// `[v2/experimental]` `--rammap_subprocess`: force the subprocess `rammap`
-    /// backend even when the in-process backend (`rammap-inprocess` feature) is
-    /// compiled in. With the feature ON, `--rammap` defaults to the in-process path;
-    /// this flag forces the subprocess path (the Phase-3 byte-identity gate oracle).
-    /// Read on BOTH builds by `lib::use_se_inprocess_rammap` (always-compiled) so it is
-    /// never a feature-off dead field. `resolve` requires `--rammap` whenever it is set.
-    pub rammap_subprocess: bool,
+    /// `[v2/experimental]` `--rammap_inprocess`: OPT INTO the in-process `rammap-core`
+    /// backend. `--rammap` defaults to the subprocess path (Phase-4, Option A); this flag
+    /// selects the in-process path instead — lower RAM, slower (single-threaded),
+    /// concordant-NOT-byte-identical. Effective only on a `--features rammap-inprocess`
+    /// build (inert otherwise — the in-process path isn't compiled). Read on BOTH builds
+    /// by `lib::use_se_inprocess_rammap` (always-compiled) so it is never a feature-off
+    /// dead field. `resolve` requires `--rammap` whenever it is set.
+    pub rammap_inprocess: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -275,13 +276,12 @@ fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Opt
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
-    // `--rammap_subprocess` (force the subprocess rammap backend even when the
-    // in-process backend is compiled in; primarily the Phase-3 byte-identity gate
-    // oracle) is meaningful only with `--rammap` — fail loud otherwise (never-silent;
-    // mirrors the rammap conflict dies in `resolve_aligner`).
-    if cli.rammap_subprocess && !cli.rammap {
+    // `--rammap_inprocess` (opt into the in-process rammap backend) is meaningful only
+    // with `--rammap` — fail loud otherwise (never-silent; mirrors the rammap conflict
+    // dies in `resolve_aligner`).
+    if cli.rammap_inprocess && !cli.rammap {
         return Err(AlignerError::Validation(
-            "--rammap_subprocess requires --rammap: it forces the subprocess rammap backend, \
+            "--rammap_inprocess requires --rammap: it selects the in-process rammap backend, \
              which only applies to a --rammap run."
                 .into(),
         ));
@@ -412,8 +412,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     Ok(RunConfig {
         command_line,
         aligner,
-        // Phase 2 (epic 06152026): force-subprocess flag (guarded above: requires --rammap).
-        rammap_subprocess: cli.rammap_subprocess,
+        // Phase 4 (epic 06152026): in-process opt-in flag (guarded above: requires --rammap).
+        rammap_inprocess: cli.rammap_inprocess,
         library,
         layout,
         format,
@@ -1187,24 +1187,24 @@ mod tests {
         );
     }
 
-    /// Epic 06152026 Phase 2 (V6): `--rammap_subprocess` requires `--rammap`. The guard
-    /// fires right after `resolve_aligner` (before genome discovery), so no on-disk index
-    /// is needed (mirrors `rammap_rejects_local`).
+    /// Epic 06152026 Phase 4: `--rammap_inprocess` requires `--rammap`. The guard fires
+    /// right after `resolve_aligner` (before genome discovery), so no on-disk index is
+    /// needed (mirrors `rammap_rejects_local`).
     #[test]
-    fn rammap_subprocess_requires_rammap() {
-        let err = resolve(&cli_from(&["--rammap_subprocess"]), "cmd".into()).unwrap_err();
+    fn rammap_inprocess_requires_rammap() {
+        let err = resolve(&cli_from(&["--rammap_inprocess"]), "cmd".into()).unwrap_err();
         assert!(
             err.to_string()
-                .contains("--rammap_subprocess requires --rammap"),
+                .contains("--rammap_inprocess requires --rammap"),
             "got: {err}"
         );
     }
 
-    /// Epic 06152026 Phase 2 (V6): the `--rammap_subprocess` flag parses and is off by default.
+    /// Epic 06152026 Phase 4: the `--rammap_inprocess` flag parses and is off by default.
     #[test]
-    fn rammap_subprocess_flag_parses() {
-        assert!(cli_from(&["--rammap", "--rammap_subprocess"]).rammap_subprocess);
-        assert!(!cli_from(&["--rammap"]).rammap_subprocess);
+    fn rammap_inprocess_flag_parses() {
+        assert!(cli_from(&["--rammap", "--rammap_inprocess"]).rammap_inprocess);
+        assert!(!cli_from(&["--rammap"]).rammap_inprocess);
     }
 
     #[test]

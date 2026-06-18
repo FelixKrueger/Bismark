@@ -133,11 +133,11 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         // Name the active backend by reusing the ONE selection predicate, so the
         // printed backend can never disagree with the path actually taken (the
         // in-process branch in `process_se_chunk` uses the same `use_se_inprocess_rammap`).
-        // It reads `config.rammap_subprocess` on both builds (feature-off → always
-        // false → "subprocess"), so the config field is never a feature-off dead field.
+        // It reads `config.rammap_inprocess` on both builds (feature-off → always false →
+        // "subprocess"), so the config field is never a feature-off dead field.
         let inprocess = use_se_inprocess_rammap(&config);
         let backend = if inprocess {
-            "in-process rammap-core backend"
+            "in-process rammap-core backend: lower RAM, slower — single-threaded"
         } else {
             "subprocess rammap binary"
         };
@@ -145,21 +145,23 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
             "Note: --rammap uses the rammap pure-Rust minimap2 reimplementation \
              ({backend}). Alignments are concordance-validated, NOT byte-identical to minimap2."
         );
-        // Never-silent fallback notices: the in-process backend is compiled in and not
-        // force-disabled (`--rammap_subprocess`), but a run condition routes to the
-        // subprocess path. Feature-gated (only reachable when in-process exists).
+        // Never-silent fallback notice: the user OPTED IN to the in-process backend
+        // (`--rammap_inprocess`) but a run condition (multicore / FastA) routes to the
+        // subprocess path instead. Condition is `config.rammap_inprocess` (NOT
+        // `!...subprocess`): a plain subprocess-default `--rammap` run must NOT emit this
+        // (it never "fell back"). Feature-gated (only reachable when in-process exists).
         #[cfg(feature = "rammap-inprocess")]
-        if !inprocess && !config.rammap_subprocess {
+        if !inprocess && config.rammap_inprocess {
             if config.multicore > 1 {
                 eprintln!(
-                    "Note: the in-process rammap backend is single-core in this build; \
-                     --multicore {} uses the subprocess rammap backend for this run.",
+                    "Note: --rammap_inprocess is single-core; --multicore {} uses the \
+                     subprocess rammap backend for this run.",
                     config.multicore
                 );
             } else if !matches!(config.format, ReadFormat::FastQ) {
                 eprintln!(
-                    "Note: the in-process rammap backend supports FastQ input only; this \
-                     FastA run uses the subprocess rammap backend."
+                    "Note: --rammap_inprocess supports FastQ input only; this FastA run \
+                     uses the subprocess rammap backend."
                 );
             }
         }
@@ -452,21 +454,26 @@ fn process_se_chunk(
 /// Unconditional + `cfg!`-gated (NOT `#[cfg]`-gated) on purpose, so it (a) returns
 /// `false` on the feature-off build, (b) is callable from `run`'s backend notice on
 /// BOTH builds — reusing ONE predicate so the printed backend can never disagree with
-/// the path actually taken, and (c) reads `config.rammap_subprocess` in always-compiled
+/// the path actually taken, and (c) reads `config.rammap_inprocess` in always-compiled
 /// code so the field is never a feature-off dead field (`-D warnings`).
+///
+/// **Phase 4 (Option A): `--rammap` defaults to the SUBPROCESS path; the in-process
+/// path is the explicit `--rammap_inprocess` OPT-IN** (lean-RAM but slower —
+/// single-threaded; see the EPIC's RAM-vs-speed note). So the in-process path is taken
+/// iff `config.rammap_inprocess` is set (plus the gates below).
 ///
 /// `config.multicore <= 1` is the single-core discriminator: `parallel::run_se_multicore`'s
 /// worker clone deliberately leaves `cfg.multicore = N (> 1)` (it clears only skip/upto),
 /// so a parallel chunk worker never takes this branch. That gate is load-bearing — without
-/// it, `--rammap --multicore N` would route each of the N workers through two `from_index`
-/// loads (= N × ~27 GB co-resident, an OOM regression worse than the subprocess fork). The
-/// HISAT2 `--multicore → multicore = 1` remap cannot fool it: rammap is mutually exclusive
-/// with `--hisat2`. FastQ-only because the Phase-1 `InProcessAlignerStream` reads 4-line
-/// FastQ records (FastA falls back to the subprocess path).
+/// it, `--rammap_inprocess --multicore N` would route each of the N workers through two
+/// `from_index` loads (= N × ~27 GB co-resident, an OOM regression worse than the subprocess
+/// fork). The HISAT2 `--multicore → multicore = 1` remap cannot fool it: rammap is mutually
+/// exclusive with `--hisat2`. FastQ-only because the Phase-1 `InProcessAlignerStream` reads
+/// 4-line FastQ records (FastA falls back to the subprocess path).
 fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
     inprocess_rammap_selected(
         config.aligner,
-        config.rammap_subprocess,
+        config.rammap_inprocess,
         config.multicore,
         config.format,
     )
@@ -474,16 +481,17 @@ fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
 
 /// The pure selection logic behind [`use_se_inprocess_rammap`], over primitives so it
 /// is unit-testable without a full `RunConfig`. `cfg!(feature = "rammap-inprocess")` is
-/// the first conjunct → always `false` on the feature-off build.
+/// the first conjunct → always `false` on the feature-off build (so `--rammap_inprocess`
+/// is inert there — the in-process path isn't compiled).
 fn inprocess_rammap_selected(
     aligner: Aligner,
-    force_subprocess: bool,
+    inprocess_opt_in: bool,
     multicore: u32,
     format: ReadFormat,
 ) -> bool {
     cfg!(feature = "rammap-inprocess")
         && aligner == Aligner::Rammap
-        && !force_subprocess
+        && inprocess_opt_in
         && multicore <= 1
         && matches!(format, ReadFormat::FastQ)
 }
@@ -4742,55 +4750,56 @@ mod tests {
     #[test]
     fn inprocess_rammap_predicate_truth_table() {
         use crate::config::{Aligner, ReadFormat};
-        // rammap + not-forced + single-core + FastQ selects in-process IFF the feature is on.
+        // Phase 4: 2nd arg is the `--rammap_inprocess` OPT-IN. rammap + opt-in + single-core
+        // + FastQ selects in-process IFF the feature is on.
         let selected = cfg!(feature = "rammap-inprocess");
         assert_eq!(
-            inprocess_rammap_selected(Aligner::Rammap, false, 1, ReadFormat::FastQ),
+            inprocess_rammap_selected(Aligner::Rammap, true, 1, ReadFormat::FastQ),
             selected
         );
-        // Wrong aligner → subprocess (on both builds).
+        // NOT opted in → subprocess (the Phase-4 default), on both builds.
+        assert!(!inprocess_rammap_selected(
+            Aligner::Rammap,
+            false,
+            1,
+            ReadFormat::FastQ
+        ));
+        // Wrong aligner → subprocess even with the opt-in (on both builds).
         assert!(!inprocess_rammap_selected(
             Aligner::Bowtie2,
-            false,
+            true,
             1,
             ReadFormat::FastQ
         ));
         assert!(!inprocess_rammap_selected(
             Aligner::Hisat2,
-            false,
+            true,
             1,
             ReadFormat::FastQ
         ));
         assert!(!inprocess_rammap_selected(
             Aligner::Minimap2,
-            false,
-            1,
-            ReadFormat::FastQ
-        ));
-        // `--rammap_subprocess` forces the subprocess path.
-        assert!(!inprocess_rammap_selected(
-            Aligner::Rammap,
             true,
             1,
             ReadFormat::FastQ
         ));
-        // Multicore worker (N>1) → subprocess — the gate that prevents N×27 GB (V5).
+        // Multicore worker (N>1) → subprocess even with the opt-in — the gate that prevents N×27 GB.
         assert!(!inprocess_rammap_selected(
             Aligner::Rammap,
-            false,
+            true,
             2,
             ReadFormat::FastQ
         ));
         assert!(!inprocess_rammap_selected(
             Aligner::Rammap,
-            false,
+            true,
             8,
             ReadFormat::FastQ
         ));
-        // FastA → subprocess (the in-process stream is 4-line FastQ-only).
+        // FastA → subprocess even with the opt-in (the in-process stream is 4-line FastQ-only).
         assert!(!inprocess_rammap_selected(
             Aligner::Rammap,
-            false,
+            true,
             1,
             ReadFormat::FastA
         ));
