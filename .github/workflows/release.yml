@@ -108,7 +108,13 @@ jobs:
       - name: Build the whole suite
         env:
           BISMARK_SUITE_VERSION: ${{ needs.check-release.outputs.version }}
-        run: cargo build --release --locked --manifest-path rust/Cargo.toml --target ${{ matrix.target }}
+        # Compile bismark_rs with the in-process rammap backend ON so the shipped
+        # binary's `--rammap_inprocess` opt-in is functional (default `--rammap`
+        # stays subprocess). `pkg/feature` syntax: the feature lives only on
+        # bismark-aligner; this still builds all 14 workspace members, and the
+        # other 11 binaries are byte-unaffected. The rammap-core git dep is fetched
+        # at build (network available on the runner).
+        run: cargo build --release --locked --manifest-path rust/Cargo.toml --target ${{ matrix.target }} --features bismark-aligner/rammap-inprocess
       - name: Package the suite tarball
         id: package
         run: |
