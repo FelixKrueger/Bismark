@@ -20,8 +20,14 @@ ENV BISMARK_SUITE_VERSION=${BISMARK_SUITE_VERSION}
 # Copy the whole repo (context = repo root) and build the workspace --locked.
 # (A dep-only cache layer is omitted: the 14-crate workspace makes the dummy-src
 # trick brittle; a clean --locked build is correct and CI caches via the registry.)
+# `--features bismark-aligner/rammap-inprocess` compiles bismark_rs's in-process
+# rammap backend ON so the shipped `--rammap_inprocess` opt-in is functional
+# (default `--rammap` stays subprocess). The feature is bismark-aligner-only, so
+# the other 11 binaries are byte-unaffected; the rammap-core git dep is fetched at
+# build (network available in the build stage). Changing this line invalidates the
+# buildx layer cache once (expected — a one-time cold compile per arch).
 COPY . .
-RUN cargo build --release --locked --manifest-path rust/Cargo.toml
+RUN cargo build --release --locked --manifest-path rust/Cargo.toml --features bismark-aligner/rammap-inprocess
 
 # ── Runtime stage ────────────────────────────────────────────
 # micromamba base so the pinned aligners + samtools install cleanly from bioconda.
