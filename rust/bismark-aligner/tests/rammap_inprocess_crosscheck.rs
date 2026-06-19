@@ -150,8 +150,17 @@ fn inprocess_matches_subprocess_record_for_record() {
     // Read the whole converted file into memory so the in-process stream consumes
     // the identical bytes the subprocess CLI reads.
     let bytes = std::fs::read(&reads).expect("read RAMMAP_READS");
-    let mut stream =
-        InProcessAlignerStream::new(aligner, Cursor::new(bytes)).expect("build in-process stream");
+    // #995: the stream takes a shared rayon pool; a 1-thread pool here keeps the field-level
+    // cross-check vs the subprocess deterministic + simplest (thread-invariance is covered by
+    // the hermetic `parallel_refill_is_thread_invariant_across_chunks` unit test).
+    let pool = std::sync::Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap(),
+    );
+    let mut stream = InProcessAlignerStream::new(aligner, Cursor::new(bytes), pool)
+        .expect("build in-process stream");
 
     let read_lens = read_lengths_by_qname(&reads);
     let sub = subprocess_sam_by_qname(&bin, &mmi, &reads);

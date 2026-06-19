@@ -126,6 +126,7 @@ dependencies = [
  "noodles-sam",
  "predicates",
  "rammap-core",
+ "rayon",
  "tempfile",
  "thiserror 2.0.0",
  "which",

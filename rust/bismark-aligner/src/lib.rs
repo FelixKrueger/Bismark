@@ -136,34 +136,32 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         // It reads `config.rammap_inprocess` on both builds (feature-off → always false →
         // "subprocess"), so the config field is never a feature-off dead field.
         let inprocess = use_se_inprocess_rammap(&config);
+        // Name the active backend (the in-process backend's thread count = --multicore, #995).
         let backend = if inprocess {
-            "in-process rammap-core backend: lower RAM, slower — single-threaded"
+            let n = config.multicore.max(1);
+            if n > 1 {
+                format!("in-process rammap-core backend: lower RAM, {n}-thread")
+            } else {
+                "in-process rammap-core backend: lower RAM, slower — single-threaded".to_string()
+            }
         } else {
-            "subprocess rammap binary"
+            "subprocess rammap binary".to_string()
         };
         eprintln!(
             "Note: --rammap uses the rammap pure-Rust minimap2 reimplementation \
              ({backend}). Alignments are concordance-validated, NOT byte-identical to minimap2."
         );
-        // Never-silent fallback notice: the user OPTED IN to the in-process backend
-        // (`--rammap_inprocess`) but a run condition (multicore / FastA) routes to the
-        // subprocess path instead. Condition is `config.rammap_inprocess` (NOT
-        // `!...subprocess`): a plain subprocess-default `--rammap` run must NOT emit this
-        // (it never "fell back"). Feature-gated (only reachable when in-process exists).
+        // Never-silent FastA fallback: the user OPTED IN (`--rammap_inprocess`) but the
+        // in-process stream is FastQ-only, so a FastA run uses the subprocess path instead.
+        // (#995: `--multicore N` no longer forces a fallback — the in-process backend is now
+        // N-threaded; that former branch is deleted.) Feature-gated. A plain subprocess-default
+        // `--rammap` run never reaches here (it never "fell back").
         #[cfg(feature = "rammap-inprocess")]
-        if !inprocess && config.rammap_inprocess {
-            if config.multicore > 1 {
-                eprintln!(
-                    "Note: --rammap_inprocess is single-core; --multicore {} uses the \
-                     subprocess rammap backend for this run.",
-                    config.multicore
-                );
-            } else if !matches!(config.format, ReadFormat::FastQ) {
-                eprintln!(
-                    "Note: --rammap_inprocess supports FastQ input only; this FastA run \
-                     uses the subprocess rammap backend."
-                );
-            }
+        if !inprocess && config.rammap_inprocess && !matches!(config.format, ReadFormat::FastQ) {
+            eprintln!(
+                "Note: --rammap_inprocess supports FastQ input only; this FastA run \
+                 uses the subprocess rammap backend."
+            );
         }
     }
     eprintln!("{}", config.summary());
@@ -205,6 +203,14 @@ fn pipeline(config: &RunConfig) -> Result<()> {
                         LibraryType::Directional => run_se_combined(config, reads),
                     }
                 }
+            } else if use_se_inprocess_rammap(config) {
+                // #995: the in-process rammap backend short-circuits to the SINGLE-process
+                // `run_se` regardless of `--multicore N`. The parallelism is intra-process (a
+                // shared rayon pool sized by N, inside the stream); routing it through the
+                // fork model (`parallel::run_se_multicore`) would reload the index per worker
+                // — the RAM blowup Phase 2 avoided. Reuses the ONE selection predicate (so the
+                // routing, the notice, and the `process_se_chunk` branch can't disagree).
+                run_se(config, reads)
             } else if n > 1 {
                 parallel::run_se_multicore(config, reads, n)
             } else {
@@ -387,13 +393,16 @@ fn process_se_chunk(
             cr.count
         );
     }
-    // Phase 2 (epic 06152026): when the in-process rammap backend is compiled in and
-    // selected (single-core SE FastQ, `--rammap` not force-subprocessed), drive the
+    // Phase 2 (epic 06152026; #995): when the in-process rammap backend is compiled in
+    // and selected (SE FastQ `--rammap_inprocess`, not force-subprocessed), drive the
     // merge over `Arc<rammap::Aligner>`-backed streams (each converted `.mmi` loaded
-    // ONCE, shared across the 2/4 instances) instead of spawning 2/4 rammap
-    // subprocesses. `drive_merge` is generic over `SamStream`; the merge / XM / output
-    // arm is byte-frozen. `--multicore N>1` and FastA fall through to the subprocess
-    // path (see `use_se_inprocess_rammap` + the never-silent notices in `run`).
+    // ONCE, shared across the 2/4 instances) instead of spawning 2/4 rammap subprocesses.
+    // The streams map their reads in PARALLEL on a shared pool (sized by `--multicore`,
+    // #995); `drive_merge` is generic over `SamStream`; the merge / XM / output arm is
+    // byte-frozen. Reached only via the single-process `run_se` (the `pipeline()`
+    // short-circuit routes `--rammap_inprocess` here for ANY `--multicore N`). Only
+    // FastA falls through to the subprocess path (the stream is FastQ-only; see
+    // `use_se_inprocess_rammap` + the never-silent notice in `run`).
     #[cfg(feature = "rammap-inprocess")]
     if use_se_inprocess_rammap(config) {
         let pbat = matches!(config.library, LibraryType::Pbat);
@@ -448,51 +457,41 @@ fn process_se_chunk(
     Ok(converted)
 }
 
-/// Whether the SE single-core in-process rammap path drives this chunk (epic
-/// 06152026 Phase 2).
+/// Whether the SE in-process rammap path drives this run (epic 06152026; #995).
 ///
 /// Unconditional + `cfg!`-gated (NOT `#[cfg]`-gated) on purpose, so it (a) returns
-/// `false` on the feature-off build, (b) is callable from `run`'s backend notice on
-/// BOTH builds — reusing ONE predicate so the printed backend can never disagree with
-/// the path actually taken, and (c) reads `config.rammap_inprocess` in always-compiled
-/// code so the field is never a feature-off dead field (`-D warnings`).
+/// `false` on the feature-off build, (b) is callable from `run`'s backend notice AND the
+/// `pipeline()` routing on BOTH builds — reusing ONE predicate so the printed backend, the
+/// routing, and the path actually taken can never disagree, and (c) reads
+/// `config.rammap_inprocess` in always-compiled code so the field is never a feature-off
+/// dead field (`-D warnings`).
 ///
-/// **Phase 4 (Option A): `--rammap` defaults to the SUBPROCESS path; the in-process
-/// path is the explicit `--rammap_inprocess` OPT-IN** (lean-RAM but slower —
-/// single-threaded; see the EPIC's RAM-vs-speed note). So the in-process path is taken
-/// iff `config.rammap_inprocess` is set (plus the gates below).
+/// **Phase 4 (Option A): `--rammap` defaults to the SUBPROCESS path; the in-process path is
+/// the explicit `--rammap_inprocess` OPT-IN.** Taken iff `config.rammap_inprocess` (+ rammap
+/// + FastQ + feature-on).
 ///
-/// `config.multicore <= 1` is the single-core discriminator: `parallel::run_se_multicore`'s
-/// worker clone deliberately leaves `cfg.multicore = N (> 1)` (it clears only skip/upto),
-/// so a parallel chunk worker never takes this branch. That gate is load-bearing — without
-/// it, `--rammap_inprocess --multicore N` would route each of the N workers through two
-/// `from_index` loads (= N × ~27 GB co-resident, an OOM regression worse than the subprocess
-/// fork). The HISAT2 `--multicore → multicore = 1` remap cannot fool it: rammap is mutually
-/// exclusive with `--hisat2`. FastQ-only because the Phase-1 `InProcessAlignerStream` reads
-/// 4-line FastQ records (FastA falls back to the subprocess path).
+/// **#995: NO `multicore` gate.** The in-process path is now N-threaded (a shared rayon pool
+/// sized by `--multicore`), so it runs for ANY N. A parallel FORK worker reaching this branch
+/// is prevented by TWO independent mechanisms: (1) `pipeline()` short-circuits
+/// `--rammap_inprocess` to the single-process `run_se` (reusing THIS predicate), so
+/// `parallel::run_se_multicore`/`se_chunk_job` is never invoked for it; (2) the
+/// `aligner == Rammap` conjunct — a fork worker only runs non-rammap engines, so even if
+/// reached it returns `false`. FastQ-only because the `InProcessAlignerStream` reads 4-line
+/// FastQ (FastA falls back to subprocess).
 fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
-    inprocess_rammap_selected(
-        config.aligner,
-        config.rammap_inprocess,
-        config.multicore,
-        config.format,
-    )
+    inprocess_rammap_selected(config.aligner, config.rammap_inprocess, config.format)
 }
 
 /// The pure selection logic behind [`use_se_inprocess_rammap`], over primitives so it
 /// is unit-testable without a full `RunConfig`. `cfg!(feature = "rammap-inprocess")` is
 /// the first conjunct → always `false` on the feature-off build (so `--rammap_inprocess`
-/// is inert there — the in-process path isn't compiled).
-fn inprocess_rammap_selected(
-    aligner: Aligner,
-    inprocess_opt_in: bool,
-    multicore: u32,
-    format: ReadFormat,
-) -> bool {
+/// is inert there — the in-process path isn't compiled). No `multicore` term (#995: the
+/// in-process path is N-threaded; fork-worker safety is via the `pipeline()` short-circuit
+/// + the `aligner == Rammap` conjunct — see [`use_se_inprocess_rammap`]).
+fn inprocess_rammap_selected(aligner: Aligner, inprocess_opt_in: bool, format: ReadFormat) -> bool {
     cfg!(feature = "rammap-inprocess")
         && aligner == Aligner::Rammap
         && inprocess_opt_in
-        && multicore <= 1
         && matches!(format, ReadFormat::FastQ)
 }
 
@@ -551,6 +550,21 @@ fn build_se_inprocess_streams(
         None
     };
 
+    // ONE shared rayon pool, sized by --multicore (#995), `Arc::clone`d into EVERY stream
+    // (NOT one pool per stream): the lockstep merge drains+refills one stream at a time, so
+    // refills never overlap → a shared pool of N gives the same throughput with N total
+    // threads, not instances×N. N == 1 (the default) → a 1-thread pool == the former
+    // one-at-a-time path (byte-identical output).
+    let threads = config.multicore.max(1) as usize;
+    let pool = Arc::new(
+        ::rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|e| {
+                AlignerError::Validation(format!("failed to build rammap thread pool: {e}"))
+            })?,
+    );
+
     let mut streams = Vec::with_capacity(plan.len());
     for (_orientation, index_choice, file_idx) in plan {
         let aligner = match index_choice {
@@ -572,7 +586,9 @@ fn build_se_inprocess_streams(
             Box::new(BufReader::new(f))
         };
         streams.push(crate::inprocess::InProcessAlignerStream::new(
-            aligner, reader,
+            aligner,
+            reader,
+            Arc::clone(&pool),
         )?);
     }
     Ok(streams)
@@ -4744,63 +4760,45 @@ mod tests {
         assert!(format!("{err}").contains("__CT/__GA conversion tag"));
     }
 
-    /// Epic 06152026 Phase 2: the SE in-process rammap selection predicate (V4 + V5).
-    /// Runs on BOTH builds — the "selected" case is true iff the feature is compiled in
-    /// (`cfg!` first conjunct); every disqualifier forces the subprocess path regardless.
+    /// Epic 06152026: the SE in-process rammap selection predicate (V4 + V5). #995 dropped
+    /// the `multicore` term (the in-process path is now N-threaded for ANY N — fork-worker
+    /// safety is via the `pipeline()` short-circuit + the `aligner == Rammap` conjunct). Runs
+    /// on BOTH builds — "selected" is true iff the feature is compiled in (`cfg!` first conjunct).
     #[test]
     fn inprocess_rammap_predicate_truth_table() {
         use crate::config::{Aligner, ReadFormat};
-        // Phase 4: 2nd arg is the `--rammap_inprocess` OPT-IN. rammap + opt-in + single-core
-        // + FastQ selects in-process IFF the feature is on.
+        // rammap + opt-in + FastQ selects in-process IFF the feature is on.
         let selected = cfg!(feature = "rammap-inprocess");
         assert_eq!(
-            inprocess_rammap_selected(Aligner::Rammap, true, 1, ReadFormat::FastQ),
+            inprocess_rammap_selected(Aligner::Rammap, true, ReadFormat::FastQ),
             selected
         );
         // NOT opted in → subprocess (the Phase-4 default), on both builds.
         assert!(!inprocess_rammap_selected(
             Aligner::Rammap,
             false,
-            1,
             ReadFormat::FastQ
         ));
         // Wrong aligner → subprocess even with the opt-in (on both builds).
         assert!(!inprocess_rammap_selected(
             Aligner::Bowtie2,
             true,
-            1,
             ReadFormat::FastQ
         ));
         assert!(!inprocess_rammap_selected(
             Aligner::Hisat2,
             true,
-            1,
             ReadFormat::FastQ
         ));
         assert!(!inprocess_rammap_selected(
             Aligner::Minimap2,
             true,
-            1,
-            ReadFormat::FastQ
-        ));
-        // Multicore worker (N>1) → subprocess even with the opt-in — the gate that prevents N×27 GB.
-        assert!(!inprocess_rammap_selected(
-            Aligner::Rammap,
-            true,
-            2,
-            ReadFormat::FastQ
-        ));
-        assert!(!inprocess_rammap_selected(
-            Aligner::Rammap,
-            true,
-            8,
             ReadFormat::FastQ
         ));
         // FastA → subprocess even with the opt-in (the in-process stream is 4-line FastQ-only).
         assert!(!inprocess_rammap_selected(
             Aligner::Rammap,
             true,
-            1,
             ReadFormat::FastA
         ));
     }
