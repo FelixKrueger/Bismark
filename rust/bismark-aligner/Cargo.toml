@@ -51,11 +51,16 @@ bstr = "=1.10.0"
 # defaults; we re-add `parallel` explicitly. rammap pulls NO noodles (the tight noodles
 # pins are safe); its `flate2 = "1"` is satisfied by our `=1.1.9` pin (one shared flate2).
 rammap-core = { git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
+# #995: rayon for the in-process parallel per-read map (the shared `ThreadPool`). OPTIONAL,
+# only under `rammap-inprocess` — already transitive via rammap-core's `parallel` feature, so
+# one shared rayon. `"1"` unifies with rammap-core's transitive pin (the default build never sees it).
+rayon = { version = "1", optional = true }
 
 [features]
 # Default-OFF: compiles the in-process rammap backend (`inprocess.rs`) + its rammap-typed
 # tests. The feature-independent CIGAR-reconstruction unit test runs on ANY toolchain.
-rammap-inprocess = ["dep:rammap-core"]
+# `dep:rayon` is the in-process parallel-map pool (#995).
+rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

@@ -43,6 +43,9 @@ use crate::error::{AlignerError, Result};
 use std::io::BufRead;
 #[cfg(feature = "rammap-inprocess")]
 use std::sync::Arc;
+// #995: parallel per-read mapping on a shared pool. `par_iter` needs the prelude.
+#[cfg(feature = "rammap-inprocess")]
+use rayon::prelude::*;
 
 // ===========================================================================
 // Pure CIGAR helpers (feature-INDEPENDENT — compile + tested on any toolchain).
@@ -283,99 +286,142 @@ pub fn build_sam_record(
 // InProcessAlignerStream (feature-gated — holds an `Arc<rammap::Aligner>`).
 // ===========================================================================
 
+/// Reads mapped per parallel refill (#995). Bounds the in-memory buffer to
+/// `CHUNK × (2/4 instances) × SamRecord` (~hundreds of MB at 2048 for long-ONT
+/// records, where `raw_line` dominates) — well under the ~31 GB index footprint.
+#[cfg(feature = "rammap-inprocess")]
+const CHUNK: usize = 2048;
+
 /// A converted-read source presented as a [`SamStream`], backed by an in-process
-/// `rammap::Aligner` (NO subprocess). One record look-ahead (`current`) mirrors
-/// [`AlignerStream`](crate::align::AlignerStream): `new` loads the first record,
-/// `advance` maps the next read. Emits exactly ONE primary record per read in
-/// INPUT ORDER (the merge's lockstep join requires it).
+/// `rammap::Aligner` (NO subprocess). **#995: maps a CHUNK of reads in PARALLEL per
+/// refill on a SHARED [`rayon::ThreadPool`]** (sized by `--multicore`), buffering the
+/// results in INPUT ORDER and serving them one-per-read through `current`/`advance` —
+/// so the byte-frozen lockstep merge is unchanged. `--multicore 1` (a 1-thread pool)
+/// is byte-identical to the former one-at-a-time path: per-read `map_seq` is
+/// deterministic + the parallel `collect` preserves input order. Emits exactly ONE
+/// primary record per read in input order (the merge's lockstep join requires it).
 ///
-/// `reads` is the SAME converted FastQ bytes the subprocess CLI reads (the
-/// per-instance `_C_to_T`/`_G_to_A` source), so the merge sees identical reads in
-/// identical order.
+/// The pool is SHARED across the 2/4 streams (NOT one per stream): the lockstep merge
+/// drains+refills one stream at a time, so refills never overlap — a shared pool of N
+/// gives the same throughput as `instances × N` threads with none of the waste.
+///
+/// `reads` is the SAME converted FastQ bytes the subprocess CLI reads.
 #[cfg(feature = "rammap-inprocess")]
 pub struct InProcessAlignerStream<R: BufRead> {
     aligner: Arc<rammap::Aligner>,
     reads: R,
-    current: Option<SamRecord>,
-    // scratch buffers reused per record (4-line FastQ), to avoid per-read allocs.
+    pool: Arc<rayon::ThreadPool>,
+    buf: Vec<SamRecord>, // current chunk, INPUT ORDER
+    pos: usize,          // cursor into `buf`
+    // scratch line buffers reused while reading a chunk (4-line FastQ).
     id: Vec<u8>,
     seq: Vec<u8>,
     id2: Vec<u8>,
     qual: Vec<u8>,
 }
 
+/// Map one converted read + build its `SamRecord` — the per-read work run in parallel.
+#[cfg(feature = "rammap-inprocess")]
+fn map_and_build(aligner: &rammap::Aligner, qname: &str, read: &[u8], qual: &[u8]) -> SamRecord {
+    let result = aligner.map_seq_with(
+        qname,
+        read,
+        rammap::MapOpts {
+            cs: None,
+            md: Some(true),
+        },
+    );
+    // Primary = the one non-supplementary primary mapping (supplementary-only → unmapped).
+    let primary = result
+        .mappings
+        .iter()
+        .find(|m| m.is_primary && !m.is_supplementary);
+    build_sam_record(qname, read, qual, primary)
+}
+
 #[cfg(feature = "rammap-inprocess")]
 impl<R: BufRead> InProcessAlignerStream<R> {
-    /// Build the stream and read up to the first record (`None` for an empty
-    /// source). The `Arc<Aligner>` is shared (Phase 2 — 2 indexes for 4 instances).
-    pub fn new(aligner: Arc<rammap::Aligner>, reads: R) -> Result<Self> {
+    /// Build the stream (sharing `pool`) and map the first chunk (`buf` empty for an
+    /// empty source). `Arc<Aligner>` + `Arc<ThreadPool>` are shared across instances.
+    pub fn new(
+        aligner: Arc<rammap::Aligner>,
+        reads: R,
+        pool: Arc<rayon::ThreadPool>,
+    ) -> Result<Self> {
         let mut s = InProcessAlignerStream {
             aligner,
             reads,
-            current: None,
+            pool,
+            buf: Vec::new(),
+            pos: 0,
             id: Vec::new(),
             seq: Vec::new(),
             id2: Vec::new(),
             qual: Vec::new(),
         };
-        s.current = s.map_next()?;
+        s.refill()?;
         Ok(s)
     }
 
-    /// Read the next converted FastQ record (4 lines, mirroring `convert.rs`'s
-    /// `read_until('\n')` + truncated-tail drop), map it, and build the `SamRecord`.
-    /// `Ok(None)` at EOF.
-    fn map_next(&mut self) -> Result<Option<SamRecord>> {
-        self.id.clear();
-        self.seq.clear();
-        self.id2.clear();
-        self.qual.clear();
-        let n1 = self.reads.read_until(b'\n', &mut self.id)?;
-        let n2 = self.reads.read_until(b'\n', &mut self.seq)?;
-        let n3 = self.reads.read_until(b'\n', &mut self.id2)?;
-        let n4 = self.reads.read_until(b'\n', &mut self.qual)?;
-        // `last unless ($id and $seq and $id2 and $qual)` — any missing line ends
-        // the stream; a truncated final record is dropped (matches convert.rs).
-        if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
-            return Ok(None);
+    /// Read up to `CHUNK` converted FastQ records (4 lines each; a truncated final
+    /// record is dropped, matching `convert.rs`), map them in PARALLEL on the shared
+    /// pool, and replace `buf` (input order) with the results; `pos = 0`. An empty
+    /// `buf` after refill ⇒ EOF.
+    fn refill(&mut self) -> Result<()> {
+        // Read the chunk serially into owned (qname, read, qual) tuples (cheap I/O;
+        // the cost is `map_seq`). Owned bytes so the parallel closure is `Send`.
+        let mut chunk: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::with_capacity(CHUNK);
+        while chunk.len() < CHUNK {
+            self.id.clear();
+            self.seq.clear();
+            self.id2.clear();
+            self.qual.clear();
+            let n1 = self.reads.read_until(b'\n', &mut self.id)?;
+            let n2 = self.reads.read_until(b'\n', &mut self.seq)?;
+            let n3 = self.reads.read_until(b'\n', &mut self.id2)?;
+            let n4 = self.reads.read_until(b'\n', &mut self.qual)?;
+            // any missing line ends the stream; a truncated final record is dropped.
+            if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+                break;
+            }
+            // QNAME = the `@id` line minus the leading `@` + trailing newline.
+            let id_line = chomp(&self.id);
+            let qname_bytes = id_line.strip_prefix(b"@").unwrap_or(id_line);
+            let qname = std::str::from_utf8(qname_bytes)
+                .map_err(|e| {
+                    AlignerError::Validation(format!("converted read ID is not valid UTF-8: {e}"))
+                })?
+                .to_string();
+            chunk.push((qname, chomp(&self.seq).to_vec(), chomp(&self.qual).to_vec()));
         }
-
-        // QNAME = the `@id` line minus the leading `@` and trailing newline (what
-        // the aligner SAM emits; the converted file always prefixes `@`).
-        let id_line = chomp(&self.id);
-        let qname_bytes = id_line.strip_prefix(b"@").unwrap_or(id_line);
-        let qname = std::str::from_utf8(qname_bytes).map_err(|e| {
-            AlignerError::Validation(format!("converted read ID is not valid UTF-8: {e}"))
-        })?;
-        let read = chomp(&self.seq);
-        let qual = chomp(&self.qual);
-
-        let result = self.aligner.map_seq_with(
-            qname,
-            read,
-            rammap::MapOpts {
-                cs: None,
-                md: Some(true),
-            },
-        );
-        // Primary = the one non-supplementary primary mapping (Q3: supplementary-only
-        // → treated as unmapped for the stream's single record).
-        let primary = result
-            .mappings
-            .iter()
-            .find(|m| m.is_primary && !m.is_supplementary);
-
-        Ok(Some(build_sam_record(qname, read, qual, primary)))
+        // Parallel map on the SHARED pool; `collect` into a `Vec` preserves input order
+        // (the lockstep merge contract). A 1-thread pool runs it serially → byte-identical
+        // to the former one-at-a-time path.
+        let aligner = &self.aligner;
+        let buf: Vec<SamRecord> = self.pool.install(|| {
+            chunk
+                .par_iter()
+                .map(|(q, r, ql)| map_and_build(aligner, q, r, ql))
+                .collect()
+        });
+        self.buf = buf;
+        self.pos = 0;
+        Ok(())
     }
 }
 
 #[cfg(feature = "rammap-inprocess")]
 impl<R: BufRead> SamStream for InProcessAlignerStream<R> {
     fn current(&self) -> Option<&SamRecord> {
-        self.current.as_ref()
+        self.buf.get(self.pos)
     }
     fn advance(&mut self) -> Result<()> {
-        self.current = self.map_next()?;
+        self.pos += 1;
+        if self.pos >= self.buf.len() {
+            // Chunk drained → map the next chunk (resets `pos = 0`); an empty `buf`
+            // after refill leaves `current() == None` (EOF).
+            self.refill()?;
+        }
         Ok(())
     }
 }
@@ -660,7 +706,8 @@ ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
         let fq = "@readA\nACGTACGTACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIIIIIIIIIII\n\
                   @readB\nTTTTTTTTTTTTTTTTTTTTTTTT\n+\nIIIIIIIIIIIIIIIIIIIIIIII\n";
         let mut s =
-            InProcessAlignerStream::new(aligner.clone(), Cursor::new(fq.as_bytes())).unwrap();
+            InProcessAlignerStream::new(aligner.clone(), Cursor::new(fq.as_bytes()), pool(1))
+                .unwrap();
 
         // Record 1 = readA, in input order.
         let c1 = s.current().expect("first record");
@@ -673,7 +720,77 @@ ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
         assert!(s.current().is_none()); // EOF
 
         // Empty source → None immediately.
-        let empty = InProcessAlignerStream::new(aligner, Cursor::new(&b""[..])).unwrap();
+        let empty = InProcessAlignerStream::new(aligner, Cursor::new(&b""[..]), pool(1)).unwrap();
         assert!(empty.current().is_none());
+    }
+
+    /// A rayon pool of `n` threads (test helper, #995).
+    #[cfg(feature = "rammap-inprocess")]
+    fn pool(n: usize) -> std::sync::Arc<rayon::ThreadPool> {
+        std::sync::Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(n)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    /// #995 V2+V3 (hermetic — `from_seqs`, no `.mmi`/oxy): the parallel chunked refill is
+    /// (V3) thread-count-invariant — `--multicore 4` == `--multicore 1` records — and (V2)
+    /// yields every read in INPUT ORDER across MULTIPLE chunk boundaries (5000 reads > the
+    /// 2048 `CHUNK`). Drains to comparable (qname, flag, rname, pos, cigar) tuples.
+    #[cfg(feature = "rammap-inprocess")]
+    #[test]
+    fn parallel_refill_is_thread_invariant_across_chunks() {
+        use std::io::Cursor;
+        use std::sync::Arc;
+        let reference = b"\
+ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\
+ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+            .to_vec();
+        let aligner = Arc::new(rammap::Aligner::from_seqs(
+            vec![("chr1_CT_converted".to_string(), reference)],
+            rammap::Preset::MapOnt,
+        ));
+        // 5000 records (> CHUNK=2048 → ≥3 chunks + the refill boundary).
+        let mut fq = String::new();
+        for i in 0..5000 {
+            fq.push_str(&format!(
+                "@read{i}\nACGTACGTACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIIIIIIIIIII\n"
+            ));
+        }
+        let drain = |n: usize| -> Vec<(String, u16, String, u32, String)> {
+            let mut s = InProcessAlignerStream::new(
+                Arc::clone(&aligner),
+                Cursor::new(fq.clone().into_bytes()),
+                pool(n),
+            )
+            .unwrap();
+            let mut v = Vec::new();
+            while let Some(r) = s.current() {
+                v.push((
+                    r.qname.clone(),
+                    r.flag,
+                    r.rname.clone(),
+                    r.pos,
+                    r.cigar.clone(),
+                ));
+                s.advance().unwrap();
+            }
+            v
+        };
+        let serial = drain(1);
+        let parallel = drain(4);
+        assert_eq!(
+            serial.len(),
+            5000,
+            "V2: every read, across chunk boundaries"
+        );
+        assert_eq!(serial[0].0, "read0", "input order preserved (first)");
+        assert_eq!(serial[4999].0, "read4999", "input order preserved (last)");
+        assert_eq!(
+            serial, parallel,
+            "V3: --multicore 4 == --multicore 1 (thread-invariant)"
+        );
     }
 }
