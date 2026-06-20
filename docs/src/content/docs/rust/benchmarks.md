@@ -8,8 +8,7 @@ tools in Rust. Its output is byte-identical to Perl Bismark `v0.25.1`, so the tw
 be compared on runtime and memory alone.
 
 This page covers a rough default-mode comparison with Perl, how the aligner scales with the number of
-cores it is given, and how the post-alignment tools that take a worker count scale with it. Some of
-those sweeps are still being filled in; see [Not yet measured](#not-yet-measured).
+cores it is given, and how the post-alignment tools that take a worker count scale with it.
 
 ## Methods
 
@@ -115,9 +114,33 @@ single-threaded default, and a steadier ~4.8× against a heavily-multicored Perl
 
 In gzip mode the extractor is limited by BAM decompression, which already keeps about 7 cores busy, so
 raising `--parallel` barely changes wall time or CPU use; it mainly adds worker threads. Peak memory
-stayed below ~0.7 GB across the sweep. (In uncompressed output mode the picture differs: CPU use is
-much lower and memory grows with worker count.) Single-end and RRBS sweeps, plotted on the same axes
-as the aligner graphs, are [still to come](#not-yet-measured).
+stays well under 1 GB. (In uncompressed output mode the picture differs: CPU use is much lower and
+memory grows with worker count.)
+
+The same flat-with-`--parallel` shape holds on single-end and RRBS data. The sweeps below use 10M-read
+subsets (so the wall times are smaller than the full-dataset table above) and overlay Perl:
+
+![Methylation extractor --parallel scaling, 10M single-end WGBS: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_se.png)
+
+![Methylation extractor --parallel scaling, 10M paired-end RRBS: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_rrbs.png)
+
+On the 10M subsets the Rust extractor holds wall time roughly flat at ~10 s (single-end) / ~11 s (RRBS)
+on about 5 cores, with peak memory rising modestly with worker count (~0.25→1.2 GB) as more output
+buffers are held. Perl starts at ~245 s (single-end) / ~330 s (RRBS) single-threaded and reaches ~37 s
+only at ~16 cores — so the Rust default is roughly 25–30× faster than a single-threaded Perl run, and
+still several times faster at matched core counts. Perl is omitted from the memory panel: its gzip
+output goes through a separate process the memory sampler does not attribute to it.
+
+## Deduplicator
+
+`deduplicate_bismark --parallel N` sets the number of BGZF compression threads for the output BAM. On a
+10M single-end alignment it scales until output compression stops being the bottleneck:
+
+![Deduplication --parallel scaling, 10M single-end: wall, CPU and peak memory vs workers](../../../assets/dedup_scaling.png)
+
+Wall time falls from ~40 s single-threaded to ~8.4 s at four workers and then flattens — beyond four
+threads the deduplication logic, not compression, is the limit. CPU use rises to about 5 cores and peak
+memory is flat at ~0.45 GB.
 
 ## rammap (experimental)
 
@@ -139,9 +162,17 @@ lighter. On 1M non-directional reads:
 | Wall time | 2451 s | 1382 s (~1.8× faster) |
 | Peak memory | 70.9 GB | 32.3 GB (−54 %) |
 
-The in-process backend is worker-invariant and scales 11.4× from one thread to sixteen while peak
-memory stays flat at ~31 GB, since all threads share one in-memory index. Plain `--rammap` still runs
-the subprocess.
+The in-process backend is worker-invariant (identical output regardless of thread count), and peak
+memory stays flat because all threads share one in-memory index. A `--multicore` sweep on a 50k-read
+subset shows the shape:
+
+![rammap in-process --multicore scaling, 50k EM-seq Nanopore reads: wall, CPU and peak memory vs workers](../../../assets/rammap_inprocess_scaling.png)
+
+The index loads once (~80–90 s, single-threaded) and the per-read alignment then parallelises, so peak
+memory is flat at ~30 GB across all thread counts. On this 50k sweep wall time falls 4.6× (~490 s →
+~106 s, 1→16 threads); the one-off index load is a large share of the wall at 50k, so at the production
+1M scale — where alignment dominates — the speedup over the single-threaded path is larger (~11×, the
+figure behind the 1.8× win over the subprocess above). Plain `--rammap` still runs the subprocess.
 
 ## Profiling the Perl pipeline
 
@@ -155,13 +186,10 @@ Pro, 55.7M paired-end reads, GRCh38):
 | bedGraph + coverage report | 57 min | 9 % |
 | Deduplication | 8.7 min | 1 % |
 
-## Not yet measured
+## Further work
 
-The following sweeps are planned on 10M-read subsets and will be added as plots matching the aligner
-graphs above:
-
-- `--parallel` sweeps for the **methylation extractor** on single-end and RRBS data (alongside the
-  WGBS PE data above) and for the **deduplicator**, recording wall time, CPU use and peak memory.
-- A fuller `--multicore` sweep for the **rammap in-process backend** beyond the two points above.
+The parallel-capable tools are now all covered above. A few measurements are deliberately left for
+later: full-scale (~55M-read) timings — the 10M subsets here already capture the scaling shape — and
+rammap on paired-end data, which is single-end only at present.
 
 The methodology and raw logs for the figures here are kept with each tool in the repository.
