@@ -124,6 +124,16 @@ The [Bismark Rust suite](/Bismark/installation/) adds an opt-in **combined-index
 
 It is **opt-in, never-silent, and concordance-gated — NOT byte-identical** to the faithful per-strand default (a small, benign churn vs the per-strand oracle: directional ~0.013%, non-directional ~0.022–0.044%, pbat ~0.044%, almost all unique↔ambiguous flips). The faithful default path is unchanged; combined mode is used only when you ask for it. minimap2 and `--multicore` are not supported in combined mode (they fail loudly).
 
+### Is combined mode advisable?
+
+Combined mode trades byte-identity for speed (and, for non-directional libraries, memory):
+
+- **Non-directional — yes, a clear win.** `--combined_index_sequential` is both faster *and* uses about a third less memory than the faithful default (~11 vs 16 GB).
+- **Directional / pbat — a speed-only win.** Roughly 1.3× faster, but a single combined index is slightly *larger* than the two per-strand indices it replaces, so it is not a memory saving.
+- **If you need byte-identical output to Perl** (reproducing published results, or a strict validated pipeline) — stay on the faithful per-strand default. Combined mode is never byte-identical (benign churn ~0.1%, almost entirely unique↔ambiguous flips; actual mis-placement ~0.005%).
+
+See [Which mode to choose](#which-mode-to-choose) below for the per-mode wall-clock and memory numbers.
+
 **Build the combined index once** (genome preparation adds a `Bisulfite_Genome/Combined/` directory):
 
 ```bash
