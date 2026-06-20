@@ -30,7 +30,7 @@ goal was only byte-identical output, and timing is incidental.
 | Tool | Rust vs Perl | Workload |
 |---|---|---|
 | `bismark` aligner | 2.6× (directional) / 1.4× (non-directional) faster | 10M WGBS reads, byte-identical |
-| `bismark_methylation_extractor` | ~4.8× faster | full WGBS, 64.6M read pairs, at comparable core counts |
+| `bismark_methylation_extractor` | ~4.8× (matched cores) — up to ~46× vs Perl's single-threaded default | full WGBS, 64.6M read pairs |
 | `coverage2cytosine` | ~12× (CpG report) / ~2.6× (`--CX`) | full hg38 |
 | `bismark2bedGraph` | ~3.4× (CpG) / ~4.4× (`--CX`) | WGBS PE |
 | `NOMe_filtering` | ~3.4× | 10M SE |
@@ -86,7 +86,24 @@ on the number of workers.
 
 ## Methylation extractor
 
-`--parallel` sweep in gzip-output mode, full WGBS (64.6M read pairs), three repetitions per point:
+Perl's methylation extractor is single-threaded by default. On 64.6M read pairs (WGBS, gzip output)
+it takes **4583 s — about 76 minutes**. The Rust extractor uses roughly 7 cores for parallel gzip
+even at its default `--parallel 1`, and finishes the same job in about **99 s**: ~46× faster out of
+the box. Against Perl's fastest parallel setting (`--multicore 12`, which drives ~19 cores) it is
+about 4.8× faster at comparable resourcing.
+
+| Run | Cores used | Wall |
+|---|---|---|
+| Perl `v0.25.1`, default (single-threaded) | ~1 | 4583 s (~76 min) |
+| Perl `v0.25.1`, `--multicore 12` | ~19 | 479 s |
+| Rust, default (`--parallel 1`) | ~7 | ~99 s |
+
+So the speedup a user actually sees depends on how Perl was being run: dramatic against Perl's
+single-threaded default, and a steadier ~4.8× against a heavily-multicored Perl.
+
+### Scaling with `--parallel`
+
+`--parallel` sweep in gzip-output mode, same WGBS data, three repetitions per point:
 
 | `--parallel` | Wall (s) | CPU (cores) | Peak threads |
 |---|---|---|---|
