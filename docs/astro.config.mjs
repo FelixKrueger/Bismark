@@ -59,6 +59,12 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Rust rewrite',
+          items: [
+            { label: 'Benchmarks', slug: 'rust/benchmarks' },
+          ],
+        },
+        {
           label: 'FAQ',
           items: [
             { label: 'Overview', slug: 'faq' },
