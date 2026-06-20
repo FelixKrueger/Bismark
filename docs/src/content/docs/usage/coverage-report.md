@@ -18,10 +18,10 @@ bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 
 Aligned BAM files. `bam2nuc` handles both Bismark single-end and paired-end files (determined automatically).
 
-!!! note
+:::note
 
-    Both BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is required for CRAM files.
-
+Both BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is required for CRAM files.
+:::
 ### Options
 
 - `--dir`

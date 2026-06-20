@@ -77,26 +77,22 @@ The mate read of paired-end alignments is written out as an additional separate 
 
 ### BAM compression with Genozip
 
-!!! info
+:::note[Third-party tool]
+Genozip is a commercial product (free for academic use, registration required) and is not part of Bismark.
+:::
 
-    3rd party program notice.
-
-    Information valid as of: 21/09/2022.
-
-Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
-
-Please note that while Genozip is free for academic use, it is a commercial product, so users would need to register to it separately.
+[Genozip](https://www.genozip.com) v14 and above supports compressing Bismark-generated BAM files. A benchmark on a Bismark paired-end test file showed roughly 7× compression versus BAM and more than 2× versus CRAM 3.1 (see [issue #526](https://github.com/FelixKrueger/Bismark/issues/526)). Install with `conda install genozip`.
 
 ### Data visualisation
 
 To see the location of the mapped reads the Bismark output file can be imported into a genome viewer, such as SeqMonk, using the chromosome, start and end positions (this can be useful to identify regions in the genome which display an artefactually high number of aligned reads). The alignment output can also be used to apply post-processing steps such as de-duplication (allowing only 1 read for each position in the genome to remove PCR artefacts) or filtering on the number of bisulfite conversion related non-bisulfite mismatches \* (please note that such post-processing scripts are not part of the Bismark package).
 
-!!! tip
+:::tip
 
-    Bisulfite conversion related non-bisulfite mismatches are mismatch positions which have a C in the BS-read but a T in the genome; such mismatches may occur due to the way bisulfite read alignments are performed. Reads containing this kind of mismatches are not automatically removed from the alignment output in order not to introduce a bias for methylated reads.
+Bisulfite conversion related non-bisulfite mismatches are mismatch positions which have a C in the BS-read but a T in the genome; such mismatches may occur due to the way bisulfite read alignments are performed. Reads containing this kind of mismatches are not automatically removed from the alignment output in order not to introduce a bias for methylated reads.
 
-    It should be noted that, even though no methylation calls are performed for these positions, reads containing bisulfite conversion related non-bisulfite mismatches might lead to false alignments if particularly lax alignment parameters were specified.
-
+It should be noted that, even though no methylation calls are performed for these positions, reads containing bisulfite conversion related non-bisulfite mismatches might lead to false alignments if particularly lax alignment parameters were specified.
+:::
 ### Methylation call
 
 The methylation call string contains a dot `.` for every position in the BS-read not involving a cytosine, or contains one of the following letters for the three different cytosine methylation contexts (UPPER CASE = METHYLATED, lower case = unmethylated):
@@ -113,10 +109,10 @@ The methylation call string contains a dot `.` for every position in the BS-read
 
 ### Local alignments in Bowtie 2 or HISAT2 mode
 
-!!! note
+:::note
 
-    This has been previously only been mentioned in the release notes here: <https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0>
-
+This has been previously only been mentioned in the release notes here: <https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0>
+:::
 Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/), a publication by [Wu et al.](https://www.ncbi.nlm.nih.gov/pubmed/30859188) described in further detail that intra-fragment chimeras can hinder the efficient alignment of single-cell BS-seq libraries. In there, the authors described a pipeline that uses paired-end alignments first, followed by a second, single-end alignment step that uses local alignments in a bid to improve the mapping of intra-molecular chimeras. To allow this type of improvement for single-cell or PBAT libraries, Bismark also allows the use of local alignments.
 
 **Please note** that we still do not recommend using local alignments as a means to _magically_ increase mapping efficiencies (please see [here](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/)), but we do acknowledge that PBAT/scBSs-seq/scNMT-seq are exceptional applications where local alignments might indeed make a difference (there is only so much data to be had from a single cell...).
@@ -150,4 +146,19 @@ bismark_rs --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
 bismark_rs --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
 ```
 
-**Memory.** At human-genome scale the combined index is one *large* index, so the memory saving comes specifically from the **low-memory non-directional variants** (`--combined_index_sequential` / `--combined_index_single_pass`): on a real 10M-read WGBS GRCh38 run they held peak RSS to ~11 GB (one index resident) versus ~16 GB for the faithful 4-instance non-directional run and ~19 GB for the parallel combined run — roughly a third to two-fifths less. Combined directional/pbat use a single index load (and the fastest wall times) but are not themselves a memory win, since one large combined index is comparable to the two small per-strand indices they replace.
+### Which mode to choose
+
+Figures are a real 10M-read WGBS GRCh38 run (single-end, 16-core budget); the full graphs and method are on the [benchmarks page](/Bismark/rust/benchmarks/#combined-index-modes).
+
+**Non-directional** — this is where the memory choice matters:
+
+| Mode | Wall | Peak RAM | Byte-identical? |
+|---|---|---|---|
+| Faithful 4-instance (default) | 477 s | 16 GB | — (it is the oracle) |
+| `--combined_index` (parallel) | 434 s | 19 GB | no (benign churn) |
+| **`--combined_index_sequential`** | 400 s | **11 GB** | **yes** (== parallel combined) |
+| `--combined_index_single_pass` | **377 s** | 11 GB | no (read-name-tag RNG) |
+
+**Recommended: `--combined_index_sequential`.** It is the only mode that is both **lower memory (~11 GB vs 16 GB, about a third less)** and **faster** than the faithful default, while staying **byte-identical**. Use `--combined_index_single_pass` only when you want the fastest wall time and can accept a non-byte-identical (still ground-truth-validated) result.
+
+**Directional / pbat:** plain `--combined_index` is fastest (one index load — e.g. directional 176 s vs 229 s faithful) but is **not** a memory saving: one large combined index is about the size of the two per-strand indices it replaces.
