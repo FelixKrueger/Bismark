@@ -2734,7 +2734,8 @@ sub check_results_single_end{
 
 		if ($fhs[$index]->{last_seq_id} eq $identifier) {
 		
-			my ($id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual) = (split (/\t/,$fhs[$index]->{last_line}))[0,1,2,3,4,5,9,10];
+			my @fields = split (/\t/,$fhs[$index]->{last_line});
+			my ($id,$flag,$mapped_chromosome,$position,$mapping_quality,$cigar,$bowtie_sequence,$qual) = @fields[0,1,2,3,4,5,9,10];
 			## If a sequence has no reported alignments there will be a single output line with a bit-wise flag value of 4. We can store the next alignment and move on to the next Bowtie 2 instance
 			if ($flag == 4){
 				## reading in the next alignment, which must be the next sequence
@@ -2770,7 +2771,6 @@ sub check_results_single_end{
 
 			### We will use the optional field to determine the best alignment. Later on we extract the number of mismatches and/or indels from the CIGAR string
 			my ($alignment_score,$second_best,$MD_tag);
-			my @fields = split (/\t/,$fhs[$index]->{last_line});
 
 			foreach (11..$#fields){
 				#warn "$fields[$_]";
@@ -3303,8 +3303,10 @@ sub check_results_paired_end{
 
 		### if the sequence pair we are currently looking at produced an alignment we are doing various things with it
 		if ($fhs[$index]->{last_seq_id} eq $identifier) {
-			my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = (split (/\t/,$fhs[$index]->{last_line_1}))[0,1,2,3,4,5,9,10];
-			my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = (split (/\t/,$fhs[$index]->{last_line_2}))[0,1,2,3,4,5,9,10];
+			my @fields_1 = split (/\t/,$fhs[$index]->{last_line_1});
+			my @fields_2 = split (/\t/,$fhs[$index]->{last_line_2});
+			my ($id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1) = @fields_1[0,1,2,3,4,5,9,10];
+			my ($id_2,$flag_2,$mapped_chromosome_2,$position_2,$mapping_quality_2,$cigar_2,$bowtie_sequence_2,$qual_2) = @fields_2[0,1,2,3,4,5,9,10];
 			# print "Index: $index\t$fhs[$index]->{last_line_1}\n";
 			# print "Index: $index\t$fhs[$index]->{last_line_2}\n";
 			# print join ("\t",$id_1,$flag_1,$mapped_chromosome_1,$position_1,$mapping_quality_1,$cigar_1,$bowtie_sequence_1,$qual_1),"\n";
@@ -3365,9 +3367,6 @@ sub check_results_paired_end{
 
 			### We will use the optional fields to determine the best alignments. Later on we extract the number of mismatches and/or indels from the CIGAR string
 			my ($alignment_score_1,$alignment_score_2,$second_best_1,$second_best_2,$MD_tag_1,$MD_tag_2);
-
-			my @fields_1 = split (/\t/,$fhs[$index]->{last_line_1});
-			my @fields_2 = split (/\t/,$fhs[$index]->{last_line_2});
 
 			foreach (11..$#fields_1){
 				if ($fields_1[$_] =~ /AS:i:(.*)/){
