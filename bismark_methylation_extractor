@@ -30,18 +30,21 @@ my $parent_dir = getcwd();
 my %fhs;	
 
 my $version = 'v0.25.1';
-my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc) = process_commandline();
 
 ### I/O ACCELERATION
 ### Worker threads for samtools BAM/CRAM decompression and for pigz output compression.
 ### Kept as a small fixed value (NOT scaled by --multicore): each of the --multicore child processes reads the
 ### whole BAM and may hold many gzip output streams open at once, so a constant keeps total threads bounded.
 ### Affects compression/decompression speed only, never the content of any output file.
+### NOTE: this must be initialised BEFORE process_commandline(), because the BAM/CRAM header read used to detect
+### the SE/PE mapping mode happens inside process_commandline() and relies on $io_threads.
 my $io_threads = 2;
 my $gzip_cmd = 'gzip';
 if (!system "which pigz >/dev/null 2>&1"){
 	$gzip_cmd = "pigz -p $io_threads";
 }
+
+my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc) = process_commandline();
 
 ### only needed for bedGraph output
 my @sorting_files; # if files are to be written to bedGraph format, these are the methylation extractor output files
