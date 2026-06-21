@@ -32,6 +32,17 @@ my %fhs;
 my $version = 'v0.25.1';
 my ($ignore,$genomic_fasta,$single,$paired,$full,$report,$no_overlap,$merge_non_CpG,$output_dir,$no_header,$bedGraph,$remove,$coverage_threshold,$counts,$cytosine_report,$genome_folder,$zero,$CpG_only,$CX_context,$split_by_chromosome,$sort_size,$samtools_path,$gzip,$ignore_r2,$mbias_off,$mbias_only,$gazillion,$ample_mem,$ignore_3prime,$ignore_3prime_r2,$multicore,$yacht,$ucsc) = process_commandline();
 
+### I/O ACCELERATION
+### Worker threads for samtools BAM/CRAM decompression and for pigz output compression.
+### Kept as a small fixed value (NOT scaled by --multicore): each of the --multicore child processes reads the
+### whole BAM and may hold many gzip output streams open at once, so a constant keeps total threads bounded.
+### Affects compression/decompression speed only, never the content of any output file.
+my $io_threads = 2;
+my $gzip_cmd = 'gzip';
+if (!system "which pigz >/dev/null 2>&1"){
+	$gzip_cmd = "pigz -p $io_threads";
+}
+
 ### only needed for bedGraph output
 my @sorting_files; # if files are to be written to bedGraph format, these are the methylation extractor output files
 my @methylcalls = qw (0 0 0); # [0] = methylated, [1] = unmethylated, [2] = total
@@ -1148,7 +1159,7 @@ VERSION
 			open (DETERMINE,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
 		}
 		elsif ($file =~ /\.cram$/ || $file =~ /\.bam$/ || isBam($file) ){ ### this would allow to read BAM files that do not end in *.bam
-			open (DETERMINE,"$samtools_path view -h $file |") or die "Unable to read from BAM/CRAM file $file: $!\n";
+			open (DETERMINE,"$samtools_path view -h --threads $io_threads $file |") or die "Unable to read from BAM/CRAM file $file: $!\n";
 		}
 		else{
 			open (DETERMINE,$file) or die "Unable to read from $file: $!\n";
@@ -1523,7 +1534,7 @@ sub process_Bismark_results_file{
 	}
 	elsif ($filename =~ /bam$/ || $filename =~ /cram$/ || isBam($filename) ){ ### this would allow to read BAM files that do not end in *.bam
 		if ($samtools_path){
-			open (IN,"$samtools_path view -h $filename |") or die "Can't open BAM/CRAM file $filename: $!\n";
+			open (IN,"$samtools_path view -h --threads $io_threads $filename |") or die "Can't open BAM/CRAM file $filename: $!\n";
 		}
 		else{
 			die "Sorry couldn't find an installation of Samtools. Either specifiy an alternative path using the option '--samtools_path /your/path/', or use a SAM file instead\n\n";
@@ -5047,7 +5058,7 @@ sub open_output_filehandles{
 		print REPORT "\n";
 	}
 
-  #####   open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+  #####   open (OUT,"| $gzip_cmd -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 
   ### --YACHT: Yet Another Context Hunting Tool: Cytosine output irrespective of cytosine context. THIS SECTION IS OPTIONAL
   ### and meant to be fed into the NOMe_filtering script afterwards
@@ -5064,7 +5075,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cytosine_output .= '.gz';
-	  open ($fhs{any_context},"| gzip -c - > $cytosine_output") or die "Failed to write to $cytosine_output $! \n";
+	  open ($fhs{any_context},"| $gzip_cmd -c - > $cytosine_output") or die "Failed to write to $cytosine_output $! \n";
       }
       else{ ### disclaimer: I am aware of "The Useless Use of Cat Awards", but I saw no other option...
 	  open ($fhs{any_context},"| cat > $cytosine_output") or die "Failed to write to $cytosine_output $! \n";
@@ -5091,7 +5102,7 @@ sub open_output_filehandles{
 
       if ($gzip){
 	  $cpg_output .= '.gz';
-	  open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
+	  open ($fhs{CpG_context},"| $gzip_cmd -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
       }
       else{ ### disclaimer: I am aware of "The Useless Use of Cat Awards", but I saw no other option...
 	  open ($fhs{CpG_context},"| cat > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
@@ -5115,7 +5126,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $other_c_output .= '.gz';
-	  open ($fhs{other_context},"| gzip -c - > $other_c_output") or die "Failed to write to $other_c_output $! \n" unless($mbias_only);
+	  open ($fhs{other_context},"| $gzip_cmd -c - > $other_c_output") or die "Failed to write to $other_c_output $! \n" unless($mbias_only);
       }
       else{
 	  open ($fhs{other_context},"| cat > $other_c_output") or die "Failed to write to $other_c_output $!\n" unless($mbias_only);
@@ -5145,7 +5156,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ot .= '.gz';
-	  open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
+	  open ($fhs{0}->{CpG},"| $gzip_cmd -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{0}->{CpG},"| cat > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
@@ -5168,7 +5179,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ctot .= '.gz';
-	  open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
+	  open ($fhs{1}->{CpG},"| $gzip_cmd -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{1}->{CpG},"| cat > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
@@ -5191,7 +5202,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ctob .= '.gz';
-	  open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
+	  open ($fhs{2}->{CpG},"| $gzip_cmd -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{2}->{CpG},"| cat > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
@@ -5214,7 +5225,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ob .= '.gz';
-	  open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
+	  open ($fhs{3}->{CpG},"| $gzip_cmd -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{3}->{CpG},"| cat > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
@@ -5240,7 +5251,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $other_c_ot .= '.gz';
-	  open ($fhs{0}->{other_c},"| gzip -c - > $other_c_ot") or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
+	  open ($fhs{0}->{other_c},"| $gzip_cmd -c - > $other_c_ot") or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{0}->{other_c},"| cat > $other_c_ot") or die "Failed to write to $other_c_ot $!\n" unless($mbias_only);
@@ -5263,7 +5274,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $other_c_ctot .= '.gz';
-	  open ($fhs{1}->{other_c},"| gzip -c - > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
+	  open ($fhs{1}->{other_c},"| $gzip_cmd -c - > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{1}->{other_c},"|  cat > $other_c_ctot") or die "Failed to write to $other_c_ctot $!\n" unless($mbias_only);
@@ -5286,7 +5297,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $other_c_ctob .= '.gz';
-	  open ($fhs{2}->{other_c},"| gzip -c - > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
+	  open ($fhs{2}->{other_c},"| $gzip_cmd -c - > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{2}->{other_c},"| cat > $other_c_ctob") or die "Failed to write to $other_c_ctob $!\n" unless($mbias_only);
@@ -5309,7 +5320,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $other_c_ob .= '.gz';
-	  open ($fhs{3}->{other_c},"| gzip -c - > $other_c_ob") or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
+	  open ($fhs{3}->{other_c},"| $gzip_cmd -c - > $other_c_ob") or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{3}->{other_c},"| cat > $other_c_ob") or die "Failed to write to $other_c_ob $!\n" unless($mbias_only);
@@ -5339,7 +5350,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_output .= '.gz';
-	  open ($fhs{CpG_context},"| gzip -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
+	  open ($fhs{CpG_context},"| $gzip_cmd -c - > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
       }
       else{
 	  open ($fhs{CpG_context},"| cat > $cpg_output") or die "Failed to write to $cpg_output $! \n" unless($mbias_only);
@@ -5363,7 +5374,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chg_output .= '.gz';
-	  open ($fhs{CHG_context},"| gzip -c - > $chg_output") or die "Failed to write to $chg_output $!\n" unless($mbias_only);
+	  open ($fhs{CHG_context},"| $gzip_cmd -c - > $chg_output") or die "Failed to write to $chg_output $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{CHG_context},"| cat > $chg_output") or die "Failed to write to $chg_output $!\n" unless($mbias_only);
@@ -5387,7 +5398,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chh_output .= '.gz';
-	  open ($fhs{CHH_context},"| gzip -c - > $chh_output") or die "Failed to write to $chh_output $!\n" unless($mbias_only);
+	  open ($fhs{CHH_context},"| $gzip_cmd -c - > $chh_output") or die "Failed to write to $chh_output $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{CHH_context},"| cat > $chh_output") or die "Failed to write to $chh_output $!\n" unless($mbias_only);
@@ -5415,7 +5426,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ot .= '.gz';
-	  open ($fhs{0}->{CpG},"| gzip -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
+	  open ($fhs{0}->{CpG},"| $gzip_cmd -c - > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{0}->{CpG},"| cat > $cpg_ot") or die "Failed to write to $cpg_ot $!\n" unless($mbias_only);
@@ -5438,7 +5449,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ctot .= '.gz';
-	  open ($fhs{1}->{CpG},"| gzip -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
+	  open ($fhs{1}->{CpG},"| $gzip_cmd -c - > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{1}->{CpG},"| cat > $cpg_ctot") or die "Failed to write to $cpg_ctot $!\n" unless($mbias_only);
@@ -5461,7 +5472,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ctob .= '.gz';
-	  open ($fhs{2}->{CpG},"| gzip -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
+	  open ($fhs{2}->{CpG},"| $gzip_cmd -c - > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{2}->{CpG},"| cat > $cpg_ctob") or die "Failed to write to $cpg_ctob $!\n" unless($mbias_only);
@@ -5484,7 +5495,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $cpg_ob .= '.gz';
-	  open ($fhs{3}->{CpG},"| gzip -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
+	  open ($fhs{3}->{CpG},"| $gzip_cmd -c - > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{3}->{CpG},"| cat > $cpg_ob") or die "Failed to write to $cpg_ob $!\n" unless($mbias_only);
@@ -5510,7 +5521,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chg_ot .= '.gz';
-	  open ($fhs{0}->{CHG},"| gzip -c - > $chg_ot") or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
+	  open ($fhs{0}->{CHG},"| $gzip_cmd -c - > $chg_ot") or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{0}->{CHG},"| cat > $chg_ot") or die "Failed to write to $chg_ot $!\n" unless($mbias_only);
@@ -5533,7 +5544,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chg_ctot .= '.gz';
-	  open ($fhs{1}->{CHG},"| gzip -c - > $chg_ctot") or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
+	  open ($fhs{1}->{CHG},"| $gzip_cmd -c - > $chg_ctot") or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{1}->{CHG},"| cat > $chg_ctot") or die "Failed to write to $chg_ctot $!\n" unless($mbias_only);
@@ -5556,7 +5567,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chg_ctob .= '.gz';
-	  open ($fhs{2}->{CHG},"| gzip -c - > $chg_ctob") or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
+	  open ($fhs{2}->{CHG},"| $gzip_cmd -c - > $chg_ctob") or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{2}->{CHG},"| cat > $chg_ctob") or die "Failed to write to $chg_ctob $!\n" unless($mbias_only);
@@ -5579,7 +5590,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chg_ob .= '.gz';
-	  open ($fhs{3}->{CHG},"| gzip -c - > $chg_ob") or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
+	  open ($fhs{3}->{CHG},"| $gzip_cmd -c - > $chg_ob") or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{3}->{CHG},"| cat > $chg_ob") or die "Failed to write to $chg_ob $!\n" unless($mbias_only);
@@ -5605,7 +5616,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chh_ot .= '.gz';
-	  open ($fhs{0}->{CHH},"| gzip -c - > $chh_ot") or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
+	  open ($fhs{0}->{CHH},"| $gzip_cmd -c - > $chh_ot") or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{0}->{CHH},"| cat > $chh_ot") or die "Failed to write to $chh_ot $!\n" unless($mbias_only);
@@ -5628,7 +5639,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chh_ctot .= '.gz';
-	  open ($fhs{1}->{CHH},"| gzip -c - > $chh_ctot") or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
+	  open ($fhs{1}->{CHH},"| $gzip_cmd -c - > $chh_ctot") or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{1}->{CHH},"| cat > $chh_ctot") or die "Failed to write to $chh_ctot $!\n" unless($mbias_only);
@@ -5651,7 +5662,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chh_ctob .= '.gz';
-	  open ($fhs{2}->{CHH},"| gzip -c - > $chh_ctob") or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
+	  open ($fhs{2}->{CHH},"| $gzip_cmd -c - > $chh_ctob") or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{2}->{CHH},"| cat > $chh_ctob") or die "Failed to write to $chh_ctob $!\n" unless($mbias_only);
@@ -5674,7 +5685,7 @@ sub open_output_filehandles{
       
       if ($gzip){
 	  $chh_ob .= '.gz';
-	  open ($fhs{3}->{CHH},"| gzip -c - > $chh_ob") or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
+	  open ($fhs{3}->{CHH},"| $gzip_cmd -c - > $chh_ob") or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
       }
       else{
 	  open ($fhs{3}->{CHH},"| cat > $chh_ob") or die "Failed to write to $chh_ob $!\n" unless($mbias_only);
