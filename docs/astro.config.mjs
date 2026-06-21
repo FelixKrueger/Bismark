@@ -61,6 +61,7 @@ export default defineConfig({
         {
           label: 'Rust rewrite',
           items: [
+            { label: 'Scope of the rewrite', slug: 'rust/overview' },
             { label: 'Benchmarks', slug: 'rust/benchmarks' },
           ],
         },
