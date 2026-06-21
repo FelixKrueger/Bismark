@@ -2,6 +2,15 @@
 
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/bismark/README.html)
 
+> [!IMPORTANT]
+> **The Perl version of Bismark is in maintenance freeze.** Bismark `v0.25.x` (this codebase) now
+> receives **critical correctness and security fixes only** — no new features or performance changes.
+> It is being succeeded by the **[Bismark Rust suite](https://felixkrueger.github.io/Bismark/rust/overview/)**,
+> which is byte-identical to `v0.25.1` on the faithful default path, faster, lower-memory, and actively
+> developed (currently in beta); the Perl code will be archived as tagged legacy at the Rust general
+> release. **New contributions, including performance work, should target the Rust suite** — please read
+> [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Thank you!
+
 > **See the documentation**: <https://felixkrueger.github.io/Bismark>
 
 Bismark is a program to map bisulfite treated sequencing reads to a genome of interest and perform methylation calls in a single step. The output can be easily imported into a genome viewer, such as [SeqMonk](http://www.bioinformatics.babraham.ac.uk/projects/seqmonk/), and enables a researcher to analyse the methylation levels of their samples straight away. Its main features are:
