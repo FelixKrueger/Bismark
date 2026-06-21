@@ -55,6 +55,10 @@ All specified input files are treated as one sample and concatenated together fo
 
 The path to your Samtools installation, e.g. `/home/user/samtools/`. Does not need to be specified explicitly if Samtools is in the `PATH` already
 
+- `--parallel [int]`
+
+Number of worker threads handed to `samtools view --threads` for BAM (de)compression. Higher values can speed up reading and writing of large BAM files on multi-core systems. If `pigz` is available it is used for the no-Samtools gzip fallback. This affects I/O speed only; the deduplicated output is unchanged. Default: 1.
+
 - `--version`
 
 Print version information and exit

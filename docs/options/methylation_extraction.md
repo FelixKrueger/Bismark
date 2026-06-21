@@ -95,6 +95,8 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
   Sets the number of cores to be used for the methylation extraction process. If system resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out `.gz` output streams will in fact use ~3 cores per value of `--multicore <int>` specified (1 for the methylation extractor itself, 1 for a Samtools stream, 1 for a GZIP stream), so `--multicore 10` is likely to use around 30 cores of system resources. This option has no bearing on the `bismark2bedGraph` or `coverage2cytosine` (genome-wide cytosine report) processes.
 
+  **I/O acceleration:** the BAM/CRAM input is now read with a small number of `samtools` decompression threads, and if `pigz` (parallel gzip) is found in your `PATH` it is used in place of plain `gzip` for the `--gzip` output streams (falling back to `gzip` automatically when `pigz` is absent). These changes affect compression/decompression speed only, never the extracted methylation calls.
+
 - `--version`
 
   Displays version information.

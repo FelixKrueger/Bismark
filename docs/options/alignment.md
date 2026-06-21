@@ -96,6 +96,15 @@ The full path `</../../>` to the HISAT2 installation on your system. If not spec
 If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
 **WARNING:** Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. _You have been warned_.
 
+##### I/O acceleration (compression):
+
+To reduce time spent on file compression, Bismark applies two automatic optimisations. These affect **speed only** and never change the content of any output file:
+
+- **Threaded BAM/CRAM compression.** All `samtools view` steps that write BAM/CRAM (including single-instance runs, ambiguous-read BAM output and the multi-instance merge) are run with `--threads 4`. Previously only the merge step of multi-instance runs was threaded.
+- **`pigz` for gzip.** If `pigz` (parallel gzip) is found in your `PATH`, it is used in place of plain `gzip` to compress temporary and auxiliary files (e.g. when `--gzip` is used, or for unmapped/ambiguous FastQ output). If `pigz` is not installed, Bismark falls back to plain `gzip` automatically. To benefit, simply install `pigz` and make sure it is on your `PATH`.
+
+The same `pigz` auto-detection and threaded BAM I/O are applied in `deduplicate_bismark` (see its `--parallel` option) and `bismark_methylation_extractor`.
+
 - `--local`
 
 In this mode, it is not required that the entire read aligns from one end to the other. Rather, some characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible alignment score. For Bowtie 2, the match bonus `--ma` (default: 2) is used in this mode, and the best possible alignment score is equal to the match bonus (`--ma`) times the length of the read. This is mutually exclusive with end-to-end alignments. DEFAULT: OFF.
