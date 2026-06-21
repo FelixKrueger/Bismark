@@ -44,10 +44,10 @@ This will produce two output files:
 1. `test_dataset_bismark_bt2.bam` (contains all alignments plus methylation call strings)
 2. `test_dataset_bismark_SE_report.txt` (contains alignment and methylation summary)
 
-!!! note
+:::note
 
-    In order to work properly the current working directory must contain the sequence files to be analysed.
-
+In order to work properly the current working directory must contain the sequence files to be analysed.
+:::
 ## Deduplication
 
 ```bash

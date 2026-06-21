@@ -117,30 +117,34 @@ raising `--parallel` barely changes wall time or CPU use; it mainly adds worker 
 stays well under 1 GB. (In uncompressed output mode the picture differs: CPU use is much lower and
 memory grows with worker count.)
 
-The same flat-with-`--parallel` shape holds on single-end and RRBS data. The sweeps below use 10M-read
-subsets (so the wall times are smaller than the full-dataset table above) and overlay Perl:
+The same flat-with-`--parallel` shape holds on single-end and RRBS data, and at full scale. The
+single-end plot overlays a 10M subset with the full (~64M-read) run; the RRBS plot is a 10M subset.
+Both overlay Perl, with wall time on a log axis to fit the range:
 
-![Methylation extractor --parallel scaling, 10M single-end WGBS: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_se.png)
+![Methylation extractor --parallel scaling, single-end WGBS, 10M vs full ~64M: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_se.png)
 
 ![Methylation extractor --parallel scaling, 10M paired-end RRBS: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_rrbs.png)
 
-On the 10M subsets the Rust extractor holds wall time roughly flat at ~10 s (single-end) / ~11 s (RRBS)
-on about 5 cores, with peak memory rising modestly with worker count (~0.25→1.2 GB) as more output
-buffers are held. Perl starts at ~245 s (single-end) / ~330 s (RRBS) single-threaded and reaches ~37 s
-only at ~16 cores — so the Rust default is roughly 25–30× faster than a single-threaded Perl run, and
-still several times faster at matched core counts. Perl is omitted from the memory panel: its gzip
-output goes through a separate process the memory sampler does not attribute to it.
+The Rust extractor holds wall time flat across `--parallel` at **every** scale (~10 s at 10M, ~80 s at
+~64M single-end; ~11 s at 10M RRBS) on about 5 cores, and its peak memory is **independent of read
+count** — the 10M and ~64M single-end curves coincide (~0.25→0.76 GB), because memory is bound by
+per-worker output buffers, not the data. Perl is single-threaded by default: ~245 s at 10M and
+**~1980 s (~33 min) at ~64M** single-end, only catching up by spending far more cores. So the Rust
+default is **~25× faster than a single-threaded Perl run at both scales**, and several times faster at
+matched core counts. Perl is omitted from the memory panels (its gzip output goes through a separate
+process the sampler does not attribute to it).
 
 ## Deduplicator
 
-`deduplicate_bismark --parallel N` sets the number of BGZF compression threads for the output BAM. On a
-10M single-end alignment it scales until output compression stops being the bottleneck:
+`deduplicate_bismark --parallel N` sets the number of BGZF compression threads for the output BAM. It
+scales the same way at 10M and at full scale (~64M single-end):
 
-![Deduplication --parallel scaling, 10M single-end: wall, CPU and peak memory vs workers](../../../assets/dedup_scaling.png)
+![Deduplication --parallel scaling, single-end, 10M vs full ~64M: wall, CPU and peak memory vs workers](../../../assets/dedup_scaling.png)
 
-Wall time falls from ~40 s single-threaded to ~8.4 s at four workers and then flattens — beyond four
-threads the deduplication logic, not compression, is the limit. CPU use rises to about 5 cores and peak
-memory is flat at ~0.45 GB.
+Wall time falls then **flattens at ~4 workers** at both sizes (10M: 40 → 8.4 s; ~64M: 343 → 77 s) —
+more than ~4 BGZF threads do not help, because the single-threaded deduplication logic becomes the
+limit. CPU use rises to about 5 cores. Peak memory is flat across workers but **scales with read
+count** (~0.45 GB at 10M, ~3.4 GB at ~64M), since deduplication holds read positions in memory.
 
 ## rammap (experimental)
 
@@ -188,8 +192,8 @@ Pro, 55.7M paired-end reads, GRCh38):
 
 ## Further work
 
-The parallel-capable tools are now all covered above. A few measurements are deliberately left for
-later: full-scale (~55M-read) timings — the 10M subsets here already capture the scaling shape — and
-rammap on paired-end data, which is single-end only at present.
+The parallel-capable post-alignment tools are now covered at both 10M and full (~64M) scale (above).
+A couple of measurements remain: a full-length aligner core-scaling sweep (single-end and paired-end
+directional), in progress; and rammap on paired-end data, which is single-end only at present.
 
 The methodology and raw logs for the figures here are kept with each tool in the repository.
