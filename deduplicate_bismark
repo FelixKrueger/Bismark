@@ -29,9 +29,17 @@ my @filenames;
 
 my ($single,$paired,$global_single,$global_paired,$samtools_path,$bam,$rrbs,$multiple,$output_dir,$outfile,$parallel,$bclconvert) = process_commandline();
 
-# Number of cores used for samtools view --threads. According to tests,
-# additional cores are simply not worth the while  (https://github.com/FelixKrueger/Bismark/issues/364)
-$parallel = 1;
+# Number of worker threads handed to 'samtools view --threads' for BAM (de)compression.
+# This used to be hard-coded to 1 because early tests saw little benefit (https://github.com/FelixKrueger/Bismark/issues/364),
+# but the value is now taken from the --parallel option (default 1, so behaviour is unchanged unless the user opts in).
+# The default is applied in process_commandline().
+
+# Use pigz (parallel gzip) for the gzip fallback when Samtools is unavailable; falls back to plain gzip otherwise.
+# This only affects compression speed, never the content of the output.
+my $gzip_cmd = 'gzip';
+if (!system "which pigz >/dev/null 2>&1"){
+	$gzip_cmd = "pigz -p $parallel";
+}
 
 my $user_defined_outfile = 0;
 if (defined $outfile){
@@ -193,7 +201,7 @@ foreach my $file (@filenames){
 		if ($multiple){
 			# we are assuming that all files are either in BAM format
 			if ($file =~ /\.bam$/){
-				open (IN,"$samtools_path cat -h $file @filenames | $samtools_path view -h |") or die "Unable to read from BAM files in '@filenames': $!\n";
+				open (IN,"$samtools_path cat -h $file @filenames | $samtools_path view -h --threads $parallel |") or die "Unable to read from BAM files in '@filenames': $!\n";
 			}
 			# or all in SAM format
 			else{ # if the reads are in SAM format we simply concatenate them
@@ -246,11 +254,11 @@ foreach my $file (@filenames){
 		warn "Output file is: $outfile\n\n";
 
 		if ($bam == 1){
-			# Using $parallel threads. Currently set to 1, as more cores don't seem to help (see above)
+			# Using $parallel threads for compression (default 1; set via --parallel).
 			open (OUT,"| $samtools_path view -bS --threads $parallel - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
 		}
 		elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-			open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
+			open (OUT,"| $gzip_cmd -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
 		}
 		else{
 			open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
@@ -559,7 +567,7 @@ sub deduplicate_barcoded_rrbs{
 		open (IN,"gunzip -c $file |") or die "Unable to read from gzipped file $file: $!\n";
     }
     elsif ($file =~ /\.bam$/){
-		open (IN,"$samtools_path view -h $file |") or die "Unable to read from BAM file $file: $!\n";
+		open (IN,"$samtools_path view -h --threads $parallel $file |") or die "Unable to read from BAM file $file: $!\n";
     }
     else{
 		open (IN,$file) or die "Unable to read from $file: $!\n";
@@ -596,10 +604,10 @@ sub deduplicate_barcoded_rrbs{
 
    
     if ($bam == 1){
-		open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
+		open (OUT,"| $samtools_path view -bSh --threads $parallel 2>/dev/null - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
     }
     elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
-		open (OUT,"| gzip -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
+		open (OUT,"| $gzip_cmd -c - > ${output_dir}$outfile") or die "Failed to write to ${output_dir}$outfile: $!\n";
     }
     else{
 		open (OUT,'>',"${output_dir}$outfile") or die "Unable to write to ${output_dir}$outfile: $!\n";
@@ -1066,6 +1074,7 @@ sub print_helpfile{
 	
 	print "--multiple\t\tAll specified input files are treated as one sample and concatenated together for deduplication.\n\t\t\tThis uses Unix 'cat' for SAM files and 'samtools cat' for BAM files. Additional notes for BAM files:\n\t\t\tAlthough this works on either BAM or CRAM, all input files must be the same format as each other.\n\t\t\tThe sequence dictionary of each input file must be identical, although this command does not check this.\n\t\t\tBy default the header is taken from the first file to be concatenated.\n\n";
 	print "--samtools_path [path]\tThe path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified\n\t\t\texplicitly if Samtools is in the PATH already\n\n";
+	print "--parallel [int]\tNumber of worker threads handed to 'samtools view --threads' for BAM (de)compression. Higher\n\t\t\tvalues can speed up reading/writing of large BAM files on multi-core systems. Default: 1.\n\n";
 	print "--version\t\tPrint version information and exit\n";
 	
 	print '='x111,"\n\n";
@@ -1369,6 +1378,14 @@ VERSION
 			$bam = 2;
 		}
     }
+
+	### Number of threads for samtools (de)compression. Default 1 preserves the historic behaviour; users may opt into more.
+	if (defined $parallel){
+		die "Please select a value of 1 or more for --parallel\n" unless ($parallel >= 1);
+	}
+	else{
+		$parallel = 1;
+	}
 
 	if ($bclconvert){
 		warn "Manually setting the UMI position to bcl-convert mode (UMI is expected to be within the readID before the multiplexing index), e.g. CAAGAG in the readID:\n";
