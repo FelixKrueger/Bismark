@@ -34,8 +34,9 @@ The goals of the rewrite follow from this profile: faster and lower-memory post-
 on a maintainable modern codebase, while producing output that is **byte-identical to Perl `v0.25.1`**.
 Byte-identity is the correctness contract that lets the Rust suite stand in for the Perl one without
 revalidating an established pipeline. The measured speed-ups for each tool are on the
-[benchmarks page](/Bismark/rust/benchmarks/). The Perl version is being frozen as tagged legacy at the
-Rust general release, following the precedent of Salmon's `cpp` branch.
+[benchmarks page](/Bismark/rust/benchmarks/). The Perl version is in maintenance
+freeze (critical correctness and security fixes only) and will be archived as tagged legacy at the Rust
+general release, following the precedent of Salmon's `cpp` branch.
 
 ## What stays the same
 
