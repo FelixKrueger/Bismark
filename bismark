@@ -47,6 +47,21 @@ $score_min_slope,$bt2_large_index,$multicore,$rg_tag,$rg_id,$rg_sample,$ambig_ba
 $aligner_version,$slam,$icpc,$local,$strandID,$mm2,$maximum_length_cutoff) = process_command_line();
 
 
+### I/O ACCELERATION
+### Number of worker threads handed to 'samtools view --threads' for BAM/CRAM (de)compression, and to pigz.
+### Default of 4 mirrors the value the merging step has used since Dec 2024 (https://github.com/FelixKrueger/Bismark/issues/707).
+### These threads are I/O bound and spend most of their time waiting on the Perl pipe, so they do not oversubscribe the CPU in practice.
+my $io_threads = 4;
+
+### Use pigz (parallel gzip) for temporary/auxiliary gzip compression when it is available in the PATH; fall back to plain gzip otherwise.
+### This only affects the *speed* of compression, never the content of any output file. Reading is left on gunzip (negligible gain).
+my $gzip_cmd = 'gzip';
+if (!system "which pigz >/dev/null 2>&1"){
+	$gzip_cmd = "pigz -p $io_threads";
+	warn "Found pigz in the PATH: using '$gzip_cmd' for gzip compression of temporary/auxiliary files.\n";
+}
+
+
 my @fhs;         # stores alignment process names, bisulfite index location, bowtie filehandles and the number of times sequences produced an alignment
 my %chromosomes; # stores the chromosome sequences of the mouse genome
 my %SQ_order;    # stores the order of sequences in the reference. This is to produce SAM/BAM files with a known order of chromosomes
@@ -138,7 +153,7 @@ sub subset_input_file_FastQ{
 
 	if ($gzip){
 		$temp .= '.gz';
-		open (TEMPFQ,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+		open (TEMPFQ,"| $gzip_cmd -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
 	}
 	else{
 		open (TEMPFQ,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
@@ -206,7 +221,7 @@ sub subset_input_file_FastA{
 
 	if ($gzip){
 		$temp .= '.gz';
-		open (TEMPFA,"| gzip -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
+		open (TEMPFA,"| $gzip_cmd -c - > ${temp_dir}${temp}") or die "Can't write to file ${temp_dir}${temp}: $!\n";
 	}
 	else{
 		open (TEMPFA,'>',"${temp_dir}${temp}") or die "Failed to write output ${temp_dir}${temp}: $!\n";
@@ -1290,7 +1305,7 @@ sub merge_individual_ambiguous_files{
   	# warn "These are the temp ambiguous files: $temp\n"; sleep(5);
   }
 
-  open (AMBIGUOUS,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+  open (AMBIGUOUS,"| $gzip_cmd -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
   warn "Now merging ambiguous sequences @$temp_ambiguous into >>> $output_dir$ambiguous_file <<<\n";
 
   foreach my $temp(@$temp_ambiguous){
@@ -1365,7 +1380,7 @@ sub merge_individual_unmapped_files{
     $temp =~ s/.*\///; # removing path information
   }
 
-  open (UNMAPPED,"| gzip -c - > ${output_dir}${unmapped_file}") or die "Failed to write to ${output_dir}${unmapped_file}: $!\n";
+  open (UNMAPPED,"| $gzip_cmd -c - > ${output_dir}${unmapped_file}") or die "Failed to write to ${output_dir}${unmapped_file}: $!\n";
   warn "Now merging unmapped sequences @$temp_unmapped into >>> ${output_dir}${unmapped_file} <<<\n";
 
   foreach my $temp(@$temp_unmapped){
@@ -1445,14 +1460,14 @@ sub merge_individual_BAM_files{
       $final_output_filename = "${output_dir}${merged_name}";
 	  # 01 Dec 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
 	  # see more here: https://github.com/FelixKrueger/Bismark/issues/707	  
-      open (OUT,"| $samtools_path view --threads 4 -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+      open (OUT,"| $samtools_path view --threads $io_threads -h -C -T $cram_ref 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to CRAM file $merged_name: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
   }
   else{
       $final_output_filename = "${output_dir}${merged_name}";
       warn "Now merging BAM files @$tempbam into >>> $merged_name <<< (using --threads 4)\n";
 	  # 01 Dec 2024: MilosCRF conducted some tests and determined that merging BAM files is faster when --threads 4 is used
 	  # see more here: https://github.com/FelixKrueger/Bismark/issues/707
-      open (OUT,"| $samtools_path view --threads 4 -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
+      open (OUT,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
   }
 
   my $first = 0;
@@ -1519,7 +1534,7 @@ sub merge_individual_ambig_BAM_files{
     }
 
     warn "Now merging ambiguous BAM files @$tempbam into >>> $merged_name <<<\n";
-    open (OUT,"| $samtools_path view -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
+    open (OUT,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > ${output_dir}${merged_name}") or die "Failed to write to $merged_name: $!\n";
     my $first = 0;
 
     foreach my $temp_bam(@$tempbam){
@@ -1585,7 +1600,7 @@ sub start_methylation_call_procedure_single_ends {
 		my $ambig_bam_out = $outfile;
 		$ambig_bam_out =~ s/sam$/ambig.bam/;
 		warn "Ambiguous BAM output: $ambig_bam_out\n";
-		open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
+		open (AMBIBAM,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
 	}
 
 	if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
@@ -1593,22 +1608,22 @@ sub start_methylation_call_procedure_single_ends {
 		### This avoids having to change all the file endings on the way
 		if($multicore > 1){
 			$outfile =~ s/sam$/bam/;
-			open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+			open (OUT,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 		}
 		else{ # single-core mode
 			$outfile =~ s/sam$/cram/;
 			$final_output_filename = "${output_dir}${outfile}";
-			open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+			open (OUT,"| $samtools_path view --threads $io_threads -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
 		}
 	}
 	elsif($bam == 1){ ### Samtools is installed, writing out BAM directly
 		$outfile =~ s/sam$/bam/;
 		$final_output_filename = "${output_dir}${outfile}";
-		open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+		open (OUT,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 	}
 	elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
 		$outfile .= '.gz';
-		open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+		open (OUT,"| $gzip_cmd -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 	}
 	else{ # uncompressed ouput, default
 		open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
@@ -1669,7 +1684,7 @@ sub start_methylation_call_procedure_single_ends {
 		}
 		else{
 			$unmapped_file .= '.gz';
-			open (UNMAPPED,"| gzip -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
+			open (UNMAPPED,"| $gzip_cmd -c - > $output_dir$unmapped_file") or die "Failed to write to $unmapped_file: $!\n";
 		}
 		warn "Unmapped sequences will be written to $output_dir$unmapped_file\n";
 	}
@@ -1703,7 +1718,7 @@ sub start_methylation_call_procedure_single_ends {
 		}
 		else{
 			$ambiguous_file .= '.gz';
-			open (AMBIG,"| gzip -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
+			open (AMBIG,"| $gzip_cmd -c - > $output_dir$ambiguous_file") or die "Failed to write to $ambiguous_file: $!\n";
 		}
 		warn "Ambiguously mapping sequences will be written to $output_dir$ambiguous_file\n";
 	}
@@ -1787,7 +1802,7 @@ sub start_methylation_call_procedure_paired_ends {
 		my $ambig_bam_out = $outfile;
 		$ambig_bam_out =~ s/sam$/ambig.bam/;
 		warn "Ambiguous BAM output: $ambig_bam_out\n";
-		open (AMBIBAM,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
+		open (AMBIBAM,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > $output_dir$ambig_bam_out") or die "Failed to write to $ambig_bam_out: $!\n";
 	}
 
 	$bam = 0 unless (defined $bam);
@@ -1795,22 +1810,22 @@ sub start_methylation_call_procedure_paired_ends {
 	if ($cram){ ### Samtools is installed, writing out CRAM directly. This qill require Samtools version 1.2 or higher!
 		if ($multicore > 1){
 			$outfile =~ s/sam$/bam/;
-			open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+			open (OUT,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 		}
 		else{ # single-core mode
 			$outfile =~ s/sam$/cram/;
 			$final_output_filename = "${output_dir}${outfile}";
-			open (OUT,"| $samtools_path view -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
+			open (OUT,"| $samtools_path view --threads $io_threads -h -C -T $cram_ref 2>/dev/null - > $output_dir$outfile") or die "Failed to write to CRAM file $outfile: $!\nPlease note that this option requires Samtools version 1.2 or higher!\n\n";
 		}
 	}
 	elsif ($bam == 1){ ### Samtools is installed, writing out BAM directly
 		$outfile =~ s/sam$/bam/;
 		$final_output_filename = "${output_dir}${outfile}";
-		open (OUT,"| $samtools_path view -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+		open (OUT,"| $samtools_path view --threads $io_threads -bSh 2>/dev/null - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 	}
 	elsif($bam == 2){ ### no Samtools found on system. Using GZIP compression instead
 		$outfile .= '.gz';
-		open (OUT,"| gzip -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
+		open (OUT,"| $gzip_cmd -c - > $output_dir$outfile") or die "Failed to write to $outfile: $!\n";
 	}
 	else{ # uncompressed ouput, default
 		open (OUT,'>',"$output_dir$outfile") or die "Failed to write to $outfile: $!\n";
@@ -1888,8 +1903,8 @@ sub start_methylation_call_procedure_paired_ends {
 		else{
 			$unmapped_1 .= '.gz';
 			$unmapped_2 .= '.gz';
-			open (UNMAPPED_1,"| gzip -c - > $output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
-			open (UNMAPPED_2,"| gzip -c - > $output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
+			open (UNMAPPED_1,"| $gzip_cmd -c - > $output_dir$unmapped_1") or die "Failed to write to $unmapped_1: $!\n";
+			open (UNMAPPED_2,"| $gzip_cmd -c - > $output_dir$unmapped_2") or die "Failed to write to $unmapped_2: $!\n";
 		}
 		warn "Unmapped sequences will be written to $unmapped_1 and $unmapped_2\n";
 	}
@@ -1931,8 +1946,8 @@ sub start_methylation_call_procedure_paired_ends {
 			else{
 			$amb_1 .= '.gz';
 			$amb_2 .= '.gz';
-			open (AMBIG_1,"| gzip -c - > $output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
-			open (AMBIG_2,"| gzip -c - > $output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
+			open (AMBIG_1,"| $gzip_cmd -c - > $output_dir$amb_1") or die "Failed to write to $amb_1: $!\n";
+			open (AMBIG_2,"| $gzip_cmd -c - > $output_dir$amb_2") or die "Failed to write to $amb_2: $!\n";
 		}
 		warn "Ambiguously mapping sequences will be written to $amb_1 and $amb_2\n";
 	}
@@ -5214,7 +5229,7 @@ sub biTransformFastAFiles {
 	if ($pbat){ # PBAT-Seq
 		warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 		if ($gzip){
-			open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!";
+			open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!";
 		}
 		else{
 			open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!";
@@ -5223,7 +5238,7 @@ sub biTransformFastAFiles {
 	else{
 		warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 		if ($gzip){
-			open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!";
+			open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!";
 		}
 		else{
 			open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!";
@@ -5232,7 +5247,7 @@ sub biTransformFastAFiles {
 		unless ($directional){
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 			if ($gzip){
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!";
 			}
 			else{
 				open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!";
@@ -5531,7 +5546,7 @@ sub biTransformFastQFiles {
 		warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 
 		if ($gzip){
-			open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+			open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 		}
 		else{
 			open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -5548,7 +5563,7 @@ sub biTransformFastQFiles {
 		warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 
 		if ($gzip){
-			open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+			open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
 		}
 		else{
 			open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n"; # uncompressed option
@@ -5565,7 +5580,7 @@ sub biTransformFastQFiles {
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 
 			if ($gzip){
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -5695,7 +5710,7 @@ sub biTransformFastQFiles_slam{
 		warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 
 		if ($gzip){
-			open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+			open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 		}
 		else{
 			open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -5712,7 +5727,7 @@ sub biTransformFastQFiles_slam{
 		warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 
 		if ($gzip){
-			open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+			open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
 		}
 		else{
 			open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n"; # uncompressed option
@@ -5729,7 +5744,7 @@ sub biTransformFastQFiles_slam{
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 
 			if ($gzip){
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -5855,7 +5870,7 @@ sub biTransformFastQFiles_paired_end {
 		if ($read_number == 1){
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 			if ($gzip){
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -5864,7 +5879,7 @@ sub biTransformFastQFiles_paired_end {
 		elsif ($read_number == 2){
 			warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 			if ($gzip){
-				open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+				open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
@@ -5879,7 +5894,7 @@ sub biTransformFastQFiles_paired_end {
 			if ($read_number == 1){
 				warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 				if ($gzip){
-					open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+					open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
 				}
 				else{
 					open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
@@ -5888,7 +5903,7 @@ sub biTransformFastQFiles_paired_end {
 			elsif ($read_number == 2){
 				warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 				if ($gzip){
-					open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+					open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 				}
 				else{
 					open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -5902,8 +5917,8 @@ sub biTransformFastQFiles_paired_end {
 			warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 			if ($gzip){
-				open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+				open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
@@ -6072,7 +6087,7 @@ sub biTransformFastQFiles_paired_end_slam {
 		if ($read_number == 1){
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 			if ($gzip){
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -6081,7 +6096,7 @@ sub biTransformFastQFiles_paired_end_slam {
 		elsif ($read_number == 2){
 			warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 			if ($gzip){
-				open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+				open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
@@ -6096,7 +6111,7 @@ sub biTransformFastQFiles_paired_end_slam {
 			if ($read_number == 1){
 				warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 				if ($gzip){
-					open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+					open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
 				}
 				else{
 					open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
@@ -6105,7 +6120,7 @@ sub biTransformFastQFiles_paired_end_slam {
 			elsif ($read_number == 2){
 				warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 				if ($gzip){
-					open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+					open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 				}
 				else{
 					open (GTOA,'>',"$temp_dir$G_to_A_infile") or die "Couldn't write to file $!\n";
@@ -6119,8 +6134,8 @@ sub biTransformFastQFiles_paired_end_slam {
 			warn "Writing a C -> T converted version of the input file $filename to $temp_dir$C_to_T_infile\n";
 			warn "Writing a G -> A converted version of the input file $filename to $temp_dir$G_to_A_infile\n";
 			if ($gzip){
-				open (CTOT,"| gzip -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
-				open (GTOA,"| gzip -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
+				open (CTOT,"| $gzip_cmd -c - > ${temp_dir}${C_to_T_infile}") or die "Can't write to file: $!\n";
+				open (GTOA,"| $gzip_cmd -c - > ${temp_dir}${G_to_A_infile}") or die "Can't write to file: $!\n";
 			}
 			else{
 				open (CTOT,'>',"$temp_dir$C_to_T_infile") or die "Couldn't write to file $!\n";
