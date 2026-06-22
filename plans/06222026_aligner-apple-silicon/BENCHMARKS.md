@@ -31,22 +31,29 @@ RSS stays ~3 GB, so it is lock-bound, not memory-bound). mimalloc removes the
 contention and `--multicore` becomes usable. This is the regime the suite's
 scaling benchmarks use.
 
-## `-p 6` (single Rust pipeline, 2 bowtie2 × 6 threads) — bowtie2-bound
-
-| `-p 6` (median of 3) | wall | peak RSS |
-|---|---|---|
-| BASE | 1145 s (1127–1158) | 3.0 GB |
-| AFTER | 1217 s (1204–1239) | 2.9 GB |
+## `-p 6` (single Rust pipeline, 2 bowtie2 × 6 threads) — bowtie2-bound, within noise
 
 Under `-p`, the aligner is **~90 % blocked waiting on the external bowtie2**
 (`sample` profile: 73,702 `read`-syscall samples vs ~7,000 Rust-CPU samples), so
-the allocator/parse work is off the critical path. Here AFTER measured **~6 %
-slower** than BASE — most likely **mimalloc's single-thread overhead** (it trades
-a little uncontended-allocation speed for large multithreaded scaling) exceeding
-the parse/build_pe_mate savings. Attribution (mimalloc-only vs the full stack)
-needs a cooled, controlled run; flagged honestly rather than hidden. Net: mimalloc
-is a clear win for `--multicore` users and a small cost for pure single-pipeline
-`-p` users — the maintainer may want to weigh gating it on `--multicore`.
+the allocator/parse work is off the critical path. A first un-interleaved
+median-of-3 measured AFTER **~6 % slower** here, but a **cooled, interleaved
+attribution run** (GATE_04: 3 distinct binaries, shared thermal state, 4-min
+cooldown per run) showed that "−6 %" was a **thermal artifact** — the difference
+vanishes into noise:
+
+| `-p 6`, interleaved (GATE_04) | median | mean | per-binary spread |
+|---|---|---|---|
+| BASE (system allocator) | 1242 s | 1240 s | 3.4 % |
+| MIMA (mimalloc only) | 1270 s | 1226 s | 14.0 % |
+| AFTER (full PR stack) | 1226 s | 1223 s | 19.2 % |
+
+Deltas vs BASE: AFTER **−1.3 % median / −1.4 % mean**; MIMA **+2.3 % median /
+−1.1 % mean** (sign flips by statistic). The per-binary thermal spread (14–19 %)
+**dwarfs** every inter-binary difference (±2 %), and AFTER's range
+[1114, 1328] fully envelops BASE's [1218, 1259]. The three are **statistically
+indistinguishable**. Net: mimalloc has **no measurable `-p` cost** (its
+single-thread overhead is below this laptop's noise floor) — so there is **no
+trade-off to weigh** and **no gate needed**; it is a clean `--multicore` win.
 
 ## Function-level: the parse byte-split (criterion, thermal-independent)
 
@@ -81,7 +88,9 @@ stages already use mimalloc + parallel I/O.
   anti-scaling pathology), byte-identical, bit-reproducible. The headline.
 - **parse byte-split**: **2.04×** at the function level; end-to-end within noise.
 - **build_pe_mate**: two per-mate intermediate allocations removed; within noise.
-- **Trade-off to weigh**: a measured ~6 % `-p` slowdown for the full stack (likely
-  mimalloc single-thread overhead). Re-measure on Linux x86_64 before relying on
-  the laptop wall-times; the function-level and byte-identity results are solid
-  regardless.
+- **No `-p` trade-off**: a cooled interleaved attribution (GATE_04) shows the full
+  stack is **statistically indistinguishable** from baseline under `-p` (−1.3 %
+  median, well inside the 14–19 % per-binary thermal spread). The earlier "~6 %
+  slower" reading was a thermal artifact of an un-interleaved comparison; mimalloc
+  has no measurable single-thread cost. Re-confirm absolute wall-times on Linux
+  x86_64; the function-level and byte-identity results are solid regardless.

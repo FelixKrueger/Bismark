@@ -19,15 +19,17 @@ contended on the system allocator's arena locks, an anti-scaling pathology:
 | `--multicore 4`, mimalloc | **1603 s** (3.13x faster, contention gone) |
 
 Under `-p` the aligner is ~90% blocked on bowtie2, so the Rust allocator is off
-the critical path. A median-of-3 here measured the full PR stack **~6% slower**
-under `-p 6` (BASE 1145 s vs AFTER 1217 s) — likely mimalloc's single-thread
-overhead (or uncontrolled laptop thermal drift; the same session showed 2.1×
-thermal variance on long runs). This needs a **clean re-measurement on the Linux
-x86_64 benchmark host** before relying on it; flagged honestly rather than hidden.
-Net: a clear `--multicore` win, possibly a small `-p` cost — you may want to weigh
-gating mimalloc on `--multicore`. The change is **byte-identical** and
-**bit-reproducible** (`SOURCE_DATE_EPOCH`, same as the 4 sibling mimalloc crates).
-See `BENCHMARKS.md` for the full table + thermal caveat.
+the critical path. A first un-interleaved median-of-3 *looked* ~6% slower under
+`-p 6`, but a **cooled, interleaved attribution run** (GATE_04: base vs
+mimalloc-only vs full-stack, shared thermal state, 4-min cooldown per run) shows
+that was a **thermal artifact**: the full stack is **statistically
+indistinguishable** from baseline under `-p` (−1.3% median, inside a 14–19%
+per-binary thermal spread). So there is **no `-p` trade-off** — mimalloc has no
+measurable single-thread cost, just the large `--multicore` win. Absolute
+wall-times should still be re-confirmed on the **Linux x86_64 benchmark host**
+(no laptop throttling). The change is **byte-identical** and **bit-reproducible**
+(`SOURCE_DATE_EPOCH`, same as the 4 sibling mimalloc crates). See `BENCHMARKS.md`
++ `GATE_04_p_attribution.md` for the full tables.
 
 ### Minor byte-identical cleanups (honest framing)
 
