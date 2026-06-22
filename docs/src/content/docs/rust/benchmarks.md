@@ -62,13 +62,33 @@ per-read wrapper work, which is why the two implementations behave differently a
 ![Aligner core scaling, non-directional reads: wall time, CPU and peak memory for Perl, faithful Rust and the combined index](../../../assets/aligner_scaling_nondirectional.png)
 
 At one thread the two are comparable (both are alignment-bound: directional 1581 s Perl vs 1656 s
-Rust). As cores are added the curves separate. **Perl saturates at about 16 cores** — wall time stops
-falling while CPU cost keeps climbing (to roughly 17,000–18,000 core-seconds at 32 cores), because the
+Rust). As cores are added the curves separate. At this 10M scale, **Perl saturates at about 16 cores** — wall
+time stops falling while CPU cost keeps climbing (to roughly 17,000–18,000 core-seconds at 32 cores), because the
 extra Bowtie 2 threads finish quickly and then wait on the serial Perl wrapper. The Rust wrapper is
 cheap, so giving the aligner more cores continues to reduce wall time up to the full 32-core
 allocation. At 32 cores the directional run is 613 s (Perl) versus 135 s (faithful Rust). In practice
 this means `-p` (more cores) is a useful lever for the Rust aligner, whereas Perl needs `--multicore`
 to use more than about 16 cores.
+
+#### At full scale (single-end and paired-end)
+
+The graphs above are a 10M subset with a directional/non-directional cut. The plots below instead show
+**single-end and paired-end directional** alignment at **full scale** (real WGBS, GRCh38), Rust faithful
+versus Perl `v0.25.1`, on the same total-cores axis.
+
+![Aligner full-scale core scaling, single-end directional: wall time, CPU and peak memory vs total cores, Rust vs Perl](../../../assets/aligner_fullcurve_se.png)
+
+![Aligner full-scale core scaling, paired-end directional: wall time, CPU and peak memory vs total cores, Rust vs Perl](../../../assets/aligner_fullcurve_pe.png)
+
+At the lowest budget (the no-threading-flags default) the two are within 1–2 %, both alignment-bound on
+the same Bowtie 2: single-end 11,556 s (Rust) versus 11,661 s (Perl), paired-end 26,408 s versus
+26,834 s. As cores are added they diverge sharply. At full scale **Perl saturates by about 8 cores** —
+its wall time is flat (even slightly non-monotonic, from load noise) across 8, 16 and 32 cores — because
+the larger per-instance read count makes the serial Perl wrapper the binding constraint sooner than at
+10M. The Rust wrapper stays cheap, so wall time keeps falling to the 32-core budget. At 32 cores the Rust
+aligner is **5.3× faster on single-end** (874 s versus 4620 s) and **4.8× on paired-end** (1847 s versus
+8870 s), while using about **5× less total CPU** (single-end 25,600 versus 140,700 core-seconds). Peak
+memory is about 10 GB throughout for both, set by the loaded index rather than the core count.
 
 ### Combined-index modes
 
