@@ -115,13 +115,15 @@ fn find_one(dir: &Path, suffix: &str) -> PathBuf {
 
 /// Drop the report lines that legitimately vary between two runs of the same
 /// code and are NOT output content:
+///
 /// - absolute filesystem paths (output dir / temp dir differ by design between
 ///   the golden capture and this run),
 /// - the `Bismark completed in 0d 0h 19m 20s` wall-clock DURATION line (a
 ///   per-run timing, the same class of sanctioned timestamp exception as
-///   `localtime` in bismark2report — it differs run-to-run and across
+///   `localtime` in bismark2report; it differs run-to-run and across
 ///   `-p`/`--multicore`, but is not part of the byte-identity contract).
-/// The remaining report content — the numbers — must be byte-identical.
+///
+/// The remaining report content (the numbers) must be byte-identical.
 fn normalize_report(s: &str) -> String {
     s.lines()
         .filter(|l| {
