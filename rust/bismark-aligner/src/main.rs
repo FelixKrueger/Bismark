@@ -10,6 +10,14 @@ use clap::Parser;
 use bismark_aligner::cli::Cli;
 use bismark_aligner::{run, version_string};
 
+// Multithreaded global allocator (Apple Silicon perf epic, 06222026). Relieves
+// system-allocator arena-lock contention on the aligner's per-record String/Vec
+// churn (bowtie2-output parse, conversion loop, methylation/tag path) — the same
+// win the extractor + 3 other crates already take. Allocator-only: output is
+// byte-identical (guarded by tests/byte_identity_real_data.rs + `just reproduce`).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> ExitCode {
     // Capture the verbatim argv (program name excluded) BEFORE parsing — this is
     // the `@PG` `CL:` string (Perl captures `join(" ",@ARGV)` at startup, line 32).
