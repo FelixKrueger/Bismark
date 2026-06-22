@@ -18,9 +18,16 @@ contended on the system allocator's arena locks, an anti-scaling pathology:
 | `--multicore 4`, system allocator | **5025 s** (4.3x SLOWER than `-p 6`) |
 | `--multicore 4`, mimalloc | **1603 s** (3.13x faster, contention gone) |
 
-mimalloc is neutral under `-p` (the aligner is ~90% blocked on bowtie2 there, so
-the Rust allocator is off the critical path). It is **byte-identical** and
+Under `-p` the aligner is ~90% blocked on bowtie2, so the Rust allocator is off
+the critical path. A median-of-3 here measured the full PR stack **~6% slower**
+under `-p 6` (BASE 1145 s vs AFTER 1217 s) — likely mimalloc's single-thread
+overhead (or uncontrolled laptop thermal drift; the same session showed 2.1×
+thermal variance on long runs). This needs a **clean re-measurement on the Linux
+x86_64 benchmark host** before relying on it; flagged honestly rather than hidden.
+Net: a clear `--multicore` win, possibly a small `-p` cost — you may want to weigh
+gating mimalloc on `--multicore`. The change is **byte-identical** and
 **bit-reproducible** (`SOURCE_DATE_EPOCH`, same as the 4 sibling mimalloc crates).
+See `BENCHMARKS.md` for the full table + thermal caveat.
 
 ### Minor byte-identical cleanups (honest framing)
 
