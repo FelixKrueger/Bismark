@@ -22,10 +22,22 @@ ASCII boundaries, no re-validation). Verified by:
 
 Full-run byte-identity at `--multicore 4`: **12,558,088 records == golden** ✓.
 
+## Function-level benchmark (criterion, noise-free)
+
+`cargo bench -p bismark-aligner --bench parse_bench` on a representative PE line:
+
+| field split | time | speedup |
+|---|---|---|
+| `char_searcher` (pre-epic `str::split('\t')`) | 277.6 ns | — |
+| `byte_scan` (current) | 136.2 ns | **2.04×** |
+
+Full `SamRecord::parse` (current): 315.7 ns (the split was ~half of the old
+parse, so the full parse is ~1.45× faster).
+
 ## Note
 
-Single-run delta (median-of-3 deferred to the PR). Modest, as the profile
-predicted: the CharSearcher was ~0.5 % of `-p` wall, ~1.4 % of the `--multicore`
-wall (where the Rust side carries 4 concurrent pipelines). It compounds with
-mimalloc on the contended path and is byte-identical, so it stays. `-p` is
-bowtie2-bound, so no realistic-usage speedup is claimed.
+The function-level win is clean (**2.0× on the split**), but **end-to-end it is
+within run-to-run noise** (GATE_03): the aligner is ~90 % bowtie2-bound under
+`-p` (GATE_00), so a 140 ns/record parse saving is a fraction of a fraction of
+wall-time. It is byte-identical and strictly faster, so it stays; no end-to-end
+`-p` speedup is claimed.
