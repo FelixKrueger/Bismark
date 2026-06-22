@@ -77,3 +77,11 @@ rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
 assert_cmd = "=2.0.16"
 predicates = "=3.1.2"
 tempfile = "=3.10.1"
+# Function-level micro-benchmarks (06222026 perf epic). Dev-only: never compiled
+# into the shipped binary. Demonstrates the SamRecord::parse byte-split speedup
+# that is real at the function level but below end-to-end (bowtie2-dominated) noise.
+criterion = { version = "=0.5.1", default-features = false }
+
+[[bench]]
+name = "parse_bench"
+harness = false
