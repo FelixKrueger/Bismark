@@ -90,6 +90,36 @@ aligner is **5.3× faster on single-end** (874 s versus 4620 s) and **4.8× on p
 8870 s), while using about **5× less total CPU** (single-end 25,600 versus 140,700 core-seconds). Peak
 memory is about 10 GB throughout for both, set by the loaded index rather than the core count.
 
+#### `-p` versus `--multicore`
+
+The Rust aligner offers two ways to use more cores: `-p` (more Bowtie 2 threads per instance, sharing
+one loaded index) and `--multicore` (split the input into N chunks aligned by N worker instances, each
+loading its own index). At a fixed 16-core budget (10M WGBS single-end, directional), allocating those
+cores entirely to `-p` is both the fastest and by far the lightest option:
+
+![Rust aligner -p versus --multicore at a fixed 16-core budget: wall time and peak memory as cores shift from -p to --multicore](../../../assets/aligner_p_vs_multicore.png)
+
+| Allocation (16 total cores) | Wall | Peak RSS | concurrent `bowtie2-align` |
+|---|---|---|---|
+| `-p 8` (pure `-p`) | 218 s | 9.8 GB | 2 |
+| `--multicore 2 -p 4` | 266 s | 16.3 GB | 4 |
+| `--multicore 4 -p 2` | 275 s | 29.4 GB | 8 |
+| `--multicore 8` (pure `--multicore`) | 302 s | 55.4 GB | 16 |
+
+Every step toward `--multicore` is slower *and* heavier: pure `--multicore` takes 38 % longer than pure
+`-p` (302 s vs 218 s) and uses 5.7× the memory. The reason is the last column — `--multicore N` runs
+`2N` concurrent `bowtie2-align` processes (2 per directional worker), each loading its own ~3.5 GB
+index, so peak memory grows roughly linearly with the worker count, while `-p` keeps two index-sharing
+processes and just adds threads (flat memory). This memory cost is **independent of read count**:
+`--multicore 4` peaks at ~29 GB on both the 10M subset and the full (~64M-read) data, because it is the
+index copies, not the reads, that dominate. CPU core-seconds are flat (~3,000–3,300) across all
+allocations.
+
+**Recommendation:** prefer `-p` for the Rust aligner — it scales cleanly to the full core budget (see
+the scaling graphs above) on a single shared index at flat memory. Reach for `--multicore` only once
+`-p` is exhausted, and budget for roughly `2 × workers × index` peak memory. (This is the opposite of
+Perl, whose serial wrapper saturates `-p` by about 8 cores, making `--multicore` necessary there.)
+
 ### Combined-index modes
 
 The aligner also offers an opt-in [combined-index mode](/Bismark/usage/alignment/) that builds one
