@@ -213,8 +213,10 @@ fn run_oracle(ds: &AlignerDataset) {
     eprintln!("✓ {idx} BAM records byte-identical");
 
     // 2) Report numbers (path lines normalized out).
-    let golden = normalize_report(&std::fs::read_to_string(&golden_report).expect("read golden report"));
-    let current = normalize_report(&std::fs::read_to_string(&cur_report).expect("read current report"));
+    let golden =
+        normalize_report(&std::fs::read_to_string(&golden_report).expect("read golden report"));
+    let current =
+        normalize_report(&std::fs::read_to_string(&cur_report).expect("read current report"));
     assert_eq!(current, golden, "report numbers differ (current vs golden)");
     eprintln!("✓ report numbers byte-identical");
 
