@@ -81,8 +81,28 @@ impl SamRecord {
     /// FLAG/POS/MAPQ; unparseable tag values are left `None` (lenient — Phase 4
     /// enforces `AS`/`MD` presence, Perl `die` 2838).
     pub fn parse(line: &str) -> Result<SamRecord> {
-        let trimmed = line.trim_end_matches(['\n', '\r']);
-        let f: Vec<&str> = trimmed.split('\t').collect();
+        // Byte-level trim + tab split. Operating on the already-validated &str's
+        // bytes avoids `str::split('\t')` / `trim_end_matches([..])`, whose
+        // `CharSearcher` (per-char decode) was the aligner's hottest parse cost
+        // (06222026 perf epic; ~330 self-samples). The line is valid UTF-8
+        // (read_line validated it), so slicing at the ASCII '\t'/'\n'/'\r'
+        // boundaries yields valid &str fields with no re-validation. Field bytes
+        // are unchanged, so this is byte-identical to the char-based split.
+        let lb = line.as_bytes();
+        let mut end = lb.len();
+        while end > 0 && (lb[end - 1] == b'\n' || lb[end - 1] == b'\r') {
+            end -= 1;
+        }
+        let trimmed = &line[..end];
+        let mut f: Vec<&str> = Vec::with_capacity(16);
+        let mut start = 0usize;
+        for (i, &b) in trimmed.as_bytes().iter().enumerate() {
+            if b == b'\t' {
+                f.push(&trimmed[start..i]);
+                start = i + 1;
+            }
+        }
+        f.push(&trimmed[start..]);
         if f.len() < 11 {
             return Err(AlignerError::Validation(format!(
                 "malformed SAM line ({} fields, expected >= 11): {trimmed}",
