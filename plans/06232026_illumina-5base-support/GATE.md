@@ -32,7 +32,19 @@ A new opt-in, never-silent, concordance-gated `--illumina_5base` (alias `--five_
 
 Perl Bismark v0.25.1 has no 5-Base path, so byte-identity-to-Perl does not apply. The faithful Bowtie2/HISAT2/minimap2 bisulfite paths stay byte-frozen (every existing `methylation_call` site passes `five_base = false`; 431 lib + 100 integ + 3 conformance unchanged).
 
-## Concordance gate (PENDING)
+## Synthetic ground-truth gate (GREEN, real minimap2)
+
+`tests/five_base_groundtruth.rs::five_base_groundtruth_real_minimap2_recovers_known_methylation`.
+
+A true DRAGEN-concordance gate is impossible here (DRAGEN is proprietary FPGA with no reproducible reference output, and there is no public raw 5-Base dataset). The achievable, stronger substitute is a **synthetic ground-truth** gate against the **real minimap2** (pinned 2.31-r1302, present locally):
+
+1. Synthesize reads from a known reference with a KNOWN methylation pattern (5mC→T injected at chosen CpGs; 12 bp exact anchors so minimap2 does not soft-clip the core).
+2. Run `bismark_rs --illumina_5base` with the REAL minimap2 against the unconverted FASTA.
+3. Walk each BAM record's POS+CIGAR to map read→genomic positions and assert the `XM` call at **every aligned CpG** matches ground truth (methylated → `Z`, unmethylated → `z`), tolerating soft-clipped edges.
+
+**Result: PASS** — no wrong-polarity call at any aligned CpG; ≥70% of CpGs recovered; several methylated (`Z`) positively confirmed through the real aligner. This validates the whole FROM-FASTQ chain (real alignment to the unconverted genome + the inverted 5-Base call + extraction), not just the hermetic fake-minimap2 path in `cli.rs`. The test is a no-op when `minimap2` is absent, so CI without minimap2 stays green.
+
+## DRAGEN concordance gate (PENDING — external)
 
 Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on a shared dataset, within a documented tolerance.
 
