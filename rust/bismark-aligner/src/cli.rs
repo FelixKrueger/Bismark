@@ -82,6 +82,16 @@ pub struct Cli {
     /// inert (the in-process path isn't compiled, so the subprocess runs).
     #[arg(long = "rammap_inprocess")]
     pub rammap_inprocess: bool,
+    /// `[v2, opt-in, never-silent, concordance-gated]` Illumina 5-Base (5mC->T)
+    /// mode. Unlike bisulfite, the 5-Base chemistry converts METHYLATED C to T and
+    /// leaves unmethylated C intact, so reads keep full complexity and align to the
+    /// UNCONVERTED genome with a standard aligner; methylation is then called with
+    /// inverted polarity (a read T at a genomic C = methylated). v1 is single-end +
+    /// directional only and aligns with minimap2 (`-x sr`) against the raw genome
+    /// FASTA. NOT byte-identical (Perl Bismark has no 5-Base oracle); validated by
+    /// concordance with DRAGEN. See FelixKrueger/Bismark#787.
+    #[arg(long = "illumina_5base", visible_alias = "five_base")]
+    pub illumina_5base: bool,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

@@ -177,6 +177,10 @@ pub struct RunConfig {
     /// by `lib::use_se_inprocess_rammap` (always-compiled) so it is never a feature-off
     /// dead field. `resolve` requires `--rammap` whenever it is set.
     pub rammap_inprocess: bool,
+    /// Illumina 5-Base (5mC->T) mode (#787): align to the UNCONVERTED genome and
+    /// call methylation with inverted polarity. v1 = single-end + directional,
+    /// minimap2 backend. Opt-in, never-silent, concordance-gated (no Perl oracle).
+    pub five_base: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -349,6 +353,50 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
+    // --illumina_5base (#787) v1 scope guards. The 5-Base path is single-end +
+    // directional, FASTQ, single-instance only; everything else is a deferred
+    // follow-up phase. Reject loudly (never silently degrade) BEFORE the generic
+    // minimap2 guards so the error names --illumina_5base, not --minimap2.
+    if cli.illumina_5base {
+        if layout.is_paired() {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is single-end only in v1: paired-end 5-Base (UMI/duplex \
+                 consensus) is a deferred follow-up. Provide single-end reads."
+                    .into(),
+            ));
+        }
+        if cli.non_directional || cli.pbat {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is directional only in v1 (drop --non_directional/--pbat): \
+                 the 5-Base library is directional."
+                    .into(),
+            ));
+        }
+        if cli.slam {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is not supported with --slam.".into(),
+            ));
+        }
+        if cli.fasta {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base requires FASTQ input in v1 (drop --fasta).".into(),
+            ));
+        }
+        if cli.multicore.unwrap_or(1) > 1 {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base does not support --multicore in v1 (single instance only)."
+                    .into(),
+            ));
+        }
+        if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is not supported with --combined_index (a separate bisulfite \
+                 alignment model)."
+                    .into(),
+            ));
+        }
+    }
+
     // PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
     // (Felix decision 2026-06-05): the Perl minimap2 paired-end path
     // (`paired_end_…_minimap2` 6697-6708) is unfinished WIP (`# TODO` +
@@ -414,6 +462,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         aligner,
         // Phase 4 (epic 06152026): in-process opt-in flag (guarded above: requires --rammap).
         rammap_inprocess: cli.rammap_inprocess,
+        // #787 5-Base mode (guarded above: SE + directional, minimap2 unconverted path).
+        five_base: cli.illumina_5base,
         library,
         layout,
         format,
@@ -683,6 +733,25 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
         return Err(AlignerError::Validation(
             "You may not select both --rammap and --minimap2. Make your pick!".into(),
         ));
+    }
+    // --illumina_5base (5-Base, #787) aligns to the UNCONVERTED genome with minimap2
+    // (v1). It is mutually exclusive with the bisulfite engines that have no
+    // unconverted-index path yet; `--minimap2` may co-occur (5-Base IS a minimap2
+    // run). Ordered before the engine `Ok`s so the conflict fires, never a silent pick.
+    if cli.illumina_5base {
+        for (flag, set) in [
+            ("--bowtie2", cli.bowtie2),
+            ("--hisat2", cli.hisat2),
+            ("--rammap", cli.rammap),
+        ] {
+            if set {
+                return Err(AlignerError::Validation(format!(
+                    "--illumina_5base is not supported with {flag}: the 5-Base v1 path aligns \
+                     to the unconverted genome with minimap2. Drop {flag} (5-Base uses minimap2)."
+                )));
+            }
+        }
+        return Ok(Aligner::Minimap2);
     }
     if cli.hisat2 {
         return Ok(Aligner::Hisat2);
@@ -1205,6 +1274,46 @@ mod tests {
     fn rammap_inprocess_flag_parses() {
         assert!(cli_from(&["--rammap", "--rammap_inprocess"]).rammap_inprocess);
         assert!(!cli_from(&["--rammap"]).rammap_inprocess);
+    }
+
+    // ---- #787 Illumina 5-Base mode guards ----------------------------------
+
+    /// The `--illumina_5base` flag (and its `--five_base` alias) parses, off by default.
+    #[test]
+    fn illumina_5base_flag_parses() {
+        assert!(cli_from(&["--illumina_5base"]).illumina_5base);
+        assert!(cli_from(&["--five_base"]).illumina_5base);
+        assert!(!cli_from(&["--minimap2"]).illumina_5base);
+    }
+
+    /// `--illumina_5base` resolves to the minimap2 (unconverted) backend (fires in
+    /// `resolve_aligner`, before genome discovery — no on-disk index needed).
+    #[test]
+    fn illumina_5base_resolves_to_minimap2() {
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--illumina_5base"])).unwrap(),
+            Aligner::Minimap2
+        );
+        // `--minimap2` may co-occur (5-Base IS a minimap2 run).
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--illumina_5base", "--minimap2"])).unwrap(),
+            Aligner::Minimap2
+        );
+    }
+
+    /// `--illumina_5base` is mutually exclusive with the bisulfite engines that have
+    /// no unconverted-index path in v1; the error names the conflicting flag.
+    #[test]
+    fn illumina_5base_rejects_other_engines() {
+        for flag in ["--bowtie2", "--hisat2", "--rammap"] {
+            let err = resolve_aligner(&cli_from(&["--illumina_5base", flag])).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("--illumina_5base is not supported with")
+                    && err.to_string().contains(flag),
+                "{flag}: {err}"
+            );
+        }
     }
 
     #[test]
