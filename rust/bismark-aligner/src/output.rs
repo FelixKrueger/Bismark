@@ -603,25 +603,32 @@ fn build_pe_mate(
 ) -> Result<BismarkRecord> {
     let mut actual_seq = original_seq.to_vec();
     let mut ref_seq = ref_seq_trimmed;
-    let mut md = md_seq.to_vec();
     let offset: u8 = if phred64 { 64 } else { 33 };
     let mut scores: Vec<u8> = qual.iter().map(|&q| q.wrapping_sub(offset)).collect();
 
     if strand == b'-' {
         actual_seq = revcomp(&actual_seq);
         ref_seq = revcomp(&ref_seq);
-        if cigar.contains('D') {
-            md = revcomp(&md); // second revcomp (extraction did the first)
-        }
         scores.reverse();
     }
 
+    // `md` is only read by make_mismatch_string (never stored in the record),
+    // and only differs from `md_seq` when reverse-complemented — strand '-' AND
+    // a deletion (the SE path already borrows md_seq directly). Allocate only
+    // in that case; borrow otherwise. The second revcomp matches Perl (the
+    // extraction did the first). Byte-identical to the prior `md_seq.to_vec()`.
+    let md_owned: Vec<u8>;
+    let md: &[u8] = if strand == b'-' && cigar.contains('D') {
+        md_owned = revcomp(md_seq);
+        &md_owned
+    } else {
+        md_seq
+    };
+
     let nm = hemming_dist(&actual_seq, &ref_seq) as i64 + indels as i64;
-    let md_full = make_mismatch_string(&actual_seq, &ref_seq, cigar, &md);
-    let md_value = md_full
-        .strip_prefix("MD:Z:")
-        .unwrap_or(&md_full)
-        .to_string();
+    let md_full = make_mismatch_string(&actual_seq, &ref_seq, cigar, md);
+    // Slice off the `MD:Z:` prefix in place (no intermediate String copy).
+    let md_value = md_full.strip_prefix("MD:Z:").unwrap_or(&md_full).as_bytes();
     let xm: Vec<u8> = if strand == b'-' {
         methylation_call.iter().rev().copied().collect()
     } else {

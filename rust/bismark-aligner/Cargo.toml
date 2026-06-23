@@ -29,6 +29,17 @@ which = "=7.0.3"
 flate2 = "=1.1.9"
 thiserror = "=2.0.0"
 anyhow = "=1.0.86"
+# Multithreaded global allocator (Apple Silicon perf epic, 06222026). The
+# aligner allocates heavily per record on the Rust side — bowtie2-output parse
+# (`SamRecord::parse`: ~7 owned String/Vec per line × 2-4 records/read), the
+# C->T / G->A conversion loop, and the methylation/tag path — and `--multicore`
+# chunk workers contend on the system allocator's arena locks (the same
+# anti-scaling that made the extractor's `--parallel N>1` slower than N=1 until
+# mimalloc: 155.8s -> 23.5s). Allocator choice does NOT affect computed output —
+# byte-identity holds (guarded by tests/byte_identity_real_data.rs + `just
+# reproduce`). Exact-pinned to the sibling crates' choice so the workspace links
+# one shared mimalloc.
+mimalloc = { version = "=0.1.52", default-features = false }
 # Phase 5: BAM output via the shared noodles writer layer. Pins MUST match
 # bismark-io's transitive choice (same as bismark-dedup declares) so the
 # workspace links one shared noodles.
@@ -66,3 +77,15 @@ rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
 assert_cmd = "=2.0.16"
 predicates = "=3.1.2"
 tempfile = "=3.10.1"
+# Function-level micro-benchmarks (06222026 perf epic). Dev-only: never compiled
+# into the shipped binary. Demonstrates the SamRecord::parse byte-split speedup
+# that is real at the function level but below end-to-end (bowtie2-dominated) noise.
+# `cargo_bench_support` is REQUIRED for `cargo bench` to actually measure (the
+# criterion harness's arg parsing + timing live behind it); `default-features =
+# false` otherwise drops the heavy `plotters`/`rayon` HTML-report machinery we do
+# not need for a CI-reproducible number.
+criterion = { version = "=0.5.1", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "parse_bench"
+harness = false

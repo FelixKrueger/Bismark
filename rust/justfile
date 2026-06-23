@@ -9,6 +9,14 @@ repo := "https://github.com/FelixKrueger/Bismark"
 suite_tag := "bismark-rust-v2.0.0-beta.11"
 suite_crates := "bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc bismark-report bismark-summary"
 
+# Local benchmark dataset root for the aligner Apple Silicon perf work
+# (`genomes/`, `RRBS_PE/`, `aligner_golden/`). Override on the command line.
+bench_dir := "/Users/benjamin/bismark_benchmarks"
+rrbs_genome := bench_dir / "genomes/GRCm39"
+rrbs_r1 := bench_dir / "RRBS_PE/SRR24766921_10M_1.fastq.gz"
+rrbs_r2 := bench_dir / "RRBS_PE/SRR24766921_10M_2.fastq.gz"
+rrbs_gold := bench_dir / "aligner_golden/rrbs_10m"
+
 # Default: the portable CI check suite (lint + tests, both profiles).
 default: ci
 
@@ -77,6 +85,56 @@ reproduce:
         if cmp -s /tmp/bismark_repro1/$b /tmp/bismark_repro2/$b; then echo "✓ $b bit-identical"; \
         else echo "✗ $b DIFFERS"; fi; \
     done
+
+# ── Apple Silicon perf helpers (bismark-aligner) ────────────────────────────
+# Discipline: profile -> prove byte-identity -> measure. See
+# plans/06222026_aligner-apple-silicon/PLAN.md.
+
+# Symbol-keeping build for samply/Instruments (the `profiling` profile keeps
+# DWARF; it is NEVER built by ci/reproduce/build, so the gates are untouched).
+build-profiling:
+    cargo build --profile profiling -p bismark-aligner
+
+# Non-portable build tuned for the host CPU. OPT-IN ONLY — never the CI/release
+# default (would break portable + bit-reproducible binaries).
+build-native:
+    RUSTFLAGS="-C target-cpu=native" cargo build --release -p bismark-aligner
+
+# Capture the golden aligner output from the CURRENT (baseline) binary so the
+# Rust-vs-Rust byte-identity oracle has a reference. Run ONCE from a known
+# byte-identical commit BEFORE optimizing; re-capture only when output
+# legitimately changes (never during pure perf work).
+aligner-golden genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 out=rrbs_gold:
+    cargo build --release -p bismark-aligner
+    rm -rf {{out}} && mkdir -p {{out}}
+    ./target/release/bismark_rs --genome {{genome}} -1 {{r1}} -2 {{r2}} -o {{out}}
+    cp {{out}}/*_bismark_bt2_pe.bam {{out}}/golden.bam
+    cp {{out}}/*_PE_report.txt {{out}}/golden.report.txt
+    @echo "✓ golden captured in {{out}}"
+
+# Rust-vs-Rust byte-identity oracle (fast iteration loop). Runs the CURRENT
+# binary and asserts decompressed BAM + report bytes equal the captured golden.
+# Uses samtools only as a local decompressor (not shipped logic); the committed
+# in-repo equivalent is bismark-aligner/tests/byte_identity_real_data.rs.
+aligner-oracle genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 gold=rrbs_gold:
+    cargo build --release -p bismark-aligner
+    rm -rf /tmp/aligner_oracle && mkdir -p /tmp/aligner_oracle
+    ./target/release/bismark_rs --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_oracle
+    # Records only (no -h): the @PG CL header line embeds the -o path and so
+    # differs by design; the record stream carries no paths and must match.
+    samtools view /tmp/aligner_oracle/*_bismark_bt2_pe.bam > /tmp/aligner_oracle/cur.sam
+    samtools view {{gold}}/golden.bam > /tmp/aligner_oracle/gold.sam
+    @cmp -s /tmp/aligner_oracle/gold.sam /tmp/aligner_oracle/cur.sam && echo "✓ BAM records byte-identical" || { echo "✗ BAM records DIFFER"; diff /tmp/aligner_oracle/gold.sam /tmp/aligner_oracle/cur.sam | head; exit 1; }
+    # Report: ignore absolute-path lines (output dir / tmp differ by design).
+    grep -vE '/Users/|/tmp/|/var/folders/|/private/|Bismark completed in' {{gold}}/golden.report.txt > /tmp/aligner_oracle/gold.report
+    grep -vE '/Users/|/tmp/|/var/folders/|/private/|Bismark completed in' /tmp/aligner_oracle/*_PE_report.txt > /tmp/aligner_oracle/cur.report
+    @cmp -s /tmp/aligner_oracle/gold.report /tmp/aligner_oracle/cur.report && echo "✓ report numbers byte-identical" || { echo "✗ report DIFFERS"; diff /tmp/aligner_oracle/gold.report /tmp/aligner_oracle/cur.report | head; exit 1; }
+
+# Record a samply CPU profile of the aligner process (Apple Silicon). bismark_rs
+# is profiled; bowtie2 is a separate PID. `parallel=1` = clean hot path;
+# `parallel=8` surfaces allocator contention.
+profile-aligner parallel="1" genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2: build-profiling
+    samply record --rate 1000 -- ./target/profiling/bismark_rs --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_prof --parallel {{parallel}}
 
 # Show all recipes.
 help:
