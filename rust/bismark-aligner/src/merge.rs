@@ -537,15 +537,30 @@ pub fn check_results_paired_end<S: PairedSamStream>(
             continue;
         }
         let pair = stream.current_pair().unwrap().clone();
+        let (r1, r2) = (&pair.read1, &pair.read2);
 
         // PE no-alignment marker (77,141): advance once, move to next instance.
         // NO die-if-same-id guard (unlike SE — Perl 3317–3346).
-        if pair.is_unmapped_pair() {
+        //
+        // minimap2 PE (experimental, #mm2-pe): minimap2 aligns the two query files as
+        // INDEPENDENT single-end reads (SE-style flags, no proper-pair bits — verified
+        // against 2.31), so a consecutive "pair" may be fully unmapped (each mate FLAG 4,
+        // NOT the 77/141 marker), half-mapped, or mapped to different chromosomes. The
+        // Bismark PE model accepts only a concordant same-chromosome pair, so for minimap2
+        // treat anything else as "no PE alignment" (skip, exactly like the 77/141 marker)
+        // rather than feeding it to the AS/MD/same-chromosome path below — which would
+        // error on a missing AS:i: or a cross-chromosome pair. Gated on `Aligner::Minimap2`
+        // so the byte-frozen Bowtie 2 / HISAT2 paths are untouched (those are concordant by
+        // construction — `--no-mixed` — so this branch can never fire for them anyway). The
+        // `&& both-mapped` short-circuits the `deconvert` so it never sees an unmapped `*`.
+        let mm2_non_concordant = aligner == Aligner::Minimap2
+            && ((r1.flag & 4 != 0)
+                || (r2.flag & 4 != 0)
+                || deconvert(&r1.rname).ok() != deconvert(&r2.rname).ok());
+        if pair.is_unmapped_pair() || mm2_non_concordant {
             stream.advance_pair()?;
             continue;
         }
-
-        let (r1, r2) = (&pair.read1, &pair.read2);
 
         // De-convert both RNAMEs; die unless on the same chromosome (Perl 3351–3364).
         let chr1 = deconvert(&r1.rname)?;
@@ -1452,6 +1467,91 @@ mod tests {
             Aligner::Bowtie2,
         );
         assert_eq!(pe_second_best_sum(&d), Some(-12));
+    }
+
+    // ---- minimap2 PE (experimental): non-concordant pairs are skipped -----------
+    // minimap2 aligns the two query files as independent SE reads (SE-style flags), so a
+    // consecutive "pair" can be half-mapped / fully-unmapped (FLAG 4, not 77/141) / on
+    // different chromosomes. For `Aligner::Minimap2` the merge skips those (no PE
+    // alignment) instead of erroring on the AS / same-chromosome path.
+
+    /// A minimap2 mate that did NOT map: FLAG 4, RNAME `*`, no AS/MD (cf. the SE form).
+    fn mm2_unmapped(id: &str, mate: u8) -> String {
+        format!("{id}/{mate}\t4\t*\t0\t0\t*\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII")
+    }
+
+    /// A minimap2 mapped mate: SE-style FLAG (0 fwd / 16 rev), AS:i:+MD:Z: (no pair bits).
+    fn mm2_mapped(id: &str, mate: u8, flag: u16, rname: &str, pos: u32, as_i: i64) -> String {
+        format!(
+            "{id}/{mate}\t{flag}\t{rname}\t{pos}\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\tAS:i:{as_i}\tMD:Z:10"
+        )
+    }
+
+    /// Half-mapped minimap2 pair (R1 maps, R2 FLAG 4) → skipped → NoAlignment (would
+    /// otherwise die on R2's missing AS:i:). The same input is concordant-by-construction
+    /// impossible for Bowtie 2 (`--no-mixed`), so the gate is minimap2-only.
+    #[test]
+    fn pe_minimap2_half_mapped_pair_is_skipped() {
+        let pair = (
+            mm2_mapped("r1", 1, 0, "chr1_CT_converted", 100, 0),
+            mm2_unmapped("r1", 2),
+        );
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Minimap2,
+        );
+        assert_eq!(d, DecisionPaired::NoAlignment);
+    }
+
+    /// Both mates map but to DIFFERENT chromosomes → skipped → NoAlignment (the bowtie2
+    /// same-chromosome guard would `die`; for minimap2 independent mapping it is expected).
+    #[test]
+    fn pe_minimap2_cross_chromosome_pair_is_skipped() {
+        let pair = (
+            mm2_mapped("r1", 1, 0, "chr1_CT_converted", 100, 0),
+            mm2_mapped("r1", 2, 16, "chr2_CT_converted", 200, 0),
+        );
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Minimap2,
+        );
+        assert_eq!(d, DecisionPaired::NoAlignment);
+    }
+
+    /// Concordant minimap2 pair (both mapped, same chromosome, SE-style FLAG 0/16) flows
+    /// through the shared AS-sum merge → UniqueBest on OT (index 0).
+    #[test]
+    fn pe_minimap2_concordant_pair_maps() {
+        let pair = (
+            mm2_mapped("r1", 1, 0, "chr1_CT_converted", 100, 0),
+            mm2_mapped("r1", 2, 16, "chr1_CT_converted", 140, 0),
+        );
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Minimap2,
+        );
+        match d {
+            DecisionPaired::UniqueBest(b) => assert_eq!(b.index, 0),
+            other => panic!("expected UniqueBest on OT, got {other:?}"),
+        }
     }
 
     /// (C) HISAT2, mate-1 second-best ONLY (mate-2 none): masking `sb1→None` makes
