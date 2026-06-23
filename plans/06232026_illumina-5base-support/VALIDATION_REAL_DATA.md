@@ -61,6 +61,21 @@ be compared against the field-standard methylation reference.
    unlike DRAGEN) and applies no adapter/quality trimming. This inflates both the non-CpG
    rate and the per-CpG noise.
 
+## Update: base-quality masking does NOT move this data (honest null result)
+
+`--five_base_baseq 20` was implemented and re-run on the same chr19 TAPS data:
+CpG 56.3 %, CHG 2.0 %, CHH 2.1 % — **identical to the no-filter run**. The TAPS reads
+are high-quality (Phred ~40 throughout), so a Q<20 mask removes nothing. Therefore the
+~2 % non-CpG floor is **NOT low-base-quality sequencing error** (and MAPQ filtering also
+did not move it). It is **high-quality-base mapping/chemistry noise** — reads placed with
+real mismatches (forced cross-mapping when a whole-genome library is aligned to one
+chromosome) and the TAPS chemistry's own false-positive rate. `--five_base_baseq` remains
+a sound, DRAGEN-precedented option, but it is not the lever for this dataset.
+
+The real lever is **whole-genome alignment** (reads land at their true locus instead of
+being forced onto chr19) plus possibly extending the deconvolution beyond CpG. The
+single-chromosome shortcut is the dominant artifact here.
+
 ## Concrete next steps for a publication-grade benchmark
 
 - **Whole-genome** alignment (all reads map to their true locus) at adequate depth.
