@@ -28,6 +28,13 @@ path writes BAM via `noodles`, not `samtools`).
 
 HISAT2 / minimap2 aligners are deferred to a `v1.x` follow-up.
 
+> **Status note (the Phase-1 text above is outdated):** the v1.x epic is complete —
+> HISAT2 (SE+PE) and minimap2 SE are byte-identical to Perl v0.25.1, and **minimap2 PE
+> is now wired as an EXPERIMENTAL path** (mirrors Perl's positional two-file invocation;
+> enabled via `--minimap2 -1/-2` with a never-silent notice, **NOT byte-identical** — the
+> Perl PE minimap2 path is unfinished WIP with no trustworthy oracle). See the suite
+> `rust/README.md` status table + milestones for the live status.
+
 ## Build & test
 
 ```bash
