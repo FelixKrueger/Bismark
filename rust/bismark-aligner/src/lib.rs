@@ -2608,6 +2608,52 @@ fn process_pe_chunk(
         converted.push(((mate, kind), cr));
     }
 
+    // Perl's `$dovetail` (8047): `!--no_dovetail`, set for EVERY aligner — the
+    // `if($bowtie2)` at 8051 only gates pushing `--dovetail` to the aligner
+    // options, NOT this variable. HISAT2 suppresses the flag from `aligner_options`
+    // (2a) but still uses `$dovetail=1` for the PE TLEN sign (Perl 8898/8946), so
+    // this MUST come from `config.dovetail`, not a scan of `aligner_options`
+    // (which would wrongly yield `false` for HISAT2 → flipped TLEN on same-POS
+    // fully-overlapping pairs). For Bowtie 2 the two are equal, so this is a no-op.
+    let dovetail = config.dovetail;
+
+    // minimap2 PE uses a DIFFERENT stream type: minimap2 aligns the two files as
+    // independent single-end reads emitted in two sequential blocks (all read 1s, then
+    // all read 2s — NOT consecutive mate pairs), so `Minimap2PairedStream` drains each
+    // instance and joins read 1 ↔ read 2 by read-ID. Bowtie 2 / HISAT2 keep the
+    // consecutive-line `PairedAlignerStream`. Both feed the generic `drive_merge_pe`.
+    if config.aligner == Aligner::Minimap2 {
+        let mut streams: Vec<Option<crate::align::Minimap2PairedStream>> =
+            vec![None, None, None, None];
+        for (slot, _orientation, index_choice, k1, k2) in plan {
+            let index_basename = match index_choice {
+                IndexChoice::Ct => &config.genome.ct_index_basename,
+                IndexChoice::Ga => &config.genome.ga_index_basename,
+            };
+            let m1 = pe_lookup(&converted, 1, k1);
+            let m2 = pe_lookup(&converted, 2, k2);
+            streams[slot] = Some(crate::align::Minimap2PairedStream::spawn(
+                bt2,
+                &config.aligner_options,
+                index_basename,
+                m1,
+                m2,
+            )?);
+        }
+        drive_merge_pe(
+            read_1,
+            read_2,
+            &mut streams,
+            config,
+            genome,
+            refid,
+            dovetail,
+            sinks,
+            counters,
+        )?;
+        return Ok(converted);
+    }
+
     // Slot-indexed (0..4): populate the per-mode slots, leaving the rest `None`
     // (the merge scans 0,3,1,2). Each instance reads its `-1`/`-2` converted files.
     let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
@@ -2629,14 +2675,6 @@ fn process_pe_chunk(
         )?);
     }
 
-    // Perl's `$dovetail` (8047): `!--no_dovetail`, set for EVERY aligner — the
-    // `if($bowtie2)` at 8051 only gates pushing `--dovetail` to the aligner
-    // options, NOT this variable. HISAT2 suppresses the flag from `aligner_options`
-    // (2a) but still uses `$dovetail=1` for the PE TLEN sign (Perl 8898/8946), so
-    // this MUST come from `config.dovetail`, not a scan of `aligner_options`
-    // (which would wrongly yield `false` for HISAT2 → flipped TLEN on same-POS
-    // fully-overlapping pairs). For Bowtie 2 the two are equal, so this is a no-op.
-    let dovetail = config.dovetail;
     drive_merge_pe(
         read_1,
         read_2,
@@ -2869,10 +2907,10 @@ fn open_reader(path: &Path) -> Result<Box<dyn BufRead>> {
 /// merge per pair, routing each `DecisionPaired` to its sink. The two genomic-seq
 /// length guards run in order (R1 short-circuits before R2 — Perl 3864→3867).
 #[allow(clippy::too_many_arguments)]
-fn drive_merge_pe(
+fn drive_merge_pe<S: crate::align::PairedSamStream>(
     read_1: &Path,
     read_2: &Path,
-    streams: &mut [Option<PairedAlignerStream>],
+    streams: &mut [Option<S>],
     config: &RunConfig,
     genome: &Genome,
     refid: &HashMap<String, usize>,

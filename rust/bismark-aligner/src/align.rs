@@ -507,37 +507,24 @@ pub struct SamPair {
     pub seq_id: String,
 }
 
-/// Strip the read-1 marker the converter appended (`/1/1`, Perl 5945-5960) to obtain
-/// the bare `seq_id` for the read-ID lockstep, tolerating both aligner conventions:
-/// Bowtie 2 / HISAT2 clip the OUTER `/1` themselves, so their QNAME tail is a single
-/// `/1` → strip that; minimap2 does NOT clip read-number suffixes (verified, 2.31), so
-/// its QNAME keeps the full `/1/1` → strip that. The `/1/1` form is tried FIRST: a
-/// Bowtie 2 / HISAT2 QNAME (`…__CT/1`) never ends in `/1/1` (the char before `/1` is the
-/// `__CT`/`__GA` conversion tag), so the double-strip is inert for the byte-frozen
-/// backends and this is provably byte-neutral for them — it only rescues minimap2.
-fn strip_read1_marker(qname: &str) -> Option<&str> {
-    qname
-        .strip_suffix("/1/1")
-        .or_else(|| qname.strip_suffix("/1"))
-}
-
 impl SamPair {
     /// Build a pair from two raw SAM lines, identifying read 1 by the trailing
-    /// read-1 marker on its QNAME (Perl 6500–6508). The converter adds `/1/1`,`/2/2`;
-    /// Bowtie 2 / HISAT2 clip the outer `/1`,`/2` (leaving `/1`,`/2`) while minimap2
-    /// leaves the full `/1/1`,`/2/2` — [`strip_read1_marker`] handles both. `die` if
-    /// neither line is read 1.
+    /// `/1` on its QNAME (Perl 6500–6508). Bowtie 2 / HISAT2 strip the outer `/1`,`/2`
+    /// we added as `/1/1`,`/2/2`, leaving `/1`,`/2`. minimap2 does NOT strip read-number
+    /// suffixes, so [`Minimap2PairedStream`] normalises its QNAMEs to the same
+    /// single-suffix shape BEFORE this is reached — keeping this single-`/1` strip
+    /// byte-frozen for every backend. `die` if neither line is read 1.
     pub(crate) fn from_lines(line1: &str, line2: &str) -> Result<SamPair> {
         let r1 = SamRecord::parse(line1)?;
         let r2 = SamRecord::parse(line2)?;
-        if let Some(id) = strip_read1_marker(&r1.qname) {
+        if let Some(id) = r1.qname.strip_suffix("/1") {
             let seq_id = id.to_string();
             Ok(SamPair {
                 read1: r1,
                 read2: r2,
                 seq_id,
             })
-        } else if let Some(id) = strip_read1_marker(&r2.qname) {
+        } else if let Some(id) = r2.qname.strip_suffix("/1") {
             let seq_id = id.to_string();
             // read 2's line was emitted first → swap so `read1` is the /1 mate.
             Ok(SamPair {
@@ -800,6 +787,194 @@ impl PairedSamStream for PairedFileSamStream {
     }
     fn advance_pair(&mut self) -> Result<()> {
         PairedFileSamStream::advance_pair(self)
+    }
+}
+
+/// The mate number carried by a converted+aligned minimap2 QNAME: `1` for read 1 (tagged
+/// `…/1/1`), `2` for read 2 (`…/2/2`). minimap2 does NOT clip read-number suffixes, so the
+/// last `/`-segment is the mate digit. `None` for an unexpected shape.
+fn minimap2_mate_of(qname: &str) -> Option<u8> {
+    match qname.rsplit('/').next() {
+        Some("1") => Some(1),
+        Some("2") => Some(2),
+        _ => None,
+    }
+}
+
+/// The fragment-pairing key shared by read 1 and read 2 of one fragment: the QNAME with the
+/// converter's read-number marker (`/1/1` or `/2/2`, or a single `/1`/`/2`) AND any original
+/// mate suffix stripped, so `<base>/1/1` and `<base>/2/2` both key on `<base>`. Used ONLY to
+/// join the two independent SE mate streams; the pair's `seq_id` (= the merge identifier) is
+/// still set by `SamPair::from_lines` from the normalised single-suffix QNAME.
+fn minimap2_pair_key(qname: &str) -> &str {
+    let s = qname
+        .strip_suffix("/1/1")
+        .or_else(|| qname.strip_suffix("/2/2"))
+        .or_else(|| qname.strip_suffix("/1"))
+        .or_else(|| qname.strip_suffix("/2"))
+        .unwrap_or(qname);
+    s.strip_suffix("/1")
+        .or_else(|| s.strip_suffix("/2"))
+        .unwrap_or(s)
+}
+
+/// Normalise a minimap2 SAM line's QNAME to the single-mate-suffix shape Bowtie 2 / HISAT2
+/// emit: strip ONE trailing `/1` or `/2` from the QNAME (first tab-delimited field).
+/// minimap2 does not clip read-number suffixes, so `<base>/1/1` → `<base>/1`; afterwards the
+/// shared [`SamPair::from_lines`] single-`/1` strip yields the SAME `seq_id` (and the same
+/// `--ambig_bam` tag strip) as the byte-frozen backends — minimap2 records become
+/// byte-shaped like Bowtie 2 records, so nothing downstream needs a minimap2 special case.
+fn normalize_minimap2_line(line: &str) -> String {
+    match line.split_once('\t') {
+        Some((qname, rest)) => {
+            let q = qname
+                .strip_suffix("/1")
+                .or_else(|| qname.strip_suffix("/2"))
+                .unwrap_or(qname);
+            format!("{q}\t{rest}")
+        }
+        None => line.to_string(),
+    }
+}
+
+/// A live **minimap2** paired-end instance. Unlike Bowtie 2 / HISAT2 (real PE: mates emitted
+/// consecutively), minimap2 with `-x map-ont` aligns the two query files as INDEPENDENT
+/// single-end reads and emits them in two SEQUENTIAL blocks — all of file 1 (read 1s), then
+/// all of file 2 (read 2s), in input order (verified against 2.31; threads do not change it).
+/// So consecutive-line pairing is WRONG; this stream drains the whole instance, keeps the
+/// PRIMARY line per mate (skips secondary/supplementary `0x900`; keeps unmapped FLAG 4 so the
+/// merge sees the missing mate), and **joins read 1 ↔ read 2 by [`minimap2_pair_key`]**,
+/// presenting one [`SamPair`] per read 1 in input order — exactly the order the PE merge's
+/// read-ID lockstep walks. (rammap PE is rejected at resolve, so it never reaches here.)
+pub struct Minimap2PairedStream {
+    child: Child,
+    pairs: std::vec::IntoIter<SamPair>,
+    current: Option<SamPair>,
+    finished: bool,
+}
+
+impl Minimap2PairedStream {
+    /// Spawn one minimap2 paired instance (`build_pe_argv` positional shape), drain its whole
+    /// stdout, and build the read-ID-joined pair list.
+    pub fn spawn(
+        bin: &Path,
+        options: &str,
+        index: &Path,
+        input1: &Path,
+        input2: &Path,
+    ) -> Result<Self> {
+        let mut cmd = Command::new(bin);
+        // Orientation is inert for minimap2 (no `--norc`/`--nofw`); `Norc` is a placeholder.
+        cmd.args(build_pe_argv(
+            Aligner::Minimap2,
+            options,
+            Orientation::Norc,
+            index,
+            input1,
+            input2,
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+        let mut child = cmd.spawn().map_err(|e| {
+            AlignerError::Validation(format!("failed to spawn minimap2 ({}): {e}", bin.display()))
+        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+        let reader = BufReader::new(stdout);
+
+        // Partition the two sequential blocks: read 1 lines (kept in input order) and read 2
+        // lines (indexed by the shared pair key). PRIMARY only (skip 0x100 secondary / 0x800
+        // supplementary); unmapped FLAG 4 IS primary and is kept.
+        let mut read1_lines: Vec<String> = Vec::new();
+        let mut read2_by_key: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for line in reader.lines() {
+            let line = line?;
+            if line.starts_with('@') {
+                continue;
+            }
+            let mut it = line.split('\t');
+            let qname = it.next().unwrap_or("");
+            let flag: u16 = it.next().and_then(|f| f.parse().ok()).unwrap_or(0);
+            if flag & 0x900 != 0 {
+                continue; // secondary / supplementary
+            }
+            let mate = match minimap2_mate_of(qname) {
+                Some(m) => m,
+                None => continue, // unexpected QNAME shape → cannot be paired
+            };
+            // Normalise to the single-mate-suffix Bowtie 2 shape so the shared downstream
+            // (from_lines, seq_id, --ambig_bam) is byte-identical to the frozen backends.
+            let line = normalize_minimap2_line(&line);
+            if mate == 1 {
+                read1_lines.push(line);
+            } else {
+                let nqname = line.split('\t').next().unwrap_or("");
+                read2_by_key.insert(minimap2_pair_key(nqname).to_string(), line);
+            }
+        }
+
+        // Join in read-1 input order. A read 1 with no matching read 2 (should not happen for
+        // parallel mate files) is dropped — the merge then counts that read as no-alignment.
+        let mut pairs: Vec<SamPair> = Vec::with_capacity(read1_lines.len());
+        for l1 in &read1_lines {
+            let nqname = l1.split('\t').next().unwrap_or("");
+            if let Some(l2) = read2_by_key.get(minimap2_pair_key(nqname)) {
+                pairs.push(SamPair::from_lines(l1, l2)?);
+            }
+        }
+        let mut pairs = pairs.into_iter();
+        let current = pairs.next();
+        Ok(Minimap2PairedStream {
+            child,
+            pairs,
+            current,
+            finished: false,
+        })
+    }
+
+    /// Peek the current pair without consuming it (`None` at end).
+    pub fn current_pair(&self) -> Option<&SamPair> {
+        self.current.as_ref()
+    }
+
+    /// Advance to the next read-ID-joined pair (`None` at end).
+    pub fn advance_pair(&mut self) -> Result<()> {
+        self.current = self.pairs.next();
+        Ok(())
+    }
+
+    /// Reap the child (stdout already fully drained at spawn) and check the exit status.
+    pub fn finish(mut self) -> Result<()> {
+        let status = self.child.wait()?;
+        self.finished = true;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(AlignerError::Validation(format!(
+                "minimap2 exited unsuccessfully ({status})"
+            )))
+        }
+    }
+}
+
+impl Drop for Minimap2PairedStream {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+impl PairedSamStream for Minimap2PairedStream {
+    fn current_pair(&self) -> Option<&SamPair> {
+        Minimap2PairedStream::current_pair(self)
+    }
+    fn advance_pair(&mut self) -> Result<()> {
+        Minimap2PairedStream::advance_pair(self)
     }
 }
 
@@ -1502,43 +1677,25 @@ mod tests {
         assert_eq!(p.read2.qname, "readX/2");
     }
 
-    /// minimap2 does NOT clip read-number suffixes (verified, 2.31): its QNAME keeps the
-    /// converter's full `/1/1`,`/2/2`. `strip_read1_marker` must still yield the bare
-    /// `seq_id` (and identify read 1) so the lockstep matches — the same `seq_id` a
-    /// Bowtie 2 single-`/1` line would produce. The conversion tag `__CT`/`__GA` is kept
-    /// in `seq_id` (only the read-number tag is stripped), exactly as for Bowtie 2.
+    /// minimap2 does NOT clip read-number suffixes (verified, 2.31), so its QNAME keeps the
+    /// converter's full `/1/1`,`/2/2`. `normalize_minimap2_line` strips ONE suffix → the
+    /// single-`/1` Bowtie 2 shape, after which `from_lines` yields the SAME `seq_id`.
+    /// Covers both a plain id and one with an original `/1` mate suffix (the case that
+    /// must NOT over-strip: `id/1` → converter `id/1/1/1` → minimap2 → normalise to
+    /// `id/1/1` → `from_lines` → `id/1`, matching the merge identifier).
     #[test]
-    fn sampair_handles_minimap2_double_suffix() {
-        let p = SamPair::from_lines(
-            &pe_line("readX__CT/1/1", 0, 100),
-            &pe_line("readX__GA/2/2", 16, 140),
-        )
-        .unwrap();
+    fn minimap2_normalize_then_from_lines_matches_bowtie2_seq_id() {
+        let n1 = normalize_minimap2_line(&pe_line("readX__CT/1/1", 0, 100));
+        let n2 = normalize_minimap2_line(&pe_line("readX__GA/2/2", 16, 140));
+        assert!(n1.starts_with("readX__CT/1\t"));
+        let p = SamPair::from_lines(&n1, &n2).unwrap();
         assert_eq!(p.seq_id, "readX__CT");
-        assert_eq!(p.read1.qname, "readX__CT/1/1");
-        assert_eq!(p.read2.qname, "readX__GA/2/2");
-        // read 2 emitted first is still canonicalised by the double-suffix marker.
-        let swapped = SamPair::from_lines(
-            &pe_line("readY__GA/2/2", 16, 140),
-            &pe_line("readY__CT/1/1", 0, 100),
-        )
-        .unwrap();
-        assert_eq!(swapped.seq_id, "readY__CT");
-        assert_eq!(swapped.read1.qname, "readY__CT/1/1");
-    }
 
-    /// Byte-neutrality guard: a Bowtie 2 / HISAT2 single-`/1` line (tag `__CT/1`) must be
-    /// unaffected by the new double-suffix-first probe — it never ends in `/1/1`, so the
-    /// `seq_id` is the same as before this change.
-    #[test]
-    fn sampair_single_suffix_unchanged_by_double_probe() {
-        let p = SamPair::from_lines(
-            &pe_line("readX__CT/1", 99, 100),
-            &pe_line("readX__GA/2", 147, 140),
-        )
-        .unwrap();
-        assert_eq!(p.seq_id, "readX__CT");
-        assert_eq!(p.read1.qname, "readX__CT/1");
+        // Original `/1` mate suffix: must normalise to `id/1/1` → seq_id `id/1`.
+        let m1 = normalize_minimap2_line(&pe_line("rd/1/1/1", 0, 100));
+        let m2 = normalize_minimap2_line(&pe_line("rd/2/2/2", 16, 140));
+        assert!(m1.starts_with("rd/1/1\t"));
+        assert_eq!(SamPair::from_lines(&m1, &m2).unwrap().seq_id, "rd/1");
     }
 
     #[test]
