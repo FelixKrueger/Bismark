@@ -5598,3 +5598,74 @@ fn five_base_bowtie2_requires_index() {
         .failure()
         .stderr(predicate::str::contains("requires --five_base_index"));
 }
+
+/// `--five_base_umi_len N` deduplicates reads sharing (UMI, chrom, pos, strand). Three
+/// reads map to chr1:1 (fake minimap2): two share the first 3 bp UMI `AAA` (one is a
+/// duplicate, dropped), one has UMI `CCC` (kept). BAM ends with 2 records; the run
+/// reports "removed 1 duplicate read".
+#[cfg(unix)]
+#[test]
+fn five_base_umi_dedup_drops_duplicates() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base(bins.path());
+    let read = genome.path().join("reads.fq");
+    // r1/r2 share UMI "AAA"; r3 is "CCC". All map to chr1:1 (fake), 6M.
+    fs::write(
+        &read,
+        b"@r1\nAAACGT\n+\nIIIIII\n@r2\nAAATTT\n+\nIIIIII\n@r3\nCCCGTA\n+\nIIIIII\n",
+    )
+    .unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_len")
+        .arg("3")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("removed 1 duplicate read"));
+
+    let mut reader =
+        bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_mm2.bam")).unwrap();
+    assert_eq!(
+        reader.records().count(),
+        2,
+        "one duplicate dropped → 2 records"
+    );
+}
+
+/// `--five_base_umi_len` without `--illumina_5base` fails loud.
+#[cfg(unix)]
+#[test]
+fn five_base_umi_len_requires_illumina_5base() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--five_base_umi_len")
+        .arg("8")
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--five_base_umi_len requires --illumina_5base",
+        ));
+}

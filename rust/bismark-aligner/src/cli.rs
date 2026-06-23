@@ -106,6 +106,13 @@ pub struct Cli {
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
+    /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI
+    /// plus 1 spacer of the Illumina 5-Base `OverrideCycles U7N1Y#`). When greater than
+    /// zero, reads are deduplicated by (UMI, chromosome, position, strand): PCR/optical
+    /// duplicates are dropped (the first survives), removing methylation bias. 0 = off
+    /// (the default; the aligner soft-clips any UMI bases). Requires `--illumina_5base`.
+    #[arg(long = "five_base_umi_len", value_name = "int", default_value_t = 0)]
+    pub five_base_umi_len: usize,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

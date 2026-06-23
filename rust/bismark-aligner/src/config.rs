@@ -187,6 +187,8 @@ pub struct RunConfig {
     /// #787: basename of the NORMAL (unconverted) bowtie2/hisat2 index for a 5-Base
     /// `--bowtie2`/`--hisat2` run (`None` ⇒ minimap2-on-FASTA default).
     pub five_base_index: Option<PathBuf>,
+    /// #787: inline UMI length for 5-Base UMI dedup (0 = off). Requires `five_base`.
+    pub five_base_umi_len: usize,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -301,6 +303,12 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         return Err(AlignerError::Validation(
             "--five_base_deconvolution requires --illumina_5base: it deconvolutes variant vs \
              methylation over a 5-Base run's output."
+                .into(),
+        ));
+    }
+    if cli.five_base_umi_len > 0 && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_len requires --illumina_5base (UMI dedup applies to a 5-Base run)."
                 .into(),
         ));
     }
@@ -478,6 +486,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         five_base: cli.illumina_5base,
         five_base_deconvolution: cli.five_base_deconvolution,
         five_base_index: cli.five_base_index.clone(),
+        five_base_umi_len: cli.five_base_umi_len,
         library,
         layout,
         format,

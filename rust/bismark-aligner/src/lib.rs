@@ -931,6 +931,11 @@ fn five_base_align_and_call(
     );
     let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut count: u64 = 0;
+    // #787 UMI dedup: drop reads sharing (UMI, chrom, pos, strand). 0 ⇒ off.
+    let umi_len = config.five_base_umi_len;
+    let mut seen: std::collections::HashSet<(Vec<u8>, String, u32, u16)> =
+        std::collections::HashSet::new();
+    let mut dups: u64 = 0;
     loop {
         id.clear();
         seq.clear();
@@ -977,6 +982,15 @@ fn five_base_align_and_call(
             )));
         }
 
+        // UMI dedup (mapped reads only): drop a read whose (UMI, chrom, pos, strand)
+        // was already seen (a PCR/optical duplicate); the first survives.
+        if umi_len > 0 && rec.flag & 0x4 == 0 {
+            let umi: Vec<u8> = seq_uc.iter().take(umi_len).copied().collect();
+            if !seen.insert((umi, rec.rname.clone(), rec.pos, rec.flag & 0x10)) {
+                dups += 1;
+                continue;
+            }
+        }
         counters.sequences_count += 1;
         if let Some(record) = five_base_emit_record(
             &rec,
@@ -1010,6 +1024,9 @@ fn five_base_align_and_call(
         return Err(AlignerError::Validation(format!(
             "minimap2 exited with status {status}"
         )));
+    }
+    if umi_len > 0 {
+        eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate read(s).");
     }
     Ok(())
 }
@@ -1179,7 +1196,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
 
 /// Spawn ONE minimap2 PE instance (`<opts> ref.fa r1.fq r2.fq`) and walk both FastQ
 /// files in lockstep with minimap2's primary records (two per pair, in input order).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn five_base_align_and_call_pe(
     config: &RunConfig,
     genome: &Genome,
@@ -1217,6 +1234,11 @@ fn five_base_align_and_call_pe(
     let icpc = config.read_processing.icpc;
     let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
     let mut count: u64 = 0;
+    // #787 UMI dedup (PE): key on both mates' UMIs + the R1 chrom/pos/strand.
+    let umi_len = config.five_base_umi_len;
+    let mut seen: std::collections::HashSet<(Vec<u8>, Vec<u8>, String, u32, u16)> =
+        std::collections::HashSet::new();
+    let mut dups: u64 = 0;
     while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
         let Some((_id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
             break;
@@ -1258,6 +1280,16 @@ fn five_base_align_and_call_pe(
         let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
         let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
 
+        // UMI dedup (proper pairs only): drop a pair whose (R1 UMI, R2 UMI, chrom,
+        // R1 pos, R1 strand) was already seen.
+        if umi_len > 0 && rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 {
+            let u1: Vec<u8> = seq1_uc.iter().take(umi_len).copied().collect();
+            let u2: Vec<u8> = seq2_uc.iter().take(umi_len).copied().collect();
+            if !seen.insert((u1, u2, rec1.rname.clone(), rec1.pos, rec1.flag & 0x10)) {
+                dups += 1;
+                continue;
+            }
+        }
         counters.sequences_count += 1;
         if let Some((out1, out2)) = five_base_emit_pe_record(
             rec1,
@@ -1283,6 +1315,9 @@ fn five_base_align_and_call_pe(
         return Err(AlignerError::Validation(format!(
             "minimap2 exited with status {status}"
         )));
+    }
+    if umi_len > 0 {
+        eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).");
     }
     Ok(())
 }
