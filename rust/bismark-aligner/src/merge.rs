@@ -506,6 +506,35 @@ pub(crate) fn deconvert(rname: &str) -> Result<String> {
 /// The scan visits slots in order `(0,3,1,2)` (Perl 3300). `sequence_1`/`_2` are
 /// the original (uc) reads — their lengths feed `calc_mapq`.
 #[allow(clippy::too_many_arguments)]
+/// Reference span of a CIGAR: the sum of reference-consuming ops (`M`/`D`/`N`/`=`/`X`),
+/// for the minimap2 PE fragment-length check. Returns `0` on an empty/unparseable CIGAR
+/// (the caller only reaches this for mapped mates, which carry a real CIGAR).
+fn ref_span(cigar: &str) -> u32 {
+    crate::methylation::parse_cigar(cigar)
+        .unwrap_or_default()
+        .iter()
+        .filter(|(_, op)| matches!(op, b'M' | b'D' | b'N' | b'=' | b'X'))
+        .map(|(len, _)| *len)
+        .sum()
+}
+
+/// Whether the fragment spanned by two mapped, same-chromosome minimap2 mates lies within
+/// `[minins, maxins]` (each side unbounded when `None`). Fragment length = the outer span
+/// `max(end1, end2) − min(start1, start2) + 1` in 1-based reference coordinates, where
+/// `end = pos + ref_span − 1`. Only called for minimap2 PE (gated by the caller).
+fn fragment_within_bounds(
+    r1: &SamRecord,
+    r2: &SamRecord,
+    minins: Option<u32>,
+    maxins: Option<u32>,
+) -> bool {
+    let e1 = r1.pos + ref_span(&r1.cigar).saturating_sub(1);
+    let e2 = r2.pos + ref_span(&r2.cigar).saturating_sub(1);
+    let frag = e1.max(e2).saturating_sub(r1.pos.min(r2.pos)) + 1;
+    minins.is_none_or(|i| frag >= i) && maxins.is_none_or(|x| frag <= x)
+}
+
+#[allow(clippy::too_many_arguments)] // the PE merge entry point: scoring + concordance knobs
 pub fn check_results_paired_end<S: PairedSamStream>(
     identifier: &str,
     sequence_1: &str,
@@ -517,6 +546,11 @@ pub fn check_results_paired_end<S: PairedSamStream>(
     score_min_local: bool,
     want_ambig: bool,
     aligner: Aligner,
+    // `--minins`/`--maxins` fragment bounds — enforced HERE only for minimap2 PE
+    // (Bowtie 2 / HISAT2 enforce them inside the aligner). `None` = unbounded on that
+    // side. Inert for every non-minimap2 aligner.
+    minins: Option<u32>,
+    maxins: Option<u32>,
     counters: &mut Counters,
 ) -> Result<DecisionPaired> {
     let mut best_sum_so_far: Option<i64> = None;
@@ -544,19 +578,30 @@ pub fn check_results_paired_end<S: PairedSamStream>(
         //
         // minimap2 PE (experimental, #mm2-pe): minimap2 aligns the two query files as
         // INDEPENDENT single-end reads (SE-style flags, no proper-pair bits — verified
-        // against 2.31), so a consecutive "pair" may be fully unmapped (each mate FLAG 4,
-        // NOT the 77/141 marker), half-mapped, or mapped to different chromosomes. The
-        // Bismark PE model accepts only a concordant same-chromosome pair, so for minimap2
-        // treat anything else as "no PE alignment" (skip, exactly like the 77/141 marker)
-        // rather than feeding it to the AS/MD/same-chromosome path below — which would
-        // error on a missing AS:i: or a cross-chromosome pair. Gated on `Aligner::Minimap2`
-        // so the byte-frozen Bowtie 2 / HISAT2 paths are untouched (those are concordant by
-        // construction — `--no-mixed` — so this branch can never fire for them anyway). The
-        // `&& both-mapped` short-circuits the `deconvert` so it never sees an unmapped `*`.
+        // against 2.31), with NO concordance enforcement of its own. So we enforce the
+        // Bismark PE-concordance ourselves and treat anything non-concordant as "no PE
+        // alignment" (skip, exactly like the 77/141 marker) rather than feeding it to the
+        // AS/MD/same-chromosome path below (which would error on a missing AS:i: or a
+        // cross-chromosome pair) or emitting a nonsense fragment. A concordant pair is:
+        //   1. both mates mapped (neither FLAG 4) — else half-mapped / fully-unmapped;
+        //   2. same chromosome (after de-converting the RNAME suffix);
+        //   3. FR orientation — the mates on OPPOSITE strands (one FLAG 0x10, one not):
+        //      a proper fragment's ends point toward each other (what Bowtie 2's default
+        //      `--fr` + `--no-discordant` guarantees); same-strand = not a fragment;
+        //   4. fragment length within `[--minins, --maxins]` when those are set (default
+        //      unbounded — minimap2 PE targets long reads, where a short-read insert cap
+        //      would wrongly drop valid pairs).
+        // Gated on `Aligner::Minimap2` so the byte-frozen Bowtie 2 / HISAT2 paths are
+        // untouched (those are concordant by construction — the aligner enforces `--fr` +
+        // `--no-mixed`/`--no-discordant` + `--maxins` — so this branch never fires for
+        // them). Each clause short-circuits the next so `deconvert`/`ref_span` never see
+        // an unmapped `*`.
         let mm2_non_concordant = aligner == Aligner::Minimap2
             && ((r1.flag & 4 != 0)
                 || (r2.flag & 4 != 0)
-                || deconvert(&r1.rname).ok() != deconvert(&r2.rname).ok());
+                || deconvert(&r1.rname).ok() != deconvert(&r2.rname).ok()
+                || (r1.flag & 0x10) == (r2.flag & 0x10)
+                || !fragment_within_bounds(r1, r2, minins, maxins));
         if pair.is_unmapped_pair() || mm2_non_concordant {
             stream.advance_pair()?;
             continue;
@@ -1379,6 +1424,33 @@ mod tests {
         want_ambig: bool,
         aligner: Aligner,
     ) -> (DecisionPaired, Counters) {
+        run_pe_aln_ins(
+            id,
+            s0,
+            s1,
+            s2,
+            s3,
+            directional,
+            want_ambig,
+            aligner,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_pe_aln_ins(
+        id: &str,
+        s0: Slot,
+        s1: Slot,
+        s2: Slot,
+        s3: Slot,
+        directional: bool,
+        want_ambig: bool,
+        aligner: Aligner,
+        minins: Option<u32>,
+        maxins: Option<u32>,
+    ) -> (DecisionPaired, Counters) {
         let mut streams: Vec<Option<VecPairStream>> = vec![s0, s1, s2, s3]
             .into_iter()
             .map(|s| s.map(VecPairStream::new))
@@ -1395,6 +1467,8 @@ mod tests {
             false,
             want_ambig,
             aligner,
+            minins,
+            maxins,
             &mut c,
         )
         .unwrap();
@@ -1552,6 +1626,76 @@ mod tests {
             DecisionPaired::UniqueBest(b) => assert_eq!(b.index, 0),
             other => panic!("expected UniqueBest on OT, got {other:?}"),
         }
+    }
+
+    /// Both mates on the SAME strand (FLAG 0 + 0) → not FR → skipped → NoAlignment.
+    /// minimap2 maps mates independently, so a same-strand "pair" is not a real fragment
+    /// (Bowtie 2's default `--fr` + `--no-discordant` would never report it).
+    #[test]
+    fn pe_minimap2_same_strand_pair_is_skipped() {
+        let pair = (
+            mm2_mapped("r1", 1, 0, "chr1_CT_converted", 100, 0),
+            mm2_mapped("r1", 2, 0, "chr1_CT_converted", 140, 0),
+        );
+        let (d, _) = run_pe_aln(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Minimap2,
+        );
+        assert_eq!(d, DecisionPaired::NoAlignment);
+    }
+
+    /// FR + same-chromosome but the fragment (910 bp: R1 100..109, R2 1000..1009) EXCEEDS
+    /// `--maxins 200` → skipped. With no bound it maps (proven by the concordant test) and
+    /// with a generous bound it maps (next test) — so this isolates the maxins cutoff.
+    #[test]
+    fn pe_minimap2_fragment_exceeds_maxins_is_skipped() {
+        let pair = (
+            mm2_mapped("r1", 1, 0, "chr1_CT_converted", 100, 0),
+            mm2_mapped("r1", 2, 16, "chr1_CT_converted", 1000, 0),
+        );
+        let (d, _) = run_pe_aln_ins(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Minimap2,
+            None,
+            Some(200), // maxins
+        );
+        assert_eq!(d, DecisionPaired::NoAlignment);
+    }
+
+    /// The SAME 910 bp FR fragment maps under a generous `--maxins 2000` (and a `--minins
+    /// 50` floor it clears) → UniqueBest. Proves the bound is a real cutoff, not an
+    /// always-reject.
+    #[test]
+    fn pe_minimap2_fragment_within_bounds_maps() {
+        let pair = (
+            mm2_mapped("r1", 1, 0, "chr1_CT_converted", 100, 0),
+            mm2_mapped("r1", 2, 16, "chr1_CT_converted", 1000, 0),
+        );
+        let (d, _) = run_pe_aln_ins(
+            "r1",
+            Some(&[pair]),
+            None,
+            None,
+            None,
+            true,
+            false,
+            Aligner::Minimap2,
+            Some(50),   // minins
+            Some(2000), // maxins
+        );
+        assert!(matches!(d, DecisionPaired::UniqueBest(_)));
     }
 
     /// (C) HISAT2, mate-1 second-best ONLY (mate-2 none): masking `sb1→None` makes
@@ -1862,6 +2006,8 @@ mod tests {
             false,
             false,
             Aligner::Bowtie2,
+            None,
+            None,
             &mut c,
         );
         assert!(r.is_err());

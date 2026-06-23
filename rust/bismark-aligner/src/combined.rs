@@ -1771,6 +1771,8 @@ mod tests {
             false,
             false,
             crate::config::Aligner::Bowtie2,
+            None, // minins (inert: minimap2-only concordance)
+            None, // maxins
             &mut c,
         )
         .unwrap()
@@ -2112,6 +2114,8 @@ mod tests {
             false,
             false,
             crate::config::Aligner::Bowtie2,
+            None, // minins (inert: minimap2-only concordance)
+            None, // maxins
             &mut c,
         )
         .unwrap()

@@ -39,9 +39,15 @@ Running `minimap2 <opts> <index>.mmi <input1> <input2>` (Perl's invocation):
   (positional, no `-x`/`-1`/`-2`/orient). `SamPair::from_lines` reads the read-1 marker via
   a shared `strip_read1_marker` (`/1/1` then `/1`) — provably byte-neutral for the frozen
   backends (their tail is a single `/1`; the conv tag `__CT`/`__GA` precedes it).
-- `merge.rs` — skip non-concordant minimap2 "pairs" (half-mapped / fully-unmapped FLAG 4 /
-  cross-chromosome) as no-PE-alignment, gated on `Aligner::Minimap2` (Bowtie 2 / HISAT2 are
-  concordant by construction — `--no-mixed` — so the branch never fires for them).
+- `merge.rs` — enforce **PE concordance** for minimap2 (gated on `Aligner::Minimap2`) and
+  skip non-concordant "pairs" as no-PE-alignment. A concordant pair is: both mates mapped
+  (neither FLAG 4), same chromosome, **FR orientation** (mates on opposite strands, what
+  Bowtie 2's default `--fr`+`--no-discordant` guarantees), and **fragment length within
+  `[--minins, --maxins]`** when those are set. Bowtie 2 / HISAT2 are concordant by
+  construction (the aligner enforces `--fr`/`--no-mixed`/`--maxins`), so the branch never
+  fires for them. `--minins`/`--maxins` are now carried in `RunConfig` (`config.rs`) and
+  threaded to `check_results_paired_end`; fragment length uses a `ref_span` (CIGAR
+  reference-consuming ops) helper.
 - `output.rs` — `--ambig_bam` raw PE tag strip tolerates the `/1/1` form.
 - Report label is the correct `minimap2` (deliberate divergence from Perl's broken HISAT2
   mislabel).
@@ -49,11 +55,22 @@ Running `minimap2 <opts> <index>.mmi <input1> <input2>` (Perl's invocation):
 The faithful Bowtie 2 / HISAT2 PE merge / scoring / MAPQ / `XM`-`XR`-`XG` / BAM output is
 reused unchanged.
 
-## Known limitations (documented in the notice)
+## Concordance (step 1, 2026-06-23)
 
-minimap2 maps mates independently, so a "both-mapped, same-chromosome" pair may still be
-discordant by orientation/insert (Bismark will emit it with a large TLEN). Filter downstream
-by insert size. Exact byte-identity to Perl is explicitly out of scope.
+minimap2 aligns the two mate files as independent single-end reads with NO concordance
+enforcement of its own, so Bismark enforces it: both mates mapped, same chromosome, **FR
+orientation**, fragment within **`[--minins, --maxins]`**. Fragment bounds default to
+**UNBOUNDED** (long-read-oriented — a short-read insert cap like Bowtie 2's 500 would
+wrongly drop valid long-read pairs); pass `--maxins` to cap the insert. This closes the
+"same-chromosome but discordant/huge-TLEN" gap from the first cut.
+
+## Remaining for a non-experimental ("concordance-gated") status (step 2)
+
+Still needs a measured concordance gate on real long-read bisulfite PE data vs the trusted
+PE backends (Bowtie 2 / HISAT2 PE on short-read WGBS for the short-read case), with a
+documented tolerance, determinism, and worker-invariance — mirroring how `--rammap` /
+`--combined_index` were gated. Until then the never-silent EXPERIMENTAL notice stays. Exact
+byte-identity to Perl is permanently out of scope (no oracle).
 
 ## Tests
 

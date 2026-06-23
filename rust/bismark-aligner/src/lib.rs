@@ -120,8 +120,12 @@ fn minimap2_paired_experimental_notice() -> String {
     "Note: paired-end --minimap2 is EXPERIMENTAL. It mirrors Perl Bismark's positional \
      two-file minimap2 invocation, but the Perl PE minimap2 path is unfinished and its \
      report mislabels minimap2 as HISAT2, so there is NO trustworthy byte-identity oracle: \
-     results are concordance-reasoned, NOT byte-identical to Perl. Use --bowtie2/--hisat2 \
-     for a byte-frozen paired-end path."
+     results are concordance-reasoned, NOT byte-identical to Perl. minimap2 aligns the two \
+     mate files as independent single-end reads, so Bismark enforces pair concordance \
+     itself (both mates mapped, same chromosome, FR orientation, fragment within \
+     --minins/--maxins); non-concordant pairs are dropped as no-alignment. Fragment bounds \
+     default to UNBOUNDED (long-read-oriented) — pass --maxins to cap the insert size. Use \
+     --bowtie2/--hisat2 for a byte-frozen paired-end path."
         .to_string()
 }
 
@@ -2985,6 +2989,8 @@ fn drive_merge_pe(
             config.score_min_local,
             config.ambig_bam,
             config.aligner,
+            config.minins,
+            config.maxins,
             counters,
         )?;
 

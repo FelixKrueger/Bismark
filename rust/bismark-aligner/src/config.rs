@@ -221,6 +221,15 @@ pub struct RunConfig {
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
     pub read_processing: ReadProcessing,
+    /// `--minins`/`--maxins` (PE-only). Bowtie 2 / HISAT2 enforce these inside the
+    /// aligner (they are pushed to `aligner_options`); minimap2 does NOT (it aligns the
+    /// two mate files as independent single-end reads), so the **minimap2 PE concordance
+    /// check** (`merge.rs`, gated on `Aligner::Minimap2`) enforces them itself: a fragment
+    /// outside `[minins, maxins]` is treated as no-PE-alignment. `None` = unbounded on
+    /// that side (the default — minimap2 PE targets long reads, where a fixed short-read
+    /// insert cap would wrongly drop valid pairs; pass `--maxins` to bound it).
+    pub minins: Option<u32>,
+    pub maxins: Option<u32>,
     /// `--multicore`/`--parallel`: file-level worker count (Phase 9b). Resolved to
     /// `cli.multicore.unwrap_or(1)`; `1` = the single-core direct path, `>1` = the
     /// order-preserving contiguous-chunk fan-out. `validate_multicore` guarantees ≥ 1.
@@ -432,6 +441,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ambig_bam: cli.ambig_bam,
         output,
         read_processing,
+        // --minins/--maxins: carried for the minimap2 PE concordance check (Bowtie 2 /
+        // HISAT2 enforce them via the aligner options instead). Validated PE-only in
+        // `build_aligner_options`.
+        minins: cli.minins,
+        maxins: cli.maxins,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
         // rejected `0`; absent flag = single-core (1). For HISAT2 the `--multicore N`
         // remap routes to ONE instance with `-p N` (the threading lives in
