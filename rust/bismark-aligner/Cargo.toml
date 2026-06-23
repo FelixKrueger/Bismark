@@ -80,7 +80,11 @@ tempfile = "=3.10.1"
 # Function-level micro-benchmarks (06222026 perf epic). Dev-only: never compiled
 # into the shipped binary. Demonstrates the SamRecord::parse byte-split speedup
 # that is real at the function level but below end-to-end (bowtie2-dominated) noise.
-criterion = { version = "=0.5.1", default-features = false }
+# `cargo_bench_support` is REQUIRED for `cargo bench` to actually measure (the
+# criterion harness's arg parsing + timing live behind it); `default-features =
+# false` otherwise drops the heavy `plotters`/`rayon` HTML-report machinery we do
+# not need for a CI-reproducible number.
+criterion = { version = "=0.5.1", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
 name = "parse_bench"
