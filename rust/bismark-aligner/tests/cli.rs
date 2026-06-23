@@ -5464,8 +5464,7 @@ fn five_base_se_end_to_end_inverts_polarity() {
         .success();
 
     // 5-Base uses the minimap2 (`mm2`) naming + the `sr` preset option string.
-    let report =
-        fs::read_to_string(outdir.path().join("reads_bismark_mm2_SE_report.txt")).unwrap();
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_mm2_SE_report.txt")).unwrap();
     assert!(report.contains("Bismark was run with minimap2 against"));
     assert!(report.contains("-a --MD --secondary=no -t 2 -x sr -K 250K"));
     assert!(report.contains("Sequences analysed in total:\t1\n"));
@@ -5508,5 +5507,7 @@ fn five_base_rejects_non_directional_and_paired_end() {
         .arg(&read)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--illumina_5base is directional only"));
+        .stderr(predicate::str::contains(
+            "--illumina_5base is directional only",
+        ));
 }
