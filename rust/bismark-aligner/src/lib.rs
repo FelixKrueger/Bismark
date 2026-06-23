@@ -720,12 +720,26 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
 /// reads to the user's NORMAL (unconverted) index with a permissive `--score-min`
 /// (the sparse C→T conversions are well within default scoring) — NOT the bisulfite
 /// option string. Used for BOTH the spawn argv and the report's "was run with" line.
+///
+/// Threads: the bisulfite minimap2 path hardcodes `-t 2` (Perl faithfulness, byte-
+/// frozen). The 5-Base path is NOT byte-identical, so there is no reason to throttle
+/// it. `--multicore N` sets the single instance's thread count (minimap2 `-t N`,
+/// bowtie2/hisat2 `-p N`, the HISAT2 `--multicore`→`-p` precedent); when unset
+/// (`multicore <= 1`) it defaults to all logical CPUs.
 fn five_base_aligner_options(config: &RunConfig) -> String {
+    let n = if config.multicore > 1 {
+        config.multicore as usize
+    } else {
+        std::thread::available_parallelism()
+            .map(|x| x.get())
+            .unwrap_or(2)
+    };
     match config.aligner {
-        Aligner::Bowtie2 => "-q --score-min L,0,-0.6".to_string(),
-        Aligner::Hisat2 => "-q --no-spliced-alignment --score-min L,0,-0.6".to_string(),
-        // minimap2 (default 5-Base engine): the resolved `-a --MD --secondary=no … -x sr`.
-        _ => config.aligner_options.clone(),
+        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n}"),
+        Aligner::Hisat2 => format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n}"),
+        // minimap2 (default 5-Base engine): reuse the resolved options but lift the
+        // faithful `-t 2` to `-t {n}` (all cores) for this non-byte-identical path.
+        _ => config.aligner_options.replace("-t 2", &format!("-t {n}")),
     }
 }
 

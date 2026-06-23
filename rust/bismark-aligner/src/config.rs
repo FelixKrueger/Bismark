@@ -407,12 +407,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 "--illumina_5base requires FASTQ input in v1 (drop --fasta).".into(),
             ));
         }
-        if cli.multicore.unwrap_or(1) > 1 {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base does not support --multicore in v1 (single instance only)."
-                    .into(),
-            ));
-        }
+        // --multicore N is honoured: it sets the single aligner instance's thread count
+        // (minimap2 -t N / bowtie2,hisat2 -p N), the HISAT2 --multicore→-p precedent.
         if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
             return Err(AlignerError::Unsupported(
                 "--illumina_5base is not supported with --combined_index (a separate bisulfite \

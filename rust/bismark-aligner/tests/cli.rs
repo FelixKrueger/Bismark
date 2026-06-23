@@ -5453,6 +5453,8 @@ fn five_base_se_end_to_end_inverts_polarity() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("--multicore") // sets minimap2 -t deterministically for the assertion
+        .arg("4")
         .arg("--path_to_minimap2")
         .arg(bins.path())
         .arg("--temp_dir")
@@ -5463,10 +5465,11 @@ fn five_base_se_end_to_end_inverts_polarity() {
         .assert()
         .success();
 
-    // 5-Base uses the minimap2 (`mm2`) naming + the `sr` preset option string.
+    // 5-Base uses the minimap2 (`mm2`) naming + the `sr` preset option string, with
+    // `-t` set from --multicore (4 here; the bisulfite path's faithful -t 2 is lifted).
     let report = fs::read_to_string(outdir.path().join("reads_bismark_mm2_SE_report.txt")).unwrap();
     assert!(report.contains("Bismark was run with minimap2 against"));
-    assert!(report.contains("-a --MD --secondary=no -t 2 -x sr -K 250K"));
+    assert!(report.contains("-a --MD --secondary=no -t 4 -x sr -K 250K"));
     assert!(report.contains("Sequences analysed in total:\t1\n"));
     assert!(report.contains("Mapping efficiency:\t100.0%\n"));
 
