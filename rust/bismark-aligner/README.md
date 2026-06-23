@@ -53,18 +53,34 @@ extractor / bedGraph / coverage2cytosine / report consume it unchanged.
 Both **single-end and paired-end** are supported (PE runs one minimap2 PE instance
 over the unconverted genome; the per-pair index is OT/OB from R1's strand).
 
+**Aligner backends.** The default is **minimap2** (`-x sr`) reading the genome FASTA
+directly. `--bowtie2`/`--hisat2` are also supported via `--five_base_index <basename>`,
+a NORMAL (unconverted) index of the genome (5-Base keeps full complexity, so a plain
+index works; build it once with `bowtie2-build`/`hisat2-build`).
+
+**Variant/methylation deconvolution** (`--five_base_deconvolution`). A SNP-naive
+caller miscalls a C>T genetic variant as 5mC (both read as `T`). With this flag a
+post-alignment pass deconvolutes them using both strands (DRAGEN's rule): at a CpG,
+methylation moves only the own-strand base while a genetic variant moves BOTH, so a
+CpG whose opposite strand also lost the cytosine is a **variant**, excluded from
+methylation. Writes a per-CpG report `<out>.5base_deconvolution.txt`.
+
+**UMI dedup** (`--five_base_umi_len N`). Takes the first `N` bases of each read as its
+UMI (e.g. `8` for the 5-Base 7 bp UMI + 1 spacer) and drops PCR/optical duplicates
+sharing (UMI, chrom, position, strand), removing methylation bias.
+
 **This is NOT byte-identical** — Perl Bismark has no 5-Base path, so there is no
-v0.25.1 oracle. Validation is two synthetic **ground-truth gates against the real
-minimap2** (`tests/five_base_groundtruth.rs`, SE + PE): reads carrying a known
-5mC→T pattern are recovered with the correct `Z`/`z` call at every aligned CpG. A
-DRAGEN-concordance gate is pending an external dataset. Requires `minimap2` on
-`PATH` (or `--path_to_minimap2`).
+v0.25.1 oracle. Validation is synthetic **ground-truth gates against the real
+minimap2** (`tests/five_base_groundtruth.rs`): SE + PE recover a known 5mC→T pattern
+with the correct `Z`/`z` call at every aligned CpG, and the deconvolution gate shows a
+homozygous C>T CpG called `variant` while a 5mC CpG stays `methylation`. A
+DRAGEN-concordance gate is pending an external dataset. Requires `minimap2` on `PATH`
+(or `--path_to_minimap2`).
 
 **Scope:** directional, FASTQ, single instance (SE + PE). Rejected loudly:
 `--non_directional`/`--pbat` (DRAGEN documents 5-Base as **directional-only**, so
 this is a permanent non-goal, not a deferred phase), `--slam`, `--fasta`,
-`--multicore`, `--combined_index*`, and the other aligner backends. UMI/duplex-
-consensus collapsing and variant-vs-methylation deconvolution (DRAGEN does both)
-are not yet implemented — the caller is SNP-naive (at parity with the Bismark
-bisulfite caller); pairs that are not properly mapped are skipped. See
-`plans/06232026_illumina-5base-support/`.
+`--multicore`, `--combined_index*`. Not yet implemented (deferred): full DRAGEN-style
+**duplex-consensus** base reconciliation (the asymmetric mC>T two-strand consensus;
+the current UMI handling is position+UMI dedup, not consensus); non-concordant PE
+pairs are skipped. See `plans/06232026_illumina-5base-support/`.

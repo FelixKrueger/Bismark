@@ -58,12 +58,15 @@ Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on 
 
 ## Done since v1
 
-- **Paired-end** (`run_pe_five_base`): one minimap2 PE instance over the unconverted genome; OT/OB index from R1's strand; reuses the PE extract + `paired_end_sam_output` with the inverted call. Ground-truth gated (above). Proper pairs only (non-concordant pairs are skipped).
+- **Paired-end** (`run_pe_five_base`): one minimap2 PE instance over the unconverted genome; OT/OB index from R1's strand; reuses the PE extract + `paired_end_sam_output` with the inverted call. Ground-truth gated. Proper pairs only.
+- **Variant/methylation deconvolution** (`--five_base_deconvolution`, module `five_base_deconv.rs`): post-alignment two-strand pileup over the BAM; a CpG whose opposite strand also lost the cytosine is a C>T/G>A variant (excluded from methylation), the rule DRAGEN uses. Writes `<out>.5base_deconvolution.txt`. Ground-truth gated (homozygous C>T → `variant`; 5mC → `methylation`).
+- **bowtie2/hisat2 backends** (`--bowtie2`/`--hisat2` + `--five_base_index <basename>`): align the raw reads to a user-provided NORMAL (unconverted) index with a plain option profile; same per-read inverted call. Hermetic-tested (fake bowtie2).
+- **UMI dedup** (`--five_base_umi_len N`): drop PCR/optical duplicates by (UMI, chrom, pos, strand) SE / (R1 UMI, R2 UMI, chrom, R1 pos, strand) PE. Hermetic-tested.
 
 ## Permanent non-goal
 
 - **Non-directional / PBAT**: DRAGEN documents 5-Base as **directional-only** (`--methylation-protocol=directional`), so this is rejected by design, not deferred.
 
-## Deferred follow-up phases (rejected loudly)
+## Deferred follow-up
 
-UMI extraction + duplex-consensus collapsing (7 bp inline UMI + 1 spacer, `OverrideCycles U7N1Y#`); variant-vs-methylation deconvolution (SNP-aware calling, rastair/DRAGEN territory — the caller is currently SNP-naive); bowtie2/hisat2 unconverted-index support; `--multicore`; FASTA input. Architect a later phase around the mC→T *convention* (TAPS/evoC share it), not the Illumina brand.
+Full DRAGEN-style **duplex-consensus** base reconciliation (the asymmetric mC>T two-strand consensus that forms a single consensus read from a duplex pair — distinct from the UMI-position dedup already shipped); `--multicore`; FASTA input. Architect a later phase around the mC→T *convention* (TAPS/evoC share it), not the Illumina brand.
