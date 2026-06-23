@@ -110,22 +110,21 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
     )
 }
 
-/// Never-silent notice for experimental paired-end minimap2 (mirrors the
-/// `hisat2_multicore_remap_notice` precedent). Unlike SE minimap2 (byte-identical
-/// to Perl), the Perl PE minimap2 path is unfinished WIP (`# TODO`, `warn`+`sleep(1)`)
-/// and its PE report mislabels minimap2 as "HISAT2" — so there is NO trustworthy
-/// byte-identity oracle. We mirror Perl's positional two-file invocation and reuse the
-/// shared PE merge/scoring/output, but results are NOT byte-validated against Perl.
-fn minimap2_paired_experimental_notice() -> String {
-    "Note: paired-end --minimap2 is EXPERIMENTAL. It mirrors Perl Bismark's positional \
-     two-file minimap2 invocation, but the Perl PE minimap2 path is unfinished and its \
-     report mislabels minimap2 as HISAT2, so there is NO trustworthy byte-identity oracle: \
-     results are concordance-reasoned, NOT byte-identical to Perl. minimap2 aligns the two \
-     mate files as independent single-end reads, so Bismark enforces pair concordance \
-     itself (both mates mapped, same chromosome, FR orientation, fragment within \
+/// Never-silent notice for paired-end minimap2 (mirrors the `--rammap` precedent: opt-in,
+/// never-silent, concordance-gated — NOT byte-identical). The Perl PE minimap2 path is
+/// unfinished WIP (`# TODO`, `warn`+`sleep(1)`) and its report mislabels minimap2 as
+/// "HISAT2", so there is no Perl oracle; instead PE minimap2 is gated against the
+/// byte-frozen Bowtie 2 PE backend (gate: 100 % position + `XM` concordance, ground-truth
+/// recovery, determinism, worker-invariance — `plans/06232026_minimap2-pe/GATE.md`).
+fn minimap2_paired_concordance_notice() -> String {
+    "Note: paired-end --minimap2 is concordance-gated, NOT byte-identical to Perl (the Perl \
+     PE minimap2 path is unfinished; there is no byte oracle). minimap2 aligns the two mate \
+     files as independent single-end reads (read-ID paired), so Bismark enforces pair \
+     concordance itself (both mates mapped, same chromosome, FR orientation, fragment within \
      --minins/--maxins); non-concordant pairs are dropped as no-alignment. Fragment bounds \
-     default to UNBOUNDED (long-read-oriented) — pass --maxins to cap the insert size. Use \
-     --bowtie2/--hisat2 for a byte-frozen paired-end path."
+     default to UNBOUNDED (long-read-oriented) — pass --maxins to cap the insert size. \
+     Validated 100% position + methylation-call concordant to the Bowtie 2 PE backend. Use \
+     --bowtie2/--hisat2 for a byte-identical (vs Perl) paired-end path."
         .to_string()
 }
 
@@ -144,10 +143,10 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
-    // Never-silent: experimental PE minimap2 (no trustworthy byte-identity oracle).
+    // Never-silent: PE minimap2 is concordance-gated (NOT byte-identical to Perl).
     // Gated on the resolved layout so SE minimap2 (byte-identical) stays silent.
     if config.aligner == Aligner::Minimap2 && config.layout.is_paired() {
-        eprintln!("{}", minimap2_paired_experimental_notice());
+        eprintln!("{}", minimap2_paired_concordance_notice());
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to

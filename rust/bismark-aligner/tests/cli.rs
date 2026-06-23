@@ -2425,9 +2425,9 @@ fn hisat2_pe_mapped_names_and_report() {
 
 // ===========================================================================
 // minimap2 (Phase 4) — positional `.mmi`, clean-slate options, `mm2` naming,
-// max-length cutoff. SE is byte-identical to Perl; PE is EXPERIMENTAL (mirrors
-// Perl's positional two-file invocation, no trustworthy byte oracle) — see
-// `minimap2_pe_mapped_names_and_report` below.
+// max-length cutoff. SE is byte-identical to Perl; PE is concordance-gated (read-ID
+// paired with FR + insert concordance, 100% concordant to the Bowtie 2 PE oracle, NOT
+// byte-identical to Perl) — see `minimap2_pe_mapped_names_and_report` below.
 // ===========================================================================
 
 /// A genome dir with a complete minimap2 `.mmi` index (single file per converted
@@ -2615,8 +2615,8 @@ esac
     write_exec(&dir.join("minimap2"), script);
 }
 
-/// PE `--minimap2` end-to-end (EXPERIMENTAL): the run emits the never-silent experimental
-/// notice on stderr, mirrors Perl's positional two-file invocation, and reuses the shared
+/// PE `--minimap2` end-to-end (concordance-gated): the run emits the never-silent notice on
+/// stderr, mirrors Perl's positional two-file invocation, and reuses the shared
 /// PE machinery — output BAM (`_mm2_pe.bam`) carries BOTH mates (FLAG 99/147 by index, the
 /// SE-style aligner flags re-derived), RNEXT `=`/PNEXT/shared-MAPQ, and the report carries
 /// the `mm2` token + says "Bismark was run with minimap2" (the deliberate non-"HISAT2"
@@ -2653,7 +2653,7 @@ fn minimap2_pe_mapped_names_and_report() {
         .success()
         // never-silent experimental notice (no trustworthy byte-identity oracle).
         .stderr(
-            predicate::str::contains("paired-end --minimap2 is EXPERIMENTAL")
+            predicate::str::contains("paired-end --minimap2 is concordance-gated")
                 .and(predicate::str::contains("NOT byte-identical to Perl")),
         );
 

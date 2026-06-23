@@ -55,21 +55,34 @@ Running `minimap2 <opts> <index>.mmi <input1> <input2>` (Perl's invocation):
 The faithful Bowtie 2 / HISAT2 PE merge / scoring / MAPQ / `XM`-`XR`-`XG` / BAM output is
 reused unchanged.
 
-## Concordance (step 1, 2026-06-23)
+## Concordance enforcement
 
 minimap2 aligns the two mate files as independent single-end reads with NO concordance
 enforcement of its own, so Bismark enforces it: both mates mapped, same chromosome, **FR
 orientation**, fragment within **`[--minins, --maxins]`**. Fragment bounds default to
 **UNBOUNDED** (long-read-oriented — a short-read insert cap like Bowtie 2's 500 would
-wrongly drop valid long-read pairs); pass `--maxins` to cap the insert. This closes the
-"same-chromosome but discordant/huge-TLEN" gap from the first cut.
+wrongly drop valid long-read pairs); pass `--maxins` to cap the insert.
 
-## Remaining for a non-experimental ("concordance-gated") status (step 2)
+## Pairing model (the load-bearing fix)
 
-Still needs a measured concordance gate on real long-read bisulfite PE data vs the trusted
-PE backends (Bowtie 2 / HISAT2 PE on short-read WGBS for the short-read case), with a
-documented tolerance, determinism, and worker-invariance — mirroring how `--rammap` /
-`--combined_index` were gated. Until then the never-silent EXPERIMENTAL notice stays. Exact
+With `-x map-ont`, minimap2 reads the two query files SEQUENTIALLY and emits all read 1s
+then all read 2s (NOT interleaved mate pairs — verified 2.31, `-t 1`/`-t 2`). So the
+consecutive-line pairing the first cut inherited from Perl is broken on real multi-read data
+(it crashed: two read 1s read as a "pair"). `Minimap2PairedStream` (align.rs) drains each
+instance and **joins read 1 ↔ read 2 by read-ID** (primary line per mate; skips
+secondary/supplementary; keeps unmapped FLAG 4), presenting one pair per read in input order.
+`drive_merge_pe` is generic over `PairedSamStream`; `process_pe_chunk` dispatches minimap2 to
+it. minimap2 QNAMEs are normalised to the single-suffix Bowtie 2 shape so `from_lines` +
+`--ambig_bam` stay byte-frozen for all backends.
+
+## Status: concordance-gated (NOT experimental)
+
+✅ Passed the concordance gate ([`GATE.md`](GATE.md), [`gate_harness.py`](gate_harness.py)):
+**100% position + `XM` concordance** vs the byte-frozen Bowtie 2 PE oracle, **100%
+ground-truth recovery** (short + long reads), deterministic, worker-invariant. Promoted from
+"experimental" to **concordance-gated, NOT byte-identical to Perl** — the `--rammap` /
+`--combined_index` status. The never-silent notice now says "concordance-gated". A
+maintainer full-scale real-data gate remains the final production sign-off; exact
 byte-identity to Perl is permanently out of scope (no oracle).
 
 ## Tests
