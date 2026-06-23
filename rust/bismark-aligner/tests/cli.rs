@@ -5401,3 +5401,112 @@ fn combined_index_se_hisat2_sequential_banner_says_hisat2() {
                 .and(predicate::str::contains("Bowtie 2").not()),
         );
 }
+
+// ===========================================================================
+// #787 Illumina 5-Base (5mC->T) — SE end-to-end, FROM FASTQ.
+// Hermetic: a fake minimap2 that aligns against the UNCONVERTED genome FASTA
+// (positional `<genome.fa> <reads>`, RNAME = plain `chr1`, NO `_CT_converted`
+// suffix) and emits one forward record per read. The driver re-reads the FASTQ
+// for the original bases and calls methylation with INVERTED (5-Base) polarity.
+// ===========================================================================
+
+/// A fake `minimap2` for the 5-Base path: maps every read to chr1:1 (6M, FLAG 0,
+/// RNAME `chr1` UNCONVERTED) echoing the read's own SEQ. The reference is located
+/// by the `*.fa` positional arg (the raw genome), NOT a `.mmi` — proving the
+/// 5-Base path passes the unconverted FASTA, not a converted index.
+#[cfg(unix)]
+fn make_fake_minimap2_five_base(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+inp=""; ref=""
+for a in "$@"; do
+  case "$a" in
+    *.fastq|*.fq) inp="$a" ;;
+    *.fa|*.fasta) ref="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
+# one forward primary per read; SEQ echoes the read (driver uses the FASTQ read).
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id) } NR%4==2 { print id "\t0\tchr1\t1\t60\t6M\t*\t0\t0\t" $0 "\tFFFFFF\tNM:i:1\tAS:i:10\tMD:Z:1C4" }' "$inp"
+"#;
+    write_exec(&dir.join("minimap2"), script);
+}
+
+/// `--illumina_5base` SE end-to-end: a read `ATGTAC` vs genome `ACGTACGT` →
+/// the genomic C at the CpG read as `T` is METHYLATED (`Z`, the 5-Base inverse of
+/// bisulfite's `z`), and the CpG C read as `C` is UNMETHYLATED (`z`). The BAM XM
+/// tag is `.Z...z`. The report carries the `mm2` naming, the `-x sr` option string,
+/// and "Bismark was run with minimap2".
+#[cfg(unix)]
+#[test]
+fn five_base_se_end_to_end_inverts_polarity() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path()); // genome.fa = chr1 ACGTACGT + BS_*.mmi for discovery
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    // 5-Base uses the minimap2 (`mm2`) naming + the `sr` preset option string.
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_mm2_SE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with minimap2 against"));
+    assert!(report.contains("-a --MD --secondary=no -t 2 -x sr -K 250K"));
+    assert!(report.contains("Sequences analysed in total:\t1\n"));
+    assert!(report.contains("Mapping efficiency:\t100.0%\n"));
+
+    // The BAM XM tag carries the INVERTED 5-Base call: `.Z...z`.
+    let mut reader =
+        bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_mm2.bam")).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let xm = bismark_io::tags::xm(recs[0].inner().data()).unwrap();
+    assert_eq!(
+        xm, b".Z...z",
+        "5-Base: read T at a genomic CpG C = methylated Z (inverse of bisulfite)"
+    );
+}
+
+/// `--illumina_5base` v1 scope guards fail loud (the error names --illumina_5base).
+#[cfg(unix)]
+#[test]
+fn five_base_rejects_non_directional_and_paired_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    // --non_directional is a deferred follow-up: reject loudly.
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--non_directional")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--illumina_5base is directional only"));
+}
