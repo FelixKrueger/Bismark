@@ -34,3 +34,30 @@ HISAT2 / minimap2 aligners are deferred to a `v1.x` follow-up.
 cargo build -p bismark-aligner
 cargo test  -p bismark-aligner
 ```
+
+## Illumina 5-Base mode (`--illumina_5base`, experimental, #787)
+
+Opt-in, never-silent, **concordance-gated** support for **Illumina 5-Base** data
+(GitHub issue #787). 5-Base is the chemical **inverse** of bisulfite: the enzyme
+converts **5mC → T** and leaves unmethylated C intact, so library complexity is
+preserved and reads align to the **unconverted** genome with a standard aligner.
+
+`--illumina_5base` (alias `--five_base`) therefore does NOT run the C→T/G→A
+converted-index spine. It aligns the raw reads with **minimap2** (`-x sr`) against
+the unconverted reference FASTA, derives the strand from the SAM FLAG (forward =
+OT, reverse = OB), and reuses the byte-frozen genomic-extraction + `XM`/`XR`/`XG`
+output, with the methylation call run at **inverted polarity** (a read `T` at a
+genomic C = methylated). The BAM it writes is standard Bismark-convention, so the
+extractor / bedGraph / coverage2cytosine / report consume it unchanged.
+
+**This is NOT byte-identical** — Perl Bismark has no 5-Base path, so there is no
+v0.25.1 oracle. The validation target is **concordance with DRAGEN's 5-Base
+pipeline** (which also emits Bismark-convention tags). Requires `minimap2` on
+`PATH` (or `--path_to_minimap2`).
+
+**v1 scope:** single-end, directional, FASTQ, single instance. Rejected loudly
+(deferred follow-up phases): paired-end, `--non_directional`/`--pbat`, `--slam`,
+`--fasta`, `--multicore`, `--combined_index*`, and the other aligner backends.
+UMI/duplex-consensus collapsing and variant-vs-methylation deconvolution (DRAGEN
+does both) are not yet implemented — v1 is SNP-naive (at parity with the Bismark
+bisulfite caller). See `plans/06232026_illumina-5base-support/`.
