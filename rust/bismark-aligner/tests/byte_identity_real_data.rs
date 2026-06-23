@@ -94,8 +94,16 @@ const DATASET_WGBS_10M: AlignerDataset = AlignerDataset {
     golden_report_rel: "aligner_golden/wgbs_10m/golden.report.txt",
 };
 
+/// Resolve the dataset root, most specific first:
+/// 1. the per-dataset env var (`BISMARK_ALIGNER_REAL_DATA_DIR_RRBS` / `…_WGBS`),
+/// 2. the shared `BISMARK_ALIGNER_REAL_DATA_DIR` (one root for both datasets),
+/// 3. the hardcoded `default_base` (the maintainer's host layout).
+///
+/// So a reviewer on a different host can point the whole oracle at one directory
+/// with a single env var instead of editing the source.
 fn base_dir(ds: &AlignerDataset) -> PathBuf {
     std::env::var(ds.env_var)
+        .or_else(|_| std::env::var("BISMARK_ALIGNER_REAL_DATA_DIR"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(ds.default_base))
 }
