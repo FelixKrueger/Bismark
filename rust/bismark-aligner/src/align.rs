@@ -260,8 +260,9 @@ fn build_se_argv(
 /// alignment — the PE analog of [`build_se_argv`]. Bowtie 2 + HISAT2 share the shape
 /// `<opts…> <orient> -x <index> -1 <input1> -2 <input2>` (Perl 6474); the argv is
 /// **identical** for the two backends (only the options string differs), so this is
-/// byte-neutral vs the previous inline Bowtie-2-named spawn. minimap2 paired-end is
-/// rejected at resolve (no trustworthy oracle, `config.rs`), so it is unreachable here.
+/// byte-neutral vs the previous inline Bowtie-2-named spawn. minimap2 PE uses a distinct
+/// positional shape (`<opts> <index>.mmi <input1> <input2>`, no orient flag, Perl 6669);
+/// rammap PE is rejected at resolve (SE-only), so it is unreachable here.
 fn build_pe_argv(
     aligner: Aligner,
     options: &str,
@@ -285,11 +286,25 @@ fn build_pe_argv(
             args.push(input2.as_os_str().to_owned());
             args
         }
-        // minimap2 + rammap (minimap-like) paired-end are both rejected at resolve
-        // (SE-only; no trustworthy oracle), so neither reaches build_pe_argv.
-        Aligner::Minimap2 | Aligner::Rammap => unreachable!(
-            "minimap2 paired-end (and the minimap-like rammap) is rejected at resolve \
-             (no trustworthy oracle); build_pe_argv must not be reached for minimap2/rammap"
+        // minimap2 PE mirrors Perl 6669: `minimap2 <opts> <index>.mmi <input1> <input2>`
+        // — BOTH mate files passed POSITIONALLY to one process (no `-x`/`-1`/`-2`, no
+        // `--norc`/`--nofw` orient flag; Perl comments those out for minimap2, 6657-6663).
+        // minimap2 reads the two files in lockstep and emits the mates interleaved
+        // (read1, read2, …) in input order, so the consecutive-line pair reading applies.
+        Aligner::Minimap2 => {
+            let mut args: Vec<OsString> = options.split_whitespace().map(OsString::from).collect();
+            let mut mmi = index.as_os_str().to_owned();
+            mmi.push(".mmi");
+            args.push(mmi);
+            args.push(input1.as_os_str().to_owned());
+            args.push(input2.as_os_str().to_owned());
+            args
+        }
+        // rammap (the minimap-like pure-Rust backend) has no PE pairing path and is
+        // rejected at resolve (SE-only), so it never reaches build_pe_argv.
+        Aligner::Rammap => unreachable!(
+            "rammap paired-end is rejected at resolve (SE-only); build_pe_argv must not \
+             be reached for rammap"
         ),
     }
 }
@@ -492,21 +507,37 @@ pub struct SamPair {
     pub seq_id: String,
 }
 
+/// Strip the read-1 marker the converter appended (`/1/1`, Perl 5945-5960) to obtain
+/// the bare `seq_id` for the read-ID lockstep, tolerating both aligner conventions:
+/// Bowtie 2 / HISAT2 clip the OUTER `/1` themselves, so their QNAME tail is a single
+/// `/1` → strip that; minimap2 does NOT clip read-number suffixes (verified, 2.31), so
+/// its QNAME keeps the full `/1/1` → strip that. The `/1/1` form is tried FIRST: a
+/// Bowtie 2 / HISAT2 QNAME (`…__CT/1`) never ends in `/1/1` (the char before `/1` is the
+/// `__CT`/`__GA` conversion tag), so the double-strip is inert for the byte-frozen
+/// backends and this is provably byte-neutral for them — it only rescues minimap2.
+fn strip_read1_marker(qname: &str) -> Option<&str> {
+    qname
+        .strip_suffix("/1/1")
+        .or_else(|| qname.strip_suffix("/1"))
+}
+
 impl SamPair {
     /// Build a pair from two raw SAM lines, identifying read 1 by the trailing
-    /// `/1` on its QNAME (Perl 6500–6508). Bowtie 2 strips the outer `/1`,`/2` we
-    /// added as `/1/1`,`/2/2`, leaving `/1`,`/2`. `die` if neither line is read 1.
+    /// read-1 marker on its QNAME (Perl 6500–6508). The converter adds `/1/1`,`/2/2`;
+    /// Bowtie 2 / HISAT2 clip the outer `/1`,`/2` (leaving `/1`,`/2`) while minimap2
+    /// leaves the full `/1/1`,`/2/2` — [`strip_read1_marker`] handles both. `die` if
+    /// neither line is read 1.
     pub(crate) fn from_lines(line1: &str, line2: &str) -> Result<SamPair> {
         let r1 = SamRecord::parse(line1)?;
         let r2 = SamRecord::parse(line2)?;
-        if let Some(id) = r1.qname.strip_suffix("/1") {
+        if let Some(id) = strip_read1_marker(&r1.qname) {
             let seq_id = id.to_string();
             Ok(SamPair {
                 read1: r1,
                 read2: r2,
                 seq_id,
             })
-        } else if let Some(id) = r2.qname.strip_suffix("/1") {
+        } else if let Some(id) = strip_read1_marker(&r2.qname) {
             let seq_id = id.to_string();
             // read 2's line was emitted first → swap so `read1` is the /1 mate.
             Ok(SamPair {
@@ -548,10 +579,10 @@ impl PairedSamStream for PairedAlignerStream {
     }
 }
 
-/// A live paired-end aligner instance (Bowtie 2 / HISAT2), presenting a peek/advance
-/// pair stream. Each pair is two consecutive SAM lines (R1 + R2, in the aligner's
-/// leftmost-first order); [`SamPair::from_lines`] canonicalises them to (read1, read2).
-/// (minimap2 PE is rejected at resolve, so it never reaches here.)
+/// A live paired-end aligner instance (Bowtie 2 / HISAT2 / minimap2), presenting a
+/// peek/advance pair stream. Each pair is two consecutive SAM lines (R1 + R2, in the
+/// aligner's leftmost-first / input order); [`SamPair::from_lines`] canonicalises them
+/// to (read1, read2). (rammap PE is rejected at resolve, so it never reaches here.)
 pub struct PairedAlignerStream {
     child: Child,
     reader: BufReader<ChildStdout>,
@@ -563,11 +594,13 @@ pub struct PairedAlignerStream {
 }
 
 impl PairedAlignerStream {
-    /// Spawn one paired aligner instance (Bowtie 2 / HISAT2) and read the first pair.
+    /// Spawn one paired aligner instance (Bowtie 2 / HISAT2 / minimap2) and read the
+    /// first pair.
     ///
-    /// Args mirror Perl 6474: `<aligner_options> <orient> -x <index> -1 <input1>
-    /// -2 <input2>` ([`build_pe_argv`]) — identical for Bowtie 2 and HISAT2. stdout
-    /// piped; stderr inherited (only stdout is drained).
+    /// Args mirror Perl 6474 for Bowtie 2 / HISAT2 (`<opts> <orient> -x <index> -1
+    /// <input1> -2 <input2>`) and Perl 6669 for minimap2 (`<opts> <index>.mmi <input1>
+    /// <input2>`, positional, no orient flag) ([`build_pe_argv`]). stdout piped; stderr
+    /// inherited (only stdout is drained).
     pub fn spawn(
         aligner: Aligner,
         bin: &Path,
@@ -1199,22 +1232,43 @@ mod tests {
         assert!(!got.iter().any(|a| a.is_empty())); // never an empty arg before -x
     }
 
+    /// minimap2 PE: BOTH mate files positional after `<index>.mmi` (Perl 6669), no
+    /// `-x`/`-1`/`-2`, and NO orient flag even when a `Norc`/`Nofw` slot orientation is
+    /// passed (minimap2 ignores strand flags, like SE — Perl comments them out 6657-6663).
     #[test]
-    #[should_panic(expected = "minimap2 paired-end")]
-    fn pe_argv_minimap2_is_unreachable() {
-        // minimap2 PE is rejected at resolve → build_pe_argv must never see it.
-        let _ = build_pe_argv(
+    fn pe_argv_minimap2_positional_no_orient() {
+        let argv = build_pe_argv(
             Aligner::Minimap2,
-            "-a --MD",
-            Orientation::Both,
-            Path::new("/idx/BS_combined"),
-            Path::new("/tmp/r1.fastq"),
-            Path::new("/tmp/r2.fastq"),
+            "-a --MD --secondary=no -t 2 -x map-ont -K 250K",
+            Orientation::Norc,
+            Path::new("/idx/BS_CT"),
+            Path::new("/tmp/r1_C_to_T.fastq"),
+            Path::new("/tmp/r2_G_to_A.fastq"),
         );
+        assert_eq!(
+            argv_strings(&argv),
+            vec![
+                "-a",
+                "--MD",
+                "--secondary=no",
+                "-t",
+                "2",
+                "-x",
+                "map-ont",
+                "-K",
+                "250K",
+                "/idx/BS_CT.mmi",
+                "/tmp/r1_C_to_T.fastq",
+                "/tmp/r2_G_to_A.fastq",
+            ]
+        );
+        let got = argv_strings(&argv);
+        // never a `-1`/`-2`/`--norc`/`--nofw` and never an empty arg.
+        assert!(!got.iter().any(|a| a == "-1" || a == "-2" || a == "--norc" || a == "--nofw"));
+        assert!(!got.iter().any(|a| a.is_empty()));
     }
 
-    /// Phase 3 (T4): rammap PE is rejected at resolve too (minimap-like, SE-only) →
-    /// build_pe_argv must never see it (the shared minimap2/rammap unreachable arm).
+    /// rammap PE is rejected at resolve (SE-only) → build_pe_argv must never see it.
     #[test]
     #[should_panic(expected = "rammap")]
     fn pe_argv_rammap_is_unreachable() {
@@ -1443,6 +1497,45 @@ mod tests {
         assert_eq!(p.seq_id, "readX");
         assert_eq!(p.read1.qname, "readX/1");
         assert_eq!(p.read2.qname, "readX/2");
+    }
+
+    /// minimap2 does NOT clip read-number suffixes (verified, 2.31): its QNAME keeps the
+    /// converter's full `/1/1`,`/2/2`. `strip_read1_marker` must still yield the bare
+    /// `seq_id` (and identify read 1) so the lockstep matches — the same `seq_id` a
+    /// Bowtie 2 single-`/1` line would produce. The conversion tag `__CT`/`__GA` is kept
+    /// in `seq_id` (only the read-number tag is stripped), exactly as for Bowtie 2.
+    #[test]
+    fn sampair_handles_minimap2_double_suffix() {
+        let p = SamPair::from_lines(
+            &pe_line("readX__CT/1/1", 0, 100),
+            &pe_line("readX__GA/2/2", 16, 140),
+        )
+        .unwrap();
+        assert_eq!(p.seq_id, "readX__CT");
+        assert_eq!(p.read1.qname, "readX__CT/1/1");
+        assert_eq!(p.read2.qname, "readX__GA/2/2");
+        // read 2 emitted first is still canonicalised by the double-suffix marker.
+        let swapped = SamPair::from_lines(
+            &pe_line("readY__GA/2/2", 16, 140),
+            &pe_line("readY__CT/1/1", 0, 100),
+        )
+        .unwrap();
+        assert_eq!(swapped.seq_id, "readY__CT");
+        assert_eq!(swapped.read1.qname, "readY__CT/1/1");
+    }
+
+    /// Byte-neutrality guard: a Bowtie 2 / HISAT2 single-`/1` line (tag `__CT/1`) must be
+    /// unaffected by the new double-suffix-first probe — it never ends in `/1/1`, so the
+    /// `seq_id` is the same as before this change.
+    #[test]
+    fn sampair_single_suffix_unchanged_by_double_probe() {
+        let p = SamPair::from_lines(
+            &pe_line("readX__CT/1", 99, 100),
+            &pe_line("readX__GA/2", 147, 140),
+        )
+        .unwrap();
+        assert_eq!(p.seq_id, "readX__CT");
+        assert_eq!(p.read1.qname, "readX__CT/1");
     }
 
     #[test]

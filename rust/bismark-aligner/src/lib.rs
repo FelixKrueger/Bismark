@@ -110,6 +110,21 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
     )
 }
 
+/// Never-silent notice for experimental paired-end minimap2 (mirrors the
+/// `hisat2_multicore_remap_notice` precedent). Unlike SE minimap2 (byte-identical
+/// to Perl), the Perl PE minimap2 path is unfinished WIP (`# TODO`, `warn`+`sleep(1)`)
+/// and its PE report mislabels minimap2 as "HISAT2" — so there is NO trustworthy
+/// byte-identity oracle. We mirror Perl's positional two-file invocation and reuse the
+/// shared PE merge/scoring/output, but results are NOT byte-validated against Perl.
+fn minimap2_paired_experimental_notice() -> String {
+    "Note: paired-end --minimap2 is EXPERIMENTAL. It mirrors Perl Bismark's positional \
+     two-file minimap2 invocation, but the Perl PE minimap2 path is unfinished and its \
+     report mislabels minimap2 as HISAT2, so there is NO trustworthy byte-identity oracle: \
+     results are concordance-reasoned, NOT byte-identical to Perl. Use --bowtie2/--hisat2 \
+     for a byte-frozen paired-end path."
+        .to_string()
+}
+
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
@@ -124,6 +139,11 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
+    }
+    // Never-silent: experimental PE minimap2 (no trustworthy byte-identity oracle).
+    // Gated on the resolved layout so SE minimap2 (byte-identical) stays silent.
+    if config.aligner == Aligner::Minimap2 && config.layout.is_paired() {
+        eprintln!("{}", minimap2_paired_experimental_notice());
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to

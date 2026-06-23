@@ -349,19 +349,19 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
-    // PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
-    // (Felix decision 2026-06-05): the Perl minimap2 paired-end path
-    // (`paired_end_…_minimap2` 6697-6708) is unfinished WIP (`# TODO` +
-    // `warn`+`sleep(1)` twice per read pair) AND the PE report writer (1845-1850)
-    // has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
-    // trustworthy oracle to byte-match. Fail loudly (Bowtie 2 + HISAT2 cover PE).
-    // minimap2 AND rammap (minimap-like) are SE-only. The error names the actual
+    // minimap2 PE is now wired (mirroring the Perl positional two-file invocation,
+    // `paired_end_…_minimap2` 6623-6723), but it is EXPERIMENTAL: the Perl path is
+    // unfinished WIP (`# TODO: Need to check this.` + `warn`+`sleep(1)` twice per
+    // read pair) AND its PE report writer (1845-1850) has no `$mm2` branch (it
+    // mislabels minimap2 PE as "HISAT2"), so there is NO trustworthy byte-identity
+    // oracle. It is enabled but emits a never-silent notice (see `run()` in lib.rs).
+    // rammap (the minimap-like pure-Rust backend) remains SE-only and is still
+    // rejected for PE — it has no PE pairing path at all. The error names the actual
     // engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
-    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
+    if matches!(aligner, Aligner::Rammap) && layout.is_paired() {
         return Err(AlignerError::Unsupported(format!(
-            "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
-             paired-end path is unfinished/experimental and has no trustworthy byte-identity \
-             reference. Use --{0} for single-end reads, or --bowtie2/--hisat2 for paired-end.",
+            "paired-end alignment with --{0} is not supported: --{0} is single-end only. \
+             Use --{0} for single-end reads, or --bowtie2/--hisat2/--minimap2 for paired-end.",
             aligner.name()
         )));
     }

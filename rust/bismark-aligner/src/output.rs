@@ -677,8 +677,21 @@ pub fn write_raw_pe_ambig_lines<W: std::io::Write>(
     line2: &str,
     refid: &HashMap<String, usize>,
 ) -> Result<()> {
-    let l1 = line1.replacen("/1\t", "\t", 1);
-    let l2 = line2.replacen("/2\t", "\t", 1);
+    // Strip the read-number tag from the QNAME (Perl 3677-3678). Bowtie 2 / HISAT2
+    // clip the outer `/1`,`/2` so their QNAME tail is a single `/1`,`/2`; minimap2 keeps
+    // the converter's full `/1/1`,`/2/2` (it does not clip read-number suffixes). Try the
+    // double form first — a Bowtie 2 / HISAT2 line never contains `/1/1\t` (byte-neutral
+    // for the frozen backends), so this only rescues the experimental minimap2 PE path.
+    let l1 = if line1.contains("/1/1\t") {
+        line1.replacen("/1/1\t", "\t", 1)
+    } else {
+        line1.replacen("/1\t", "\t", 1)
+    };
+    let l2 = if line2.contains("/2/2\t") {
+        line2.replacen("/2/2\t", "\t", 1)
+    } else {
+        line2.replacen("/2\t", "\t", 1)
+    };
     write_raw_sam_line_to_bam(writer, &l1, refid)?;
     write_raw_sam_line_to_bam(writer, &l2, refid)?;
     Ok(())
