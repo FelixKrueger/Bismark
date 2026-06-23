@@ -35,9 +35,12 @@ wall-times should still be re-confirmed on the **Linux x86_64 benchmark host**
 
 - **`SamRecord::parse` byte-level field split**: replaced `str::split('\t')`
   (`CharSearcher`, per-char decode) with a byte scan over the already-validated
-  `&str`. **2.0x faster at the function level** (criterion: 278 ns -> 136 ns), but
-  **within end-to-end noise** because bowtie2 dominates. Zero ripple (signature
-  unchanged), byte-identical.
+  `&str`, extracted to a `trim_and_split` seam pinned by a CI unit test
+  (`trim_and_split_matches_char_based_reference`, covering empty / leading /
+  trailing-tab fields, lone `\r`, `\r\n`, mid-line `\r`, no trailing newline).
+  **≈1.9x faster at the function level** (criterion, reproducible via
+  `cargo bench`: 249 ns -> 130 ns), but **within end-to-end noise** because
+  bowtie2 dominates. Zero ripple (signature unchanged), byte-identical.
 - **`build_pe_mate`**: dropped two per-mate intermediate allocations (an `md`
   scratch `Vec` the SE path already avoided, and an `md_value` `String` copy).
   Byte-identical; end-to-end within noise.

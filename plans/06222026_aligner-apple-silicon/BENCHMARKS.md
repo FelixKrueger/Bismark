@@ -57,14 +57,15 @@ trade-off to weigh** and **no gate needed**; it is a clean `--multicore` win.
 
 ## Function-level: the parse byte-split (criterion, thermal-independent)
 
-`cargo bench -p bismark-aligner --bench parse_bench`:
+`cargo bench -p bismark-aligner --bench parse_bench` (reproducible from the
+committed manifest — the `criterion` dev-dep enables `cargo_bench_support`):
 
 | SAM field split | time | speedup |
 |---|---|---|
-| `char_searcher` (pre-epic `str::split('\t')`) | 277.6 ns | — |
-| `byte_scan` (this PR) | 136.2 ns | **2.04×** |
+| `char_searcher` (pre-epic `str::split('\t')`) | 248.8 ns | — |
+| `byte_scan` (this PR) | 129.7 ns | **1.92×** |
 
-Full `SamRecord::parse`: 315.7 ns (≈1.45× faster than the old parse). This win is
+Full `SamRecord::parse`: 316.7 ns. This win is
 real and clean at the function level, but **below the end-to-end noise floor**
 because bowtie2 dominates — hence it is presented as a byte-identical
 allocation/CPU-hygiene improvement, not claimed as an end-to-end speedup.
@@ -86,7 +87,8 @@ stages already use mimalloc + parallel I/O.
 
 - **mimalloc**: **3.13×** on `--multicore 4` (cures a 4.3× allocator-contention
   anti-scaling pathology), byte-identical, bit-reproducible. The headline.
-- **parse byte-split**: **2.04×** at the function level; end-to-end within noise.
+- **parse byte-split**: **1.92×** at the function level (criterion, reproducible);
+  end-to-end within noise.
 - **build_pe_mate**: two per-mate intermediate allocations removed; within noise.
 - **No `-p` trade-off**: a cooled interleaved attribution (GATE_04) shows the full
   stack is **statistically indistinguishable** from baseline under `-p` (−1.3 %
