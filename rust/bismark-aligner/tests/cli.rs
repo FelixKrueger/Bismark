@@ -2577,17 +2577,19 @@ fn minimap2_max_length_drop_counts_as_no_alignment() {
 }
 
 /// A fake PE `minimap2` modelling real 2.31 behavior: invoked POSITIONALLY (`<opts>
-/// <BS_*.mmi> <input1> <input2>`, no `-1`/`-2`/`-x`/orient), it reads BOTH mate files as
-/// INDEPENDENT single-end reads and emits the mates INTERLEAVED (read1, read2) in input
-/// order with SE-style flags (0 fwd / 16 rev / 4 unmapped — NOT the bowtie2 99/147/77/141
-/// proper-pair flags) and the converter's FULL `/1/1`,`/2/2` QNAME suffix (minimap2 does
-/// NOT clip read-number tags). On the CT (`BS_CT`) index it maps a concordant 6 bp pair at
-/// chr1:1 with minimap2 tags (positive `AS:i:`, the ignored `s2:i:`, `MD:Z:`); UNMAPPED on
-/// GA → the merge yields a unique best on OT.
+/// <BS_*.mmi> <input1> <input2>`, no `-1`/`-2`/`-x`/orient), it aligns BOTH mate files as
+/// INDEPENDENT single-end reads and emits them in TWO SEQUENTIAL BLOCKS — all read 1s,
+/// THEN all read 2s (the real `-x map-ont` order; verified against 2.31), NOT interleaved
+/// mate pairs — with SE-style flags (0 fwd / 16 rev / 4 unmapped, NOT the bowtie2
+/// 99/147/77/141 proper-pair flags) and the converter's FULL `/1/1`,`/2/2` QNAME suffix
+/// (minimap2 does NOT clip read-number tags). On the CT (`BS_CT`) index it maps a
+/// concordant 6 bp pair at chr1:1 with minimap2 tags (positive `AS:i:`, the ignored
+/// `s2:i:`, `MD:Z:`); UNMAPPED on GA → the merge yields a unique best on OT.
 ///
-/// 🔴 Cannot false-pass on the Bowtie 2 PE shape (`-x BS_CT -1 … -2 …`): there would be no
-/// `.mmi` arg → `$mmi` empty → every pair routes to unmapped → the unique-best assertion
-/// fails.
+/// The sequential-block layout is the load-bearing part: it would BREAK a consecutive-line
+/// pairing (two read 1s read as a "pair"), so it pins that `Minimap2PairedStream` joins by
+/// read-ID. 🔴 Cannot false-pass on the Bowtie 2 PE shape (`-x BS_CT -1 … -2 …`): no `.mmi`
+/// arg → `$mmi` empty → every pair routes to unmapped → the unique-best assertion fails.
 #[cfg(unix)]
 fn make_fake_minimap2_pe(dir: &Path) {
     let script = r#"#!/bin/sh
@@ -2602,11 +2604,12 @@ done
 printf '@HD\tVN:1.0\n'
 case "$mmi" in
   *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); base=id; sub(/\/1\/1$/,"",base);
-      print base "/1/1\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6";
-      print base "/2/2\t16\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tGTACGT\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$in1" ;;
+      r1[++n]=base "/1/1\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6";
+      r2[n]=base "/2/2\t16\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tGTACGT\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }
+      END { for(i=1;i<=n;i++) print r1[i]; for(i=1;i<=n;i++) print r2[i] }' "$in1" ;;
   *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); base=id; sub(/\/1\/1$/,"",base);
-      print base "/1/1\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI";
-      print base "/2/2\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$in1" ;;
+      r1[++n]=base "/1/1\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI"; r2[n]=base "/2/2\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }
+      END { for(i=1;i<=n;i++) print r1[i]; for(i=1;i<=n;i++) print r2[i] }' "$in1" ;;
 esac
 "#;
     write_exec(&dir.join("minimap2"), script);
@@ -2679,6 +2682,51 @@ fn minimap2_pe_mapped_names_and_report() {
     assert!(report.contains("-a --MD --secondary=no -t 2 -x map-ont -K 250K"));
     assert!(report.contains("Sequence pairs analysed in total:\t1\n"));
     assert!(report.contains("Number of paired-end alignments with a unique best hit:\t1\n"));
+}
+
+/// Multi-pair guard for the SEQUENTIAL-block layout: with 2 input pairs the fake emits
+/// `read1a, read1b, read2a, read2b` (all read 1s, then all read 2s). A consecutive-line
+/// pairing would read `read1a, read1b` as one "pair" and die; `Minimap2PairedStream`'s
+/// read-ID join recovers both pairs → 2 unique hits / 4 BAM records. This pins the fix the
+/// real-data gate exposed in a hermetic (no real aligner) test.
+#[cfg(unix)]
+#[test]
+fn minimap2_pe_sequential_blocks_pair_by_id() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@a\nACGTAC\n+\nFFFFFF\n@b\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@a\nGTACGT\n+\nFFFFFF\n@b\nGTACGT\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--minimap2")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    let bam = outdir.path().join("reads_1_bismark_mm2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    assert_eq!(reader.records().count(), 4, "2 pairs × 2 mates");
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
+    assert!(report.contains("Sequence pairs analysed in total:\t2\n"));
+    assert!(report.contains("Number of paired-end alignments with a unique best hit:\t2\n"));
 }
 
 // ===========================================================================
