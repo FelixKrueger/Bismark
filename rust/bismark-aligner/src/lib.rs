@@ -1017,6 +1017,7 @@ fn route_se_decision(
                 seq_uc,
                 &ext.unmodified_genomic_sequence,
                 ext.read_conversion,
+                false, // bisulfite polarity (frozen path)
                 counters,
             );
             let record = single_end_sam_output(
@@ -3050,12 +3051,14 @@ fn route_pe_decision(
                 seq1_uc,
                 &ext.unmodified_genomic_sequence_1,
                 ext.read_conversion_1,
+                false, // bisulfite polarity (frozen path)
                 counters,
             );
             let mc2 = methylation_call(
                 seq2_uc,
                 &ext.unmodified_genomic_sequence_2,
                 ext.read_conversion_2,
+                false, // bisulfite polarity (frozen path)
                 counters,
             );
             let (rec1, rec2) = paired_end_sam_output(
