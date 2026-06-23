@@ -5483,9 +5483,10 @@ fn five_base_se_end_to_end_inverts_polarity() {
 }
 
 /// `--illumina_5base` v1 scope guards fail loud (the error names --illumina_5base).
+/// (Paired-end is now SUPPORTED via run_pe_five_base — see the PE ground-truth gate.)
 #[cfg(unix)]
 #[test]
-fn five_base_rejects_non_directional_and_paired_end() {
+fn five_base_rejects_non_directional() {
     let genome = TempDir::new().unwrap();
     make_genome_mmi(genome.path());
     let bins = TempDir::new().unwrap();

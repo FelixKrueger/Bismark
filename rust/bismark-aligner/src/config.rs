@@ -358,13 +358,6 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // follow-up phase. Reject loudly (never silently degrade) BEFORE the generic
     // minimap2 guards so the error names --illumina_5base, not --minimap2.
     if cli.illumina_5base {
-        if layout.is_paired() {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base is single-end only in v1: paired-end 5-Base (UMI/duplex \
-                 consensus) is a deferred follow-up. Provide single-end reads."
-                    .into(),
-            ));
-        }
         if cli.non_directional || cli.pbat {
             return Err(AlignerError::Unsupported(
                 "--illumina_5base is directional only in v1 (drop --non_directional/--pbat): \
@@ -405,7 +398,12 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // trustworthy oracle to byte-match. Fail loudly (Bowtie 2 + HISAT2 cover PE).
     // minimap2 AND rammap (minimap-like) are SE-only. The error names the actual
     // engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
-    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
+    // 5-Base PE (#787) is its own path (run_pe_five_base) — unconverted minimap2 PE,
+    // concordance-gated, NOT the (rejected) bisulfite minimap2 PE — so it is exempt.
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap)
+        && layout.is_paired()
+        && !cli.illumina_5base
+    {
         return Err(AlignerError::Unsupported(format!(
             "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
              paired-end path is unfinished/experimental and has no trustworthy byte-identity \

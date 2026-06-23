@@ -70,8 +70,8 @@ use crate::aux_out::AuxKind;
 use crate::config::{Aligner, LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
 use crate::merge::{
-    BestAlignment, Counters, Decision, DecisionPaired, check_results_paired_end,
-    check_results_single_end,
+    BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired,
+    check_results_paired_end, check_results_single_end,
 };
 use crate::methylation::{
     extract_corresponding_genomic_sequence_paired_end,
@@ -134,7 +134,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         eprintln!(
             "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
              with minimap2 to the UNCONVERTED genome and methylation is called with inverted \
-             polarity (a read T at a genomic C = methylated). SE + directional only in v1. \
+             polarity (a read T at a genomic C = methylated). Directional only (SE + PE). \
              NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN."
         );
     }
@@ -192,13 +192,16 @@ fn pipeline(config: &RunConfig) -> Result<()> {
     // contiguous-chunk fan-out; N == 1 (the default) takes the proven single-core
     // direct path — byte-identical by construction (PLAN §3.1).
     let n = config.multicore;
-    // #787 Illumina 5-Base: a distinct SE path that aligns to the UNCONVERTED genome
+    // #787 Illumina 5-Base: a distinct path that aligns to the UNCONVERTED genome
     // (no C->T read conversion) and inverts the methylation call. Guarded at resolve()
-    // to SE + directional + minimap2 + single-instance, so it short-circuits here.
-    if config.five_base
-        && let ReadLayout::SingleEnd { reads } = &config.layout
-    {
-        return run_se_five_base(config, reads);
+    // to directional + minimap2 + single-instance, so it short-circuits here (SE + PE).
+    if config.five_base {
+        match &config.layout {
+            ReadLayout::SingleEnd { reads } => return run_se_five_base(config, reads),
+            ReadLayout::PairedEnd { mates1, mates2 } => {
+                return run_pe_five_base(config, mates1, mates2);
+            }
+        }
     }
     match &config.layout {
         ReadLayout::SingleEnd { reads } => {
@@ -1023,6 +1026,299 @@ fn five_base_emit_record(
         identifier, seq_uc, qual_bytes, &best, &ext, &methcall, refid, phred64,
     )?;
     Ok(Some(record))
+}
+
+// ===========================================================================
+// #787 Illumina 5-Base PAIRED-END driver. Same model as the SE path, but minimap2
+// is run in PE mode (`<opts> ref.fa r1.fq r2.fq`) against the unconverted genome;
+// the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
+// byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
+// ===========================================================================
+
+/// Drive the 5-Base PE run: one minimap2 PE instance per mate-pair file against the
+/// unconverted reference, lockstep with the original FastQ pair, emitting a Bismark
+/// `_pe.bam` + PE report. Mirrors `run_pe`'s setup.
+fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
+        eprintln!(
+            ">>> Writing 5-Base mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &config.aligner_options,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+
+        let mut counters = Counters::default();
+        five_base_align_and_call_pe(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_1),
+            Path::new(read_2),
+            &ref_path,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, true)?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+    }
+
+    if let Some(tmp) = ref_tmp {
+        let _ = std::fs::remove_file(tmp);
+    }
+    Ok(())
+}
+
+/// Spawn ONE minimap2 PE instance (`<opts> ref.fa r1.fq r2.fq`) and walk both FastQ
+/// files in lockstep with minimap2's primary records (two per pair, in input order).
+#[allow(clippy::too_many_arguments)]
+fn five_base_align_and_call_pe(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    ref_path: &Path,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let bin = &config.detected_aligner.path;
+    let mut args: Vec<std::ffi::OsString> = config
+        .aligner_options
+        .split_whitespace()
+        .map(std::ffi::OsString::from)
+        .collect();
+    args.push(ref_path.as_os_str().to_owned());
+    args.push(read_1.as_os_str().to_owned());
+    args.push(read_2.as_os_str().to_owned());
+    let mut child = std::process::Command::new(bin)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| {
+            AlignerError::Validation(format!("failed to spawn minimap2 ({}): {e}", bin.display()))
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+    let mut sam = BufReader::new(stdout);
+    let mut sam_line = String::new();
+
+    let mut r1 = open_maybe_gz(read_1)?;
+    let mut r2 = open_maybe_gz(read_2)?;
+    let icpc = config.read_processing.icpc;
+    let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
+    let mut count: u64 = 0;
+    while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
+        let Some((_id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
+            break;
+        };
+        count += 1;
+        // Each pair always yields TWO minimap2 primaries (mapped or unmapped); consume
+        // them to stay in lockstep even for skipped reads.
+        let a = five_base_next_primary(&mut sam, &mut sam_line)?;
+        let b = five_base_next_primary(&mut sam, &mut sam_line)?;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        let (Some(a), Some(b)) = (a, b) else {
+            return Err(AlignerError::Validation(
+                "minimap2 produced fewer PE records than read pairs (desync)".into(),
+            ));
+        };
+        // Identify R1 (FLAG 0x40) and R2 (FLAG 0x80) within the pair.
+        let (rec1, rec2) = if a.flag & 0x40 != 0 {
+            (&a, &b)
+        } else {
+            (&b, &a)
+        };
+
+        let fixed = convert::fix_id(convert::chomp_newline(&id1), icpc);
+        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
+        let identifier = strip_mate_suffix(&String::from_utf8_lossy(id_bytes));
+        let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
+        let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
+        let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
+        let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
+
+        counters.sequences_count += 1;
+        if let Some((out1, out2)) = five_base_emit_pe_record(
+            rec1,
+            rec2,
+            &identifier,
+            &seq1_uc,
+            &qual1_bytes,
+            &seq2_uc,
+            &qual2_bytes,
+            genome,
+            refid,
+            config.phred64,
+            config.dovetail,
+            counters,
+        )? {
+            write_record(&mut sinks.bam, &out1)?;
+            write_record(&mut sinks.bam, &out2)?;
+        }
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(AlignerError::Validation(format!(
+            "minimap2 exited with status {status}"
+        )));
+    }
+    Ok(())
+}
+
+/// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
+/// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
+/// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
+/// a directional library produces. Pure (unit-testable), inverted polarity.
+#[allow(clippy::too_many_arguments)]
+fn five_base_emit_pe_record(
+    rec1: &SamRecord,
+    rec2: &SamRecord,
+    identifier: &str,
+    seq1_uc: &[u8],
+    qual1: &[u8],
+    seq2_uc: &[u8],
+    qual2: &[u8],
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    phred64: bool,
+    dovetail: bool,
+    counters: &mut Counters,
+) -> Result<Option<(bismark_io::BismarkRecord, bismark_io::BismarkRecord)>> {
+    // Require a proper pair with both mates mapped (5-Base v1: concordant pairs only).
+    let proper = rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 && rec2.flag & 0x4 == 0;
+    if !proper {
+        counters.no_single_alignment_found += 1;
+        return Ok(None);
+    }
+    counters.unique_best_alignment_count += 1;
+    let index = if rec1.flag & 0x10 != 0 { 3 } else { 0 }; // R1 reverse → OB, else OT
+    let best = BestAlignmentPaired {
+        chromosome: rec1.rname.clone(),
+        index,
+        position_1: rec1.pos,
+        position_2: rec2.pos,
+        cigar_1: rec1.cigar.clone(),
+        cigar_2: rec2.cigar.clone(),
+        md_tag_1: rec1.md_tag.clone().unwrap_or_default(),
+        md_tag_2: rec2.md_tag.clone().unwrap_or_default(),
+        bowtie_sequence_1: rec1.seq.clone(),
+        bowtie_sequence_2: rec2.seq.clone(),
+        flag_1: rec1.flag,
+        flag_2: rec2.flag,
+        sum_of_alignment_scores: rec1.alignment_score.unwrap_or(0)
+            + rec2.alignment_score.unwrap_or(0),
+        sum_of_alignment_scores_second_best: None,
+        mapq: rec1.mapq.min(rec2.mapq),
+    };
+    let ext = extract_corresponding_genomic_sequence_paired_end(&best, genome, counters)?;
+    if ext.unmodified_genomic_sequence_1.len() != seq1_uc.len() + 2
+        || ext.unmodified_genomic_sequence_2.len() != seq2_uc.len() + 2
+    {
+        counters.genomic_sequence_could_not_be_extracted_count += 1;
+        return Ok(None);
+    }
+    let mc1 = methylation_call(
+        seq1_uc,
+        &ext.unmodified_genomic_sequence_1,
+        ext.read_conversion_1,
+        true,
+        counters,
+    );
+    let mc2 = methylation_call(
+        seq2_uc,
+        &ext.unmodified_genomic_sequence_2,
+        ext.read_conversion_2,
+        true,
+        counters,
+    );
+    let (out1, out2) = paired_end_sam_output(
+        identifier, seq1_uc, seq2_uc, qual1, qual2, &best, &ext, &mc1, &mc2, refid, phred64,
+        dovetail,
+    )?;
+    Ok(Some((out1, out2)))
+}
+
+/// Open a (optionally gzipped) reader.
+fn open_maybe_gz(path: &Path) -> Result<Box<dyn BufRead>> {
+    let file = File::open(path)?;
+    if path.to_string_lossy().ends_with(".gz") {
+        Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
+/// Read one 4-line FastQ record (owned id/seq/plus/qual lines incl. trailing `\n`),
+/// or `None` at EOF / a truncated final record.
+#[allow(clippy::type_complexity)]
+fn read_fastq_record<R: BufRead>(
+    reader: &mut R,
+) -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)>> {
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let n1 = reader.read_until(b'\n', &mut id)?;
+    let n2 = reader.read_until(b'\n', &mut seq)?;
+    let n3 = reader.read_until(b'\n', &mut plus)?;
+    let n4 = reader.read_until(b'\n', &mut qual)?;
+    if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+        return Ok(None);
+    }
+    Ok(Some((id, seq, plus, qual)))
+}
+
+/// Strip a trailing `/1` or `/2` mate suffix from a read id (minimap2 reports the
+/// bare name for both mates; the PE record name carries no mate suffix).
+fn strip_mate_suffix(id: &str) -> String {
+    id.strip_suffix("/1")
+        .or_else(|| id.strip_suffix("/2"))
+        .unwrap_or(id)
+        .to_string()
 }
 
 /// A per-record aux writer (`--unmapped`/`--ambiguous`). The single-core path
@@ -5157,6 +5453,52 @@ mod tests {
         let out =
             five_base_emit_record(&rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, &mut c)
                 .unwrap();
+        assert!(out.is_none());
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    /// A proper FR pair (R1 forward FLAG 99, R2 reverse FLAG 147) → PE index 0 (OT);
+    /// R1's window is identical to the SE index-0 case, so a read `T` at a genomic CpG
+    /// C is methylated (`Z`) under 5-Base. Output FLAGs are the Bismark PE 99/147, and
+    /// the pair counts as one unique-best alignment.
+    #[test]
+    fn five_base_emit_pe_forward_pair_methylated_and_flags() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA"); // 16 bp
+        let refid = build_refid(&genome);
+        let r1 = SamRecord::parse("p\t99\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t147\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let (o1, o2) = five_base_emit_pe_record(
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, &mut c,
+        )
+        .unwrap()
+        .expect("proper pair emits two records");
+        assert_eq!(u16::from(o1.inner().flags()), 99); // R1 OT output FLAG
+        assert_eq!(u16::from(o2.inner().flags()), 147); // R2 OT output FLAG
+        let xm1 = bismark_io::tags::xm(o1.inner().data()).unwrap();
+        assert_eq!(
+            xm1, b"Z...",
+            "R1 5-Base: read T at genomic CpG C = methylated Z"
+        );
+        assert_eq!(c.unique_best_alignment_count, 1);
+        assert_eq!(c.total_me_cpg, 1);
+    }
+
+    /// A non-proper pair (R1 not flagged 0x2, e.g. one mate unmapped) emits nothing and
+    /// counts as no-alignment.
+    #[test]
+    fn five_base_emit_pe_improper_pair_is_none() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        // R1 mapped but NOT a proper pair (no 0x2); R2 unmapped (0x4).
+        let r1 = SamRecord::parse("p\t73\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t133\t*\t0\t0\t*\t*\t0\t0\tGAAT\tIIII").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_pe_record(
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, &mut c,
+        )
+        .unwrap();
         assert!(out.is_none());
         assert_eq!(c.no_single_alignment_found, 1);
         assert_eq!(c.unique_best_alignment_count, 0);
