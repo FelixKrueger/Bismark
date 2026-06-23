@@ -723,17 +723,26 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
 ///
 /// Threads: the bisulfite minimap2 path hardcodes `-t 2` (Perl faithfulness, byte-
 /// frozen). The 5-Base path is NOT byte-identical, so there is no reason to throttle
-/// it. `--multicore N` sets the single instance's thread count (minimap2 `-t N`,
-/// bowtie2/hisat2 `-p N`, the HISAT2 `--multicore`→`-p` precedent); when unset
-/// (`multicore <= 1`) it defaults to all logical CPUs.
+/// it. The aligner thread count is Bismark's `-p` (threads-to-aligner) knob, falling
+/// back to `--multicore`, then all logical CPUs — applied as minimap2 `-t N` /
+/// bowtie2,hisat2 `-p N`. (`-p` and `--multicore`/`--parallel` are different axes:
+/// `-p` = threads inside one aligner instance, `--multicore` = the fork model; for the
+/// single-instance 5-Base path `-p` is the right knob.)
 fn five_base_aligner_options(config: &RunConfig) -> String {
-    let n = if config.multicore > 1 {
-        config.multicore as usize
-    } else {
-        std::thread::available_parallelism()
-            .map(|x| x.get())
-            .unwrap_or(2)
-    };
+    let n = config
+        .bowtie_threads
+        .filter(|&p| p > 0)
+        .or(if config.multicore > 1 {
+            Some(config.multicore)
+        } else {
+            None
+        })
+        .map(|p| p as usize)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|x| x.get())
+                .unwrap_or(2)
+        });
     match config.aligner {
         Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n}"),
         Aligner::Hisat2 => format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n}"),

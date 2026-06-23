@@ -242,6 +242,10 @@ pub struct RunConfig {
     /// For HISAT2 this is forced to `1` when `--multicore N` is remapped to `-p N`
     /// (see `hisat2_multicore_remap`) — the fork model is not faithful for HISAT2.
     pub multicore: u32,
+    /// `-p` (threads passed to the aligner instance, Perl Bismark `-p`). Used by the
+    /// 5-Base path to set minimap2 `-t` / bowtie2,hisat2 `-p` (precedence over
+    /// `--multicore`, then all logical CPUs). `None` ⇒ aligner default / all cores.
+    pub bowtie_threads: Option<u32>,
     /// HISAT2 Approach B-faithful (`--hisat2 --multicore N`): when set, `--multicore N`
     /// was interpreted as a single HISAT2 instance with `-p N --reorder` (NOT the fork
     /// model — HISAT2 splice discovery is not chunk-invariant; the `-p N` threading is
@@ -522,6 +526,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         } else {
             cli.multicore.unwrap_or(1)
         },
+        bowtie_threads: cli.bowtie_threads,
         hisat2_multicore_remap,
         // v2 combined-index mode (guarded above; the combined index is present).
         combined_index: cli.combined_index,
