@@ -44,6 +44,8 @@ A true DRAGEN-concordance gate is impossible here (DRAGEN is proprietary FPGA wi
 
 **Result: PASS** — no wrong-polarity call at any aligned CpG; ≥70% of CpGs recovered; several methylated (`Z`) positively confirmed through the real aligner. This validates the whole FROM-FASTQ chain (real alignment to the unconverted genome + the inverted 5-Base call + extraction), not just the hermetic fake-minimap2 path in `cli.rs`. The test is a no-op when `minimap2` is absent, so CI without minimap2 stays green.
 
+**Paired-end** (`five_base_pe_groundtruth_real_minimap2`): FR fragment pairs (R1 forward 5' end with injected 5mC→T, R2 = revcomp of the 3' end) aligned with real minimap2 PE via `--illumina_5base -1 -2`. **PASS** — every pair emits two records (R1 FLAG 0x40 forward / R2 0x80 reverse), and R1's CpG calls match ground truth at every aligned position (the OT/index-0 inverted call through real minimap2 PE).
+
 ## DRAGEN concordance gate (PENDING — external)
 
 Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on a shared dataset, within a documented tolerance.
@@ -54,6 +56,14 @@ Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on 
   2. `bismark_methylation_extractor_rs --cytosine_report` → CX report.
   3. Diff per-CpG % methylation vs DRAGEN's CX report; record divergence here.
 
-## Deferred follow-up phases (rejected loudly in v1)
+## Done since v1
 
-Paired-end; non-directional / PBAT; UMI extraction + duplex-consensus collapsing (7 bp inline UMI + 1 spacer, `OverrideCycles U7N1Y#`); variant-vs-methylation deconvolution (SNP-aware calling, rastair/DRAGEN territory — v1 is SNP-naive); bowtie2/hisat2 unconverted-index support; `--multicore`; FASTA input. Architect a later phase around the mC→T *convention* (TAPS/evoC share it), not the Illumina brand.
+- **Paired-end** (`run_pe_five_base`): one minimap2 PE instance over the unconverted genome; OT/OB index from R1's strand; reuses the PE extract + `paired_end_sam_output` with the inverted call. Ground-truth gated (above). Proper pairs only (non-concordant pairs are skipped).
+
+## Permanent non-goal
+
+- **Non-directional / PBAT**: DRAGEN documents 5-Base as **directional-only** (`--methylation-protocol=directional`), so this is rejected by design, not deferred.
+
+## Deferred follow-up phases (rejected loudly)
+
+UMI extraction + duplex-consensus collapsing (7 bp inline UMI + 1 spacer, `OverrideCycles U7N1Y#`); variant-vs-methylation deconvolution (SNP-aware calling, rastair/DRAGEN territory — the caller is currently SNP-naive); bowtie2/hisat2 unconverted-index support; `--multicore`; FASTA input. Architect a later phase around the mC→T *convention* (TAPS/evoC share it), not the Illumina brand.

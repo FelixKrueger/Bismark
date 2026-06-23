@@ -50,14 +50,21 @@ output, with the methylation call run at **inverted polarity** (a read `T` at a
 genomic C = methylated). The BAM it writes is standard Bismark-convention, so the
 extractor / bedGraph / coverage2cytosine / report consume it unchanged.
 
+Both **single-end and paired-end** are supported (PE runs one minimap2 PE instance
+over the unconverted genome; the per-pair index is OT/OB from R1's strand).
+
 **This is NOT byte-identical** — Perl Bismark has no 5-Base path, so there is no
-v0.25.1 oracle. The validation target is **concordance with DRAGEN's 5-Base
-pipeline** (which also emits Bismark-convention tags). Requires `minimap2` on
+v0.25.1 oracle. Validation is two synthetic **ground-truth gates against the real
+minimap2** (`tests/five_base_groundtruth.rs`, SE + PE): reads carrying a known
+5mC→T pattern are recovered with the correct `Z`/`z` call at every aligned CpG. A
+DRAGEN-concordance gate is pending an external dataset. Requires `minimap2` on
 `PATH` (or `--path_to_minimap2`).
 
-**v1 scope:** single-end, directional, FASTQ, single instance. Rejected loudly
-(deferred follow-up phases): paired-end, `--non_directional`/`--pbat`, `--slam`,
-`--fasta`, `--multicore`, `--combined_index*`, and the other aligner backends.
-UMI/duplex-consensus collapsing and variant-vs-methylation deconvolution (DRAGEN
-does both) are not yet implemented — v1 is SNP-naive (at parity with the Bismark
-bisulfite caller). See `plans/06232026_illumina-5base-support/`.
+**Scope:** directional, FASTQ, single instance (SE + PE). Rejected loudly:
+`--non_directional`/`--pbat` (DRAGEN documents 5-Base as **directional-only**, so
+this is a permanent non-goal, not a deferred phase), `--slam`, `--fasta`,
+`--multicore`, `--combined_index*`, and the other aligner backends. UMI/duplex-
+consensus collapsing and variant-vs-methylation deconvolution (DRAGEN does both)
+are not yet implemented — the caller is SNP-naive (at parity with the Bismark
+bisulfite caller); pairs that are not properly mapped are skipped. See
+`plans/06232026_illumina-5base-support/`.

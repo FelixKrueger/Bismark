@@ -235,3 +235,157 @@ fn five_base_groundtruth_real_minimap2_recovers_known_methylation() {
         "should positively confirm several methylated (Z) CpGs, got {checked_meth}"
     );
 }
+
+fn revcomp(seq: &[u8]) -> Vec<u8> {
+    seq.iter()
+        .rev()
+        .map(|&b| match b {
+            b'A' => b'T',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'T' => b'A',
+            o => o,
+        })
+        .collect()
+}
+
+/// THE PE GATE: real minimap2 in PAIRED mode. Read pairs are an FR fragment of the
+/// reference (R1 = forward 5' end with injected 5mC->T methylation; R2 = revcomp of
+/// the 3' end). After `--illumina_5base` PE alignment, every pair yields two records
+/// (R1 FLAG 0x40 forward, R2 FLAG 0x80 reverse) and the R1 CpG calls match ground
+/// truth at every aligned position (the OT/index-0 inverted call, via real minimap2 PE).
+#[test]
+fn five_base_pe_groundtruth_real_minimap2() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (PE ground-truth gate)");
+        return;
+    }
+    let reference = gen_reference(900);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+
+    let (frag, rl, anchor) = (180usize, 90usize, 10usize);
+    let cpgs = cpg_positions(&reference);
+    let mut fq1 = Vec::new();
+    let mut fq2 = Vec::new();
+    let mut truth: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
+    let n_pairs = reference.len() / frag;
+    for p in 0..n_pairs {
+        let start = p * frag;
+        let qname = format!("pair{p}");
+        // R1: forward 5' end, methylation injected.
+        let mut r1 = reference[start..start + rl].to_vec();
+        let mut here = Vec::new();
+        for (gi, &cpos) in cpgs.iter().enumerate() {
+            if cpos >= start + anchor && cpos < start + rl - anchor {
+                let methylated = gi % 2 == 0;
+                if methylated {
+                    r1[cpos - start] = b'T';
+                }
+                here.push((cpos, methylated));
+            }
+        }
+        truth.insert(qname.clone(), here);
+        // R2: reverse-complement of the fragment's 3' end (kept as reference).
+        let r2 = revcomp(&reference[start + frag - rl..start + frag]);
+
+        fq1.extend_from_slice(format!("@{qname}\n").as_bytes());
+        fq1.extend_from_slice(&r1);
+        fq1.extend_from_slice(b"\n+\n");
+        fq1.extend_from_slice(&vec![b'I'; rl]);
+        fq1.push(b'\n');
+        fq2.extend_from_slice(format!("@{qname}\n").as_bytes());
+        fq2.extend_from_slice(&r2);
+        fq2.extend_from_slice(b"\n+\n");
+        fq2.extend_from_slice(&vec![b'I'; rl]);
+        fq2.push(b'\n');
+    }
+    let read1 = genome.path().join("reads_1.fq");
+    let read2 = genome.path().join("reads_2.fq");
+    fs::write(&read1, &fq1).unwrap();
+    fs::write(&read2, &fq2).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("-1")
+        .arg(&read1)
+        .arg("-2")
+        .arg(&read2)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .assert()
+        .success();
+
+    let bam = outdir.path().join("reads_1_bismark_mm2_pe.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let (mut r1_records, mut r2_records, mut checked, mut checked_meth) = (0usize, 0usize, 0, 0);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        let inner = rec.inner();
+        let flag = u16::from(inner.flags());
+        if flag & 0x80 != 0 {
+            r2_records += 1;
+            continue; // R2 (reverse) — XM is in revcomp orientation; not position-checked here.
+        }
+        r1_records += 1;
+        assert_eq!(flag & 0x10, 0, "R1 of a proper FR pair maps forward");
+        let qname = String::from_utf8_lossy(inner.name().unwrap().as_ref()).into_owned();
+        let Some(expect) = truth.get(&qname) else {
+            continue;
+        };
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
+        let mut read_at = HashMap::<usize, usize>::new();
+        let (mut ri, mut rp) = (0usize, ref_start);
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            use noodles_sam::alignment::record::cigar::op::Kind::*;
+            match op.kind() {
+                Match | SequenceMatch | SequenceMismatch => {
+                    for _ in 0..len {
+                        read_at.insert(rp, ri);
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Insertion | SoftClip => ri += len,
+                Deletion | Skip => rp += len,
+                _ => {}
+            }
+        }
+        for &(cpg_pos, methylated) in expect {
+            if let Some(&ri) = read_at.get(&cpg_pos) {
+                let call = xm[ri];
+                if methylated {
+                    assert_eq!(call, b'Z', "{qname}: methylated CpG at {cpg_pos} must be Z");
+                    checked_meth += 1;
+                } else {
+                    assert_eq!(
+                        call, b'z',
+                        "{qname}: unmethylated CpG at {cpg_pos} must be z"
+                    );
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        r1_records >= 1 && r2_records >= 1,
+        "PE should emit both mates"
+    );
+    assert_eq!(r1_records, r2_records, "one R1 per R2");
+    assert!(
+        checked >= 3,
+        "should validate several R1 CpGs, got {checked}"
+    );
+    assert!(
+        checked_meth >= 1,
+        "should confirm at least one methylated R1 CpG through real minimap2 PE"
+    );
+}
