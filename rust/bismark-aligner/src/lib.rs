@@ -774,6 +774,17 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
         sinks.finish()?;
         eprintln!("{}", counters_summary(read_file, &counters));
+
+        // #787 optional variant/methylation deconvolution over the just-written BAM.
+        if config.five_base_deconvolution {
+            let deconv_path = derive_output_path(
+                read_file,
+                config,
+                &format!("_bismark_{tok}.5base_deconvolution.txt"),
+                ".5base_deconvolution.txt",
+            );
+            run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
+        }
     }
 
     // Delete the concatenated-reference temp, if one was written (multi-FASTA genome).
@@ -1093,6 +1104,17 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         report.flush()?;
         sinks.finish()?;
         eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+
+        // #787 optional variant/methylation deconvolution over the just-written BAM.
+        if config.five_base_deconvolution {
+            let deconv_path = derive_output_path(
+                read_1,
+                config,
+                &format!("_bismark_{tok}_pe.5base_deconvolution.txt"),
+                "_pe.5base_deconvolution.txt",
+            );
+            run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
+        }
     }
 
     if let Some(tmp) = ref_tmp {
@@ -1284,6 +1306,106 @@ fn five_base_emit_pe_record(
         dovetail,
     )?;
     Ok(Some((out1, out2)))
+}
+
+/// #787 deconvolution pass: read back the just-written 5-Base BAM, build the per-CpG
+/// two-strand pileup against the genome, classify each cytosine (variant vs 5mC) and
+/// write `<report_path>`. Reads are in SAM forward orientation; OT reads sequence the
+/// `+` strand, OB reads the `-` strand (in forward orientation). At a genomic `C` (CpG)
+/// the own strand is OT and the T-equivalent allele is `T`; at a genomic `G` the own
+/// strand is OB and the T-equivalent allele is `A`.
+fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &Path) -> Result<()> {
+    use crate::five_base_deconv::{DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC, Deconvoluter};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+        .map_err(|e| AlignerError::Validation(format!("deconvolution: open BAM: {e}")))?;
+    let mut dec = Deconvoluter::default();
+
+    for rec in reader.records() {
+        let rec = rec.map_err(|e| AlignerError::Validation(format!("deconvolution: {e}")))?;
+        let inner = rec.inner();
+        if u16::from(inner.flags()) & 0x4 != 0 {
+            continue; // unmapped
+        }
+        let xr = bismark_io::tags::xr(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("deconvolution: XR: {e}")))?;
+        let xg = bismark_io::tags::xg(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("deconvolution: XG: {e}")))?;
+        let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+            .map_err(|e| AlignerError::Validation(format!("deconvolution: strand: {e}")))?;
+        let (is_ot, is_ob) = (
+            strand == bismark_io::BismarkStrand::OT,
+            strand == bismark_io::BismarkStrand::OB,
+        );
+        if !is_ot && !is_ob {
+            continue; // directional 5-Base only ever yields OT/OB
+        }
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            continue;
+        };
+        let Some(chrom) = genome.sq_order.get(ref_id) else {
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else { continue };
+        let seq = inner.sequence().as_ref();
+        let Some(start) = inner.alignment_start() else {
+            continue;
+        };
+        let ref_start = usize::from(start) - 1; // 1-based POS → 0-based
+
+        let (mut ri, mut rp) = (0usize, ref_start);
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            match op.kind() {
+                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                    for _ in 0..len {
+                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
+                            // CpG `+`-strand cytosine: genomic C followed by G.
+                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
+                                dec.observe(
+                                    chrom,
+                                    rp as u32,
+                                    true,
+                                    is_ot,
+                                    base.eq_ignore_ascii_case(&b'T'),
+                                );
+                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                                // CpG `-`-strand cytosine: genomic G preceded by C.
+                                dec.observe(
+                                    chrom,
+                                    rp as u32,
+                                    false,
+                                    is_ob,
+                                    base.eq_ignore_ascii_case(&b'A'),
+                                );
+                            }
+                        }
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Kind::Insertion | Kind::SoftClip => ri += len,
+                Kind::Deletion | Kind::Skip => rp += len,
+                _ => {}
+            }
+        }
+    }
+
+    let mut w = BufWriter::new(File::create(report_path)?);
+    let s = dec.write_report(&mut w, DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)?;
+    w.flush()?;
+    eprintln!(
+        "5-Base deconvolution: {} variant CpG(s), {} methylation site(s), {} undetermined \
+         ({}/{} methylated calls kept). Report: {}",
+        s.variants,
+        s.methylation_sites,
+        s.undetermined,
+        s.methylated_calls,
+        s.total_calls,
+        report_path.display()
+    );
+    Ok(())
 }
 
 /// Open a (optionally gzipped) reader.

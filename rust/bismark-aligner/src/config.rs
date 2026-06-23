@@ -181,6 +181,9 @@ pub struct RunConfig {
     /// call methylation with inverted polarity. v1 = single-end + directional,
     /// minimap2 backend. Opt-in, never-silent, concordance-gated (no Perl oracle).
     pub five_base: bool,
+    /// #787: run the post-alignment variant/methylation deconvolution pass + report.
+    /// Requires `five_base` (guarded at resolve()).
+    pub five_base_deconvolution: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -287,6 +290,14 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         return Err(AlignerError::Validation(
             "--rammap_inprocess requires --rammap: it selects the in-process rammap backend, \
              which only applies to a --rammap run."
+                .into(),
+        ));
+    }
+    // #787: deconvolution is a post-pass over a 5-Base BAM — meaningless without it.
+    if cli.five_base_deconvolution && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_deconvolution requires --illumina_5base: it deconvolutes variant vs \
+             methylation over a 5-Base run's output."
                 .into(),
         ));
     }
@@ -462,6 +473,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         rammap_inprocess: cli.rammap_inprocess,
         // #787 5-Base mode (guarded above: SE + directional, minimap2 unconverted path).
         five_base: cli.illumina_5base,
+        five_base_deconvolution: cli.five_base_deconvolution,
         library,
         layout,
         format,
@@ -1296,6 +1308,22 @@ mod tests {
         assert_eq!(
             resolve_aligner(&cli_from(&["--illumina_5base", "--minimap2"])).unwrap(),
             Aligner::Minimap2
+        );
+    }
+
+    /// `--five_base_deconvolution` requires `--illumina_5base` (it post-processes a
+    /// 5-Base run). Fires early in resolve() (before genome discovery).
+    #[test]
+    fn five_base_deconvolution_requires_illumina_5base() {
+        let err = resolve(&cli_from(&["--five_base_deconvolution"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_deconvolution requires --illumina_5base"),
+            "got: {err}"
+        );
+        // accepted together (parses; resolves to minimap2).
+        assert!(
+            cli_from(&["--illumina_5base", "--five_base_deconvolution"]).five_base_deconvolution
         );
     }
 

@@ -236,6 +236,102 @@ fn five_base_groundtruth_real_minimap2_recovers_known_methylation() {
     );
 }
 
+/// THE DECONVOLUTION GATE: a homozygous C>T variant CpG vs a methylated CpG, both
+/// covered by OT (forward) and OB (reverse) reads via real minimap2, then run
+/// `--illumina_5base --five_base_deconvolution`. The variant CpG (cytosine gone on
+/// BOTH strands → OB reads show `T`) must be called `variant`; the methylated CpG (OT
+/// reads `T` from 5mC, OB reads intact `C`) must be called `methylation`. This proves
+/// the SNP-aware caller distinguishes the two through the whole real pipeline.
+#[test]
+fn five_base_deconvolution_groundtruth_variant_vs_methylation() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (deconvolution ground-truth gate)");
+        return;
+    }
+    let reference = gen_reference(450);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    // Two CpGs with room for a 100 bp window centred on each, well separated.
+    let pick = |around: usize| -> usize {
+        *cpgs
+            .iter()
+            .filter(|&&c| c >= 60 && c + 60 < reference.len())
+            .min_by_key(|&&c| c.abs_diff(around))
+            .expect("a usable CpG near the target")
+    };
+    let tv = pick(150); // variant CpG
+    let tm = pick(330); // methylation CpG
+    assert_ne!(tv, tm);
+
+    let half = 50usize;
+    let mut fq = Vec::new();
+    let mut emit = |name: &str, bytes: &[u8]| {
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(bytes);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
+        fq.push(b'\n');
+    };
+    // Window around a target, with the target C optionally converted to T.
+    let window = |t: usize, convert_target: bool| -> Vec<u8> {
+        let mut w = reference[t - half..t + half].to_vec();
+        if convert_target {
+            w[half] = b'T'; // the target C → T
+        }
+        w
+    };
+    for i in 0..4 {
+        // Variant CpG: BOTH strands carry the C→T (cytosine genuinely gone).
+        emit(&format!("v_ot_{i}"), &window(tv, true));
+        emit(&format!("v_ob_{i}"), &revcomp(&window(tv, true)));
+        // Methylation CpG: OT carries 5mC (C→T); OB strand is intact (no conversion).
+        emit(&format!("m_ot_{i}"), &window(tm, true));
+        emit(&format!("m_ob_{i}"), &revcomp(&window(tm, false)));
+    }
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, &fq).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_deconvolution")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(
+        outdir
+            .path()
+            .join("reads_bismark_mm2.5base_deconvolution.txt"),
+    )
+    .unwrap();
+    // Report positions are 1-based; the target C is the genomic position tv/tm.
+    let verdict_at = |pos1: usize| -> Option<String> {
+        report.lines().find_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() >= 4 && f[1] == pos1.to_string()).then(|| f[3].to_string())
+        })
+    };
+    assert_eq!(
+        verdict_at(tv + 1).as_deref(),
+        Some("variant"),
+        "the homozygous C>T CpG must deconvolute to a variant\nreport:\n{report}"
+    );
+    assert_eq!(
+        verdict_at(tm + 1).as_deref(),
+        Some("methylation"),
+        "the 5mC CpG must stay methylation\nreport:\n{report}"
+    );
+}
+
 fn revcomp(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()

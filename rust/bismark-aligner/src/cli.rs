@@ -92,6 +92,13 @@ pub struct Cli {
     /// concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
+    /// `[#787]` After a `--illumina_5base` run, deconvolute methylation from C>T/G>A
+    /// genetic variants using both strands (DRAGEN's rule), and write a per-CpG report
+    /// `<out>.5base_deconvolution.txt` (chrom, pos, strand, verdict, methylated, total,
+    /// %). A CpG whose OPPOSITE strand also lost the cytosine is a variant, not 5mC, and
+    /// is excluded from the methylation totals. Requires `--illumina_5base`.
+    #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
+    pub five_base_deconvolution: bool,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,
