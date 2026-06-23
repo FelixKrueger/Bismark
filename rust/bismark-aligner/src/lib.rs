@@ -64,13 +64,14 @@ use bismark_io::BamWriter;
 
 use crate::align::{
     AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
-    PairedSamStream, SamStream,
+    PairedSamStream, SamRecord, SamStream,
 };
 use crate::aux_out::AuxKind;
 use crate::config::{Aligner, LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
 use crate::merge::{
-    Counters, Decision, DecisionPaired, check_results_paired_end, check_results_single_end,
+    BestAlignment, Counters, Decision, DecisionPaired, check_results_paired_end,
+    check_results_single_end,
 };
 use crate::methylation::{
     extract_corresponding_genomic_sequence_paired_end,
@@ -124,6 +125,18 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
+    }
+    // Never-silent opt-in notice (#787): --illumina_5base is the inverse-of-bisulfite
+    // 5-Base (5mC->T) mode — it aligns the RAW reads to the UNCONVERTED genome with
+    // minimap2 and calls methylation with inverted polarity. There is no Perl oracle
+    // for 5-Base, so this is NOT byte-identical; it is concordance-validated vs DRAGEN.
+    if config.five_base {
+        eprintln!(
+            "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
+             with minimap2 to the UNCONVERTED genome and methylation is called with inverted \
+             polarity (a read T at a genomic C = methylated). SE + directional only in v1. \
+             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN."
+        );
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to
@@ -179,6 +192,14 @@ fn pipeline(config: &RunConfig) -> Result<()> {
     // contiguous-chunk fan-out; N == 1 (the default) takes the proven single-core
     // direct path — byte-identical by construction (PLAN §3.1).
     let n = config.multicore;
+    // #787 Illumina 5-Base: a distinct SE path that aligns to the UNCONVERTED genome
+    // (no C->T read conversion) and inverts the methylation call. Guarded at resolve()
+    // to SE + directional + minimap2 + single-instance, so it short-circuits here.
+    if config.five_base
+        && let ReadLayout::SingleEnd { reads } = &config.layout
+    {
+        return run_se_five_base(config, reads);
+    }
     match &config.layout {
         ReadLayout::SingleEnd { reads } => {
             if config.combined_index {
@@ -679,6 +700,329 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
         eprintln!("{}", counters_summary(read_file, &counters));
     }
     Ok(())
+}
+
+// ===========================================================================
+// #787 Illumina 5-Base single-end driver. Opt-in, never-silent, concordance-gated
+// (NOT byte-identical — Perl Bismark has no 5-Base oracle). Unlike the bisulfite
+// spine it does NOT convert the reads: it aligns the RAW reads to the UNCONVERTED
+// genome with ONE minimap2 instance, derives the strand from the SAM FLAG, and
+// reuses the byte-frozen genomic-extraction + (polarity-INVERTED) methylation_call
+// + single_end_sam_output. v1 = single-end + directional (guarded at resolve()).
+// ===========================================================================
+
+/// Drive the 5-Base SE run: one minimap2 instance per read file against the
+/// unconverted reference, lockstep with the original FastQ, emitting a Bismark BAM
+/// and SE report. Mirrors `run_se`'s setup (genome / header / sinks / report) but
+/// swaps the convert+2-instance+merge core for [`five_base_align_and_call`].
+fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token(); // minimap2 → "mm2"
+    // The single reference FASTA minimap2 aligns against (the UNCONVERTED genome).
+    let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing 5-Base mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &config.aligner_options,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+
+        let mut counters = Counters::default();
+        five_base_align_and_call(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &ref_path,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        // 5-Base is directional (the report's strand block is OT/OB only).
+        report::print_final_analysis_report_single_end(&mut report, &counters, true)?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+        eprintln!("{}", counters_summary(read_file, &counters));
+    }
+
+    // Delete the concatenated-reference temp, if one was written (multi-FASTA genome).
+    if let Some(tmp) = ref_tmp {
+        let _ = std::fs::remove_file(tmp);
+    }
+    Ok(())
+}
+
+/// Resolve the reference FASTA minimap2 will align against. A single-FASTA genome
+/// is passed through directly (no copy); a multi-FASTA genome is decompressed +
+/// concatenated once into a temp plain FASTA (so minimap2 sees one file, with the
+/// same contig names — hence the same RNAMEs the in-memory `genome`/`refid` use).
+/// Returns `(reference_path, Some(temp_to_delete))` for the multi-FASTA case.
+fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<PathBuf>)> {
+    let fastas = &config.genome.fastas;
+    if fastas.len() == 1 {
+        return Ok((fastas[0].clone(), None));
+    }
+    let tmp = config
+        .output
+        .output_dir
+        .join(".bismark_5base_concat_ref.fa");
+    let mut out = BufWriter::new(File::create(&tmp)?);
+    for f in fastas {
+        let file = File::open(f)?;
+        let mut r: Box<dyn BufRead> = if f.to_string_lossy().ends_with(".gz") {
+            Box::new(BufReader::new(MultiGzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+        std::io::copy(&mut r, &mut out)?;
+        out.write_all(b"\n")?; // guard against a missing trailing newline between files
+    }
+    out.flush()?;
+    Ok((tmp.clone(), Some(tmp)))
+}
+
+/// Spawn ONE minimap2 against `ref_path` (unconverted) with the RAW reads, then walk
+/// the original FastQ in lockstep with minimap2's primary SAM records (input order),
+/// emitting one Bismark record per read. `skip`/`upto` mirror `drive_merge`.
+fn five_base_align_and_call(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_file: &Path,
+    ref_path: &Path,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    // minimap2 argv: the resolved options (`-x sr` for 5-Base) + positional
+    // reference + reads. minimap2 reads the FASTA / (optionally gzipped) FastQ
+    // directly, so NO `.mmi` build and NO read conversion.
+    let bin = &config.detected_aligner.path;
+    let mut args: Vec<std::ffi::OsString> = config
+        .aligner_options
+        .split_whitespace()
+        .map(std::ffi::OsString::from)
+        .collect();
+    args.push(ref_path.as_os_str().to_owned());
+    args.push(read_file.as_os_str().to_owned());
+    let mut child = std::process::Command::new(bin)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| {
+            AlignerError::Validation(format!("failed to spawn minimap2 ({}): {e}", bin.display()))
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+    let mut sam = BufReader::new(stdout);
+    let mut sam_line = String::new();
+
+    // Walk the original FastQ (4-line records) in lockstep with minimap2's primary
+    // records. minimap2 emits output in input order (one primary per read), so the
+    // pairing is positional; a qname mismatch is a hard desync error (never a silent
+    // miscall). `--secondary=no` + skipping supplementary keeps it 1:1.
+    let file = File::open(read_file)?;
+    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let (skip, upto, icpc) = (
+        config.read_processing.skip,
+        config.read_processing.upto,
+        config.read_processing.icpc,
+    );
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    loop {
+        id.clear();
+        seq.clear();
+        plus.clear();
+        qual.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        let n3 = reader.read_until(b'\n', &mut plus)?;
+        let n4 = reader.read_until(b'\n', &mut qual)?;
+        if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+            break;
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            // skipped reads still consume their SAM primary to stay in lockstep.
+            let _ = five_base_next_primary(&mut sam, &mut sam_line)?;
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+
+        let fixed = convert::fix_id(convert::chomp_newline(&id), icpc);
+        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
+        let identifier = String::from_utf8_lossy(id_bytes).into_owned();
+        let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
+        let qual_bytes: Vec<u8> = convert::chomp_newline(&qual).to_vec();
+
+        let rec = five_base_next_primary(&mut sam, &mut sam_line)?.ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "minimap2 produced fewer records than reads (desync at read {identifier})"
+            ))
+        })?;
+        if rec.qname != identifier {
+            return Err(AlignerError::Validation(format!(
+                "5-Base SAM/FastQ desync: expected read {identifier}, minimap2 emitted {}",
+                rec.qname
+            )));
+        }
+
+        counters.sequences_count += 1;
+        if let Some(record) = five_base_emit_record(
+            &rec,
+            &identifier,
+            &seq_uc,
+            &qual_bytes,
+            genome,
+            refid,
+            config.phred64,
+            counters,
+        )? {
+            write_record(&mut sinks.bam, &record)?;
+        } else if rec.flag & 0x4 != 0 {
+            // unmapped → optional --unmapped FastQ (mirrors Decision::NoAlignment).
+            if let Some(w) = sinks.unmapped.as_mut() {
+                let seq_orig = convert::chomp_newline(&seq).to_vec();
+                write_se_aux_record(
+                    w,
+                    false,
+                    identifier.as_bytes(),
+                    &seq_orig,
+                    &plus,
+                    &qual_bytes,
+                )?;
+            }
+        }
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(AlignerError::Validation(format!(
+            "minimap2 exited with status {status}"
+        )));
+    }
+    Ok(())
+}
+
+/// Read the next PRIMARY SAM record from minimap2's stdout, skipping `@` headers
+/// and secondary (0x100) / supplementary (0x800) lines. `None` at EOF.
+fn five_base_next_primary<R: BufRead>(
+    reader: &mut R,
+    line: &mut String,
+) -> Result<Option<SamRecord>> {
+    loop {
+        line.clear();
+        let n = reader.read_line(line)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        if line.starts_with('@') {
+            continue;
+        }
+        let rec = SamRecord::parse(line)?;
+        if rec.flag & 0x100 != 0 || rec.flag & 0x800 != 0 {
+            continue; // secondary / supplementary — not the primary for this read
+        }
+        return Ok(Some(rec));
+    }
+}
+
+/// Turn one minimap2 primary [`SamRecord`] + the original read into a Bismark
+/// record with INVERTED (5-Base) methylation polarity, or `None` (unmapped, or the
+/// chromosome-edge length guard fired). Pure (no I/O) so it is unit-testable with a
+/// canned `SamRecord` + tiny in-memory genome. Increments the alignment-outcome and
+/// (via `methylation_call`/extraction) the methylation/strand counters.
+#[allow(clippy::too_many_arguments)]
+fn five_base_emit_record(
+    rec: &SamRecord,
+    identifier: &str,
+    seq_uc: &[u8],
+    qual_bytes: &[u8],
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    phred64: bool,
+    counters: &mut Counters,
+) -> Result<Option<bismark_io::BismarkRecord>> {
+    if rec.flag & 0x4 != 0 {
+        counters.no_single_alignment_found += 1;
+        return Ok(None);
+    }
+    counters.unique_best_alignment_count += 1;
+    // Strand from the FLAG: forward (0) → OT (index 0); reverse (0x10) → OB (index 1).
+    // Directional only in v1, so only the two original strands occur.
+    let index = if rec.flag & 0x10 != 0 { 1 } else { 0 };
+    let best = BestAlignment {
+        chromosome: rec.rname.clone(), // unconverted genome → no _CT_/_GA_ suffix
+        position: rec.pos,
+        index,
+        alignment_score: rec.alignment_score.unwrap_or(0),
+        alignment_score_second_best: rec.second_best,
+        md_tag: rec.md_tag.clone().unwrap_or_default(),
+        cigar: rec.cigar.clone(),
+        bowtie_sequence: rec.seq.clone(),
+        mapq: rec.mapq,
+    };
+    let ext = extract_corresponding_genomic_sequence_single_end(&best, genome, false, counters)?;
+    // Length guard (Perl 3127): the window must be read_len + 2; a shorter one means
+    // a chromosome-edge guard fired → skip (counted, not written).
+    if ext.unmodified_genomic_sequence.len() != seq_uc.len() + 2 {
+        counters.genomic_sequence_could_not_be_extracted_count += 1;
+        return Ok(None);
+    }
+    // THE inversion: five_base = true (5mC->T, the chemical inverse of bisulfite).
+    let methcall = methylation_call(
+        seq_uc,
+        &ext.unmodified_genomic_sequence,
+        ext.read_conversion,
+        true,
+        counters,
+    );
+    let record = single_end_sam_output(
+        identifier, seq_uc, qual_bytes, &best, &ext, &methcall, refid, phred64,
+    )?;
+    Ok(Some(record))
 }
 
 /// A per-record aux writer (`--unmapped`/`--ambiguous`). The single-core path
@@ -4747,6 +5091,104 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- #787 Illumina 5-Base per-record emission (hermetic, no minimap2) ----
+
+    fn five_base_genome(chr: &str, seq: &[u8]) -> Genome {
+        let mut chromosomes = std::collections::HashMap::new();
+        chromosomes.insert(chr.to_string(), seq.to_vec());
+        Genome {
+            chromosomes,
+            sq_order: vec![chr.to_string()],
+        }
+    }
+
+    /// A forward (FLAG 0) read with a read `T` at a genomic C (downstream G) is a
+    /// METHYLATED CpG under 5-Base polarity → XM `Z` (the inverse of bisulfite, where
+    /// a read T at C is unmethylated `z`). Genome "AACGAATTTT": read "TGAA" at POS 3
+    /// (window "CGAATT") → i0 T vs C, downstream G → meCpG; i1..3 match/non-C → '.'.
+    #[test]
+    fn five_base_emit_forward_methylated_cpg() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let out =
+            five_base_emit_record(&rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, &mut c)
+                .unwrap()
+                .expect("forward mapped read emits a record");
+        let inner = out.inner();
+        assert_eq!(u16::from(inner.flags()), 0); // forward
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        assert_eq!(
+            xm, b"Z...",
+            "5-Base: read T at genomic C (CpG) = methylated Z"
+        );
+        assert_eq!(c.total_me_cpg, 1);
+        assert_eq!(c.total_unme_cpg, 0);
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    /// The same locus but the read keeps the C (read "CGAA") is UNMETHYLATED under
+    /// 5-Base → lower-case `z` (the exact inverse of bisulfite's `Z`).
+    #[test]
+    fn five_base_emit_forward_unmethylated_cpg() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tCGAA\tIIII\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let out =
+            five_base_emit_record(&rec, "r1", b"CGAA", b"IIII", &genome, &refid, false, &mut c)
+                .unwrap()
+                .unwrap();
+        let xm = bismark_io::tags::xm(out.inner().data()).unwrap();
+        assert_eq!(xm, b"z...");
+        assert_eq!(c.total_unme_cpg, 1);
+        assert_eq!(c.total_me_cpg, 0);
+    }
+
+    /// An unmapped primary (FLAG 4) yields no record and counts as no-alignment.
+    #[test]
+    fn five_base_emit_unmapped_is_none() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t4\t*\t0\t0\t*\t*\t0\t0\tTGAA\tIIII").unwrap();
+        let mut c = Counters::default();
+        let out =
+            five_base_emit_record(&rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, &mut c)
+                .unwrap();
+        assert!(out.is_none());
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    /// `five_base_next_primary` skips `@` headers + secondary (0x100) / supplementary
+    /// (0x800) lines and returns primaries in order.
+    #[test]
+    fn five_base_next_primary_skips_headers_and_secondary() {
+        let sam = "@HD\tVN:1.0\n\
+                   @SQ\tSN:chr1\tLN:10\n\
+                   r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\n\
+                   r1\t256\tchr1\t7\t0\t4M\t*\t0\t0\tTGAA\tIIII\n\
+                   r2\t16\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\n";
+        let mut reader = std::io::BufReader::new(sam.as_bytes());
+        let mut line = String::new();
+        let a = five_base_next_primary(&mut reader, &mut line)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.qname, "r1");
+        assert_eq!(a.flag, 0);
+        let b = five_base_next_primary(&mut reader, &mut line)
+            .unwrap()
+            .unwrap();
+        assert_eq!(b.qname, "r2"); // the 0x100 secondary line was skipped
+        assert_eq!(b.flag, 16);
+        assert!(
+            five_base_next_primary(&mut reader, &mut line)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn strip_conv_tag_ct_ga_and_fail_loud() {
