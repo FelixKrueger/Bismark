@@ -99,6 +99,13 @@ pub struct Cli {
     /// is excluded from the methylation totals. Requires `--illumina_5base`.
     #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
     pub five_base_deconvolution: bool,
+    /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
+    /// used by `--illumina_5base --bowtie2`/`--hisat2`. 5-Base reads keep full
+    /// complexity, so they align to the plain genome index (build it once with
+    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
+    /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
+    #[arg(long = "five_base_index", value_name = "BASENAME")]
+    pub five_base_index: Option<PathBuf>,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

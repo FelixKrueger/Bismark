@@ -5512,3 +5512,89 @@ fn five_base_rejects_non_directional() {
             "--illumina_5base is directional only",
         ));
 }
+
+/// A fake `bowtie2` for the 5-Base path: maps every `-U` read to chr1:1 (6M, FLAG 0,
+/// RNAME `chr1` UNCONVERTED), echoing the read SEQ. Locates the index by `-x` and the
+/// reads by `-U` (the 5-Base bowtie2 invocation `<opts> -x <normal_index> -U <reads>`).
+#[cfg(unix)]
+fn make_fake_bowtie2_five_base(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id) } NR%4==2 { print id "\t0\tchr1\t1\t42\t6M\t*\t0\t0\t" $0 "\tFFFFFF\tAS:i:0\tMD:Z:1C4" }' "$inp"
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// `--illumina_5base --bowtie2 --five_base_index` aligns the RAW reads to a NORMAL
+/// (unconverted) bowtie2 index and emits the same inverted-polarity BAM as the
+/// minimap2 path (read `T` at a genomic CpG C → methylated `Z`). Uses the `bt2`
+/// naming and the plain (non-bisulfite) bowtie2 option string in the report.
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_unconverted_index_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // CT/GA .bt2 (for discovery) + genome.fa chr1 ACGTACGT
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg(genome.path().join("normal_idx")) // basename; the fake bowtie2 ignores it
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with Bowtie 2 against"));
+    assert!(report.contains("-q --score-min L,0,-0.6")); // the plain 5-Base bowtie2 opts
+    assert!(!report.contains("--norc")); // NOT the bisulfite strand-restricted options
+
+    let mut reader =
+        bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_bt2.bam")).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let xm = bismark_io::tags::xm(recs[0].inner().data()).unwrap();
+    assert_eq!(xm, b".Z...z", "5-Base via bowtie2: inverted CpG calls");
+}
+
+/// `--illumina_5base --bowtie2` WITHOUT `--five_base_index` fails loud.
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_requires_index() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --five_base_index"));
+}

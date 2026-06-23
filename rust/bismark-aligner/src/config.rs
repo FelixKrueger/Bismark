@@ -184,6 +184,9 @@ pub struct RunConfig {
     /// #787: run the post-alignment variant/methylation deconvolution pass + report.
     /// Requires `five_base` (guarded at resolve()).
     pub five_base_deconvolution: bool,
+    /// #787: basename of the NORMAL (unconverted) bowtie2/hisat2 index for a 5-Base
+    /// `--bowtie2`/`--hisat2` run (`None` ⇒ minimap2-on-FASTA default).
+    pub five_base_index: Option<PathBuf>,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -474,6 +477,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // #787 5-Base mode (guarded above: SE + directional, minimap2 unconverted path).
         five_base: cli.illumina_5base,
         five_base_deconvolution: cli.five_base_deconvolution,
+        five_base_index: cli.five_base_index.clone(),
         library,
         layout,
         format,
@@ -749,19 +753,45 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
     // unconverted-index path yet; `--minimap2` may co-occur (5-Base IS a minimap2
     // run). Ordered before the engine `Ok`s so the conflict fires, never a silent pick.
     if cli.illumina_5base {
-        for (flag, set) in [
-            ("--bowtie2", cli.bowtie2),
-            ("--hisat2", cli.hisat2),
-            ("--rammap", cli.rammap),
-        ] {
-            if set {
-                return Err(AlignerError::Validation(format!(
-                    "--illumina_5base is not supported with {flag}: the 5-Base v1 path aligns \
-                     to the unconverted genome with minimap2. Drop {flag} (5-Base uses minimap2)."
-                )));
+        if cli.rammap {
+            return Err(AlignerError::Validation(
+                "--illumina_5base is not supported with --rammap. Use --bowtie2/--hisat2 (with \
+                 --five_base_index) or the default minimap2 (genome FASTA)."
+                    .into(),
+            ));
+        }
+        // bowtie2/hisat2 5-Base align the RAW reads to a user-provided UNCONVERTED
+        // index (5-Base keeps full complexity, so a normal index works). minimap2 (the
+        // default) reads the genome FASTA directly and needs no index.
+        if cli.bowtie2 || cli.hisat2 {
+            if cli.five_base_index.is_none() {
+                return Err(AlignerError::Validation(
+                    "--illumina_5base with --bowtie2/--hisat2 requires --five_base_index \
+                     <basename>: a NORMAL (unconverted) index of the genome, built once with \
+                     bowtie2-build/hisat2-build. (Without an engine flag, 5-Base uses minimap2 \
+                     against the genome FASTA directly.)"
+                        .into(),
+                ));
             }
+            return Ok(if cli.hisat2 {
+                Aligner::Hisat2
+            } else {
+                Aligner::Bowtie2
+            });
+        }
+        if cli.five_base_index.is_some() {
+            return Err(AlignerError::Validation(
+                "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2; the \
+                 default minimap2 5-Base path reads the genome FASTA directly."
+                    .into(),
+            ));
         }
         return Ok(Aligner::Minimap2);
+    }
+    if cli.five_base_index.is_some() {
+        return Err(AlignerError::Validation(
+            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2.".into(),
+        ));
     }
     if cli.hisat2 {
         return Ok(Aligner::Hisat2);
@@ -1327,19 +1357,54 @@ mod tests {
         );
     }
 
-    /// `--illumina_5base` is mutually exclusive with the bisulfite engines that have
-    /// no unconverted-index path in v1; the error names the conflicting flag.
+    /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/
+    /// `--hisat2` need `--five_base_index` (a normal unconverted index) and then resolve
+    /// to that engine; no engine flag → minimap2 (genome FASTA).
     #[test]
-    fn illumina_5base_rejects_other_engines() {
-        for flag in ["--bowtie2", "--hisat2", "--rammap"] {
+    fn illumina_5base_engine_selection() {
+        // rammap: rejected outright.
+        let err = resolve_aligner(&cli_from(&["--illumina_5base", "--rammap"])).unwrap_err();
+        assert!(
+            err.to_string().contains("not supported with --rammap"),
+            "{err}"
+        );
+        // bowtie2/hisat2 without an index: fail loud.
+        for flag in ["--bowtie2", "--hisat2"] {
             let err = resolve_aligner(&cli_from(&["--illumina_5base", flag])).unwrap_err();
             assert!(
-                err.to_string()
-                    .contains("--illumina_5base is not supported with")
-                    && err.to_string().contains(flag),
+                err.to_string().contains("requires --five_base_index"),
                 "{flag}: {err}"
             );
         }
+        // bowtie2/hisat2 WITH an index: resolve to that engine.
+        assert_eq!(
+            resolve_aligner(&cli_from(&[
+                "--illumina_5base",
+                "--bowtie2",
+                "--five_base_index",
+                "idx"
+            ]))
+            .unwrap(),
+            Aligner::Bowtie2
+        );
+        assert_eq!(
+            resolve_aligner(&cli_from(&[
+                "--illumina_5base",
+                "--hisat2",
+                "--five_base_index",
+                "idx"
+            ]))
+            .unwrap(),
+            Aligner::Hisat2
+        );
+        // --five_base_index without an engine flag is rejected (minimap2 needs no index).
+        let err = resolve_aligner(&cli_from(&["--illumina_5base", "--five_base_index", "idx"]))
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_index only applies to"),
+            "{err}"
+        );
     }
 
     #[test]

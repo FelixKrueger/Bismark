@@ -715,9 +715,63 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
 // + single_end_sam_output. v1 = single-end + directional (guarded at resolve()).
 // ===========================================================================
 
-/// Drive the 5-Base SE run: one minimap2 instance per read file against the
-/// unconverted reference, lockstep with the original FastQ, emitting a Bismark BAM
-/// and SE report. Mirrors `run_se`'s setup (genome / header / sinks / report) but
+/// The aligner option string for a 5-Base run. minimap2 (the default) uses the
+/// resolved `-x sr …` options against the genome FASTA. bowtie2/hisat2 align the RAW
+/// reads to the user's NORMAL (unconverted) index with a permissive `--score-min`
+/// (the sparse C→T conversions are well within default scoring) — NOT the bisulfite
+/// option string. Used for BOTH the spawn argv and the report's "was run with" line.
+fn five_base_aligner_options(config: &RunConfig) -> String {
+    match config.aligner {
+        Aligner::Bowtie2 => "-q --score-min L,0,-0.6".to_string(),
+        Aligner::Hisat2 => "-q --no-spliced-alignment --score-min L,0,-0.6".to_string(),
+        // minimap2 (default 5-Base engine): the resolved `-a --MD --secondary=no … -x sr`.
+        _ => config.aligner_options.clone(),
+    }
+}
+
+/// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
+/// <reads…>` (positional FASTA + reads). bowtie2/hisat2: `<opts> -x <index> {-U r |
+/// -1 r1 -2 r2}` against the user's unconverted index. `reads` is 1 (SE) or 2 (PE).
+fn five_base_build_argv(
+    config: &RunConfig,
+    opts: &str,
+    ref_path: &Path,
+    reads: &[&Path],
+) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    let mut args: Vec<OsString> = opts.split_whitespace().map(OsString::from).collect();
+    match config.aligner {
+        Aligner::Bowtie2 | Aligner::Hisat2 => {
+            let idx = config
+                .five_base_index
+                .as_ref()
+                .expect("five_base_index is required for bowtie2/hisat2 5-Base (guarded)");
+            args.push("-x".into());
+            args.push(idx.as_os_str().to_owned());
+            if reads.len() == 2 {
+                args.push("-1".into());
+                args.push(reads[0].as_os_str().to_owned());
+                args.push("-2".into());
+                args.push(reads[1].as_os_str().to_owned());
+            } else {
+                args.push("-U".into());
+                args.push(reads[0].as_os_str().to_owned());
+            }
+        }
+        _ => {
+            // minimap2: positional <genome.fa> then the read file(s).
+            args.push(ref_path.as_os_str().to_owned());
+            for r in reads {
+                args.push(r.as_os_str().to_owned());
+            }
+        }
+    }
+    args
+}
+
+/// Drive the 5-Base SE run: one aligner instance per read file against the
+/// unconverted reference/index, lockstep with the original FastQ, emitting a Bismark
+/// BAM and SE report. Mirrors `run_se`'s setup (genome / header / sinks / report) but
 /// swaps the convert+2-instance+merge core for [`five_base_align_and_call`].
 fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
     let started = Instant::now();
@@ -726,6 +780,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
     let header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token(); // minimap2 → "mm2"
+    let fb_opts = five_base_aligner_options(config); // engine option string (report + spawn)
     // The single reference FASTA minimap2 aligns against (the UNCONVERTED genome).
     let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
 
@@ -751,7 +806,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
                 sequence_file: read_file,
                 sequence_file2: None,
                 genome_folder: &genome_folder,
-                aligner_options: &config.aligner_options,
+                aligner_options: &fb_opts,
                 aligner: config.aligner,
                 library: config.library,
             },
@@ -835,24 +890,22 @@ fn five_base_align_and_call(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    // minimap2 argv: the resolved options (`-x sr` for 5-Base) + positional
-    // reference + reads. minimap2 reads the FASTA / (optionally gzipped) FastQ
-    // directly, so NO `.mmi` build and NO read conversion.
+    // Per-engine argv against the UNCONVERTED reference/index (no read conversion):
+    // minimap2 reads the FASTA directly, bowtie2/hisat2 use the user's normal index.
     let bin = &config.detected_aligner.path;
-    let mut args: Vec<std::ffi::OsString> = config
-        .aligner_options
-        .split_whitespace()
-        .map(std::ffi::OsString::from)
-        .collect();
-    args.push(ref_path.as_os_str().to_owned());
-    args.push(read_file.as_os_str().to_owned());
+    let opts = five_base_aligner_options(config);
+    let args = five_base_build_argv(config, &opts, ref_path, &[read_file]);
     let mut child = std::process::Command::new(bin)
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
         .spawn()
         .map_err(|e| {
-            AlignerError::Validation(format!("failed to spawn minimap2 ({}): {e}", bin.display()))
+            AlignerError::Validation(format!(
+                "failed to spawn {} ({}): {e}",
+                config.aligner.name(),
+                bin.display()
+            ))
         })?;
     let stdout = child
         .stdout
@@ -1057,6 +1110,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
     let header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token();
+    let fb_opts = five_base_aligner_options(config);
     let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
@@ -1081,7 +1135,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 sequence_file: read_1,
                 sequence_file2: Some(read_2),
                 genome_folder: &genome_folder,
-                aligner_options: &config.aligner_options,
+                aligner_options: &fb_opts,
                 aligner: config.aligner,
                 library: config.library,
             },
@@ -1137,21 +1191,19 @@ fn five_base_align_and_call_pe(
     counters: &mut Counters,
 ) -> Result<()> {
     let bin = &config.detected_aligner.path;
-    let mut args: Vec<std::ffi::OsString> = config
-        .aligner_options
-        .split_whitespace()
-        .map(std::ffi::OsString::from)
-        .collect();
-    args.push(ref_path.as_os_str().to_owned());
-    args.push(read_1.as_os_str().to_owned());
-    args.push(read_2.as_os_str().to_owned());
+    let opts = five_base_aligner_options(config);
+    let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
     let mut child = std::process::Command::new(bin)
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
         .spawn()
         .map_err(|e| {
-            AlignerError::Validation(format!("failed to spawn minimap2 ({}): {e}", bin.display()))
+            AlignerError::Validation(format!(
+                "failed to spawn {} ({}): {e}",
+                config.aligner.name(),
+                bin.display()
+            ))
         })?;
     let stdout = child
         .stdout
