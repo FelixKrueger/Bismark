@@ -32,6 +32,7 @@ pub mod config;
 pub mod convert;
 pub mod discovery;
 pub mod error;
+pub mod five_base_deconv;
 pub mod genome;
 pub mod inprocess;
 pub mod mapq;
