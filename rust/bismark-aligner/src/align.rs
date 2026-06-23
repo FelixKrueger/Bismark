@@ -75,34 +75,46 @@ pub struct SamRecord {
     pub raw_line: String,
 }
 
+/// Strip the trailing CR/LF terminator then split on TAB, operating on the
+/// already-validated `&str`'s bytes. This avoids
+/// `line.trim_end_matches(['\n', '\r']).split('\t')`, whose `CharSearcher`
+/// (per-char UTF-8 decode) was the aligner's hottest parse cost (06222026 perf
+/// epic; ~330 self-samples). The line is valid UTF-8 (read_line validated it)
+/// and `\t`/`\n`/`\r` are all < 0x80, so a byte slice at those boundaries never
+/// lands mid-codepoint and yields valid `&str` fields with no re-validation.
+///
+/// **Byte-identical to the char-based reference** by construction (only trailing
+/// `\n`/`\r` are trimmed; field bytes are untouched; an empty input yields a
+/// single empty field, like `"".split('\t')`). Returned as a seam so the
+/// equivalence is pinned by a CI unit test (`trim_and_split_*`), not just the
+/// `#[ignore]`d real-data oracle. The returned `trimmed` slice backs both the
+/// fields and `raw_line`.
+fn trim_and_split(line: &str) -> (&str, Vec<&str>) {
+    let lb = line.as_bytes();
+    let mut end = lb.len();
+    while end > 0 && (lb[end - 1] == b'\n' || lb[end - 1] == b'\r') {
+        end -= 1;
+    }
+    let trimmed = &line[..end];
+    let mut f: Vec<&str> = Vec::with_capacity(16);
+    let mut start = 0usize;
+    for (i, &b) in trimmed.as_bytes().iter().enumerate() {
+        if b == b'\t' {
+            f.push(&trimmed[start..i]);
+            start = i + 1;
+        }
+    }
+    f.push(&trimmed[start..]);
+    (trimmed, f)
+}
+
 impl SamRecord {
     /// Parse one SAM line (`split('\t')`). The line may carry a trailing
     /// terminator, which is stripped. Errors on `< 11` fields or unparseable
     /// FLAG/POS/MAPQ; unparseable tag values are left `None` (lenient — Phase 4
     /// enforces `AS`/`MD` presence, Perl `die` 2838).
     pub fn parse(line: &str) -> Result<SamRecord> {
-        // Byte-level trim + tab split. Operating on the already-validated &str's
-        // bytes avoids `str::split('\t')` / `trim_end_matches([..])`, whose
-        // `CharSearcher` (per-char decode) was the aligner's hottest parse cost
-        // (06222026 perf epic; ~330 self-samples). The line is valid UTF-8
-        // (read_line validated it), so slicing at the ASCII '\t'/'\n'/'\r'
-        // boundaries yields valid &str fields with no re-validation. Field bytes
-        // are unchanged, so this is byte-identical to the char-based split.
-        let lb = line.as_bytes();
-        let mut end = lb.len();
-        while end > 0 && (lb[end - 1] == b'\n' || lb[end - 1] == b'\r') {
-            end -= 1;
-        }
-        let trimmed = &line[..end];
-        let mut f: Vec<&str> = Vec::with_capacity(16);
-        let mut start = 0usize;
-        for (i, &b) in trimmed.as_bytes().iter().enumerate() {
-            if b == b'\t' {
-                f.push(&trimmed[start..i]);
-                start = i + 1;
-            }
-        }
-        f.push(&trimmed[start..]);
+        let (trimmed, f) = trim_and_split(line);
         if f.len() < 11 {
             return Err(AlignerError::Validation(format!(
                 "malformed SAM line ({} fields, expected >= 11): {trimmed}",
@@ -869,6 +881,47 @@ mod tests {
         assert_eq!(r.qual, "IIIIIIIIII"); // no trailing \r on QUAL
         assert!(!r.raw_line.ends_with('\r') && !r.raw_line.ends_with('\n'));
         assert_eq!(r.raw_line, MAPPED);
+    }
+
+    #[test]
+    fn trim_and_split_matches_char_based_reference() {
+        // The byte-scan field split (06222026 perf epic) MUST be byte-identical to
+        // the original `line.trim_end_matches(['\n', '\r']).split('\t')`. This pins
+        // the edge cases reviewed by hand on PR #1013 so CI guards them (the
+        // real-data oracle that also covers them is `#[ignore]`d): empty / leading /
+        // trailing-tab fields, lone `\r`, `\r\n`, mid-line `\r` (NOT trailing, so it
+        // stays inside the field), no trailing newline, and empty input (→ `[""]`).
+        for line in [
+            "",            // empty → one empty field
+            "\n",          // bare LF → one empty field
+            "\r",          // bare CR → one empty field
+            "\r\n",        // CRLF → one empty field
+            "\n\r",        // both terminators trimmed
+            "a",           // single field, no terminator
+            "a\n",         // single field + LF
+            "a\r\n",       // single field + CRLF
+            "\ta",         // leading tab → empty first field
+            "a\t",         // trailing tab → empty last field
+            "\t",          // lone tab → two empty fields
+            "a\t\tb",      // empty middle field
+            "a\tb\tc",     // ordinary three fields
+            "a\tb\tc\r\n", // three fields + CRLF
+            "a\rb",        // mid-line CR is content, not trimmed
+            "a\tb\rc\n",   // mid-line CR inside field 2, trailing LF trimmed
+        ] {
+            let reference: Vec<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
+            let (trimmed, got) = trim_and_split(line);
+            assert_eq!(got, reference, "field split mismatch for {line:?}");
+            assert_eq!(
+                trimmed,
+                line.trim_end_matches(['\n', '\r']),
+                "trim mismatch"
+            );
+            assert!(
+                !got.is_empty(),
+                "split always yields >= 1 field (even empty input)"
+            );
+        }
     }
 
     // ---- FileSamStream (v2 phase 9 — sequential combined-index spill replay) ----
