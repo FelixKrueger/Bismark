@@ -1000,6 +1000,7 @@ fn five_base_align_and_call(
             genome,
             refid,
             config.phred64,
+            config.five_base_baseq,
             counters,
         )? {
             write_record(&mut sinks.bam, &record)?;
@@ -1054,6 +1055,25 @@ fn five_base_next_primary<R: BufRead>(
     }
 }
 
+/// Mask read bases below the Phred base-quality threshold to `b'N'` for the methylation
+/// call ONLY (the BAM SEQ keeps the original read). `baseq == 0` ⇒ no masking (returns a
+/// plain copy). `offset` is 33 (Sanger/Phred+33) or 64 (`--phred64`). An `N` matches no
+/// genomic base, so `methylation_call` emits a no-call (`.`) there, cutting the per-base
+/// sequencing-error noise floor (#787 real-data finding; DRAGEN `--methylation-baseq`).
+fn mask_low_quality(seq: &[u8], qual: &[u8], baseq: u8, offset: u8) -> Vec<u8> {
+    if baseq == 0 {
+        return seq.to_vec();
+    }
+    let min = offset.saturating_add(baseq);
+    seq.iter()
+        .enumerate()
+        .map(|(i, &b)| match qual.get(i) {
+            Some(&q) if q < min => b'N',
+            _ => b,
+        })
+        .collect()
+}
+
 /// Turn one minimap2 primary [`SamRecord`] + the original read into a Bismark
 /// record with INVERTED (5-Base) methylation polarity, or `None` (unmapped, or the
 /// chromosome-edge length guard fired). Pure (no I/O) so it is unit-testable with a
@@ -1068,6 +1088,7 @@ fn five_base_emit_record(
     genome: &Genome,
     refid: &HashMap<String, usize>,
     phred64: bool,
+    baseq: u8,
     counters: &mut Counters,
 ) -> Result<Option<bismark_io::BismarkRecord>> {
     if rec.flag & 0x4 != 0 {
@@ -1097,8 +1118,10 @@ fn five_base_emit_record(
         return Ok(None);
     }
     // THE inversion: five_base = true (5mC->T, the chemical inverse of bisulfite).
+    // Base-quality masking applies to the CALL ONLY; the BAM SEQ keeps the original read.
+    let call_seq = mask_low_quality(seq_uc, qual_bytes, baseq, if phred64 { 64 } else { 33 });
     let methcall = methylation_call(
-        seq_uc,
+        &call_seq,
         &ext.unmodified_genomic_sequence,
         ext.read_conversion,
         true,
@@ -1303,6 +1326,7 @@ fn five_base_align_and_call_pe(
             refid,
             config.phred64,
             config.dovetail,
+            config.five_base_baseq,
             counters,
         )? {
             write_record(&mut sinks.bam, &out1)?;
@@ -1339,6 +1363,7 @@ fn five_base_emit_pe_record(
     refid: &HashMap<String, usize>,
     phred64: bool,
     dovetail: bool,
+    baseq: u8,
     counters: &mut Counters,
 ) -> Result<Option<(bismark_io::BismarkRecord, bismark_io::BismarkRecord)>> {
     // Require a proper pair with both mates mapped (5-Base v1: concordant pairs only).
@@ -1374,15 +1399,18 @@ fn five_base_emit_pe_record(
         counters.genomic_sequence_could_not_be_extracted_count += 1;
         return Ok(None);
     }
+    let off = if phred64 { 64 } else { 33 };
+    let call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
+    let call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
     let mc1 = methylation_call(
-        seq1_uc,
+        &call1,
         &ext.unmodified_genomic_sequence_1,
         ext.read_conversion_1,
         true,
         counters,
     );
     let mc2 = methylation_call(
-        seq2_uc,
+        &call2,
         &ext.unmodified_genomic_sequence_2,
         ext.read_conversion_2,
         true,
@@ -5619,10 +5647,11 @@ mod tests {
         let refid = build_refid(&genome);
         let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\tAS:i:0").unwrap();
         let mut c = Counters::default();
-        let out =
-            five_base_emit_record(&rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, &mut c)
-                .unwrap()
-                .expect("forward mapped read emits a record");
+        let out = five_base_emit_record(
+            &rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, 0, &mut c,
+        )
+        .unwrap()
+        .expect("forward mapped read emits a record");
         let inner = out.inner();
         assert_eq!(u16::from(inner.flags()), 0); // forward
         let xm = bismark_io::tags::xm(inner.data()).unwrap();
@@ -5643,13 +5672,42 @@ mod tests {
         let refid = build_refid(&genome);
         let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tCGAA\tIIII\tAS:i:0").unwrap();
         let mut c = Counters::default();
-        let out =
-            five_base_emit_record(&rec, "r1", b"CGAA", b"IIII", &genome, &refid, false, &mut c)
-                .unwrap()
-                .unwrap();
+        let out = five_base_emit_record(
+            &rec, "r1", b"CGAA", b"IIII", &genome, &refid, false, 0, &mut c,
+        )
+        .unwrap()
+        .unwrap();
         let xm = bismark_io::tags::xm(out.inner().data()).unwrap();
         assert_eq!(xm, b"z...");
         assert_eq!(c.total_unme_cpg, 1);
+        assert_eq!(c.total_me_cpg, 0);
+    }
+
+    /// `mask_low_quality`: bases below the Phred threshold become `N`; `baseq=0` is a
+    /// passthrough.
+    #[test]
+    fn mask_low_quality_masks_below_threshold() {
+        // qual "!" = Phred 0, "I" = Phred 40 (Phred+33). threshold 20 → only the '!' masks.
+        assert_eq!(mask_low_quality(b"ACGT", b"!III", 20, 33), b"NCGT");
+        assert_eq!(mask_low_quality(b"ACGT", b"!III", 0, 33), b"ACGT"); // off
+        assert_eq!(mask_low_quality(b"ACGT", b"IIII", 20, 33), b"ACGT"); // all high-Q
+    }
+
+    /// With `--five_base_baseq`, a low-quality read base at a methylated CpG is masked to
+    /// a no-call (`.`) instead of `Z` — cutting the sequencing-error noise floor.
+    #[test]
+    fn five_base_emit_baseq_masks_low_quality_call() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\t!III\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_record(
+            &rec, "r1", b"TGAA", b"!III", &genome, &refid, false, 20, &mut c,
+        )
+        .unwrap()
+        .unwrap();
+        let xm = bismark_io::tags::xm(out.inner().data()).unwrap();
+        assert_eq!(xm, b"....", "low-Q CpG base is a no-call, not Z");
         assert_eq!(c.total_me_cpg, 0);
     }
 
@@ -5660,9 +5718,10 @@ mod tests {
         let refid = build_refid(&genome);
         let rec = SamRecord::parse("r1\t4\t*\t0\t0\t*\t*\t0\t0\tTGAA\tIIII").unwrap();
         let mut c = Counters::default();
-        let out =
-            five_base_emit_record(&rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, &mut c)
-                .unwrap();
+        let out = five_base_emit_record(
+            &rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, 0, &mut c,
+        )
+        .unwrap();
         assert!(out.is_none());
         assert_eq!(c.no_single_alignment_found, 1);
         assert_eq!(c.unique_best_alignment_count, 0);
@@ -5680,7 +5739,8 @@ mod tests {
         let r2 = SamRecord::parse("p\t147\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII\tAS:i:0").unwrap();
         let mut c = Counters::default();
         let (o1, o2) = five_base_emit_pe_record(
-            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, &mut c,
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
+            &mut c,
         )
         .unwrap()
         .expect("proper pair emits two records");
@@ -5706,7 +5766,8 @@ mod tests {
         let r2 = SamRecord::parse("p\t133\t*\t0\t0\t*\t*\t0\t0\tGAAT\tIIII").unwrap();
         let mut c = Counters::default();
         let out = five_base_emit_pe_record(
-            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, &mut c,
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
+            &mut c,
         )
         .unwrap();
         assert!(out.is_none());

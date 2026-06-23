@@ -189,6 +189,9 @@ pub struct RunConfig {
     pub five_base_index: Option<PathBuf>,
     /// #787: inline UMI length for 5-Base UMI dedup (0 = off). Requires `five_base`.
     pub five_base_umi_len: usize,
+    /// #787: min Phred base quality for a 5-Base methylation call (0 = off; mask low-Q
+    /// read bases as no-call). Requires `five_base`.
+    pub five_base_baseq: u8,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -309,6 +312,13 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     if cli.five_base_umi_len > 0 && !cli.illumina_5base {
         return Err(AlignerError::Validation(
             "--five_base_umi_len requires --illumina_5base (UMI dedup applies to a 5-Base run)."
+                .into(),
+        ));
+    }
+    if cli.five_base_baseq > 0 && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_baseq requires --illumina_5base (it masks low-quality bases in the \
+             5-Base methylation call)."
                 .into(),
         ));
     }
@@ -487,6 +497,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         five_base_deconvolution: cli.five_base_deconvolution,
         five_base_index: cli.five_base_index.clone(),
         five_base_umi_len: cli.five_base_umi_len,
+        five_base_baseq: cli.five_base_baseq,
         library,
         layout,
         format,

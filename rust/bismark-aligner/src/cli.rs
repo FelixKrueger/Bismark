@@ -113,6 +113,13 @@ pub struct Cli {
     /// (the default; the aligner soft-clips any UMI bases). Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_len", value_name = "int", default_value_t = 0)]
     pub five_base_umi_len: usize,
+    /// `[#787]` Minimum Phred base quality for a 5-Base methylation call. Read bases
+    /// below this are ignored in the call (emitted as no-call), cutting the per-base
+    /// sequencing-error noise floor that otherwise inflates non-CpG "methylation"
+    /// (DRAGEN's `--methylation-baseq-threshold` precedent). 0 = off. The BAM SEQ is
+    /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
+    #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
+    pub five_base_baseq: u8,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,
