@@ -1264,7 +1264,10 @@ mod tests {
         );
         let got = argv_strings(&argv);
         // never a `-1`/`-2`/`--norc`/`--nofw` and never an empty arg.
-        assert!(!got.iter().any(|a| a == "-1" || a == "-2" || a == "--norc" || a == "--nofw"));
+        assert!(
+            !got.iter()
+                .any(|a| a == "-1" || a == "-2" || a == "--norc" || a == "--nofw")
+        );
         assert!(!got.iter().any(|a| a.is_empty()));
     }
 
