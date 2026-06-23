@@ -137,9 +137,12 @@ fn minimap2_is_accepted_not_deferred() {
 }
 
 #[test]
-fn minimap2_paired_end_is_rejected() {
-    // PE-minimap2 is deferred out of v1.x (no trustworthy Perl oracle): a
-    // paired-end --minimap2 run must fail loudly, not silently mis-align.
+fn minimap2_paired_end_is_accepted_not_rejected() {
+    // PE-minimap2 is now wired (experimental, mirroring Perl's positional invocation):
+    // a paired-end --minimap2 run must NO LONGER short-circuit with the old
+    // "not supported" rejection — it proceeds past aligner selection (here failing
+    // later, on the missing genome). See `minimap2_pe_mapped_names_and_report` for the
+    // end-to-end mapped path + the never-silent experimental notice.
     let r1 = TempDir::new().unwrap();
     let m1 = r1.path().join("r1.fq");
     let m2 = r1.path().join("r2.fq");
@@ -155,11 +158,7 @@ fn minimap2_paired_end_is_rejected() {
         .assert()
         .failure()
         .code(1)
-        .stderr(
-            predicate::str::contains("paired-end")
-                .and(predicate::str::contains("minimap2"))
-                .and(predicate::str::contains("not supported")),
-        );
+        .stderr(predicate::str::contains("not supported").not());
 }
 
 #[test]
@@ -2425,9 +2424,10 @@ fn hisat2_pe_mapped_names_and_report() {
 }
 
 // ===========================================================================
-// minimap2 (Phase 4) — SE only; positional `.mmi`, clean-slate options, `mm2`
-// naming, max-length cutoff. PE-minimap2 is rejected (see
-// `minimap2_paired_end_is_rejected` above).
+// minimap2 (Phase 4) — positional `.mmi`, clean-slate options, `mm2` naming,
+// max-length cutoff. SE is byte-identical to Perl; PE is EXPERIMENTAL (mirrors
+// Perl's positional two-file invocation, no trustworthy byte oracle) — see
+// `minimap2_pe_mapped_names_and_report` below.
 // ===========================================================================
 
 /// A genome dir with a complete minimap2 `.mmi` index (single file per converted
@@ -2574,6 +2574,111 @@ fn minimap2_max_length_drop_counts_as_no_alignment() {
     let mut reader =
         bismark_io::BamReader::from_path(&outdir.path().join("reads_bismark_mm2.bam")).unwrap();
     assert_eq!(reader.records().count(), 1);
+}
+
+/// A fake PE `minimap2` modelling real 2.31 behavior: invoked POSITIONALLY (`<opts>
+/// <BS_*.mmi> <input1> <input2>`, no `-1`/`-2`/`-x`/orient), it reads BOTH mate files as
+/// INDEPENDENT single-end reads and emits the mates INTERLEAVED (read1, read2) in input
+/// order with SE-style flags (0 fwd / 16 rev / 4 unmapped — NOT the bowtie2 99/147/77/141
+/// proper-pair flags) and the converter's FULL `/1/1`,`/2/2` QNAME suffix (minimap2 does
+/// NOT clip read-number tags). On the CT (`BS_CT`) index it maps a concordant 6 bp pair at
+/// chr1:1 with minimap2 tags (positive `AS:i:`, the ignored `s2:i:`, `MD:Z:`); UNMAPPED on
+/// GA → the merge yields a unique best on OT.
+///
+/// 🔴 Cannot false-pass on the Bowtie 2 PE shape (`-x BS_CT -1 … -2 …`): there would be no
+/// `.mmi` arg → `$mmi` empty → every pair routes to unmapped → the unique-best assertion
+/// fails.
+#[cfg(unix)]
+fn make_fake_minimap2_pe(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+mmi=""; in1=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) [ -z "$in1" ] && in1="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); base=id; sub(/\/1\/1$/,"",base);
+      print base "/1/1\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6";
+      print base "/2/2\t16\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tGTACGT\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$in1" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); base=id; sub(/\/1\/1$/,"",base);
+      print base "/1/1\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+      print base "/2/2\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$in1" ;;
+esac
+"#;
+    write_exec(&dir.join("minimap2"), script);
+}
+
+/// PE `--minimap2` end-to-end (EXPERIMENTAL): the run emits the never-silent experimental
+/// notice on stderr, mirrors Perl's positional two-file invocation, and reuses the shared
+/// PE machinery — output BAM (`_mm2_pe.bam`) carries BOTH mates (FLAG 99/147 by index, the
+/// SE-style aligner flags re-derived), RNEXT `=`/PNEXT/shared-MAPQ, and the report carries
+/// the `mm2` token + says "Bismark was run with minimap2" (the deliberate non-"HISAT2"
+/// divergence from the broken Perl PE report) + echoes the clean-slate option string.
+#[cfg(unix)]
+#[test]
+fn minimap2_pe_mapped_names_and_report() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nGTACGT\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--minimap2")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success()
+        // never-silent experimental notice (no trustworthy byte-identity oracle).
+        .stderr(
+            predicate::str::contains("paired-end --minimap2 is EXPERIMENTAL")
+                .and(predicate::str::contains("NOT byte-identical to Perl")),
+        );
+
+    // The PE BAM uses the `mm2` token (NOT `bt2`/`hisat2`) and holds BOTH mate records.
+    let bam = outdir.path().join("reads_1_bismark_mm2_pe.bam");
+    assert!(bam.is_file(), "expected {}", bam.display());
+    assert!(!outdir.path().join("reads_1_bismark_bt2_pe.bam").exists());
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 2, "two records per pair");
+    let (m1, m2) = (recs[0].inner(), recs[1].inner());
+    // index 0 (OT) FLAG pair, re-derived by Bismark (NOT minimap2's SE-style 0/16).
+    assert_eq!(u16::from(m1.flags()), 99);
+    assert_eq!(u16::from(m2.flags()), 147);
+    // mate-link fields: RNEXT '=' (mate tid == own tid), shared MAPQ.
+    assert_eq!(m1.mate_reference_sequence_id(), m1.reference_sequence_id());
+    assert_eq!(
+        u8::from(m1.mapping_quality().unwrap()),
+        u8::from(m2.mapping_quality().unwrap())
+    );
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
+    assert!(report.contains("Bismark was run with minimap2 against"));
+    assert!(!report.contains("Bismark was run with HISAT2"));
+    assert!(report.contains("-a --MD --secondary=no -t 2 -x map-ont -K 250K"));
+    assert!(report.contains("Sequence pairs analysed in total:\t1\n"));
+    assert!(report.contains("Number of paired-end alignments with a unique best hit:\t1\n"));
 }
 
 // ===========================================================================
