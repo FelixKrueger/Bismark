@@ -62,6 +62,7 @@ Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on 
 - **Variant/methylation deconvolution** (`--five_base_deconvolution`, module `five_base_deconv.rs`): post-alignment two-strand pileup over the BAM; a CpG whose opposite strand also lost the cytosine is a C>T/G>A variant (excluded from methylation), the rule DRAGEN uses. Writes `<out>.5base_deconvolution.txt`. Ground-truth gated (homozygous C>T → `variant`; 5mC → `methylation`).
 - **bowtie2/hisat2 backends** (`--bowtie2`/`--hisat2` + `--five_base_index <basename>`): align the raw reads to a user-provided NORMAL (unconverted) index with a plain option profile; same per-read inverted call. Hermetic-tested (fake bowtie2).
 - **UMI dedup** (`--five_base_umi_len N`): drop PCR/optical duplicates by (UMI, chrom, pos, strand) SE / (R1 UMI, R2 UMI, chrom, R1 pos, strand) PE. Hermetic-tested.
+- **Duplex-consensus** (`--five_base_duplex` / `--five_base_consensus`, module `five_base_duplex.rs`, SE): groups the two strands of one original molecule into a *duplex family* (genomic span + a canonical, swap-collapsed nonrandom-duplex UMI carried to the BAM as a standard `RX:Z:` tag) and reconciles the asymmetric 5mC→T signal **per molecule** (distinct from the population deconvolution and from the UMI-position dedup). `--five_base_duplex` writes `<out>.5base_duplex.txt` (per-family verdicts; `DUPLEX_MIN_OPP_DEPTH=1` — one opposite read IS the duplex partner). `--five_base_consensus` collapses each family to ONE consensus read in `<out>.5base_consensus.bam`: at a CpG the own strand carries the call and the opposite strand is the variant check (a cytosine gone on both strands is masked to `N`, excluded from methylation), other positions reconcile by agreement/quality. The consensus carries a **standard single-strand** Bismark `XM`/`XR`/`XG`; DRAGEN's undocumented combined +/- XM string is deliberately **not** reproduced (downstream compatibility). Ground-truth gated (one 5mC molecule + one homozygous C>T molecule, each an OT read + an OB read with swapped UMIs → the strands pair into one family; the 5mC site stays methylation/`Z`, the C>T site becomes `variant`/masked `.`).
 
 ## Permanent non-goal
 
@@ -69,4 +70,8 @@ Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on 
 
 ## Deferred follow-up
 
-Full DRAGEN-style **duplex-consensus** base reconciliation (the asymmetric mC>T two-strand consensus that forms a single consensus read from a duplex pair — distinct from the UMI-position dedup already shipped); `--multicore`; FASTA input. Architect a later phase around the mC→T *convention* (TAPS/evoC share it), not the Illumina brand.
+- **Paired-end duplex** (`--five_base_duplex`/`--five_base_consensus` with `-1/-2`): currently rejected (SE only). PE is the natural home for full per-base reconciliation — R1/R2 give both fragment ends, whereas in SE the OT and OB members overlap only partially (the SE consensus reconciles only the overlap; non-overlap positions fall back to single-strand). Wire the duplex key off the R1/R2 pair span with swapped R1/R2 UMIs.
+- `--multicore` for the duplex/consensus post-passes; FASTA input.
+- **External DRAGEN concordance gate** — still PENDING (no public raw 5-Base dataset; proprietary FPGA). Runbook above. The synthetic ground-truth vs real minimap2 is the substitute that ships.
+
+Architect a later phase around the mC→T *convention* (TAPS/evoC share it), not the Illumina brand.
