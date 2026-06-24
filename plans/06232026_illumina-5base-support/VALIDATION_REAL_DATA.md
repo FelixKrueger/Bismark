@@ -1,4 +1,39 @@
-# 5-Base real public-data validation (TAPS vs matched WGBS)
+# 5-Base real-data validation
+
+## Real Illumina 5-Base data (NA12878, BaseSpace) — END-TO-END PE RUN (2026-06-24)
+
+Ran the full pipeline on the **real Illumina 5-Base demo** (NA12878 100ng, BaseSpace),
+PE, against the **whole GRCh38** (not chr20-only):
+
+```sh
+bismark_rs --illumina_5base --five_base_umi_qname --five_base_consensus \
+           --genome <GRCh38> -1 L007_R1 -2 L007_R2   # 10M read pairs (~0.5x)
+```
+
+**Results (10M real PE pairs vs full GRCh38; 13 min wall, 60.8 GB peak RAM):**
+- **93.7% mapping efficiency** (9,368,173 unique PE alignments) — real 5-Base reads align
+  cleanly to the UNCONVERTED human genome, confirming the core design.
+- Methylation signature: **CpG 48.2%** vs **CHG 1.3% / CHH 1.1%** — the correct 5-Base
+  directional signal (CpG ≫ non-CpG; non-CpG at the ~1% conversion-quality floor, much
+  cleaner than the chr20-only run's 3.8% because full-genome mapping removes mismap noise).
+- **Duplex pairing OBSERVED on real data:** of 9,147,285 fragment families, **1,123 were
+  duplex-paired** (both swapped-UMI partner read-pairs co-occurred at this ~0.5x depth) —
+  e.g. `1  6961630-6961939  AAGACAT+ACTAGAT  2+2`. The qname dual-UMI + PE fragment-span
+  keying works on real reads.
+- **Consensus collapse:** **1,123 consensus reads emitted** (one per paired family, 0
+  skipped) into `*_pe.5base_consensus.bam`, each carrying real Bismark `XM` calls (e.g.
+  consensus read `dpx:1:6961630-6961939:AAGACAT+ACTAGAT`).
+
+This run also surfaced + fixed the qname-whitespace desync (commit 4e4f3d4). A deeper run
+(more lanes) would yield proportionally more duplex pairs, but this confirms the whole
+chain — real FASTQ → unconverted GRCh38 alignment → inverted 5mC call → qname dual-UMI
+duplex pairing → per-molecule reconciliation → consensus collapse — works on real data.
+The BaseSpace download is still partial (no lane has both R1+R2 complete; used L007 R2 +
+R1.part), so a full-coverage run awaits the finished download.
+
+---
+
+## TAPS vs matched WGBS (public-data mechanical equivalent)
 
 **Date:** 2026-06-23. **Honest status:** the pipeline is **validated as correct and
 biologically sound on real public data**; it is **not yet a polished publication-grade
