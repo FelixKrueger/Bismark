@@ -70,7 +70,8 @@ Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on 
 
 ## Deferred follow-up
 
-- **Paired-end duplex** (`--five_base_duplex`/`--five_base_consensus` with `-1/-2`): currently rejected (SE only). PE is the natural home for full per-base reconciliation — R1/R2 give both fragment ends, whereas in SE the OT and OB members overlap only partially (the SE consensus reconciles only the overlap; non-overlap positions fall back to single-strand). Wire the duplex key off the R1/R2 pair span with swapped R1/R2 UMIs.
+- **qname dual-UMI extraction**: the real Illumina 5-Base demo (NA12878, BaseSpace) carries the duplex UMI in the read NAME as `UMI1+UMI2` (e.g. `...:ANCGTTG+NGGTGTA 1:N:0:...`), NOT inline at the 5'. So `--five_base_umi_len` (inline bases) does not fit real data; add a qname dual-UMI extractor (cf. bismark-io `extract_bclconvert`) to feed the duplex key. (The real headers also surfaced + fixed the qname-whitespace desync — commit 4e4f3d4.)
+- **Paired-end duplex** (`--five_base_duplex`/`--five_base_consensus` with `-1/-2`): currently rejected (SE only). PE is the natural home for full per-base reconciliation — R1/R2 give both fragment ends, whereas in SE the OT and OB members overlap only partially (the SE consensus reconciles only the overlap; non-overlap positions fall back to single-strand). Wire the duplex key off the R1/R2 pair span with the swapped R1/R2 UMIs from the qname.
 - `--multicore` for the duplex/consensus post-passes; FASTA input.
 - **External DRAGEN concordance gate** — still PENDING (no public raw 5-Base dataset; proprietary FPGA). Runbook above. The synthetic ground-truth vs real minimap2 is the substitute that ships.
 
