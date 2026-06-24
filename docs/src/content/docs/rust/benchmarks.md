@@ -120,15 +120,43 @@ the scaling graphs above) on a single shared index at flat memory. Reach for `--
 `-p` is exhausted, and budget for roughly `2 × workers × index` peak memory. (This is the opposite of
 Perl, whose serial wrapper saturates `-p` by about 8 cores, making `--multicore` necessary there.)
 
+The aligner links the [mimalloc](https://github.com/microsoft/mimalloc) allocator. On Apple Silicon /
+macOS that removes a system-allocator lock contention that made `--multicore` anti-scale badly; on the
+Linux x86_64 benchmark host used here it is **performance-neutral** (glibc already uses per-thread
+arenas), so the wall and memory figures above — and the `-p` recommendation — are the same with or
+without it.
+
 ### Combined-index modes
 
 The aligner also offers an opt-in [combined-index mode](/Bismark/usage/alignment/) that builds one
-index holding both the C→T and G→A genomes instead of separate per-strand instances. For
-non-directional data this is the fastest mode at every core budget and uses about **32 % less peak
-memory** (one ~11.5 GB index instead of four per-strand instances totalling ~16.7 GB). It is
-concordance-gated rather than byte-identical: against the faithful result, about 0.1 % of reads
-change fate, almost all unique↔ambiguous flips at cross-sub-genome ties, with actual mis-placement
-around 0.005 %.
+index holding both the C→T and G→A genomes instead of separate per-strand instances. It is
+**concordance-gated, not byte-identical**: against the faithful result about 0.1 % of reads change fate,
+almost all unique↔ambiguous flips at cross-sub-genome ties, with actual mis-placement around 0.005 %. The
+numbers below are the 32-core envelope on the Linux benchmark host, median of repeats.
+
+**Directional — a clean win.** One both-strands pass replaces the two per-strand instances, so it is
+faster at every core budget (10M and full scale) and uses about **22–28 % less CPU**, for a *fixed*
+~1.3 GB memory premium that does not grow with read count (it is the one larger combined index, not the
+reads). At full scale (real WGBS paired-end, 8-core budget) directional combined runs **5298 s versus
+7373 s** for the standard two-instance path (−28 %), at 43,200 versus 59,600 core-seconds.
+
+**Non-directional — choose by priority.** There are three concordance-gated execution models, and they
+differ sharply on memory, so the right one depends on what you are optimising:
+
+| Non-directional, full-scale PE, 16-core budget | Wall | Peak RSS |
+|---|---|---|
+| standard (four per-strand instances) | 7810 s | 16.5 GB |
+| `--combined_index` (default; two parallel both-strands passes) | 6114 s (−22 %) | 19.3 GB (+17 %) |
+| `--combined_index_single_pass` (one conversion-tagged pass) | 5371 s (−31 %) | 11.3 GB (−32 %) |
+
+The **default** non-directional combined mode runs two passes, so it is faster at scale but uses about
+2.8 GB *more* memory than standard — two large combined indexes resident, versus four smaller per-strand
+ones. (At the 10M subset its wall advantage sits within run-to-run noise; the speed-up is a full-scale
+effect.) The **single-pass** mode is the fastest and leanest, but it perturbs Bowtie 2's read-name-seeded
+RNG and so is *not decision-equivalent* — about 1 read in 10,000 gets a different, equally-valid
+placement; opt into it only when that is acceptable. A `--combined_index_sequential` mode runs the
+default's two passes one at a time: byte-identical to the default, roughly half the peak memory, roughly
+twice the wall.
 
 The aligner's `--multicore` / `--parallel` model is also worker-invariant: the output does not depend
 on the number of workers.
