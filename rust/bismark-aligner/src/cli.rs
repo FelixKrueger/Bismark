@@ -129,11 +129,18 @@ pub struct Cli {
     /// with `--five_base_deconvolution`, the variant-vs-methylation call is computed per
     /// family rather than over a population pileup. SE only (PE is a follow-up). Requires
     /// `--illumina_5base`.
-    #[arg(
-        long = "five_base_duplex",
-        visible_alias = "five_base_duplex_consensus"
-    )]
+    #[arg(long = "five_base_duplex")]
     pub five_base_duplex: bool,
+    /// `[#787]` COLLAPSE each duplex family to ONE consensus read in
+    /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
+    /// `--five_base_duplex`. The consensus uses the asymmetric 5mC>T rule: at a CpG the
+    /// own strand carries the methylation call and the opposite strand is the variant
+    /// check (a cytosine gone on BOTH strands is masked to `N`, excluded from
+    /// methylation); other positions reconcile by agreement/quality. The consensus read
+    /// carries a standard single-strand Bismark `XM`/`XR`/`XG` (the per-read BAM stays as
+    /// the default output). SE only. Requires `--illumina_5base`.
+    #[arg(long = "five_base_consensus")]
+    pub five_base_consensus: bool,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

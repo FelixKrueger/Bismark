@@ -450,6 +450,142 @@ fn five_base_duplex_groundtruth_pairs_strands_and_reconciles() {
     );
 }
 
+/// THE CONSENSUS GATE: the same two duplex molecules (one 5mC, one homozygous C>T),
+/// run with `--illumina_5base --five_base_umi_len 8 --five_base_consensus`. The collapse
+/// must emit ONE consensus read per duplex family into `<out>.5base_consensus.bam`, and
+/// the consensus methylation call must be Z at the 5mC target CpG and `.` (masked, NOT
+/// methylated) at the homozygous C>T variant CpG — the asymmetric 5mC>T reconciliation
+/// through the whole real-minimap2 pipeline.
+#[test]
+fn five_base_consensus_groundtruth_collapses_and_masks_variant() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (consensus ground-truth gate)");
+        return;
+    }
+    let reference = gen_reference(450);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    let pick = |around: usize| -> usize {
+        *cpgs
+            .iter()
+            .filter(|&&c| c >= 60 && c + 60 < reference.len())
+            .min_by_key(|&&c| c.abs_diff(around))
+            .expect("a usable CpG near the target")
+    };
+    let tm = pick(150); // 5mC molecule
+    let tv = pick(330); // homozygous C>T variant molecule
+    assert_ne!(tm, tv);
+
+    let half = 50usize;
+    let window = |t: usize, convert_target: bool| -> Vec<u8> {
+        let mut w = reference[t - half..t + half].to_vec();
+        if convert_target {
+            w[half] = b'T';
+        }
+        w
+    };
+    let mut fq = Vec::new();
+    let mut emit = |name: &str, umi: &[u8], core: &[u8]| {
+        let mut read = umi.to_vec();
+        read.extend_from_slice(core);
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(&read);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; read.len()]);
+        fq.push(b'\n');
+    };
+    let umi_m = b"AACCGGTT";
+    let umi_v = b"TTGGCCAA";
+    emit("m_ot", umi_m, &window(tm, true));
+    emit("m_ob", &revcomp(umi_m), &revcomp(&window(tm, false)));
+    emit("v_ot", umi_v, &window(tv, true));
+    emit("v_ob", &revcomp(umi_v), &revcomp(&window(tv, true)));
+
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, &fq).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_len")
+        .arg("8")
+        .arg("--five_base_consensus")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let bam = outdir.path().join("reads_bismark_mm2.5base_consensus.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let (mut n_records, mut z_at_tm, mut dot_at_tv) = (0usize, false, false);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        let inner = rec.inner();
+        n_records += 1;
+        // Consensus reads are forward (FLAG 0) → XM aligned with read order.
+        assert_eq!(
+            u16::from(inner.flags()) & 0x10,
+            0,
+            "consensus reads are forward"
+        );
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
+        // pure-M consensus: read_idx = genomic - ref_start.
+        let read_at = |gpos: usize| -> Option<usize> {
+            let mut ri = 0usize;
+            let mut rp = ref_start;
+            for op in inner.cigar().as_ref().iter() {
+                use noodles_sam::alignment::record::cigar::op::Kind::*;
+                let len = op.len();
+                match op.kind() {
+                    Match | SequenceMatch | SequenceMismatch => {
+                        for _ in 0..len {
+                            if rp == gpos {
+                                return Some(ri);
+                            }
+                            ri += 1;
+                            rp += 1;
+                        }
+                    }
+                    Insertion | SoftClip => ri += len,
+                    Deletion | Skip => rp += len,
+                    _ => {}
+                }
+            }
+            None
+        };
+        if let Some(ri) = read_at(tm)
+            && xm[ri] == b'Z'
+        {
+            z_at_tm = true;
+        }
+        if let Some(ri) = read_at(tv) {
+            // Variant masked to N → methylation call is '.' (not Z/z).
+            if xm[ri] == b'.' {
+                dot_at_tv = true;
+            }
+            assert_ne!(
+                xm[ri], b'Z',
+                "the homozygous C>T variant must NOT be called methylated in the consensus"
+            );
+        }
+    }
+    // Two duplex families → two consensus reads (one per molecule).
+    assert_eq!(n_records, 2, "one consensus read per duplex family");
+    assert!(z_at_tm, "the 5mC CpG must be Z in the consensus read");
+    assert!(
+        dot_at_tv,
+        "the homozygous C>T CpG must be masked ('.') in the consensus read"
+    );
+}
+
 fn revcomp(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()

@@ -275,6 +275,66 @@ impl DuplexFamilies {
     }
 }
 
+// ===========================================================================
+// Commit 2: duplex CONSENSUS base reconciliation (collapse a family to one read).
+// ===========================================================================
+
+/// What a reference position is, for consensus reconciliation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiteKind {
+    /// A `+`-strand CpG cytosine (genomic `C` followed by `G`): OT is the own strand.
+    PlusCpG,
+    /// A `-`-strand CpG cytosine (genomic `G` preceded by `C`): OB is the own strand.
+    MinusCpG,
+    /// Any other position: generic agree/quality/N reconciliation.
+    Other,
+}
+
+/// Generic two-strand base reconciliation at a non-CpG position. Both bases are in
+/// reference-forward orientation; each is `Some((base, qual))` or `None` (not covered).
+fn reconcile_generic(ot: Option<(u8, u8)>, ob: Option<(u8, u8)>) -> (u8, u8) {
+    match (ot, ob) {
+        (None, None) => (b'N', 0),
+        (Some(x), None) | (None, Some(x)) => x,
+        (Some((ba, qa)), Some((bb, qb))) => {
+            if ba.eq_ignore_ascii_case(&bb) {
+                (ba, qa.max(qb)) // agreement
+            } else if qa >= qb {
+                if qa == qb { (b'N', qa) } else { (ba, qa) } // tie → N, else higher-Q
+            } else {
+                (bb, qb)
+            }
+        }
+    }
+}
+
+/// THE asymmetric 5mC>T consensus base at one reference position. At a CpG cytosine the
+/// OWN strand carries the methylation call (5mC reads as the T-equivalent) and the
+/// OPPOSITE strand is the variant check: if the opposite strand ALSO shows the
+/// T-equivalent the cytosine is gone on both strands (a C>T/G>A variant), so the
+/// consensus is masked to `N` (excluded from methylation). Otherwise the consensus is
+/// the own-strand base, so a true 5mC (own `T`, opposite intact) survives as a call.
+/// Non-CpG positions fall back to [`reconcile_generic`].
+///
+/// `ot`/`ob` are each `Some((base, qual))` (reference-forward) or `None` (not covered).
+pub fn consensus_base(kind: SiteKind, ot: Option<(u8, u8)>, ob: Option<(u8, u8)>) -> (u8, u8) {
+    let cpg = |own: Option<(u8, u8)>, opp: Option<(u8, u8)>, t_equiv: u8| -> (u8, u8) {
+        match own {
+            None => (b'N', opp.map(|x| x.1).unwrap_or(0)), // no own strand → no call
+            Some((b, q)) => match opp {
+                // opposite also shows the T-equivalent ⇒ variant ⇒ mask out of methylation.
+                Some((ob_b, _)) if ob_b.eq_ignore_ascii_case(&t_equiv) => (b'N', q),
+                _ => (b, q), // own-strand base carries the (possibly methylated) call
+            },
+        }
+    };
+    match kind {
+        SiteKind::PlusCpG => cpg(ot, ob, b'T'),
+        SiteKind::MinusCpG => cpg(ob, ot, b'A'),
+        SiteKind::Other => reconcile_generic(ot, ob),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +518,89 @@ mod tests {
         assert_eq!(s.methylation_sites, 1);
         assert_eq!(s.methylated_calls, 1);
         assert_eq!(s.variant_sites, 0);
+    }
+
+    // ---- consensus_base (commit 2) ----------------------------------------
+
+    /// Plus-strand CpG, 5mC: own (OT) shows T, opposite (OB) intact C; consensus keeps
+    /// the T so the methylation call survives (NOT masked to N).
+    #[test]
+    fn consensus_plus_cpg_methylated_keeps_t() {
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, Some((b'T', 40)), Some((b'C', 40))),
+            (b'T', 40)
+        );
+    }
+
+    /// Plus-strand CpG, unmethylated: own C, opposite C, consensus C.
+    #[test]
+    fn consensus_plus_cpg_unmethylated_keeps_c() {
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, Some((b'C', 40)), Some((b'C', 40))),
+            (b'C', 40)
+        );
+    }
+
+    /// Plus-strand CpG, homozygous C>T variant: own T AND opposite T, masked to N
+    /// (excluded from methylation) even though both strands agree on T.
+    #[test]
+    fn consensus_plus_cpg_variant_masks_to_n() {
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, Some((b'T', 40)), Some((b'T', 40))),
+            (b'N', 40)
+        );
+    }
+
+    /// Minus-strand CpG, 5mC: own (OB) shows A (T-equiv for G), opposite (OT) intact G,
+    /// consensus keeps A.
+    #[test]
+    fn consensus_minus_cpg_methylated_keeps_a() {
+        assert_eq!(
+            consensus_base(SiteKind::MinusCpG, Some((b'G', 40)), Some((b'A', 40))),
+            (b'A', 40)
+        );
+    }
+
+    /// Minus-strand CpG variant: own A and opposite A, masked to N.
+    #[test]
+    fn consensus_minus_cpg_variant_masks_to_n() {
+        assert_eq!(
+            consensus_base(SiteKind::MinusCpG, Some((b'A', 40)), Some((b'A', 40))),
+            (b'N', 40)
+        );
+    }
+
+    /// Generic position: agreement keeps the base (max quality); disagreement takes the
+    /// higher-quality base; an equal-quality conflict → N; one-sided coverage passes through.
+    #[test]
+    fn consensus_generic_rules() {
+        assert_eq!(
+            consensus_base(SiteKind::Other, Some((b'A', 20)), Some((b'A', 35))),
+            (b'A', 35)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::Other, Some((b'A', 10)), Some((b'G', 30))),
+            (b'G', 30)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::Other, Some((b'A', 30)), Some((b'G', 30))),
+            (b'N', 30)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::Other, Some((b'C', 25)), None),
+            (b'C', 25)
+        );
+        assert_eq!(consensus_base(SiteKind::Other, None, None), (b'N', 0));
+    }
+
+    /// A CpG covered by only the own strand still emits the own base (its methylation
+    /// call), since with no opposite strand there is no variant evidence to mask it.
+    #[test]
+    fn consensus_plus_cpg_own_only_keeps_call() {
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, Some((b'T', 30)), None),
+            (b'T', 30)
+        );
     }
 
     #[test]

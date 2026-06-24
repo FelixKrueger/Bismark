@@ -195,6 +195,9 @@ pub struct RunConfig {
     /// #787: run the post-alignment DUPLEX-consensus family pass + report (per-molecule
     /// reconciliation). SE only this PR. Requires `five_base` (guarded at resolve()).
     pub five_base_duplex: bool,
+    /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
+    /// (implies `five_base_duplex`). SE only. Requires `five_base`.
+    pub five_base_consensus: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -340,10 +343,18 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     }
     // #787: per-base duplex reconciliation needs both fragment ends, which SE cannot
     // give from a single read. PE duplex is a documented follow-up.
-    if cli.five_base_duplex && cli.mates2.is_some() {
+    if (cli.five_base_duplex || cli.five_base_consensus) && cli.mates2.is_some() {
         return Err(AlignerError::Validation(
-            "--five_base_duplex is single-end only in this version; paired-end duplex \
-             reconciliation is a follow-up (#787)."
+            "--five_base_duplex/--five_base_consensus is single-end only in this version; \
+             paired-end duplex reconciliation is a follow-up (#787)."
+                .into(),
+        ));
+    }
+    // #787: consensus collapse builds on duplex families — meaningless without a 5-Base run.
+    if cli.five_base_consensus && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus requires --illumina_5base: it collapses duplex families \
+             over a 5-Base run's output."
                 .into(),
         ));
     }
@@ -519,7 +530,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         five_base_index: cli.five_base_index.clone(),
         five_base_umi_len: cli.five_base_umi_len,
         five_base_baseq: cli.five_base_baseq,
-        five_base_duplex: cli.five_base_duplex,
+        // --five_base_consensus implies the duplex family pass.
+        five_base_duplex: cli.five_base_duplex || cli.five_base_consensus,
+        five_base_consensus: cli.five_base_consensus,
         library,
         layout,
         format,
@@ -1400,8 +1413,7 @@ mod tests {
         );
     }
 
-    /// `--five_base_duplex` requires `--illumina_5base`, is SE-only (rejects `-2`), and
-    /// accepts its `--five_base_duplex_consensus` alias.
+    /// `--five_base_duplex` requires `--illumina_5base` and is SE-only (rejects `-2`).
     #[test]
     fn five_base_duplex_guards() {
         let err = resolve(&cli_from(&["--five_base_duplex"]), "cmd".into()).unwrap_err();
@@ -1424,8 +1436,31 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("single-end only"), "got: {err}");
-        // alias parses to the same flag.
-        assert!(cli_from(&["--illumina_5base", "--five_base_duplex_consensus"]).five_base_duplex);
+    }
+
+    /// `--five_base_consensus` requires `--illumina_5base`, implies `five_base_duplex` in
+    /// the resolved config, and is SE-only.
+    #[test]
+    fn five_base_consensus_guards_and_implies_duplex() {
+        let err = resolve(&cli_from(&["--five_base_consensus"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_consensus requires --illumina_5base"),
+            "got: {err}"
+        );
+        let err = resolve(
+            &cli_from(&[
+                "--illumina_5base",
+                "--five_base_consensus",
+                "-1",
+                "r1.fq",
+                "-2",
+                "r2.fq",
+            ]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("single-end only"), "got: {err}");
     }
 
     /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/
