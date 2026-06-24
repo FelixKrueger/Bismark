@@ -141,6 +141,14 @@ pub struct Cli {
     /// the default output). SE only. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
+    /// `[#787]` Take the duplex UMI from the READ NAME instead of inline read bases. Real
+    /// Illumina 5-Base data carries a DUAL UMI as the tail `:`-field of the qname written
+    /// `A+B` (e.g. `...:1070:ANCGTTG+NGGTGTA`), with the duplex partner's halves swapped
+    /// (`B+A`); canonicalizing collapses the swap into one family key. Use this instead of
+    /// `--five_base_umi_len` for real data (the two are mutually exclusive). Requires
+    /// `--illumina_5base`.
+    #[arg(long = "five_base_umi_qname")]
+    pub five_base_umi_qname: bool,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

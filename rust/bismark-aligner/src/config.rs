@@ -198,6 +198,10 @@ pub struct RunConfig {
     /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
     /// (implies `five_base_duplex`). SE only. Requires `five_base`.
     pub five_base_consensus: bool,
+    /// #787: take the duplex UMI from the read NAME tail (`A+B` dual UMI) instead of inline
+    /// read bases; the duplex partner carries `B+A`. Requires `five_base`; mutually
+    /// exclusive with `five_base_umi_len`.
+    pub five_base_umi_qname: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -347,6 +351,21 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         return Err(AlignerError::Validation(
             "--five_base_duplex/--five_base_consensus is single-end only in this version; \
              paired-end duplex reconciliation is a follow-up (#787)."
+                .into(),
+        ));
+    }
+    // #787: qname-UMI source requires a 5-Base run and excludes the inline-UMI flag.
+    if cli.five_base_umi_qname && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_qname requires --illumina_5base (it sources the duplex UMI from \
+             a 5-Base run's read names)."
+                .into(),
+        ));
+    }
+    if cli.five_base_umi_qname && cli.five_base_umi_len > 0 {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_qname and --five_base_umi_len are mutually exclusive: choose the \
+             read-name dual UMI OR an inline UMI length."
                 .into(),
         ));
     }
@@ -533,6 +552,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // --five_base_consensus implies the duplex family pass.
         five_base_duplex: cli.five_base_duplex || cli.five_base_consensus,
         five_base_consensus: cli.five_base_consensus,
+        five_base_umi_qname: cli.five_base_umi_qname,
         library,
         layout,
         format,
@@ -1461,6 +1481,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("single-end only"), "got: {err}");
+    }
+
+    /// `--five_base_umi_qname` requires `--illumina_5base` and is mutually exclusive with
+    /// `--five_base_umi_len`.
+    #[test]
+    fn five_base_umi_qname_guards() {
+        let err = resolve(&cli_from(&["--five_base_umi_qname"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_umi_qname requires --illumina_5base"),
+            "got: {err}"
+        );
+        let err = resolve(
+            &cli_from(&[
+                "--illumina_5base",
+                "--five_base_umi_qname",
+                "--five_base_umi_len",
+                "8",
+            ]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"), "got: {err}");
+        assert!(cli_from(&["--illumina_5base", "--five_base_umi_qname"]).five_base_umi_qname);
     }
 
     /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/

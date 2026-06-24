@@ -480,6 +480,100 @@ fn five_base_duplex_groundtruth_pairs_strands_and_reconciles() {
     );
 }
 
+/// THE QNAME-UMI DUPLEX GATE: like the duplex gate, but the dual UMI lives in the READ
+/// NAME (`...:A+B`, the real Illumina 5-Base layout) instead of inline, with the duplex
+/// partner carrying the halves swapped (`B+A`). Run with `--five_base_umi_qname`; the two
+/// strands of each molecule must still pair into one family (canonical dual-UMI collapses
+/// the swap) and the per-molecule verdicts must separate methylation from variant.
+#[test]
+fn five_base_duplex_groundtruth_qname_umi_pairs_strands() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (qname-UMI duplex gate)");
+        return;
+    }
+    let reference = gen_reference(450);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    let pick = |around: usize| -> usize {
+        *cpgs
+            .iter()
+            .filter(|&&c| c >= 60 && c + 60 < reference.len())
+            .min_by_key(|&&c| c.abs_diff(around))
+            .expect("a usable CpG near the target")
+    };
+    let tm = pick(150);
+    let tv = pick(330);
+    assert_ne!(tm, tv);
+
+    let half = 50usize;
+    let window = |t: usize, convert_target: bool| -> Vec<u8> {
+        let mut w = reference[t - half..t + half].to_vec();
+        if convert_target {
+            w[half] = b'T';
+        }
+        w
+    };
+    let mut fq = Vec::new();
+    // The dual UMI is the qname tail `:A+B`; the OB partner carries `B+A`. No inline UMI.
+    let mut emit = |name: &str, umi_tail: &str, core: &[u8]| {
+        fq.extend_from_slice(format!("@{name}:{umi_tail}\n").as_bytes());
+        fq.extend_from_slice(core);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; core.len()]);
+        fq.push(b'\n');
+    };
+    emit("m_ot", "AACCGGTT+TTGGCCAA", &window(tm, true));
+    emit("m_ob", "TTGGCCAA+AACCGGTT", &revcomp(&window(tm, false)));
+    emit("v_ot", "GGGGAAAA+CCCCTTTT", &window(tv, true));
+    emit("v_ob", "CCCCTTTT+GGGGAAAA", &revcomp(&window(tv, true)));
+
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, &fq).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_qname")
+        .arg("--five_base_duplex")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_mm2.5base_duplex.txt")).unwrap();
+    let families: Vec<Vec<String>> = report
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| l.split('\t').map(str::to_string).collect())
+        .collect();
+    let paired: Vec<&Vec<String>> = families
+        .iter()
+        .filter(|f| f.len() >= 8 && f[4] == "1+1")
+        .collect();
+    assert!(
+        paired.len() >= 2,
+        "qname-UMI: expected >=2 duplex-paired families\nreport:\n{report}"
+    );
+    let variant_sites: u32 = paired.iter().map(|f| f[5].parse::<u32>().unwrap()).sum();
+    assert!(
+        variant_sites >= 1,
+        "qname-UMI: the C>T molecule must flag a variant\nreport:\n{report}"
+    );
+    // The canonical dual UMI is recorded (collapsed `A+B`/`B+A` into one key).
+    assert!(
+        report.contains("AACCGGTT+TTGGCCAA") || report.contains("TTGGCCAA+AACCGGTT"),
+        "qname-UMI: the family key should carry the canonical dual UMI\nreport:\n{report}"
+    );
+}
+
 /// THE CONSENSUS GATE: the same two duplex molecules (one 5mC, one homozygous C>T),
 /// run with `--illumina_5base --five_base_umi_len 8 --five_base_consensus`. The collapse
 /// must emit ONE consensus read per duplex family into `<out>.5base_consensus.bam`, and

@@ -865,6 +865,16 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
             run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
         }
 
+        // #787 the UMI swap model for the duplex key: read-name dual UMI (`A+B`),
+        // inline-bases (reverse-complement swap), or none (span-only key).
+        let umi_swap = if config.five_base_umi_qname {
+            Some(crate::five_base_duplex::UmiSwap::DualPlus)
+        } else if config.five_base_umi_len > 0 {
+            Some(crate::five_base_duplex::UmiSwap::RevComp)
+        } else {
+            None
+        };
+
         // #787 optional duplex-consensus family pass over the just-written BAM.
         if config.five_base_duplex {
             let duplex_path = derive_output_path(
@@ -873,7 +883,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
                 &format!("_bismark_{tok}.5base_duplex.txt"),
                 ".5base_duplex.txt",
             );
-            run_five_base_duplex(&genome, &bam_path, &duplex_path, config.five_base_umi_len)?;
+            run_five_base_duplex(&genome, &bam_path, &duplex_path, umi_swap)?;
         }
 
         // #787 optional duplex-consensus COLLAPSE → one consensus read per family.
@@ -890,7 +900,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
                 &bam_path,
                 &consensus_path,
                 &header,
-                config.five_base_umi_len,
+                umi_swap,
             )?;
         }
     }
@@ -1058,9 +1068,14 @@ fn five_base_align_and_call(
             config.five_base_baseq,
             counters,
         )? {
-            // #787 duplex: carry the raw UMI to the BAM (RX:Z:) so the duplex pass
-            // that re-reads the BAM can key families by it. Only when UMIs are in use.
-            if umi_len > 0 {
+            // #787 duplex: carry the raw UMI to the BAM (RX:Z:) so the duplex pass that
+            // re-reads the BAM can key families by it. Source it from the read NAME's
+            // dual-UMI tail (real Illumina) or from inline 5' bases (synthetic).
+            if config.five_base_umi_qname {
+                if let Some(rx) = bismark_io::umi::extract_barcode(identifier.as_bytes()) {
+                    record.set_rx(rx);
+                }
+            } else if umi_len > 0 {
                 let umi: Vec<u8> = seq_uc.iter().take(umi_len).copied().collect();
                 record.set_rx(&umi);
             }
@@ -1393,7 +1408,12 @@ fn five_base_align_and_call_pe(
             counters,
         )? {
             // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
-            if umi_len > 0 {
+            if config.five_base_umi_qname {
+                if let Some(rx) = bismark_io::umi::extract_barcode(identifier.as_bytes()) {
+                    out1.set_rx(rx);
+                    out2.set_rx(rx);
+                }
+            } else if umi_len > 0 {
                 out1.set_rx(&seq1_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
                 out2.set_rx(&seq2_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
             }
@@ -1600,9 +1620,9 @@ fn run_five_base_duplex(
     genome: &Genome,
     bam_path: &Path,
     report_path: &Path,
-    umi_len: usize,
+    umi_swap: Option<crate::five_base_duplex::UmiSwap>,
 ) -> Result<()> {
-    use crate::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, UmiSwap, canonical_umi};
+    use crate::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, canonical_umi};
     use noodles_sam::alignment::record::cigar::op::Kind;
 
     let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
@@ -1641,9 +1661,9 @@ fn run_five_base_duplex(
         let ref_start = usize::from(start) - 1; // 1-based POS → 0-based
 
         // Canonical UMI from the RX tag (swap-collapsed so both members hash equal).
-        let canon_umi: Vec<u8> = if umi_len > 0 {
+        let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match bismark_io::tags::rx(inner.data()) {
-                Ok(Some(raw)) => canonical_umi(raw, UmiSwap::RevComp),
+                Ok(Some(raw)) => canonical_umi(raw, swap),
                 _ => {
                     missing_umi = true;
                     Vec::new()
@@ -1694,11 +1714,11 @@ fn run_five_base_duplex(
         fams.add_read(key, is_ot, obs);
     }
 
-    if umi_len == 0 || missing_umi {
+    if umi_swap.is_none() || missing_umi {
         eprintln!(
-            "Note: --five_base_duplex without per-read UMIs (use --five_base_umi_len) keys \
-             families on genomic span alone; reads from DIFFERENT molecules sharing a span \
-             may be merged into one family."
+            "Note: --five_base_duplex without per-read UMIs (use --five_base_umi_len or \
+             --five_base_umi_qname) keys families on genomic span alone; reads from DIFFERENT \
+             molecules sharing a span may be merged into one family."
         );
     }
 
@@ -1745,9 +1765,9 @@ fn run_five_base_consensus(
     bam_path: &Path,
     consensus_bam_path: &Path,
     header: &noodles_sam::Header,
-    umi_len: usize,
+    umi_swap: Option<crate::five_base_duplex::UmiSwap>,
 ) -> Result<()> {
-    use crate::five_base_duplex::{DuplexKey, SiteKind, UmiSwap, canonical_umi, consensus_base};
+    use crate::five_base_duplex::{DuplexKey, SiteKind, canonical_umi, consensus_base};
     use noodles_sam::alignment::record::cigar::op::Kind;
     use std::collections::BTreeMap;
 
@@ -1824,9 +1844,9 @@ fn run_five_base_consensus(
             }
         }
         let end = rp;
-        let canon_umi: Vec<u8> = if umi_len > 0 {
+        let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match bismark_io::tags::rx(inner.data()) {
-                Ok(Some(raw)) => canonical_umi(raw, UmiSwap::RevComp),
+                Ok(Some(raw)) => canonical_umi(raw, swap),
                 _ => Vec::new(),
             }
         } else {

@@ -35,6 +35,9 @@ pub enum UmiSwap {
     /// The two members carry reverse-complementary UMIs (the nonrandom-duplex swap):
     /// the bottom strand's UMI is the reverse complement of the top strand's.
     RevComp,
+    /// A DUAL UMI written `A+B` in the read name (real Illumina 5-Base): the duplex
+    /// partner carries the two halves swapped (`B+A`). Canonicalizing collapses the swap.
+    DualPlus,
 }
 
 /// Reverse complement of an ASCII nucleotide UMI (non-ACGT bytes pass through).
@@ -58,6 +61,17 @@ pub fn canonical_umi(umi: &[u8], swap: UmiSwap) -> Vec<u8> {
     let other = match swap {
         UmiSwap::Identity => umi_uc.clone(),
         UmiSwap::RevComp => revcomp(&umi_uc),
+        UmiSwap::DualPlus => match umi_uc.iter().position(|&b| b == b'+') {
+            Some(p) => {
+                let (a, b) = (&umi_uc[..p], &umi_uc[p + 1..]);
+                let mut swapped = Vec::with_capacity(umi_uc.len());
+                swapped.extend_from_slice(b);
+                swapped.push(b'+');
+                swapped.extend_from_slice(a);
+                swapped
+            }
+            None => umi_uc.clone(), // no '+': nothing to swap
+        },
     };
     if umi_uc <= other { umi_uc } else { other }
 }
@@ -355,6 +369,22 @@ mod tests {
         assert_eq!(
             canonical_umi(top, UmiSwap::RevComp),
             canonical_umi(&bottom, UmiSwap::RevComp)
+        );
+    }
+
+    /// DualPlus: a real `A+B` read-name UMI and its swapped partner `B+A` collapse equal.
+    #[test]
+    fn canonical_umi_dualplus_collapses_swapped_pair() {
+        let top = b"ANCGTTG+NGGTGTA";
+        let bottom = b"NGGTGTA+ANCGTTG"; // the duplex partner: halves swapped
+        assert_eq!(
+            canonical_umi(top, UmiSwap::DualPlus),
+            canonical_umi(bottom, UmiSwap::DualPlus)
+        );
+        // and a different UMI does NOT collapse to the same value.
+        assert_ne!(
+            canonical_umi(b"AAAA+CCCC", UmiSwap::DualPlus),
+            canonical_umi(b"GGGG+TTTT", UmiSwap::DualPlus)
         );
     }
 
