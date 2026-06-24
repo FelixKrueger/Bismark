@@ -15,8 +15,8 @@
 | Implementation | ✅ done | 2026-06-24 on `rust/umi-barcode`. cli/config/output/merge/lib + 6 new unit tests. Local: 426 lib + full suite green, fmt + clippy(-D) clean, `--help` shows both flags. Notes in PLAN. |
 | Code review (dual `code-reviewer`) + `plan-manager` | ✅ done | 2026-06-24. A+B both APPROVE (no Critical/High); plan-manager COMPLETE (0 missing/partial). Only Low polish + deferred oxy smoke. `CODE_REVIEW_A/B.md`, `COVERAGE.md`. |
 | Optional polish applied | ✅ done | PE notice noun → "read pair(s)" (B Low-1) + reworded to "empty barcode/UMI field (QNAME field N)" (A nit); `___` all-underscores parse test (B Low-3). Re-ran: 426 tests + fmt + clippy(-D) green. |
-| Committed on rust/umi-barcode | 🔄 this turn | feature checkpoint (NOT a merge to iron-chancellor) |
-| Validation gate (unit done; oxy e2e smoke) | 🔄 oxy smoke this turn | Unit/structural covered; running oxy `--add_barcode --add_umi` PE (dir+pbat) + `samtools view` (PLAN Impl-Notes deviation 2). |
+| Committed + pushed (rust/umi-barcode) | ✅ done | `ef4c5ee` (feature) + plan-update follow-up; pushed to `origin/rust/umi-barcode`. NOT merged to iron-chancellor. |
+| Validation gate — oxy real-data smoke | ✅ PASS | `GATE_OXY.md`: real GRCh38 + 2000 WGBS pairs (synthetic SeekSoul QNAMEs). dir single==--parallel 2 (3406/3406 CB+UR, both mates, CB/UR==field0/1); pbat tags correct; `--ambig_bam` 0 tags. |
 
 ## Key decisions
 

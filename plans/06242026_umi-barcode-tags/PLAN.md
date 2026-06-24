@@ -250,3 +250,5 @@ O(len(QNAME)) split, ≤2 small `BString` allocations only when a flag is on, gu
 - `cargo fmt -p bismark-aligner -- --check` → clean.
 - `cargo clippy -p bismark-aligner --all-targets -- -D warnings` → clean.
 - `bismark_rs --help` → both `--add_barcode` / `--add_umi` present and documented.
+
+**Real-data smoke (oxy, 2026-06-24) — PASS (`GATE_OXY.md`).** Closes Validation §6–8 / review Low-4. Real GRCh38 + 2000 real WGBS PE pairs (QNAMEs rewritten to the SeekSoul contract — synthetic names required because all on-disk FastQ is pre-extraction). Directional single-core = `--parallel 2` (3406/3406 records carry CB+UR, both mates, CB/UR == QNAME field0/field1); `--pbat` tags correct; `--ambig_bam` carries 0 CB/UR. Post-polish wording was also applied (PE notice "read pair(s)"; reworded "empty barcode/UMI field (QNAME field N)"; `___` parse test) — 426 lib tests + fmt + clippy(-D) re-verified green.
