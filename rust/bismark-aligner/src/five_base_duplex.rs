@@ -90,9 +90,11 @@ pub struct DuplexKey {
 }
 
 /// One CpG-cytosine observation a member contributes (filled by the deconv-style CIGAR
-/// walk in the driver). `plus` = the cytosine is the genomic `C` of the CpG (OT own
-/// strand) vs the genomic `G` (OB own strand). `t_equivalent` = the read shows the
-/// converted/variant allele (`T` opposite a `C`, `A` opposite a `G`).
+/// walk in the driver). `plus` = the cytosine is the genomic `C` of the CpG (`+` site)
+/// vs the genomic `G` (`-` site). `t_equivalent` = the read shows the converted/variant
+/// allele (`T` at a `C`, `A` at a `G`). Whether this observation is on the site's OWN or
+/// OPPOSITE strand is derived at [`DuplexFamilies::add_read`] time from the read's
+/// coverage-strand, so the same `SiteObs` serves SE and PE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SiteObs {
     pub pos0: u32,
@@ -100,14 +102,26 @@ pub struct SiteObs {
     pub t_equivalent: bool,
 }
 
-/// A duplex family: the OT-member and OB-member observations of one molecule, plus the
-/// number of reads contributing to each strand (a strand may have several PCR copies).
+/// Internal per-observation tally entry: a `SiteObs` plus the resolved own/opposite flag
+/// (`own` = the read covers the site's own strand → carries the methylation call).
+#[derive(Debug, Clone, Copy)]
+struct OwnedObs {
+    pos0: u32,
+    plus: bool,
+    own: bool,
+    t_equivalent: bool,
+}
+
+/// A duplex family: the molecule-OT-strand and molecule-OB-strand observations of one
+/// molecule (the two duplex pairs), plus the number of reads on each. The `ot`/`ob`
+/// split is the MOLECULE strand (which duplex pair) — used for pairing; each stored
+/// observation also carries its own/opposite coverage flag for reconciliation.
 #[derive(Debug, Default, Clone)]
 pub struct DuplexFamily {
     pub ot_reads: u32,
     pub ob_reads: u32,
-    pub ot: Vec<SiteObs>,
-    pub ob: Vec<SiteObs>,
+    ot: Vec<OwnedObs>,
+    ob: Vec<OwnedObs>,
 }
 
 impl DuplexFamily {
@@ -142,17 +156,32 @@ pub struct DuplexSummary {
 }
 
 impl DuplexFamilies {
-    /// Record one read's CpG observations for a family member (`is_ot` selects the
-    /// strand bucket). Counts as one read on that strand, regardless of how many CpG
-    /// sites it covers.
-    pub fn add_read(&mut self, key: DuplexKey, is_ot: bool, obs: Vec<SiteObs>) {
+    /// Record one read's CpG observations. `molecule_is_ot` selects the duplex-pair
+    /// bucket (top-strand pair vs bottom-strand pair) for pairing. `coverage_forward` is
+    /// the read's genomic coverage-strand (forward reads cover `+`, reverse cover `-`);
+    /// each site's own/opposite flag is `coverage_forward == site.plus`. In SE these two
+    /// coincide (OT reads are forward); in PE they differ (R2 covers the opposite strand
+    /// from its R1). Counts as one read on the molecule strand regardless of CpG count.
+    pub fn add_read(
+        &mut self,
+        key: DuplexKey,
+        molecule_is_ot: bool,
+        coverage_forward: bool,
+        obs: Vec<SiteObs>,
+    ) {
         let fam = self.fams.entry(key).or_default();
-        if is_ot {
+        let owned = obs.into_iter().map(|o| OwnedObs {
+            pos0: o.pos0,
+            plus: o.plus,
+            own: coverage_forward == o.plus,
+            t_equivalent: o.t_equivalent,
+        });
+        if molecule_is_ot {
             fam.ot_reads += 1;
-            fam.ot.extend(obs);
+            fam.ot.extend(owned);
         } else {
             fam.ob_reads += 1;
-            fam.ob.extend(obs);
+            fam.ob.extend(owned);
         }
     }
 
@@ -166,25 +195,17 @@ impl DuplexFamilies {
         self.fams.is_empty()
     }
 
-    /// Build the per-site two-strand tally for one paired family: for each CpG position
-    /// the family covers, the OT member's bases go to the "own" side and the OB
-    /// member's to the "opposite" side (or vice versa for a genomic `G` site). Returns
-    /// `(pos0, plus, StrandPileup)` per site, in position order.
+    /// Build the per-site two-strand tally for one family: each observation carries its
+    /// own/opposite coverage flag (set by the caller from the read's coverage-strand), so
+    /// SE and PE share this reconciliation unchanged. Returns `(pos0, plus, StrandPileup)`
+    /// per site, in position order.
     fn family_sites(fam: &DuplexFamily) -> BTreeMap<u32, (bool, StrandPileup)> {
         let mut sites: BTreeMap<u32, (bool, StrandPileup)> = BTreeMap::new();
-        // OT member: at a `+` (genomic C) site OT is the OWN strand; at a `-` (genomic
-        // G) site OT is the OPPOSITE strand. OB is the mirror.
-        for o in &fam.ot {
+        for o in fam.ot.iter().chain(fam.ob.iter()) {
             let (_, p) = sites
                 .entry(o.pos0)
                 .or_insert((o.plus, StrandPileup::default()));
-            p.observe(o.plus, o.t_equivalent); // OT own ⇔ plus site
-        }
-        for o in &fam.ob {
-            let (_, p) = sites
-                .entry(o.pos0)
-                .or_insert((o.plus, StrandPileup::default()));
-            p.observe(!o.plus, o.t_equivalent); // OB own ⇔ minus site
+            p.observe(o.own, o.t_equivalent);
         }
         sites
     }
@@ -418,6 +439,7 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
+            true, // SE: coverage-strand == molecule strand
             vec![
                 SiteObs {
                     pos0: 110,
@@ -434,6 +456,7 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
+            false, // SE: coverage-strand == molecule strand
             vec![
                 SiteObs {
                     pos0: 110,
@@ -465,6 +488,7 @@ mod tests {
         d.add_read(
             key(b"AAAAA"),
             true,
+            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -474,6 +498,7 @@ mod tests {
         d.add_read(
             key(b"GGGGG"),
             false,
+            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -498,6 +523,7 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
+            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -507,6 +533,7 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
+            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 200,
                 plus: true,
@@ -529,6 +556,7 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
+            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 140,
                 plus: false,
@@ -538,6 +566,7 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
+            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 140,
                 plus: false,
@@ -640,6 +669,7 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
+            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -649,6 +679,7 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
+            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -664,6 +695,7 @@ mod tests {
                 canon_umi: b"TTTTT".to_vec(),
             },
             true,
+            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 310,
                 plus: true,

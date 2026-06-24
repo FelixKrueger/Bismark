@@ -345,12 +345,12 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 .into(),
         ));
     }
-    // #787: per-base duplex reconciliation needs both fragment ends, which SE cannot
-    // give from a single read. PE duplex is a documented follow-up.
-    if (cli.five_base_duplex || cli.five_base_consensus) && cli.mates2.is_some() {
+    // #787: the consensus COLLAPSE is single-end only for now (merging two read-pairs
+    // into a consensus pair is a further step); the PE duplex REPORT is supported.
+    if cli.five_base_consensus && cli.mates2.is_some() {
         return Err(AlignerError::Validation(
-            "--five_base_duplex/--five_base_consensus is single-end only in this version; \
-             paired-end duplex reconciliation is a follow-up (#787)."
+            "--five_base_consensus (consensus collapse) is single-end only in this version; \
+             use --five_base_duplex for the paired-end duplex report (#787)."
                 .into(),
         ));
     }
@@ -1442,8 +1442,9 @@ mod tests {
                 .contains("--five_base_duplex requires --illumina_5base"),
             "got: {err}"
         );
-        // PE + duplex → rejected (SE only this version).
-        let err = resolve(
+        // PE + duplex is ALLOWED (the PE duplex report): no single-end rejection. resolve
+        // may still fail for unrelated reasons (no genome), but not on the SE guard.
+        if let Err(e) = resolve(
             &cli_from(&[
                 "--illumina_5base",
                 "--five_base_duplex",
@@ -1453,9 +1454,12 @@ mod tests {
                 "r2.fq",
             ]),
             "cmd".into(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("single-end only"), "got: {err}");
+        ) {
+            assert!(
+                !e.to_string().contains("single-end only"),
+                "PE duplex must not be rejected as single-end: {e}"
+            );
+        }
     }
 
     /// `--five_base_consensus` requires `--illumina_5base`, implies `five_base_duplex` in

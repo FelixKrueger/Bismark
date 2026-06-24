@@ -710,6 +710,131 @@ fn five_base_consensus_groundtruth_collapses_and_masks_variant() {
     );
 }
 
+/// THE PAIRED-END DUPLEX GATE: each molecule is sequenced as TWO read-pairs (top-strand
+/// pair + bottom-strand pair) with the dual UMI swapped in the read NAME, both mapping to
+/// the SAME fragment. Run PE with `--five_base_umi_qname --five_base_duplex`. The two
+/// pairs of a molecule must collapse into ONE duplex-paired family (keyed by fragment
+/// span + canonical dual UMI), and the per-molecule reconciliation must separate the 5mC
+/// molecule (methylation) from the homozygous C>T molecule (variant) — proving the PE
+/// strand handling (molecule-strand for pairing, FLAG coverage-strand for reconciliation).
+#[test]
+fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (PE duplex gate)");
+        return;
+    }
+    let reference = gen_reference(900);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    let (frag, rl) = (140usize, 100usize); // R1 covers [0,100), R2 covers [40,140)
+    // Target CpG inside the R1∩R2 overlap [40,100) of each fragment.
+    let pick = |frag_start: usize| -> usize {
+        *cpgs
+            .iter()
+            .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
+            .expect("a CpG in the mate overlap")
+    };
+    let sm = 100usize; // 5mC molecule fragment start
+    let sv = 500usize; // variant molecule fragment start
+    let tm = pick(sm);
+    let tv = pick(sv);
+
+    let mut fq1 = Vec::new();
+    let mut fq2 = Vec::new();
+    let emit = |fq: &mut Vec<u8>, name: &str, bytes: &[u8]| {
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(bytes);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
+        fq.push(b'\n');
+    };
+    // Build one molecule's two pairs. `convert_target` puts T at the + target (5mC or
+    // variant on the + strand); `variant` also makes the - strand carry the variant.
+    let mut molecule = |s: usize, t: usize, variant: bool, umi_a: &str, umi_b: &str| {
+        // + strand as forward reads see it: reference with the target set to T.
+        let mut g_plus = reference[s..s + frag].to_vec();
+        g_plus[t - s] = b'T';
+        // what reverse reads carry = revcomp of the - strand. For 5mC the - base at the
+        // target is intact (G, from unconverted C); for a variant it is A (from + T).
+        let minus_src = if variant {
+            g_plus.clone()
+        } else {
+            reference[s..s + frag].to_vec()
+        };
+        let g_minus_rc = revcomp(&minus_src);
+        let fwd_left = &g_plus[0..rl]; // covers [s, s+rl)
+        let rev_right = &g_minus_rc[0..rl]; // revcomp of [s+frag-rl, s+frag)
+        // Top-strand pair (molecule OT): R1 forward-left, R2 reverse-right. UMI A+B.
+        emit(&mut fq1, &format!("top_{s}:{umi_a}+{umi_b}"), fwd_left);
+        emit(&mut fq2, &format!("top_{s}:{umi_a}+{umi_b}"), rev_right);
+        // Bottom-strand pair (molecule OB): R1 reverse-right, R2 forward-left. UMI B+A.
+        emit(&mut fq1, &format!("bot_{s}:{umi_b}+{umi_a}"), rev_right);
+        emit(&mut fq2, &format!("bot_{s}:{umi_b}+{umi_a}"), fwd_left);
+    };
+    molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
+    molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");
+
+    let read1 = genome.path().join("r1.fq");
+    let read2 = genome.path().join("r2.fq");
+    fs::write(&read1, &fq1).unwrap();
+    fs::write(&read2, &fq2).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_qname")
+        .arg("--five_base_duplex")
+        .arg("-1")
+        .arg(&read1)
+        .arg("-2")
+        .arg(&read2)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("r1_bismark_mm2_pe.5base_duplex.txt")).unwrap();
+    let families: Vec<Vec<String>> = report
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| l.split('\t').map(str::to_string).collect())
+        .collect();
+    // Each molecule's two pairs (2 reads each) → one family with members "2+2".
+    let paired: Vec<&Vec<String>> = families
+        .iter()
+        .filter(|f| f.len() >= 8 && f[4] == "2+2")
+        .collect();
+    assert!(
+        paired.len() >= 2,
+        "PE: expected >=2 duplex-paired families (2+2 members each)\nreport:\n{report}"
+    );
+    let variant_sites: u32 = paired.iter().map(|f| f[5].parse::<u32>().unwrap()).sum();
+    let methyl_sites: u32 = paired.iter().map(|f| f[6].parse::<u32>().unwrap()).sum();
+    assert!(
+        variant_sites >= 1,
+        "PE: the homozygous C>T molecule must flag a variant\nreport:\n{report}"
+    );
+    assert!(
+        methyl_sites >= 1,
+        "PE: the 5mC molecule must contribute a methylation site\nreport:\n{report}"
+    );
+    let fams_with_variant = paired
+        .iter()
+        .filter(|f| f[5].parse::<u32>().unwrap() >= 1)
+        .count();
+    assert_eq!(
+        fams_with_variant, 1,
+        "PE: only the variant molecule should flag a variant\nreport:\n{report}"
+    );
+}
+
 /// REGRESSION (real-data bug): real Illumina FastQ headers carry a comment after a
 /// space, e.g. `@LH00757:...:ANCGTTG+NGGTGTA 1:N:0:GTAACTGAAG+TCNCGACTCC`. The aligner
 /// truncates the SAM QNAME at the first whitespace, so the 5-Base lockstep must derive

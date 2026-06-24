@@ -1285,6 +1285,24 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             );
             run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
         }
+
+        // #787 optional PAIRED-END duplex family pass over the just-written _pe.bam.
+        if config.five_base_duplex {
+            let umi_swap = if config.five_base_umi_qname {
+                Some(crate::five_base_duplex::UmiSwap::DualPlus)
+            } else if config.five_base_umi_len > 0 {
+                Some(crate::five_base_duplex::UmiSwap::RevComp)
+            } else {
+                None
+            };
+            let duplex_path = derive_output_path(
+                read_1,
+                config,
+                &format!("_bismark_{tok}_pe.5base_duplex.txt"),
+                "_pe.5base_duplex.txt",
+            );
+            run_five_base_duplex_pe(&genome, &bam_path, &duplex_path, umi_swap)?;
+        }
     }
 
     if let Some(tmp) = ref_tmp {
@@ -1711,7 +1729,9 @@ fn run_five_base_duplex(
             end: rp as u32,
             canon_umi,
         };
-        fams.add_read(key, is_ot, obs);
+        // SE: the record's coverage-strand equals its molecule strand (OT ⇔ forward).
+        let coverage_forward = u16::from(inner.flags()) & 0x10 == 0;
+        fams.add_read(key, is_ot, coverage_forward, obs);
     }
 
     if umi_swap.is_none() || missing_umi {
@@ -1727,6 +1747,146 @@ fn run_five_base_duplex(
     w.flush()?;
     eprintln!(
         "5-Base duplex: {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
+         site(s), {} variant site(s), {} undetermined. Report: {}",
+        s.total_families,
+        s.duplex_paired,
+        s.singletons,
+        s.methylation_sites,
+        s.variant_sites,
+        s.undetermined_sites,
+        report_path.display()
+    );
+    Ok(())
+}
+
+/// #787 PAIRED-END duplex pass over a 5-Base `_pe.bam`. The nonrandom-duplex library
+/// sequences each molecule as TWO read-pairs (top-strand + bottom-strand) with swapped
+/// UMIs; both map to the SAME fragment, so families key on the FRAGMENT outer span
+/// (POS + mate-pos + TLEN) plus the canonical dual UMI, and the two pairs land in one
+/// family without explicit R1/R2 pairing. Two strand concepts (cf. SE, where they
+/// coincide): the MOLECULE strand (which duplex pair: `R1-forward == OT`) drives family
+/// pairing; the COVERAGE strand (the record's FLAG orientation) drives per-CpG
+/// own/opposite reconciliation — R2 covers the opposite genomic strand from its R1, so
+/// strand is taken from the FLAG, never from R2's `CTOT`/`CTOB` tag.
+fn run_five_base_duplex_pe(
+    genome: &Genome,
+    bam_path: &Path,
+    report_path: &Path,
+    umi_swap: Option<crate::five_base_duplex::UmiSwap>,
+) -> Result<()> {
+    use crate::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, canonical_umi};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+        .map_err(|e| AlignerError::Validation(format!("duplex-pe: open BAM: {e}")))?;
+    let mut fams = DuplexFamilies::default();
+    let mut missing_umi = false;
+
+    for rec in reader.records() {
+        let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex-pe: {e}")))?;
+        let inner = rec.inner();
+        let flag = u16::from(inner.flags());
+        // Concordant primary pairs only (the 5-Base PE path emits proper pairs).
+        if flag & 0x4 != 0 || flag & 0x2 == 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
+            continue;
+        }
+        let tlen = inner.template_length();
+        if tlen == 0 {
+            continue;
+        }
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            continue;
+        };
+        let Some(chrom) = genome.sq_order.get(ref_id) else {
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else { continue };
+        let Some(start) = inner.alignment_start() else {
+            continue;
+        };
+        let pos0 = usize::from(start) - 1;
+        let Some(mate) = inner.mate_alignment_start() else {
+            continue;
+        };
+        let mate0 = usize::from(mate) - 1;
+        // Fragment outer span: identical for both mates and for the swapped-UMI partner.
+        let frag_start = pos0.min(mate0) as u32;
+        let frag_end = frag_start + tlen.unsigned_abs();
+
+        // Coverage strand (forward reads cover `+`), and molecule strand (which duplex
+        // pair): R1-forward / R2-reverse ⇒ top-strand pair (OT); R1-reverse / R2-forward
+        // ⇒ bottom-strand pair (OB).
+        let coverage_forward = flag & 0x10 == 0;
+        let is_r1 = flag & 0x40 != 0;
+        let molecule_is_ot = is_r1 == coverage_forward;
+
+        let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
+            match bismark_io::tags::rx(inner.data()) {
+                Ok(Some(raw)) => canonical_umi(raw, swap),
+                _ => {
+                    missing_umi = true;
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // CpG-cytosine observations from this record's CIGAR walk (BAM-forward bases).
+        let seq = inner.sequence().as_ref();
+        let (mut ri, mut rp) = (0usize, pos0);
+        let mut obs: Vec<SiteObs> = Vec::new();
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            match op.kind() {
+                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                    for _ in 0..len {
+                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
+                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: true,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'T'),
+                                });
+                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: false,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'A'),
+                                });
+                            }
+                        }
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Kind::Insertion | Kind::SoftClip => ri += len,
+                Kind::Deletion | Kind::Skip => rp += len,
+                _ => {}
+            }
+        }
+        let key = DuplexKey {
+            chrom: chrom.clone(),
+            start: frag_start,
+            end: frag_end,
+            canon_umi,
+        };
+        fams.add_read(key, molecule_is_ot, coverage_forward, obs);
+    }
+
+    if umi_swap.is_none() || missing_umi {
+        eprintln!(
+            "Note: --five_base_duplex (PE) without per-read UMIs (use --five_base_umi_qname) \
+             keys families on fragment span alone; reads from DIFFERENT molecules sharing a \
+             fragment may be merged into one family."
+        );
+    }
+
+    let mut w = BufWriter::new(File::create(report_path)?);
+    let s = w_duplex_report(&mut w, &fams)?;
+    w.flush()?;
+    eprintln!(
+        "5-Base duplex (PE): {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
          site(s), {} variant site(s), {} undetermined. Report: {}",
         s.total_families,
         s.duplex_paired,
