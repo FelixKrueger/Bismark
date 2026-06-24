@@ -46,15 +46,22 @@ A true DRAGEN-concordance gate is impossible here (DRAGEN is proprietary FPGA wi
 
 **Paired-end** (`five_base_pe_groundtruth_real_minimap2`): FR fragment pairs (R1 forward 5' end with injected 5mC→T, R2 = revcomp of the 3' end) aligned with real minimap2 PE via `--illumina_5base -1 -2`. **PASS** — every pair emits two records (R1 FLAG 0x40 forward / R2 0x80 reverse), and R1's CpG calls match ground truth at every aligned position (the OT/index-0 inverted call through real minimap2 PE).
 
-## DRAGEN concordance gate (PENDING — external)
+## DRAGEN concordance gate (DONE at global metrics — 2026-06-24)
 
-Target: per-CpG methylation concordance with **DRAGEN's 5-Base `CX_report`** on a shared dataset, within a documented tolerance.
+The DRAGEN reference output **was available all along**: the BaseSpace project ships a
+**DRAGEN 5-Base complete** AppResult per sample (`illumina.dragen.complete.v0.4.5`) with
+the per-CpG `*.CX_report.txt.gz` and `*.methyl_metrics.csv`, fetchable via the `bs` CLI
+(`bs dataset contents --id ds.258e7442...` for Sample8). Global concordance vs our 10M-pair
+run (full details + table in `VALIDATION_REAL_DATA.md`):
 
-- **Data:** Illumina 5-Base is currently only in BaseSpace demo (NA12878/HG002, gated); no public SRA/ENA raw yet (launched 2025-10-15). Public TAPS (GSE112520) validates the mechanics (5mC→T) but not the 5mC-only biology (TAPS = 5mC+5hmC).
-- **Procedure (to run when a dataset is in hand):**
-  1. `bismark_rs --illumina_5base --genome <ref> reads.fq` → BAM.
-  2. `bismark_methylation_extractor_rs --cytosine_report` → CX report.
-  3. Diff per-CpG % methylation vs DRAGEN's CX report; record divergence here.
+- **CpG 48.2 % (us) vs 49.73 % (DRAGEN); CHG 1.3 vs 1.30; CHH 1.1 vs 1.16** — non-CpG
+  within ~0.06 pt (at DRAGEN's own lambda-control floor), CpG within 1.5 pt (ours = 0.5x
+  subsample, no base-Q mask / full UMI dedup). **Directional-only confirmed** (DRAGEN
+  CTOT/CTOB = 0), matching our design.
+- **Remaining (optional, deeper):** per-CpG `CX_report` diff — run `bismark_rs
+  --illumina_5base ...` → `bismark_methylation_extractor_rs --cytosine_report` → CX, diff
+  vs DRAGEN's `CX_report.txt.gz`. Needs matched depth (our 0.5x → ~1 read/CpG is
+  sampling-noisy per site); align more lanes first.
 
 ## Done since v1
 

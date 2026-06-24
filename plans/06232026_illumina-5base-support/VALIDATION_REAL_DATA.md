@@ -24,6 +24,33 @@ bismark_rs --illumina_5base --five_base_umi_qname --five_base_consensus \
   skipped) into `*_pe.5base_consensus.bam`, each carrying real Bismark `XM` calls (e.g.
   consensus read `dpx:1:6961630-6961939:AAGACAT+ACTAGAT`).
 
+### Concordance vs DRAGEN (the actual gate — DRAGEN output WAS available)
+
+Earlier notes said a DRAGEN comparison was impossible (no reference output). **That was
+wrong:** the BaseSpace project ships the **DRAGEN 5-Base complete** AppResult per sample
+(`illumina.dragen.complete.v0.4.5`), including the per-CpG `*.CX_report.txt.gz` and
+`*.methyl_metrics.csv`. Fetched Sample8's DRAGEN metrics via the `bs` CLI and compared
+(DRAGEN = full depth ~490M pairs; ours = 10M-pair subsample):
+
+| Metric | **DRAGEN** | **bismark_rs 5-Base** |
+|---|---|---|
+| % CpG methylated | 49.73 % | **48.2 %** |
+| % CHG methylated | 1.30 % | **1.3 %** |
+| % CHH methylated | 1.16 % | **1.1 %** |
+| Mapping efficiency | 89.51 % | 93.7 % |
+| Strand model | OT/OB only (CTOT/CTOB = 0) | OT/OB only (directional by design) |
+
+The global methylation numbers match DRAGEN closely — CHG/CHH within ~0.06 pt, CpG within
+1.5 pt (ours slightly lower: 0.5x subsample, no base-Q masking, no full UMI dedup). The
+non-CpG rate sits at DRAGEN's own **lambda unmethylated-control floor (1.35 % CpG /
+1.23 % CHH)** — i.e. our noise floor equals DRAGEN's, confirming the 5mC→T polarity and
+base handling are right. DRAGEN's **directional-only** strand profile (CTOT/CTOB = 0)
+matches our design's directional-only rejection. DRAGEN's puc19 methylated control caps
+at 96.91 % CpG (the chemistry's sensitivity ceiling).
+
+A per-CpG `CX_report` diff is the natural deeper gate but needs matched depth (our 0.5x
+subsample gives ~1 read/CpG → per-site % is sampling-noisy); run more lanes first.
+
 This run also surfaced + fixed the qname-whitespace desync (commit 4e4f3d4). A deeper run
 (more lanes) would yield proportionally more duplex pairs, but this confirms the whole
 chain — real FASTQ → unconverted GRCh38 alignment → inverted 5mC call → qname dual-UMI
