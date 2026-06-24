@@ -16,11 +16,41 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 use assert_cmd::Command;
 use tempfile::TempDir;
+
+/// The real downloaded reference genome (`test_files/NC_010473.fa.gz`, E. coli K-12),
+/// resolved relative to this crate. `None` if absent (the gate then no-ops).
+fn real_genome_gz() -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test_files/NC_010473.fa.gz");
+    p.exists().then_some(p)
+}
+
+/// Decompress the first FASTA contig of a `.fa.gz` into uppercase bytes.
+fn load_first_contig_gz(path: &Path) -> Vec<u8> {
+    let file = fs::File::open(path).unwrap();
+    let mut s = String::new();
+    flate2::read::MultiGzDecoder::new(file)
+        .read_to_string(&mut s)
+        .unwrap();
+    let mut out = Vec::new();
+    let mut seen_header = false;
+    for line in s.lines() {
+        if line.starts_with('>') {
+            if seen_header {
+                break; // only the first contig
+            }
+            seen_header = true;
+            continue;
+        }
+        out.extend(line.trim().bytes().map(|b| b.to_ascii_uppercase()));
+    }
+    out
+}
 
 /// Per-read ground truth: qname → list of (genomic CpG position, expected methylated?).
 type Truth = HashMap<String, Vec<(usize, bool)>>;
@@ -583,6 +613,241 @@ fn five_base_consensus_groundtruth_collapses_and_masks_variant() {
     assert!(
         dot_at_tv,
         "the homozygous C>T CpG must be masked ('.') in the consensus read"
+    );
+}
+
+/// REGRESSION (real-data bug): real Illumina FastQ headers carry a comment after a
+/// space, e.g. `@LH00757:...:ANCGTTG+NGGTGTA 1:N:0:GTAACTGAAG+TCNCGACTCC`. The aligner
+/// truncates the SAM QNAME at the first whitespace, so the 5-Base lockstep must derive
+/// its read identifier the same way (whitespace-truncated) regardless of `--icpc`;
+/// otherwise every read desyncs ("expected ..._1:N:0:..., minimap2 emitted ..."). This
+/// gate feeds Illumina-style spaced headers through the real-minimap2 5-Base path and
+/// asserts it runs and still recovers the methylation calls.
+#[test]
+fn five_base_groundtruth_illumina_spaced_header_no_desync() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (spaced-header regression)");
+        return;
+    }
+    let reference = gen_reference(600);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let (plain, truth) = make_methylated_reads(&reference, 120, 5);
+    // Rewrite each `@<name>` header to `@<name> 1:N:0:GTAACTGAAG+TCNCGACTCC` (a real
+    // Illumina dual-index comment), leaving seq/qual lines untouched.
+    let mut fastq = Vec::new();
+    for (i, line) in plain.split_inclusive(|&b| b == b'\n').enumerate() {
+        if i % 4 == 0 {
+            let trimmed = &line[..line.len() - 1]; // drop '\n'
+            fastq.extend_from_slice(trimmed);
+            fastq.extend_from_slice(b" 1:N:0:GTAACTGAAG+TCNCGACTCC\n");
+        } else {
+            fastq.extend_from_slice(line);
+        }
+    }
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, &fastq).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let bam = outdir.path().join("reads_bismark_mm2.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let (mut n, mut checked_meth) = (0usize, 0usize);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        n += 1;
+        let inner = rec.inner();
+        // The BAM qname is whitespace-truncated (the comment dropped) → matches truth keys.
+        let qname = String::from_utf8_lossy(inner.name().unwrap().as_ref()).into_owned();
+        assert!(!qname.contains(' '), "qname must not contain the comment");
+        let Some(expect) = truth.get(&qname) else {
+            continue;
+        };
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
+        let (mut ri, mut rp) = (0usize, ref_start);
+        let mut read_at = HashMap::<usize, usize>::new();
+        for op in inner.cigar().as_ref().iter() {
+            use noodles_sam::alignment::record::cigar::op::Kind::*;
+            let len = op.len();
+            match op.kind() {
+                Match | SequenceMatch | SequenceMismatch => {
+                    for _ in 0..len {
+                        read_at.insert(rp, ri);
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Insertion | SoftClip => ri += len,
+                Deletion | Skip => rp += len,
+                _ => {}
+            }
+        }
+        for &(cpg_pos, methylated) in expect {
+            if let Some(&ri) = read_at.get(&cpg_pos)
+                && methylated
+                && xm[ri] == b'Z'
+            {
+                checked_meth += 1;
+            }
+        }
+    }
+    assert!(
+        n >= 1,
+        "reads with Illumina spaced headers must align (no desync)"
+    );
+    assert!(
+        checked_meth >= 1,
+        "should still recover methylated CpGs with spaced headers"
+    );
+}
+
+/// THE REAL-GENOME DUPLEX-CONSENSUS GATE: same construction as the synthetic consensus
+/// gate, but the reference is the REAL downloaded genome (`test_files/NC_010473.fa.gz`,
+/// E. coli K-12) — real CpG density and sequence complexity, aligned with the REAL
+/// minimap2. Two duplex molecules (one 5mC, one homozygous C>T) are synthesized from
+/// real subsequences; the collapse must emit one consensus read per family with the 5mC
+/// CpG called `Z` and the C>T CpG masked to `.`. No-op if minimap2 or the genome file is
+/// absent (CI stays green).
+#[test]
+fn five_base_consensus_groundtruth_real_reference_ecoli() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (real-reference consensus gate)");
+        return;
+    }
+    let Some(gz) = real_genome_gz() else {
+        eprintln!("skipping: test_files/NC_010473.fa.gz not found (real-reference gate)");
+        return;
+    };
+    let reference = load_first_contig_gz(&gz);
+    assert!(reference.len() > 200_000, "real genome should be large");
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+
+    // Pick two well-separated CpG cytosines in the real sequence (cores of two windows).
+    let half = 60usize;
+    let cpg_near = |center: usize| -> usize {
+        (center - 25..center + 25)
+            .find(|&i| reference[i] == b'C' && reference[i + 1] == b'G')
+            .expect("a CpG near the chosen center of the real genome")
+    };
+    let tm = cpg_near(100_000); // 5mC molecule
+    let tv = cpg_near(105_000); // homozygous C>T molecule
+    assert_ne!(tm, tv);
+
+    let window = |t: usize, convert_target: bool| -> Vec<u8> {
+        let mut w = reference[t - half..t + half].to_vec();
+        if convert_target {
+            w[half] = b'T';
+        }
+        w
+    };
+    let mut fq = Vec::new();
+    let mut emit = |name: &str, umi: &[u8], core: &[u8]| {
+        let mut read = umi.to_vec();
+        read.extend_from_slice(core);
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(&read);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; read.len()]);
+        fq.push(b'\n');
+    };
+    let umi_m = b"AACCGGTT";
+    let umi_v = b"TTGGCCAA";
+    emit("m_ot", umi_m, &window(tm, true));
+    emit("m_ob", &revcomp(umi_m), &revcomp(&window(tm, false)));
+    emit("v_ot", umi_v, &window(tv, true));
+    emit("v_ob", &revcomp(umi_v), &revcomp(&window(tv, true)));
+
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, &fq).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_len")
+        .arg("8")
+        .arg("--five_base_consensus")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let bam = outdir.path().join("reads_bismark_mm2.5base_consensus.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let (mut n_records, mut z_at_tm, mut dot_at_tv) = (0usize, false, false);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        let inner = rec.inner();
+        n_records += 1;
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
+        let read_at = |gpos: usize| -> Option<usize> {
+            let (mut ri, mut rp) = (0usize, ref_start);
+            for op in inner.cigar().as_ref().iter() {
+                use noodles_sam::alignment::record::cigar::op::Kind::*;
+                let len = op.len();
+                match op.kind() {
+                    Match | SequenceMatch | SequenceMismatch => {
+                        for _ in 0..len {
+                            if rp == gpos {
+                                return Some(ri);
+                            }
+                            ri += 1;
+                            rp += 1;
+                        }
+                    }
+                    Insertion | SoftClip => ri += len,
+                    Deletion | Skip => rp += len,
+                    _ => {}
+                }
+            }
+            None
+        };
+        if let Some(ri) = read_at(tm)
+            && xm[ri] == b'Z'
+        {
+            z_at_tm = true;
+        }
+        if let Some(ri) = read_at(tv) {
+            if xm[ri] == b'.' {
+                dot_at_tv = true;
+            }
+            assert_ne!(
+                xm[ri], b'Z',
+                "real-genome C>T variant must not be methylated"
+            );
+        }
+    }
+    assert_eq!(
+        n_records, 2,
+        "one consensus read per duplex family (real genome)"
+    );
+    assert!(
+        z_at_tm,
+        "the 5mC CpG must be Z in the consensus (real genome)"
+    );
+    assert!(
+        dot_at_tv,
+        "the homozygous C>T CpG must be masked ('.') in the consensus (real genome)"
     );
 }
 

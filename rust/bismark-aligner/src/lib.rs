@@ -977,11 +977,8 @@ fn five_base_align_and_call(
     } else {
         Box::new(BufReader::new(file))
     };
-    let (skip, upto, icpc) = (
-        config.read_processing.skip,
-        config.read_processing.upto,
-        config.read_processing.icpc,
-    );
+    // 5-Base forces whitespace-truncated qnames (the aligner truncates), so `icpc` is unused.
+    let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
     let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut count: u64 = 0;
     // #787 UMI dedup: drop reads sharing (UMI, chrom, pos, strand). 0 ⇒ off.
@@ -1017,7 +1014,12 @@ fn five_base_align_and_call(
             break;
         }
 
-        let fixed = convert::fix_id(convert::chomp_newline(&id), icpc);
+        // #787: the 5-Base path hands the RAW FastQ to the aligner, which truncates the
+        // SAM QNAME at the first whitespace (SAM forbids spaces) — so a real Illumina
+        // header `@<name> 1:N:0:<index>` becomes just `<name>` in minimap2's output.
+        // Force whitespace truncation (icpc semantics) regardless of `--icpc` so the
+        // lockstep qname check matches; underscoring the comment would desync every read.
+        let fixed = convert::fix_id(convert::chomp_newline(&id), true);
         let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
         let identifier = String::from_utf8_lossy(id_bytes).into_owned();
         let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
@@ -1313,7 +1315,6 @@ fn five_base_align_and_call_pe(
 
     let mut r1 = open_maybe_gz(read_1)?;
     let mut r2 = open_maybe_gz(read_2)?;
-    let icpc = config.read_processing.icpc;
     let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
     let mut count: u64 = 0;
     // #787 UMI dedup (PE): key on both mates' UMIs + the R1 chrom/pos/strand.
@@ -1354,7 +1355,10 @@ fn five_base_align_and_call_pe(
             (&b, &a)
         };
 
-        let fixed = convert::fix_id(convert::chomp_newline(&id1), icpc);
+        // #787: force whitespace truncation (see the SE path) — minimap2 PE truncates the
+        // QNAME at the first space, so the real Illumina header's `1:N:0:` comment must be
+        // dropped here too or every pair desyncs.
+        let fixed = convert::fix_id(convert::chomp_newline(&id1), true);
         let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
         let identifier = strip_mate_suffix(&String::from_utf8_lossy(id_bytes));
         let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
