@@ -46,6 +46,34 @@ A true DRAGEN-concordance gate is impossible here (DRAGEN is proprietary FPGA wi
 
 **Paired-end** (`five_base_pe_groundtruth_real_minimap2`): FR fragment pairs (R1 forward 5' end with injected 5mC→T, R2 = revcomp of the 3' end) aligned with real minimap2 PE via `--illumina_5base -1 -2`. **PASS** — every pair emits two records (R1 FLAG 0x40 forward / R2 0x80 reverse), and R1's CpG calls match ground truth at every aligned position (the OT/index-0 inverted call through real minimap2 PE).
 
+## Official Illumina spec confirmation (data sheet M-GL-03689)
+
+The manufacturer data sheet ("Illumina 5-Base DNA Prep", M-GL-03689) confirms the core
+design decisions of this implementation verbatim:
+
+- **Chemistry / polarity** — "Novel chemistry for direct conversion of 5-methylcytosine
+  to thymine" / "one-step 5mC-to-T base conversion". Matches our `methylation_call(...,
+  five_base = true)`: a read `T` at a genomic `C` is methylated (the inverse of
+  bisulfite). The enzymatic conversion is "nondamaging" / "single-step", so reads keep
+  full complexity and align to the UNCONVERTED genome (we verified C ≈ 19.7% base
+  composition on the real data) — exactly our model.
+- **5mC only** — "detection of five bases (A, T, G, C, and 5mC)"; no 5hmC. Consistent
+  with the dossier (TAPS = 5mC+5hmC is the distinct chemistry).
+- **Simultaneous variants + methylation** — "simultaneous discovery of genomic variants
+  and methylation"; DRAGEN Germline + Somatic. This is what `--five_base_deconvolution`
+  addresses (separating C>T genetic variants from 5mC via the two-strand rule).
+- **Read structure** — 2×151 bp + UMI; matches the qname dual-UMI we handle with
+  `--five_base_umi_qname` + the duplex passes.
+- **Recommended coverage** — "Germline 5-base genome: 35–40×" (whole-methylome 10–35×;
+  somatic ≥100×). Our full-depth validation run (~44×) is at/above the germline nominal
+  depth, so the per-CpG DRAGEN comparison is at proper coverage.
+- **Analysis** — DRAGEN secondary analysis ("dual genomic and epigenomic annotations …
+  for a 30× genome"), i.e. the reference pipeline we benchmark against.
+
+This is authoritative (manufacturer) grounding that the 5mC→T model, the unconverted-genome
+alignment, the variant/methylation deconvolution, the UMI/duplex handling, and the
+directional-only stance (DRAGEN metrics show CTOT/CTOB = 0) all match the real method.
+
 ## DRAGEN concordance gate (DONE at global metrics — 2026-06-24)
 
 The DRAGEN reference output **was available all along**: the BaseSpace project ships a
