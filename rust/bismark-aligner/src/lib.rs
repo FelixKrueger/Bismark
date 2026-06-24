@@ -901,6 +901,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
                 &consensus_path,
                 &header,
                 umi_swap,
+                false, // SE
             )?;
         }
     }
@@ -1302,6 +1303,25 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 "_pe.5base_duplex.txt",
             );
             run_five_base_duplex_pe(&genome, &bam_path, &duplex_path, umi_swap)?;
+
+            // #787 optional PE consensus COLLAPSE (one consensus read per duplex family).
+            if config.five_base_consensus {
+                let consensus_path = derive_output_path(
+                    read_1,
+                    config,
+                    &format!("_bismark_{tok}_pe.5base_consensus.bam"),
+                    "_pe.5base_consensus.bam",
+                );
+                run_five_base_consensus(
+                    &genome,
+                    &refid,
+                    &bam_path,
+                    &consensus_path,
+                    &header,
+                    umi_swap,
+                    true, // PE
+                )?;
+            }
         }
     }
 
@@ -1919,6 +1939,14 @@ fn w_duplex_report<W: std::io::Write>(
 /// Bismark `XM`/`XR`/`XG`. Each member is mapped to reference coordinates by a CIGAR
 /// walk, so soft-clips (e.g. an inline UMI prefix) and indels are handled; only singleton
 /// (unpaired) families are skipped.
+///
+/// Unified SE + PE: families are keyed like the duplex passes (SE = the read's alignment
+/// span; PE = the FRAGMENT outer span from POS + mate-pos + TLEN). The MOLECULE strand
+/// (which duplex pair) gates pairing; the COVERAGE strand (FLAG orientation) buckets reads
+/// for reconciliation. At each reference position the forward-covering reads and the
+/// reverse-covering reads are each reduced to their highest-quality base, then combined by
+/// [`consensus_base`] (own = forward at a `+` CpG / reverse at a `-` CpG).
+#[allow(clippy::too_many_arguments)]
 fn run_five_base_consensus(
     genome: &Genome,
     refid: &HashMap<String, usize>,
@@ -1926,15 +1954,14 @@ fn run_five_base_consensus(
     consensus_bam_path: &Path,
     header: &noodles_sam::Header,
     umi_swap: Option<crate::five_base_duplex::UmiSwap>,
+    paired_end: bool,
 ) -> Result<()> {
     use crate::five_base_duplex::{DuplexKey, SiteKind, canonical_umi, consensus_base};
     use noodles_sam::alignment::record::cigar::op::Kind;
     use std::collections::BTreeMap;
 
     /// One member's aligned read, as a reference-position → `(base, phred)` map built by
-    /// walking the CIGAR. This handles soft-clips (e.g. an inline UMI prefix) and indels
-    /// uniformly: clipped/inserted read bases are dropped, deleted reference positions are
-    /// simply absent. `start`/`end` bound the aligned reference span.
+    /// walking the CIGAR (soft-clips/indels handled). `start`/`end` bound the span.
     struct Member {
         start: u32,
         end: u32,
@@ -1946,28 +1973,38 @@ fn run_five_base_consensus(
             self.covered.get(&p).copied()
         }
     }
+    /// A family's reads split by molecule strand (for pairing) and coverage strand (for
+    /// reconciliation).
+    #[derive(Default)]
+    struct Fam {
+        ot_reads: u32,
+        ob_reads: u32,
+        fwd: Vec<Member>,
+        rev: Vec<Member>,
+    }
+    /// Reduce all reads covering `p` on one coverage strand to their highest-quality base.
+    fn reduce(members: &[Member], p: u32) -> Option<(u8, u8)> {
+        members
+            .iter()
+            .filter_map(|m| m.at(p))
+            .max_by_key(|&(_, q)| q)
+    }
 
     let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
         .map_err(|e| AlignerError::Validation(format!("consensus: open BAM: {e}")))?;
-    let mut fams: BTreeMap<DuplexKey, (Option<Member>, Option<Member>)> = BTreeMap::new();
+    let mut fams: BTreeMap<DuplexKey, Fam> = BTreeMap::new();
 
     for rec in reader.records() {
         let rec = rec.map_err(|e| AlignerError::Validation(format!("consensus: {e}")))?;
         let inner = rec.inner();
-        if u16::from(inner.flags()) & 0x4 != 0 {
+        let flag = u16::from(inner.flags());
+        if flag & 0x4 != 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
             continue;
         }
-        let xr = bismark_io::tags::xr(inner.data())
-            .map_err(|e| AlignerError::Validation(format!("consensus: XR: {e}")))?;
-        let xg = bismark_io::tags::xg(inner.data())
-            .map_err(|e| AlignerError::Validation(format!("consensus: XG: {e}")))?;
-        let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
-            .map_err(|e| AlignerError::Validation(format!("consensus: strand: {e}")))?;
-        let is_ot = strand == bismark_io::BismarkStrand::OT;
-        let is_ob = strand == bismark_io::BismarkStrand::OB;
-        if !is_ot && !is_ob {
-            continue;
-        }
+        let coverage_forward = flag & 0x10 == 0;
+
+        // Molecule strand + family span keying differ for SE vs PE.
+        let (molecule_is_ot, key_start, key_end);
         let Some(ref_id) = inner.reference_sequence_id() else {
             continue;
         };
@@ -1978,6 +2015,38 @@ fn run_five_base_consensus(
             continue;
         };
         let ref_start = (usize::from(start) - 1) as u32;
+        if paired_end {
+            if flag & 0x2 == 0 {
+                continue; // proper pairs only
+            }
+            let tlen = inner.template_length();
+            let Some(mate) = inner.mate_alignment_start() else {
+                continue;
+            };
+            if tlen == 0 {
+                continue;
+            }
+            let mate0 = (usize::from(mate) - 1) as u32;
+            key_start = ref_start.min(mate0);
+            key_end = key_start + tlen.unsigned_abs();
+            let is_r1 = flag & 0x40 != 0;
+            molecule_is_ot = is_r1 == coverage_forward;
+        } else {
+            // SE: molecule strand == coverage strand (from the OT/OB tag == FLAG).
+            let xr = bismark_io::tags::xr(inner.data())
+                .map_err(|e| AlignerError::Validation(format!("consensus: XR: {e}")))?;
+            let xg = bismark_io::tags::xg(inner.data())
+                .map_err(|e| AlignerError::Validation(format!("consensus: XG: {e}")))?;
+            let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+                .map_err(|e| AlignerError::Validation(format!("consensus: strand: {e}")))?;
+            match strand {
+                bismark_io::BismarkStrand::OT => molecule_is_ot = true,
+                bismark_io::BismarkStrand::OB => molecule_is_ot = false,
+                _ => continue,
+            }
+            key_start = ref_start; // span filled after the CIGAR walk
+            key_end = 0;
+        }
 
         // Walk the CIGAR → per-reference-position (base, phred) map + the aligned span end.
         let seq = inner.sequence().as_ref();
@@ -2003,7 +2072,7 @@ fn run_five_base_consensus(
                 Kind::HardClip | Kind::Pad => {}
             }
         }
-        let end = rp;
+        let aln_end = rp;
         let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match bismark_io::tags::rx(inner.data()) {
                 Ok(Some(raw)) => canonical_umi(raw, swap),
@@ -2014,20 +2083,32 @@ fn run_five_base_consensus(
         };
         let member = Member {
             start: ref_start,
-            end,
+            end: aln_end,
             covered,
             mapq: inner.mapping_quality().map(u8::from).unwrap_or(255),
         };
+        // SE keys on the read's own span; PE on the fragment outer span.
+        let (kstart, kend) = if paired_end {
+            (key_start, key_end)
+        } else {
+            (key_start, aln_end)
+        };
         let key = DuplexKey {
             chrom: chrom.clone(),
-            start: ref_start,
-            end,
+            start: kstart,
+            end: kend,
             canon_umi,
         };
-        let entry = fams.entry(key).or_insert((None, None));
-        let slot = if is_ot { &mut entry.0 } else { &mut entry.1 };
-        if slot.is_none() {
-            *slot = Some(member); // first read on this strand represents the family
+        let fam = fams.entry(key).or_default();
+        if molecule_is_ot {
+            fam.ot_reads += 1;
+        } else {
+            fam.ob_reads += 1;
+        }
+        if coverage_forward {
+            fam.fwd.push(member);
+        } else {
+            fam.rev.push(member);
         }
     }
 
@@ -2035,16 +2116,22 @@ fn run_five_base_consensus(
         .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?;
     let (mut emitted, mut skipped) = (0u64, 0u64);
 
-    for (key, (ot, ob)) in &fams {
-        let (Some(ot), Some(ob)) = (ot, ob) else {
+    for (key, fam) in &fams {
+        if fam.ot_reads == 0 || fam.ob_reads == 0 {
             continue; // singleton family: no duplex partner to reconcile
-        };
+        }
         let Some(g) = genome.get(&key.chrom) else {
             skipped += 1;
             continue;
         };
-        let start = ot.start.min(ob.start);
-        let end = ot.end.max(ob.end);
+        let members = fam.fwd.iter().chain(fam.rev.iter());
+        let start = members.clone().map(|m| m.start).min().unwrap_or(0);
+        let end = members.clone().map(|m| m.end).max().unwrap_or(0);
+        let mapq = members.map(|m| m.mapq).min().unwrap_or(0);
+        if end <= start {
+            skipped += 1;
+            continue;
+        }
         let mut cons_seq: Vec<u8> = Vec::with_capacity((end - start) as usize);
         let mut cons_qual: Vec<u8> = Vec::with_capacity((end - start) as usize);
         for p in start..end {
@@ -2056,7 +2143,7 @@ fn run_five_base_consensus(
             } else {
                 SiteKind::Other
             };
-            let (b, q) = consensus_base(kind, ot.at(p), ob.at(p));
+            let (b, q) = consensus_base(kind, reduce(&fam.fwd, p), reduce(&fam.rev, p));
             cons_seq.push(b);
             cons_qual.push(q.saturating_add(33)); // phred → ASCII for the SAM QUAL field
         }
@@ -2074,7 +2161,7 @@ fn run_five_base_consensus(
             flag: 0,
             rname: key.chrom.clone(),
             pos: start + 1,
-            mapq: ot.mapq.min(ob.mapq),
+            mapq,
             cigar: format!("{}M", cons_seq.len()),
             seq: String::from_utf8_lossy(&cons_seq).into_owned(),
             qual: String::from_utf8_lossy(&cons_qual).into_owned(),
@@ -2106,8 +2193,9 @@ fn run_five_base_consensus(
         .finish()
         .map_err(|e| AlignerError::Validation(format!("consensus: finalise BAM: {e}")))?;
     eprintln!(
-        "5-Base duplex consensus: {emitted} consensus read(s) emitted, {skipped} family(ies) \
-         skipped (chromosome-edge guard). BAM: {}",
+        "5-Base duplex consensus ({}): {emitted} consensus read(s) emitted, {skipped} family(ies) \
+         skipped. BAM: {}",
+        if paired_end { "PE" } else { "SE" },
         consensus_bam_path.display()
     );
     Ok(())

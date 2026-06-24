@@ -835,6 +835,132 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
     );
 }
 
+/// THE PE CONSENSUS GATE: same two-pairs-per-molecule fixture as the PE duplex gate, but
+/// run with `--five_base_consensus`. The PE collapse must emit ONE consensus read per
+/// duplex family into `<out>_pe.5base_consensus.bam`, with the 5mC CpG called `Z` and the
+/// homozygous C>T CpG masked to `.` (the asymmetric reconciliation over all four reads).
+#[test]
+fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (PE consensus gate)");
+        return;
+    }
+    let reference = gen_reference(900);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    let (frag, rl) = (140usize, 100usize);
+    let pick = |frag_start: usize| -> usize {
+        *cpgs
+            .iter()
+            .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
+            .expect("a CpG in the mate overlap")
+    };
+    let (sm, sv) = (100usize, 500usize);
+    let (tm, tv) = (pick(sm), pick(sv));
+
+    let mut fq1 = Vec::new();
+    let mut fq2 = Vec::new();
+    let emit = |fq: &mut Vec<u8>, name: &str, bytes: &[u8]| {
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(bytes);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
+        fq.push(b'\n');
+    };
+    let mut molecule = |s: usize, t: usize, variant: bool, ua: &str, ub: &str| {
+        let mut g_plus = reference[s..s + frag].to_vec();
+        g_plus[t - s] = b'T';
+        let minus_src = if variant {
+            g_plus.clone()
+        } else {
+            reference[s..s + frag].to_vec()
+        };
+        let g_minus_rc = revcomp(&minus_src);
+        let (fwd_left, rev_right) = (&g_plus[0..rl], &g_minus_rc[0..rl]);
+        emit(&mut fq1, &format!("top_{s}:{ua}+{ub}"), fwd_left);
+        emit(&mut fq2, &format!("top_{s}:{ua}+{ub}"), rev_right);
+        emit(&mut fq1, &format!("bot_{s}:{ub}+{ua}"), rev_right);
+        emit(&mut fq2, &format!("bot_{s}:{ub}+{ua}"), fwd_left);
+    };
+    molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
+    molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");
+
+    let read1 = genome.path().join("r1.fq");
+    let read2 = genome.path().join("r2.fq");
+    fs::write(&read1, &fq1).unwrap();
+    fs::write(&read2, &fq2).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_qname")
+        .arg("--five_base_consensus")
+        .arg("-1")
+        .arg(&read1)
+        .arg("-2")
+        .arg(&read2)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .assert()
+        .success();
+
+    let bam = outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam");
+    let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
+    let (mut n, mut z_at_tm, mut dot_at_tv) = (0usize, false, false);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        let inner = rec.inner();
+        n += 1;
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
+        let read_at = |gpos: usize| -> Option<usize> {
+            let (mut ri, mut rp) = (0usize, ref_start);
+            for op in inner.cigar().as_ref().iter() {
+                use noodles_sam::alignment::record::cigar::op::Kind::*;
+                let len = op.len();
+                match op.kind() {
+                    Match | SequenceMatch | SequenceMismatch => {
+                        for _ in 0..len {
+                            if rp == gpos {
+                                return Some(ri);
+                            }
+                            ri += 1;
+                            rp += 1;
+                        }
+                    }
+                    Insertion | SoftClip => ri += len,
+                    Deletion | Skip => rp += len,
+                    _ => {}
+                }
+            }
+            None
+        };
+        if let Some(ri) = read_at(tm)
+            && xm[ri] == b'Z'
+        {
+            z_at_tm = true;
+        }
+        if let Some(ri) = read_at(tv) {
+            if xm[ri] == b'.' {
+                dot_at_tv = true;
+            }
+            assert_ne!(
+                xm[ri], b'Z',
+                "PE consensus: C>T variant must not be methylated"
+            );
+        }
+    }
+    assert_eq!(n, 2, "PE: one consensus read per duplex family");
+    assert!(z_at_tm, "PE consensus: the 5mC CpG must be Z");
+    assert!(dot_at_tv, "PE consensus: the C>T CpG must be masked ('.')");
+}
+
 /// REGRESSION (real-data bug): real Illumina FastQ headers carry a comment after a
 /// space, e.g. `@LH00757:...:ANCGTTG+NGGTGTA 1:N:0:GTAACTGAAG+TCNCGACTCC`. The aligner
 /// truncates the SAM QNAME at the first whitespace, so the 5-Base lockstep must derive
