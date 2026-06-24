@@ -1019,6 +1019,16 @@ fn route_se_decision(
                 ext.read_conversion,
                 counters,
             );
+            let barcode_umi = config.barcode_umi_tags();
+            if barcode_umi.enabled() {
+                let (bc, umi) = crate::output::parse_barcode_umi(identifier);
+                if barcode_umi.add_barcode && bc.is_empty() {
+                    counters.add_barcode_missing += 1;
+                }
+                if barcode_umi.add_umi && umi.is_empty() {
+                    counters.add_umi_missing += 1;
+                }
+            }
             let record = single_end_sam_output(
                 identifier,
                 seq_uc,
@@ -1028,6 +1038,7 @@ fn route_se_decision(
                 &methcall,
                 refid,
                 config.phred64,
+                barcode_umi,
             )?;
             write_record(&mut sinks.bam, &record)?;
         }
@@ -3058,6 +3069,16 @@ fn route_pe_decision(
                 ext.read_conversion_2,
                 counters,
             );
+            let barcode_umi = config.barcode_umi_tags();
+            if barcode_umi.enabled() {
+                let (bc, umi) = crate::output::parse_barcode_umi(identifier);
+                if barcode_umi.add_barcode && bc.is_empty() {
+                    counters.add_barcode_missing += 1;
+                }
+                if barcode_umi.add_umi && umi.is_empty() {
+                    counters.add_umi_missing += 1;
+                }
+            }
             let (rec1, rec2) = paired_end_sam_output(
                 identifier,
                 seq1_uc,
@@ -3071,6 +3092,7 @@ fn route_pe_decision(
                 refid,
                 config.phred64,
                 dovetail,
+                barcode_umi,
             )?;
             write_record(&mut sinks.bam, &rec1)?;
             write_record(&mut sinks.bam, &rec2)?;
@@ -4060,8 +4082,30 @@ fn write_pe_aux(
     Ok(())
 }
 
+/// Append the per-run never-silent notice for `--add_barcode`/`--add_umi` reads
+/// whose QNAME lacked the expected field (tag omitted). A non-zero count implies
+/// the flag was set, so no config is needed. STDERR only — never the byte-gated
+/// report. Emitted from the end-of-run mapping summary, which every driver
+/// (single-core SE/PE and the `--multicore` merge) funnels through.
+fn push_barcode_umi_notice(s: &mut String, c: &Counters, unit: &str) {
+    if c.add_barcode_missing > 0 {
+        s.push_str(&format!(
+            "\nWARNING: --add_barcode set, but {} {unit} had an empty barcode field \
+             (QNAME field 0) — CB tag omitted",
+            c.add_barcode_missing
+        ));
+    }
+    if c.add_umi_missing > 0 {
+        s.push_str(&format!(
+            "\nWARNING: --add_umi set, but {} {unit} had an empty UMI field \
+             (QNAME field 1) — UR tag omitted",
+            c.add_umi_missing
+        ));
+    }
+}
+
 fn counters_summary_pe(read_1: &str, read_2: &str, c: &Counters) -> String {
-    format!(
+    let mut s = format!(
         "Mapping summary for {read_1} / {read_2}:\n\
            sequence pairs analysed:  {}\n\
            unique best alignments:   {}\n\
@@ -4080,11 +4124,13 @@ fn counters_summary_pe(read_1: &str, read_2: &str, c: &Counters) -> String {
         c.ga_ct_ga_count,
         c.ga_ct_ct_count,
         c.ct_ga_ga_count,
-    )
+    );
+    push_barcode_umi_notice(&mut s, c, "read pair(s)");
+    s
 }
 
 fn counters_summary(read_file: &str, c: &Counters) -> String {
-    format!(
+    let mut s = format!(
         "Mapping summary for {read_file}:\n\
            sequences analysed:       {}\n\
            unique best alignments:   {}\n\
@@ -4104,7 +4150,9 @@ fn counters_summary(read_file: &str, c: &Counters) -> String {
         c.ct_ga_count,
         c.ga_ct_count,
         c.ga_ga_count,
-    )
+    );
+    push_barcode_umi_notice(&mut s, c, "read(s)");
+    s
 }
 
 // ===========================================================================
@@ -4744,6 +4792,23 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn barcode_umi_notice_emitted_when_fields_missing() {
+        let mut c = Counters::default();
+        // nothing missing → no warning in the end-of-run summary.
+        assert!(!counters_summary("r.fq", &c).contains("WARNING:"));
+        // umi missing only → exactly the UMI warning (count surfaced).
+        c.add_umi_missing = 3;
+        let s = counters_summary("r.fq", &c);
+        assert!(s.contains("--add_umi set, but 3 read(s) had an empty UMI field"));
+        assert!(!s.contains("--add_barcode set"));
+        // both missing, PE summary path → both warning lines present, "read pair(s)" noun.
+        c.add_barcode_missing = 1;
+        let s = counters_summary_pe("r1.fq", "r2.fq", &c);
+        assert!(s.contains("--add_barcode set, but 1 read pair(s)"));
+        assert!(s.contains("--add_umi set, but 3 read pair(s)"));
+    }
 
     #[test]
     fn strip_conv_tag_ct_ga_and_fail_loud() {

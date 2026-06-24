@@ -217,6 +217,11 @@ pub struct RunConfig {
     /// `<name>_bismark_<aligner>.ambig.bam`. Phase 6. For HISAT2 `--multicore N` (the
     /// `-p N` remap) this stays the single-instance path, so `--ambig_bam` works.
     pub ambig_bam: bool,
+    /// `--add_barcode`: write `CB:Z:<barcode>` parsed from QNAME field 0
+    /// (`<barcode>_<umi>[_<alt>]_<name>`, SeekSoul single-cell format).
+    pub add_barcode: bool,
+    /// `--add_umi`: write `UR:Z:<umi>` parsed from QNAME field 1.
+    pub add_umi: bool,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -430,6 +435,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         unmapped: cli.unmapped,
         ambiguous: cli.ambiguous,
         ambig_bam: cli.ambig_bam,
+        add_barcode: cli.add_barcode,
+        add_umi: cli.add_umi,
         output,
         read_processing,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
@@ -953,6 +960,14 @@ fn resolve_output(cli: &Cli) -> Result<OutputTarget> {
 }
 
 impl RunConfig {
+    /// The cell-barcode/UMI tag toggles handed to the SAM record builders.
+    pub fn barcode_umi_tags(&self) -> crate::output::BarcodeUmiTags {
+        crate::output::BarcodeUmiTags {
+            add_barcode: self.add_barcode,
+            add_umi: self.add_umi,
+        }
+    }
+
     /// A human-readable resolved-config summary (STDERR; not byte-gated).
     pub fn summary(&self) -> String {
         let library = match self.library {
