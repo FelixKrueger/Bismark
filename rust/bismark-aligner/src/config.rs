@@ -192,6 +192,9 @@ pub struct RunConfig {
     /// #787: min Phred base quality for a 5-Base methylation call (0 = off; mask low-Q
     /// read bases as no-call). Requires `five_base`.
     pub five_base_baseq: u8,
+    /// #787: run the post-alignment DUPLEX-consensus family pass + report (per-molecule
+    /// reconciliation). SE only this PR. Requires `five_base` (guarded at resolve()).
+    pub five_base_duplex: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -323,6 +326,24 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         return Err(AlignerError::Validation(
             "--five_base_baseq requires --illumina_5base (it masks low-quality bases in the \
              5-Base methylation call)."
+                .into(),
+        ));
+    }
+    // #787: the duplex-consensus pass groups two strands of one molecule over a 5-Base
+    // BAM — meaningless without a 5-Base run.
+    if cli.five_base_duplex && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_duplex requires --illumina_5base: it pairs the two strands of each \
+             molecule over a 5-Base run's output."
+                .into(),
+        ));
+    }
+    // #787: per-base duplex reconciliation needs both fragment ends, which SE cannot
+    // give from a single read. PE duplex is a documented follow-up.
+    if cli.five_base_duplex && cli.mates2.is_some() {
+        return Err(AlignerError::Validation(
+            "--five_base_duplex is single-end only in this version; paired-end duplex \
+             reconciliation is a follow-up (#787)."
                 .into(),
         ));
     }
@@ -498,6 +519,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         five_base_index: cli.five_base_index.clone(),
         five_base_umi_len: cli.five_base_umi_len,
         five_base_baseq: cli.five_base_baseq,
+        five_base_duplex: cli.five_base_duplex,
         library,
         layout,
         format,
@@ -1376,6 +1398,34 @@ mod tests {
         assert!(
             cli_from(&["--illumina_5base", "--five_base_deconvolution"]).five_base_deconvolution
         );
+    }
+
+    /// `--five_base_duplex` requires `--illumina_5base`, is SE-only (rejects `-2`), and
+    /// accepts its `--five_base_duplex_consensus` alias.
+    #[test]
+    fn five_base_duplex_guards() {
+        let err = resolve(&cli_from(&["--five_base_duplex"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_duplex requires --illumina_5base"),
+            "got: {err}"
+        );
+        // PE + duplex → rejected (SE only this version).
+        let err = resolve(
+            &cli_from(&[
+                "--illumina_5base",
+                "--five_base_duplex",
+                "-1",
+                "r1.fq",
+                "-2",
+                "r2.fq",
+            ]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("single-end only"), "got: {err}");
+        // alias parses to the same flag.
+        assert!(cli_from(&["--illumina_5base", "--five_base_duplex_consensus"]).five_base_duplex);
     }
 
     /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/

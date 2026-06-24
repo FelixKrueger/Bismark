@@ -218,6 +218,17 @@ impl BismarkRecord {
         self.umi = umi;
     }
 
+    /// Write a raw-UMI `RX:Z:` aux tag onto the wrapped record (SAM standard).
+    /// Used by the 5-Base path (`--five_base_umi_len > 0`) so the UMI survives to
+    /// the duplex-consensus pass that re-reads the BAM. Overwrites any existing `RX`.
+    pub fn set_rx(&mut self, umi: &[u8]) {
+        use noodles_sam::alignment::record::data::field::Tag;
+        use noodles_sam::alignment::record_buf::data::field::Value;
+        self.inner
+            .data_mut()
+            .insert(Tag::from(*b"RX"), Value::String(umi.to_vec().into()));
+    }
+
     /// Iterate XM calls oriented by the **5' end of the sequenced read**.
     ///
     /// For each XM byte that aligns to a reference position (skipping

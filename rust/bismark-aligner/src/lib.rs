@@ -33,6 +33,7 @@ pub mod convert;
 pub mod discovery;
 pub mod error;
 pub mod five_base_deconv;
+pub mod five_base_duplex;
 pub mod genome;
 pub mod inprocess;
 pub mod mapq;
@@ -863,6 +864,17 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
             );
             run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
         }
+
+        // #787 optional duplex-consensus family pass over the just-written BAM.
+        if config.five_base_duplex {
+            let duplex_path = derive_output_path(
+                read_file,
+                config,
+                &format!("_bismark_{tok}.5base_duplex.txt"),
+                ".5base_duplex.txt",
+            );
+            run_five_base_duplex(&genome, &bam_path, &duplex_path, config.five_base_umi_len)?;
+        }
     }
 
     // Delete the concatenated-reference temp, if one was written (multi-FASTA genome).
@@ -1015,7 +1027,7 @@ fn five_base_align_and_call(
             }
         }
         counters.sequences_count += 1;
-        if let Some(record) = five_base_emit_record(
+        if let Some(mut record) = five_base_emit_record(
             &rec,
             &identifier,
             &seq_uc,
@@ -1026,6 +1038,12 @@ fn five_base_align_and_call(
             config.five_base_baseq,
             counters,
         )? {
+            // #787 duplex: carry the raw UMI to the BAM (RX:Z:) so the duplex pass
+            // that re-reads the BAM can key families by it. Only when UMIs are in use.
+            if umi_len > 0 {
+                let umi: Vec<u8> = seq_uc.iter().take(umi_len).copied().collect();
+                record.set_rx(&umi);
+            }
             write_record(&mut sinks.bam, &record)?;
         } else if rec.flag & 0x4 != 0 {
             // unmapped → optional --unmapped FastQ (mirrors Decision::NoAlignment).
@@ -1337,7 +1355,7 @@ fn five_base_align_and_call_pe(
             }
         }
         counters.sequences_count += 1;
-        if let Some((out1, out2)) = five_base_emit_pe_record(
+        if let Some((mut out1, mut out2)) = five_base_emit_pe_record(
             rec1,
             rec2,
             &identifier,
@@ -1352,6 +1370,11 @@ fn five_base_align_and_call_pe(
             config.five_base_baseq,
             counters,
         )? {
+            // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
+            if umi_len > 0 {
+                out1.set_rx(&seq1_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
+                out2.set_rx(&seq2_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
+            }
             write_record(&mut sinks.bam, &out1)?;
             write_record(&mut sinks.bam, &out2)?;
         }
@@ -1544,6 +1567,144 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
         report_path.display()
     );
     Ok(())
+}
+
+/// #787 DUPLEX-consensus pass: re-read the 5-Base BAM, group reads into duplex families
+/// (same genomic span + canonical swap-collapsed UMI, one OT + one OB member), and
+/// reconcile the 5mC->T signal per molecule into `<out>.5base_duplex.txt`. The UMI is
+/// read from the `RX:Z:` tag the emit path wrote when `--five_base_umi_len > 0`; without
+/// it, families key on span alone (a never-silent collision notice fires).
+fn run_five_base_duplex(
+    genome: &Genome,
+    bam_path: &Path,
+    report_path: &Path,
+    umi_len: usize,
+) -> Result<()> {
+    use crate::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, UmiSwap, canonical_umi};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+        .map_err(|e| AlignerError::Validation(format!("duplex: open BAM: {e}")))?;
+    let mut fams = DuplexFamilies::default();
+    let mut missing_umi = false;
+
+    for rec in reader.records() {
+        let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex: {e}")))?;
+        let inner = rec.inner();
+        if u16::from(inner.flags()) & 0x4 != 0 {
+            continue; // unmapped
+        }
+        let xr = bismark_io::tags::xr(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("duplex: XR: {e}")))?;
+        let xg = bismark_io::tags::xg(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("duplex: XG: {e}")))?;
+        let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+            .map_err(|e| AlignerError::Validation(format!("duplex: strand: {e}")))?;
+        let is_ot = strand == bismark_io::BismarkStrand::OT;
+        let is_ob = strand == bismark_io::BismarkStrand::OB;
+        if !is_ot && !is_ob {
+            continue; // directional 5-Base only ever yields OT/OB
+        }
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            continue;
+        };
+        let Some(chrom) = genome.sq_order.get(ref_id) else {
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else { continue };
+        let seq = inner.sequence().as_ref();
+        let Some(start) = inner.alignment_start() else {
+            continue;
+        };
+        let ref_start = usize::from(start) - 1; // 1-based POS → 0-based
+
+        // Canonical UMI from the RX tag (swap-collapsed so both members hash equal).
+        let canon_umi: Vec<u8> = if umi_len > 0 {
+            match bismark_io::tags::rx(inner.data()) {
+                Ok(Some(raw)) => canonical_umi(raw, UmiSwap::RevComp),
+                _ => {
+                    missing_umi = true;
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // One CIGAR walk: collect CpG-cytosine observations AND the reference end.
+        let (mut ri, mut rp) = (0usize, ref_start);
+        let mut obs: Vec<SiteObs> = Vec::new();
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            match op.kind() {
+                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                    for _ in 0..len {
+                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
+                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: true,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'T'),
+                                });
+                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: false,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'A'),
+                                });
+                            }
+                        }
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Kind::Insertion | Kind::SoftClip => ri += len,
+                Kind::Deletion | Kind::Skip => rp += len,
+                _ => {}
+            }
+        }
+        let key = DuplexKey {
+            chrom: chrom.clone(),
+            start: ref_start as u32,
+            end: rp as u32,
+            canon_umi,
+        };
+        fams.add_read(key, is_ot, obs);
+    }
+
+    if umi_len == 0 || missing_umi {
+        eprintln!(
+            "Note: --five_base_duplex without per-read UMIs (use --five_base_umi_len) keys \
+             families on genomic span alone; reads from DIFFERENT molecules sharing a span \
+             may be merged into one family."
+        );
+    }
+
+    let mut w = BufWriter::new(File::create(report_path)?);
+    let s = w_duplex_report(&mut w, &fams)?;
+    w.flush()?;
+    eprintln!(
+        "5-Base duplex: {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
+         site(s), {} variant site(s), {} undetermined. Report: {}",
+        s.total_families,
+        s.duplex_paired,
+        s.singletons,
+        s.methylation_sites,
+        s.variant_sites,
+        s.undetermined_sites,
+        report_path.display()
+    );
+    Ok(())
+}
+
+/// Thin wrapper so the duplex report uses the module's default thresholds.
+fn w_duplex_report<W: std::io::Write>(
+    w: &mut W,
+    fams: &crate::five_base_duplex::DuplexFamilies,
+) -> std::io::Result<crate::five_base_duplex::DuplexSummary> {
+    use crate::five_base_deconv::DEFAULT_VARIANT_OPP_FRAC;
+    use crate::five_base_duplex::DUPLEX_MIN_OPP_DEPTH;
+    fams.write_report(w, DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)
 }
 
 /// Open a (optionally gzipped) reader.

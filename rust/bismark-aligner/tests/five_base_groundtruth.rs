@@ -332,6 +332,124 @@ fn five_base_deconvolution_groundtruth_variant_vs_methylation() {
     );
 }
 
+/// THE DUPLEX GATE: two molecules, each sequenced as one OT (forward) read + one OB
+/// (reverse) read carrying the SWAPPED (reverse-complement) UMI of the nonrandom-duplex
+/// pair, both prefixed with an inline UMI. Molecule A is a 5mC CpG (OT shows T, OB
+/// intact C); molecule B is a homozygous C>T variant CpG (both strands show T). After
+/// `--illumina_5base --five_base_umi_len 8 --five_base_duplex`, the duplex report must
+/// pair each molecule's two strands into ONE family and reconcile per molecule: the 5mC
+/// family has a methylated call; the variant family flags a variant site. Proves the
+/// family pairing (span + canonical swapped UMI) and per-molecule reconciliation run
+/// through the whole real-minimap2 pipeline.
+#[test]
+fn five_base_duplex_groundtruth_pairs_strands_and_reconciles() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (duplex ground-truth gate)");
+        return;
+    }
+    let reference = gen_reference(450);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    let pick = |around: usize| -> usize {
+        *cpgs
+            .iter()
+            .filter(|&&c| c >= 60 && c + 60 < reference.len())
+            .min_by_key(|&&c| c.abs_diff(around))
+            .expect("a usable CpG near the target")
+    };
+    let tm = pick(150); // methylation molecule's target CpG
+    let tv = pick(330); // variant molecule's target CpG
+    assert_ne!(tm, tv);
+
+    let half = 50usize;
+    let window = |t: usize, convert_target: bool| -> Vec<u8> {
+        let mut w = reference[t - half..t + half].to_vec();
+        if convert_target {
+            w[half] = b'T';
+        }
+        w
+    };
+    let mut fq = Vec::new();
+    let mut emit = |name: &str, umi: &[u8], core: &[u8]| {
+        let mut read = umi.to_vec();
+        read.extend_from_slice(core);
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(&read);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; read.len()]);
+        fq.push(b'\n');
+    };
+    // Distinct top-strand UMIs per molecule; each molecule's OB carries the revcomp UMI.
+    let umi_m = b"AACCGGTT";
+    let umi_v = b"TTGGCCAA";
+    // Molecule A — 5mC: OT window has C->T at target; OB strand intact (revcomp of the
+    // unconverted window). UMIs are swapped (OB = revcomp(OT UMI)).
+    emit("m_ot", umi_m, &window(tm, true));
+    emit("m_ob", &revcomp(umi_m), &revcomp(&window(tm, false)));
+    // Molecule B — homozygous C>T variant: BOTH strands carry T at the target.
+    emit("v_ot", umi_v, &window(tv, true));
+    emit("v_ob", &revcomp(umi_v), &revcomp(&window(tv, true)));
+
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, &fq).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_len")
+        .arg("8")
+        .arg("--five_base_duplex")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_bismark_mm2.5base_duplex.txt")).unwrap();
+    // Parse the per-family rows (skip `#` comments). Columns:
+    // chrom start end umi members variant methylation undetermined
+    let families: Vec<Vec<String>> = report
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| l.split('\t').map(str::to_string).collect())
+        .collect();
+    // At least two duplex-paired families, each with a "1+1" member count (one OT, one OB).
+    let paired: Vec<&Vec<String>> = families
+        .iter()
+        .filter(|f| f.len() >= 8 && f[4] == "1+1")
+        .collect();
+    assert!(
+        paired.len() >= 2,
+        "expected >=2 duplex-paired families (one per molecule)\nreport:\n{report}"
+    );
+    let variant_sites: u32 = paired.iter().map(|f| f[5].parse::<u32>().unwrap()).sum();
+    let methyl_sites: u32 = paired.iter().map(|f| f[6].parse::<u32>().unwrap()).sum();
+    assert!(
+        variant_sites >= 1,
+        "the homozygous C>T molecule must contribute a variant site\nreport:\n{report}"
+    );
+    assert!(
+        methyl_sites >= 1,
+        "the 5mC molecule must contribute a methylation site\nreport:\n{report}"
+    );
+    // Exactly one family carries the variant (the other molecule is intact at its target).
+    let fams_with_variant = paired
+        .iter()
+        .filter(|f| f[5].parse::<u32>().unwrap() >= 1)
+        .count();
+    assert_eq!(
+        fams_with_variant, 1,
+        "only the variant molecule should flag a variant\nreport:\n{report}"
+    );
+}
+
 fn revcomp(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()

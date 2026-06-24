@@ -120,6 +120,20 @@ pub struct Cli {
     /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
+    /// `[#787]` After a `--illumina_5base` run, group the two strands of each original
+    /// molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and reconcile the
+    /// 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`. A family is an OT
+    /// member plus an OB member sharing a genomic span and a canonical (swap-collapsed)
+    /// UMI; use `--five_base_umi_len` for the UMI key (without it, families key on span
+    /// alone and a never-silent notice warns of multi-molecule collisions). Combined
+    /// with `--five_base_deconvolution`, the variant-vs-methylation call is computed per
+    /// family rather than over a population pileup. SE only (PE is a follow-up). Requires
+    /// `--illumina_5base`.
+    #[arg(
+        long = "five_base_duplex",
+        visible_alias = "five_base_duplex_consensus"
+    )]
+    pub five_base_duplex: bool,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,
