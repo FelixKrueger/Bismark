@@ -409,7 +409,7 @@ impl Drop for AlignerStream {
 /// with [`AlignerStream`] (the spill writes only records, so in practice there are
 /// none, but a header would be tolerated).
 pub struct FileSamStream {
-    reader: BufReader<File>,
+    reader: BufReader<noodles_bgzf::io::Reader<File>>,
     current: Option<SamRecord>,
     line_buf: String,
 }
@@ -425,7 +425,7 @@ impl FileSamStream {
                 path.display()
             ))
         })?;
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::new(noodles_bgzf::io::Reader::new(file)); // BGZF spill (issue #1019)
         let mut line = String::new();
         let current = loop {
             line.clear();
@@ -695,7 +695,7 @@ impl Drop for PairedAlignerStream {
 /// **lone trailing line** (odd line count → no second mate) yields `None`, mirroring
 /// [`PairedAlignerStream::advance_pair`] (Perl 6491), NOT an error.
 pub struct PairedFileSamStream {
-    reader: BufReader<File>,
+    reader: BufReader<noodles_bgzf::io::Reader<File>>,
     current: Option<SamPair>,
 }
 
@@ -710,7 +710,7 @@ impl PairedFileSamStream {
                 path.display()
             ))
         })?;
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::new(noodles_bgzf::io::Reader::new(file)); // BGZF spill (issue #1019)
         // Skip `@` header lines; the first non-`@` line is the first record of the
         // first pair (cf. `PairedAlignerStream::spawn`).
         let mut line1 = String::new();
@@ -933,7 +933,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("ct_pass.sam");
         let miss = "r2\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
-        std::fs::write(&p, format!("{MAPPED}\n{miss}\n")).unwrap();
+        write_bgzf(&p, format!("{MAPPED}\n{miss}\n").as_bytes());
 
         let mut s = FileSamStream::open(&p).unwrap();
         assert_eq!(s.current().unwrap().qname, "r1");
@@ -952,15 +952,15 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
 
         let empty = dir.path().join("empty.sam");
-        std::fs::write(&empty, b"").unwrap();
+        write_bgzf(&empty, b"");
         assert!(FileSamStream::open(&empty).unwrap().current().is_none());
 
         let hdr = dir.path().join("hdronly.sam");
-        std::fs::write(&hdr, b"@HD\tVN:1.0\n").unwrap();
+        write_bgzf(&hdr, b"@HD\tVN:1.0\n");
         assert!(FileSamStream::open(&hdr).unwrap().current().is_none());
 
         let mix = dir.path().join("mix.sam");
-        std::fs::write(&mix, format!("@HD\tVN:1.0\n{MAPPED}\n")).unwrap();
+        write_bgzf(&mix, format!("@HD\tVN:1.0\n{MAPPED}\n").as_bytes());
         assert_eq!(
             FileSamStream::open(&mix).unwrap().current().unwrap().qname,
             "r1"
@@ -1523,17 +1523,31 @@ mod tests {
 
     // ---- PairedFileSamStream (Phase 6 — the spilled PE pass replay) ---------
 
-    /// Write SAM `lines` (each newline-terminated) to a fresh temp file and return
-    /// it (the TempDir keeps the file alive for the test's lifetime).
+    /// Write `content` to `path` as a BGZF stream — the spill is BGZF since issue #1019,
+    /// so reader fixtures must be BGZF too. Mirrors the production writer
+    /// (`MultithreadedWriter` + `finish()`; 1 worker is plenty for tests).
+    fn write_bgzf(path: &std::path::Path, content: &[u8]) {
+        use std::io::Write as _;
+        let workers = std::num::NonZeroUsize::new(1).unwrap();
+        let mut w = noodles_bgzf::io::MultithreadedWriter::with_worker_count(
+            workers,
+            std::fs::File::create(path).unwrap(),
+        );
+        w.write_all(content).unwrap();
+        w.finish().unwrap();
+    }
+
+    /// Write SAM `lines` (each newline-terminated) to a fresh temp file as a BGZF spill
+    /// and return it (the TempDir keeps the file alive for the test's lifetime).
     fn write_spill(lines: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("ct_pass.sam");
+        let path = dir.path().join("ct_pass.sam.gz");
         let mut body = String::new();
         for l in lines {
             body.push_str(l);
             body.push('\n');
         }
-        std::fs::write(&path, body).unwrap();
+        write_bgzf(&path, body.as_bytes());
         (dir, path)
     }
 

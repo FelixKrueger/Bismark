@@ -130,6 +130,7 @@ dependencies = [
  "flate2",
  "mimalloc",
  "noodles-bam",
+ "noodles-bgzf 0.47.0",
  "noodles-core 0.20.0",
  "noodles-sam",
  "predicates",
