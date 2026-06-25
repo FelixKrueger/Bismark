@@ -49,6 +49,7 @@ pub mod options;
 pub mod output;
 pub mod parallel;
 pub mod report;
+pub mod ubam;
 
 use std::collections::HashMap;
 use std::fs::File;
