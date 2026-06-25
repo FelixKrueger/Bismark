@@ -34,7 +34,7 @@ After v1.0 of the Rust port, the `_rs` suffix is dropped — the Rust binaries b
 
 ## Installing
 
-<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.11` / `beta.11` literal in this
+<!-- Maintainer: on a suite-version bump, update every `2.0.0-beta.12` / `beta.12` literal in this
      section (the pinned `docker pull` tag + the `cargo install --tag`), `suite_tag` in `rust/justfile`,
      AND the matching section in the docs site (`docs/src/content/docs/installation.md`).
      The `--branch` command and the prebuilt/container `:beta` paths track latest automatically. -->
@@ -51,7 +51,7 @@ A multi-arch image is published to the GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
-docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.11  # pinned
+docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.12  # pinned
 ```
 
 Inside the container the tools are *additionally* exposed under their **canonical** names (`bismark`, `deduplicate_bismark`, …), so it is a drop-in for pipelines such as nf-core/methylseq.
@@ -78,16 +78,16 @@ Requires a Rust toolchain (see Prerequisites below). This installs **all 12** bi
 
 ```bash
 cargo install --git https://github.com/FelixKrueger/Bismark \
-  --tag bismark-rust-v2.0.0-beta.11 --locked \
+  --tag bismark-rust-v2.0.0-beta.12 --locked \
   bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
   bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
   bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
   bismark-report bismark-summary
 ```
 
-For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.11` for `--branch rust/iron-chancellor`.
+For the latest development build instead of a pinned release, swap `--tag bismark-rust-v2.0.0-beta.12` for `--branch rust/iron-chancellor`.
 
-> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.11`), or add `--force` to reinstall in place.
+> **Updating.** Re-run the **`--branch`** command and cargo picks up the newest commit automatically (it prints `Replacing …`). **Re-running the same `--tag` is a no-op** — cargo reports the package is already installed. To move to a newer release, bump the `--tag` to the new version (e.g. `…beta.12`), or add `--force` to reinstall in place.
 
 Compiling 12 crates from source is a non-trivial one-time build; cargo does not fully share dependency compilation across the listed packages.
 
@@ -174,6 +174,7 @@ Versions are the crate manifests on `rust/iron-chancellor` (a release **git tag*
 
 Reverse-chronological log of the main Rust-rewrite shipping events (merges into `rust/iron-chancellor`). One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-06-25** — **`bismark-rust-v2.0.0-beta.12` released** — Rust suite beta carrying everything merged since `…beta.11`. Headline deltas: **single-cell `--add_barcode` / `--add_umi` SAM tags** (`CB:Z:` / `UR:Z:` parsed from the QNAME, #1021 — so SeekGene's `SeekSoulMethyl` can pin a tagged release and drop its v0.25.2 Perl fork; default-off + byte-identical when off), the **BGZF-compressed `--combined_index_sequential` pass-1 spill** (~7× less scratch — ~0.09 KB/pair, ~95 GB worst case for ~1 B pairs — wall-neutral + output byte-identical, #1019/#1022), and the **mimalloc global allocator** fixing `--multicore` allocator contention (macOS ~3.1× on the contended path; **performance-neutral on Linux x86_64**, #1013), plus the refreshed Rust **benchmarks** + new **"Choosing an alignment mode"** docs pages. The intervening `…beta.4`–`…beta.11` tags were incremental version bumps plus the HISAT2 `--local` / `--multicore`, rammap in-process, and combined-index v2.x work already logged below. Multi-arch GHCR image `ghcr.io/felixkrueger/bismark:beta` / `:2.0.0-beta.12` + 3 platform tarballs (all 12 tools). All 12 suite tools remain byte-identical to Perl v0.25.1.
 - **2026-06-24** — `bismark` aligner **opt-in `--add_barcode` / `--add_umi` single-cell SAM tags** (`plans/06242026_umi-barcode-tags/`) — copy a cell barcode and UMI out of the read QNAME (SeekSoul `<barcode>_<umi>[_<alt>]_<name>`, split max-3 → barcode = field 0 / umi = field 1) into 10x-convention tags on `UniqueBest` records: `--add_barcode` → `CB:Z:`, `--add_umi` → `UR:Z:` (consumed by per-cell BAM splitting + `umi_tools dedup --umi-tag UR --paired`). **Both PE mates** tagged; one never-silent STDERR notice per run when a flag is set but its field is empty. **Default (no-flag) output is byte-identical** (early-return before any parse), so the existing Perl-oracle / worker-invariance gates are untouched. **Downstream-correct tags — NOT byte-identity vs the SeekGene fork**; contract verified against the live `altos-labs/SeekSoulMethyl` source. oxy real-data smoke PASS (real GRCh38: directional single-core == `--parallel 2` with both mates tagged; pbat OK; `--ambig_bam` carries 0 tags). Aligner-crate-only; dual code-review APPROVE + plan-manager COMPLETE.
 - **2026-06-19** — `bismark` aligner **v2: in-process rammap `--rammap_inprocess` EXPOSED in release binaries** (`plans/06192026_rammap-release-exposure/`) — the release-exposure follow-up to the parallelization below, unblocked by oxy V6. `release.yml` (the prebuilt-binary build) + the root `Dockerfile` now compile with `--features bismark-aligner/rammap-inprocess`, so the shipped `bismark_rs` exposes a **functional** `--rammap_inprocess`. Previously the flag was **present-but-inert** on the feature-OFF release binaries (accepted, but silently ran the subprocess — the in-process path wasn't compiled in). **`--rammap` alone still defaults to the subprocess; `--rammap_inprocess` is the explicit opt-in**, and the default / local / CI builds stay feature-OFF. The feature lives only on `bismark-aligner`, so the build still produces all 14 workspace members — only `bismark_rs` is recompiled with it, leaving the **other 11 shipped binaries byte-unaffected**; the in-process path (`inprocess.rs` / merge / XM / output) is reached only via the opt-in, leaving the Bowtie 2 / HISAT2 / minimap2 / subprocess-rammap paths byte-frozen. Behaviourally `--rammap_inprocess` is **concordant — NOT byte-identical — to the subprocess** (≤0.022 %/cell on borderline long reads), **leaner + faster** (oxy V6: 1.8× wall, −54 % RAM), and **SE + FastQ only** (a FastA `--rammap_inprocess` run falls back to the subprocess with a never-silent notice). Gated by the release dry-run (feature-ON build on all 3 binary targets + both Docker arches) + an oxy functional check (the `in-process rammap-core backend` run notice). Plan: `plans/06192026_rammap-release-exposure/PLAN.md`.
 - **2026-06-19** — `bismark` aligner **v2: in-process rammap `--rammap_inprocess` PARALLELIZED** (#995, `plans/06192026_rammap-inprocess-parallel/`) — the speed half the trade-off below was waiting on. `InProcessAlignerStream` now maps a 2048-read chunk per refill in PARALLEL on a SHARED `Arc<rayon::ThreadPool>` (sized by `--multicore`), buffering in input order + serving through the unchanged `SamStream` `current()`/`advance()` — so the lockstep merge / XM / output stay byte-frozen. `--rammap_inprocess` short-circuits `pipeline()` to the single-process `run_se` (NOT the fork model — that would reload the index per worker); the selection predicate dropped its `multicore` gate (fork-worker safety via the short-circuit + the `aligner == Rammap` conjunct). rammap-core exposes no batch map API (its `parallel` feature is internal), so the parallelism is Bismark-side over the independent + deterministic per-read `map_seq` (spike-confirmed thread-safe). **oxy V6: worker-invariant (`--multicore 1` == `16` byte-identical), RSS flat ~31 GB, 11.4× over serial (1M non-dir 1382 s vs 15702 s), and now BEATS the subprocess on BOTH wall (1382 < 2451 s, 1.8×) and RAM (32.3 < 70.9 GB, −54 %)** — the "threads sharing one in-memory index" payoff, realized. Thread-invariance also proven hermetically via `Aligner::from_seqs` (no oxy). **Release stays feature-OFF** — flipping `release.yml`/Dockerfile to ship `--rammap_inprocess` is the unblocked follow-up. Gate: `plans/06192026_rammap-inprocess-parallel/GATE_V6.md`.
