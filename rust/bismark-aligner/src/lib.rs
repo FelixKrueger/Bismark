@@ -120,7 +120,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // convert→align→merge path runs unchanged. Returns the per-input temp dirs to
     // clean up after the run (the transcode FASTQ is consumed by BOTH the convert
     // step and the methylation-call re-read, so cleanup must follow the pipeline).
-    let ubam_temp_dirs = resolve_ubam_inputs(&mut config)?;
+    let ubam_temp_dirs = resolve_ubam_inputs(&mut config, cli)?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -207,7 +207,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 /// temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
 /// same-basename uBAMs can't collide and a pre-existing temp is never clobbered.
 /// Returns the created subdirs for the caller to clean up after the pipeline.
-fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
+fn resolve_ubam_inputs(config: &mut RunConfig, cli: &cli::Cli) -> Result<Vec<PathBuf>> {
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
@@ -279,6 +279,21 @@ fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
+        // The positional uBAM resolved as SINGLE-END, so `resolve()` built single-end
+        // aligner options. A paired-end run needs the PE Bowtie 2 flags
+        // (`--no-mixed --no-discordant --dovetail --maxins …`); recompute via the SAME
+        // builder with is_paired=true so the options exactly match a native `-1/-2` run.
+        // (Without `--no-mixed`/`--no-discordant`, Bowtie 2 emits half-mapped pairs the
+        // PE merge can't score.)
+        let (opts, gaps) = options::build_aligner_options(
+            cli,
+            config.aligner,
+            config.format,
+            true,
+            config.hisat2_multicore_remap,
+        )?;
+        config.aligner_options = opts;
+        config.gap_penalties = gaps;
     } else {
         // Single-end uBAM(s): transcode each; leave any plain FASTQ entries as-is.
         let mut new_reads = reads.clone();
