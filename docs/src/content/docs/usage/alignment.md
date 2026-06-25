@@ -172,3 +172,23 @@ Figures are a real 10M-read WGBS GRCh38 run (single-end, 16-core budget); the fu
 **Recommended: `--combined_index_sequential`.** It is the only mode that is both **lower memory (~11 GB vs 16 GB, about a third less)** and **faster** than the faithful default, while staying **byte-identical**. Use `--combined_index_single_pass` only when you want the fastest wall time and can accept a non-byte-identical (still ground-truth-validated) result.
 
 **Directional / pbat:** plain `--combined_index` is fastest (one index load — e.g. directional 176 s vs 229 s faithful) but is **not** a memory saving: one large combined index is about the size of the two per-strand indices it replaces.
+
+## Unaligned BAM (uBAM) input (Rust suite beta)
+
+The Rust `bismark` aligner accepts an **unaligned BAM** as read input in addition to FASTQ/FASTA — useful for the increasingly common uBAM raw-read container (ONT/PacBio basecaller output, 10x, archival). It is **auto-detected by the file's BAM magic bytes** (not the extension), so no extra flag is needed:
+
+```bash
+# single-end uBAM
+bismark --genome /data/genomes/GRCh38/ reads.bam
+
+# paired-end: a single name-collated uBAM (both mates) passed positionally —
+# auto-detected as paired and split into R1/R2 automatically
+bismark --genome /data/genomes/GRCh38/ pairs.bam
+```
+
+The reads are extracted (equivalent to `samtools fastq`) and fed into the unchanged bisulfite-convert → align → merge pipeline, so the result is **byte-identical to running Bismark on the corresponding `samtools fastq` output** (validated on real GRCh38 data for single- and paired-end across directional / non-directional / pbat). All library types and aligner backends work; it is purely an input front-end.
+
+Notes:
+- **Paired-end uBAMs must be name-collated** (mates adjacent, as `samtools fastq` requires); a desynchronised pairing fails loudly. Run `samtools collate` first if needed.
+- A paired-end uBAM is passed as **one positional file**, not via `-1`/`-2`; a uBAM supplied through `-1`/`-2` is rejected with guidance.
+- uBAM input is incompatible with `-f`/`--fasta` (BAM carries qualities → FASTQ), and — like FASTQ/FASTA — paired-end is unsupported for the minimap2/rammap backends.

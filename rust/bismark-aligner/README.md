@@ -10,6 +10,8 @@ the `XM`/`XR`/`XG` methylation call, and writes the Bismark BAM + reports.
 
 **Binary:** `bismark_rs`.
 
+**Input formats:** FastQ, FastA, and **unaligned BAM (uBAM)** — a uBAM is auto-detected by its BAM magic bytes (single-end, or a single name-collated paired-end uBAM that is auto-split into mates) and transcoded to a temp FASTQ matching `samtools fastq`, so output is byte-identical to the equivalent FASTQ run. See the [Alignment usage docs](https://felixkrueger.github.io/Bismark/usage/alignment/) for details.
+
 ## Status — built phase by phase
 
 This crate is implemented incrementally against a phased epic
