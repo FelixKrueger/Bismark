@@ -49,7 +49,7 @@ three ways. They differ sharply on memory and disk:
 
 - **`--combined_index_sequential` — recommended.** Runs the two passes one at a time, so it is the
   **fastest** *and* uses the **least RAM** (~11 GB), and it is **byte-identical to the parallel combined
-  run**. Its one cost is scratch disk (see the caution below).
+  run**. Its one cost is a small BGZF-compressed scratch spill (see the note below).
 - **`--combined_index_single_pass`** — just as fast and light, with **no disk spill**, but **not
   decision-equivalent** (a read-name tag perturbs Bowtie 2's RNG, so ~1 read in 10,000 is placed
   differently but equally validly). Use it when disk is tight and that tiny non-equivalence is acceptable.
@@ -58,13 +58,13 @@ three ways. They differ sharply on memory and disk:
   to prefer the others.
 - **standard (4 instances)** — the only **byte-identical-to-Perl** non-directional option.
 
-:::caution[`--combined_index_sequential` needs scratch disk that scales with your data]
+:::note[`--combined_index_sequential` uses a small BGZF-compressed scratch spill]
 Sequential spills its first pass to a temporary file in `--temp_dir`, then replays it against the second
-pass. Today that spill is **uncompressed SAM — about 0.67 KB per read pair** (and it grows with read
-length), so it runs to order **hundreds of GB for large WGBS, approaching ~1 TB for the largest
-paired-end runs**. Point `--temp_dir` at a filesystem with adequate fast scratch. If you cannot, use
-`--combined_index_single_pass` (no spill) or the standard index instead. *(A planned enhancement to
-BGZF-compress the spill would cut it about 7×.)*
+pass. The spill is **BGZF-compressed — about 0.09 KB per read pair**, roughly **7× smaller than the raw
+SAM**, so even the largest paired-end runs stay modest: on the order of **~95 GB for ~1 billion pairs**.
+Any filesystem with that much fast scratch is fine — just point `--temp_dir` at it. If scratch is
+genuinely tight, `--combined_index_single_pass` (no spill) and the standard index remain spill-free
+alternatives.
 :::
 
 ## Correctness / concordance
