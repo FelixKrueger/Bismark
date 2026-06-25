@@ -1897,14 +1897,24 @@ fn select_and_route_se_nondir(
 /// live stream would, preserving the per-read lockstep `drive_merge_combined_nondir`
 /// relies on. Generic over [`SamStream`] so it is unit-testable with a canned stream.
 fn spill_stream_to_file<S: SamStream>(stream: &mut S, path: &Path) -> Result<u64> {
-    let mut w = BufWriter::new(File::create(path)?);
+    // BGZF-compressed spill (issue #1019): ~7x less scratch than raw SAM at ~0 wall cost
+    // (parallel encode hides behind pass-1 alignment; the decompressed line stream is
+    // byte-identical to the prior raw spill, so the FileSamStream replay + output are
+    // unchanged). 4 encoder workers far exceed the pass-1 SAM production rate (measured),
+    // so they never lag or contend with Bowtie 2.
+    let workers = std::num::NonZeroUsize::new(4).expect("nonzero BGZF worker count");
+    let mut w =
+        noodles_bgzf::io::MultithreadedWriter::with_worker_count(workers, File::create(path)?);
     let mut n: u64 = 0;
     while let Some(r) = stream.current() {
+        // writeln! => write_fmt => write_all (writes the whole line; NOT a bare partial .write()).
         writeln!(w, "{}", r.raw_line)?;
         n += 1;
         stream.advance()?;
     }
-    w.flush()?;
+    // finish() writes the BGZF EOF block + flushes; state then transitions to `Done`, so the
+    // subsequent Drop is a no-op (noodles-bgzf, unlike gzp, never panics in Drop).
+    w.finish()?;
     Ok(n)
 }
 
@@ -1918,15 +1928,19 @@ fn spill_stream_to_file<S: SamStream>(stream: &mut S, path: &Path) -> Result<u64
 /// on-disk line order, preserving the per-pair lockstep `drive_merge_combined_pe_nondir`
 /// relies on. Generic over [`PairedSamStream`] so it is unit-testable with a canned stream.
 fn spill_pe_stream_to_file<S: PairedSamStream>(stream: &mut S, path: &Path) -> Result<u64> {
-    let mut w = BufWriter::new(File::create(path)?);
+    // BGZF-compressed spill (issue #1019) — see `spill_stream_to_file` for the rationale.
+    let workers = std::num::NonZeroUsize::new(4).expect("nonzero BGZF worker count");
+    let mut w =
+        noodles_bgzf::io::MultithreadedWriter::with_worker_count(workers, File::create(path)?);
     let mut n: u64 = 0;
     while let Some(p) = stream.current_pair() {
+        // writeln! => write_fmt => write_all (NOT a bare partial .write()).
         writeln!(w, "{}", p.read1.raw_line)?;
         writeln!(w, "{}", p.read2.raw_line)?;
         n += 1;
         stream.advance_pair()?;
     }
-    w.flush()?;
+    w.finish()?;
     Ok(n)
 }
 
@@ -2077,7 +2091,7 @@ fn process_se_chunk_combined_nondir_sequential(
     // temp_dir — reusing its path sidesteps the empty default `temp_dir`).
     let mut spill_path = converted[0].path.clone();
     let mut spill_name = spill_path.file_name().unwrap_or_default().to_os_string();
-    spill_name.push(".ct_pass.sam");
+    spill_name.push(".ct_pass.sam.gz"); // BGZF-compressed (issue #1019)
     spill_path.set_file_name(spill_name);
 
     // ---- PASS 1 (C→T → OT/OB) ------------------------------------------------
@@ -4341,7 +4355,7 @@ fn process_pe_chunk_combined_nondir_sequential(
     // temp_dir — reusing its path sidesteps the empty default `temp_dir`).
     let mut spill_path = r1_ct.path.clone();
     let mut spill_name = spill_path.file_name().unwrap_or_default().to_os_string();
-    spill_name.push(".ct_pass.sam");
+    spill_name.push(".ct_pass.sam.gz"); // BGZF-compressed (issue #1019)
     spill_path.set_file_name(spill_name);
 
     // ---- PASS 1 (C→T reads → OT/OB) -----------------------------------------
@@ -4982,6 +4996,70 @@ mod tests {
             replay.advance_pair().unwrap();
         }
         assert!(replay.current_pair().is_none());
+    }
+
+    #[test]
+    fn spill_stream_to_file_crosses_bgzf_blocks() {
+        // A BGZF block holds <= 64 KiB; a spill larger than one block exercises the
+        // cross-block `read_line` reassembly path the small fixtures above never reach
+        // (the one BGZF-specific risk on the read side, issue #1019).
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam.gz");
+        // ~2000 records × ~80 B ≈ 160 KB >> 64 KiB → several BGZF blocks.
+        let lines: Vec<String> = (0..2000u32)
+            .map(|i| {
+                format!(
+                    "r{i}\t0\tchr1_CT_converted\t{}\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+                    i + 1
+                )
+            })
+            .collect();
+        let recs: Vec<_> = lines
+            .iter()
+            .map(|l| crate::align::SamRecord::parse(l).unwrap())
+            .collect();
+        let mut stream = VecStream {
+            recs: recs.clone(),
+            idx: 0,
+        };
+        let n = spill_stream_to_file(&mut stream, &p).unwrap();
+        assert_eq!(n, 2000);
+        assert!(std::fs::metadata(&p).unwrap().len() > 0);
+
+        let mut replay = crate::align::FileSamStream::open(&p).unwrap();
+        for orig in &recs {
+            assert_eq!(
+                replay.current().unwrap(),
+                orig,
+                "record mismatch across BGZF block boundary"
+            );
+            replay.advance().unwrap();
+        }
+        assert!(replay.current().is_none());
+    }
+
+    #[test]
+    fn spill_pe_stream_to_file_empty_stream() {
+        // PE analog of `spill_stream_to_file_empty_stream`: a 0-pair spill must still write a
+        // valid (EOF-block) BGZF file that replays as zero pairs.
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam.gz");
+        let mut stream = VecPairStream {
+            pairs: Vec::new(),
+            idx: 0,
+        };
+        assert_eq!(spill_pe_stream_to_file(&mut stream, &p).unwrap(), 0);
+        // Non-empty (the BGZF EOF block was written) yet zero pairs on replay.
+        assert!(
+            std::fs::metadata(&p).unwrap().len() > 0,
+            "empty spill should still write a BGZF EOF block"
+        );
+        assert!(
+            PairedFileSamStream::open(&p)
+                .unwrap()
+                .current_pair()
+                .is_none()
+        );
     }
 
     /// The non-directional PE desync guard: in-sync (head `seq_id` == identifier) and a
