@@ -279,6 +279,13 @@ fn resolve_ubam_inputs(config: &mut RunConfig, cli: &cli::Cli) -> Result<Vec<Pat
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
+        // The positional uBAM resolved as SINGLE-END, so `resolve()`'s layout-dependent
+        // guards ran against the SE layout. Re-run the paired-aligner reject now that the
+        // layout is PE, via the SAME shared validator `resolve()` uses — so e.g.
+        // `--minimap2 <collated-pe.bam>` (a long-read uBAM) fails loud exactly as
+        // `--minimap2 -1 .. -2 ..` does, instead of silently entering the deferred
+        // minimap2-PE path.
+        config::reject_unsupported_paired_aligner(config.aligner, &config.layout)?;
         // The positional uBAM resolved as SINGLE-END, so `resolve()` built single-end
         // aligner options. A paired-end run needs the PE Bowtie 2 flags
         // (`--no-mixed --no-discordant --dovetail --maxins …`); recompute via the SAME
