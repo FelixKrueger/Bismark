@@ -114,7 +114,11 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
-    let config = resolve(cli, command_line)?;
+    let mut config = resolve(cli, command_line)?;
+    // #1025 Phase 1: transcode any single-end unaligned-BAM read inputs into temp
+    // FASTQ (samtools-fastq-equivalent) BEFORE dispatch, so the byte-frozen
+    // convert→align→merge path runs unchanged.
+    resolve_ubam_inputs(&mut config)?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -167,6 +171,64 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     eprintln!("{}", config.summary());
     pipeline(&config)?;
+    Ok(())
+}
+
+/// #1025 Phase 1: resolve unaligned-BAM (uBAM) read inputs into temp FASTQ files.
+///
+/// For each **single-end** read input that the magic-byte sniff identifies as an
+/// authentic BAM (`ubam::is_bam_input` — a plain FASTQ or `.fq.gz` never matches,
+/// per R4), transcode it to a `samtools fastq`-equivalent temp FASTQ named
+/// `<stem>.fastq` (so the downstream output stem is unchanged — R3), substitute
+/// the temp path into the reads list (so BOTH the convert step and the
+/// methylation-call re-read consume it — R2), and switch the format to FASTQ.
+/// Emits a never-silent notice per transcoded input.
+///
+/// Paired-end uBAM (a single file split into mates) is not yet wired and fails
+/// loud. uBAM + `--fasta` is rejected (BAM carries qualities → FASTQ).
+fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<()> {
+    let temp_dir = config.output.temp_dir.clone();
+    let is_fasta = matches!(config.format, ReadFormat::FastA);
+    let mut transcoded_any = false;
+    match &mut config.layout {
+        ReadLayout::SingleEnd { reads } => {
+            for read in reads.iter_mut() {
+                if !ubam::is_bam_input(Path::new(read)) {
+                    continue;
+                }
+                if is_fasta {
+                    return Err(AlignerError::Validation(
+                        "unaligned BAM input is incompatible with --fasta/-f (BAM carries \
+                         base qualities, so it transcodes to FASTQ, not FASTA)"
+                            .into(),
+                    ));
+                }
+                eprintln!(
+                    "Note: input '{read}' detected as an unaligned BAM — transcoding reads to \
+                     FASTQ (equivalent to `samtools fastq`) before alignment."
+                );
+                let temp = ubam::transcode_ubam_to_fastq_se(Path::new(read), &temp_dir)?;
+                *read = temp.to_string_lossy().into_owned();
+                transcoded_any = true;
+            }
+        }
+        ReadLayout::PairedEnd { mates1, mates2 } => {
+            if mates1
+                .iter()
+                .chain(mates2.iter())
+                .any(|f| ubam::is_bam_input(Path::new(f)))
+            {
+                return Err(AlignerError::Validation(
+                    "paired-end unaligned BAM input is not yet supported (single-end uBAM is). \
+                     Convert with `samtools fastq -1 r1.fq.gz -2 r2.fq.gz <in.bam>` for now."
+                        .into(),
+                ));
+            }
+        }
+    }
+    if transcoded_any {
+        config.format = ReadFormat::FastQ;
+    }
     Ok(())
 }
 

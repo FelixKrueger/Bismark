@@ -143,7 +143,10 @@ fn record_to_fastq_lines(rec: &RecordBuf, out: &mut Vec<u8>) -> Result<bool> {
 /// Reads via raw `noodles_bam::io::Reader` (no tag/unmapped filtering).
 pub fn transcode_ubam_to_fastq_se(bam: &Path, temp_dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(temp_dir)?;
-    let out_path = temp_dir.join(format!("{}.ubam_reads.fastq", file_stem(bam)));
+    // Name the temp `<stem>.fastq` so the downstream output stem
+    // (`strip_fastq_suffix(basename)`) equals what the equivalent
+    // `samtools fastq > <stem>.fastq` run would produce (plan-review R3).
+    let out_path = temp_dir.join(format!("{}.fastq", file_stem(bam)));
     let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(bam)?));
     let header = reader.read_header()?;
     let mut w = BufWriter::new(File::create(&out_path)?);
@@ -166,8 +169,8 @@ pub fn transcode_ubam_to_fastq_se(bam: &Path, temp_dir: &Path) -> Result<PathBuf
 pub fn transcode_ubam_to_fastq_pe(bam: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
     std::fs::create_dir_all(temp_dir)?;
     let stem = file_stem(bam);
-    let p1 = temp_dir.join(format!("{stem}.ubam_reads_1.fastq"));
-    let p2 = temp_dir.join(format!("{stem}.ubam_reads_2.fastq"));
+    let p1 = temp_dir.join(format!("{stem}_1.fastq"));
+    let p2 = temp_dir.join(format!("{stem}_2.fastq"));
     let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(bam)?));
     let header = reader.read_header()?;
     let mut w1 = BufWriter::new(File::create(&p1)?);
@@ -307,7 +310,12 @@ mod tests {
 
     #[test]
     fn n_and_iupac_pass_through_forward() {
-        let (_w, out) = lines(&rec("r4", 0, b"ACGTNRYK", vec![10, 10, 10, 10, 10, 10, 10, 10]));
+        let (_w, out) = lines(&rec(
+            "r4",
+            0,
+            b"ACGTNRYK",
+            vec![10, 10, 10, 10, 10, 10, 10, 10],
+        ));
         assert!(out.starts_with(b"@r4\nACGTNRYK\n+\n"));
     }
 
