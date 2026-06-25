@@ -59,10 +59,13 @@ pub fn is_bam_input(path: &Path) -> bool {
 /// Full-IUPAC complement, matching `samtools fastq`'s reverse-complement table.
 /// Unknown bytes pass through unchanged.
 fn complement(b: u8) -> u8 {
+    // noodles decodes BAM's 4-bit SEQ to the uppercase IUPAC alphabet
+    // (`=ACMGRSVTWYHKDBN` — no `U`, no lowercase), so this table covers every
+    // reachable base and matches `samtools fastq`'s complement; any other byte
+    // passes through unchanged (total, but unreachable for real BAM SEQ).
     match b {
         b'A' => b'T',
         b'T' => b'A',
-        b'U' => b'A',
         b'G' => b'C',
         b'C' => b'G',
         b'Y' => b'R',
@@ -76,12 +79,6 @@ fn complement(b: u8) -> u8 {
         b'D' => b'H',
         b'H' => b'D',
         b'N' => b'N',
-        // lowercase (uBAM SEQ is uppercase, but stay total)
-        b'a' => b't',
-        b't' => b'a',
-        b'g' => b'c',
-        b'c' => b'g',
-        b'n' => b'n',
         other => other,
     }
 }

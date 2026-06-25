@@ -1,0 +1,40 @@
+Bismark report for: /tmp/claude-501/.tmpajftee/reads.fq (version: v0.25.1)
+Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)
+Bismark was run with Bowtie 2 against the bisulfite genome of /private/tmp/claude-501/.tmpajftee/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals
+
+Final Alignment report
+======================
+Sequences analysed in total:	1
+Number of alignments with a unique best hit from the different alignments:	0
+Mapping efficiency:	0.0%
+Sequences with no alignments under any condition:	1
+Sequences did not map uniquely:	0
+Sequences which were discarded because genomic sequence could not be extracted:	0
+
+Number of sequences with unique best (first) alignment came from the bowtie output:
+CT/CT:	0	((converted) top strand)
+CT/GA:	0	((converted) bottom strand)
+GA/CT:	0	(complementary to (converted) top strand)
+GA/GA:	0	(complementary to (converted) bottom strand)
+
+Final Cytosine Methylation Report
+=================================
+Total number of C's analysed:	0
+
+Total methylated C's in CpG context:	0
+Total methylated C's in CHG context:	0
+Total methylated C's in CHH context:	0
+Total methylated C's in Unknown context:	0
+
+Total unmethylated C's in CpG context:	0
+Total unmethylated C's in CHG context:	0
+Total unmethylated C's in CHH context:	0
+Total unmethylated C's in Unknown context:	0
+
+Can't determine percentage of methylated Cs in CpG context if value was 0
+Can't determine percentage of methylated Cs in CHG context if value was 0
+Can't determine percentage of methylated Cs in CHH context if value was 0
+Can't determine percentage of methylated Cs in Unknown context (CN or CHN) if value was 0
+
+
+Bismark completed in 0d 0h 0m 0s

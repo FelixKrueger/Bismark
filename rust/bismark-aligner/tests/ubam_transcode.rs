@@ -124,3 +124,53 @@ fn pe_ubam_desync_fails_loud() {
         "unexpected error: {msg}"
     );
 }
+
+#[test]
+fn is_bam_input_only_true_for_real_bam() {
+    // The load-bearing R4 invariant: only an authentic BAM (magic, NOT extension)
+    // is treated as uBAM, so the normal FASTQ/FASTA path is never broken.
+    let dir = tempfile::tempdir().unwrap();
+
+    let bam = dir.path().join("real.bam");
+    write_ubam(
+        &bam,
+        &Header::default(),
+        &[record("r", 0, b"ACGT", vec![30, 30, 30, 30])],
+    );
+    assert!(
+        ubam::is_bam_input(&bam),
+        "a real BAM must be detected as uBAM"
+    );
+
+    // Plain FASTQ (first byte '@') sniffs as SAM, NOT BAM.
+    let fq = dir.path().join("reads.fastq");
+    std::fs::write(&fq, b"@r1\nACGT\n+\nIIII\n").unwrap();
+    assert!(!ubam::is_bam_input(&fq), "plain FASTQ must not be uBAM");
+
+    // SAM TEXT mis-named `.ubam` (the gate-script bug) — magic, not extension.
+    let sam = dir.path().join("reads.ubam");
+    std::fs::write(&sam, b"@HD\tVN:1.6\n@SQ\tSN:c\tLN:9\n").unwrap();
+    assert!(
+        !ubam::is_bam_input(&sam),
+        "SAM text must not be uBAM (detection is by BGZF+BAM magic, not extension)"
+    );
+
+    // gzip-magic, non-BAM payload (a `.fq.gz`-like file) → not uBAM, never panics.
+    let gz = dir.path().join("reads.fq.gz");
+    std::fs::write(&gz, [0x1f_u8, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 0]).unwrap();
+    assert!(!ubam::is_bam_input(&gz), "gzip non-BAM must not be uBAM");
+
+    // Missing file → false, never panics.
+    assert!(!ubam::is_bam_input(&dir.path().join("nope.bam")));
+}
+
+#[test]
+fn se_ubam_header_only_yields_empty_fastq() {
+    // Validation #3: a header-only (zero-record) uBAM transcodes to an empty FASTQ,
+    // which flows into the existing graceful-empty handling downstream.
+    let dir = tempfile::tempdir().unwrap();
+    let bam = dir.path().join("empty.bam");
+    write_ubam(&bam, &Header::default(), &[]);
+    let out = ubam::transcode_ubam_to_fastq_se(&bam, dir.path()).unwrap();
+    assert_eq!(read_to_string(&out), "", "header-only uBAM → empty FASTQ");
+}

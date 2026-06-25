@@ -117,8 +117,10 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     let mut config = resolve(cli, command_line)?;
     // #1025 Phase 1: transcode any single-end unaligned-BAM read inputs into temp
     // FASTQ (samtools-fastq-equivalent) BEFORE dispatch, so the byte-frozen
-    // convert→align→merge path runs unchanged.
-    resolve_ubam_inputs(&mut config)?;
+    // convert→align→merge path runs unchanged. Returns the per-input temp dirs to
+    // clean up after the run (the transcode FASTQ is consumed by BOTH the convert
+    // step and the methylation-call re-read, so cleanup must follow the pipeline).
+    let ubam_temp_dirs = resolve_ubam_inputs(&mut config)?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -170,8 +172,13 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
-    pipeline(&config)?;
-    Ok(())
+    let result = pipeline(&config);
+    // Best-effort cleanup of the uBAM transcode temp dirs (the plan's "cleaned up
+    // with the other temps"), regardless of pipeline success/failure.
+    for dir in &ubam_temp_dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    result
 }
 
 /// #1025 Phase 1: resolve unaligned-BAM (uBAM) read inputs into temp FASTQ files.
@@ -186,13 +193,20 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 ///
 /// Paired-end uBAM (a single file split into mates) is not yet wired and fails
 /// loud. uBAM + `--fasta` is rejected (BAM carries qualities → FASTQ).
-fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<()> {
+///
+/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<i>/` so the
+/// temp is named `<stem>.fastq` (preserving the output stem, R3) yet two
+/// same-basename uBAMs can't collide on the temp and a pre-existing
+/// `<stem>.fastq` in `temp_dir`/CWD is never clobbered. Returns the created
+/// subdirs for the caller to clean up after the pipeline.
+fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut transcoded_any = false;
+    let mut temp_dirs: Vec<PathBuf> = Vec::new();
     match &mut config.layout {
         ReadLayout::SingleEnd { reads } => {
-            for read in reads.iter_mut() {
+            for (i, read) in reads.iter_mut().enumerate() {
                 if !ubam::is_bam_input(Path::new(read)) {
                     continue;
                 }
@@ -207,8 +221,10 @@ fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<()> {
                     "Note: input '{read}' detected as an unaligned BAM — transcoding reads to \
                      FASTQ (equivalent to `samtools fastq`) before alignment."
                 );
-                let temp = ubam::transcode_ubam_to_fastq_se(Path::new(read), &temp_dir)?;
+                let sub = temp_dir.join(".bismark_ubam").join(i.to_string());
+                let temp = ubam::transcode_ubam_to_fastq_se(Path::new(read), &sub)?;
                 *read = temp.to_string_lossy().into_owned();
+                temp_dirs.push(sub);
                 transcoded_any = true;
             }
         }
@@ -229,7 +245,7 @@ fn resolve_ubam_inputs(config: &mut RunConfig) -> Result<()> {
     if transcoded_any {
         config.format = ReadFormat::FastQ;
     }
-    Ok(())
+    Ok(temp_dirs)
 }
 
 /// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
