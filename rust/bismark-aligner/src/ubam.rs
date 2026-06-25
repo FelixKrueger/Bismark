@@ -35,6 +35,7 @@ use noodles_sam::alignment::RecordBuf;
 use crate::error::{AlignerError, Result};
 
 // SAM FLAG bits we consult.
+const FLAG_PAIRED: u16 = 0x1;
 const FLAG_REVERSE: u16 = 0x10;
 const FLAG_READ1: u16 = 0x40;
 const FLAG_READ2: u16 = 0x80;
@@ -54,6 +55,24 @@ pub fn is_bam_input(path: &Path) -> bool {
         bismark_io::AlignmentKind::from_path(path),
         Ok(bismark_io::AlignmentKind::Bam)
     )
+}
+
+/// Peek a uBAM to classify single- vs paired-end: `true` iff the first **primary**
+/// record (secondary/supplementary skipped) carries the paired flag (`0x1`).
+/// A header-only / no-primary BAM returns `false` (→ the single-end path, which
+/// produces an empty FASTQ → the existing graceful-empty handling).
+pub fn is_paired(bam: &Path) -> Result<bool> {
+    let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(bam)?));
+    let header = reader.read_header()?;
+    for result in reader.record_bufs(&header) {
+        let rec = result?;
+        let flags = u16::from(rec.flags());
+        if flags & (FLAG_SECONDARY | FLAG_SUPPLEMENTARY) != 0 {
+            continue;
+        }
+        return Ok(flags & FLAG_PAIRED != 0);
+    }
+    Ok(false)
 }
 
 /// Full-IUPAC complement, matching `samtools fastq`'s reverse-complement table.
