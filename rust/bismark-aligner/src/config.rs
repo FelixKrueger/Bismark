@@ -279,6 +279,33 @@ fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Opt
 }
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
+/// Reject a paired-end layout with an aligner that has no PE support / no
+/// byte-identity oracle (minimap2, rammap — minimap-like, SE-only).
+///
+/// PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
+/// (Felix decision 2026-06-05): the Perl minimap2 paired-end path
+/// (`paired_end_…_minimap2` 6697-6708) is unfinished WIP (`# TODO` +
+/// `warn`+`sleep(1)` twice per read pair) AND the PE report writer (1845-1850)
+/// has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
+/// trustworthy oracle to byte-match. minimap2 AND rammap are SE-only. The error
+/// names the actual engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
+///
+/// Shared by [`resolve`] (native `-1/-2`) AND the uBAM SingleEnd→PairedEnd switch
+/// (`lib::resolve_ubam_inputs`), so this layout-dependent guard cannot drift
+/// between the two entry points — a positional paired uBAM is rejected for
+/// minimap2/rammap exactly as `-1/-2` would be.
+pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) -> Result<()> {
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
+        return Err(AlignerError::Unsupported(format!(
+            "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
+             paired-end path is unfinished/experimental and has no trustworthy byte-identity \
+             reference. Use --{0} for single-end reads, or --bowtie2/--hisat2 for paired-end.",
+            aligner.name()
+        )));
+    }
+    Ok(())
+}
+
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
     // `--rammap_inprocess` (opt into the in-process rammap backend) is meaningful only
@@ -354,22 +381,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
-    // PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
-    // (Felix decision 2026-06-05): the Perl minimap2 paired-end path
-    // (`paired_end_…_minimap2` 6697-6708) is unfinished WIP (`# TODO` +
-    // `warn`+`sleep(1)` twice per read pair) AND the PE report writer (1845-1850)
-    // has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
-    // trustworthy oracle to byte-match. Fail loudly (Bowtie 2 + HISAT2 cover PE).
-    // minimap2 AND rammap (minimap-like) are SE-only. The error names the actual
-    // engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
-    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
-        return Err(AlignerError::Unsupported(format!(
-            "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
-             paired-end path is unfinished/experimental and has no trustworthy byte-identity \
-             reference. Use --{0} for single-end reads, or --bowtie2/--hisat2 for paired-end.",
-            aligner.name()
-        )));
-    }
+    reject_unsupported_paired_aligner(aligner, &layout)?;
 
     // --combined_index (v2) scope guard: SE (directional OR non-directional)
     // Bowtie 2 only. Reject every not-yet-supported combination loudly (never
@@ -1143,6 +1155,30 @@ mod tests {
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--bowtie2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--hisat2", "--minimap2"])).is_err());
         assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
+    }
+
+    /// #1025: the shared paired-aligner guard — minimap2/rammap PE rejected,
+    /// Bowtie 2/HISAT2 PE allowed, and minimap2/rammap SE allowed. This is the
+    /// guard `lib::resolve_ubam_inputs` re-runs after the uBAM SE→PE switch so a
+    /// positional `--minimap2 <pe.bam>` fails loud exactly like `--minimap2 -1/-2`.
+    #[test]
+    fn reject_unsupported_paired_aligner_guard() {
+        let pe = ReadLayout::PairedEnd {
+            mates1: vec!["a_1.fq".into()],
+            mates2: vec!["a_2.fq".into()],
+        };
+        let se = ReadLayout::SingleEnd {
+            reads: vec!["a.fq".into()],
+        };
+        // minimap2/rammap + PE → rejected.
+        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &pe).is_err());
+        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &pe).is_err());
+        // Bowtie 2/HISAT2 + PE → allowed.
+        assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, &pe).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, &pe).is_ok());
+        // minimap2/rammap + SE → allowed (SE is their supported mode).
+        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &se).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &se).is_ok());
     }
 
     /// Phase 3 (T2): `--rammap` selects [`Aligner::Rammap`].

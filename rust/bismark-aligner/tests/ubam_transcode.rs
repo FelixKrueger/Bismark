@@ -174,3 +174,52 @@ fn se_ubam_header_only_yields_empty_fastq() {
     let out = ubam::transcode_ubam_to_fastq_se(&bam, dir.path()).unwrap();
     assert_eq!(read_to_string(&out), "", "header-only uBAM → empty FASTQ");
 }
+
+#[test]
+fn is_paired_classifies_from_first_primary_record() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Paired uBAM: first primary record carries 0x1.
+    let pe = dir.path().join("pe.bam");
+    write_ubam(
+        &pe,
+        &Header::default(),
+        &[
+            record("p", 0x1 | 0x40, b"ACGT", vec![30, 30, 30, 30]),
+            record("p", 0x1 | 0x80, b"TTGG", vec![30, 30, 30, 30]),
+        ],
+    );
+    assert!(ubam::is_paired(&pe).unwrap(), "0x1 records → paired");
+
+    // Single-end uBAM: no 0x1.
+    let se = dir.path().join("se.bam");
+    write_ubam(
+        &se,
+        &Header::default(),
+        &[record("s", 0, b"ACGT", vec![30, 30, 30, 30])],
+    );
+    assert!(!ubam::is_paired(&se).unwrap(), "no 0x1 → single-end");
+
+    // A leading secondary (0x100) record is skipped; the first PRIMARY decides.
+    let lead_sec = dir.path().join("lead_sec.bam");
+    write_ubam(
+        &lead_sec,
+        &Header::default(),
+        &[
+            record("x", 0x100, b"GGGG", vec![20, 20, 20, 20]), // secondary, skipped
+            record("x", 0, b"ACGT", vec![30, 30, 30, 30]),     // first primary: SE
+        ],
+    );
+    assert!(
+        !ubam::is_paired(&lead_sec).unwrap(),
+        "secondary skipped → first primary (SE) decides"
+    );
+
+    // Header-only → false (→ SE path → empty → graceful).
+    let empty = dir.path().join("empty.bam");
+    write_ubam(&empty, &Header::default(), &[]);
+    assert!(
+        !ubam::is_paired(&empty).unwrap(),
+        "header-only → not paired"
+    );
+}
