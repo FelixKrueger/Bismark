@@ -6,7 +6,7 @@
 
 # Install/update config for the `install-suite*` recipes (bump `suite_tag` on release).
 repo := "https://github.com/FelixKrueger/Bismark"
-suite_tag := "bismark-rust-v2.0.0-beta.11"
+suite_tag := "bismark-rust-v2.0.0-beta.12"
 suite_crates := "bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc bismark-report bismark-summary"
 
 # Local benchmark dataset root for the aligner Apple Silicon perf work
