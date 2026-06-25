@@ -53,7 +53,8 @@ noodles-bam = "=0.89.0"
 # Issue #1019: BGZF-compress the `--combined_index_sequential` pass-1 spill (~7x less
 # scratch, wall-neutral — parallel encode hides behind pass-1 alignment). MultithreadedWriter
 # (write) + io::Reader (read). Pinned to the workspace's shared noodles-bgzf (bismark-io + 3
-# others declare =0.47.0; also transitive via noodles-bam) so one shared noodles-bgzf links.
+# others declare =0.47.0; also transitive via noodles-bam) — the spill resolves to this direct
+# =0.47.0. (A separate noodles-bgzf 0.42.0 reachable via noodles-csi is pre-existing, not added here.)
 noodles-bgzf = "=0.47.0"
 bstr = "=1.10.0"
 # Phase 1 (epic 06152026): the in-process rammap backend (`inprocess::InProcessAlignerStream`).

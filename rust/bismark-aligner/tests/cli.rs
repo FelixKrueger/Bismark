@@ -4378,7 +4378,7 @@ fn run_combined_nondir_records(
         let leftover = fs::read_dir(temp.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam.gz"));
         assert!(!leftover, "sequential spill temp file must be cleaned up");
     }
 
@@ -4700,7 +4700,7 @@ fn run_combined_pe_nondir_records(
         let leftover = fs::read_dir(temp.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam.gz"));
         assert!(
             !leftover,
             "sequential PE spill temp file must be cleaned up"
@@ -5085,7 +5085,7 @@ fn run_combined_pe_hisat2_records(
         let leftover = fs::read_dir(temp.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam.gz"));
         assert!(!leftover, "sequential HISAT2 PE spill must be cleaned up");
     }
 
@@ -5135,7 +5135,7 @@ fn run_combined_se_hisat2_records(
         let leftover = fs::read_dir(temp.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam"));
+            .any(|e| e.file_name().to_string_lossy().ends_with(".ct_pass.sam.gz"));
         assert!(!leftover, "sequential HISAT2 SE spill must be cleaned up");
     }
 
