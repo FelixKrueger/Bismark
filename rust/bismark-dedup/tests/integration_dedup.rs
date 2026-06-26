@@ -126,6 +126,16 @@ fn qname_of(record: &BismarkRecord) -> String {
     String::from_utf8_lossy(AsRef::as_ref(record.inner().name().unwrap())).into_owned()
 }
 
+/// Read all records and return their SAM FLAGs in file order. Used to assert
+/// dedup passes the (possibly swapped) FLAG bits through unmodified — faithful
+/// write-out per `write.rs` (#1030).
+fn read_flags(path: &Path) -> Vec<u16> {
+    read_records(path)
+        .iter()
+        .map(|r| u16::from(r.inner().flags()))
+        .collect()
+}
+
 /// Construct a PE pair: R1 (flags 0x41 = paired + first-in-pair) at
 /// `r1_start`, R2 (flags 0x81 = paired + second-in-pair) at `r2_start`.
 /// For an OT pair: R1 has XR=CT XG=CT, R2 has XR=GA XG=CT.
@@ -136,12 +146,29 @@ fn ot_pair(qname: &str, r1_start: usize, r2_start: usize) -> [RecordBuf; 2] {
     ]
 }
 
-/// CTOT pair (non-directional library): R1 has XR=GA XG=CT (→ CTOT
-/// per-record strand and CTOT pair-strand since R1-derived).
+/// CTOT pair (non-directional library): first-in-file is sequencing Read 1,
+/// XR=GA XG=CT (→ CTOT per-record strand and CTOT pair-strand since
+/// R1-derived). **Real Bismark FLAGs:** for CTOT/CTOB Bismark swaps the
+/// first/second-in-pair bits — flag_1=147 (0x80 → "R2"!), flag_2=99 (0x40 →
+/// "R1"!) — so the first-in-file record carries `0x80`. The old fixture used
+/// idealized 0x41/0x81, which Bismark never emits for CTOT and which masked
+/// the #1030 crash (the dedup/extractor PE gate rejected the swap). Strand,
+/// keying, and dedup behaviour are FLAG-independent (derived from XR/XG +
+/// file order), so only the bytes differ — but now they're real bytes.
 fn ctot_pair(qname: &str, r1_start: usize, r2_start: usize) -> [RecordBuf; 2] {
     [
-        build_record(qname, b"GA", b"CT", 0x41, 0, r1_start, 50),
-        build_record(qname, b"CT", b"CT", 0x81, 0, r2_start, 50),
+        build_record(qname, b"GA", b"CT", 147, 0, r1_start, 50),
+        build_record(qname, b"CT", b"CT", 99, 0, r2_start, 50),
+    ]
+}
+
+/// CTOB pair (non-directional library): first-in-file is sequencing Read 1,
+/// XR=GA XG=GA (→ CTOB pair-strand). **Real Bismark FLAGs (swapped):**
+/// flag_1=163 (0x80 → "R2"!), flag_2=83 (0x40 → "R1"!).
+fn ctob_pair(qname: &str, r1_start: usize, r2_start: usize) -> [RecordBuf; 2] {
+    [
+        build_record(qname, b"GA", b"GA", 163, 0, r1_start, 50),
+        build_record(qname, b"CT", b"GA", 83, 0, r2_start, 50),
     ]
 }
 
@@ -389,8 +416,10 @@ fn se_dedup_retains_first_occurrence_and_removes_subsequent_duplicates() {
 }
 
 /// Non-directional library: a CTOT pair (R1 XR=GA XG=CT → CTOT pair-strand)
-/// dedups correctly. This is the only non-OT/OB path through `compute_pe_key`,
-/// and `bismark-io`'s existing test fixture is directional-only.
+/// dedups correctly. CTOT/OB is the reverse-class path through
+/// `compute_pe_key`. The pair uses **real swapped FLAGs** (147/99) — the exact
+/// shape that crashed before #1030 — so this now exercises the swapped-flag
+/// path end-to-end, and asserts the swapped FLAGs survive write-out unchanged.
 #[test]
 fn ctot_pair_non_directional_dedup_works_end_to_end() {
     let dir = TempDir::new().unwrap();
@@ -412,8 +441,121 @@ fn ctot_pair_non_directional_dedup_works_end_to_end() {
         .assert()
         .success();
 
-    let retained = read_qnames(&dir.path().join("input.deduplicated.bam"));
+    let out = dir.path().join("input.deduplicated.bam");
+    let retained = read_qnames(&out);
     assert_eq!(retained, vec!["ctot_unique".to_string()]);
+    // Faithful write-out: the swapped FLAGs (147 first, 99 second) are
+    // preserved byte-for-byte — dedup never rewrites the FLAG field.
+    assert_eq!(read_flags(&out), vec![147u16, 99u16]);
+}
+
+/// Non-directional library: a CTOB pair (R1 XR=GA XG=GA → CTOB pair-strand,
+/// the OT/CTOB forward-class path) with **real swapped FLAGs** (163/83) dedups
+/// correctly and preserves its FLAGs on write-out.
+#[test]
+fn ctob_pair_non_directional_dedup_works_end_to_end() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+
+    let mut records = Vec::new();
+    records.extend(ctob_pair("ctob_unique", 2000, 2100));
+    records.extend(ctob_pair("ctob_dup", 2000, 2100));
+
+    write_bam(&input, &records);
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let out = dir.path().join("input.deduplicated.bam");
+    assert_eq!(read_qnames(&out), vec!["ctob_unique".to_string()]);
+    assert_eq!(read_flags(&out), vec![163u16, 83u16]);
+}
+
+/// Mixed-strand single file (#1030 reviewer V-gap-3): one OT, one OB, one CTOT,
+/// one CTOB pair interleaved, all at distinct positions (no duplicates). After
+/// the flag-gate relaxation, directional (first=0x40) and swapped-flag
+/// (first=0x80) pairs must coexist in one BAM — all 8 records retained.
+#[test]
+fn mixed_four_strand_single_file_all_pairs_coexist() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+
+    let mut records = Vec::new();
+    records.extend(ot_pair("ot1", 1000, 1100));
+    records.extend(ctot_pair("ctot1", 2000, 2100));
+    records.extend(ctob_pair("ctob1", 3000, 3100));
+    // OB pair: R1 XR=CT XG=GA flag_1=83, R2 XR=GA XG=GA flag_2=163.
+    records.push(build_record("ob1", b"CT", b"GA", 83, 0, 4000, 50));
+    records.push(build_record("ob1", b"GA", b"GA", 163, 0, 4100, 50));
+    write_bam(&input, &records);
+
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let out = dir.path().join("input.deduplicated.bam");
+    assert_eq!(
+        read_qnames(&out),
+        vec![
+            "ctob1".to_string(),
+            "ctot1".to_string(),
+            "ob1".to_string(),
+            "ot1".to_string()
+        ]
+    );
+    // All 8 records (4 pairs) retained — none dropped, gate no longer trips.
+    assert_eq!(read_records(&out).len(), 8);
+}
+
+/// Real-data regression for issue #1030: a `--non_directional` PE BAM
+/// produced by `bismark_rs` (10 CTOT/CTOB pairs, all first-in-file FLAG
+/// 147/163). Before the fix this aborted with `read identity mismatch:
+/// expected R1 for first mate, got R2`. The Perl oracle keeps all 10 pairs
+/// (0 duplicates). Run on the default path, `--barcode` (UMI mode), and
+/// `--parallel` — all three crashed identically pre-fix.
+#[test]
+fn nondir_pe_repro_1030_dedups_without_crash() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/nondir_pe_1030.bam");
+    assert!(fixture.exists(), "fixture missing: {}", fixture.display());
+
+    for extra_args in [
+        vec![],
+        vec!["--barcode"],
+        vec!["--parallel", "4"],
+        vec!["--barcode", "--parallel", "4"],
+    ] {
+        let dir = TempDir::new().unwrap();
+        let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+        cmd.arg("--paired").arg("--output_dir").arg(dir.path());
+        for a in &extra_args {
+            cmd.arg(a);
+        }
+        cmd.arg(&fixture).assert().success();
+
+        let out = dir.path().join("nondir_pe_1030.deduplicated.bam");
+        // 10 distinct positions → 0 duplicates → all 20 records (10 pairs) kept.
+        assert_eq!(
+            read_records(&out).len(),
+            20,
+            "args {extra_args:?}: expected all 20 records kept"
+        );
+        assert_eq!(
+            read_qnames(&out).len(),
+            10,
+            "args {extra_args:?}: expected 10 unique pair qnames"
+        );
+    }
 }
 
 /// Dedup report bytes: exact match against the Perl format.

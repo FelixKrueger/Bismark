@@ -11,7 +11,7 @@
 //! the strand-routing bug this type prevents.
 
 use crate::error::BismarkIoError;
-use crate::record::{BismarkRecord, ReadIdentity};
+use crate::record::BismarkRecord;
 use crate::strand::BismarkStrand;
 
 /// A paired-end alignment with its library-level strand classification.
@@ -27,28 +27,33 @@ pub struct BismarkPair {
 }
 
 impl BismarkPair {
-    /// Construct a pair from R1 and R2 records.
+    /// Construct a pair from two adjacent mates in **file order**.
+    ///
+    /// `r1` is the first record in file order (= sequencing Read 1); `r2`
+    /// is the second (= sequencing Read 2). Pairing is by file adjacency +
+    /// qname, exactly as Perl `deduplicate_bismark` / the Perl methylation
+    /// extractor do — it does **not** gate on the SAM first/second-in-pair
+    /// FLAG bits (`0x40`/`0x80`).
+    ///
+    /// This matters because for **non-directional** libraries Bismark
+    /// deliberately *swaps* those FLAG bits for CTOT/CTOB pairs: the
+    /// first-in-file record (still sequencing Read 1) carries `0x80`
+    /// ("second in pair") and the second carries `0x40`. See `bismark`
+    /// `paired_end_SAM_output` (the CTOT/CTOB block, ~lines 8821-8852) and
+    /// issue #1030. An earlier flag-based R1/R2 identity gate here rejected
+    /// every such pair with `ReadIdentityMismatch`, which Perl never did —
+    /// so dedup/extraction crashed on all non-directional PE data. The gate
+    /// is gone; `pair.r1()` is keyed off file order, which the swap does not
+    /// perturb.
     ///
     /// Validates:
-    /// - `r1.read_identity()` is `R1` (else [`BismarkIoError::ReadIdentityMismatch`]).
-    /// - `r2.read_identity()` is `R2` (else [`BismarkIoError::ReadIdentityMismatch`]).
     /// - The records share a qname (else [`BismarkIoError::MateMismatch`]).
     ///
-    /// `pair_strand` is set to `r1.record_strand()`. Note that R2's
-    /// per-record strand will be the complement (e.g. for an OT-pair, R1
-    /// is OT and R2 is CTOT); this is expected and not an error.
+    /// `pair_strand` is set to `r1.record_strand()` (derived from R1's
+    /// `XR`/`XG`, not the FLAG bits). Note that R2's per-record strand will
+    /// be the complement (e.g. for an OT-pair, R1 is OT and R2 is CTOT);
+    /// this is expected and not an error.
     pub fn from_mates(r1: BismarkRecord, r2: BismarkRecord) -> Result<Self, BismarkIoError> {
-        if r1.read_identity() != ReadIdentity::R1 {
-            return Err(BismarkIoError::ReadIdentityMismatch {
-                description: format!("expected R1 for first mate, got {:?}", r1.read_identity()),
-            });
-        }
-        if r2.read_identity() != ReadIdentity::R2 {
-            return Err(BismarkIoError::ReadIdentityMismatch {
-                description: format!("expected R2 for second mate, got {:?}", r2.read_identity()),
-            });
-        }
-
         // Borrow-compare first; only allocate on the error path. At 27M+
         // pairs from a typical PE WGBS run the cheap-path matters.
         //
@@ -101,6 +106,7 @@ impl BismarkPair {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::record::ReadIdentity;
     use bstr::BString;
     use noodles_sam::alignment::RecordBuf;
     use noodles_sam::alignment::record::data::field::Tag;
@@ -124,12 +130,25 @@ mod tests {
         record
     }
 
+    /// Build a pair from explicit per-mate (XR, XG) tags **and real Bismark
+    /// FLAGs**. The FLAG matters: for non-directional CTOT/CTOB pairs Bismark
+    /// swaps the first/second-in-pair bits, so the first-in-file record
+    /// carries `0x80` ("R2") — the very thing `from_mates` must now tolerate.
+    /// (The old helper hard-coded `0x41`/`0x81`, which Bismark never emits for
+    /// CTOT/CTOB, so the "non_directional" tests below silently never
+    /// exercised the swap — issue #1030.)
     fn make_pair_records(
         r1_xr_xg: (&[u8], &[u8]),
+        r1_flag: u16,
         r2_xr_xg: (&[u8], &[u8]),
+        r2_flag: u16,
     ) -> (BismarkRecord, BismarkRecord) {
-        let r1 = synth(b"qname1", r1_xr_xg.0, r1_xr_xg.1, b".....", b"ACGTC", 0x41);
-        let r2 = synth(b"qname1", r2_xr_xg.0, r2_xr_xg.1, b".....", b"ACGTC", 0x81);
+        let r1 = synth(
+            b"qname1", r1_xr_xg.0, r1_xr_xg.1, b".....", b"ACGTC", r1_flag,
+        );
+        let r2 = synth(
+            b"qname1", r2_xr_xg.0, r2_xr_xg.1, b".....", b"ACGTC", r2_flag,
+        );
         (
             BismarkRecord::from_noodles_record(r1).unwrap(),
             BismarkRecord::from_noodles_record(r2).unwrap(),
@@ -138,61 +157,68 @@ mod tests {
 
     #[test]
     fn from_mates_ot_pair() {
-        // OT pair: R1 XR=CT XG=CT → OT, R2 XR=GA XG=CT → CTOT
-        let (r1, r2) = make_pair_records((b"CT", b"CT"), (b"GA", b"CT"));
+        // OT pair (directional): flag_1=99 (R1, 0x40), flag_2=147 (R2, 0x80).
+        // R1 XR=CT XG=CT → OT, R2 XR=GA XG=CT → CTOT.
+        let (r1, r2) = make_pair_records((b"CT", b"CT"), 99, (b"GA", b"CT"), 147);
         assert_eq!(r1.record_strand(), BismarkStrand::OT);
         assert_eq!(r2.record_strand(), BismarkStrand::CTOT);
+        // No swap on OT: first-in-file carries the R1 bit.
+        assert_eq!(r1.read_identity(), ReadIdentity::R1);
+        assert_eq!(r2.read_identity(), ReadIdentity::R2);
         let pair = BismarkPair::from_mates(r1, r2).unwrap();
         assert_eq!(pair.pair_strand(), BismarkStrand::OT);
     }
 
     #[test]
     fn from_mates_ob_pair() {
-        // OB pair: R1 XR=CT XG=GA → OB, R2 XR=GA XG=GA → CTOB
-        let (r1, r2) = make_pair_records((b"CT", b"GA"), (b"GA", b"GA"));
+        // OB pair (directional): flag_1=83 (R1, 0x40), flag_2=163 (R2, 0x80).
+        // R1 XR=CT XG=GA → OB, R2 XR=GA XG=GA → CTOB.
+        let (r1, r2) = make_pair_records((b"CT", b"GA"), 83, (b"GA", b"GA"), 163);
         assert_eq!(r1.record_strand(), BismarkStrand::OB);
         assert_eq!(r2.record_strand(), BismarkStrand::CTOB);
+        assert_eq!(r1.read_identity(), ReadIdentity::R1);
+        assert_eq!(r2.read_identity(), ReadIdentity::R2);
         let pair = BismarkPair::from_mates(r1, r2).unwrap();
         assert_eq!(pair.pair_strand(), BismarkStrand::OB);
     }
 
     #[test]
     fn from_mates_ctot_pair_non_directional() {
-        // Non-directional CTOT-pair: R1 XR=GA XG=CT → CTOT, R2 XR=CT XG=CT → OT
-        let (r1, r2) = make_pair_records((b"GA", b"CT"), (b"CT", b"CT"));
+        // Non-directional CTOT-pair — Bismark SWAPS the FLAG bits:
+        // flag_1=147 (0x80 → "R2"!), flag_2=99 (0x40 → "R1"!).
+        // First-in-file is still sequencing Read 1: XR=GA XG=CT → CTOT.
+        let (r1, r2) = make_pair_records((b"GA", b"CT"), 147, (b"CT", b"CT"), 99);
         assert_eq!(r1.record_strand(), BismarkStrand::CTOT);
         assert_eq!(r2.record_strand(), BismarkStrand::OT);
+        // The swap: first-in-file carries the 0x80 ("R2") bit. This is the
+        // exact case the old flag gate rejected (#1030); from_mates must now
+        // accept it, keying r1 off file order rather than the FLAG bit.
+        assert_eq!(r1.read_identity(), ReadIdentity::R2);
+        assert_eq!(r2.read_identity(), ReadIdentity::R1);
         let pair = BismarkPair::from_mates(r1, r2).unwrap();
         assert_eq!(pair.pair_strand(), BismarkStrand::CTOT);
     }
 
     #[test]
     fn from_mates_ctob_pair_non_directional() {
-        // Non-directional CTOB-pair: R1 XR=GA XG=GA → CTOB, R2 XR=CT XG=GA → OB
-        let (r1, r2) = make_pair_records((b"GA", b"GA"), (b"CT", b"GA"));
+        // Non-directional CTOB-pair — Bismark SWAPS the FLAG bits:
+        // flag_1=163 (0x80 → "R2"!), flag_2=83 (0x40 → "R1"!).
+        // First-in-file is still sequencing Read 1: XR=GA XG=GA → CTOB.
+        let (r1, r2) = make_pair_records((b"GA", b"GA"), 163, (b"CT", b"GA"), 83);
         assert_eq!(r1.record_strand(), BismarkStrand::CTOB);
         assert_eq!(r2.record_strand(), BismarkStrand::OB);
+        assert_eq!(r1.read_identity(), ReadIdentity::R2);
+        assert_eq!(r2.read_identity(), ReadIdentity::R1);
         let pair = BismarkPair::from_mates(r1, r2).unwrap();
         assert_eq!(pair.pair_strand(), BismarkStrand::CTOB);
     }
 
-    #[test]
-    fn from_mates_wrong_r1_identity_errors() {
-        // Caller passes R2 + R2 (no R1)
-        let (_r1, r2a) = make_pair_records((b"CT", b"CT"), (b"GA", b"CT"));
-        let (_r1b, r2b) = make_pair_records((b"CT", b"CT"), (b"GA", b"CT"));
-        let err = BismarkPair::from_mates(r2a, r2b).unwrap_err();
-        assert!(matches!(err, BismarkIoError::ReadIdentityMismatch { .. }));
-    }
-
-    #[test]
-    fn from_mates_wrong_r2_identity_errors() {
-        // Caller passes R1 + R1 (no R2)
-        let (r1a, _r2) = make_pair_records((b"CT", b"CT"), (b"GA", b"CT"));
-        let (r1b, _r2b) = make_pair_records((b"CT", b"CT"), (b"GA", b"CT"));
-        let err = BismarkPair::from_mates(r1a, r1b).unwrap_err();
-        assert!(matches!(err, BismarkIoError::ReadIdentityMismatch { .. }));
-    }
+    // NOTE: the former `from_mates_wrong_r1_identity_errors` /
+    // `_wrong_r2_identity_errors` tests asserted the flag-based R1/R2 gate
+    // that was removed for #1030 (it rejected legitimate non-directional
+    // CTOT/CTOB pairs). Pairing is now by file order + qname only, matching
+    // Perl, so those negative tests no longer describe real behaviour and
+    // have been deleted. The qname-mismatch guard below remains.
 
     #[test]
     fn from_mates_qname_mismatch_errors() {
@@ -213,7 +239,7 @@ mod tests {
 
     #[test]
     fn accessors_return_inner_records() {
-        let (r1, r2) = make_pair_records((b"CT", b"CT"), (b"GA", b"CT"));
+        let (r1, r2) = make_pair_records((b"CT", b"CT"), 99, (b"GA", b"CT"), 147);
         let pair = BismarkPair::from_mates(r1, r2).unwrap();
         assert_eq!(pair.r1().record_strand(), BismarkStrand::OT);
         assert_eq!(pair.r2().record_strand(), BismarkStrand::CTOT);

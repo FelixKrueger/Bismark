@@ -4,6 +4,23 @@ All notable changes to `bismark-dedup` will be documented in this file.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1-beta.2] — 2026-06-26
+
+### Fixed
+
+- **Non-directional paired-end input no longer crashes.** `deduplicate_bismark_rs --paired` on a
+  `--non_directional` BAM aborted with `read identity mismatch: expected R1 for first mate, got R2` as soon
+  as it hit a CTOT/CTOB pair, because Bismark deliberately swaps the SAM first/second-in-pair FLAG bits for
+  those strands (the first-in-file record — still sequencing Read 1 — carries `0x80`). The shared
+  `bismark_io::BismarkPair::from_mates` gate rejected the swap; Perl's `deduplicate_bismark` never inspected
+  those bits. Fixed in `bismark-io` (pairs by file order + qname only); dedup keying was already
+  FLAG-independent (`compute_pe_key` uses `pair_strand` from `XR`/`XG` + file-order positions), so output is
+  **byte-identical to Perl v0.25.1** on the issue's reproducer (20 records, same md5; report identical) and
+  the swapped FLAGs are preserved on write-out. Resolves
+  [#1030](https://github.com/FelixKrueger/Bismark/issues/1030). New tests: `ctob_pair_..._end_to_end`,
+  `mixed_four_strand_single_file_all_pairs_coexist`, `nondir_pe_repro_1030_dedups_without_crash`; the CTOT
+  fixture + end-to-end test now use real swapped flags (147/99) and assert FLAG preservation.
+
 ## [1.2.1-beta.1] — 2026-05-26
 
 **bcl-convert qname auto-detect** — closes the v1.2 deferral noted in #792's

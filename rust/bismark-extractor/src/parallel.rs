@@ -122,7 +122,8 @@ pub(crate) enum WorkerInputItem {
     /// `chr_table` keyed by `chr_id`.
     Se { record: BismarkRecord, chr_id: u32 },
     /// Paired-end pair (one item per pair). Pair is already validated by
-    /// `BismarkPair::from_mates` (qname-eq + R1/R2 identity). `Box` keeps the
+    /// `BismarkPair::from_mates` (qname-eq; paired by file order, not the R1/R2
+    /// FLAG bits — #1030). `Box` keeps the
     /// enum size proportional to the smallest variant
     /// (clippy::large_enum_variant); BismarkPair is ~2× BismarkRecord.
     Pe { pair: Box<BismarkPair>, chr_id: u32 },

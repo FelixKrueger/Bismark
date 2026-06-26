@@ -182,7 +182,9 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
 /// PE extraction main loop (Phase C).
 ///
 /// Pairs adjacent records (R1 then R2) via [`BismarkPair::from_mates`],
-/// which enforces qname-equality and R1/R2 identity. R2 calls overlapping
+/// which enforces qname-equality and pairs by file order (R1 = first-in-file;
+/// the SAM R1/R2 FLAG bits are NOT consulted — Bismark swaps them for
+/// non-directional CTOT/CTOB pairs, see #1030). R2 calls overlapping
 /// R1's reference span are dropped via [`drop_overlap`] when
 /// `config.no_overlap` is true (PE default; `--include_overlap` flips it).
 /// Per-mate ignore-region trims (`--ignore_r2`, `--ignore_3prime_r2`) are
@@ -258,7 +260,8 @@ pub fn extract_pe(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
             }
         };
 
-        // Construct the pair (qname-eq + R1/R2 identity enforced by bismark-io).
+        // Construct the pair (qname-eq enforced by bismark-io; paired by file
+        // order, not the R1/R2 FLAG bits — #1030).
         let pair = match BismarkPair::from_mates(r1, r2) {
             Ok(p) => p,
             Err(e) => {
