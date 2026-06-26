@@ -2195,3 +2195,126 @@ fn autodetect_skipped_when_no_umi_flag_even_on_bclconvert_input() {
         .success()
         .stderr(predicates::str::contains("bcl-convert format").not());
 }
+
+// ── Perl-vs-Rust byte identity: NON-DIRECTIONAL PE (#1030 regression cell) ──
+//
+// The CI `perl-oracle` job runs this against the in-repo Perl
+// `deduplicate_bismark` v0.25.1. It closes the coverage gap that let #1030 ship:
+// the standing oracle matrix had no non-directional PE case, and the gate
+// rejected the input *before* producing output, so no output-diff ever ran on
+// CTOT/CTOB pairs (whose R1/R2 SAM FLAG bits Bismark deliberately swaps).
+// Auto-skips locally without perl/samtools; CI sets BISMARK_REQUIRE_PERL=1 to
+// turn a missing tool into a hard failure (issue #796).
+
+/// Locate the in-repo Perl `deduplicate_bismark` and confirm perl + samtools are
+/// available. Returns `None` (caller skips) if anything is missing.
+fn perl_dedup_script() -> Option<PathBuf> {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deduplicate_bismark");
+    if !script.exists() {
+        return None;
+    }
+    let ok = |bin: &str, arg: &str| {
+        std::process::Command::new(bin)
+            .arg(arg)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    if !ok("perl", "-v") || !ok("samtools", "--version") {
+        return None;
+    }
+    Some(script)
+}
+
+fn require_perl() -> bool {
+    std::env::var("BISMARK_REQUIRE_PERL").as_deref() == Ok("1")
+}
+
+fn skip_or_panic(reason: &str) {
+    if require_perl() {
+        panic!("BISMARK_REQUIRE_PERL=1 but {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
+/// `samtools view` (no header → excludes the `@PG` provenance lines that Perl
+/// injects but the Rust port omits), with optional tags compared as an
+/// order-independent set.
+fn samtools_record_set(path: &Path) -> Vec<String> {
+    let out = std::process::Command::new("samtools")
+        .arg("view")
+        .arg(path)
+        .output()
+        .expect("samtools view");
+    assert!(
+        out.status.success(),
+        "samtools view {} failed: {}",
+        path.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|line| {
+            let mut fields: Vec<&str> = line.split('\t').collect();
+            if fields.len() > 11 {
+                fields[11..].sort_unstable();
+            }
+            fields.join("\t")
+        })
+        .collect()
+}
+
+/// Perl-vs-Rust byte identity of `deduplicate_bismark --paired` on the real
+/// non-directional PE reproducer from issue #1030 (10 CTOT/CTOB pairs with
+/// Bismark's swapped R1/R2 FLAG bits). Pre-fix the Rust port aborted here; this
+/// asserts the deduplicated record set now matches Perl v0.25.1 exactly.
+#[test]
+fn perl_vs_rust_nondirectional_pe_dedup() {
+    let Some(script) = perl_dedup_script() else {
+        skip_or_panic("nondir PE dedup oracle: perl/samtools/script not available");
+        return;
+    };
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/nondir_pe_1030.bam");
+    assert!(fixture.exists(), "fixture missing: {}", fixture.display());
+
+    let root = TempDir::new().unwrap();
+    let perl_dir = root.path().join("perl");
+    let rust_dir = root.path().join("rust");
+    std::fs::create_dir(&perl_dir).unwrap();
+    std::fs::create_dir(&rust_dir).unwrap();
+
+    // Perl oracle.
+    let perl_out = std::process::Command::new("perl")
+        .arg(&script)
+        .arg("--paired")
+        .arg("--bam")
+        .arg("--output_dir")
+        .arg(&perl_dir)
+        .arg(&fixture)
+        .output()
+        .expect("run perl deduplicate_bismark");
+    assert!(
+        perl_out.status.success(),
+        "perl deduplicate_bismark failed: {}",
+        String::from_utf8_lossy(&perl_out.stderr)
+    );
+
+    // Rust.
+    Command::cargo_bin("deduplicate_bismark_rs")
+        .unwrap()
+        .arg("--paired")
+        .arg("--bam")
+        .arg("--output_dir")
+        .arg(&rust_dir)
+        .arg(&fixture)
+        .assert()
+        .success();
+
+    let perl_bam = perl_dir.join("nondir_pe_1030.deduplicated.bam");
+    let rust_bam = rust_dir.join("nondir_pe_1030.deduplicated.bam");
+    assert_eq!(
+        samtools_record_set(&perl_bam),
+        samtools_record_set(&rust_bam),
+        "non-directional PE dedup records differ between Perl and Rust (#1030)"
+    );
+}
