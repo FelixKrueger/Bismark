@@ -167,3 +167,32 @@ single-chromosome shortcut is the dominant artifact here.
 
 *Reproducible: subsets pulled from ENA (`ftp.sra.ebi.ac.uk/vol1/fastq/...`), real
 minimap2 2.31-r1302 + Bowtie 2 2.5.5; see the commands above.*
+
+## Experimental modes vs DRAGEN (NA12878, real 5-Base)
+
+### Deconvolution vs DRAGEN's germline VCF
+
+Ran `--five_base_deconvolution` on the real NA12878 lanes and cross-checked our per-CpG
+`variant` verdicts against DRAGEN's PASS germline SNVs (a + CpG variant = ref `C` → alt
+`T`; a − CpG variant = `G` → `A`):
+
+| depth | our `variant` calls | precision (any DRAGEN C>T/G>A) | recall (DRAGEN HOM, covered) |
+|---|---|---|---|
+| ~6× (1 lane)  | 120,730 | 92.9 % | 43.4 % |
+| ~24× (4 lanes) | 298,041 | 92.0 % | 82.1 % |
+
+Precision is **~92 %** (when we exclude a CpG as a variant, DRAGEN has a disrupting SNV
+there ~92 % of the time); recall climbs steeply with depth (43 % → 82 % from 6× to 24×)
+because the two-strand rule needs the opposite strand covered. So the deconvolution
+**reproduces DRAGEN's variant exclusions** at depth. (40× aggregate pending.)
+
+### Consensus — RAM-bounded rewrite (was OOM at WGS depth)
+
+The full-depth run exposed a real scalability bug: the consensus pass held every read's
+per-position (base,phred) map for ALL families in memory (~hundreds of GB at WGS depth) →
+OOM-killed the process and, run in parallel, panicked the machine twice. Fixed (commit
+83ff030) as **two passes** keyed by a compact heap-free key: pass 1 counts OT/OB per family
+→ the duplex-PAIRED set; pass 2 builds covered maps ONLY for paired families (~0.1 % of
+reads). Peak memory drops from hundreds of GB to **~a few GB**. Output unchanged (3
+consensus ground-truth gates still green). Per-CpG consensus-vs-DRAGEN concordance + the
+measured peak RSS at full depth are pending the running validation.
