@@ -110,11 +110,13 @@ jobs:
           BISMARK_SUITE_VERSION: ${{ needs.check-release.outputs.version }}
         # Compile bismark_rs with the in-process rammap backend ON so the shipped
         # binary's `--rammap_inprocess` opt-in is functional (default `--rammap`
-        # stays subprocess). `pkg/feature` syntax: the feature lives only on
-        # bismark-aligner; this still builds all 14 workspace members, and the
-        # other 11 binaries are byte-unaffected. The rammap-core git dep is fetched
-        # at build (network available on the runner).
-        run: cargo build --release --locked --manifest-path rust/Cargo.toml --target ${{ matrix.target }} --features bismark-aligner/rammap-inprocess
+        # stays subprocess), AND with `binseq-input` ON so the shipped binary can read
+        # BINSEQ `.vbq` files (#1025 Phase 2 — a default `cargo build` rejects `.vbq`
+        # fail-loud; release binaries decode it). `pkg/feature` syntax: both features
+        # live only on bismark-aligner; this still builds all 14 workspace members, and
+        # the other 11 binaries are byte-unaffected. The rammap-core git dep + the
+        # binseq crates.io dep are fetched at build (network available on the runner).
+        run: cargo build --release --locked --manifest-path rust/Cargo.toml --target ${{ matrix.target }} --features bismark-aligner/rammap-inprocess,bismark-aligner/binseq-input
       - name: Package the suite tarball
         id: package
         run: |

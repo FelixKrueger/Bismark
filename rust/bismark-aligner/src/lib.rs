@@ -26,6 +26,7 @@
 pub mod align;
 pub mod aligner;
 pub mod aux_out;
+pub mod binseq_decode;
 pub mod cli;
 pub mod combined;
 pub mod config;
@@ -43,6 +44,12 @@ pub mod mapq;
 // sees this. The extern crate is `rammap` (the package `rammap-core`'s lib name).
 #[cfg(feature = "rammap-inprocess")]
 pub use ::rammap;
+// #1025 Phase 2: re-export the `binseq` crate under the `binseq-input` feature so the
+// `binseq_transcode` integration test (a separate crate that does NOT inherit the parent
+// crate's normal deps — see the `rammap` note above) can build `.vbq` fixtures with the
+// `binseq` writer. Default/Mac build never sees this.
+#[cfg(feature = "binseq-input")]
+pub use ::binseq;
 pub mod merge;
 pub mod methylation;
 pub mod options;
@@ -115,12 +122,14 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     let mut config = resolve(cli, command_line)?;
-    // #1025 Phase 1: transcode any single-end unaligned-BAM read inputs into temp
-    // FASTQ (samtools-fastq-equivalent) BEFORE dispatch, so the byte-frozen
-    // convert→align→merge path runs unchanged. Returns the per-input temp dirs to
-    // clean up after the run (the transcode FASTQ is consumed by BOTH the convert
-    // step and the methylation-call re-read, so cleanup must follow the pipeline).
-    let ubam_temp_dirs = resolve_alt_inputs(&mut config, cli, &[&UbamDecoder])?;
+    // #1025: transcode any alternative binary read inputs into temp FASTQ BEFORE
+    // dispatch, so the byte-frozen convert→align→merge path runs unchanged. Phase 1
+    // = unaligned BAM (uBAM, `samtools fastq`-equivalent); Phase 2 = BINSEQ `.vbq`
+    // (`bqtools decode`-equivalent). Returns the per-input temp dirs to clean up after
+    // the run (the transcode FASTQ is consumed by BOTH the convert step and the
+    // methylation-call re-read, so cleanup must follow the pipeline).
+    let alt_input_temp_dirs =
+        resolve_alt_inputs(&mut config, cli, &[&UbamDecoder, &BinseqDecoder])?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -173,9 +182,9 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     eprintln!("{}", config.summary());
     let result = pipeline(&config);
-    // Best-effort cleanup of the uBAM transcode temp dirs (the plan's "cleaned up
-    // with the other temps"), regardless of pipeline success/failure.
-    for dir in &ubam_temp_dirs {
+    // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
+    // "cleaned up with the other temps"), regardless of pipeline success/failure.
+    for dir in &alt_input_temp_dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
@@ -257,6 +266,35 @@ impl InputDecoder for UbamDecoder {
     }
     fn subdir(&self) -> &'static str {
         ".bismark_ubam"
+    }
+}
+
+/// BINSEQ backend — thin adapter over [`binseq_decode`] (#1025 Phase 2). Decodes
+/// Arc Institute `.vbq` files; `.cbq`/`.bq` are detected then rejected fail-loud
+/// (v1 scope / D2). Detection is feature-independent so a build without the
+/// `binseq-input` feature still rejects a `.vbq` never-silently.
+struct BinseqDecoder;
+impl InputDecoder for BinseqDecoder {
+    fn detect(&self, path: &Path) -> bool {
+        binseq_decode::is_binseq_input(path)
+    }
+    fn is_paired(&self, path: &Path) -> Result<bool> {
+        binseq_decode::is_paired(path)
+    }
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        binseq_decode::transcode_binseq_to_fastq_se(path, temp_dir)
+    }
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        binseq_decode::transcode_binseq_to_fastq_pe(path, temp_dir)
+    }
+    fn label(&self) -> &'static str {
+        "BINSEQ"
+    }
+    fn decode_tool(&self) -> &'static str {
+        "bqtools decode"
+    }
+    fn subdir(&self) -> &'static str {
+        ".bismark_binseq"
     }
 }
 
