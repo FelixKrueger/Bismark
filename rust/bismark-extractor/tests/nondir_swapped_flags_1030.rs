@@ -247,3 +247,101 @@ fn mixed_four_strand_extractor_coexist() {
         "expected all 4 pairs processed; got:\n{report}"
     );
 }
+
+// ── Perl-vs-Rust byte identity: NON-DIRECTIONAL PE (#1030 regression cell) ──
+//
+// The CI `perl-oracle` job runs this against the in-repo Perl
+// `bismark_methylation_extractor` v0.25.1 — the matching extractor cell to the
+// dedup one in `bismark-dedup`. Closes the non-directional coverage gap that let
+// #1030 ship. Auto-skips locally without perl/samtools; CI sets
+// `BISMARK_REQUIRE_PERL=1` to turn a missing tool into a hard failure (#796).
+
+/// Locate the in-repo Perl `bismark_methylation_extractor` and confirm perl +
+/// samtools are available. Returns `None` (caller skips) if anything is missing.
+fn perl_extractor_script() -> Option<PathBuf> {
+    let script =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bismark_methylation_extractor");
+    if !script.exists() {
+        return None;
+    }
+    let ok = |bin: &str, arg: &str| {
+        std::process::Command::new(bin)
+            .arg(arg)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    if !ok("perl", "-v") || !ok("samtools", "--version") {
+        return None;
+    }
+    Some(script)
+}
+
+fn require_perl() -> bool {
+    std::env::var("BISMARK_REQUIRE_PERL").as_deref() == Ok("1")
+}
+
+fn skip_or_panic(reason: &str) {
+    if require_perl() {
+        panic!("BISMARK_REQUIRE_PERL=1 but {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
+/// Perl-vs-Rust byte identity of `bismark_methylation_extractor --paired-end
+/// --comprehensive` on the real non-directional PE reproducer from #1030.
+/// Asserts the CpG/CHG/CHH context files, M-bias, and splitting report are all
+/// byte-identical to Perl v0.25.1 (the extractor PE path the swap reaches).
+#[test]
+fn perl_vs_rust_nondirectional_pe_extractor() {
+    let Some(script) = perl_extractor_script() else {
+        skip_or_panic("nondir PE extractor oracle: perl/samtools/script not available");
+        return;
+    };
+    let fixture = fixture_repro();
+    assert!(fixture.exists(), "fixture missing: {}", fixture.display());
+
+    let work = tempfile::tempdir().unwrap();
+    let perl_dir = work.path().join("perl");
+    let rust_dir = work.path().join("rust");
+    fs::create_dir_all(&perl_dir).unwrap();
+
+    // Perl oracle.
+    let perl_out = std::process::Command::new("perl")
+        .arg(&script)
+        .arg("--paired-end")
+        .arg("--comprehensive")
+        .arg("--output_dir")
+        .arg(&perl_dir)
+        .arg(&fixture)
+        .output()
+        .expect("run perl bismark_methylation_extractor");
+    assert!(
+        perl_out.status.success(),
+        "perl bismark_methylation_extractor failed: {}",
+        String::from_utf8_lossy(&perl_out.stderr)
+    );
+
+    // Rust.
+    run_extractor(&fixture, &rust_dir, &["--comprehensive"]).success();
+
+    // Every primary output byte-identical (these are plain text; the Rust port
+    // mirrors Perl's version line, so the splitting report matches too).
+    for f in [
+        "CpG_context_nondir_pe_1030.txt",
+        "CHG_context_nondir_pe_1030.txt",
+        "CHH_context_nondir_pe_1030.txt",
+        "nondir_pe_1030.M-bias.txt",
+        "nondir_pe_1030_splitting_report.txt",
+    ] {
+        let perl_f =
+            fs::read(perl_dir.join(f)).unwrap_or_else(|e| panic!("perl output {f} missing: {e}"));
+        let rust_f =
+            fs::read(rust_dir.join(f)).unwrap_or_else(|e| panic!("rust output {f} missing: {e}"));
+        assert_eq!(
+            String::from_utf8_lossy(&perl_f),
+            String::from_utf8_lossy(&rust_f),
+            "non-directional PE extractor output {f} differs between Perl and Rust (#1030)"
+        );
+    }
+}
