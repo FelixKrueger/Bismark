@@ -280,6 +280,11 @@ mod vbq_impl {
             .map_err(|e| binseq_err(path, &e))?
         {
             for rec in block.iter() {
+                // Deliberate divergence from `bqtools decode`, which silently skips just the
+                // R2 write for a mate-less record (`if !xbuf.is_empty()`). For an aligner that
+                // would desync R1/R2 — every following read mis-pairs — so we fail loud
+                // instead (never-silent). A well-formed paired VBQ never hits this (the file
+                // header guarantees `xlen > 0` per record).
                 if !rec.is_paired() {
                     return Err(AlignerError::Validation(format!(
                         "paired BINSEQ input '{}' has a record with no second mate (xlen == 0); \

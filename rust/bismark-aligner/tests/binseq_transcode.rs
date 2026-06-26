@@ -240,3 +240,60 @@ fn empty_se_vbq_yields_empty_fastq() {
         "empty VBQ → empty FASTQ"
     );
 }
+
+#[test]
+fn multi_block_vbq_decodes_all_records_in_order() {
+    // The production path: a real `.vbq` spans many 128 KB blocks, so the
+    // `while read_block_into(&mut block)` loop iterates with block reuse + cross-block
+    // index continuity. The other fixtures are single-block, so force MULTIPLE blocks
+    // with a tiny `block_size` and enough records, then assert every record is decoded
+    // exactly once, in file order (no dropped/duplicated/reordered record at a boundary).
+    let dir = tempfile::tempdir().unwrap();
+    let vbq = dir.path().join("multiblock.vbq");
+
+    const N: usize = 200;
+    let seq: &[u8] = b"ACGTACGTACGTACGTACGTACGTACGTACGT"; // 32 bp, exact under 2-bit
+    let qual: &[u8] = b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII"; // 32
+
+    // block_size = 256 bytes holds only a few ~70-byte records → ~tens of blocks for N=200.
+    let mut w = BinseqWriterBuilder::new(Format::Vbq)
+        .paired(false)
+        .quality(true)
+        .headers(true)
+        .block_size(256)
+        .build(std::fs::File::create(&vbq).unwrap())
+        .unwrap();
+    let mut expected = Vec::new();
+    for i in 0..N {
+        let header = format!("read{i}");
+        let rec = SequencingRecordBuilder::default()
+            .s_header(header.as_bytes())
+            .s_seq(seq)
+            .s_qual(qual)
+            .build()
+            .unwrap();
+        assert!(w.push(rec).unwrap());
+        expected.extend_from_slice(b"@");
+        expected.extend_from_slice(header.as_bytes());
+        expected.push(b'\n');
+        expected.extend_from_slice(seq);
+        expected.extend_from_slice(b"\n+\n");
+        expected.extend_from_slice(qual);
+        expected.push(b'\n');
+    }
+    w.finish().unwrap();
+
+    let out = binseq_decode::transcode_binseq_to_fastq_se(&vbq, dir.path()).unwrap();
+    let got = read_to_bytes(&out);
+    // Byte-exact over all N records ⇒ no record dropped, duplicated, or reordered across
+    // the many block boundaries, and every header (`read0`..`read199`) is in file order.
+    assert_eq!(
+        got, expected,
+        "multi-block decode must be complete + in file order"
+    );
+    assert_eq!(
+        got.iter().filter(|&&b| b == b'@').count(),
+        N,
+        "exactly N headers"
+    );
+}

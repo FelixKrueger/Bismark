@@ -80,13 +80,16 @@ rayon = { version = "1", optional = true }
 # never-silently via the always-compiled extension detection (see `binseq_decode`).
 # `default-features = false` drops binseq's `paraseq` + `parking_lot` defaults (we use only
 # the serial `vbq::MmapReader` + the low-level writer for test fixtures — never the
-# paraseq-gated `encode_fastx`), but we MUST re-enable `anyhow`: binseq's CBQ index path
-# does `?` on an `anyhow::Error` whose `From` impl is `#[cfg(feature = "anyhow")]`, so the
-# crate does not COMPILE without it (it is a default feature it depends on internally).
-# NOTE: `zstd` (cc-based, NOT cmake) is a NON-optional binseq dependency, so it is NOT
-# dropped by `default-features = false`; the feature gate is what keeps it out of the default
-# build. binseq's `anyhow` needs `^1.0.100` (hence the workspace `anyhow` pin bump to
-# 1.0.103). Exact-pinned per the workspace convention.
+# paraseq-gated `encode_fastx`), but we MUST re-enable `anyhow`: binseq's CBQ EliasFano
+# path (`cbq/core/block.rs` — `EliasFanoBuilder::new(..)?` / `EliasFano::deserialize_from(..)?`
+# on `sucds`, which returns `anyhow::Error`) `?`-converts into `binseq::Error`, whose
+# `From<anyhow::Error>` impl is `#[cfg(feature = "anyhow")]`. So the crate does NOT compile
+# without `anyhow` (verified empirically: a `default-features=false` build fails with
+# "From<anyhow::Error> is not implemented"). It is an implicit `?` conversion, invisible to a
+# grep for "anyhow". NOTE: `zstd` (cc-based, NOT cmake) is a NON-optional binseq dependency,
+# so `default-features = false` does NOT drop it; the feature gate is what keeps it out of the
+# default build. Two workspace pin bumps are forced: `thiserror` (binseq's unconditional
+# `^2.0.17` dep) and `anyhow` (the feature above needs `^1.0.100`). Exact-pinned per convention.
 binseq = { version = "=0.9.2", default-features = false, features = ["anyhow"], optional = true }
 
 [features]
