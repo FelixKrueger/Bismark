@@ -48,8 +48,27 @@ base handling are right. DRAGEN's **directional-only** strand profile (CTOT/CTOB
 matches our design's directional-only rejection. DRAGEN's puc19 methylated control caps
 at 96.91 % CpG (the chemistry's sensitivity ceiling).
 
-A per-CpG `CX_report` diff is the natural deeper gate but needs matched depth (our 0.5x
-subsample gives ~1 read/CpG → per-site % is sampling-noisy); run more lanes first.
+### Per-CpG concordance vs DRAGEN — FULL DEPTH (~44×, all 8 lanes, 2026-06-25)
+
+Aligned all 8 lanes (~384M pairs ≈ DRAGEN's depth) to whole GRCh38, extracted a genome-wide
+CpG cytosine report (`bismark_methylation_extractor_rs --cytosine_report`), and diffed it
+per-CpG against DRAGEN's `CX_report` over **55 million shared CpGs** (autosomes + X). This is
+the CORE per-read SE+PE 5-Base path (no duplex/consensus/deconvolution flags).
+
+| cov ≥ (both) | shared CpGs | Pearson r | cov-weighted r | mean \|Δ%\| | call agreement @50% |
+|---|---|---|---|---|---|
+| 1  | 55,492,552 | 0.9812 | 0.9886 | 2.60 % | 97.16 % |
+| 5  | 54,596,475 | 0.9863 | 0.9891 | 2.32 % | 97.40 % |
+| 10 | 53,163,111 | 0.9878 | 0.9896 | 2.16 % | **97.53 %** |
+
+Mean % methylation: ours 49.7–50.1 % vs DRAGEN 50.0–50.5 % (within ~0.3 pt). The 5×5
+methylation-level confusion is overwhelmingly diagonal (at ≥10×: 16.9M low-low, 17.5M
+high-high, ~4.8M on each intermediate diagonal cell, small off-diagonal). At 0.5× this was
+r=0.77 (sampling-noise-limited); at full depth it converges to **r≈0.99, 97.5 % call
+agreement** — i.e. `bismark_rs --illumina_5base` produces per-CpG methylation calls
+**equivalent to DRAGEN** on real Illumina 5-Base NA12878, despite a different aligner
+(minimap2 vs DRAGEN). This substantiates the core path at GA grade. (Experimental
+duplex/consensus/deconvolution modes are validated separately — see below.)
 
 This run also surfaced + fixed the qname-whitespace desync (commit 4e4f3d4). A deeper run
 (more lanes) would yield proportionally more duplex pairs, but this confirms the whole
