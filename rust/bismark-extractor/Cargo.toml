@@ -40,7 +40,7 @@ mimalloc = { version = "=0.1.52", default-features = false }
 # blocks + one stream-wide CRC footer), so plain `GzDecoder` reads it.
 # deflate_rust = pure-Rust backend (no cmake/C; matches TG-OE's gzp config).
 gzp = { version = "=0.11.3", default-features = false, features = ["deflate_rust"] }
-thiserror = "=2.0.0"
+thiserror = "=2.0.18"
 # noodles-sam pinned to match bismark-io's transitive choice (matches dedup precedent).
 # Used for `Header` in the chr-name lookup table builder (header.rs) and in tests.
 noodles-sam = "=0.85.0"

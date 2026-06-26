@@ -26,6 +26,7 @@
 pub mod align;
 pub mod aligner;
 pub mod aux_out;
+pub mod binseq_decode;
 pub mod cli;
 pub mod combined;
 pub mod config;
@@ -43,6 +44,12 @@ pub mod mapq;
 // sees this. The extern crate is `rammap` (the package `rammap-core`'s lib name).
 #[cfg(feature = "rammap-inprocess")]
 pub use ::rammap;
+// #1025 Phase 2: re-export the `binseq` crate under the `binseq-input` feature so the
+// `binseq_transcode` integration test (a separate crate that does NOT inherit the parent
+// crate's normal deps — see the `rammap` note above) can build `.vbq` fixtures with the
+// `binseq` writer. Default/Mac build never sees this.
+#[cfg(feature = "binseq-input")]
+pub use ::binseq;
 pub mod merge;
 pub mod methylation;
 pub mod options;
@@ -115,12 +122,14 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     let mut config = resolve(cli, command_line)?;
-    // #1025 Phase 1: transcode any single-end unaligned-BAM read inputs into temp
-    // FASTQ (samtools-fastq-equivalent) BEFORE dispatch, so the byte-frozen
-    // convert→align→merge path runs unchanged. Returns the per-input temp dirs to
-    // clean up after the run (the transcode FASTQ is consumed by BOTH the convert
-    // step and the methylation-call re-read, so cleanup must follow the pipeline).
-    let ubam_temp_dirs = resolve_ubam_inputs(&mut config, cli)?;
+    // #1025: transcode any alternative binary read inputs into temp FASTQ BEFORE
+    // dispatch, so the byte-frozen convert→align→merge path runs unchanged. Phase 1
+    // = unaligned BAM (uBAM, `samtools fastq`-equivalent); Phase 2 = BINSEQ `.vbq`
+    // (`bqtools decode`-equivalent). Returns the per-input temp dirs to clean up after
+    // the run (the transcode FASTQ is consumed by BOTH the convert step and the
+    // methylation-call re-read, so cleanup must follow the pipeline).
+    let alt_input_temp_dirs =
+        resolve_alt_inputs(&mut config, cli, &[&UbamDecoder, &BinseqDecoder])?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -173,9 +182,9 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     eprintln!("{}", config.summary());
     let result = pipeline(&config);
-    // Best-effort cleanup of the uBAM transcode temp dirs (the plan's "cleaned up
-    // with the other temps"), regardless of pipeline success/failure.
-    for dir in &ubam_temp_dirs {
+    // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
+    // "cleaned up with the other temps"), regardless of pipeline success/failure.
+    for dir in &alt_input_temp_dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
@@ -207,91 +216,188 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 /// temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
 /// same-basename uBAMs can't collide and a pre-existing temp is never clobbered.
 /// Returns the created subdirs for the caller to clean up after the pipeline.
-fn resolve_ubam_inputs(config: &mut RunConfig, cli: &cli::Cli) -> Result<Vec<PathBuf>> {
+/// An alternative (non-FASTQ/FASTA) read-input backend: a binary format that is
+/// detected, then **transcoded to a temp FASTQ** and fed to the byte-frozen
+/// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
+/// second. The shared resolver [`resolve_alt_inputs`] owns the SE/PE
+/// classification, the per-input temp subdir + cleanup, the SingleEnd→PairedEnd
+/// switch (with PE-options recompute + the paired-aligner reject), and the
+/// fail-loud guards — so every backend behaves identically; a backend only
+/// supplies detection + the transcode.
+trait InputDecoder {
+    /// Does `path` belong to this backend? Backends must be mutually exclusive
+    /// and must never match a FASTQ/FASTA file (uBAM = BAM magic byte; BINSEQ =
+    /// `.vbq`/`.cbq`/`.bq` extension — disjoint).
+    fn detect(&self, path: &Path) -> bool;
+    /// Single- vs paired-end (peek; a paired input is auto-split into mates).
+    fn is_paired(&self, path: &Path) -> Result<bool>;
+    /// Transcode a single-end input → one temp FASTQ named `<stem>.fastq`.
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf>;
+    /// Transcode a paired-end input → (R1, R2) temp FASTQs `<stem>_1/2.fastq`.
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)>;
+    /// Human label for notices/errors, e.g. "unaligned BAM" / "BINSEQ".
+    fn label(&self) -> &'static str;
+    /// The reference decode tool named in the notice (the `samtools fastq` analog).
+    fn decode_tool(&self) -> &'static str;
+    /// Per-input temp subdir name (internal; does not affect output naming).
+    fn subdir(&self) -> &'static str;
+}
+
+/// uBAM backend — thin adapter over [`ubam`] (#1026 SE / #1027 PE).
+struct UbamDecoder;
+impl InputDecoder for UbamDecoder {
+    fn detect(&self, path: &Path) -> bool {
+        ubam::is_bam_input(path)
+    }
+    fn is_paired(&self, path: &Path) -> Result<bool> {
+        ubam::is_paired(path)
+    }
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        ubam::transcode_ubam_to_fastq_se(path, temp_dir)
+    }
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        ubam::transcode_ubam_to_fastq_pe(path, temp_dir)
+    }
+    fn label(&self) -> &'static str {
+        "unaligned BAM"
+    }
+    fn decode_tool(&self) -> &'static str {
+        "samtools fastq"
+    }
+    fn subdir(&self) -> &'static str {
+        ".bismark_ubam"
+    }
+}
+
+/// BINSEQ backend — thin adapter over [`binseq_decode`] (#1025 Phase 2). Decodes
+/// Arc Institute `.vbq` files; `.cbq`/`.bq` are detected then rejected fail-loud
+/// (v1 scope / D2). Detection is feature-independent so a build without the
+/// `binseq-input` feature still rejects a `.vbq` never-silently.
+struct BinseqDecoder;
+impl InputDecoder for BinseqDecoder {
+    fn detect(&self, path: &Path) -> bool {
+        binseq_decode::is_binseq_input(path)
+    }
+    fn is_paired(&self, path: &Path) -> Result<bool> {
+        binseq_decode::is_paired(path)
+    }
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        binseq_decode::transcode_binseq_to_fastq_se(path, temp_dir)
+    }
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        binseq_decode::transcode_binseq_to_fastq_pe(path, temp_dir)
+    }
+    fn label(&self) -> &'static str {
+        "BINSEQ"
+    }
+    fn decode_tool(&self) -> &'static str {
+        "bqtools decode"
+    }
+    fn subdir(&self) -> &'static str {
+        ".bismark_binseq"
+    }
+}
+
+/// Detect alternative binary read inputs (uBAM, BINSEQ, …), transcode them to
+/// temp FASTQ, and rewrite `config.layout` / `config.format` so the byte-frozen
+/// pipeline runs unchanged. Returns the per-input temp subdirs to clean up after
+/// the pipeline. Generalizes the Phase-1 uBAM resolver across backends.
+fn resolve_alt_inputs(
+    config: &mut RunConfig,
+    cli: &cli::Cli,
+    decoders: &[&dyn InputDecoder],
+) -> Result<Vec<PathBuf>> {
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
 
-    // A positional PE uBAM arrives as a SingleEnd layout (one file). A uBAM passed
-    // via -1/-2 is not the supported shape — fail loud (design: single collated file).
+    let decoder_idx = |path: &str| decoders.iter().position(|d| d.detect(Path::new(path)));
+
+    // A positional paired input arrives as a SingleEnd layout (one file). A binary
+    // input passed via -1/-2 is not the supported shape — fail loud.
     let reads = match &config.layout {
         ReadLayout::SingleEnd { reads } => reads.clone(),
         ReadLayout::PairedEnd { mates1, mates2 } => {
-            if mates1
+            if let Some(i) = mates1
                 .iter()
                 .chain(mates2.iter())
-                .any(|f| ubam::is_bam_input(Path::new(f)))
+                .find_map(|f| decoder_idx(f))
             {
-                return Err(AlignerError::Validation(
-                    "unaligned BAM via -1/-2 is not supported; pass a single collated paired-end \
-                     uBAM as a positional argument (it is auto-detected and split into mates), or \
-                     run `samtools fastq -1 r1.fq.gz -2 r2.fq.gz <in.bam>` first"
-                        .into(),
-                ));
+                return Err(AlignerError::Validation(format!(
+                    "{} input via -1/-2 is not supported; pass a single positional file — a \
+                     paired input is auto-detected and split into mates",
+                    decoders[i].label()
+                )));
             }
             return Ok(temp_dirs);
         }
     };
 
-    // Classify each SE input: (is_uBAM, is_paired_uBAM).
-    let mut classes = Vec::with_capacity(reads.len());
-    let mut any_ubam = false;
+    // Classify each input: Some((decoder index, is_paired)) for a binary input, None for plain FASTQ.
+    let mut classes: Vec<Option<(usize, bool)>> = Vec::with_capacity(reads.len());
+    let mut any = false;
     let mut any_pe = false;
     for r in &reads {
-        let is_bam = ubam::is_bam_input(Path::new(r));
-        let is_pe = is_bam && ubam::is_paired(Path::new(r))?;
-        any_ubam |= is_bam;
-        any_pe |= is_pe;
-        classes.push((is_bam, is_pe));
+        match decoder_idx(r) {
+            Some(i) => {
+                any = true;
+                let pe = decoders[i].is_paired(Path::new(r))?;
+                any_pe |= pe;
+                classes.push(Some((i, pe)));
+            }
+            None => classes.push(None),
+        }
     }
-    if !any_ubam {
+    if !any {
         return Ok(temp_dirs); // plain FASTQ/FASTA single-end — nothing to do.
     }
     if is_fasta {
-        return Err(AlignerError::Validation(
-            "unaligned BAM input is incompatible with --fasta/-f (BAM carries base qualities, so \
-             it transcodes to FASTQ, not FASTA)"
-                .into(),
-        ));
+        let i = classes.iter().flatten().next().unwrap().0;
+        return Err(AlignerError::Validation(format!(
+            "{} input is incompatible with --fasta/-f (it carries base qualities, so it \
+             transcodes to FASTQ, not FASTA)",
+            decoders[i].label()
+        )));
     }
 
     if any_pe {
-        // Paired-end uBAM(s): every input must be a paired uBAM (no mixing).
-        if !classes.iter().all(|(is_bam, is_pe)| *is_bam && *is_pe) {
+        // Paired-end: every input must be a paired input of the SAME backend (no mixing).
+        let first = classes[0];
+        let homogeneous = classes
+            .iter()
+            .all(|c| matches!((c, first), (Some((i, true)), Some((j, _))) if *i == j));
+        if !homogeneous {
             return Err(AlignerError::Validation(
-                "a paired-end unaligned BAM cannot be mixed with single-end or FASTQ inputs in \
-                 the same run"
+                "a paired-end binary input cannot be mixed with single-end, FASTQ, or \
+                 other-format inputs in the same run"
                     .into(),
             ));
         }
+        let dec = decoders[first.unwrap().0];
         let mut mates1 = Vec::with_capacity(reads.len());
         let mut mates2 = Vec::with_capacity(reads.len());
         for (i, r) in reads.iter().enumerate() {
             eprintln!(
-                "Note: input '{r}' detected as a paired-end unaligned BAM — splitting mates and \
-                 transcoding to FASTQ (equivalent to `samtools fastq -1/-2`) before alignment."
+                "Note: input '{r}' detected as a paired-end {} — splitting mates and transcoding \
+                 to FASTQ (equivalent to `{} -1/-2`) before alignment.",
+                dec.label(),
+                dec.decode_tool()
             );
-            let sub = temp_dir.join(".bismark_ubam").join(i.to_string());
-            let (r1, r2) = ubam::transcode_ubam_to_fastq_pe(Path::new(r), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
+            let (r1, r2) = dec.transcode_pe(Path::new(r), &sub)?;
             mates1.push(r1.to_string_lossy().into_owned());
             mates2.push(r2.to_string_lossy().into_owned());
             temp_dirs.push(sub);
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
-        // The positional uBAM resolved as SINGLE-END, so `resolve()`'s layout-dependent
-        // guards ran against the SE layout. Re-run the paired-aligner reject now that the
-        // layout is PE, via the SAME shared validator `resolve()` uses — so e.g.
-        // `--minimap2 <collated-pe.bam>` (a long-read uBAM) fails loud exactly as
-        // `--minimap2 -1 .. -2 ..` does, instead of silently entering the deferred
-        // minimap2-PE path.
+        // The positional file resolved as SINGLE-END, so `resolve()`'s layout-dependent
+        // guards ran against the SE layout. Re-run the paired-aligner reject (so e.g.
+        // `--minimap2 <pe binary file>` fails loud exactly as `--minimap2 -1 .. -2 ..`)
+        // and recompute the PE aligner options (`--no-mixed --no-discordant …`) via the
+        // SAME builders `resolve()` uses — without them Bowtie 2 emits half-mapped pairs
+        // the PE merge can't score.
         config::reject_unsupported_paired_aligner(config.aligner, &config.layout)?;
-        // The positional uBAM resolved as SINGLE-END, so `resolve()` built single-end
-        // aligner options. A paired-end run needs the PE Bowtie 2 flags
-        // (`--no-mixed --no-discordant --dovetail --maxins …`); recompute via the SAME
-        // builder with is_paired=true so the options exactly match a native `-1/-2` run.
-        // (Without `--no-mixed`/`--no-discordant`, Bowtie 2 emits half-mapped pairs the
-        // PE merge can't score.)
         let (opts, gaps) = options::build_aligner_options(
             cli,
             config.aligner,
@@ -302,18 +408,19 @@ fn resolve_ubam_inputs(config: &mut RunConfig, cli: &cli::Cli) -> Result<Vec<Pat
         config.aligner_options = opts;
         config.gap_penalties = gaps;
     } else {
-        // Single-end uBAM(s): transcode each; leave any plain FASTQ entries as-is.
+        // Single-end: transcode each binary input; leave any plain FASTQ entries as-is.
         let mut new_reads = reads.clone();
         for (i, read) in new_reads.iter_mut().enumerate() {
-            if !classes[i].0 {
-                continue;
-            }
+            let Some((di, _)) = classes[i] else { continue };
+            let dec = decoders[di];
             eprintln!(
-                "Note: input '{read}' detected as an unaligned BAM — transcoding reads to FASTQ \
-                 (equivalent to `samtools fastq`) before alignment."
+                "Note: input '{read}' detected as {} — transcoding reads to FASTQ (equivalent to \
+                 `{}`) before alignment.",
+                dec.label(),
+                dec.decode_tool()
             );
-            let sub = temp_dir.join(".bismark_ubam").join(i.to_string());
-            let temp = ubam::transcode_ubam_to_fastq_se(Path::new(read), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
+            let temp = dec.transcode_se(Path::new(read), &sub)?;
             *read = temp.to_string_lossy().into_owned();
             temp_dirs.push(sub);
         }

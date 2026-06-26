@@ -20,7 +20,7 @@ path = "src/main.rs"
 [dependencies]
 bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
-thiserror = "=2.0.0"
+thiserror = "=2.0.18"
 # Local-time formatting for the default {{date}}/{{time}} (Perl `localtime`).
 # Already in the workspace Cargo.lock (transitive) — this adds NO new dependency
 # tree. The deterministic `--__test_timestamp` path is pure-std (no libc).

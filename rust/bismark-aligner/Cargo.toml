@@ -27,8 +27,8 @@ which = "=7.0.3"
 # gzip read (.fq.gz input) + optional gzip write (--gzip temp). MultiGzDecoder
 # handles concatenated-member .gz (Perl uses `gunzip -c`); same pin as genome-prep.
 flate2 = "=1.1.9"
-thiserror = "=2.0.0"
-anyhow = "=1.0.86"
+thiserror = "=2.0.18"
+anyhow = "=1.0.103"
 # Multithreaded global allocator (Apple Silicon perf epic, 06222026). The
 # aligner allocates heavily per record on the Rust side — bowtie2-output parse
 # (`SamRecord::parse`: ~7 owned String/Vec per line × 2-4 records/read), the
@@ -72,12 +72,35 @@ rammap-core = { git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f78
 # only under `rammap-inprocess` — already transitive via rammap-core's `parallel` feature, so
 # one shared rayon. `"1"` unifies with rammap-core's transitive pin (the default build never sees it).
 rayon = { version = "1", optional = true }
+# #1025 Phase 2: Arc Institute BINSEQ (.vbq) read input (the `binseq_decode` backend).
+# OPTIONAL + behind the default-OFF `binseq-input` feature (Rev 1 R7), mirroring the
+# `rammap-inprocess` precedent so the default/local/Mac `cargo build` NEVER compiles the
+# `binseq` crate (and its zstd C build). Release Linux binaries ship with the feature ON
+# (see release.yml), and a default build still REJECTS a `.vbq`/`.cbq`/`.bq` input
+# never-silently via the always-compiled extension detection (see `binseq_decode`).
+# `default-features = false` drops binseq's `paraseq` + `parking_lot` defaults (we use only
+# the serial `vbq::MmapReader` + the low-level writer for test fixtures — never the
+# paraseq-gated `encode_fastx`), but we MUST re-enable `anyhow`: binseq's CBQ EliasFano
+# path (`cbq/core/block.rs` — `EliasFanoBuilder::new(..)?` / `EliasFano::deserialize_from(..)?`
+# on `sucds`, which returns `anyhow::Error`) `?`-converts into `binseq::Error`, whose
+# `From<anyhow::Error>` impl is `#[cfg(feature = "anyhow")]`. So the crate does NOT compile
+# without `anyhow` (verified empirically: a `default-features=false` build fails with
+# "From<anyhow::Error> is not implemented"). It is an implicit `?` conversion, invisible to a
+# grep for "anyhow". NOTE: `zstd` (cc-based, NOT cmake) is a NON-optional binseq dependency,
+# so `default-features = false` does NOT drop it; the feature gate is what keeps it out of the
+# default build. Two workspace pin bumps are forced: `thiserror` (binseq's unconditional
+# `^2.0.17` dep) and `anyhow` (the feature above needs `^1.0.100`). Exact-pinned per convention.
+binseq = { version = "=0.9.2", default-features = false, features = ["anyhow"], optional = true }
 
 [features]
 # Default-OFF: compiles the in-process rammap backend (`inprocess.rs`) + its rammap-typed
 # tests. The feature-independent CIGAR-reconstruction unit test runs on ANY toolchain.
 # `dep:rayon` is the in-process parallel-map pool (#995).
 rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
+# Default-OFF: compiles the BINSEQ (.vbq) decode path (`binseq_decode::vbq_impl`) + its
+# tests. The extension-detection + the CBQ/BQ/feature-off fail-loud rejects compile on ANY
+# toolchain (feature-independent); only the actual `binseq`-crate decode is gated here.
+binseq-input = ["dep:binseq"]
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

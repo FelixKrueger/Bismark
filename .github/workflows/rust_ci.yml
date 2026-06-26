@@ -85,6 +85,36 @@ jobs:
       - name: cargo test -p bismark-aligner --features rammap-inprocess
         run: cargo test -p bismark-aligner --features rammap-inprocess
 
+  binseq-input:
+    name: cargo build/test (binseq-input feature)
+    # The default `test`/`clippy` jobs build FEATURE-OFF, so the BINSEQ (.vbq) decode
+    # path (`binseq_decode::vbq_impl` + the `binseq_transcode` integration test, all
+    # `#[cfg(feature = "binseq-input")]`) is otherwise NEVER compiled in CI (#1025
+    # Phase 2). This job compiles + tests it. `binseq` is an OPTIONAL crates.io dep that
+    # pulls a `cc`-built `zstd` (NOT cmake); the hermetic `binseq_transcode` tests build
+    # their own `.vbq` fixtures with the `binseq` writer, and the oxy gate covers the
+    # real `bqtools encode`/`decode` equivalence.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build -p bismark-aligner --features binseq-input
+        run: cargo build -p bismark-aligner --all-targets --features binseq-input
+      - name: cargo clippy -p bismark-aligner --features binseq-input -D warnings
+        run: cargo clippy -p bismark-aligner --all-targets --features binseq-input -- -D warnings
+      - name: cargo test -p bismark-aligner --features binseq-input
+        run: cargo test -p bismark-aligner --features binseq-input
+
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest
