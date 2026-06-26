@@ -1956,16 +1956,16 @@ fn run_five_base_consensus(
     umi_swap: Option<crate::five_base_duplex::UmiSwap>,
     paired_end: bool,
 ) -> Result<()> {
-    use crate::five_base_duplex::{DuplexKey, SiteKind, canonical_umi, consensus_base};
+    use crate::five_base_duplex::{SiteKind, canonical_umi, consensus_base};
     use noodles_sam::alignment::record::cigar::op::Kind;
-    use std::collections::BTreeMap;
+    use std::collections::{HashMap, HashSet};
 
     /// One member's aligned read, as a reference-position → `(base, phred)` map built by
     /// walking the CIGAR (soft-clips/indels handled). `start`/`end` bound the span.
     struct Member {
         start: u32,
         end: u32,
-        covered: std::collections::HashMap<u32, (u8, u8)>,
+        covered: HashMap<u32, (u8, u8)>,
         mapq: u8,
     }
     impl Member {
@@ -1974,105 +1974,108 @@ fn run_five_base_consensus(
         }
     }
     /// A family's reads split by molecule strand (for pairing) and coverage strand (for
-    /// reconciliation).
+    /// reconciliation), plus the chrom + canonical UMI for emission (PASS 2 only).
     #[derive(Default)]
     struct Fam {
-        ot_reads: u32,
-        ob_reads: u32,
         fwd: Vec<Member>,
         rev: Vec<Member>,
+        ref_id: usize,
+        canon_umi: Vec<u8>,
     }
-    /// Reduce all reads covering `p` on one coverage strand to their highest-quality base.
     fn reduce(members: &[Member], p: u32) -> Option<(u8, u8)> {
         members
             .iter()
             .filter_map(|m| m.at(p))
             .max_by_key(|&(_, q)| q)
     }
-
-    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
-        .map_err(|e| AlignerError::Validation(format!("consensus: open BAM: {e}")))?;
-    let mut fams: BTreeMap<DuplexKey, Fam> = BTreeMap::new();
-
-    for rec in reader.records() {
-        let rec = rec.map_err(|e| AlignerError::Validation(format!("consensus: {e}")))?;
-        let inner = rec.inner();
+    /// Compact, `Copy`, heap-free family key — keeps memory bounded across the millions of
+    /// (mostly singleton) families at WGS depth. The UMI is folded into a 64-bit hash;
+    /// collisions only matter WITHIN one identical `(ref_id, start, end)` fragment span,
+    /// where distinct UMIs are few, so they are effectively impossible.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct CKey {
+        ref_id: u32,
+        start: u32,
+        end: u32,
+        umi_hash: u64,
+    }
+    fn umi_hash(umi: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in umi {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+    /// Per-record key info (no covered map) shared by both passes.
+    struct KeyInfo {
+        ckey: CKey,
+        molecule_is_ot: bool,
+        coverage_forward: bool,
+        ref_id: usize,
+        ref_start: u32,
+        canon_umi: Vec<u8>,
+    }
+    // Per-record key extraction (no covered map), or None to skip the record.
+    let key_of = |inner: &noodles_sam::alignment::RecordBuf| -> Result<Option<KeyInfo>> {
         let flag = u16::from(inner.flags());
         if flag & 0x4 != 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
-            continue;
+            return Ok(None);
         }
         let coverage_forward = flag & 0x10 == 0;
-
-        // Molecule strand + family span keying differ for SE vs PE.
-        let (molecule_is_ot, key_start, key_end);
         let Some(ref_id) = inner.reference_sequence_id() else {
-            continue;
+            return Ok(None);
         };
-        let Some(chrom) = genome.sq_order.get(ref_id) else {
-            continue;
-        };
+        if genome.sq_order.get(ref_id).is_none() {
+            return Ok(None);
+        }
         let Some(start) = inner.alignment_start() else {
-            continue;
+            return Ok(None);
         };
         let ref_start = (usize::from(start) - 1) as u32;
+        let (molecule_is_ot, kstart, kend);
         if paired_end {
             if flag & 0x2 == 0 {
-                continue; // proper pairs only
+                return Ok(None);
             }
             let tlen = inner.template_length();
             let Some(mate) = inner.mate_alignment_start() else {
-                continue;
+                return Ok(None);
             };
             if tlen == 0 {
-                continue;
+                return Ok(None);
             }
             let mate0 = (usize::from(mate) - 1) as u32;
-            key_start = ref_start.min(mate0);
-            key_end = key_start + tlen.unsigned_abs();
-            let is_r1 = flag & 0x40 != 0;
-            molecule_is_ot = is_r1 == coverage_forward;
+            kstart = ref_start.min(mate0);
+            kend = kstart + tlen.unsigned_abs();
+            molecule_is_ot = (flag & 0x40 != 0) == coverage_forward;
         } else {
-            // SE: molecule strand == coverage strand (from the OT/OB tag == FLAG).
             let xr = bismark_io::tags::xr(inner.data())
                 .map_err(|e| AlignerError::Validation(format!("consensus: XR: {e}")))?;
             let xg = bismark_io::tags::xg(inner.data())
                 .map_err(|e| AlignerError::Validation(format!("consensus: XG: {e}")))?;
-            let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
-                .map_err(|e| AlignerError::Validation(format!("consensus: strand: {e}")))?;
-            match strand {
+            match bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+                .map_err(|e| AlignerError::Validation(format!("consensus: strand: {e}")))?
+            {
                 bismark_io::BismarkStrand::OT => molecule_is_ot = true,
                 bismark_io::BismarkStrand::OB => molecule_is_ot = false,
-                _ => continue,
+                _ => return Ok(None),
             }
-            key_start = ref_start; // span filled after the CIGAR walk
-            key_end = 0;
-        }
-
-        // Walk the CIGAR → per-reference-position (base, phred) map + the aligned span end.
-        let seq = inner.sequence().as_ref();
-        let quals = inner.quality_scores().as_ref();
-        let mut covered: std::collections::HashMap<u32, (u8, u8)> =
-            std::collections::HashMap::new();
-        let (mut ri, mut rp) = (0usize, ref_start);
-        for op in inner.cigar().as_ref().iter() {
-            let len = op.len();
-            match op.kind() {
-                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                    for _ in 0..len {
-                        if let Some(&b) = seq.get(ri) {
-                            let q = quals.get(ri).copied().unwrap_or(40);
-                            covered.insert(rp, (b.to_ascii_uppercase(), q));
-                        }
-                        ri += 1;
-                        rp += 1;
-                    }
+            // SE keys on the read's own span; walk ref-consuming CIGAR ops for the end.
+            let mut end = ref_start;
+            for op in inner.cigar().as_ref().iter() {
+                match op.kind() {
+                    Kind::Match
+                    | Kind::SequenceMatch
+                    | Kind::SequenceMismatch
+                    | Kind::Deletion
+                    | Kind::Skip => end += op.len() as u32,
+                    _ => {}
                 }
-                Kind::Insertion | Kind::SoftClip => ri += len,
-                Kind::Deletion | Kind::Skip => rp += len as u32,
-                Kind::HardClip | Kind::Pad => {}
             }
+            kstart = ref_start;
+            kend = end;
         }
-        let aln_end = rp;
         let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match bismark_io::tags::rx(inner.data()) {
                 Ok(Some(raw)) => canonical_umi(raw, swap),
@@ -2081,34 +2084,101 @@ fn run_five_base_consensus(
         } else {
             Vec::new()
         };
-        let member = Member {
-            start: ref_start,
-            end: aln_end,
-            covered,
-            mapq: inner.mapping_quality().map(u8::from).unwrap_or(255),
-        };
-        // SE keys on the read's own span; PE on the fragment outer span.
-        let (kstart, kend) = if paired_end {
-            (key_start, key_end)
-        } else {
-            (key_start, aln_end)
-        };
-        let key = DuplexKey {
-            chrom: chrom.clone(),
+        let ckey = CKey {
+            ref_id: ref_id as u32,
             start: kstart,
             end: kend,
-            canon_umi,
+            umi_hash: umi_hash(&canon_umi),
         };
-        let fam = fams.entry(key).or_default();
-        if molecule_is_ot {
-            fam.ot_reads += 1;
-        } else {
-            fam.ob_reads += 1;
+        Ok(Some(KeyInfo {
+            ckey,
+            molecule_is_ot,
+            coverage_forward,
+            ref_id,
+            ref_start,
+            canon_umi,
+        }))
+    };
+
+    // PASS 1 — count OT/OB reads per family (compact key only); find the paired families.
+    let mut counts: HashMap<CKey, (u32, u32)> = HashMap::new();
+    {
+        let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+            .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 1): {e}")))?;
+        for rec in reader.records() {
+            let rec = rec.map_err(|e| AlignerError::Validation(format!("consensus: {e}")))?;
+            if let Some(ki) = key_of(rec.inner())? {
+                let e = counts.entry(ki.ckey).or_default();
+                if ki.molecule_is_ot {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                }
+            }
         }
-        if coverage_forward {
-            fam.fwd.push(member);
-        } else {
-            fam.rev.push(member);
+    }
+    let paired: HashSet<CKey> = counts
+        .iter()
+        .filter(|(_, (ot, ob))| *ot > 0 && *ob > 0)
+        .map(|(k, _)| *k)
+        .collect();
+    drop(counts); // free the per-family counters before pass 2
+
+    // PASS 2 — store members for the (few) paired families only; build their covered maps.
+    let mut fams: HashMap<CKey, Fam> = HashMap::new();
+    {
+        let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+            .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 2): {e}")))?;
+        for rec in reader.records() {
+            let rec = rec.map_err(|e| AlignerError::Validation(format!("consensus: {e}")))?;
+            let inner = rec.inner();
+            let Some(ki) = key_of(inner)? else {
+                continue;
+            };
+            if !paired.contains(&ki.ckey) {
+                continue; // singleton family — never produces a consensus, so don't store it
+            }
+            let (coverage_forward, ref_id, ref_start) =
+                (ki.coverage_forward, ki.ref_id, ki.ref_start);
+            // Build the per-reference-position (base, phred) map for this read.
+            let seq = inner.sequence().as_ref();
+            let quals = inner.quality_scores().as_ref();
+            let mut covered: HashMap<u32, (u8, u8)> = HashMap::new();
+            let (mut ri, mut rp) = (0usize, ref_start);
+            for op in inner.cigar().as_ref().iter() {
+                let len = op.len();
+                match op.kind() {
+                    Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                        for _ in 0..len {
+                            if let Some(&b) = seq.get(ri) {
+                                let q = quals.get(ri).copied().unwrap_or(40);
+                                covered.insert(rp, (b.to_ascii_uppercase(), q));
+                            }
+                            ri += 1;
+                            rp += 1;
+                        }
+                    }
+                    Kind::Insertion | Kind::SoftClip => ri += len,
+                    Kind::Deletion | Kind::Skip => rp += len as u32,
+                    Kind::HardClip | Kind::Pad => {}
+                }
+            }
+            let member = Member {
+                start: ref_start,
+                end: rp,
+                covered,
+                mapq: inner.mapping_quality().map(u8::from).unwrap_or(255),
+            };
+            let fam = fams.entry(ki.ckey).or_default();
+            fam.ref_id = ref_id;
+            if fam.canon_umi.is_empty() {
+                fam.canon_umi = ki.canon_umi;
+            }
+            if coverage_forward {
+                fam.fwd.push(member);
+            } else {
+                fam.rev.push(member);
+            }
         }
     }
 
@@ -2116,11 +2186,13 @@ fn run_five_base_consensus(
         .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?;
     let (mut emitted, mut skipped) = (0u64, 0u64);
 
-    for (key, fam) in &fams {
-        if fam.ot_reads == 0 || fam.ob_reads == 0 {
-            continue; // singleton family: no duplex partner to reconcile
-        }
-        let Some(g) = genome.get(&key.chrom) else {
+    for fam in fams.values() {
+        // All families here are paired (filtered in pass 2).
+        let Some(chrom) = genome.sq_order.get(fam.ref_id) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else {
             skipped += 1;
             continue;
         };
@@ -2150,16 +2222,16 @@ fn run_five_base_consensus(
 
         // Synthesize a forward single-end SAM record for the consensus and run it through
         // the same inverted-call emit path as a normal 5-Base read.
-        let umi_str = if key.canon_umi.is_empty() {
+        let umi_str = if fam.canon_umi.is_empty() {
             "NA".to_string()
         } else {
-            String::from_utf8_lossy(&key.canon_umi).into_owned()
+            String::from_utf8_lossy(&fam.canon_umi).into_owned()
         };
-        let qname = format!("dpx:{}:{}-{}:{}", key.chrom, start, end, umi_str);
+        let qname = format!("dpx:{chrom}:{start}-{end}:{umi_str}");
         let sam = SamRecord {
             qname: qname.clone(),
             flag: 0,
-            rname: key.chrom.clone(),
+            rname: chrom.clone(),
             pos: start + 1,
             mapq,
             cigar: format!("{}M", cons_seq.len()),
