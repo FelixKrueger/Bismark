@@ -92,11 +92,13 @@ pub struct Cli {
     /// concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
-    /// `[#787]` After a `--illumina_5base` run, deconvolute methylation from C>T/G>A
-    /// genetic variants using both strands (DRAGEN's rule), and write a per-CpG report
-    /// `<out>.5base_deconvolution.txt` (chrom, pos, strand, verdict, methylated, total,
-    /// %). A CpG whose OPPOSITE strand also lost the cytosine is a variant, not 5mC, and
-    /// is excluded from the methylation totals. Requires `--illumina_5base`.
+    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, deconvolute
+    /// methylation from C>T/G>A genetic variants using both strands (DRAGEN's rule), and
+    /// write a per-CpG report `<out>.5base_deconvolution.txt` (chrom, pos, strand,
+    /// verdict, methylated, total, %). A CpG whose OPPOSITE strand also lost the cytosine
+    /// is a variant, not 5mC, and is excluded from the methylation totals. Requires
+    /// `--illumina_5base`. EXPERIMENTAL: not byte-identity- or per-site-concordance-gated;
+    /// the supported output is the core per-read 5-Base BAM.
     #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
     pub five_base_deconvolution: bool,
     /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
@@ -120,33 +122,34 @@ pub struct Cli {
     /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
-    /// `[#787]` After a `--illumina_5base` run, group the two strands of each original
-    /// molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and reconcile the
-    /// 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`. A family is an OT
-    /// member plus an OB member sharing a genomic span and a canonical (swap-collapsed)
-    /// UMI; use `--five_base_umi_len` for the UMI key (without it, families key on span
-    /// alone and a never-silent notice warns of multi-molecule collisions). Combined
-    /// with `--five_base_deconvolution`, the variant-vs-methylation call is computed per
-    /// family rather than over a population pileup. SE only (PE is a follow-up). Requires
-    /// `--illumina_5base`.
+    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
+    /// of each original molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and
+    /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`. PE keys
+    /// each family on the FRAGMENT span (POS + mate-pos + TLEN) + canonical dual UMI — the
+    /// real workflow (Illumina 5-Base is paired-end). SE-duplex is a KNOWN LIMITATION:
+    /// single-end OT/OB reads cover opposite fragment ends with different spans, so they do
+    /// not pair on real data (SE is not a real 5-Base workflow). Use `--five_base_umi_qname`
+    /// (real data) or `--five_base_umi_len` for the UMI key. EXPERIMENTAL: not gated.
+    /// Requires `--illumina_5base`.
     #[arg(long = "five_base_duplex")]
     pub five_base_duplex: bool,
-    /// `[#787]` COLLAPSE each duplex family to ONE consensus read in
+    /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to ONE consensus read in
     /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
-    /// `--five_base_duplex`. The consensus uses the asymmetric 5mC>T rule: at a CpG the
-    /// own strand carries the methylation call and the opposite strand is the variant
-    /// check (a cytosine gone on BOTH strands is masked to `N`, excluded from
-    /// methylation); other positions reconcile by agreement/quality. The consensus read
-    /// carries a standard single-strand Bismark `XM`/`XR`/`XG` (the per-read BAM stays as
-    /// the default output). SE only. Requires `--illumina_5base`.
+    /// `--five_base_duplex` (SE + PE; PE is the real workflow). The consensus uses the
+    /// asymmetric 5mC>T rule: at a CpG the own strand carries the methylation call and the
+    /// opposite strand is the variant check (a cytosine gone on BOTH strands is masked to
+    /// `N`); other positions reconcile by agreement/quality. KNOWN LIMITATION: the
+    /// consensus record is forward (OT) only, so its `XM` carries `+`-strand CpG calls
+    /// only (the `.5base_duplex.txt` report covers both strands). EXPERIMENTAL: not gated.
+    /// Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
-    /// `[#787]` Take the duplex UMI from the READ NAME instead of inline read bases. Real
-    /// Illumina 5-Base data carries a DUAL UMI as the tail `:`-field of the qname written
-    /// `A+B` (e.g. `...:1070:ANCGTTG+NGGTGTA`), with the duplex partner's halves swapped
-    /// (`B+A`); canonicalizing collapses the swap into one family key. Use this instead of
-    /// `--five_base_umi_len` for real data (the two are mutually exclusive). Requires
-    /// `--illumina_5base`.
+    /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of
+    /// inline read bases. Real Illumina 5-Base data carries a DUAL UMI as the tail
+    /// `:`-field of the qname written `A+B` (e.g. `...:1070:ANCGTTG+NGGTGTA`), with the
+    /// duplex partner's halves swapped (`B+A`); canonicalizing collapses the swap into one
+    /// family key. Use this instead of `--five_base_umi_len` for real data (mutually
+    /// exclusive). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_qname")]
     pub five_base_umi_qname: bool,
     /// Folder containing `samtools`.

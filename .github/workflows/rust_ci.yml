@@ -32,6 +32,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+      - name: Install minimap2 (5-Base #787 ground-truth gates)
+        # The Illumina 5-Base real-aligner gates shell out to minimap2; without it they
+        # would no-op silently. CI must guarantee it so the gates can't pass vacuously
+        # (the tests themselves panic if minimap2 is missing while $CI is set).
+        run: |
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minimap2
+          minimap2 --version
       - name: cargo build --workspace
         run: cargo build --workspace --all-targets
       - name: cargo test --workspace

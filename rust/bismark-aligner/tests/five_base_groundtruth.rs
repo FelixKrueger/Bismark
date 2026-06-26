@@ -60,11 +60,20 @@ fn bin() -> Command {
 }
 
 fn have_minimap2() -> bool {
-    StdCommand::new("minimap2")
+    let present = StdCommand::new("minimap2")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    // Fail loud in CI: these real-aligner gates must not pass vacuously (#787 review).
+    // Locally (no $CI) a missing minimap2 just skips the gate.
+    if !present && std::env::var_os("CI").is_some() {
+        panic!(
+            "minimap2 not found but $CI is set: the 5-Base ground-truth gates require \
+             minimap2 on PATH in CI (install it in the workflow) — refusing to no-op."
+        );
+    }
+    present
 }
 
 /// Deterministic pseudo-random ACGT reference (fixed LCG → stable CpG layout).
@@ -371,7 +380,16 @@ fn five_base_deconvolution_groundtruth_variant_vs_methylation() {
 /// family has a methylated call; the variant family flags a variant site. Proves the
 /// family pairing (span + canonical swapped UMI) and per-molecule reconciliation run
 /// through the whole real-minimap2 pipeline.
+///
+/// KNOWN LIMITATION (#787 review): this fixture forces both strands of a molecule to the
+/// SAME alignment span so they pair. On REAL single-end data they do NOT — SE OT/OB reads
+/// cover opposite fragment ends with different spans, so SE-duplex never pairs. Illumina
+/// 5-Base is paired-end, so SE-duplex is a degenerate non-workflow; `#[ignore]`d so this
+/// vacuous-on-real-data gate doesn't masquerade as coverage. The reconciliation logic is
+/// covered non-vacuously by the `five_base_duplex` module unit tests, and real pairing by
+/// `five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule` (PE keys on TLEN span).
 #[test]
+#[ignore = "SE-duplex is degenerate (5-Base is PE); fixture forces same-span pairing — see PE gate + module unit tests"]
 fn five_base_duplex_groundtruth_pairs_strands_and_reconciles() {
     if !have_minimap2() {
         eprintln!("skipping: minimap2 not on PATH (duplex ground-truth gate)");

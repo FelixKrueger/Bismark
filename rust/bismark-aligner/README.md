@@ -58,29 +58,45 @@ directly. `--bowtie2`/`--hisat2` are also supported via `--five_base_index <base
 a NORMAL (unconverted) index of the genome (5-Base keeps full complexity, so a plain
 index works; build it once with `bowtie2-build`/`hisat2-build`).
 
-**Variant/methylation deconvolution** (`--five_base_deconvolution`). A SNP-naive
-caller miscalls a C>T genetic variant as 5mC (both read as `T`). With this flag a
-post-alignment pass deconvolutes them using both strands (DRAGEN's rule): at a CpG,
-methylation moves only the own-strand base while a genetic variant moves BOTH, so a
-CpG whose opposite strand also lost the cytosine is a **variant**, excluded from
-methylation. Writes a per-CpG report `<out>.5base_deconvolution.txt`.
-
 **UMI dedup** (`--five_base_umi_len N`). Takes the first `N` bases of each read as its
 UMI (e.g. `8` for the 5-Base 7 bp UMI + 1 spacer) and drops PCR/optical duplicates
-sharing (UMI, chrom, position, strand), removing methylation bias.
+sharing (UMI, chrom, position, strand), removing methylation bias. (Relies on the
+aligner soft-clipping the UMI prefix; soft-clipped bases produce no methylation call.)
 
-**This is NOT byte-identical** — Perl Bismark has no 5-Base path, so there is no
-v0.25.1 oracle. Validation is synthetic **ground-truth gates against the real
-minimap2** (`tests/five_base_groundtruth.rs`): SE + PE recover a known 5mC→T pattern
-with the correct `Z`/`z` call at every aligned CpG, and the deconvolution gate shows a
-homozygous C>T CpG called `variant` while a 5mC CpG stays `methylation`. A
-DRAGEN-concordance gate is pending an external dataset. Requires `minimap2` on `PATH`
-(or `--path_to_minimap2`).
+### Validation against DRAGEN (real data)
 
-**Scope:** directional, FASTQ, single instance (SE + PE). Rejected loudly:
-`--non_directional`/`--pbat` (DRAGEN documents 5-Base as **directional-only**, so
-this is a permanent non-goal, not a deferred phase), `--slam`, `--fasta`,
-`--multicore`, `--combined_index*`. Not yet implemented (deferred): full DRAGEN-style
-**duplex-consensus** base reconciliation (the asymmetric mC>T two-strand consensus;
-the current UMI handling is position+UMI dedup, not consensus); non-concordant PE
-pairs are skipped. See `plans/06232026_illumina-5base-support/`.
+The supported path is the **core per-read SE+PE 5-Base BAM** above. On the real Illumina
+5-Base demo (NA12878 100 ng, BaseSpace; ~44×, whole GRCh38), the extracted per-CpG
+cytosine report is **per-CpG equivalent to DRAGEN's `CX_report`**: Pearson **r ≈ 0.99**,
+call agreement **97.5 %** over **55 M** shared CpGs, global CpG 49.7–50.1 % vs DRAGEN
+49.98–50.48 %, with non-CpG at DRAGEN's own lambda-control floor and directional-only
+confirmed (DRAGEN CTOT/CTOB = 0). It is **NOT byte-identical** (Perl Bismark has no
+5-Base oracle); the reproducible CI gate is synthetic ground-truth vs the real minimap2
+(`tests/five_base_groundtruth.rs`, which **fail loud in CI if minimap2 is absent**). See
+`plans/06232026_illumina-5base-support/VALIDATION_REAL_DATA.md`.
+
+### Experimental / preview modes (#787)
+
+These secondary modes are **wired end-to-end and never-silent**, but are **not
+byte-identity- or per-site-CI-gated** — treat them as preview:
+
+- **`--five_base_deconvolution`** — variant-vs-5mC deconvolution. A C>T genetic variant
+  reads as `T` like 5mC; a two-strand pass flags a CpG gone on BOTH strands as a
+  **variant** (excluded from methylation), DRAGEN's rule. Writes
+  `<out>.5base_deconvolution.txt`.
+- **`--five_base_duplex`** — groups a molecule's two strands into a duplex family and
+  reconciles 5mC→T per molecule (`<out>.5base_duplex.txt`). **PE keys on the fragment
+  span (POS + mate-pos + TLEN)** — the real workflow (5-Base is paired-end). **SE-duplex
+  is a known limitation:** SE OT/OB reads cover opposite fragment ends with different
+  spans and do not pair on real data, so SE-duplex is a degenerate non-workflow.
+- **`--five_base_consensus`** — collapses each duplex family to one consensus read
+  (`<out>.5base_consensus.bam`) via the asymmetric 5mC>T rule. **Known limitation:** the
+  consensus record is forward (OT) only, so its `XM` carries `+`-strand CpG calls only
+  (the `.5base_duplex.txt` report covers both strands).
+- **`--five_base_umi_qname`** — takes the duplex dual-UMI from the read NAME (`A+B`, with
+  the partner's halves swapped) instead of inline bases; this is the real-data UMI form.
+
+**Scope (rejected loudly):** `--non_directional`/`--pbat` (DRAGEN documents 5-Base as
+**directional-only** — a permanent non-goal), `--slam`, `--fasta`, `--combined_index*`.
+`--multicore` is honored as a thread count (single instance, scale with `-p`). See
+`plans/06232026_illumina-5base-support/`.
