@@ -178,13 +178,15 @@ Ran `--five_base_deconvolution` on the real NA12878 lanes and cross-checked our 
 
 | depth | our `variant` calls | precision (any DRAGEN C>T/G>A) | recall (DRAGEN HOM, covered) |
 |---|---|---|---|
-| ~6× (1 lane)  | 120,730 | 92.9 % | 43.4 % |
+| ~6× (1 lane)   | 120,730 | 92.9 % | 43.4 % |
 | ~24× (4 lanes) | 298,041 | 92.0 % | 82.1 % |
+| **~40× (8 lanes)** | **409,043** | **90.3 %** | **93.4 %** |
 
-Precision is **~92 %** (when we exclude a CpG as a variant, DRAGEN has a disrupting SNV
-there ~92 % of the time); recall climbs steeply with depth (43 % → 82 % from 6× to 24×)
-because the two-strand rule needs the opposite strand covered. So the deconvolution
-**reproduces DRAGEN's variant exclusions** at depth. (40× aggregate pending.)
+Precision is **~90 %** (when we exclude a CpG as a variant, DRAGEN has a disrupting SNV
+there ~90 % of the time); recall climbs steeply with depth (43 % → 82 % → **93.4 %** from
+6× to 40×) because the two-strand rule needs the opposite strand covered. So at full depth
+the deconvolution **reproduces DRAGEN's variant exclusions** — 90 % precision, 93 % recall
+over 167,978 DRAGEN homozygous CpG-disrupting SNVs. **PROVEN** (GA-candidate).
 
 ### Consensus — RAM-bounded rewrite (was OOM at WGS depth)
 
@@ -193,6 +195,17 @@ per-position (base,phred) map for ALL families in memory (~hundreds of GB at WGS
 OOM-killed the process and, run in parallel, panicked the machine twice. Fixed (commit
 83ff030) as **two passes** keyed by a compact heap-free key: pass 1 counts OT/OB per family
 → the duplex-PAIRED set; pass 2 builds covered maps ONLY for paired families (~0.1 % of
-reads). Peak memory drops from hundreds of GB to **~a few GB**. Output unchanged (3
-consensus ground-truth gates still green). Per-CpG consensus-vs-DRAGEN concordance + the
-measured peak RSS at full depth are pending the running validation.
+reads). Output unchanged (3 consensus ground-truth gates still green). **Confirmed at full
+depth:** a real lane (~61M pairs) ran the consensus to completion with **peak RSS 26.6 GB**
+(was OOM/machine-panic before) — the fix holds.
+
+**BUT the consensus methylation does NOT reproduce DRAGEN.** Per-CpG vs DRAGEN's CX over
+68,896 shared `+`-strand CpGs: mean methylation **23.3 % (ours) vs 47.5 % (DRAGEN)** — a
+systematic ~2× UNDER-estimate — Pearson **r = 0.45**, call agreement 68 %. This is a real
+reconciliation defect, not sparsity: at a `+` CpG the consensus reduces all
+"forward-covering" reads together, mixing the OT pair's R1 (which carries the `+`-strand
+5mC→T signal) with the OB pair's forward mate (the bottom-strand molecule, which does not),
+diluting the methylation call. So **the consensus collapse stays EXPERIMENTAL/preview and
+is NOT validated** — the memory bug is fixed, but the per-molecule reconciliation needs
+rework before it can claim DRAGEN concordance. The supported methylation path remains the
+core per-read BAM (r ≈ 0.99); the validated *experimental* mode is the deconvolution.
