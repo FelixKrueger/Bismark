@@ -508,7 +508,14 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         out_path.display()
     );
     run_five_base_consensus(
-        &genome, &refid, &paths, &out_path, &header, umi_swap, paired_end,
+        &genome,
+        &refid,
+        &paths,
+        &out_path,
+        &header,
+        umi_swap,
+        paired_end,
+        cli.five_base_min_mapq,
     )
 }
 
@@ -1230,6 +1237,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
                 &header,
                 umi_swap,
                 false, // SE
+                config.five_base_min_mapq,
             )?;
         }
     }
@@ -1658,6 +1666,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                     &header,
                     umi_swap,
                     true, // PE
+                    config.five_base_min_mapq,
                 )?;
             }
         }
@@ -2306,6 +2315,7 @@ fn run_five_base_consensus(
     header: &noodles_sam::Header,
     umi_swap: Option<crate::five_base_duplex::UmiSwap>,
     paired_end: bool,
+    min_mapq: u8,
 ) -> Result<()> {
     use crate::five_base_duplex::{SiteKind, canonical_umi, consensus_base};
     use noodles_sam::alignment::record::cigar::op::Kind;
@@ -2375,6 +2385,12 @@ fn run_five_base_consensus(
     let key_of = |inner: &noodles_sam::alignment::RecordBuf| -> Result<Option<KeyInfo>> {
         let flag = u16::from(inner.flags());
         if flag & 0x4 != 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
+            return Ok(None);
+        }
+        // #787 MAPQ filter (DRAGEN's MAPQ<20): drop mis-mapped reads (repeat/satellite
+        // pile-ups) before they form/inflate a consensus family. Both passes use key_of,
+        // so the family counts AND the covered maps see the same filtered read set.
+        if min_mapq > 0 && inner.mapping_quality().map(u8::from).unwrap_or(255) < min_mapq {
             return Ok(None);
         }
         let coverage_forward = flag & 0x10 == 0;

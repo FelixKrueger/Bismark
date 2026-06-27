@@ -192,6 +192,9 @@ pub struct RunConfig {
     /// #787: min Phred base quality for a 5-Base methylation call (0 = off; mask low-Q
     /// read bases as no-call). Requires `five_base`.
     pub five_base_baseq: u8,
+    /// #787: min read MAPQ for a 5-Base call / consensus family (0 = off; drop reads below
+    /// it — DRAGEN's MAPQ<20 filter, removes mis-mapped repeat pile-ups). Requires `five_base`.
+    pub five_base_min_mapq: u8,
     /// #787: run the post-alignment DUPLEX-consensus family pass + report (per-molecule
     /// reconciliation). SE only this PR. Requires `five_base` (guarded at resolve()).
     pub five_base_duplex: bool,
@@ -365,6 +368,13 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         return Err(AlignerError::Validation(
             "--five_base_baseq requires --illumina_5base (it masks low-quality bases in the \
              5-Base methylation call)."
+                .into(),
+        ));
+    }
+    if cli.five_base_min_mapq > 0 && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_min_mapq requires --illumina_5base (it filters low-MAPQ reads in the \
+             5-Base methylation call / consensus)."
                 .into(),
         ));
     }
@@ -558,6 +568,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         five_base_index: cli.five_base_index.clone(),
         five_base_umi_len: cli.five_base_umi_len,
         five_base_baseq: cli.five_base_baseq,
+        five_base_min_mapq: cli.five_base_min_mapq,
         // --five_base_consensus implies the duplex family pass.
         five_base_duplex: cli.five_base_duplex || cli.five_base_consensus,
         five_base_consensus: cli.five_base_consensus,

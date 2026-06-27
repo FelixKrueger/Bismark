@@ -122,6 +122,13 @@ pub struct Cli {
     /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
+    /// `[#787]` Minimum read MAPQ for a 5-Base methylation call / consensus family. Reads
+    /// below this are dropped (DRAGEN filters alt reads at MAPQ < 20). This removes
+    /// mis-mapped pile-ups in satellite/repeat regions (e.g. pericentromeric reads that
+    /// minimap2 places at MAPQ ~1), which otherwise inflate consensus coverage and diverge
+    /// from DRAGEN. 0 = off. Requires `--illumina_5base`.
+    #[arg(long = "five_base_min_mapq", value_name = "MAPQ", default_value_t = 0)]
+    pub five_base_min_mapq: u8,
     /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
     /// of each original molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and
     /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`. PE keys
