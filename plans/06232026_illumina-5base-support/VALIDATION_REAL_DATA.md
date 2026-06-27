@@ -235,3 +235,27 @@ So the **consensus is now correct and DRAGEN-validated on both strands** (bias g
 match, r 0.77–0.86 at the single-molecule resolution it provides). It went from broken
 (r = 0.45, 2× bias, `+` strand only) to validated. The high-resolution methylation path is
 still the **core per-read BAM (r ≈ 0.99)**; the consensus is the per-molecule duplex view.
+
+## Reproducible control gate (lambda / pUC19) — no proprietary data
+
+The DRAGEN `CX_report` concordance above is strong evidence but cannot become a CI test:
+DRAGEN's output is not redistributable. The reproducible gate that DOES ship uses the
+5-Base kit's own **spike-in controls** — **unmethylated lambda** (NC_001416) +
+**fully-CpG-methylated pUC19** (L09137) — whose methylation truth is KNOWN (lambda ~0 %
+5mC, pUC19 ~100 % CpG 5mC) and whose sequences are PUBLIC. This is the same control standard
+the whole methylation-seq field uses (EM-seq/NEB; DRAGEN reports their conversion in
+`methyl_metrics.csv`).
+
+`tests/five_base_groundtruth.rs` adds three gates (committed fixtures in `test_files/`,
+fail-loud in CI, no DRAGEN):
+
+- **`five_base_controls_core_recovers_lambda_and_puc19`** — the per-read 5-Base call must
+  read lambda as **< 2 % 5mC** and pUC19 as **> 95 %** CpG 5mC.
+- **`five_base_controls_consensus_preserves_methylation_state`** — the duplex consensus
+  collapse must preserve the state on BOTH strands: lambda **< 5 %**, pUC19 **> 90 %**.
+- **`five_base_controls_deconvolution_no_false_variants`** — the variant/5mC deconvolution
+  must call **zero `variant`** on the controls (they carry 5mC, not C>T SNVs) and recover
+  pUC19 ≈ 100 % / lambda ≈ 0 % methylation.
+
+This is the concordance gate the experimental modes (consensus / duplex / deconvolution)
+need to graduate out of preview: it locks a known-truth floor with no proprietary data.
