@@ -496,10 +496,7 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         None
     };
 
-    let out_dir = cli
-        .output_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."));
+    let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&out_dir).ok();
     let out_path = out_dir.join("five_base_consensus.bam");
 
@@ -510,7 +507,9 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         if paired_end { "PE" } else { "SE" },
         out_path.display()
     );
-    run_five_base_consensus(&genome, &refid, &paths, &out_path, &header, umi_swap, paired_end)
+    run_five_base_consensus(
+        &genome, &refid, &paths, &out_path, &header, umi_swap, paired_end,
+    )
 }
 
 /// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
@@ -1882,7 +1881,17 @@ fn five_base_emit_pe_record(
         counters,
     );
     let (out1, out2) = paired_end_sam_output(
-        identifier, seq1_uc, seq2_uc, qual1, qual2, &best, &ext, &mc1, &mc2, refid, phred64,
+        identifier,
+        seq1_uc,
+        seq2_uc,
+        qual1,
+        qual2,
+        &best,
+        &ext,
+        &mc1,
+        &mc2,
+        refid,
+        phred64,
         dovetail,
         // 5-Base UMIs use --five_base_umi_qname (RX written by the 5-Base path); the general
         // --barcode/--umi tag emission is not wired here, so pass no extra tags.
@@ -2484,8 +2493,7 @@ fn run_five_base_consensus(
             if !paired.contains(&ki.ckey) {
                 continue; // singleton family — never produces a consensus, so don't store it
             }
-            let (molecule_is_ot, ref_id, ref_start) =
-                (ki.molecule_is_ot, ki.ref_id, ki.ref_start);
+            let (molecule_is_ot, ref_id, ref_start) = (ki.molecule_is_ot, ki.ref_id, ki.ref_start);
             // Build the per-reference-position (base, phred) map for this read.
             let seq = inner.sequence().as_ref();
             let quals = inner.quality_scores().as_ref();

@@ -717,7 +717,10 @@ fn five_base_consensus_groundtruth_collapses_and_masks_variant() {
         }
     }
     // Two duplex families × (forward + reverse) consensus record = 4.
-    assert_eq!(n_records, 4, "forward+reverse consensus record per duplex family");
+    assert_eq!(
+        n_records, 4,
+        "forward+reverse consensus record per duplex family"
+    );
     assert!(z_at_tm, "the 5mC CpG must be Z in the consensus read");
     assert!(
         dot_at_tv,
@@ -992,7 +995,10 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
         }
     }
     // Two records per duplex family now (forward `+` calls + reverse `-` calls) × 2 molecules.
-    assert_eq!(n, 4, "PE: forward+reverse consensus record per duplex family");
+    assert_eq!(
+        n, 4,
+        "PE: forward+reverse consensus record per duplex family"
+    );
     assert!(
         minus_called,
         "PE consensus: the `-`-strand CpG must be scored by the reverse record"
