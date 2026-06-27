@@ -20,6 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `BismarkPair::from_mates` no longer gates on the SAM first/second-in-pair FLAG
+  bits (`0x40`/`0x80`). For **non-directional** libraries Bismark deliberately
+  swaps those bits for CTOT/CTOB pairs (`bismark` `paired_end_SAM_output`, the
+  CTOT/CTOB block ~lines 8821-8852): the first-in-file record — still sequencing
+  Read 1 — carries `0x80`, so the prior flag-based R1/R2 identity check rejected
+  every such pair with `ReadIdentityMismatch`, aborting `deduplicate_bismark_rs`
+  and `bismark-methylation-extractor-rs` on **all** non-directional PE data
+  (`read identity mismatch: expected R1 for first mate, got R2`). Perl's tools
+  never inspected those bits — they pair by file adjacency + qname and derive
+  strand from `XR`/`XG`. `from_mates` now does the same: qname-equality only,
+  `pair_strand = r1.record_strand()`. **Non-breaking** (signature unchanged and
+  now strictly more permissive — no valid existing caller changes behavior), so
+  version intentionally **not** bumped, consistent with the entries below; an
+  exact-pin bump would ripple to all 7 dependents. `ReadIdentityMismatch` is
+  retained for API stability but no longer produced. Resolves
+  [#1030](https://github.com/FelixKrueger/Bismark/issues/1030). Regression tests:
+  `from_mates_ctot_pair_non_directional` / `_ctob_` (now use real swapped flags
+  147/99, 163/83).
 - `detect_paired_from_header` now picks the **last** Bismark `@PG` line when a
   header carries more than one, matching Perl's `determine_file_type` /
   `deduplicate_bismark` loop (which re-assigns on each match so the final

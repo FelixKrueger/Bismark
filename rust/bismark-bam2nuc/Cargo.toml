@@ -21,7 +21,7 @@ path = "src/main.rs"
 [dependencies]
 bismark-meta = { path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
-thiserror = "=2.0.0"
+thiserror = "=2.0.18"
 # bismark-io supplies the magic-byte format sniff (AlignmentKind::from_path) for
 # the .bam accept gate + detect_paired_from_header for SE/PE detection. We do
 # NOT use its BamReader: it routes through BismarkRecord which REQUIRES XR/XG/XM

@@ -19,6 +19,7 @@ use noodles_sam::alignment::record::cigar::Op;
 use noodles_sam::alignment::record::cigar::op::Kind;
 use noodles_sam::alignment::record::data::field::Tag;
 use noodles_sam::alignment::record::{Flags, MappingQuality};
+use noodles_sam::alignment::record_buf::data::Data;
 use noodles_sam::alignment::record_buf::data::field::Value;
 use noodles_sam::alignment::record_buf::{Cigar, QualityScores, Sequence};
 use noodles_sam::header::record::value::Map;
@@ -34,6 +35,57 @@ use crate::error::{AlignerError, Result};
 use crate::genome::Genome;
 use crate::merge::{BestAlignment, BestAlignmentPaired};
 use crate::methylation::{Conversion, GenomicExtraction, GenomicExtractionPaired, parse_cigar};
+
+/// 10x-convention cell-barcode/UMI tag toggles parsed from the QNAME
+/// (`<barcode>_<umi>[_<alt>]_<original-name>`, the SeekSoul single-cell format).
+/// Mirrors SeekGene's `build_barcode_umi_tags`. `Copy`; threaded by value through
+/// the record builders.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct BarcodeUmiTags {
+    /// `--add_barcode` → write `CB:Z:<barcode>` (QNAME field 0).
+    pub add_barcode: bool,
+    /// `--add_umi` → write `UR:Z:<umi>` (QNAME field 1).
+    pub add_umi: bool,
+}
+
+impl BarcodeUmiTags {
+    /// True if either tag is requested.
+    #[inline]
+    pub fn enabled(self) -> bool {
+        self.add_barcode || self.add_umi
+    }
+}
+
+/// Split a QNAME into `(barcode, umi)` per `<barcode>_<umi>_<rest>` — split on
+/// `_`, max 3 fields, so barcode = field 0, umi = field 1, and everything else
+/// (any `_alt` signature + the original read name) is the ignored remainder.
+/// Either field may be empty (leading `_`, or too few underscores). Matches Perl
+/// `split(/_/, $id, 3)` and SeekSoul's own `addtag.py` re-parser. Shared by the
+/// tag-inserter and the call-site missing-field counter so the two never diverge.
+pub fn parse_barcode_umi(id: &str) -> (&str, &str) {
+    let mut it = id.splitn(3, '_');
+    (it.next().unwrap_or(""), it.next().unwrap_or(""))
+}
+
+/// Append `CB:Z:`/`UR:Z:` to `data` from the QNAME, gated on `opts`. No-op when
+/// neither flag is set (so default aligner output is byte-identical). A tag is
+/// inserted only when its parsed field is non-empty (matches the fork's "append
+/// only if defined & non-empty"); `Data::insert` appends a new tag, so CB/UR
+/// land after the existing `NM/MD/XM/XR/XG` block. The missing-field *counting*
+/// (for the never-silent notice) is done at the call site, which holds the
+/// `Counters` — this helper only writes tags.
+fn append_barcode_umi_tags(data: &mut Data, id: &str, opts: BarcodeUmiTags) {
+    if !opts.enabled() {
+        return;
+    }
+    let (barcode, umi) = parse_barcode_umi(id);
+    if opts.add_barcode && !barcode.is_empty() {
+        data.insert(Tag::from(*b"CB"), Value::String(BString::from(barcode)));
+    }
+    if opts.add_umi && !umi.is_empty() {
+        data.insert(Tag::from(*b"UR"), Value::String(BString::from(umi)));
+    }
+}
 
 /// Map chromosome name → reference id (0-based index into `sq_order`), the
 /// `reference_sequence_id` the BAM record needs.
@@ -347,6 +399,7 @@ pub fn single_end_sam_output(
     methylation_call: &[u8],
     refid: &HashMap<String, usize>,
     phred64: bool,
+    opts: BarcodeUmiTags,
 ) -> Result<BismarkRecord> {
     let strand = ext.alignment_strand;
     let read_conv = ext.read_conversion;
@@ -438,6 +491,7 @@ pub fn single_end_sam_output(
         Tag::from(*b"XG"),
         Value::String(BString::from(genome_conv.as_str())),
     );
+    append_barcode_umi_tags(rec.data_mut(), id, opts);
 
     BismarkRecord::from_noodles_record(rec)
         .map_err(|e| AlignerError::Validation(format!("failed to build SAM record: {e}")))
@@ -463,6 +517,7 @@ pub fn paired_end_sam_output(
     refid: &HashMap<String, usize>,
     phred64: bool,
     dovetail: bool,
+    opts: BarcodeUmiTags,
 ) -> Result<(BismarkRecord, BismarkRecord)> {
     // FLAG = a per-index constant pair (Perl 8825–8868); index 1/2 swap the R1/R2
     // first/second-in-pair bits (SeqMonk concordance, 8821–8823). NOT bit-assembly.
@@ -552,6 +607,7 @@ pub fn paired_end_sam_output(
         ext.read_conversion_1,
         ext.genome_conversion,
         phred64,
+        opts,
     )?;
     let rec2 = build_pe_mate(
         id,
@@ -572,6 +628,7 @@ pub fn paired_end_sam_output(
         ext.read_conversion_2,
         ext.genome_conversion,
         phred64,
+        opts,
     )?;
     Ok((rec1, rec2))
 }
@@ -600,28 +657,36 @@ fn build_pe_mate(
     read_conv: Conversion,
     genome_conv: Conversion,
     phred64: bool,
+    opts: BarcodeUmiTags,
 ) -> Result<BismarkRecord> {
     let mut actual_seq = original_seq.to_vec();
     let mut ref_seq = ref_seq_trimmed;
-    let mut md = md_seq.to_vec();
     let offset: u8 = if phred64 { 64 } else { 33 };
     let mut scores: Vec<u8> = qual.iter().map(|&q| q.wrapping_sub(offset)).collect();
 
     if strand == b'-' {
         actual_seq = revcomp(&actual_seq);
         ref_seq = revcomp(&ref_seq);
-        if cigar.contains('D') {
-            md = revcomp(&md); // second revcomp (extraction did the first)
-        }
         scores.reverse();
     }
 
+    // `md` is only read by make_mismatch_string (never stored in the record),
+    // and only differs from `md_seq` when reverse-complemented — strand '-' AND
+    // a deletion (the SE path already borrows md_seq directly). Allocate only
+    // in that case; borrow otherwise. The second revcomp matches Perl (the
+    // extraction did the first). Byte-identical to the prior `md_seq.to_vec()`.
+    let md_owned: Vec<u8>;
+    let md: &[u8] = if strand == b'-' && cigar.contains('D') {
+        md_owned = revcomp(md_seq);
+        &md_owned
+    } else {
+        md_seq
+    };
+
     let nm = hemming_dist(&actual_seq, &ref_seq) as i64 + indels as i64;
-    let md_full = make_mismatch_string(&actual_seq, &ref_seq, cigar, &md);
-    let md_value = md_full
-        .strip_prefix("MD:Z:")
-        .unwrap_or(&md_full)
-        .to_string();
+    let md_full = make_mismatch_string(&actual_seq, &ref_seq, cigar, md);
+    // Slice off the `MD:Z:` prefix in place (no intermediate String copy).
+    let md_value = md_full.strip_prefix("MD:Z:").unwrap_or(&md_full).as_bytes();
     let xm: Vec<u8> = if strand == b'-' {
         methylation_call.iter().rev().copied().collect()
     } else {
@@ -656,6 +721,7 @@ fn build_pe_mate(
         Tag::from(*b"XG"),
         Value::String(BString::from(genome_conv.as_str())),
     );
+    append_barcode_umi_tags(rec.data_mut(), id, opts);
 
     BismarkRecord::from_noodles_record(rec)
         .map_err(|e| AlignerError::Validation(format!("failed to build PE SAM record: {e}")))
@@ -990,6 +1056,7 @@ mod tests {
             b"....",
             &refid_of(&["chr1"]),
             false,
+            BarcodeUmiTags::default(),
         )
         .unwrap();
         let inner = r.inner();
@@ -1013,6 +1080,7 @@ mod tests {
             b"zh..", // XM
             &refid_of(&["chr1"]),
             false,
+            BarcodeUmiTags::default(),
         )
         .unwrap();
         let inner = r.inner();
@@ -1022,6 +1090,145 @@ mod tests {
         // XM reversed: "zh.." → "..hz"
         let xm = bismark_io::tags::xm(inner.data()).unwrap();
         assert_eq!(xm, b"..hz");
+    }
+
+    // ---- cell barcode / UMI tags (--add_barcode / --add_umi) ---------------
+
+    #[test]
+    fn parse_barcode_umi_splits_max_3_fields() {
+        // barcode = field 0, umi = field 1, everything else is the ignored remainder.
+        assert_eq!(parse_barcode_umi("BC_UMI_rest_a_b"), ("BC", "UMI"));
+        // real SeekSoul 4-field name: barcode_umi_alt_<illumina-name-with-colons>.
+        assert_eq!(
+            parse_barcode_umi("AACGTGAT_TTGCAA_1N3T_VL00347:237:AAJCLHTM5:1:1101:32054:1000"),
+            ("AACGTGAT", "TTGCAA")
+        );
+        assert_eq!(parse_barcode_umi("BC_UMI__name"), ("BC", "UMI")); // empty _alt field
+        assert_eq!(parse_barcode_umi("BC_UMI"), ("BC", "UMI"));
+        assert_eq!(parse_barcode_umi("BC_"), ("BC", "")); // trailing empty kept (positive limit)
+        assert_eq!(parse_barcode_umi("nounderscore"), ("nounderscore", ""));
+        assert_eq!(parse_barcode_umi("_UMI_rest"), ("", "UMI")); // leading empty barcode
+        assert_eq!(parse_barcode_umi("___"), ("", "")); // all-underscores → both empty
+        assert_eq!(parse_barcode_umi(""), ("", ""));
+    }
+
+    /// Build an SE record for the barcode/UMI tests (index-0 OT, FLAG 0).
+    fn se_tagged(name: &str, opts: BarcodeUmiTags) -> RecordBuf {
+        let b = best("chr1", 5, 0, "4M");
+        let e = ext_of(b'+', Conversion::Ct, Conversion::Ct, b"ACGTCG");
+        single_end_sam_output(
+            name,
+            b"ACGT",
+            b"IIII",
+            &b,
+            &e,
+            b"....",
+            &refid_of(&["chr1"]),
+            false,
+            opts,
+        )
+        .unwrap()
+        .inner()
+        .clone()
+    }
+
+    fn cb(r: &RecordBuf) -> Option<&Value> {
+        r.data().get(&Tag::from(*b"CB"))
+    }
+    fn ur(r: &RecordBuf) -> Option<&Value> {
+        r.data().get(&Tag::from(*b"UR"))
+    }
+
+    #[test]
+    fn se_both_flags_write_cb_and_ur_from_real_name() {
+        // the _alt signature + colon-delimited original name must NOT leak into either tag.
+        let name = "AACGTGAT_TTGCAA_1N3T_VL00347:237:AAJCLHTM5:1:1101:32054:1000";
+        let r = se_tagged(
+            name,
+            BarcodeUmiTags {
+                add_barcode: true,
+                add_umi: true,
+            },
+        );
+        assert_eq!(cb(&r), Some(&Value::String(BString::from("AACGTGAT"))));
+        assert_eq!(ur(&r), Some(&Value::String(BString::from("TTGCAA"))));
+    }
+
+    #[test]
+    fn se_flag_matrix_barcode_only_umi_only_neither() {
+        let name = "BC_UMI_rest";
+        let r = se_tagged(
+            name,
+            BarcodeUmiTags {
+                add_barcode: true,
+                add_umi: false,
+            },
+        );
+        assert!(cb(&r).is_some() && ur(&r).is_none());
+        let r = se_tagged(
+            name,
+            BarcodeUmiTags {
+                add_barcode: false,
+                add_umi: true,
+            },
+        );
+        assert!(cb(&r).is_none() && ur(&r).is_some());
+        // neither flag → no CB/UR (the default-path byte-identity guarantee).
+        let r = se_tagged(name, BarcodeUmiTags::default());
+        assert!(cb(&r).is_none() && ur(&r).is_none());
+    }
+
+    #[test]
+    fn se_empty_fields_skip_their_tag() {
+        let both = BarcodeUmiTags {
+            add_barcode: true,
+            add_umi: true,
+        };
+        // no underscore: barcode = whole name, umi empty → CB yes, UR no.
+        let r = se_tagged("nounderscore", both);
+        assert_eq!(cb(&r), Some(&Value::String(BString::from("nounderscore"))));
+        assert!(ur(&r).is_none());
+        // leading underscore: barcode empty → no CB; umi present.
+        let r = se_tagged("_UMI_rest", both);
+        assert!(cb(&r).is_none());
+        assert_eq!(ur(&r), Some(&Value::String(BString::from("UMI"))));
+        // empty middle field `BC__rest`: umi empty → no UR (the easy-to-get-wrong case).
+        let r = se_tagged("BC__rest", both);
+        assert_eq!(cb(&r), Some(&Value::String(BString::from("BC"))));
+        assert!(ur(&r).is_none());
+    }
+
+    #[test]
+    fn pe_both_mates_carry_equal_nonempty_cb_ur() {
+        let (best, ext) = pe_io(0, 100, 140, 110, 150);
+        let name = "AACGTGAT_TTGCAA_1N3T_VL00347:237:AAJCLHTM5:1:1101:32054:1000";
+        let opts = BarcodeUmiTags {
+            add_barcode: true,
+            add_umi: true,
+        };
+        let (r1, r2) = paired_end_sam_output(
+            name,
+            b"ACGT",
+            b"ACGT",
+            b"FFFF",
+            b"FFFF",
+            &best,
+            &ext,
+            b"....",
+            b"....",
+            &refid_of(&["chr1"]),
+            false,
+            true,
+            opts,
+        )
+        .unwrap();
+        let (r1, r2) = (r1.inner(), r2.inner());
+        let cb_v = Value::String(BString::from("AACGTGAT"));
+        let ur_v = Value::String(BString::from("TTGCAA"));
+        assert_eq!(r1.data().get(&Tag::from(*b"CB")), Some(&cb_v));
+        assert_eq!(r2.data().get(&Tag::from(*b"CB")), Some(&cb_v));
+        assert_eq!(r1.data().get(&Tag::from(*b"UR")), Some(&ur_v));
+        assert_eq!(r2.data().get(&Tag::from(*b"UR")), Some(&ur_v));
     }
 
     // ---- header ------------------------------------------------------------
@@ -1063,6 +1270,7 @@ mod tests {
             b"....",
             &refid_of(&["chr1"]),
             false,
+            BarcodeUmiTags::default(),
         )
         .unwrap();
         let nm = rec.inner().data().get(&Tag::from(*b"NM")).unwrap();
@@ -1104,8 +1312,18 @@ mod tests {
             false,
             &mut c,
         );
-        let rec = single_end_sam_output("r1", read, b"FFFFFF", &b, &ext, &methcall, &refid, false)
-            .unwrap();
+        let rec = single_end_sam_output(
+            "r1",
+            read,
+            b"FFFFFF",
+            &b,
+            &ext,
+            &methcall,
+            &refid,
+            false,
+            BarcodeUmiTags::default(),
+        )
+        .unwrap();
         let inner = rec.inner();
         assert_eq!(u16::from(inner.flags()), 16); // OB → '-' → FLAG 16
         assert_eq!(inner.sequence().as_ref(), b"CCGGTT"); // revcomp(read)
@@ -1152,8 +1370,18 @@ mod tests {
             false,
             &mut c,
         );
-        let rec =
-            single_end_sam_output("r1", read, b"FFFFFF", &b, &ext, &mc, &refid, false).unwrap();
+        let rec = single_end_sam_output(
+            "r1",
+            read,
+            b"FFFFFF",
+            &b,
+            &ext,
+            &mc,
+            &refid,
+            false,
+            BarcodeUmiTags::default(),
+        )
+        .unwrap();
         let inner = rec.inner();
         assert_eq!(u16::from(inner.flags()), 16);
         assert_eq!(inner.sequence().as_ref(), b"GCGTAC"); // strand '+', not revcomp'd
@@ -1189,8 +1417,18 @@ mod tests {
             &mut c,
         );
         // forward call "H...z." → reversed on the '-' strand below.
-        let rec =
-            single_end_sam_output("r1", read, b"FFFFFF", &b, &ext, &mc, &refid, false).unwrap();
+        let rec = single_end_sam_output(
+            "r1",
+            read,
+            b"FFFFFF",
+            &b,
+            &ext,
+            &mc,
+            &refid,
+            false,
+            BarcodeUmiTags::default(),
+        )
+        .unwrap();
         let inner = rec.inner();
         assert_eq!(u16::from(inner.flags()), 0); // (-, GA, CT) → FLAG 0
         assert_eq!(inner.sequence().as_ref(), b"GTACGC"); // revcomp("GCGTAC")
@@ -1251,8 +1489,18 @@ mod tests {
         let b = best("chr1", 5, 0, "4M");
         // read+2 genomic window; CT drops last 2 → ref "ACGT" == read → MD 4, NM 0.
         let e = ext_of(b'+', Conversion::Ct, Conversion::Ct, b"ACGTAC");
-        let rec =
-            single_end_sam_output("r1", b"ACGT", b"FFFF", &b, &e, b"....", &refid, false).unwrap();
+        let rec = single_end_sam_output(
+            "r1",
+            b"ACGT",
+            b"FFFF",
+            &b,
+            &e,
+            b"....",
+            &refid,
+            false,
+            BarcodeUmiTags::default(),
+        )
+        .unwrap();
 
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("out.bam");
@@ -1433,6 +1681,7 @@ mod tests {
             &refid_of(&["chr1"]),
             false,
             dovetail,
+            BarcodeUmiTags::default(),
         )
         .unwrap();
         (r1.inner().clone(), r2.inner().clone())
@@ -1593,6 +1842,7 @@ mod tests {
             &refid_of(&["chr1"]),
             false,
             true,
+            BarcodeUmiTags::default(),
         )
         .unwrap();
         // mate1 (+): SEQ as-is, XM as-is.

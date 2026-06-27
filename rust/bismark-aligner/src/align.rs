@@ -75,14 +75,46 @@ pub struct SamRecord {
     pub raw_line: String,
 }
 
+/// Strip the trailing CR/LF terminator then split on TAB, operating on the
+/// already-validated `&str`'s bytes. This avoids
+/// `line.trim_end_matches(['\n', '\r']).split('\t')`, whose `CharSearcher`
+/// (per-char UTF-8 decode) was the aligner's hottest parse cost (06222026 perf
+/// epic; ~330 self-samples). The line is valid UTF-8 (read_line validated it)
+/// and `\t`/`\n`/`\r` are all < 0x80, so a byte slice at those boundaries never
+/// lands mid-codepoint and yields valid `&str` fields with no re-validation.
+///
+/// **Byte-identical to the char-based reference** by construction (only trailing
+/// `\n`/`\r` are trimmed; field bytes are untouched; an empty input yields a
+/// single empty field, like `"".split('\t')`). Returned as a seam so the
+/// equivalence is pinned by a CI unit test (`trim_and_split_*`), not just the
+/// `#[ignore]`d real-data oracle. The returned `trimmed` slice backs both the
+/// fields and `raw_line`.
+fn trim_and_split(line: &str) -> (&str, Vec<&str>) {
+    let lb = line.as_bytes();
+    let mut end = lb.len();
+    while end > 0 && (lb[end - 1] == b'\n' || lb[end - 1] == b'\r') {
+        end -= 1;
+    }
+    let trimmed = &line[..end];
+    let mut f: Vec<&str> = Vec::with_capacity(16);
+    let mut start = 0usize;
+    for (i, &b) in trimmed.as_bytes().iter().enumerate() {
+        if b == b'\t' {
+            f.push(&trimmed[start..i]);
+            start = i + 1;
+        }
+    }
+    f.push(&trimmed[start..]);
+    (trimmed, f)
+}
+
 impl SamRecord {
     /// Parse one SAM line (`split('\t')`). The line may carry a trailing
     /// terminator, which is stripped. Errors on `< 11` fields or unparseable
     /// FLAG/POS/MAPQ; unparseable tag values are left `None` (lenient — Phase 4
     /// enforces `AS`/`MD` presence, Perl `die` 2838).
     pub fn parse(line: &str) -> Result<SamRecord> {
-        let trimmed = line.trim_end_matches(['\n', '\r']);
-        let f: Vec<&str> = trimmed.split('\t').collect();
+        let (trimmed, f) = trim_and_split(line);
         if f.len() < 11 {
             return Err(AlignerError::Validation(format!(
                 "malformed SAM line ({} fields, expected >= 11): {trimmed}",
@@ -377,7 +409,7 @@ impl Drop for AlignerStream {
 /// with [`AlignerStream`] (the spill writes only records, so in practice there are
 /// none, but a header would be tolerated).
 pub struct FileSamStream {
-    reader: BufReader<File>,
+    reader: BufReader<noodles_bgzf::io::Reader<File>>,
     current: Option<SamRecord>,
     line_buf: String,
 }
@@ -393,7 +425,7 @@ impl FileSamStream {
                 path.display()
             ))
         })?;
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::new(noodles_bgzf::io::Reader::new(file)); // BGZF spill (issue #1019)
         let mut line = String::new();
         let current = loop {
             line.clear();
@@ -663,7 +695,7 @@ impl Drop for PairedAlignerStream {
 /// **lone trailing line** (odd line count → no second mate) yields `None`, mirroring
 /// [`PairedAlignerStream::advance_pair`] (Perl 6491), NOT an error.
 pub struct PairedFileSamStream {
-    reader: BufReader<File>,
+    reader: BufReader<noodles_bgzf::io::Reader<File>>,
     current: Option<SamPair>,
 }
 
@@ -678,7 +710,7 @@ impl PairedFileSamStream {
                 path.display()
             ))
         })?;
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::new(noodles_bgzf::io::Reader::new(file)); // BGZF spill (issue #1019)
         // Skip `@` header lines; the first non-`@` line is the first record of the
         // first pair (cf. `PairedAlignerStream::spawn`).
         let mut line1 = String::new();
@@ -851,6 +883,47 @@ mod tests {
         assert_eq!(r.raw_line, MAPPED);
     }
 
+    #[test]
+    fn trim_and_split_matches_char_based_reference() {
+        // The byte-scan field split (06222026 perf epic) MUST be byte-identical to
+        // the original `line.trim_end_matches(['\n', '\r']).split('\t')`. This pins
+        // the edge cases reviewed by hand on PR #1013 so CI guards them (the
+        // real-data oracle that also covers them is `#[ignore]`d): empty / leading /
+        // trailing-tab fields, lone `\r`, `\r\n`, mid-line `\r` (NOT trailing, so it
+        // stays inside the field), no trailing newline, and empty input (→ `[""]`).
+        for line in [
+            "",            // empty → one empty field
+            "\n",          // bare LF → one empty field
+            "\r",          // bare CR → one empty field
+            "\r\n",        // CRLF → one empty field
+            "\n\r",        // both terminators trimmed
+            "a",           // single field, no terminator
+            "a\n",         // single field + LF
+            "a\r\n",       // single field + CRLF
+            "\ta",         // leading tab → empty first field
+            "a\t",         // trailing tab → empty last field
+            "\t",          // lone tab → two empty fields
+            "a\t\tb",      // empty middle field
+            "a\tb\tc",     // ordinary three fields
+            "a\tb\tc\r\n", // three fields + CRLF
+            "a\rb",        // mid-line CR is content, not trimmed
+            "a\tb\rc\n",   // mid-line CR inside field 2, trailing LF trimmed
+        ] {
+            let reference: Vec<&str> = line.trim_end_matches(['\n', '\r']).split('\t').collect();
+            let (trimmed, got) = trim_and_split(line);
+            assert_eq!(got, reference, "field split mismatch for {line:?}");
+            assert_eq!(
+                trimmed,
+                line.trim_end_matches(['\n', '\r']),
+                "trim mismatch"
+            );
+            assert!(
+                !got.is_empty(),
+                "split always yields >= 1 field (even empty input)"
+            );
+        }
+    }
+
     // ---- FileSamStream (v2 phase 9 — sequential combined-index spill replay) ----
 
     /// Replays a spilled file (a mapped record + a FLAG-4 miss) through the same
@@ -860,7 +933,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("ct_pass.sam");
         let miss = "r2\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF";
-        std::fs::write(&p, format!("{MAPPED}\n{miss}\n")).unwrap();
+        write_bgzf(&p, format!("{MAPPED}\n{miss}\n").as_bytes());
 
         let mut s = FileSamStream::open(&p).unwrap();
         assert_eq!(s.current().unwrap().qname, "r1");
@@ -879,15 +952,15 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
 
         let empty = dir.path().join("empty.sam");
-        std::fs::write(&empty, b"").unwrap();
+        write_bgzf(&empty, b"");
         assert!(FileSamStream::open(&empty).unwrap().current().is_none());
 
         let hdr = dir.path().join("hdronly.sam");
-        std::fs::write(&hdr, b"@HD\tVN:1.0\n").unwrap();
+        write_bgzf(&hdr, b"@HD\tVN:1.0\n");
         assert!(FileSamStream::open(&hdr).unwrap().current().is_none());
 
         let mix = dir.path().join("mix.sam");
-        std::fs::write(&mix, format!("@HD\tVN:1.0\n{MAPPED}\n")).unwrap();
+        write_bgzf(&mix, format!("@HD\tVN:1.0\n{MAPPED}\n").as_bytes());
         assert_eq!(
             FileSamStream::open(&mix).unwrap().current().unwrap().qname,
             "r1"
@@ -1450,17 +1523,31 @@ mod tests {
 
     // ---- PairedFileSamStream (Phase 6 — the spilled PE pass replay) ---------
 
-    /// Write SAM `lines` (each newline-terminated) to a fresh temp file and return
-    /// it (the TempDir keeps the file alive for the test's lifetime).
+    /// Write `content` to `path` as a BGZF stream — the spill is BGZF since issue #1019,
+    /// so reader fixtures must be BGZF too. Mirrors the production writer
+    /// (`MultithreadedWriter` + `finish()`; 1 worker is plenty for tests).
+    fn write_bgzf(path: &std::path::Path, content: &[u8]) {
+        use std::io::Write as _;
+        let workers = std::num::NonZeroUsize::new(1).unwrap();
+        let mut w = noodles_bgzf::io::MultithreadedWriter::with_worker_count(
+            workers,
+            std::fs::File::create(path).unwrap(),
+        );
+        w.write_all(content).unwrap();
+        w.finish().unwrap();
+    }
+
+    /// Write SAM `lines` (each newline-terminated) to a fresh temp file as a BGZF spill
+    /// and return it (the TempDir keeps the file alive for the test's lifetime).
     fn write_spill(lines: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("ct_pass.sam");
+        let path = dir.path().join("ct_pass.sam.gz");
         let mut body = String::new();
         for l in lines {
             body.push_str(l);
             body.push('\n');
         }
-        std::fs::write(&path, body).unwrap();
+        write_bgzf(&path, body.as_bytes());
         (dir, path)
     }
 

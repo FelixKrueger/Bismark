@@ -333,6 +333,16 @@ pub struct Cli {
     #[arg(long = "nucleotide_coverage")]
     pub nucleotide_coverage: bool,
 
+    // ---- cell barcode / UMI tags (SeekSoul-style single-cell input) -------
+    /// Write the `CB:Z:` tag (cell barcode = field 0 of a
+    /// `<barcode>_<umi>[_<alt>]_<name>` QNAME).
+    #[arg(long = "add_barcode")]
+    pub add_barcode: bool,
+    /// Write the `UR:Z:` tag (raw UMI = field 1 of a
+    /// `<barcode>_<umi>[_<alt>]_<name>` QNAME).
+    #[arg(long = "add_umi")]
+    pub add_umi: bool,
+
     // ---- read-group tags --------------------------------------------------
     /// Add an `@RG` read-group header line.
     #[arg(long = "rg_tag")]

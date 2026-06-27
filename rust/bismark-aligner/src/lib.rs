@@ -26,6 +26,7 @@
 pub mod align;
 pub mod aligner;
 pub mod aux_out;
+pub mod binseq_decode;
 pub mod cli;
 pub mod combined;
 pub mod config;
@@ -45,12 +46,19 @@ pub mod mapq;
 // sees this. The extern crate is `rammap` (the package `rammap-core`'s lib name).
 #[cfg(feature = "rammap-inprocess")]
 pub use ::rammap;
+// #1025 Phase 2: re-export the `binseq` crate under the `binseq-input` feature so the
+// `binseq_transcode` integration test (a separate crate that does NOT inherit the parent
+// crate's normal deps — see the `rammap` note above) can build `.vbq` fixtures with the
+// `binseq` writer. Default/Mac build never sees this.
+#[cfg(feature = "binseq-input")]
+pub use ::binseq;
 pub mod merge;
 pub mod methylation;
 pub mod options;
 pub mod output;
 pub mod parallel;
 pub mod report;
+pub mod ubam;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -121,7 +129,15 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if !cli.five_base_consensus_from_bam.is_empty() {
         return run_five_base_consensus_standalone(cli, &command_line);
     }
-    let config = resolve(cli, command_line)?;
+    let mut config = resolve(cli, command_line)?;
+    // #1025: transcode any alternative binary read inputs into temp FASTQ BEFORE
+    // dispatch, so the byte-frozen convert→align→merge path runs unchanged. Phase 1
+    // = unaligned BAM (uBAM, `samtools fastq`-equivalent); Phase 2 = BINSEQ `.vbq`
+    // (`bqtools decode`-equivalent). Returns the per-input temp dirs to clean up after
+    // the run (the transcode FASTQ is consumed by BOTH the convert step and the
+    // methylation-call re-read, so cleanup must follow the pipeline).
+    let alt_input_temp_dirs =
+        resolve_alt_inputs(&mut config, cli, &[&UbamDecoder, &BinseqDecoder])?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -185,8 +201,253 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
-    pipeline(&config)?;
-    Ok(())
+    let result = pipeline(&config);
+    // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
+    // "cleaned up with the other temps"), regardless of pipeline success/failure.
+    for dir in &alt_input_temp_dirs {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    result
+}
+
+/// #1025 Phase 1: resolve unaligned-BAM (uBAM) read inputs into temp FASTQ files.
+///
+/// For each **single-end** read input that the magic-byte sniff identifies as an
+/// authentic BAM (`ubam::is_bam_input` — a plain FASTQ or `.fq.gz` never matches,
+/// per R4), transcode it to a `samtools fastq`-equivalent temp FASTQ named
+/// `<stem>.fastq` (so the downstream output stem is unchanged — R3), substitute
+/// the temp path into the reads list (so BOTH the convert step and the
+/// methylation-call re-read consume it — R2), and switch the format to FASTQ.
+/// Emits a never-silent notice per transcoded input.
+///
+/// A uBAM read input is **auto-detected** (magic byte) and, from its FLAGs,
+/// classified single- vs paired-end:
+/// - **Single-end uBAM** → transcoded to one temp FASTQ; the reads list entry is
+///   substituted in place (SingleEnd layout preserved).
+/// - **Paired-end uBAM** (a single collated file, `0x1`) → split into R1/R2 temp
+///   FASTQs and the layout is **switched SingleEnd → PairedEnd** (the user passes
+///   one positional file; we recover the mates, equivalent to `samtools fastq -1/-2`).
+///
+/// Mixing a paired uBAM with other inputs fails loud; a uBAM supplied via `-1`/`-2`
+/// fails loud (pass the collated PE uBAM positionally instead); uBAM + `--fasta`
+/// is rejected (BAM carries qualities → FASTQ).
+///
+/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<i>/` so the
+/// temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
+/// same-basename uBAMs can't collide and a pre-existing temp is never clobbered.
+/// Returns the created subdirs for the caller to clean up after the pipeline.
+/// An alternative (non-FASTQ/FASTA) read-input backend: a binary format that is
+/// detected, then **transcoded to a temp FASTQ** and fed to the byte-frozen
+/// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
+/// second. The shared resolver [`resolve_alt_inputs`] owns the SE/PE
+/// classification, the per-input temp subdir + cleanup, the SingleEnd→PairedEnd
+/// switch (with PE-options recompute + the paired-aligner reject), and the
+/// fail-loud guards — so every backend behaves identically; a backend only
+/// supplies detection + the transcode.
+trait InputDecoder {
+    /// Does `path` belong to this backend? Backends must be mutually exclusive
+    /// and must never match a FASTQ/FASTA file (uBAM = BAM magic byte; BINSEQ =
+    /// `.vbq`/`.cbq`/`.bq` extension — disjoint).
+    fn detect(&self, path: &Path) -> bool;
+    /// Single- vs paired-end (peek; a paired input is auto-split into mates).
+    fn is_paired(&self, path: &Path) -> Result<bool>;
+    /// Transcode a single-end input → one temp FASTQ named `<stem>.fastq`.
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf>;
+    /// Transcode a paired-end input → (R1, R2) temp FASTQs `<stem>_1/2.fastq`.
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)>;
+    /// Human label for notices/errors, e.g. "unaligned BAM" / "BINSEQ".
+    fn label(&self) -> &'static str;
+    /// The reference decode tool named in the notice (the `samtools fastq` analog).
+    fn decode_tool(&self) -> &'static str;
+    /// Per-input temp subdir name (internal; does not affect output naming).
+    fn subdir(&self) -> &'static str;
+}
+
+/// uBAM backend — thin adapter over [`ubam`] (#1026 SE / #1027 PE).
+struct UbamDecoder;
+impl InputDecoder for UbamDecoder {
+    fn detect(&self, path: &Path) -> bool {
+        ubam::is_bam_input(path)
+    }
+    fn is_paired(&self, path: &Path) -> Result<bool> {
+        ubam::is_paired(path)
+    }
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        ubam::transcode_ubam_to_fastq_se(path, temp_dir)
+    }
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        ubam::transcode_ubam_to_fastq_pe(path, temp_dir)
+    }
+    fn label(&self) -> &'static str {
+        "unaligned BAM"
+    }
+    fn decode_tool(&self) -> &'static str {
+        "samtools fastq"
+    }
+    fn subdir(&self) -> &'static str {
+        ".bismark_ubam"
+    }
+}
+
+/// BINSEQ backend — thin adapter over [`binseq_decode`] (#1025 Phase 2). Decodes
+/// Arc Institute `.vbq` files; `.cbq`/`.bq` are detected then rejected fail-loud
+/// (v1 scope / D2). Detection is feature-independent so a build without the
+/// `binseq-input` feature still rejects a `.vbq` never-silently.
+struct BinseqDecoder;
+impl InputDecoder for BinseqDecoder {
+    fn detect(&self, path: &Path) -> bool {
+        binseq_decode::is_binseq_input(path)
+    }
+    fn is_paired(&self, path: &Path) -> Result<bool> {
+        binseq_decode::is_paired(path)
+    }
+    fn transcode_se(&self, path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        binseq_decode::transcode_binseq_to_fastq_se(path, temp_dir)
+    }
+    fn transcode_pe(&self, path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        binseq_decode::transcode_binseq_to_fastq_pe(path, temp_dir)
+    }
+    fn label(&self) -> &'static str {
+        "BINSEQ"
+    }
+    fn decode_tool(&self) -> &'static str {
+        "bqtools decode"
+    }
+    fn subdir(&self) -> &'static str {
+        ".bismark_binseq"
+    }
+}
+
+/// Detect alternative binary read inputs (uBAM, BINSEQ, …), transcode them to
+/// temp FASTQ, and rewrite `config.layout` / `config.format` so the byte-frozen
+/// pipeline runs unchanged. Returns the per-input temp subdirs to clean up after
+/// the pipeline. Generalizes the Phase-1 uBAM resolver across backends.
+fn resolve_alt_inputs(
+    config: &mut RunConfig,
+    cli: &cli::Cli,
+    decoders: &[&dyn InputDecoder],
+) -> Result<Vec<PathBuf>> {
+    let temp_dir = config.output.temp_dir.clone();
+    let is_fasta = matches!(config.format, ReadFormat::FastA);
+    let mut temp_dirs: Vec<PathBuf> = Vec::new();
+
+    let decoder_idx = |path: &str| decoders.iter().position(|d| d.detect(Path::new(path)));
+
+    // A positional paired input arrives as a SingleEnd layout (one file). A binary
+    // input passed via -1/-2 is not the supported shape — fail loud.
+    let reads = match &config.layout {
+        ReadLayout::SingleEnd { reads } => reads.clone(),
+        ReadLayout::PairedEnd { mates1, mates2 } => {
+            if let Some(i) = mates1
+                .iter()
+                .chain(mates2.iter())
+                .find_map(|f| decoder_idx(f))
+            {
+                return Err(AlignerError::Validation(format!(
+                    "{} input via -1/-2 is not supported; pass a single positional file — a \
+                     paired input is auto-detected and split into mates",
+                    decoders[i].label()
+                )));
+            }
+            return Ok(temp_dirs);
+        }
+    };
+
+    // Classify each input: Some((decoder index, is_paired)) for a binary input, None for plain FASTQ.
+    let mut classes: Vec<Option<(usize, bool)>> = Vec::with_capacity(reads.len());
+    let mut any = false;
+    let mut any_pe = false;
+    for r in &reads {
+        match decoder_idx(r) {
+            Some(i) => {
+                any = true;
+                let pe = decoders[i].is_paired(Path::new(r))?;
+                any_pe |= pe;
+                classes.push(Some((i, pe)));
+            }
+            None => classes.push(None),
+        }
+    }
+    if !any {
+        return Ok(temp_dirs); // plain FASTQ/FASTA single-end — nothing to do.
+    }
+    if is_fasta {
+        let i = classes.iter().flatten().next().unwrap().0;
+        return Err(AlignerError::Validation(format!(
+            "{} input is incompatible with --fasta/-f (it carries base qualities, so it \
+             transcodes to FASTQ, not FASTA)",
+            decoders[i].label()
+        )));
+    }
+
+    if any_pe {
+        // Paired-end: every input must be a paired input of the SAME backend (no mixing).
+        let first = classes[0];
+        let homogeneous = classes
+            .iter()
+            .all(|c| matches!((c, first), (Some((i, true)), Some((j, _))) if *i == j));
+        if !homogeneous {
+            return Err(AlignerError::Validation(
+                "a paired-end binary input cannot be mixed with single-end, FASTQ, or \
+                 other-format inputs in the same run"
+                    .into(),
+            ));
+        }
+        let dec = decoders[first.unwrap().0];
+        let mut mates1 = Vec::with_capacity(reads.len());
+        let mut mates2 = Vec::with_capacity(reads.len());
+        for (i, r) in reads.iter().enumerate() {
+            eprintln!(
+                "Note: input '{r}' detected as a paired-end {} — splitting mates and transcoding \
+                 to FASTQ (equivalent to `{} -1/-2`) before alignment.",
+                dec.label(),
+                dec.decode_tool()
+            );
+            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
+            let (r1, r2) = dec.transcode_pe(Path::new(r), &sub)?;
+            mates1.push(r1.to_string_lossy().into_owned());
+            mates2.push(r2.to_string_lossy().into_owned());
+            temp_dirs.push(sub);
+        }
+        config.layout = ReadLayout::PairedEnd { mates1, mates2 };
+        config.format = ReadFormat::FastQ;
+        // The positional file resolved as SINGLE-END, so `resolve()`'s layout-dependent
+        // guards ran against the SE layout. Re-run the paired-aligner reject (so e.g.
+        // `--minimap2 <pe binary file>` fails loud exactly as `--minimap2 -1 .. -2 ..`)
+        // and recompute the PE aligner options (`--no-mixed --no-discordant …`) via the
+        // SAME builders `resolve()` uses — without them Bowtie 2 emits half-mapped pairs
+        // the PE merge can't score.
+        config::reject_unsupported_paired_aligner(config.aligner, &config.layout)?;
+        let (opts, gaps) = options::build_aligner_options(
+            cli,
+            config.aligner,
+            config.format,
+            true,
+            config.hisat2_multicore_remap,
+        )?;
+        config.aligner_options = opts;
+        config.gap_penalties = gaps;
+    } else {
+        // Single-end: transcode each binary input; leave any plain FASTQ entries as-is.
+        let mut new_reads = reads.clone();
+        for (i, read) in new_reads.iter_mut().enumerate() {
+            let Some((di, _)) = classes[i] else { continue };
+            let dec = decoders[di];
+            eprintln!(
+                "Note: input '{read}' detected as {} — transcoding reads to FASTQ (equivalent to \
+                 `{}`) before alignment.",
+                dec.label(),
+                dec.decode_tool()
+            );
+            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
+            let temp = dec.transcode_se(Path::new(read), &sub)?;
+            *read = temp.to_string_lossy().into_owned();
+            temp_dirs.push(sub);
+        }
+        config.layout = ReadLayout::SingleEnd { reads: new_reads };
+        config.format = ReadFormat::FastQ;
+    }
+    Ok(temp_dirs)
 }
 
 /// `[#787]` Standalone duplex-consensus over one or more EXISTING 5-Base BAM(s), with NO
@@ -1273,7 +1534,17 @@ fn five_base_emit_record(
         counters,
     );
     let record = single_end_sam_output(
-        identifier, seq_uc, qual_bytes, &best, &ext, &methcall, refid, phred64,
+        identifier,
+        seq_uc,
+        qual_bytes,
+        &best,
+        &ext,
+        &methcall,
+        refid,
+        phred64,
+        // 5-Base UMIs are carried via --five_base_umi_qname (RX written by the 5-Base path);
+        // the general --barcode/--umi tag emission is not wired here, so pass no extra tags.
+        crate::output::BarcodeUmiTags::default(),
     )?;
     Ok(Some(record))
 }
@@ -1613,6 +1884,9 @@ fn five_base_emit_pe_record(
     let (out1, out2) = paired_end_sam_output(
         identifier, seq1_uc, seq2_uc, qual1, qual2, &best, &ext, &mc1, &mc2, refid, phred64,
         dovetail,
+        // 5-Base UMIs use --five_base_umi_qname (RX written by the 5-Base path); the general
+        // --barcode/--umi tag emission is not wired here, so pass no extra tags.
+        crate::output::BarcodeUmiTags::default(),
     )?;
     Ok(Some((out1, out2)))
 }
@@ -2743,6 +3017,16 @@ fn route_se_decision(
                 false, // bisulfite polarity (frozen path)
                 counters,
             );
+            let barcode_umi = config.barcode_umi_tags();
+            if barcode_umi.enabled() {
+                let (bc, umi) = crate::output::parse_barcode_umi(identifier);
+                if barcode_umi.add_barcode && bc.is_empty() {
+                    counters.add_barcode_missing += 1;
+                }
+                if barcode_umi.add_umi && umi.is_empty() {
+                    counters.add_umi_missing += 1;
+                }
+            }
             let record = single_end_sam_output(
                 identifier,
                 seq_uc,
@@ -2752,6 +3036,7 @@ fn route_se_decision(
                 &methcall,
                 refid,
                 config.phred64,
+                barcode_umi,
             )?;
             write_record(&mut sinks.bam, &record)?;
         }
@@ -3610,14 +3895,24 @@ fn select_and_route_se_nondir(
 /// live stream would, preserving the per-read lockstep `drive_merge_combined_nondir`
 /// relies on. Generic over [`SamStream`] so it is unit-testable with a canned stream.
 fn spill_stream_to_file<S: SamStream>(stream: &mut S, path: &Path) -> Result<u64> {
-    let mut w = BufWriter::new(File::create(path)?);
+    // BGZF-compressed spill (issue #1019): ~7x less scratch than raw SAM at ~0 wall cost
+    // (parallel encode hides behind pass-1 alignment; the decompressed line stream is
+    // byte-identical to the prior raw spill, so the FileSamStream replay + output are
+    // unchanged). 4 encoder workers far exceed the pass-1 SAM production rate (measured),
+    // so they never lag or contend with Bowtie 2.
+    let workers = std::num::NonZeroUsize::new(4).expect("nonzero BGZF worker count");
+    let mut w =
+        noodles_bgzf::io::MultithreadedWriter::with_worker_count(workers, File::create(path)?);
     let mut n: u64 = 0;
     while let Some(r) = stream.current() {
+        // writeln! => write_fmt => write_all (writes the whole line; NOT a bare partial .write()).
         writeln!(w, "{}", r.raw_line)?;
         n += 1;
         stream.advance()?;
     }
-    w.flush()?;
+    // finish() writes the BGZF EOF block + flushes; state then transitions to `Done`, so the
+    // subsequent Drop is a no-op (noodles-bgzf, unlike gzp, never panics in Drop).
+    w.finish()?;
     Ok(n)
 }
 
@@ -3631,15 +3926,19 @@ fn spill_stream_to_file<S: SamStream>(stream: &mut S, path: &Path) -> Result<u64
 /// on-disk line order, preserving the per-pair lockstep `drive_merge_combined_pe_nondir`
 /// relies on. Generic over [`PairedSamStream`] so it is unit-testable with a canned stream.
 fn spill_pe_stream_to_file<S: PairedSamStream>(stream: &mut S, path: &Path) -> Result<u64> {
-    let mut w = BufWriter::new(File::create(path)?);
+    // BGZF-compressed spill (issue #1019) — see `spill_stream_to_file` for the rationale.
+    let workers = std::num::NonZeroUsize::new(4).expect("nonzero BGZF worker count");
+    let mut w =
+        noodles_bgzf::io::MultithreadedWriter::with_worker_count(workers, File::create(path)?);
     let mut n: u64 = 0;
     while let Some(p) = stream.current_pair() {
+        // writeln! => write_fmt => write_all (NOT a bare partial .write()).
         writeln!(w, "{}", p.read1.raw_line)?;
         writeln!(w, "{}", p.read2.raw_line)?;
         n += 1;
         stream.advance_pair()?;
     }
-    w.flush()?;
+    w.finish()?;
     Ok(n)
 }
 
@@ -3790,7 +4089,7 @@ fn process_se_chunk_combined_nondir_sequential(
     // temp_dir — reusing its path sidesteps the empty default `temp_dir`).
     let mut spill_path = converted[0].path.clone();
     let mut spill_name = spill_path.file_name().unwrap_or_default().to_os_string();
-    spill_name.push(".ct_pass.sam");
+    spill_name.push(".ct_pass.sam.gz"); // BGZF-compressed (issue #1019)
     spill_path.set_file_name(spill_name);
 
     // ---- PASS 1 (C→T → OT/OB) ------------------------------------------------
@@ -4784,6 +5083,16 @@ fn route_pe_decision(
                 false, // bisulfite polarity (frozen path)
                 counters,
             );
+            let barcode_umi = config.barcode_umi_tags();
+            if barcode_umi.enabled() {
+                let (bc, umi) = crate::output::parse_barcode_umi(identifier);
+                if barcode_umi.add_barcode && bc.is_empty() {
+                    counters.add_barcode_missing += 1;
+                }
+                if barcode_umi.add_umi && umi.is_empty() {
+                    counters.add_umi_missing += 1;
+                }
+            }
             let (rec1, rec2) = paired_end_sam_output(
                 identifier,
                 seq1_uc,
@@ -4797,6 +5106,7 @@ fn route_pe_decision(
                 refid,
                 config.phred64,
                 dovetail,
+                barcode_umi,
             )?;
             write_record(&mut sinks.bam, &rec1)?;
             write_record(&mut sinks.bam, &rec2)?;
@@ -5786,8 +6096,30 @@ fn write_pe_aux(
     Ok(())
 }
 
+/// Append the per-run never-silent notice for `--add_barcode`/`--add_umi` reads
+/// whose QNAME lacked the expected field (tag omitted). A non-zero count implies
+/// the flag was set, so no config is needed. STDERR only — never the byte-gated
+/// report. Emitted from the end-of-run mapping summary, which every driver
+/// (single-core SE/PE and the `--multicore` merge) funnels through.
+fn push_barcode_umi_notice(s: &mut String, c: &Counters, unit: &str) {
+    if c.add_barcode_missing > 0 {
+        s.push_str(&format!(
+            "\nWARNING: --add_barcode set, but {} {unit} had an empty barcode field \
+             (QNAME field 0) — CB tag omitted",
+            c.add_barcode_missing
+        ));
+    }
+    if c.add_umi_missing > 0 {
+        s.push_str(&format!(
+            "\nWARNING: --add_umi set, but {} {unit} had an empty UMI field \
+             (QNAME field 1) — UR tag omitted",
+            c.add_umi_missing
+        ));
+    }
+}
+
 fn counters_summary_pe(read_1: &str, read_2: &str, c: &Counters) -> String {
-    format!(
+    let mut s = format!(
         "Mapping summary for {read_1} / {read_2}:\n\
            sequence pairs analysed:  {}\n\
            unique best alignments:   {}\n\
@@ -5806,11 +6138,13 @@ fn counters_summary_pe(read_1: &str, read_2: &str, c: &Counters) -> String {
         c.ga_ct_ga_count,
         c.ga_ct_ct_count,
         c.ct_ga_ga_count,
-    )
+    );
+    push_barcode_umi_notice(&mut s, c, "read pair(s)");
+    s
 }
 
 fn counters_summary(read_file: &str, c: &Counters) -> String {
-    format!(
+    let mut s = format!(
         "Mapping summary for {read_file}:\n\
            sequences analysed:       {}\n\
            unique best alignments:   {}\n\
@@ -5830,7 +6164,9 @@ fn counters_summary(read_file: &str, c: &Counters) -> String {
         c.ct_ga_count,
         c.ga_ct_count,
         c.ga_ga_count,
-    )
+    );
+    push_barcode_umi_notice(&mut s, c, "read(s)");
+    s
 }
 
 // ===========================================================================
@@ -6019,7 +6355,7 @@ fn process_pe_chunk_combined_nondir_sequential(
     // temp_dir — reusing its path sidesteps the empty default `temp_dir`).
     let mut spill_path = r1_ct.path.clone();
     let mut spill_name = spill_path.file_name().unwrap_or_default().to_os_string();
-    spill_name.push(".ct_pass.sam");
+    spill_name.push(".ct_pass.sam.gz"); // BGZF-compressed (issue #1019)
     spill_path.set_file_name(spill_name);
 
     // ---- PASS 1 (C→T reads → OT/OB) -----------------------------------------
@@ -6649,6 +6985,23 @@ mod tests {
     }
 
     #[test]
+    fn barcode_umi_notice_emitted_when_fields_missing() {
+        let mut c = Counters::default();
+        // nothing missing → no warning in the end-of-run summary.
+        assert!(!counters_summary("r.fq", &c).contains("WARNING:"));
+        // umi missing only → exactly the UMI warning (count surfaced).
+        c.add_umi_missing = 3;
+        let s = counters_summary("r.fq", &c);
+        assert!(s.contains("--add_umi set, but 3 read(s) had an empty UMI field"));
+        assert!(!s.contains("--add_barcode set"));
+        // both missing, PE summary path → both warning lines present, "read pair(s)" noun.
+        c.add_barcode_missing = 1;
+        let s = counters_summary_pe("r1.fq", "r2.fq", &c);
+        assert!(s.contains("--add_barcode set, but 1 read pair(s)"));
+        assert!(s.contains("--add_umi set, but 3 read pair(s)"));
+    }
+
+    #[test]
     fn strip_conv_tag_ct_ga_and_fail_loud() {
         // happy paths: the base id + which pass.
         assert_eq!(strip_conv_tag("read1__CT").unwrap(), ("read1", ConvTag::Ct));
@@ -6820,6 +7173,70 @@ mod tests {
             replay.advance_pair().unwrap();
         }
         assert!(replay.current_pair().is_none());
+    }
+
+    #[test]
+    fn spill_stream_to_file_crosses_bgzf_blocks() {
+        // A BGZF block holds <= 64 KiB; a spill larger than one block exercises the
+        // cross-block `read_line` reassembly path the small fixtures above never reach
+        // (the one BGZF-specific risk on the read side, issue #1019).
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam.gz");
+        // ~2000 records × ~80 B ≈ 160 KB >> 64 KiB → several BGZF blocks.
+        let lines: Vec<String> = (0..2000u32)
+            .map(|i| {
+                format!(
+                    "r{i}\t0\tchr1_CT_converted\t{}\t255\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
+                    i + 1
+                )
+            })
+            .collect();
+        let recs: Vec<_> = lines
+            .iter()
+            .map(|l| crate::align::SamRecord::parse(l).unwrap())
+            .collect();
+        let mut stream = VecStream {
+            recs: recs.clone(),
+            idx: 0,
+        };
+        let n = spill_stream_to_file(&mut stream, &p).unwrap();
+        assert_eq!(n, 2000);
+        assert!(std::fs::metadata(&p).unwrap().len() > 0);
+
+        let mut replay = crate::align::FileSamStream::open(&p).unwrap();
+        for orig in &recs {
+            assert_eq!(
+                replay.current().unwrap(),
+                orig,
+                "record mismatch across BGZF block boundary"
+            );
+            replay.advance().unwrap();
+        }
+        assert!(replay.current().is_none());
+    }
+
+    #[test]
+    fn spill_pe_stream_to_file_empty_stream() {
+        // PE analog of `spill_stream_to_file_empty_stream`: a 0-pair spill must still write a
+        // valid (EOF-block) BGZF file that replays as zero pairs.
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("ct_pass.sam.gz");
+        let mut stream = VecPairStream {
+            pairs: Vec::new(),
+            idx: 0,
+        };
+        assert_eq!(spill_pe_stream_to_file(&mut stream, &p).unwrap(), 0);
+        // Non-empty (the BGZF EOF block was written) yet zero pairs on replay.
+        assert!(
+            std::fs::metadata(&p).unwrap().len() > 0,
+            "empty spill should still write a BGZF EOF block"
+        );
+        assert!(
+            PairedFileSamStream::open(&p)
+                .unwrap()
+                .current_pair()
+                .is_none()
+        );
     }
 
     /// The non-directional PE desync guard: in-sync (head `seq_id` == identifier) and a

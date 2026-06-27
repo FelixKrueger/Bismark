@@ -127,6 +127,15 @@ pub struct Counters {
     pub total_unme_chh: u64,
     /// Unmethylated C in unknown context (`u`).
     pub total_unme_c_unknown: u64,
+
+    // ---- cell-barcode/UMI tagging (`--add_barcode`/`--add_umi`) ------------
+    // Counted on UniqueBest reads where the flag is set but the parsed QNAME
+    // field is empty (tag omitted). Drives the per-run never-silent STDERR
+    // notice; NOT printed in the byte-gated report.
+    /// `--add_barcode` set but QNAME field 0 (barcode) empty → no `CB` written.
+    pub add_barcode_missing: u64,
+    /// `--add_umi` set but QNAME field 1 (umi) empty → no `UR` written.
+    pub add_umi_missing: u64,
 }
 
 impl Counters {
@@ -159,6 +168,8 @@ impl Counters {
         self.total_unme_chg += other.total_unme_chg;
         self.total_unme_chh += other.total_unme_chh;
         self.total_unme_c_unknown += other.total_unme_c_unknown;
+        self.add_barcode_missing += other.add_barcode_missing;
+        self.add_umi_missing += other.add_umi_missing;
     }
 }
 

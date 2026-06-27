@@ -1,6 +1,6 @@
 [package]
 name = "bismark-dedup"
-version = "1.2.1-beta.1"
+version = "1.2.1-beta.2"
 description = "Rust port of Bismark Perl's deduplicate_bismark script"
 edition.workspace = true
 rust-version.workspace = true
@@ -27,8 +27,8 @@ bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 noodles-sam = "=0.85.0"
 clap = { version = "=4.5.30", features = ["derive"] }
 rustc-hash = "=2.1.0"
-thiserror = "=2.0.0"
-anyhow = "=1.0.86"
+thiserror = "=2.0.18"
+anyhow = "=1.0.103"
 bstr = "=1.10.0"
 # Phase B (v1.2 UMI epic): UmiDedupKey carries the per-record UMI as a
 # stack-allocated SmallVec for ≤16-byte UMIs. Matches bismark-io's pin.

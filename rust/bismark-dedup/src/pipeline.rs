@@ -246,8 +246,9 @@ fn stream_se<W: WriteBismark>(
 }
 
 /// Stream PE records: pair two adjacent records at a time via
-/// [`BismarkPair::from_mates`] (qname-equality + R1/R2 read-identity
-/// enforced there); compute key, observe, write **both** mates on unique.
+/// [`BismarkPair::from_mates`] (qname-equality enforced there; pairing is by
+/// file order, not the FLAG R1/R2 bits — see #1030); compute key, observe,
+/// write **both** mates on unique.
 fn stream_pe<W: WriteBismark>(
     records: impl Iterator<Item = Result<BismarkRecord, bismark_io::BismarkIoError>>,
     refid_table: &[u32],
@@ -271,10 +272,10 @@ fn stream_pe<W: WriteBismark>(
             }
         };
         // BismarkPair::from_mates validates:
-        //   - r1.read_identity == R1
-        //   - r2.read_identity == R2
         //   - r1.qname == r2.qname
-        // (Closes Alan's port's missing PE-mate validation gap.)
+        // Pairing is by file order (r1 = first-in-file = sequencing Read 1),
+        // NOT the SAM R1/R2 FLAG bits — Bismark swaps those for non-directional
+        // CTOT/CTOB pairs (#1030). Perl's deduplicate_bismark pairs the same way.
         let pair = BismarkPair::from_mates(r1, r2)?;
         let key = compute_pe_key(&pair, refid_table)?;
         if state.observe(key) {

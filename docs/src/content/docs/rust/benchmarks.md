@@ -62,23 +62,104 @@ per-read wrapper work, which is why the two implementations behave differently a
 ![Aligner core scaling, non-directional reads: wall time, CPU and peak memory for Perl, faithful Rust and the combined index](../../../assets/aligner_scaling_nondirectional.png)
 
 At one thread the two are comparable (both are alignment-bound: directional 1581 s Perl vs 1656 s
-Rust). As cores are added the curves separate. **Perl saturates at about 16 cores** — wall time stops
-falling while CPU cost keeps climbing (to roughly 17,000–18,000 core-seconds at 32 cores), because the
+Rust). As cores are added the curves separate. At this 10M scale, **Perl saturates at about 16 cores** — wall
+time stops falling while CPU cost keeps climbing (to roughly 17,000–18,000 core-seconds at 32 cores), because the
 extra Bowtie 2 threads finish quickly and then wait on the serial Perl wrapper. The Rust wrapper is
 cheap, so giving the aligner more cores continues to reduce wall time up to the full 32-core
 allocation. At 32 cores the directional run is 613 s (Perl) versus 135 s (faithful Rust). In practice
 this means `-p` (more cores) is a useful lever for the Rust aligner, whereas Perl needs `--multicore`
 to use more than about 16 cores.
 
+#### At full scale (single-end and paired-end)
+
+The graphs above are a 10M subset with a directional/non-directional cut. The plots below instead show
+**single-end and paired-end directional** alignment at **full scale** (real WGBS, GRCh38), Rust faithful
+versus Perl `v0.25.1`, on the same total-cores axis.
+
+![Aligner full-scale core scaling, single-end directional: wall time, CPU and peak memory vs total cores, Rust vs Perl](../../../assets/aligner_fullcurve_se.png)
+
+![Aligner full-scale core scaling, paired-end directional: wall time, CPU and peak memory vs total cores, Rust vs Perl](../../../assets/aligner_fullcurve_pe.png)
+
+At the lowest budget (the no-threading-flags default) the two are within 1–2 %, both alignment-bound on
+the same Bowtie 2: single-end 11,556 s (Rust) versus 11,661 s (Perl), paired-end 26,408 s versus
+26,834 s. As cores are added they diverge sharply. At full scale **Perl saturates by about 8 cores** —
+its wall time is flat (even slightly non-monotonic, from load noise) across 8, 16 and 32 cores — because
+the larger per-instance read count makes the serial Perl wrapper the binding constraint sooner than at
+10M. The Rust wrapper stays cheap, so wall time keeps falling to the 32-core budget. At 32 cores the Rust
+aligner is **5.3× faster on single-end** (874 s versus 4620 s) and **4.8× on paired-end** (1847 s versus
+8870 s), while using about **5× less total CPU** (single-end 25,600 versus 140,700 core-seconds). Peak
+memory is about 10 GB throughout for both, set by the loaded index rather than the core count.
+
+#### `-p` versus `--multicore`
+
+The Rust aligner offers two ways to use more cores: `-p` (more Bowtie 2 threads per instance, sharing
+one loaded index) and `--multicore` (split the input into N chunks aligned by N worker instances, each
+loading its own index). At a fixed 16-core budget (10M WGBS single-end, directional), allocating those
+cores entirely to `-p` is both the fastest and by far the lightest option:
+
+![Rust aligner -p versus --multicore at a fixed 16-core budget: wall time and peak memory as cores shift from -p to --multicore](../../../assets/aligner_p_vs_multicore.png)
+
+| Allocation (16 total cores) | Wall | Peak RSS | concurrent `bowtie2-align` |
+|---|---|---|---|
+| `-p 8` (pure `-p`) | 218 s | 9.8 GB | 2 |
+| `--multicore 2 -p 4` | 266 s | 16.3 GB | 4 |
+| `--multicore 4 -p 2` | 275 s | 29.4 GB | 8 |
+| `--multicore 8` (pure `--multicore`) | 302 s | 55.4 GB | 16 |
+
+Every step toward `--multicore` is slower *and* heavier: pure `--multicore` takes 38 % longer than pure
+`-p` (302 s vs 218 s) and uses 5.7× the memory. The reason is the last column — `--multicore N` runs
+`2N` concurrent `bowtie2-align` processes (2 per directional worker), each loading its own ~3.5 GB
+index, so peak memory grows roughly linearly with the worker count, while `-p` keeps two index-sharing
+processes and just adds threads (flat memory). This memory cost is **independent of read count**:
+`--multicore 4` peaks at ~29 GB on both the 10M subset and the full (~64M-read) data, because it is the
+index copies, not the reads, that dominate. CPU core-seconds are flat (~3,000–3,300) across all
+allocations.
+
+**Recommendation:** prefer `-p` for the Rust aligner — it scales cleanly to the full core budget (see
+the scaling graphs above) on a single shared index at flat memory. Reach for `--multicore` only once
+`-p` is exhausted, and budget for roughly `2 × workers × index` peak memory. (This is the opposite of
+Perl, whose serial wrapper saturates `-p` by about 8 cores, making `--multicore` necessary there.)
+
+The aligner links the [mimalloc](https://github.com/microsoft/mimalloc) allocator. On Apple Silicon /
+macOS that removes a system-allocator lock contention that made `--multicore` anti-scale badly; on the
+Linux x86_64 benchmark host used here it is **performance-neutral** (glibc already uses per-thread
+arenas), so the wall and memory figures above — and the `-p` recommendation — are the same with or
+without it.
+
 ### Combined-index modes
 
 The aligner also offers an opt-in [combined-index mode](/Bismark/usage/alignment/) that builds one
-index holding both the C→T and G→A genomes instead of separate per-strand instances. For
-non-directional data this is the fastest mode at every core budget and uses about **32 % less peak
-memory** (one ~11.5 GB index instead of four per-strand instances totalling ~16.7 GB). It is
-concordance-gated rather than byte-identical: against the faithful result, about 0.1 % of reads
-change fate, almost all unique↔ambiguous flips at cross-sub-genome ties, with actual mis-placement
-around 0.005 %.
+index holding both the C→T and G→A genomes instead of separate per-strand instances. It is
+**concordance-gated, not byte-identical**: against the faithful result about 0.1 % of reads change fate,
+almost all unique↔ambiguous flips at cross-sub-genome ties, with actual mis-placement around 0.005 %. The
+numbers below are the 32-core envelope on the Linux benchmark host, median of repeats.
+
+**Directional — a clean win.** One both-strands pass replaces the two per-strand instances, so it is
+faster at every core budget (10M and full scale) and uses about **22–28 % less CPU**, for a *fixed*
+~1.3 GB memory premium that does not grow with read count (it is the one larger combined index, not the
+reads). At full scale (real WGBS paired-end, 8-core budget) directional combined runs **5298 s versus
+7373 s** for the standard two-instance path (−28 %), at 43,200 versus 59,600 core-seconds.
+
+**Non-directional — `--combined_index_sequential` is the pick.** There are several concordance-gated
+execution models; measured at equal core budgets they rank cleanly:
+
+| Non-directional, full-scale PE, 16-core budget | Wall | Peak RSS |
+|---|---|---|
+| standard (four per-strand instances) | 7810 s | 16.5 GB |
+| `--combined_index` parallel (current default; two concurrent passes) | 6114 s | 19.3 GB |
+| `--combined_index_single_pass` (one conversion-tagged pass) | 5371 s | 11.3 GB |
+| **`--combined_index_sequential`** (two passes, one at a time) | **5043 s** | **11.3 GB** |
+
+Running the two both-strands passes **one at a time** (`--combined_index_sequential`) is the **fastest
+and leanest** non-directional mode: each pass gets the full core budget with a single ~11 GB index
+resident, which avoids the memory-bandwidth contention of two concurrent passes (the parallel default
+keeps two indexes co-resident at ~19 GB and is the slowest combined mode here). It is **byte-identical to
+the parallel default**, so it adds no correctness caveat beyond the combined index's concordance-gating,
+and at full scale it even edges out the single-pass mode — which is faster than standard but **not
+decision-equivalent** (it perturbs Bowtie 2's read-name-seeded RNG, so about 1 read in 10,000 gets a
+different, equally-valid placement). **Prefer `--combined_index_sequential` for non-directional data**;
+reach for `--combined_index_single_pass` only for its marginal extra speed at small scale, when the
+non-decision-equivalence is acceptable.
 
 The aligner's `--multicore` / `--parallel` model is also worker-invariant: the output does not depend
 on the number of workers.
@@ -117,30 +198,34 @@ raising `--parallel` barely changes wall time or CPU use; it mainly adds worker 
 stays well under 1 GB. (In uncompressed output mode the picture differs: CPU use is much lower and
 memory grows with worker count.)
 
-The same flat-with-`--parallel` shape holds on single-end and RRBS data. The sweeps below use 10M-read
-subsets (so the wall times are smaller than the full-dataset table above) and overlay Perl:
+The same flat-with-`--parallel` shape holds on single-end and RRBS data, and at full scale. The
+single-end plot overlays a 10M subset with the full (~64M-read) run; the RRBS plot is a 10M subset.
+Both overlay Perl, with wall time on a log axis to fit the range:
 
-![Methylation extractor --parallel scaling, 10M single-end WGBS: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_se.png)
+![Methylation extractor --parallel scaling, single-end WGBS, 10M vs full ~64M: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_se.png)
 
 ![Methylation extractor --parallel scaling, 10M paired-end RRBS: wall, CPU and peak memory vs workers, Rust vs Perl](../../../assets/extractor_scaling_rrbs.png)
 
-On the 10M subsets the Rust extractor holds wall time roughly flat at ~10 s (single-end) / ~11 s (RRBS)
-on about 5 cores, with peak memory rising modestly with worker count (~0.25→1.2 GB) as more output
-buffers are held. Perl starts at ~245 s (single-end) / ~330 s (RRBS) single-threaded and reaches ~37 s
-only at ~16 cores — so the Rust default is roughly 25–30× faster than a single-threaded Perl run, and
-still several times faster at matched core counts. Perl is omitted from the memory panel: its gzip
-output goes through a separate process the memory sampler does not attribute to it.
+The Rust extractor holds wall time flat across `--parallel` at **every** scale (~10 s at 10M, ~80 s at
+~64M single-end; ~11 s at 10M RRBS) on about 5 cores, and its peak memory is **independent of read
+count** — the 10M and ~64M single-end curves coincide (~0.25→0.76 GB), because memory is bound by
+per-worker output buffers, not the data. Perl is single-threaded by default: ~245 s at 10M and
+**~1980 s (~33 min) at ~64M** single-end, only catching up by spending far more cores. So the Rust
+default is **~25× faster than a single-threaded Perl run at both scales**, and several times faster at
+matched core counts. Perl is omitted from the memory panels (its gzip output goes through a separate
+process the sampler does not attribute to it).
 
 ## Deduplicator
 
-`deduplicate_bismark --parallel N` sets the number of BGZF compression threads for the output BAM. On a
-10M single-end alignment it scales until output compression stops being the bottleneck:
+`deduplicate_bismark --parallel N` sets the number of BGZF compression threads for the output BAM. It
+scales the same way at 10M and at full scale (~64M single-end):
 
-![Deduplication --parallel scaling, 10M single-end: wall, CPU and peak memory vs workers](../../../assets/dedup_scaling.png)
+![Deduplication --parallel scaling, single-end, 10M vs full ~64M: wall, CPU and peak memory vs workers](../../../assets/dedup_scaling.png)
 
-Wall time falls from ~40 s single-threaded to ~8.4 s at four workers and then flattens — beyond four
-threads the deduplication logic, not compression, is the limit. CPU use rises to about 5 cores and peak
-memory is flat at ~0.45 GB.
+Wall time falls then **flattens at ~4 workers** at both sizes (10M: 40 → 8.4 s; ~64M: 343 → 77 s) —
+more than ~4 BGZF threads do not help, because the single-threaded deduplication logic becomes the
+limit. CPU use rises to about 5 cores. Peak memory is flat across workers but **scales with read
+count** (~0.45 GB at 10M, ~3.4 GB at ~64M), since deduplication holds read positions in memory.
 
 ## rammap (experimental)
 
@@ -188,8 +273,8 @@ Pro, 55.7M paired-end reads, GRCh38):
 
 ## Further work
 
-The parallel-capable tools are now all covered above. A few measurements are deliberately left for
-later: full-scale (~55M-read) timings — the 10M subsets here already capture the scaling shape — and
-rammap on paired-end data, which is single-end only at present.
+The parallel-capable post-alignment tools are now covered at both 10M and full (~64M) scale (above).
+A couple of measurements remain: a full-length aligner core-scaling sweep (single-end and paired-end
+directional), in progress; and rammap on paired-end data, which is single-end only at present.
 
 The methodology and raw logs for the figures here are kept with each tool in the repository.

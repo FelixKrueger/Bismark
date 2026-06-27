@@ -77,26 +77,22 @@ The mate read of paired-end alignments is written out as an additional separate 
 
 ### BAM compression with Genozip
 
-!!! info
+:::note[Third-party tool]
+Genozip is a commercial product (free for academic use, registration required) and is not part of Bismark.
+:::
 
-    3rd party program notice.
-
-    Information valid as of: 21/09/2022.
-
-Genozip v14 and above supports the compression of Bismark-generated BAM files. A benchmark with a Bismark test file (PE) showed that compression resulted in a 7X vs BAM and more than 2X vs CRAM 3.1 (see [this issue](https://github.com/FelixKrueger/Bismark/issues/526)). More information on Genozip on its [website](https://www.genozip.com), conda installation `conda install genozip`.
-
-Please note that while Genozip is free for academic use, it is a commercial product, so users would need to register to it separately.
+[Genozip](https://www.genozip.com) v14 and above supports compressing Bismark-generated BAM files. A benchmark on a Bismark paired-end test file showed roughly 7× compression versus BAM and more than 2× versus CRAM 3.1 (see [issue #526](https://github.com/FelixKrueger/Bismark/issues/526)). Install with `conda install genozip`.
 
 ### Data visualisation
 
 To see the location of the mapped reads the Bismark output file can be imported into a genome viewer, such as SeqMonk, using the chromosome, start and end positions (this can be useful to identify regions in the genome which display an artefactually high number of aligned reads). The alignment output can also be used to apply post-processing steps such as de-duplication (allowing only 1 read for each position in the genome to remove PCR artefacts) or filtering on the number of bisulfite conversion related non-bisulfite mismatches \* (please note that such post-processing scripts are not part of the Bismark package).
 
-!!! tip
+:::tip
 
-    Bisulfite conversion related non-bisulfite mismatches are mismatch positions which have a C in the BS-read but a T in the genome; such mismatches may occur due to the way bisulfite read alignments are performed. Reads containing this kind of mismatches are not automatically removed from the alignment output in order not to introduce a bias for methylated reads.
+Bisulfite conversion related non-bisulfite mismatches are mismatch positions which have a C in the BS-read but a T in the genome; such mismatches may occur due to the way bisulfite read alignments are performed. Reads containing this kind of mismatches are not automatically removed from the alignment output in order not to introduce a bias for methylated reads.
 
-    It should be noted that, even though no methylation calls are performed for these positions, reads containing bisulfite conversion related non-bisulfite mismatches might lead to false alignments if particularly lax alignment parameters were specified.
-
+It should be noted that, even though no methylation calls are performed for these positions, reads containing bisulfite conversion related non-bisulfite mismatches might lead to false alignments if particularly lax alignment parameters were specified.
+:::
 ### Methylation call
 
 The methylation call string contains a dot `.` for every position in the BS-read not involving a cytosine, or contains one of the following letters for the three different cytosine methylation contexts (UPPER CASE = METHYLATED, lower case = unmethylated):
@@ -113,10 +109,10 @@ The methylation call string contains a dot `.` for every position in the BS-read
 
 ### Local alignments in Bowtie 2 or HISAT2 mode
 
-!!! note
+:::note
 
-    This has been previously only been mentioned in the release notes here: <https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0>
-
+This has been previously only been mentioned in the release notes here: <https://github.com/FelixKrueger/Bismark/releases/tag/0.22.0>
+:::
 Expanding on our observation that single-cell BS-seq, or PBAT libraries in general, can [generate chimeric read pairs](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/), a publication by [Wu et al.](https://www.ncbi.nlm.nih.gov/pubmed/30859188) described in further detail that intra-fragment chimeras can hinder the efficient alignment of single-cell BS-seq libraries. In there, the authors described a pipeline that uses paired-end alignments first, followed by a second, single-end alignment step that uses local alignments in a bid to improve the mapping of intra-molecular chimeras. To allow this type of improvement for single-cell or PBAT libraries, Bismark also allows the use of local alignments.
 
 **Please note** that we still do not recommend using local alignments as a means to _magically_ increase mapping efficiencies (please see [here](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/)), but we do acknowledge that PBAT/scBSs-seq/scNMT-seq are exceptional applications where local alignments might indeed make a difference (there is only so much data to be had from a single cell...).
@@ -127,6 +123,16 @@ We didn't have the time yet to set more appropriate or stringent default values 
 The [Bismark Rust suite](/Bismark/installation/) adds an opt-in **combined-index** alignment mode to `bismark_rs`. Instead of running 2 (directional) or 4 (non-directional) separate per-strand aligner instances, it aligns against a **single combined C→T + G→A index** in one both-strands pass per read-conversion.
 
 It is **opt-in, never-silent, and concordance-gated — NOT byte-identical** to the faithful per-strand default (a small, benign churn vs the per-strand oracle: directional ~0.013%, non-directional ~0.022–0.044%, pbat ~0.044%, almost all unique↔ambiguous flips). The faithful default path is unchanged; combined mode is used only when you ask for it. minimap2 and `--multicore` are not supported in combined mode (they fail loudly).
+
+### Is combined mode advisable?
+
+Combined mode trades byte-identity for speed (and, for non-directional libraries, memory):
+
+- **Non-directional — yes, a clear win.** `--combined_index_sequential` is both faster *and* uses about a third less memory than the faithful default (~11 vs 16 GB).
+- **Directional / pbat — a speed-only win.** Roughly 1.3× faster, but a single combined index is slightly *larger* than the two per-strand indices it replaces, so it is not a memory saving.
+- **If you need byte-identical output to Perl** (reproducing published results, or a strict validated pipeline) — stay on the faithful per-strand default. Combined mode is never byte-identical (benign churn ~0.1%, almost entirely unique↔ambiguous flips; actual mis-placement ~0.005%).
+
+See [Which mode to choose](#which-mode-to-choose) below for the per-mode wall-clock and memory numbers.
 
 **Build the combined index once** (genome preparation adds a `Bisulfite_Genome/Combined/` directory):
 
@@ -150,4 +156,60 @@ bismark_rs --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
 bismark_rs --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
 ```
 
-**Memory.** At human-genome scale the combined index is one *large* index, so the memory saving comes specifically from the **low-memory non-directional variants** (`--combined_index_sequential` / `--combined_index_single_pass`): on a real 10M-read WGBS GRCh38 run they held peak RSS to ~11 GB (one index resident) versus ~16 GB for the faithful 4-instance non-directional run and ~19 GB for the parallel combined run — roughly a third to two-fifths less. Combined directional/pbat use a single index load (and the fastest wall times) but are not themselves a memory win, since one large combined index is comparable to the two small per-strand indices they replace.
+### Which mode to choose
+
+Figures are a real 10M-read WGBS GRCh38 run (single-end, 16-core budget); the full graphs and method are on the [benchmarks page](/Bismark/rust/benchmarks/#combined-index-modes).
+
+**Non-directional** — this is where the memory choice matters:
+
+| Mode | Wall | Peak RAM | Byte-identical? |
+|---|---|---|---|
+| Faithful 4-instance (default) | 477 s | 16 GB | — (it is the oracle) |
+| `--combined_index` (parallel) | 434 s | 19 GB | no (benign churn) |
+| **`--combined_index_sequential`** | 400 s | **11 GB** | **yes** (== parallel combined) |
+| `--combined_index_single_pass` | **377 s** | 11 GB | no (read-name-tag RNG) |
+
+**Recommended: `--combined_index_sequential`.** It is the only mode that is both **lower memory (~11 GB vs 16 GB, about a third less)** and **faster** than the faithful default, while staying **byte-identical**. Use `--combined_index_single_pass` only when you want the fastest wall time and can accept a non-byte-identical (still ground-truth-validated) result.
+
+**Directional / pbat:** plain `--combined_index` is fastest (one index load — e.g. directional 176 s vs 229 s faithful) but is **not** a memory saving: one large combined index is about the size of the two per-strand indices it replaces.
+
+## Unaligned BAM (uBAM) input (Rust suite beta)
+
+The Rust `bismark` aligner accepts an **unaligned BAM** as read input in addition to FASTQ/FASTA — useful for the increasingly common uBAM raw-read container (ONT/PacBio basecaller output, 10x, archival). It is **auto-detected by the file's BAM magic bytes** (not the extension), so no extra flag is needed:
+
+```bash
+# single-end uBAM
+bismark --genome /data/genomes/GRCh38/ reads.bam
+
+# paired-end: a single name-collated uBAM (both mates) passed positionally —
+# auto-detected as paired and split into R1/R2 automatically
+bismark --genome /data/genomes/GRCh38/ pairs.bam
+```
+
+The reads are extracted (equivalent to `samtools fastq`) and fed into the unchanged bisulfite-convert → align → merge pipeline, so the result is **byte-identical to running Bismark on the corresponding `samtools fastq` output** (validated on real GRCh38 data for single- and paired-end across directional / non-directional / pbat). All library types and aligner backends work; it is purely an input front-end.
+
+Notes:
+- **Paired-end uBAMs must be name-collated** (mates adjacent, as `samtools fastq` requires); a desynchronised pairing fails loudly. Run `samtools collate` first if needed.
+- A paired-end uBAM is passed as **one positional file**, not via `-1`/`-2`; a uBAM supplied through `-1`/`-2` is rejected with guidance.
+- uBAM input is incompatible with `-f`/`--fasta` (BAM carries qualities → FASTQ), and — like FASTQ/FASTA — paired-end is unsupported for the minimap2/rammap backends.
+
+## BINSEQ (`.vbq`) input (Rust suite beta)
+
+The Rust `bismark` aligner also accepts an [Arc Institute **BINSEQ**](https://github.com/arcinstitute/binseq) `.vbq` file as read input, decoded **in-process** (via the `binseq` crate — no `bqtools` needed at runtime) and auto-detected by the `.vbq` extension:
+
+```bash
+# single-end VBQ
+bismark --genome /data/genomes/GRCh38/ reads.vbq
+
+# paired-end: a single VBQ carries BOTH mates per record —
+# auto-detected as paired and split into R1/R2 automatically
+bismark --genome /data/genomes/GRCh38/ pairs.vbq
+```
+
+The reads are decoded to a temporary FASTQ matching `bqtools decode` and fed into the unchanged bisulfite-convert → align → merge pipeline, so the result is **identical to running Bismark on the corresponding `bqtools decode` output** (the same equivalence contract as the uBAM front-end above). All library types and aligner backends work; it is purely an input front-end.
+
+Notes:
+- **VBQ only.** `.cbq` and `.bq` are recognised but **rejected with a clear message** (they are not yet supported): `.bq` carries no per-read quality or names and cannot be faithfully aligned; CBQ is a planned follow-up. Convert to VBQ or FASTQ first.
+- A VBQ **must carry per-read quality scores and headers** (encode with `bqtools encode` preserving both). A quality-less or name-less VBQ is rejected rather than silently filled — Bismark needs real qualities and original read names (output QNAMEs).
+- A paired-end VBQ is passed as **one positional file**, not via `-1`/`-2`; `.vbq` via `-1`/`-2` is rejected, and `.vbq` + `-f`/`--fasta` is rejected (it carries qualities → FASTQ).
+- **Prebuilt release binaries and the container image support `.vbq` out of the box.** A *from-source* build enables it with the `binseq-input` Cargo feature — `cargo build -p bismark-aligner --features binseq-input` (or add it to the suite `cargo install`). A default source build still recognises `.vbq` and exits with a clear "compiled without BINSEQ support" message rather than mis-reading it.

@@ -21,7 +21,7 @@ path = "src/main.rs"
 bismark-meta = { path = "../bismark-meta" }
 bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
-thiserror = "=2.0.0"
+thiserror = "=2.0.18"
 # Phase B: always-gzipped `.manOwar.txt.gz` output + gz-aware yacht input.
 flate2 = "=1.1.9"
 

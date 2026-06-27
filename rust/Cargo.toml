@@ -14,3 +14,12 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = "debuginfo"
+
+# Measurement-only profile for `samply`/Instruments on Apple Silicon (and perf
+# elsewhere): identical codegen to `release` but keeps DWARF so the sampler can
+# symbolicate. NEVER built by `just ci` / `just reproduce` / `just build`
+# (those use `release`), so the reproducibility + CI gates are untouched.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false

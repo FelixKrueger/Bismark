@@ -24,8 +24,8 @@ bismark-meta = { path = "../bismark-meta" }
 # outputs — so NO bismark-io, NO noodles, NO flate2. Pure CLI + text parsers +
 # string templating.
 clap = { version = "=4.5.30", features = ["derive"] }
-thiserror = "=2.0.0"
-anyhow = "=1.0.86"
+thiserror = "=2.0.18"
+anyhow = "=1.0.103"
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"
