@@ -2292,41 +2292,54 @@ fn run_five_base_consensus(
             cons_qual.push(q.saturating_add(33)); // phred → ASCII for the SAM QUAL field
         }
 
-        // Synthesize a forward single-end SAM record for the consensus and run it through
-        // the same inverted-call emit path as a normal 5-Base read.
+        // Synthesize the consensus and run it through the same inverted-call emit path as a
+        // normal 5-Base read. `cons_seq` is +ref-oriented and already holds BOTH strands'
+        // calls (PlusCpG → T/C at a genomic C; MinusCpG → A/G at a genomic G), so we emit it
+        // TWICE: a forward record (FLAG 0 → CT call → `+`-strand CpGs) AND a reverse record
+        // (FLAG 0x10 → GA call → `-`-strand CpGs). This lifts the former "+ strand only"
+        // limitation and doubles per-CpG-site coverage (each CpG dinucleotide is now scored
+        // from both cytosines). The BAM SEQ stays +ref-oriented for both (SAM convention).
         let umi_str = if fam.canon_umi.is_empty() {
             "NA".to_string()
         } else {
             String::from_utf8_lossy(&fam.canon_umi).into_owned()
         };
         let qname = format!("dpx:{chrom}:{start}-{end}:{umi_str}");
-        let sam = SamRecord {
-            qname: qname.clone(),
-            flag: 0,
-            rname: chrom.clone(),
-            pos: start + 1,
-            mapq,
-            cigar: format!("{}M", cons_seq.len()),
-            seq: String::from_utf8_lossy(&cons_seq).into_owned(),
-            qual: String::from_utf8_lossy(&cons_qual).into_owned(),
-            alignment_score: Some(0),
-            second_best: None,
-            md_tag: None,
-            raw_line: String::new(),
-        };
-        let mut counters = Counters::default();
-        if let Some(record) = five_base_emit_record(
-            &sam,
-            &qname,
-            &cons_seq,
-            &cons_qual,
-            genome,
-            refid,
-            false, // consensus QUAL is phred33
-            0,     // no base-quality masking on the consensus
-            &mut counters,
-        )? {
-            write_record(&mut writer, &record)?;
+        let seq_str = String::from_utf8_lossy(&cons_seq).into_owned();
+        let qual_str = String::from_utf8_lossy(&cons_qual).into_owned();
+        let mut wrote_any = false;
+        for flag in [0u16, 0x10] {
+            let sam = SamRecord {
+                qname: qname.clone(),
+                flag,
+                rname: chrom.clone(),
+                pos: start + 1,
+                mapq,
+                cigar: format!("{}M", cons_seq.len()),
+                seq: seq_str.clone(),
+                qual: qual_str.clone(),
+                alignment_score: Some(0),
+                second_best: None,
+                md_tag: None,
+                raw_line: String::new(),
+            };
+            let mut counters = Counters::default();
+            if let Some(record) = five_base_emit_record(
+                &sam,
+                &qname,
+                &cons_seq,
+                &cons_qual,
+                genome,
+                refid,
+                false, // consensus QUAL is phred33
+                0,     // no base-quality masking on the consensus
+                &mut counters,
+            )? {
+                write_record(&mut writer, &record)?;
+                wrote_any = true;
+            }
+        }
+        if wrote_any {
             emitted += 1;
         } else {
             skipped += 1; // chromosome-edge guard, etc.

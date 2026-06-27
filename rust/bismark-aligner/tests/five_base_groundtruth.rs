@@ -671,12 +671,9 @@ fn five_base_consensus_groundtruth_collapses_and_masks_variant() {
         let rec = rec.unwrap();
         let inner = rec.inner();
         n_records += 1;
-        // Consensus reads are forward (FLAG 0) → XM aligned with read order.
-        assert_eq!(
-            u16::from(inner.flags()) & 0x10,
-            0,
-            "consensus reads are forward"
-        );
+        // Each family now emits a forward (`+` CpG calls) AND a reverse (`-` CpG calls)
+        // consensus record. Both store SEQ/XM +ref-oriented with a pure-M CIGAR, so the
+        // genomic→read index map below is `genomic - ref_start` for either strand.
         let xm = bismark_io::tags::xm(inner.data()).unwrap();
         let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
         // pure-M consensus: read_idx = genomic - ref_start.
@@ -719,8 +716,8 @@ fn five_base_consensus_groundtruth_collapses_and_masks_variant() {
             );
         }
     }
-    // Two duplex families → two consensus reads (one per molecule).
-    assert_eq!(n_records, 2, "one consensus read per duplex family");
+    // Two duplex families × (forward + reverse) consensus record = 4.
+    assert_eq!(n_records, 4, "forward+reverse consensus record per duplex family");
     assert!(z_at_tm, "the 5mC CpG must be Z in the consensus read");
     assert!(
         dot_at_tv,
@@ -942,6 +939,10 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
     let bam = outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam");
     let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
     let (mut n, mut z_at_tm, mut dot_at_tv) = (0usize, false, false);
+    // The `-`-strand cytosine of the same CpG dinucleotide sits at tm+1 (a genomic G). It is
+    // scored ONLY by the reverse consensus record (GA call); forward-only emission left it
+    // uncalled. Assert it is now a real CpG call, proving both strands are emitted.
+    let mut minus_called = false;
     for rec in reader.records() {
         let rec = rec.unwrap();
         let inner = rec.inner();
@@ -975,6 +976,11 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
         {
             z_at_tm = true;
         }
+        if let Some(ri) = read_at(tm + 1)
+            && (xm[ri] == b'Z' || xm[ri] == b'z')
+        {
+            minus_called = true; // `-`-strand CpG now scored by the reverse record
+        }
         if let Some(ri) = read_at(tv) {
             if xm[ri] == b'.' {
                 dot_at_tv = true;
@@ -985,7 +991,12 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
             );
         }
     }
-    assert_eq!(n, 2, "PE: one consensus read per duplex family");
+    // Two records per duplex family now (forward `+` calls + reverse `-` calls) × 2 molecules.
+    assert_eq!(n, 4, "PE: forward+reverse consensus record per duplex family");
+    assert!(
+        minus_called,
+        "PE consensus: the `-`-strand CpG must be scored by the reverse record"
+    );
     assert!(z_at_tm, "PE consensus: the 5mC CpG must be Z");
     assert!(dot_at_tv, "PE consensus: the C>T CpG must be masked ('.')");
 }
@@ -1212,8 +1223,8 @@ fn five_base_consensus_groundtruth_real_reference_ecoli() {
         }
     }
     assert_eq!(
-        n_records, 2,
-        "one consensus read per duplex family (real genome)"
+        n_records, 4,
+        "forward+reverse consensus record per duplex family (real genome)"
     );
     assert!(
         z_at_tm,
