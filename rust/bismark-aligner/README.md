@@ -89,10 +89,13 @@ byte-identity- or per-site-CI-gated** — treat them as preview:
   span (POS + mate-pos + TLEN)** — the real workflow (5-Base is paired-end). **SE-duplex
   is a known limitation:** SE OT/OB reads cover opposite fragment ends with different
   spans and do not pair on real data, so SE-duplex is a degenerate non-workflow.
-- **`--five_base_consensus`** — collapses each duplex family to one consensus read
-  (`<out>.5base_consensus.bam`) via the asymmetric 5mC>T rule. **Known limitation:** the
-  consensus record is forward (OT) only, so its `XM` carries `+`-strand CpG calls only
-  (the `.5base_duplex.txt` report covers both strands).
+- **`--five_base_consensus`** — collapses each duplex family to a consensus (a forward +
+  reverse record per family in `<out>.5base_consensus.bam`) via the asymmetric 5mC>T rule,
+  reconciled by **molecule strand** (OT carries a `+` CpG, OB a `-` CpG). DRAGEN-validated on
+  real NA12878 (24×, both strands r ≈ 0.77; per-CpG r 0.77 at cov≥1 → 0.86 at cov≥3). The
+  high-resolution methylation path is still the core per-read BAM (r ≈ 0.99); the consensus
+  is the per-molecule duplex view. Replay it on existing BAMs (no re-alignment) with
+  `--five_base_consensus_from_bam <bam>` (repeatable; families pair across files).
 - **`--five_base_umi_qname`** — takes the duplex dual-UMI from the read NAME (`A+B`, with
   the partner's halves swapped) instead of inline bases; this is the real-data UMI form.
 

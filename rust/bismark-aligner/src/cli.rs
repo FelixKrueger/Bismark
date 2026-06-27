@@ -133,15 +133,13 @@ pub struct Cli {
     /// Requires `--illumina_5base`.
     #[arg(long = "five_base_duplex")]
     pub five_base_duplex: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to ONE consensus read in
+    /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to a consensus in
     /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
-    /// `--five_base_duplex` (SE + PE; PE is the real workflow). The consensus uses the
-    /// asymmetric 5mC>T rule: at a CpG the own strand carries the methylation call and the
-    /// opposite strand is the variant check (a cytosine gone on BOTH strands is masked to
-    /// `N`); other positions reconcile by agreement/quality. KNOWN LIMITATION: the
-    /// consensus record is forward (OT) only, so its `XM` carries `+`-strand CpG calls
-    /// only (the `.5base_duplex.txt` report covers both strands). EXPERIMENTAL: not gated.
-    /// Requires `--illumina_5base`.
+    /// `--five_base_duplex` (SE + PE; PE is the real workflow). Reconciled by MOLECULE strand
+    /// (the OT molecule owns a `+` CpG, the OB molecule a `-` CpG); the opposite strand is the
+    /// variant check (a cytosine gone on BOTH strands is masked to `N`). Emits a forward AND a
+    /// reverse record per family, so BOTH strands of every CpG are scored. DRAGEN-validated on
+    /// real NA12878 (both strands r ≈ 0.77). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
     /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of

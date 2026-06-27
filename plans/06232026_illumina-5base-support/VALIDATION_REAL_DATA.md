@@ -199,13 +199,39 @@ reads). Output unchanged (3 consensus ground-truth gates still green). **Confirm
 depth:** a real lane (~61M pairs) ran the consensus to completion with **peak RSS 26.6 GB**
 (was OOM/machine-panic before) — the fix holds.
 
-**BUT the consensus methylation does NOT reproduce DRAGEN.** Per-CpG vs DRAGEN's CX over
-68,896 shared `+`-strand CpGs: mean methylation **23.3 % (ours) vs 47.5 % (DRAGEN)** — a
-systematic ~2× UNDER-estimate — Pearson **r = 0.45**, call agreement 68 %. This is a real
-reconciliation defect, not sparsity: at a `+` CpG the consensus reduces all
-"forward-covering" reads together, mixing the OT pair's R1 (which carries the `+`-strand
-5mC→T signal) with the OB pair's forward mate (the bottom-strand molecule, which does not),
-diluting the methylation call. So **the consensus collapse stays EXPERIMENTAL/preview and
-is NOT validated** — the memory bug is fixed, but the per-molecule reconciliation needs
-rework before it can claim DRAGEN concordance. The supported methylation path remains the
-core per-read BAM (r ≈ 0.99); the validated *experimental* mode is the deconvolution.
+### Consensus — two reconciliation bugs found vs DRAGEN, both fixed
+
+The first full-depth comparison exposed a **systematic ~2× UNDER-estimate**: mean CpG
+methylation **23 % (ours) vs ~48 % (DRAGEN)**, Pearson r = 0.45. Diffing the real reads vs
+DRAGEN pinned the cause: the collapse bucketed reads by **coverage strand** (FLAG 0x10), but
+at a `+` CpG the OB-molecule's forward-covering mate reads the bottom strand and shows the
+unmethylated `C` (measured: **0.8 % T** vs **49 %** for the OT mate) — mixing it into the
+"own" bucket halved the 5mC signal. Fix: bucket by **molecule strand** (OT/OB); `consensus_base`'s
+`ot`/`ob` params were already molecule-strand by design, only the caller was wrong. Verified
+on real reads (chr1:0–5 Mb): `+` CpG methylation **23 % → 47.9 %** (DRAGEN ~48 %).
+
+A second bug surfaced when lifting the old "+ strand only" limitation (the consensus now
+emits a **reverse** record too, so the `-`-strand CpG of each dinucleotide is scored): the
+reverse record was passed the `+`ref-oriented `cons_seq`, but the emit path expects a
+reverse read in **read (5′→3′) orientation** (it revcomps back to `+`ref for the BAM), so
+the `-`-strand calls landed at random (chr1 `-` strand r = 0.05). Fix: pass
+`revcomp(cons_seq)` + reversed qual for the reverse record.
+
+**After both fixes, the consensus reproduces DRAGEN on BOTH strands** (24×, L001–L004
+pooled via `--five_base_consensus_from_bam`, no re-alignment; 707 k duplex-paired families):
+
+| chr1 strand | n | ours | DRAGEN | r | call agree |
+|---|---|---|---|---|---|
+| `+` | 147,348 | 49.7 % | 50.0 % | **0.769** | 85.0 % |
+| `-` | 147,219 | 49.7 % | 49.9 % | **0.769** | 85.1 % |
+
+Per-CpG (both strands merged) vs DRAGEN's CX: r = **0.77** at cov ≥ 1 (1.80 M CpGs), rising
+to r = **0.86** at cov ≥ 3 (66,886 CpGs — 18× more than the `+`-only run, since merging
+brings each CpG to cov ≥ 2). The cov ≥ 1 r stays ~0.77 because the two cytosines of one CpG
+in one molecule encode the SAME methylation event (symmetric) — merging averages measurement
+noise but adds no independent biological sampling; the lever for higher r is depth.
+
+So the **consensus is now correct and DRAGEN-validated on both strands** (bias gone, means
+match, r 0.77–0.86 at the single-molecule resolution it provides). It went from broken
+(r = 0.45, 2× bias, `+` strand only) to validated. The high-resolution methylation path is
+still the **core per-read BAM (r ≈ 0.99)**; the consensus is the per-molecule duplex view.
