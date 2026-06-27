@@ -160,6 +160,9 @@ pub struct ReadProcessing {
     pub icpc: bool,
     /// minimap2-only maximum read length (`--mm2_maximum_length`); inert for Bowtie 2.
     pub maximum_length_cutoff: Option<u32>,
+    /// `--paraseq`: parse the input FastQ with the paraseq fast parser in the convert
+    /// step (#1025; opt-in, byte-identical, requires the `paraseq-convert` feature).
+    pub paraseq: bool,
 }
 
 /// The fully-resolved configuration (the seam consumed by later phases).
@@ -556,6 +559,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         icpc: cli.icpc,
         // Resolved above (minimap2: Some(value-or-default-10000); else None).
         maximum_length_cutoff,
+        paraseq: cli.paraseq,
     };
 
     Ok(RunConfig {

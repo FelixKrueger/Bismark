@@ -95,6 +95,18 @@ rayon = { version = "1", optional = true }
 # default build. Two workspace pin bumps are forced: `thiserror` (binseq's unconditional
 # `^2.0.17` dep) and `anyhow` (the feature above needs `^1.0.100`). Exact-pinned per convention.
 binseq = { version = "=0.9.2", default-features = false, features = ["anyhow"], optional = true }
+# #1025 Phase 3c: paraseq fast FASTQ parser for the bisulfite-convert prelude (the
+# `convert::paraseq_convert` path). OPTIONAL + behind the default-OFF `paraseq-convert`
+# feature, mirroring `binseq-input` so the default/local/Mac `cargo build` NEVER compiles
+# paraseq. Opt-in at runtime via `--paraseq` (never-silent; a default build rejects the flag
+# loudly). The serial `fastq::Reader` is used (NOT the parallel `process_parallel`, which
+# exposes no record-set index → cannot guarantee byte-identical file-order output); reads are
+# converted + written inline (no owned-record channel hand-off), so paraseq's zero-copy parse
+# win is captured while the converted temp FASTQ stays byte-identical to the serial loop.
+# `default-features = false` drops paraseq's `niffler` (compression auto-detect) + `anyhow`
+# defaults; we feed it an already-decompressed stream (flate2 `MultiGzDecoder`), so no
+# compression backend is needed. Exact-pinned per convention.
+paraseq = { version = "=0.4.13", default-features = false, optional = true }
 
 [features]
 # Default-OFF: compiles the in-process rammap backend (`inprocess.rs`) + its rammap-typed
@@ -105,6 +117,11 @@ rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
 # tests. The extension-detection + the CBQ/BQ/feature-off fail-loud rejects compile on ANY
 # toolchain (feature-independent); only the actual `binseq`-crate decode is gated here.
 binseq-input = ["dep:binseq"]
+# Default-OFF: compiles the paraseq fast-parse convert path (`convert::paraseq_convert`). The
+# `--paraseq` flag parses + is rejected never-silently on ANY build (feature-independent);
+# only the actual paraseq decode is gated here. Opt-in at runtime so the byte-frozen serial
+# convert loop stays the default.
+paraseq-convert = ["dep:paraseq"]
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

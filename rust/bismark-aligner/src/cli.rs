@@ -377,6 +377,14 @@ pub struct Cli {
     /// whitespace with underscores (Bismark issue #236; affects `fix_IDs`).
     #[arg(long)]
     pub icpc: bool,
+    /// Parse the input FastQ with the `paraseq` fast parser for the bisulfite-convert
+    /// step instead of the built-in line reader (#1025). Opt-in; requires a build with
+    /// the `paraseq-convert` feature (rejected never-silently otherwise). Output is
+    /// byte-identical to the default path; the win is faster raw-read parsing (most
+    /// relevant on the in-process backend, where parsing is a larger share of wall time
+    /// than on the gzip-output/alignment-dominated Bowtie2/HISAT2 path).
+    #[arg(long = "paraseq")]
+    pub paraseq: bool,
     /// minimap2 short-read preset (`-x sr`; minimap2 mode only).
     #[arg(long = "mm2_short_reads")]
     pub mm2_short_read: bool,

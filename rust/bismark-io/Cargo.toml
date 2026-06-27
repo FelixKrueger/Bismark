@@ -27,7 +27,7 @@ thiserror = "2"
 # Phase B (v1.2 UMI epic): BismarkRecord carries an optional UMI as a
 # stack-allocated SmallVec for ≤16-byte UMIs (covers all known Bismark
 # workflows; longer UMIs heap-allocate without semantic change).
-smallvec = "=1.13.2"
+smallvec = "=1.15.2"
 # Plain-gzip `.fa.gz`/`.fasta.gz` support in `genome::` (Perl uses `gunzip -c`);
 # MultiGzDecoder also decodes gzip-framed BGZF. Added additively for the
 # promoted whole-genome reader; the crate version is unchanged (=1.0.0).

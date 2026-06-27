@@ -139,6 +139,35 @@ jobs:
       - name: cargo test -p bismark-aligner --features binseq-input
         run: cargo test -p bismark-aligner --features binseq-input
 
+  paraseq-convert:
+    name: cargo build/test (paraseq-convert feature)
+    # The default `test`/`clippy` jobs build FEATURE-OFF, so the paraseq fast-parse convert
+    # path (`convert::convert_fastq_impl_paraseq` + the `paraseq_byte_identity` concordance
+    # tests, all `#[cfg(feature = "paraseq-convert")]`) is otherwise NEVER compiled in CI
+    # (#1025 Phase 3c). This job compiles + tests it. `paraseq` is an OPTIONAL crates.io dep
+    # (edition 2021, MSRV ≤ 1.89); it forced the workspace `smallvec` pin up to =1.15.2
+    # (byte-output-neutral). The hermetic byte-identity tests assert serial == paraseq output.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build -p bismark-aligner --features paraseq-convert
+        run: cargo build -p bismark-aligner --all-targets --features paraseq-convert
+      - name: cargo clippy -p bismark-aligner --features paraseq-convert -D warnings
+        run: cargo clippy -p bismark-aligner --all-targets --features paraseq-convert -- -D warnings
+      - name: cargo test -p bismark-aligner --features paraseq-convert
+        run: cargo test -p bismark-aligner --features paraseq-convert
+
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest

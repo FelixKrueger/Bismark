@@ -12,6 +12,8 @@ the `XM`/`XR`/`XG` methylation call, and writes the Bismark BAM + reports.
 
 **Input formats:** FastQ, FastA, and **unaligned BAM (uBAM)** — a uBAM is auto-detected by its BAM magic bytes (single-end, or a single name-collated paired-end uBAM that is auto-split into mates) and transcoded to a temp FASTQ matching `samtools fastq`, so output is byte-identical to the equivalent FASTQ run. See the [Alignment usage docs](https://felixkrueger.github.io/Bismark/usage/alignment/) for details.
 
+**Fast FastQ parsing (`--paraseq`):** opt-in flag (#1025) that parses the input FastQ with the [`paraseq`](https://github.com/noamteyssier/paraseq) reader in the bisulfite-convert step instead of the built-in line reader. Output is **byte-identical** to the default path (verified by a serial-vs-paraseq concordance gate); the win is faster raw-read parsing, most relevant on the in-process backend where parsing is a larger share of wall time than on the gzip-output / alignment-dominated Bowtie2 / HISAT2 path. Behind the default-OFF / release-ON `paraseq-convert` feature; a default build rejects `--paraseq` fail-loud.
+
 ## Status — built phase by phase
 
 This crate is implemented incrementally against a phased epic

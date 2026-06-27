@@ -37,6 +37,8 @@ pub struct ConvertOptions {
     pub icpc: bool,
     /// minimap2-only max read length; inert for Bowtie 2.
     pub maximum_length_cutoff: Option<u32>,
+    /// `--paraseq`: use the paraseq fast parser (#1025; opt-in, byte-identical).
+    pub paraseq: bool,
 }
 
 impl ConvertOptions {
@@ -50,6 +52,7 @@ impl ConvertOptions {
             upto: cfg.read_processing.upto,
             icpc: cfg.read_processing.icpc,
             maximum_length_cutoff: cfg.read_processing.maximum_length_cutoff,
+            paraseq: cfg.read_processing.paraseq,
         }
     }
 }
@@ -257,6 +260,13 @@ fn convert_fastq_impl(
     id_suffix: &[u8],
     file_base: &str,
 ) -> Result<ConvertedReads> {
+    // #1025 Phase 3c: opt-in paraseq fast-parse path. Gated so the default build never
+    // compiles paraseq; the serial loop below stays the byte-frozen default. Dispatched
+    // up front so the two paths share nothing but produce byte-identical output.
+    if opts.paraseq {
+        return convert_fastq_impl_paraseq(input, temp_dir, opts, kind, id_suffix, file_base);
+    }
+
     // ---- output name + path (raw concat, Perl ${temp_dir}${name}) -----------
     let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
         AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
@@ -364,6 +374,161 @@ fn convert_fastq_impl(
         count,
         seqid_tab_count,
     })
+}
+
+/// #1025 Phase 3c, paraseq fast-parse variant of [`convert_fastq_impl`]. Reads the input
+/// FastQ with paraseq's serial reader (zero-copy borrowed record views) instead of the
+/// `read_until`×4 loop, reconstructs the chomped ID line (`@`+`id()`; `id()` omits the
+/// `@`), takes the raw seq, the separator line `sep()` (which already includes the leading
+/// `+`) and the qual from the parsed fields, and runs the
+/// IDENTICAL per-record transform in the IDENTICAL order (count -> `fix_id` -> skip/upto ->
+/// max-len -> `C→T`/`G→A` -> write `id2`/`qual` verbatim). The output is byte-identical to
+/// the serial path for well-formed FastQ (paraseq's `id()`/`sep()`/`seq_raw()`/`qual()` are
+/// the raw line bodies, a CRLF `\r` included). Records are converted + written inline (no
+/// owned-record channel hand-off), so paraseq's parse win is captured without the regression
+/// the maintainer's spike found. Malformed input (a truncated final record) fails loud here
+/// where the serial loop silently drops it, an acceptable never-silent divergence on this
+/// opt-in path.
+#[cfg(feature = "paraseq-convert")]
+fn convert_fastq_impl_paraseq(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    file_base: &str,
+) -> Result<ConvertedReads> {
+    use paraseq::Record as _;
+    use paraseq::fastq::Reader;
+
+    // ---- output name + path (IDENTICAL to convert_fastq_impl) ----------------
+    let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
+    })?;
+    let mut name = match &opts.prefix {
+        Some(p) => format!("{p}.{basename}"),
+        None => basename.to_string(),
+    };
+    name.push_str(file_base);
+    name.push_str(if opts.gzip { ".fastq.gz" } else { ".fastq" });
+    let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
+    let full_path = PathBuf::from(&full);
+
+    // ---- input reader (gz or plain), handed to paraseq already decompressed --
+    let file = File::open(input)?;
+    let inner: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    let mut reader = Reader::new(inner);
+
+    // ---- writer (gz or plain), IDENTICAL ------------------------------------
+    let out = File::create(&full_path)?;
+    let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(if opts.gzip {
+        Box::new(GzEncoder::new(out, Compression::default()))
+    } else {
+        Box::new(out)
+    });
+
+    let mut count: u64 = 0;
+    let mut seqid_tab_count: u64 = 0;
+    let mut id_line: Vec<u8> = Vec::new(); // reused scratch: "@" + id()
+    let mut rset = reader.new_record_set();
+
+    'outer: while rset
+        .fill(&mut reader)
+        .map_err(|e| AlignerError::Validation(format!("failed to parse FastQ '{input:?}': {e}")))?
+    {
+        for rec in rset.iter() {
+            let rec = rec.map_err(|e| {
+                AlignerError::Validation(format!("failed to parse FastQ '{input:?}': {e}"))
+            })?;
+            count += 1;
+
+            // ID: "@" + raw header (paraseq id() is after '@', before '\n', spaces + a CRLF
+            // '\r' preserved) -> fix_id -> (PE: /1/1 or /2/2) -> '\n'. Matches the serial
+            // path's fix_id(chomp_newline(&id)) exactly.
+            id_line.clear();
+            id_line.push(b'@');
+            id_line.extend_from_slice(rec.id());
+            let mut fixed_id = fix_id(&id_line, opts.icpc);
+            fixed_id.extend_from_slice(id_suffix);
+            fixed_id.push(b'\n');
+
+            // skip/upto (Perl falsy-0). count is already incremented (matches serial: the
+            // upto-triggering record is counted, then the loop stops).
+            if let Some(s) = opts.skip
+                && s > 0
+                && count <= s
+            {
+                continue;
+            }
+            if let Some(u) = opts.upto
+                && u > 0
+                && count > u
+            {
+                break 'outer;
+            }
+
+            let seq = rec.seq_raw();
+            // max-length guard (mm2-only, inert on the Bowtie 2 spine). The serial path
+            // measures the raw seq line length INCLUDING its terminator, so add 1 for the
+            // stripped '\n' to match byte-for-byte.
+            if let Some(cutoff) = opts.maximum_length_cutoff
+                && (seq.len() as u64 + 1) > cutoff as u64
+            {
+                continue;
+            }
+
+            // tab-in-ID counter (dead: fix_id removed tabs above, a faithful replica of
+            // Perl's likewise-dead check, kept so ConvertedReads.seqid_tab_count matches).
+            if fixed_id.contains(&b'\t') {
+                seqid_tab_count += 1;
+            }
+            // (The serial path's record-1 FastQ sanity is omitted: fixed_id always starts
+            // with '@' and the separator with '+' on this path, and paraseq has already
+            // fail-loud-rejected any non-FastQ input above, so the check can never fire.)
+
+            // uc + C→T/G→A + write; separator (paraseq sep() already includes the leading
+            // '+', unlike id() which omits '@') and qual verbatim, each + '\n'.
+            writer.write_all(&fixed_id)?;
+            writer.write_all(&convert_one(seq, kind))?;
+            writer.write_all(b"\n")?;
+            writer.write_all(rec.sep())?;
+            writer.write_all(b"\n")?;
+            writer.write_all(rec.qual().unwrap_or(b""))?;
+            writer.write_all(b"\n")?;
+        }
+    }
+
+    writer.flush()?;
+    drop(writer);
+    Ok(ConvertedReads {
+        name,
+        path: full_path,
+        count,
+        seqid_tab_count,
+    })
+}
+
+/// Feature-OFF twin: `--paraseq` was passed to a build without the `paraseq-convert`
+/// feature. Reject never-silently rather than silently falling back to the serial parser.
+#[cfg(not(feature = "paraseq-convert"))]
+fn convert_fastq_impl_paraseq(
+    _input: &Path,
+    _temp_dir: &Path,
+    _opts: &ConvertOptions,
+    _kind: ConvKind,
+    _id_suffix: &[u8],
+    _file_base: &str,
+) -> Result<ConvertedReads> {
+    Err(AlignerError::Validation(
+        "this bismark_rs build was compiled without `--paraseq` support; rebuild with \
+         `--features paraseq-convert` (the released binaries include it), or drop --paraseq \
+         to use the built-in FastQ parser."
+            .into(),
+    ))
 }
 
 // ===========================================================================
@@ -991,6 +1156,7 @@ mod tests {
             upto,
             icpc,
             maximum_length_cutoff: None,
+            paraseq: false,
         }
     }
 
@@ -1751,5 +1917,150 @@ mod tests {
             .unwrap_err();
             assert!(format!("{err}").contains("reserved combined-index conversion tag"));
         }
+    }
+}
+
+// ===========================================================================
+// #1025 Phase 3c, paraseq fast-parse byte-identity gate.
+//
+// Concordance: the `--paraseq` path must produce byte-identical converted FastQ to the
+// frozen serial loop (which is itself byte-identical to Perl v0.25.1). So serial == paraseq
+// transitively proves the paraseq path is byte-identical to Perl. Runs both paths over the
+// SAME input with the SAME options and asserts the output bytes + count match.
+// ===========================================================================
+#[cfg(all(test, feature = "paraseq-convert"))]
+mod paraseq_byte_identity {
+    use super::*;
+    use std::io::Read as _;
+
+    fn base_opts() -> ConvertOptions {
+        ConvertOptions {
+            prefix: None,
+            gzip: false,
+            skip: None,
+            upto: None,
+            icpc: false,
+            maximum_length_cutoff: None,
+            paraseq: false,
+        }
+    }
+
+    fn read_bytes(p: &Path) -> Vec<u8> {
+        let mut v = Vec::new();
+        File::open(p).unwrap().read_to_end(&mut v).unwrap();
+        v
+    }
+
+    /// Run `convert` serially and via paraseq on the same `input_bytes`/`opts`; assert the
+    /// converted file bytes + record count are identical.
+    fn assert_concordant(
+        input_bytes: &[u8],
+        opts: &ConvertOptions,
+        convert: impl Fn(&Path, &Path, &ConvertOptions) -> Result<ConvertedReads>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.fastq");
+        std::fs::write(&input, input_bytes).unwrap();
+
+        let serial_dir = dir.path().join("serial");
+        let paraseq_dir = dir.path().join("paraseq");
+        std::fs::create_dir_all(&serial_dir).unwrap();
+        std::fs::create_dir_all(&paraseq_dir).unwrap();
+
+        let mut o = opts.clone();
+        o.paraseq = false;
+        let a = convert(&input, &serial_dir, &o).unwrap();
+        o.paraseq = true;
+        let b = convert(&input, &paraseq_dir, &o).unwrap();
+
+        assert_eq!(
+            read_bytes(&a.path),
+            read_bytes(&b.path),
+            "serial vs paraseq converted bytes differ"
+        );
+        assert_eq!(a.count, b.count, "record count differs");
+        assert_eq!(a.seqid_tab_count, b.seqid_tab_count, "tab count differs");
+    }
+
+    /// A deliberately tricky FastQ: header with internal spaces (fix_id underscores them),
+    /// lowercase bases (uc), a non-bare `+read3` separator line (sep reconstruction), mixed
+    /// lengths, and CpG/CHG context so C->T actually fires.
+    const TRICKY: &[u8] = b"@read1 with spaces here\n\
+acgtACGTnN\n\
++\n\
+IIIIIIIIII\n\
+@read2\n\
+CCGGCCGGCCGG\n\
++\n\
+##########\x21\x21\n\
+@read3 desc\ttabbed\n\
+ACGTACGT\n\
++read3 desc tabbed\n\
+JJJJJJJJ\n\
+@read4\n\
+GGGGCCCCAAAATTTT\n\
++\n\
+0123456789:;<=>?\n";
+
+    #[test]
+    fn se_ct_concordant() {
+        assert_concordant(TRICKY, &base_opts(), bisulfite_convert_fastq_se);
+    }
+
+    #[test]
+    fn se_ga_concordant() {
+        assert_concordant(TRICKY, &base_opts(), bisulfite_convert_fastq_se_ga);
+    }
+
+    #[test]
+    fn pe_r1_concordant() {
+        assert_concordant(TRICKY, &base_opts(), |i, t, o| {
+            bisulfite_convert_fastq_pe(i, t, o, 1)
+        });
+    }
+
+    #[test]
+    fn pe_r2_concordant() {
+        assert_concordant(TRICKY, &base_opts(), |i, t, o| {
+            bisulfite_convert_fastq_pe(i, t, o, 2)
+        });
+    }
+
+    #[test]
+    fn icpc_concordant() {
+        let mut o = base_opts();
+        o.icpc = true; // truncate ID at first space/tab instead of underscoring
+        assert_concordant(TRICKY, &o, bisulfite_convert_fastq_se);
+    }
+
+    #[test]
+    fn skip_concordant() {
+        let mut o = base_opts();
+        o.skip = Some(2);
+        assert_concordant(TRICKY, &o, bisulfite_convert_fastq_se);
+    }
+
+    #[test]
+    fn upto_concordant() {
+        let mut o = base_opts();
+        o.upto = Some(3);
+        assert_concordant(TRICKY, &o, bisulfite_convert_fastq_se);
+    }
+
+    #[test]
+    fn crlf_concordant() {
+        // CRLF line endings: chomp_newline strips only '\n', leaving '\r' in every field;
+        // paraseq splits on '\n' too, so the '\r' is carried identically.
+        let crlf = b"@r1 a b\r\nACGTacgt\r\n+\r\nIIIIIIII\r\n@r2\r\nCCGG\r\n+\r\n!!!!\r\n";
+        assert_concordant(crlf, &base_opts(), bisulfite_convert_fastq_se);
+    }
+
+    #[test]
+    fn gzip_output_concordant() {
+        // gzip temp output: GzEncoder is deterministic, so identical decompressed content
+        // yields identical gz bytes.
+        let mut o = base_opts();
+        o.gzip = true;
+        assert_concordant(TRICKY, &o, bisulfite_convert_fastq_se);
     }
 }

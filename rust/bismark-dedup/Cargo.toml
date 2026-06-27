@@ -32,7 +32,10 @@ anyhow = "=1.0.103"
 bstr = "=1.10.0"
 # Phase B (v1.2 UMI epic): UmiDedupKey carries the per-record UMI as a
 # stack-allocated SmallVec for ≤16-byte UMIs. Matches bismark-io's pin.
-smallvec = "=1.13.2"
+# Pinned at =1.15.2 (bumped from =1.13.2 to satisfy paraseq's `^1.15.1`, #1025
+# Phase 3c, byte-output-neutral: SmallVec is an inline-or-heap Vec, contents
+# unchanged). bismark-io carries the same pin.
+smallvec = "=1.15.2"
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"
