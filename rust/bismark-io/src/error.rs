@@ -73,8 +73,14 @@ pub enum BismarkIoError {
     },
 
     /// Paired-end mate validation: the read identity of a supplied record
-    /// is not what was expected (e.g. caller passed two R1 records to
-    /// `BismarkPair::from_mates`).
+    /// is not what was expected.
+    ///
+    /// **No longer produced** as of the #1030 fix: `BismarkPair::from_mates`
+    /// used to gate on the SAM first/second-in-pair FLAG bits, but Bismark
+    /// deliberately swaps those bits for non-directional CTOT/CTOB pairs, so
+    /// the gate rejected legitimate input. Pairing is now by file order +
+    /// qname (matching Perl), and this variant has no remaining constructor.
+    /// Retained for public-API stability.
     ///
     /// Stored as a string to keep the error module decoupled from the
     /// `ReadIdentity` enum in `record.rs`.

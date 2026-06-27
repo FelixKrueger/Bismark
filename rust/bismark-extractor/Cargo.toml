@@ -1,6 +1,6 @@
 [package]
 name = "bismark-extractor"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase G: bedGraph + cytosine_report subprocess chain)"
 edition.workspace = true
 rust-version.workspace = true

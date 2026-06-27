@@ -167,13 +167,14 @@ jobs:
           command -v samtools >/dev/null || { echo "samtools missing"; exit 1; }
           perl -v
           samtools --version >/dev/null
-      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 10 ran)
+      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 12 ran)
         env:
           BISMARK_REQUIRE_PERL: "1"
         run: |
           set -euo pipefail
-          EXPECTED=10
+          EXPECTED=12
           out=$(cargo test -p bismark-genome-preparation -p bismark-methylation-consistency \
+                  -p bismark-dedup -p bismark-extractor \
                   -- --exact \
                   perl_vs_rust_byte_identical_mfa \
                   perl_vs_rust_byte_identical_single_fasta \
@@ -185,6 +186,8 @@ jobs:
                   perl_vs_rust_se_three_way \
                   perl_vs_rust_pe_three_way \
                   perl_vs_rust_chh_se \
+                  perl_vs_rust_nondirectional_pe_dedup \
+                  perl_vs_rust_nondirectional_pe_extractor \
                   2>&1 | tee /dev/stderr)
           n=$(printf '%s\n' "$out" | grep -cE '^test .* \.\.\. ok$' || true)
           test "$n" -eq "$EXPECTED" || { echo "::error::expected $EXPECTED oracle tests, $n ran ok"; exit 1; }
