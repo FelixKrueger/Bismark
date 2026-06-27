@@ -886,20 +886,31 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
         fq.extend_from_slice(&vec![b'I'; bytes.len()]);
         fq.push(b'\n');
     };
+    // FAITHFUL duplex fixture (molecule-strand, not coverage-strand). A real 5-Base duplex
+    // is two complementary strands of ONE molecule. At a `+` CpG, only the TOP strand carries
+    // that cytosine's methylation (the bottom strand has G there), so EVERY read of the OT
+    // molecule shows `T` at `t` while EVERY read of the OB molecule shows the unconverted `C`
+    // — confirmed on real Illumina data (OB forward reads are 0.8% T at `+` CpGs vs 49% for
+    // OT). A homozygous C>T variant, by contrast, is present on BOTH strands, so the OB reads
+    // also show `T`. The consensus must therefore key own/opposite on MOLECULE strand.
     let mut molecule = |s: usize, t: usize, variant: bool, ua: &str, ub: &str| {
-        let mut g_plus = reference[s..s + frag].to_vec();
-        g_plus[t - s] = b'T';
-        let minus_src = if variant {
-            g_plus.clone()
+        // TOP strand in +ref orientation: 5mC (or variant) → T at t.
+        let mut top = reference[s..s + frag].to_vec();
+        top[t - s] = b'T';
+        // BOTTOM strand in +ref orientation: unconverted C at t, UNLESS a homozygous variant.
+        let bot = if variant {
+            top.clone()
         } else {
             reference[s..s + frag].to_vec()
         };
-        let g_minus_rc = revcomp(&minus_src);
-        let (fwd_left, rev_right) = (&g_plus[0..rl], &g_minus_rc[0..rl]);
-        emit(&mut fq1, &format!("top_{s}:{ua}+{ub}"), fwd_left);
-        emit(&mut fq2, &format!("top_{s}:{ua}+{ub}"), rev_right);
-        emit(&mut fq1, &format!("bot_{s}:{ub}+{ua}"), rev_right);
-        emit(&mut fq2, &format!("bot_{s}:{ub}+{ua}"), fwd_left);
+        // Proper FR pairs. OT molecule: R1 fwd (left) + R2 rev (right), both TOP strand.
+        // OB molecule: R1 rev (right) + R2 fwd (left), both BOTTOM strand.
+        let (ot_r1, ot_r2) = (top[0..rl].to_vec(), revcomp(&top[frag - rl..frag]));
+        let (ob_r1, ob_r2) = (revcomp(&bot[frag - rl..frag]), bot[0..rl].to_vec());
+        emit(&mut fq1, &format!("top_{s}:{ua}+{ub}"), &ot_r1);
+        emit(&mut fq2, &format!("top_{s}:{ua}+{ub}"), &ot_r2);
+        emit(&mut fq1, &format!("bot_{s}:{ub}+{ua}"), &ob_r1);
+        emit(&mut fq2, &format!("bot_{s}:{ub}+{ua}"), &ob_r2);
     };
     molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
     molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");

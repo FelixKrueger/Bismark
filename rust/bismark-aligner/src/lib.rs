@@ -1973,12 +1973,17 @@ fn run_five_base_consensus(
             self.covered.get(&p).copied()
         }
     }
-    /// A family's reads split by molecule strand (for pairing) and coverage strand (for
-    /// reconciliation), plus the chrom + canonical UMI for emission (PASS 2 only).
+    /// A family's reads split by **molecule strand** (OT vs OB), plus the chrom + canonical
+    /// UMI for emission (PASS 2 only). The methylation call at a CpG is carried by the
+    /// molecule strand that owns that cytosine (OT for a `+` CpG, OB for a `-` CpG), so the
+    /// reconciliation MUST bucket by molecule strand, not coverage strand: a `-`-molecule
+    /// (OB) read can be coverage-forward yet shows the unmethylated `+` base (it reads the
+    /// complementary strand), which would dilute the `+` CpG 5mC signal by ~2× if mixed into
+    /// the "own" bucket. See [`consensus_base`] (`ot`/`ob` args == molecule strand).
     #[derive(Default)]
     struct Fam {
-        fwd: Vec<Member>,
-        rev: Vec<Member>,
+        ot: Vec<Member>,
+        ob: Vec<Member>,
         ref_id: usize,
         canon_umi: Vec<u8>,
     }
@@ -2011,7 +2016,6 @@ fn run_five_base_consensus(
     struct KeyInfo {
         ckey: CKey,
         molecule_is_ot: bool,
-        coverage_forward: bool,
         ref_id: usize,
         ref_start: u32,
         canon_umi: Vec<u8>,
@@ -2093,7 +2097,6 @@ fn run_five_base_consensus(
         Ok(Some(KeyInfo {
             ckey,
             molecule_is_ot,
-            coverage_forward,
             ref_id,
             ref_start,
             canon_umi,
@@ -2138,8 +2141,8 @@ fn run_five_base_consensus(
             if !paired.contains(&ki.ckey) {
                 continue; // singleton family — never produces a consensus, so don't store it
             }
-            let (coverage_forward, ref_id, ref_start) =
-                (ki.coverage_forward, ki.ref_id, ki.ref_start);
+            let (molecule_is_ot, ref_id, ref_start) =
+                (ki.molecule_is_ot, ki.ref_id, ki.ref_start);
             // Build the per-reference-position (base, phred) map for this read.
             let seq = inner.sequence().as_ref();
             let quals = inner.quality_scores().as_ref();
@@ -2174,10 +2177,10 @@ fn run_five_base_consensus(
             if fam.canon_umi.is_empty() {
                 fam.canon_umi = ki.canon_umi;
             }
-            if coverage_forward {
-                fam.fwd.push(member);
+            if molecule_is_ot {
+                fam.ot.push(member);
             } else {
-                fam.rev.push(member);
+                fam.ob.push(member);
             }
         }
     }
@@ -2196,7 +2199,7 @@ fn run_five_base_consensus(
             skipped += 1;
             continue;
         };
-        let members = fam.fwd.iter().chain(fam.rev.iter());
+        let members = fam.ot.iter().chain(fam.ob.iter());
         let start = members.clone().map(|m| m.start).min().unwrap_or(0);
         let end = members.clone().map(|m| m.end).max().unwrap_or(0);
         let mapq = members.map(|m| m.mapq).min().unwrap_or(0);
@@ -2215,7 +2218,7 @@ fn run_five_base_consensus(
             } else {
                 SiteKind::Other
             };
-            let (b, q) = consensus_base(kind, reduce(&fam.fwd, p), reduce(&fam.rev, p));
+            let (b, q) = consensus_base(kind, reduce(&fam.ot, p), reduce(&fam.ob, p));
             cons_seq.push(b);
             cons_qual.push(q.saturating_add(33)); // phred → ASCII for the SAM QUAL field
         }
