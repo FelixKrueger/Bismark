@@ -2305,19 +2305,29 @@ fn run_five_base_consensus(
             String::from_utf8_lossy(&fam.canon_umi).into_owned()
         };
         let qname = format!("dpx:{chrom}:{start}-{end}:{umi_str}");
-        let seq_str = String::from_utf8_lossy(&cons_seq).into_owned();
-        let qual_str = String::from_utf8_lossy(&cons_qual).into_owned();
         let mut wrote_any = false;
         for flag in [0u16, 0x10] {
+            // The emit path takes the read in READ (5'->3') orientation: for a reverse record
+            // single_end_sam_output revcomps it back to +ref for the BAM, and the GA call +
+            // genomic extraction are read-oriented. cons_seq/cons_qual are +ref, so the
+            // reverse record passes their reverse-complement / reverse (matching a real OB
+            // read, whose raw FastQ seq is read-oriented).
+            let (eseq, equal): (Vec<u8>, Vec<u8>) = if flag & 0x10 != 0 {
+                let mut q = cons_qual.clone();
+                q.reverse();
+                (crate::output::revcomp(&cons_seq), q)
+            } else {
+                (cons_seq.clone(), cons_qual.clone())
+            };
             let sam = SamRecord {
                 qname: qname.clone(),
                 flag,
                 rname: chrom.clone(),
                 pos: start + 1,
                 mapq,
-                cigar: format!("{}M", cons_seq.len()),
-                seq: seq_str.clone(),
-                qual: qual_str.clone(),
+                cigar: format!("{}M", eseq.len()),
+                seq: String::from_utf8_lossy(&eseq).into_owned(),
+                qual: String::from_utf8_lossy(&equal).into_owned(),
                 alignment_score: Some(0),
                 second_best: None,
                 md_tag: None,
@@ -2327,8 +2337,8 @@ fn run_five_base_consensus(
             if let Some(record) = five_base_emit_record(
                 &sam,
                 &qname,
-                &cons_seq,
-                &cons_qual,
+                &eseq,
+                &equal,
                 genome,
                 refid,
                 false, // consensus QUAL is phred33
