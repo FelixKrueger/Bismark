@@ -197,7 +197,7 @@ pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeInde
 /// wins), case-insensitively sorted. Filters on `path.is_file()` (which
 /// **follows symlinks**) and matches on raw file-name bytes (non-UTF-8 safe) —
 /// both mirroring `bismark-genome-preparation::discovery::find_fasta_files`.
-fn discover_fastas(genome_dir: &Path) -> Result<(Vec<PathBuf>, FastaKind)> {
+pub(crate) fn discover_fastas(genome_dir: &Path) -> Result<(Vec<PathBuf>, FastaKind)> {
     for kind in FastaKind::PROBE_ORDER {
         let mut group: Vec<PathBuf> = std::fs::read_dir(genome_dir)?
             .filter_map(|e| e.ok())

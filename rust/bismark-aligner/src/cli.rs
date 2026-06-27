@@ -152,6 +152,14 @@ pub struct Cli {
     /// exclusive). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_qname")]
     pub five_base_umi_qname: bool,
+    /// `[#787 EXPERIMENTAL/PREVIEW]` Run ONLY the duplex-consensus collapse over one or more
+    /// EXISTING 5-Base `_pe.bam`/`.bam` files (repeat the flag per file) — no re-alignment.
+    /// Families pair ACROSS all the given BAMs, so passing every lane's BAM yields a
+    /// full-depth consensus. Writes `<output_dir>/five_base_consensus.bam`. Requires
+    /// `--illumina_5base` + `--genome`; honours `--five_base_umi_qname`. When set, the normal
+    /// align pipeline is skipped.
+    #[arg(long = "five_base_consensus_from_bam", value_name = "BAM")]
+    pub five_base_consensus_from_bam: Vec<std::path::PathBuf>,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

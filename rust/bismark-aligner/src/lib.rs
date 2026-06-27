@@ -116,6 +116,11 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
+    // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
+    // entirely (resolve() requires reads; this path takes BAMs instead).
+    if !cli.five_base_consensus_from_bam.is_empty() {
+        return run_five_base_consensus_standalone(cli, &command_line);
+    }
     let config = resolve(cli, command_line)?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
@@ -182,6 +187,69 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     eprintln!("{}", config.summary());
     pipeline(&config)?;
     Ok(())
+}
+
+/// `[#787]` Standalone duplex-consensus over one or more EXISTING 5-Base BAM(s), with NO
+/// re-alignment. Loads the genome, infers PE/SE from the first BAM's first record, and runs
+/// [`run_five_base_consensus`] over ALL the BAMs at once — families pair ACROSS files, so
+/// passing every lane's per-read BAM yields a full-depth consensus from already-aligned data.
+fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Result<()> {
+    let bams = &cli.five_base_consensus_from_bam;
+    if !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus_from_bam requires --illumina_5base".into(),
+        ));
+    }
+    let Some(genome_arg) = cli.genome.as_ref() else {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus_from_bam requires --genome <folder>".into(),
+        ));
+    };
+    let genome_dir = std::fs::canonicalize(genome_arg).map_err(|e| {
+        AlignerError::Validation(format!("consensus: --genome {}: {e}", genome_arg.display()))
+    })?;
+    let (fastas, _kind) = crate::discovery::discover_fastas(&genome_dir)?;
+    let genome = read_genome_into_memory(&fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, command_line);
+
+    // Infer PE/SE from the first mapped record of the first BAM (FLAG 0x1 = paired).
+    let mut probe = bismark_io::BamReader::from_path_without_sort_check(&bams[0]).map_err(|e| {
+        AlignerError::Validation(format!("consensus: open {}: {e}", bams[0].display()))
+    })?;
+    let paired_end = probe
+        .records()
+        .next()
+        .transpose()
+        .map_err(|e| {
+            AlignerError::Validation(format!("consensus: read {}: {e}", bams[0].display()))
+        })?
+        .map(|r| u16::from(r.inner().flags()) & 0x1 != 0)
+        .unwrap_or(false);
+
+    let umi_swap = if cli.five_base_umi_qname {
+        Some(crate::five_base_duplex::UmiSwap::DualPlus)
+    } else if cli.five_base_umi_len > 0 {
+        Some(crate::five_base_duplex::UmiSwap::RevComp)
+    } else {
+        None
+    };
+
+    let out_dir = cli
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&out_dir).ok();
+    let out_path = out_dir.join("five_base_consensus.bam");
+
+    let paths: Vec<&Path> = bams.iter().map(PathBuf::as_path).collect();
+    eprintln!(
+        "Note: 5-Base consensus-from-BAM over {} file(s) ({}); no re-alignment. Output: {}",
+        paths.len(),
+        if paired_end { "PE" } else { "SE" },
+        out_path.display()
+    );
+    run_five_base_consensus(&genome, &refid, &paths, &out_path, &header, umi_swap, paired_end)
 }
 
 /// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
@@ -897,7 +965,7 @@ fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
             run_five_base_consensus(
                 &genome,
                 &refid,
-                &bam_path,
+                &[bam_path.as_path()],
                 &consensus_path,
                 &header,
                 umi_swap,
@@ -1315,7 +1383,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 run_five_base_consensus(
                     &genome,
                     &refid,
-                    &bam_path,
+                    &[bam_path.as_path()],
                     &consensus_path,
                     &header,
                     umi_swap,
@@ -1950,7 +2018,7 @@ fn w_duplex_report<W: std::io::Write>(
 fn run_five_base_consensus(
     genome: &Genome,
     refid: &HashMap<String, usize>,
-    bam_path: &Path,
+    bam_paths: &[&Path],
     consensus_bam_path: &Path,
     header: &noodles_sam::Header,
     umi_swap: Option<crate::five_base_duplex::UmiSwap>,
@@ -2104,8 +2172,9 @@ fn run_five_base_consensus(
     };
 
     // PASS 1 — count OT/OB reads per family (compact key only); find the paired families.
+    // Iterate ALL input BAMs so a molecule's two strands pair even across lanes/files.
     let mut counts: HashMap<CKey, (u32, u32)> = HashMap::new();
-    {
+    for bam_path in bam_paths {
         let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
             .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 1): {e}")))?;
         for rec in reader.records() {
@@ -2129,7 +2198,7 @@ fn run_five_base_consensus(
 
     // PASS 2 — store members for the (few) paired families only; build their covered maps.
     let mut fams: HashMap<CKey, Fam> = HashMap::new();
-    {
+    for bam_path in bam_paths {
         let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
             .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 2): {e}")))?;
         for rec in reader.records() {
