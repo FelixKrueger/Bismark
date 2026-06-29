@@ -41,7 +41,7 @@ fn list_sorted(dir: &Path) -> Vec<String> {
 
 fn run_rust(genome: &str, cov: &str, oname: &str, flags: &[&str]) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg(oname)

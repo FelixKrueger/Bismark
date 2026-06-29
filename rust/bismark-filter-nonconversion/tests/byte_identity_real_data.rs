@@ -82,7 +82,7 @@ fn compare_cell(perl: &Path, real_bam: &Path, mode_flag: &str, extra: &[&str], l
     assert!(perl_status.success(), "[{label}] Perl run failed");
 
     // Rust.
-    let mut rust_cmd = AssertCommand::cargo_bin("filter_non_conversion_rs").unwrap();
+    let mut rust_cmd = AssertCommand::cargo_bin("filter_non_conversion").unwrap();
     rust_cmd.current_dir(rust_dir.path()).arg(mode_flag);
     for f in extra {
         rust_cmd.arg(f);

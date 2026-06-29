@@ -260,7 +260,7 @@ fn methylseq_extractor_no_alignment_runtime_emits_required_outputs() {
     write_header_only_bam(&bam);
     let out_dir = work.path().join("out");
 
-    Command::cargo_bin("bismark_methylation_extractor_rs")
+    Command::cargo_bin("bismark_methylation_extractor")
         .unwrap()
         .arg(&bam)
         .args(["--bedGraph", "--counts", "--gzip", "--report", "-s", "--CX"])

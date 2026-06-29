@@ -19,7 +19,7 @@ fn assert_mode_matches_golden(mode: &str, report_suffix: &str, extra: &[&str]) {
     let d = data_dir();
     let tmp = tempfile::tempdir().unwrap();
 
-    let mut cmd = Command::cargo_bin("coverage2cytosine_rs").unwrap();
+    let mut cmd = Command::cargo_bin("coverage2cytosine").unwrap();
     cmd.arg("-o")
         .arg(mode)
         .arg("-g")
@@ -93,7 +93,7 @@ fn run_with(genome_fa: &str, cov: &str, extra: &[&str]) -> String {
     let out = tmp.path().join("out");
     std::fs::create_dir(&out).unwrap();
 
-    let mut cmd = Command::cargo_bin("coverage2cytosine_rs").unwrap();
+    let mut cmd = Command::cargo_bin("coverage2cytosine").unwrap();
     cmd.arg("-o")
         .arg("s")
         .arg("-g")
@@ -140,7 +140,7 @@ fn empty_coverage_input_standard_path_emits_all_zero_report() {
     let cov = tmp.path().join("empty.cov");
     std::fs::write(&cov, "").unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")
@@ -187,7 +187,7 @@ fn empty_coverage_gzipped_standard_path_emits_gzipped_all_zero_report() {
     enc.write_all(b"").unwrap();
     enc.finish().unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")
@@ -234,7 +234,7 @@ fn empty_coverage_missing_file_errors() {
     std::fs::write(gdir.join("g.fa"), ">chrA\nACGT\n").unwrap();
     let missing = tmp.path().join("does_not_exist.cov");
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")
@@ -262,7 +262,7 @@ fn empty_coverage_corrupt_gzip_with_gz_name_errors() {
     // decompress, which fails.
     std::fs::write(&cov, b"this is not gzip data at all\n").unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")
@@ -305,7 +305,7 @@ fn empty_coverage_threshold_emits_empty_report() {
     let cov = tmp.path().join("empty.cov");
     std::fs::write(&cov, "").unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")
@@ -335,7 +335,7 @@ fn empty_coverage_nome_emits_empty_report() {
     let cov = tmp.path().join("empty.cov");
     std::fs::write(&cov, "").unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")
@@ -364,7 +364,7 @@ fn empty_coverage_gc_emits_empty_report() {
     let cov = tmp.path().join("empty.cov");
     std::fs::write(&cov, "").unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")

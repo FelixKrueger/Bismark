@@ -163,7 +163,7 @@ fn write_non_cpg_only_bam(path: &Path) {
 
 /// Run the extractor binary on `bam` into `out_dir` with the given extra args.
 fn run_extractor(bam: &Path, out_dir: &Path, extra: &[&str]) -> assert_cmd::assert::Assert {
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(bam)
         .arg("--single-end")
         .arg("--output_dir")

@@ -766,7 +766,7 @@ mod pe_e2e {
     }
 
     fn run_binary(bam: &std::path::Path, outdir: &std::path::Path, extra_args: &[&str]) {
-        let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
         cmd.arg(bam)
             .arg("--paired-end")
             .arg("--output_dir")
@@ -998,7 +998,7 @@ mod pe_e2e {
         writer.finish().unwrap();
 
         let outdir = work.path().join("out");
-        let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
         cmd.arg(&bam_path)
             .arg("--paired-end")
             .arg("--output_dir")
@@ -1036,7 +1036,7 @@ mod pe_e2e {
             vec![pair.r1().clone(), pair.r2().clone(), orphan_r1],
         );
         let outdir = work.path().join("out");
-        let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
         cmd.arg(&bam_path)
             .arg("--paired-end")
             .arg("--output_dir")
@@ -1417,7 +1417,7 @@ mod auto_detect {
 
         let outdir = work.path().join("out");
         // No --single-end / --paired-end — AutoDetect must dispatch to PE.
-        let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
         cmd.arg(&bam_path)
             .arg("--output_dir")
             .arg(&outdir)
@@ -1451,7 +1451,7 @@ mod auto_detect {
         writer.finish().unwrap();
 
         let outdir = work.path().join("out");
-        let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
         cmd.arg(&bam_path)
             .arg("--output_dir")
             .arg(&outdir)
@@ -1474,7 +1474,7 @@ mod auto_detect {
         writer.finish().unwrap();
 
         let outdir = work.path().join("out");
-        let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
         cmd.arg(&bam_path)
             .arg("--output_dir")
             .arg(&outdir)

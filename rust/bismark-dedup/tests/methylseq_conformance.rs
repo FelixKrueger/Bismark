@@ -80,7 +80,7 @@ fn methylseq_deduplicate_empty_input_does_not_crash_pipeline() {
         let input = dir.path().join("aligned.bam");
         write_header_only_bam(&input);
 
-        Command::cargo_bin("deduplicate_bismark_rs")
+        Command::cargo_bin("deduplicate_bismark")
             .unwrap()
             .arg(mode)
             .arg("--bam")

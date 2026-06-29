@@ -28,7 +28,7 @@ fn real_bam_produces_nonempty_stats() {
     let out = tempfile::tempdir().unwrap();
     let dir_arg = format!("{}/", out.path().display());
 
-    Command::cargo_bin("bam2nuc_rs")
+    Command::cargo_bin("bam2nuc")
         .unwrap()
         .arg("-g")
         .arg(&genome)

@@ -56,7 +56,7 @@ fn load_first_contig_gz(path: &Path) -> Vec<u8> {
 type Truth = HashMap<String, Vec<(usize, bool)>>;
 
 fn bin() -> Command {
-    Command::cargo_bin("bismark_rs").unwrap()
+    Command::cargo_bin("bismark").unwrap()
 }
 
 fn have_minimap2() -> bool {

@@ -60,7 +60,7 @@ fn run_perl(dir: &Path, script: &Path, basename: &str) -> std::process::ExitStat
 }
 
 fn run_rust(dir: &Path, basename: &str) -> std::process::ExitStatus {
-    Command::new(env!("CARGO_BIN_EXE_bismark2summary_rs"))
+    Command::new(env!("CARGO_BIN_EXE_bismark2summary"))
         .args([
             "-o",
             basename,
@@ -468,7 +468,7 @@ fn oracle_explicit_argv_order() {
         .status()
         .unwrap()
         .success();
-    let rust_ok = Command::new(env!("CARGO_BIN_EXE_bismark2summary_rs"))
+    let rust_ok = Command::new(env!("CARGO_BIN_EXE_bismark2summary"))
         .args([
             "-o",
             "rust_out",
@@ -519,7 +519,7 @@ fn oracle_basename_zero_truthiness() {
         .current_dir(pdir.path())
         .status()
         .unwrap();
-    Command::new(env!("CARGO_BIN_EXE_bismark2summary_rs"))
+    Command::new(env!("CARGO_BIN_EXE_bismark2summary"))
         .args(["-o", "0", "--__test_timestamp", "1780272000"])
         .current_dir(rdir.path())
         .status()

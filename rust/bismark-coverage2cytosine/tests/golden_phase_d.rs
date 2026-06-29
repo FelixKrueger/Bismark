@@ -25,7 +25,7 @@ fn gunzip(path: &Path) -> Vec<u8> {
 /// Run `--merge_CpGs …` into a tempdir; assert success; return the tempdir.
 fn run_merge(genome: &Path, cov: &Path, flags: &[&str]) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    let mut cmd = Command::cargo_bin("coverage2cytosine_rs").unwrap();
+    let mut cmd = Command::cargo_bin("coverage2cytosine").unwrap();
     cmd.arg("-o")
         .arg("m")
         .arg("-g")
@@ -131,7 +131,7 @@ fn eof_mid_resync_errors_with_partial_merged_file() {
     // hits EOF; Perl dies (255) leaving chrM's merged line. Rust errors (exit 1,
     // no panic) and leaves the SAME partial merged file.
     let tmp = tempfile::tempdir().unwrap();
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("m")

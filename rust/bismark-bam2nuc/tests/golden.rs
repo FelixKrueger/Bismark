@@ -47,7 +47,7 @@ fn assert_bytes_eq(actual: &[u8], expected: &[u8], label: &str) {
 }
 
 fn bin() -> Command {
-    Command::cargo_bin("bam2nuc_rs").unwrap()
+    Command::cargo_bin("bam2nuc").unwrap()
 }
 
 /// Run `--genomic_composition_only` against a genome fixture; return the cache.

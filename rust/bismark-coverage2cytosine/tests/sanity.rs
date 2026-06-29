@@ -10,7 +10,7 @@ use predicates::str::is_match;
 
 #[test]
 fn version_output_matches_provenance_regex() {
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("--version")
         .assert()
@@ -20,7 +20,7 @@ fn version_output_matches_provenance_regex() {
 
 #[test]
 fn short_version_flag_works_too() {
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-V")
         .assert()
@@ -30,7 +30,7 @@ fn short_version_flag_works_too() {
 
 #[test]
 fn help_lists_v1_flags() {
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("--help")
         .assert()
@@ -45,7 +45,7 @@ fn help_lists_v1_flags() {
 #[test]
 fn missing_output_fails_with_clear_message() {
     // validate() returns MissingOutput before any I/O.
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-g")
         .arg("genome_dir")

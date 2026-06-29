@@ -304,7 +304,7 @@ fn pe_dedup_retains_first_occurrence_and_removes_subsequent_duplicates() {
 
     write_bam(&input, &records);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -348,7 +348,7 @@ fn pe_dedup_output_preserves_r1_followed_by_r2_adjacency() {
     }
     write_bam(&input, &records);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -396,7 +396,7 @@ fn se_dedup_retains_first_occurrence_and_removes_subsequent_duplicates() {
 
     write_bam(&input, &records);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--single")
         .arg("--output_dir")
         .arg(dir.path())
@@ -433,7 +433,7 @@ fn ctot_pair_non_directional_dedup_works_end_to_end() {
 
     write_bam(&input, &records);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -463,7 +463,7 @@ fn ctob_pair_non_directional_dedup_works_end_to_end() {
 
     write_bam(&input, &records);
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--output_dir")
@@ -495,7 +495,7 @@ fn mixed_four_strand_single_file_all_pairs_coexist() {
     records.push(build_record("ob1", b"GA", b"GA", 163, 0, 4100, 50));
     write_bam(&input, &records);
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--output_dir")
@@ -536,7 +536,7 @@ fn nondir_pe_repro_1030_dedups_without_crash() {
         vec!["--barcode", "--parallel", "4"],
     ] {
         let dir = TempDir::new().unwrap();
-        let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+        let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
         cmd.arg("--paired").arg("--output_dir").arg(dir.path());
         for a in &extra_args {
             cmd.arg(a);
@@ -573,7 +573,7 @@ fn pe_dedup_report_bytes_match_perl_format() {
     records.extend(ot_pair("dup", 1000, 1100));
     write_bam(&input, &records);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -605,7 +605,7 @@ fn outfile_with_directory_prefix_strips_path_per_perl_regex() {
     let input = dir.path().join("input.bam");
     write_bam(&input, &ot_pair("u0", 1000, 1100));
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -671,7 +671,7 @@ fn multiple_mode_accumulates_dedup_state_across_inputs() {
     f2.extend(ot_pair("f2_dup_of_f1_u0", 1000, 1100));
     write_bam(&input2, &f2);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--multiple")
         .arg("--paired")
         .arg("--output_dir")
@@ -759,7 +759,7 @@ fn empty_input_se_is_graceful() {
     let input = dir.path().join("empty.bam");
     write_bam(&input, &[]); // header only, no records
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--single")
         .arg("--output_dir")
         .arg(dir.path())
@@ -780,7 +780,7 @@ fn empty_input_pe_is_graceful() {
     let input = dir.path().join("empty.bam");
     write_bam(&input, &[]);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -799,7 +799,7 @@ fn empty_input_parallel_is_graceful() {
     let input = dir.path().join("empty.bam");
     write_bam(&input, &[]);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--single")
         .arg("--parallel")
         .arg("2")
@@ -821,7 +821,7 @@ fn empty_input_umi_is_graceful() {
     let input = dir.path().join("empty.bam");
     write_bam(&input, &[]);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--single")
         .arg("--barcode")
         .arg("--output_dir")
@@ -846,7 +846,7 @@ fn all_unmapped_input_is_graceful() {
     let rec = build_record("r1", b"CT", b"CT", 0x4, 0, 1, 50);
     write_bam(&input, &[rec]);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--single")
         .arg("--output_dir")
         .arg(dir.path())
@@ -886,7 +886,7 @@ fn multiple_mode_rejects_different_sq_name_sets_across_inputs() {
         .unwrap();
     writer.finish().unwrap();
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--multiple")
         .arg("--paired")
         .arg("--output_dir")
@@ -920,7 +920,7 @@ fn multiple_mode_empty_file1_still_processes_file2() {
     write_bam(&input1, &[]); // file1: header only
     write_bam(&input2, &ot_pair("u0", 1000, 1100)); // file2: one PE pair
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--multiple")
         .arg("--paired")
         .arg("--output_dir")
@@ -971,7 +971,7 @@ fn multiple_mode_all_files_empty_is_graceful() {
     write_bam(&input1, &[]);
     write_bam(&input2, &[]);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--multiple")
         .arg("--single")
         .arg("--output_dir")
@@ -1015,7 +1015,7 @@ fn multiple_mode_sq_mismatch_fires_when_file1_is_empty() {
         .unwrap();
     writer.finish().unwrap();
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--multiple")
         .arg("--paired")
         .arg("--output_dir")
@@ -1055,7 +1055,7 @@ fn multiple_mode_rejects_mixed_input_formats() {
         writer.finish().unwrap();
     }
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--multiple")
         .arg("--paired")
         .arg("--output_dir")
@@ -1086,7 +1086,7 @@ fn pe_dedup_report_with_no_duplicates_renders_zero_percent() {
     }
     write_bam(&input, &records);
 
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.arg("--paired")
         .arg("--output_dir")
         .arg(dir.path())
@@ -1152,7 +1152,7 @@ fn pe_parallel_4_produces_same_qname_set_as_single_threaded() {
     // Run with --parallel 1 (single-threaded path).
     let out1 = dir.path().join("single");
     std::fs::create_dir_all(&out1).unwrap();
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1166,7 +1166,7 @@ fn pe_parallel_4_produces_same_qname_set_as_single_threaded() {
     // Run with --parallel 4 (threaded path).
     let out4 = dir.path().join("threaded");
     std::fs::create_dir_all(&out4).unwrap();
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1222,7 +1222,7 @@ fn se_parallel_4_produces_same_qname_set_as_single_threaded() {
 
     let out1 = dir.path().join("single");
     std::fs::create_dir_all(&out1).unwrap();
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--single")
         .arg("--parallel")
@@ -1235,7 +1235,7 @@ fn se_parallel_4_produces_same_qname_set_as_single_threaded() {
 
     let out4 = dir.path().join("threaded");
     std::fs::create_dir_all(&out4).unwrap();
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--single")
         .arg("--parallel")
@@ -1302,7 +1302,7 @@ fn multiple_parallel_4_produces_same_qname_set_as_single_threaded() {
 
     let out1 = dir.path().join("single");
     std::fs::create_dir_all(&out1).unwrap();
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--multiple")
         .arg("--paired")
@@ -1317,7 +1317,7 @@ fn multiple_parallel_4_produces_same_qname_set_as_single_threaded() {
 
     let out4 = dir.path().join("threaded");
     std::fs::create_dir_all(&out4).unwrap();
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--multiple")
         .arg("--paired")
@@ -1377,7 +1377,7 @@ fn pe_parallel_4_preserves_r1_followed_by_r2_adjacency() {
         "PE adjacency fixture too small to span multiple BGZF blocks ({bam_size} bytes)"
     );
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1416,7 +1416,7 @@ fn parallel_above_four_emits_diminishing_returns_warning() {
     let input = dir.path().join("input.bam");
     write_bam(&input, &ot_pair("u0", 1000, 1100));
 
-    let output = Command::cargo_bin("deduplicate_bismark_rs")
+    let output = Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1455,7 +1455,7 @@ fn parallel_equal_to_four_does_not_emit_diminishing_returns_warning() {
     let input = dir.path().join("input.bam");
     write_bam(&input, &ot_pair("u0", 1000, 1100));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1475,7 +1475,7 @@ fn parallel_zero_is_rejected_at_validate() {
     let input = dir.path().join("input.bam");
     write_bam(&input, &ot_pair("u0", 1000, 1100));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1540,7 +1540,7 @@ fn cram_with_parallel_n_logs_warning_and_runs_single_threaded() {
         writer.finish().unwrap();
     }
 
-    let output = Command::cargo_bin("deduplicate_bismark_rs")
+    let output = Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--parallel")
@@ -1641,7 +1641,7 @@ fn parallel_4_multiple_mode_output_ends_with_bgzf_eof_marker() {
         "fixture combined size ({combined} B) too small to span multiple BGZF blocks"
     );
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--multiple")
         .arg("--paired")
@@ -1710,7 +1710,7 @@ fn umi_barcode_dedup_matches_perl_baseline_byte_for_byte() {
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--barcode")
@@ -1797,7 +1797,7 @@ fn umi_bclconvert_dedup_matches_perl_baseline_byte_for_byte() {
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--bclconvert")
@@ -1835,7 +1835,7 @@ fn umi_barcode_engages_mode_retains_more_reads_than_position_only() {
     std::fs::create_dir_all(&dir_umi).unwrap();
     std::fs::create_dir_all(&dir_pos).unwrap();
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--barcode")
@@ -1845,7 +1845,7 @@ fn umi_barcode_engages_mode_retains_more_reads_than_position_only() {
         .assert()
         .success();
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--output_dir")
@@ -1895,7 +1895,7 @@ fn umi_mode_with_parallel_4_produces_same_qname_set_as_parallel_1() {
     std::fs::create_dir_all(&dir4).unwrap();
 
     for (parallel, out_dir) in [(1, &dir1), (4, &dir4)] {
-        Command::cargo_bin("deduplicate_bismark_rs")
+        Command::cargo_bin("deduplicate_bismark")
             .unwrap()
             .arg("--paired")
             .arg("--barcode")
@@ -1936,7 +1936,7 @@ fn umi_bclconvert_and_barcode_together_bclconvert_wins() {
     std::fs::create_dir_all(&dir_bclonly).unwrap();
     std::fs::create_dir_all(&dir_both).unwrap();
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--bclconvert")
@@ -1946,7 +1946,7 @@ fn umi_bclconvert_and_barcode_together_bclconvert_wins() {
         .assert()
         .success();
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--bclconvert")
@@ -1992,7 +1992,7 @@ fn umi_barcode_with_multiple_input_files_accumulates_state() {
     std::fs::create_dir_all(&dir_double).unwrap();
 
     // Single input via --multiple (degenerate; should match the single-file path).
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--multiple")
         .arg("--paired")
@@ -2005,7 +2005,7 @@ fn umi_barcode_with_multiple_input_files_accumulates_state() {
 
     // Same input passed twice — cross-file UMI dedup state should
     // collapse all duplicates from the second file against the first.
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--multiple")
         .arg("--paired")
@@ -2052,7 +2052,7 @@ fn umi_barcode_on_record_without_umi_errors_with_extraction_failed() {
     }
     write_bam(&input, &pairs);
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--barcode")
@@ -2090,7 +2090,7 @@ fn autodetect_barcode_against_bclconvert_input_errors_with_helpful_hint() {
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--barcode") // WRONG flag for bcl-convert format input
@@ -2119,7 +2119,7 @@ fn autodetect_bclconvert_on_bclconvert_input_proceeds_without_conflict() {
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--bclconvert") // CORRECT flag
@@ -2138,7 +2138,7 @@ fn autodetect_barcode_on_barcode_input_proceeds_without_conflict() {
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--barcode") // CORRECT flag for barcode-format input
@@ -2160,7 +2160,7 @@ fn autodetect_bclconvert_on_barcode_input_skips_autodetect_fails_at_extraction()
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BARCODE_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--bclconvert") // WRONG flag for barcode-format input
@@ -2184,7 +2184,7 @@ fn autodetect_skipped_when_no_umi_flag_even_on_bclconvert_input() {
     let dir = TempDir::new().unwrap();
     let input = umi_fixtures_dir().join(format!("{BCLCONVERT_STEM}.bam"));
 
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         // no --barcode, no --bclconvert — position-only dedup
@@ -2300,7 +2300,7 @@ fn perl_vs_rust_nondirectional_pe_dedup() {
     );
 
     // Rust.
-    Command::cargo_bin("deduplicate_bismark_rs")
+    Command::cargo_bin("deduplicate_bismark")
         .unwrap()
         .arg("--paired")
         .arg("--bam")

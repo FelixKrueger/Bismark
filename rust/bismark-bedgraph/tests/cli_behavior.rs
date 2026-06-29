@@ -38,7 +38,7 @@ fn run_and_read(workdir: &Path, out_dir: &Path, extra: &[&str]) -> (Vec<u8>, Vec
     for f in CPG {
         fs::copy(fx.join(f), workdir.join(f)).unwrap();
     }
-    let mut cmd = Command::cargo_bin("bismark2bedGraph_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark2bedGraph").unwrap();
     cmd.current_dir(workdir);
     cmd.args(extra);
     cmd.args(["-o", "out.bedGraph"]);
@@ -120,7 +120,7 @@ fn accepted_but_ignored_flags_do_not_change_output() {
 
 #[test]
 fn version_flag_prints_provenance_and_exits_zero() {
-    Command::cargo_bin("bismark2bedGraph_rs")
+    Command::cargo_bin("bismark2bedGraph")
         .unwrap()
         .arg("--version")
         .assert()
@@ -130,7 +130,7 @@ fn version_flag_prints_provenance_and_exits_zero() {
 
 #[test]
 fn man_flag_prints_long_help_and_exits_zero() {
-    Command::cargo_bin("bismark2bedGraph_rs")
+    Command::cargo_bin("bismark2bedGraph")
         .unwrap()
         .arg("--man")
         .assert()
@@ -140,7 +140,7 @@ fn man_flag_prints_long_help_and_exits_zero() {
 
 #[test]
 fn help_flag_smoke() {
-    Command::cargo_bin("bismark2bedGraph_rs")
+    Command::cargo_bin("bismark2bedGraph")
         .unwrap()
         .arg("--help")
         .assert()

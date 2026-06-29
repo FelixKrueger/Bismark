@@ -73,7 +73,7 @@ fn run_both_and_compare(work: &Path, label: &str) {
         "perl bismark2report failed for `{label}`"
     );
 
-    let rust_status = Command::new(env!("CARGO_BIN_EXE_bismark2report_rs"))
+    let rust_status = Command::new(env!("CARGO_BIN_EXE_bismark2report"))
         .args(["--dir", "rust/", "--__test_timestamp", "0"])
         .current_dir(work)
         .output()

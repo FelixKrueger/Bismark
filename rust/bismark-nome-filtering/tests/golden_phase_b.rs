@@ -32,7 +32,7 @@ fn run_case(yacht: &str) -> Vec<u8> {
     let d = data();
     let tmp = tempfile::tempdir().unwrap();
     std::fs::copy(d.join(yacht), tmp.path().join(yacht)).unwrap();
-    Command::cargo_bin("NOMe_filtering_rs")
+    Command::cargo_bin("NOMe_filtering")
         .unwrap()
         .arg("-g")
         .arg(d.join("genome"))
@@ -88,7 +88,7 @@ fn vs_empty_leaves_header_only_gz_and_exits_nonzero() {
     let d = data();
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("empty.yacht.txt"), "").unwrap();
-    Command::cargo_bin("NOMe_filtering_rs")
+    Command::cargo_bin("NOMe_filtering")
         .unwrap()
         .arg("-g")
         .arg(d.join("genome"))
@@ -112,7 +112,7 @@ fn vs_crlf_input_matches_lf_golden() {
     let crlf = lf.replace('\n', "\r\n");
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(tmp.path().join("crlf.yacht.txt"), crlf).unwrap();
-    Command::cargo_bin("NOMe_filtering_rs")
+    Command::cargo_bin("NOMe_filtering")
         .unwrap()
         .arg("-g")
         .arg(d.join("genome"))
@@ -137,7 +137,7 @@ fn unknown_chromosome_read_yields_header_only_no_data_line() {
         "rZ\t+\tchrZ\t6\tz\t4\t12\t+\n",
     )
     .unwrap();
-    Command::cargo_bin("NOMe_filtering_rs")
+    Command::cargo_bin("NOMe_filtering")
         .unwrap()
         .arg("-g")
         .arg(d.join("genome"))

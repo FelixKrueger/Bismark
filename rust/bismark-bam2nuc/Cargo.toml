@@ -15,7 +15,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "bam2nuc_rs"
+name = "bam2nuc"
 path = "src/main.rs"
 
 [dependencies]

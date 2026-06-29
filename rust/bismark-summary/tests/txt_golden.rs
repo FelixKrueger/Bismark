@@ -11,7 +11,7 @@ fn wgbs_two_sample_txt_is_byte_exact() {
     let dir = tempfile::tempdir().unwrap();
     common::build_wgbs_two_sample(dir.path());
 
-    let status = Command::new(env!("CARGO_BIN_EXE_bismark2summary_rs"))
+    let status = Command::new(env!("CARGO_BIN_EXE_bismark2summary"))
         .current_dir(dir.path())
         .args(["-o", "out", "--title", "Gate Test"])
         .status()
@@ -35,7 +35,7 @@ s1_bismark_bt2_pe.bam\t10000\t8000\t1500\t500\t0\t2000\t6000\t400000\t9000\t8000
 #[test]
 fn no_bams_exits_nonzero() {
     let dir = tempfile::tempdir().unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_bismark2summary_rs"))
+    let status = Command::new(env!("CARGO_BIN_EXE_bismark2summary"))
         .current_dir(dir.path())
         .args(["-o", "out"])
         .status()

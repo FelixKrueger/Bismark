@@ -80,7 +80,7 @@ fn write_bam(path: &Path, records: &[BismarkRecord]) {
 
 fn run_extractor(bam: &Path, outdir: &Path, extra: &[&str]) -> assert_cmd::assert::Assert {
     fs::create_dir_all(outdir).unwrap();
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(bam)
         .arg("--paired-end")
         .arg("--output_dir")

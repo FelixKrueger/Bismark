@@ -15,7 +15,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "filter_non_conversion_rs"
+name = "filter_non_conversion"
 path = "src/main.rs"
 
 [dependencies]

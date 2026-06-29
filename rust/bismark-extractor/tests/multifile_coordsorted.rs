@@ -129,7 +129,7 @@ fn write_bam(path: &Path, header: Header, records: &[BismarkRecord]) {
 }
 
 fn extractor() -> Command {
-    Command::cargo_bin("bismark_methylation_extractor_rs").unwrap()
+    Command::cargo_bin("bismark_methylation_extractor").unwrap()
 }
 
 fn read_gz(path: &Path) -> Vec<u8> {

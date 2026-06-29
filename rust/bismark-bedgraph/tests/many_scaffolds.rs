@@ -37,7 +37,7 @@ fn handles_thousands_of_scaffolds_in_bytewise_order() {
         }
     }
 
-    Command::cargo_bin("bismark2bedGraph_rs")
+    Command::cargo_bin("bismark2bedGraph")
         .unwrap()
         .current_dir(tmp.path())
         .args(["-o", "out.bedGraph", "CpG_OT_scaffolds.txt"])

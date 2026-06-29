@@ -26,7 +26,7 @@ use std::process::Command;
 use flate2::read::GzDecoder;
 use tempfile::TempDir;
 
-const RUST_BIN: &str = env!("CARGO_BIN_EXE_bismark2bedGraph_rs");
+const RUST_BIN: &str = env!("CARGO_BIN_EXE_bismark2bedGraph");
 
 fn gunzip(path: &Path) -> Vec<u8> {
     let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));

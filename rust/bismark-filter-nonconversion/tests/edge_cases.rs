@@ -115,7 +115,7 @@ fn count_records(path: &Path) -> usize {
 }
 
 fn bin() -> Command {
-    Command::cargo_bin("filter_non_conversion_rs").unwrap()
+    Command::cargo_bin("filter_non_conversion").unwrap()
 }
 
 // ─────────────────────────────── tests ─────────────────────────────────

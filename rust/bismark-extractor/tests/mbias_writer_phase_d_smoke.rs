@@ -115,7 +115,7 @@ fn smoke_mbias_se_directional_produces_se_format_mbias_txt() {
     writer.finish().unwrap();
 
     let output_dir = workdir.path().join("out");
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(&bam_path)
         .arg("--single-end")
         .arg("--output_dir")
@@ -179,7 +179,7 @@ fn smoke_mbias_pe_auto_detect_produces_pe_format_mbias_txt() {
     writer.finish().unwrap();
 
     let output_dir = workdir.path().join("out");
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     // No --paired-end / --single-end — let AutoDetect dispatch.
     cmd.arg(&bam_path)
         .arg("--output_dir")
@@ -242,7 +242,7 @@ fn smoke_mbias_txt_absent_with_mbias_off() {
     writer.finish().unwrap();
 
     let output_dir = workdir.path().join("out");
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(&bam_path)
         .arg("--single-end")
         .arg("--mbias_off")

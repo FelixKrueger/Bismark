@@ -87,7 +87,7 @@ fn empty_file_sweep_emits_perl_format_log_lines_on_stderr() {
     write_se_directional_one_cpg_record(&bam_path);
     let outdir = workdir.path().join("out");
 
-    let output = Command::cargo_bin("bismark_methylation_extractor_rs")
+    let output = Command::cargo_bin("bismark_methylation_extractor")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -161,7 +161,7 @@ fn splitting_report_byte_shape_matches_perl_format() {
     write_se_directional_one_cpg_record(&bam_path);
     let outdir = workdir.path().join("out");
 
-    Command::cargo_bin("bismark_methylation_extractor_rs")
+    Command::cargo_bin("bismark_methylation_extractor")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -256,7 +256,7 @@ fn splitting_report_yacht_mode_matches_perl_comprehensive_merge() {
     write_se_directional_one_cpg_record(&bam_path);
     let outdir = workdir.path().join("out");
 
-    Command::cargo_bin("bismark_methylation_extractor_rs")
+    Command::cargo_bin("bismark_methylation_extractor")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
@@ -350,7 +350,7 @@ fn mbias_only_mode_does_not_call_sweep_no_trailing_blank_lines() {
     write_se_directional_one_cpg_record(&bam_path);
     let outdir = workdir.path().join("out");
 
-    let output = Command::cargo_bin("bismark_methylation_extractor_rs")
+    let output = Command::cargo_bin("bismark_methylation_extractor")
         .unwrap()
         .arg(&bam_path)
         .arg("--single-end")
