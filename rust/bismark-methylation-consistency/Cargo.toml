@@ -1,6 +1,6 @@
 [package]
 name = "bismark-methylation-consistency"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's methylation_consistency script — splits a Bismark BAM by read-level methylation consistency"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,8 +19,8 @@ name = "methylation_consistency_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
-bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
 # noodles-sam pinned to match bismark-io's transitive choice (dedup/extractor
 # precedent). Needed directly for `Header` (returned by the reader's

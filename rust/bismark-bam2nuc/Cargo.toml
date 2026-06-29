@@ -1,6 +1,6 @@
 [package]
 name = "bismark-bam2nuc"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's bam2nuc script (mono-/di-nucleotide coverage QC)"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,7 +19,7 @@ name = "bam2nuc_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.18"
 # bismark-io supplies the magic-byte format sniff (AlignmentKind::from_path) for
@@ -28,7 +28,7 @@ thiserror = "=2.0.18"
 # and silently drops unmapped reads — bam2nuc is tag-agnostic (it counts the
 # GENOMIC sequence, never the read's bases) and must keep the SE die-on-stray-flag
 # contract faithful.
-bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
 # Genome FASTA reading (mirrors bismark-io/src/cram_ref.rs + c2c genome.rs pins).
 noodles-fasta = "=0.61.0"
 # Plain-gzip .fa.gz / .fasta.gz (Perl uses `gunzip -c`); MultiGzDecoder also

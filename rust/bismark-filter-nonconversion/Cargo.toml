@@ -1,6 +1,6 @@
 [package]
 name = "bismark-filter-nonconversion"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's filter_non_conversion script"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,14 +19,14 @@ name = "filter_non_conversion_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 # Used ONLY for `detect_paired_from_header` (the @PG SE/PE auto-detect). All
 # BAM record I/O goes through noodles directly (raw RecordBuf passthrough),
 # NOT bismark-io's BismarkRecord reader — that reader drops unmapped reads and
 # requires XR/XG, neither of which is faithful to filter_non_conversion's
 # verbatim, XM-only, all-records pass-through (SPEC §9, bam2nuc C-1 decision).
-bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
-# noodles pins match bismark-io =1.0.0-beta.8's transitive choice so the
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
+# noodles pins match bismark-io =1.0.0's transitive choice so the
 # `Header` / `RecordBuf` types are identical across the crate boundary.
 noodles-bam = "=0.89.0"
 noodles-sam = "=0.85.0"

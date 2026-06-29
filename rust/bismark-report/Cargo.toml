@@ -1,6 +1,6 @@
 [package]
 name = "bismark-report"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's bismark2report script (per-sample graphical HTML report)"
 edition.workspace = true
 rust-version.workspace = true
@@ -18,7 +18,7 @@ name = "bismark2report_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.18"
 # Local-time formatting for the default {{date}}/{{time}} (Perl `localtime`).
