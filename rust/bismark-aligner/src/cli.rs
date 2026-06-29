@@ -112,7 +112,10 @@ pub struct Cli {
     /// plus 1 spacer of the Illumina 5-Base `OverrideCycles U7N1Y#`). When greater than
     /// zero, reads are deduplicated by (UMI, chromosome, position, strand): PCR/optical
     /// duplicates are dropped (the first survives), removing methylation bias. 0 = off
-    /// (the default; the aligner soft-clips any UMI bases). Requires `--illumina_5base`.
+    /// (the default). When greater than zero, the UMI prefix is taken from the raw read,
+    /// so the methylation call relies on the aligner soft-clipping that prefix (minimap2
+    /// `-x sr` and bowtie2/hisat2-local do; soft-clipped bases produce no call). A
+    /// non-soft-clipping aligner would mis-frame the call. Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_len", value_name = "int", default_value_t = 0)]
     pub five_base_umi_len: usize,
     /// `[#787]` Minimum Phred base quality for a 5-Base methylation call. Read bases
@@ -122,11 +125,13 @@ pub struct Cli {
     /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
-    /// `[#787]` Minimum read MAPQ for a 5-Base methylation call / consensus family. Reads
-    /// below this are dropped (DRAGEN filters alt reads at MAPQ < 20). This removes
-    /// mis-mapped pile-ups in satellite/repeat regions (e.g. pericentromeric reads that
-    /// minimap2 places at MAPQ ~1), which otherwise inflate consensus coverage and diverge
-    /// from DRAGEN. 0 = off. Requires `--illumina_5base`.
+    /// `[#787]` Minimum read MAPQ for the experimental duplex/consensus family pass
+    /// (`--five_base_duplex` / `--five_base_consensus`). Reads below this are dropped from
+    /// the consensus collapse (DRAGEN filters alt reads at MAPQ < 20), removing mis-mapped
+    /// satellite/repeat pile-ups (e.g. pericentromeric reads minimap2 places at MAPQ ~1)
+    /// that otherwise inflate consensus coverage and diverge from DRAGEN. Does NOT filter
+    /// the core per-read methylation calls or the primary BAM. 0 = off. Requires
+    /// `--illumina_5base`.
     #[arg(long = "five_base_min_mapq", value_name = "MAPQ", default_value_t = 0)]
     pub five_base_min_mapq: u8,
     /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
