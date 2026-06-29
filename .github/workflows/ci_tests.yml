@@ -34,12 +34,12 @@ jobs:
 
       - name: Bismark help message
         shell: bash -l {0}
-        run: ./bismark --help
+        run: ./legacy/bismark --help
 
       - name: software versions
         shell: bash -l {0}
         run: |
-          ./bismark --version
+          ./legacy/bismark --version
           samtools --version
           bowtie2 --version
           hisat2 --version
@@ -48,85 +48,85 @@ jobs:
         shell: bash -l {0} # required: yes! see above
         run: |
           pwd
-          ./bismark_genome_preparation --verbose ./test_files/
-          ./bismark_genome_preparation --verbose --parallel 4 ./test_files/
+          ./legacy/bismark_genome_preparation --verbose ./test_files/
+          ./legacy/bismark_genome_preparation --verbose --parallel 4 ./test_files/
 
       - name: Bismark PE run
         shell: bash -l {0}
         run: |
-          ./bismark --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam
-          ./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./test_files/
-          ./bismark2report
-          ./bismark2summary
+          ./legacy/bismark --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/deduplicate_bismark --bam test_R1_bismark_bt2_pe.bam
+          ./legacy/bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --genome ./test_files/
+          ./legacy/bismark2report
+          ./legacy/bismark2summary
 
       - name: Bismark SE run
         shell: bash -l {0}
         run: |
-          ./bismark --genome ./test_files/ ./test_files/test_R1.fastq.gz
-          ./deduplicate_bismark --bam test_R1_bismark_bt2.bam
-          ./bismark_methylation_extractor test_R1_bismark_bt2.bam --gzip --CX --bed --genome ./test_files/
+          ./legacy/bismark --genome ./test_files/ ./test_files/test_R1.fastq.gz
+          ./legacy/deduplicate_bismark --bam test_R1_bismark_bt2.bam
+          ./legacy/bismark_methylation_extractor test_R1_bismark_bt2.bam --gzip --CX --bed --genome ./test_files/
 
       - name: Bismark run with option ICPC
         shell: bash -l {0}
         run: |
-          ./bismark --bowtie2 --icpc ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./bismark --bowtie2 --icpc ./test_files/ ./test_files/test_R1.fastq.gz
+          ./legacy/bismark --bowtie2 --icpc ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark --bowtie2 --icpc ./test_files/ ./test_files/test_R1.fastq.gz
 
       - name: Bismark run using HISAT2
         shell: bash -l {0}
         run: |
-          ./bismark_genome_preparation --hisat2 --verbose ./test_files/
-          ./bismark_genome_preparation --hisat2 --verbose --parallel 4 ./test_files/
-          ./bismark --genome ./test_files/ --hisat2 ./test_files/test_R1.fastq.gz
-          ./bismark --genome ./test_files/ --hisat2 -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./deduplicate_bismark --bam test_R1_bismark_hisat2.bam
-          ./bismark_methylation_extractor test_R1_bismark_hisat2.bam  --gzip --CX --bed --genome ./test_files/
-          ./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam  --gzip --CX --bed --genome ./test_files/
+          ./legacy/bismark_genome_preparation --hisat2 --verbose ./test_files/
+          ./legacy/bismark_genome_preparation --hisat2 --verbose --parallel 4 ./test_files/
+          ./legacy/bismark --genome ./test_files/ --hisat2 ./test_files/test_R1.fastq.gz
+          ./legacy/bismark --genome ./test_files/ --hisat2 -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/deduplicate_bismark --bam test_R1_bismark_hisat2.bam
+          ./legacy/bismark_methylation_extractor test_R1_bismark_hisat2.bam  --gzip --CX --bed --genome ./test_files/
+          ./legacy/bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam  --gzip --CX --bed --genome ./test_files/
 
       - name: Bismark run Multicore
         shell: bash -l {0}
         run: |
-          ./bismark --genome ./test_files/ --parallel 4 -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./bismark --genome ./test_files/ --hisat2 --parallel 4 -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --parallel 8 --genome ./test_files/
-          ./bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam --gzip --CX --bed --parallel 8 --genome ./test_files/
+          ./legacy/bismark --genome ./test_files/ --parallel 4 -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark --genome ./test_files/ --hisat2 --parallel 4 -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark_methylation_extractor test_R1_bismark_bt2_pe.bam --gzip --CX --bed --parallel 8 --genome ./test_files/
+          ./legacy/bismark_methylation_extractor test_R1_bismark_hisat2_pe.bam --gzip --CX --bed --parallel 8 --genome ./test_files/
 
       - name: coverage2cytosine
         shell: bash -l {0}
         run: |
-          ./coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --merge_CpG --genome ./test_files/ -o test.output
-          ./coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --NOMe-seq --genome ./test_files/ -o test.output
+          ./legacy/coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --merge_CpG --genome ./test_files/ -o test.output
+          ./legacy/coverage2cytosine test_R1_bismark_bt2_pe.bismark.cov.gz --NOMe-seq --genome ./test_files/ -o test.output
 
       - name: bam2nuc
         shell: bash -l {0}
         run: |
-          ./bam2nuc --genome_folder ./test_files/ --genomic_composition_only
-          ./bam2nuc --genome_folder ./test_files/ test_R1_bismark_bt2_pe.bam
-          ./bam2nuc --genome_folder ./test_files/ test_R1_bismark_hisat2_pe.bam
+          ./legacy/bam2nuc --genome_folder ./test_files/ --genomic_composition_only
+          ./legacy/bam2nuc --genome_folder ./test_files/ test_R1_bismark_bt2_pe.bam
+          ./legacy/bam2nuc --genome_folder ./test_files/ test_R1_bismark_hisat2_pe.bam
 
       - name: Additional scenarios
         shell: bash -l {0}
         run: |
-          ./bismark --pbat --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./bismark --non_directional --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./bismark --hisat2 --pbat --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
-          ./bismark --hisat2 --non_directional --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark --pbat --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark --non_directional --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark --hisat2 --pbat --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
+          ./legacy/bismark --hisat2 --non_directional --genome ./test_files/ -1 ./test_files/test_R1.fastq.gz -2 ./test_files/test_R2.fastq.gz
 
       - name: bismark2bedGraph
         shell: bash -l {0}
         run: |
-          ./bismark2bedGraph -o test.bedGraph --buffer 5G CpG_*
-          ./bismark2bedGraph -o test.bedGraph --ucsc --buffer 5G CpG_*
-          ./bismark2bedGraph -o test.bedGraph --CX --scaffolds CpG* CHG_* CHH_*
-          ./bismark2bedGraph -o test.bedGraph --CX --ample_memory --zero_based CpG* CHH_* CHG_*
+          ./legacy/bismark2bedGraph -o test.bedGraph --buffer 5G CpG_*
+          ./legacy/bismark2bedGraph -o test.bedGraph --ucsc --buffer 5G CpG_*
+          ./legacy/bismark2bedGraph -o test.bedGraph --CX --scaffolds CpG* CHG_* CHH_*
+          ./legacy/bismark2bedGraph -o test.bedGraph --CX --ample_memory --zero_based CpG* CHH_* CHG_*
 
       - name: Filte non-conversion
         shell: bash -l {0}
         run: |
-          ./filter_non_conversion test_R1_bismark_bt2_pe.bam
-          ./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_bt2.bam
-          ./filter_non_conversion test_R1_bismark_hisat2_pe.bam
-          ./filter_non_conversion --consecutive --threshold 6 test_R1_bismark_hisat2.bam
-          ./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_bt2_pe.bam
-          ./filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_hisat2_pe.bam
+          ./legacy/filter_non_conversion test_R1_bismark_bt2_pe.bam
+          ./legacy/filter_non_conversion --consecutive --threshold 6 test_R1_bismark_bt2.bam
+          ./legacy/filter_non_conversion test_R1_bismark_hisat2_pe.bam
+          ./legacy/filter_non_conversion --consecutive --threshold 6 test_R1_bismark_hisat2.bam
+          ./legacy/filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_bt2_pe.bam
+          ./legacy/filter_non_conversion --percentage_cutoff 66 --minimum_count 4 test_R1_bismark_hisat2_pe.bam

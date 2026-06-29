@@ -61,7 +61,7 @@ fn run_both_and_compare(work: &Path, label: &str) {
     std::fs::create_dir_all(work.join("perl")).unwrap();
     std::fs::create_dir_all(work.join("rust")).unwrap();
 
-    let perl_script = repo_root().join("bismark2report");
+    let perl_script = repo_root().join("legacy/bismark2report");
     let perl_status = Command::new("perl")
         .arg(&perl_script)
         .args(["--dir", "perl/"])

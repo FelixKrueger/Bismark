@@ -31,7 +31,7 @@ fn fake_indexer_dir(parent: &Path) -> PathBuf {
 /// the crate manifest: `rust/bismark-genome-preparation/` → repo root).
 fn perl_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../bismark_genome_preparation")
+        .join("../../legacy/bismark_genome_preparation")
         .canonicalize()
         .unwrap()
 }

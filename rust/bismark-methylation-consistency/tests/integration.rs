@@ -448,7 +448,7 @@ fn version_flag_prints_provenance() {
 /// on colossal where the tooling exists, and is a graceful no-op elsewhere.
 fn perl_script() -> Option<std::path::PathBuf> {
     let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../methylation_consistency");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy/methylation_consistency");
     if !script.exists() {
         return None;
     }

@@ -260,7 +260,7 @@ fn mixed_four_strand_extractor_coexist() {
 /// samtools are available. Returns `None` (caller skips) if anything is missing.
 fn perl_extractor_script() -> Option<PathBuf> {
     let script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bismark_methylation_extractor");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy/bismark_methylation_extractor");
     if !script.exists() {
         return None;
     }

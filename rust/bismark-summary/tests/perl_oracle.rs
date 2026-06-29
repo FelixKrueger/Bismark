@@ -19,7 +19,7 @@ use std::process::Command;
 
 fn perl_script() -> Option<PathBuf> {
     // crate dir = .../rust/bismark-summary ; Perl script = repo-root/bismark2summary
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bismark2summary");
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy/bismark2summary");
     let plotly = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plotly/plot.ly");
     if !p.exists() || !plotly.exists() {
         return None;

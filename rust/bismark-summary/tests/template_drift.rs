@@ -9,7 +9,7 @@ const TEMPLATE: &str = include_str!("../src/summary_template.html");
 
 #[test]
 fn embedded_template_matches_perl_heredoc() {
-    let src_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bismark2summary");
+    let src_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy/bismark2summary");
     if !src_path.exists() {
         eprintln!(
             "skipping: Perl source unavailable at {}",

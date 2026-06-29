@@ -2209,7 +2209,7 @@ fn autodetect_skipped_when_no_umi_flag_even_on_bclconvert_input() {
 /// Locate the in-repo Perl `deduplicate_bismark` and confirm perl + samtools are
 /// available. Returns `None` (caller skips) if anything is missing.
 fn perl_dedup_script() -> Option<PathBuf> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deduplicate_bismark");
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy/deduplicate_bismark");
     if !script.exists() {
         return None;
     }
