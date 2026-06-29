@@ -1,6 +1,6 @@
 [package]
 name = "bismark-io"
-version = "1.0.0-beta.8"
+version = "1.0.0"
 description = "Bismark-aware BAM/SAM/CRAM I/O on top of noodles"
 edition.workspace = true
 rust-version.workspace = true
@@ -30,7 +30,7 @@ thiserror = "2"
 smallvec = "=1.13.2"
 # Plain-gzip `.fa.gz`/`.fasta.gz` support in `genome::` (Perl uses `gunzip -c`);
 # MultiGzDecoder also decodes gzip-framed BGZF. Added additively for the
-# promoted whole-genome reader; the crate version is unchanged (=1.0.0-beta.8).
+# promoted whole-genome reader; the crate version is unchanged (=1.0.0).
 flate2 = "=1.1.9"
 
 [dev-dependencies]

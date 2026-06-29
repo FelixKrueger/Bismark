@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-aligner"
-version = "1.0.0-alpha.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-bam2nuc"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-io",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-bedgraph"
-version = "1.0.0-beta.2"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-meta",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-coverage2cytosine"
-version = "1.0.0-beta.2"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-meta",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-dedup"
-version = "1.2.1-beta.2"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-extractor"
-version = "1.0.0-beta.2"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-bedgraph",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-filter-nonconversion"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-io",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-genome-preparation"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-io"
-version = "1.0.0-beta.8"
+version = "1.0.0"
 dependencies = [
  "bstr",
  "flate2",
@@ -321,11 +321,11 @@ dependencies = [
 
 [[package]]
 name = "bismark-meta"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "bismark-methylation-consistency"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-io",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-nome-filtering"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-io",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-report"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "bismark-meta",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "bismark-summary"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",

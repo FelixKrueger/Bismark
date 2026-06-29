@@ -1,6 +1,6 @@
 [package]
 name = "bismark-nome-filtering"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's standalone NOMe_filtering script (per-read NOMe-Seq classifier)"
 edition.workspace = true
 rust-version.workspace = true
@@ -18,8 +18,8 @@ name = "NOMe_filtering_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
-bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.18"
 # Phase B: always-gzipped `.manOwar.txt.gz` output + gz-aware yacht input.

@@ -1,6 +1,6 @@
 [package]
 name = "bismark-dedup"
-version = "1.2.1-beta.2"
+version = "1.2.1"
 description = "Rust port of Bismark Perl's deduplicate_bismark script"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,8 +19,8 @@ name = "deduplicate_bismark_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
-bismark-io = { version = "=1.0.0-beta.8", path = "../bismark-io" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
 # noodles-sam pinned to match bismark-io =1.0.0's transitive choice.
 # Needed directly for `Header` (returned by `bismark_io::open_reader`
 # via `AnyReader::header`) and for test-helper types.

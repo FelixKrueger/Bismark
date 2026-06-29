@@ -1,6 +1,6 @@
 [package]
 name = "bismark-summary"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's bismark2summary project-level multi-sample aggregator"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,7 +19,7 @@ name = "bismark2summary_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 # bismark2summary opens NO BAM/SAM/CRAM (filename-only) and writes plain-text
 # outputs — so NO bismark-io, NO noodles, NO flate2. Pure CLI + text parsers +
 # string templating.

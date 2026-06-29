@@ -1,15 +1,14 @@
 [package]
 name = "bismark-meta"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Shared build-time version/provenance metadata for the Bismark Rust suite (internal — not published)"
-# Internal-only: this crate captures the SUITE version + git hash at build time
-# for every binary's `--version`. It is never published to crates.io.
-publish = false
+description = "Shared build-time version/provenance metadata for the Bismark Rust suite"
+# Captures the SUITE version + git hash at build time for every binary's `--version`.
+# Published at GA so the dependent suite crates have a resolvable registry dependency.
 
 [lib]
 path = "src/lib.rs"

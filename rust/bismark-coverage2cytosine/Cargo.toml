@@ -1,6 +1,6 @@
 [package]
 name = "bismark-coverage2cytosine"
-version = "1.0.0-beta.2"
+version = "1.0.0"
 description = "Rust port of Bismark Perl's coverage2cytosine script (Phase A: scaffold + CLI + genome reader)"
 edition.workspace = true
 rust-version.workspace = true
@@ -18,7 +18,7 @@ name = "coverage2cytosine_rs"
 path = "src/main.rs"
 
 [dependencies]
-bismark-meta = { path = "../bismark-meta" }
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }
 thiserror = "=2.0.18"
 # Genome FASTA reading (mirrors bismark-io/src/cram_ref.rs pins).
