@@ -192,14 +192,15 @@ pub struct RunConfig {
     /// #787: min Phred base quality for a 5-Base methylation call (0 = off; mask low-Q
     /// read bases as no-call). Requires `five_base`.
     pub five_base_baseq: u8,
-    /// #787: min read MAPQ for a 5-Base call / consensus family (0 = off; drop reads below
-    /// it — DRAGEN's MAPQ<20 filter, removes mis-mapped repeat pile-ups). Requires `five_base`.
+    /// #787: min read MAPQ for the experimental duplex/consensus family pass (0 = off; drop
+    /// reads below it — DRAGEN's MAPQ<20 filter, removes mis-mapped repeat pile-ups). Does
+    /// NOT filter the core per-read calls / primary BAM. Requires `five_base`.
     pub five_base_min_mapq: u8,
     /// #787: run the post-alignment DUPLEX-consensus family pass + report (per-molecule
-    /// reconciliation). SE only this PR. Requires `five_base` (guarded at resolve()).
+    /// reconciliation). SE + PE (PE is the real workflow). Requires `five_base` (guarded at resolve()).
     pub five_base_duplex: bool,
     /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
-    /// (implies `five_base_duplex`). SE only. Requires `five_base`.
+    /// (implies `five_base_duplex`). SE + PE (PE is the real workflow). Requires `five_base`.
     pub five_base_consensus: bool,
     /// #787: take the duplex UMI from the read NAME tail (`A+B` dual UMI) instead of inline
     /// read bases; the duplex partner carries `B+A`. Requires `five_base`; mutually
