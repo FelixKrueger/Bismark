@@ -269,6 +269,10 @@ fn minimap2_options(cli: &Cli) -> Result<String> {
             ));
         }
         "map-pb"
+    } else if cli.illumina_5base {
+        // #787: Illumina 5-Base is short-read Illumina data → the `sr` preset by
+        // default (no explicit `--mm2_*` given). An explicit preset above still wins.
+        "sr"
     } else {
         // Default OR explicit `--mm2_nanopore` → ONT (Perl 8404-8408).
         "map-ont"

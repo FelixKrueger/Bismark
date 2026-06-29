@@ -1309,6 +1309,7 @@ mod tests {
             read,
             &ext.unmodified_genomic_sequence,
             ext.read_conversion,
+            false,
             &mut c,
         );
         let rec = single_end_sam_output(
@@ -1366,6 +1367,7 @@ mod tests {
             read,
             &ext.unmodified_genomic_sequence,
             ext.read_conversion,
+            false,
             &mut c,
         );
         let rec = single_end_sam_output(
@@ -1411,6 +1413,7 @@ mod tests {
             read,
             &ext.unmodified_genomic_sequence,
             ext.read_conversion,
+            false,
             &mut c,
         );
         // forward call "H...z." → reversed on the '-' strand below.

@@ -33,6 +33,8 @@ pub mod config;
 pub mod convert;
 pub mod discovery;
 pub mod error;
+pub mod five_base_deconv;
+pub mod five_base_duplex;
 pub mod genome;
 pub mod inprocess;
 pub mod mapq;
@@ -72,13 +74,14 @@ use bismark_io::BamWriter;
 
 use crate::align::{
     AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
-    PairedSamStream, SamStream,
+    PairedSamStream, SamRecord, SamStream,
 };
 use crate::aux_out::AuxKind;
 use crate::config::{Aligner, LibraryType, ReadFormat, ReadLayout};
 use crate::genome::{Genome, read_genome_into_memory};
 use crate::merge::{
-    Counters, Decision, DecisionPaired, check_results_paired_end, check_results_single_end,
+    BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired,
+    check_results_paired_end, check_results_single_end,
 };
 use crate::methylation::{
     extract_corresponding_genomic_sequence_paired_end,
@@ -121,6 +124,11 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
+    // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
+    // entirely (resolve() requires reads; this path takes BAMs instead).
+    if !cli.five_base_consensus_from_bam.is_empty() {
+        return run_five_base_consensus_standalone(cli, &command_line);
+    }
     let mut config = resolve(cli, command_line)?;
     // #1025: transcode any alternative binary read inputs into temp FASTQ BEFORE
     // dispatch, so the byte-frozen convert→align→merge path runs unchanged. Phase 1
@@ -140,6 +148,18 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
+    }
+    // Never-silent opt-in notice (#787): --illumina_5base is the inverse-of-bisulfite
+    // 5-Base (5mC->T) mode — it aligns the RAW reads to the UNCONVERTED genome with
+    // minimap2 and calls methylation with inverted polarity. There is no Perl oracle
+    // for 5-Base, so this is NOT byte-identical; it is concordance-validated vs DRAGEN.
+    if config.five_base {
+        eprintln!(
+            "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
+             with minimap2 to the UNCONVERTED genome and methylation is called with inverted \
+             polarity (a read T at a genomic C = methylated). Directional only (SE + PE). \
+             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN."
+        );
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to
@@ -430,6 +450,75 @@ fn resolve_alt_inputs(
     Ok(temp_dirs)
 }
 
+/// `[#787]` Standalone duplex-consensus over one or more EXISTING 5-Base BAM(s), with NO
+/// re-alignment. Loads the genome, infers PE/SE from the first BAM's first record, and runs
+/// [`run_five_base_consensus`] over ALL the BAMs at once — families pair ACROSS files, so
+/// passing every lane's per-read BAM yields a full-depth consensus from already-aligned data.
+fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Result<()> {
+    let bams = &cli.five_base_consensus_from_bam;
+    if !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus_from_bam requires --illumina_5base".into(),
+        ));
+    }
+    let Some(genome_arg) = cli.genome.as_ref() else {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus_from_bam requires --genome <folder>".into(),
+        ));
+    };
+    let genome_dir = std::fs::canonicalize(genome_arg).map_err(|e| {
+        AlignerError::Validation(format!("consensus: --genome {}: {e}", genome_arg.display()))
+    })?;
+    let (fastas, _kind) = crate::discovery::discover_fastas(&genome_dir)?;
+    let genome = read_genome_into_memory(&fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, command_line);
+
+    // Infer PE/SE from the first mapped record of the first BAM (FLAG 0x1 = paired).
+    let mut probe = bismark_io::BamReader::from_path_without_sort_check(&bams[0]).map_err(|e| {
+        AlignerError::Validation(format!("consensus: open {}: {e}", bams[0].display()))
+    })?;
+    let paired_end = probe
+        .records()
+        .next()
+        .transpose()
+        .map_err(|e| {
+            AlignerError::Validation(format!("consensus: read {}: {e}", bams[0].display()))
+        })?
+        .map(|r| u16::from(r.inner().flags()) & 0x1 != 0)
+        .unwrap_or(false);
+
+    let umi_swap = if cli.five_base_umi_qname {
+        Some(crate::five_base_duplex::UmiSwap::DualPlus)
+    } else if cli.five_base_umi_len > 0 {
+        Some(crate::five_base_duplex::UmiSwap::RevComp)
+    } else {
+        None
+    };
+
+    let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&out_dir).ok();
+    let out_path = out_dir.join("five_base_consensus.bam");
+
+    let paths: Vec<&Path> = bams.iter().map(PathBuf::as_path).collect();
+    eprintln!(
+        "Note: 5-Base consensus-from-BAM over {} file(s) ({}); no re-alignment. Output: {}",
+        paths.len(),
+        if paired_end { "PE" } else { "SE" },
+        out_path.display()
+    );
+    run_five_base_consensus(
+        &genome,
+        &refid,
+        &paths,
+        &out_path,
+        &header,
+        umi_swap,
+        paired_end,
+        cli.five_base_min_mapq,
+    )
+}
+
 /// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
 /// types (directional/non-directional/pbat) AND both input formats (FastQ +
 /// FastA, Phase 9a) into the generalized `run_se`/`run_pe`. Phase 9b routes
@@ -440,6 +529,17 @@ fn pipeline(config: &RunConfig) -> Result<()> {
     // contiguous-chunk fan-out; N == 1 (the default) takes the proven single-core
     // direct path — byte-identical by construction (PLAN §3.1).
     let n = config.multicore;
+    // #787 Illumina 5-Base: a distinct path that aligns to the UNCONVERTED genome
+    // (no C->T read conversion) and inverts the methylation call. Guarded at resolve()
+    // to directional + minimap2 + single-instance, so it short-circuits here (SE + PE).
+    if config.five_base {
+        match &config.layout {
+            ReadLayout::SingleEnd { reads } => return run_se_five_base(config, reads),
+            ReadLayout::PairedEnd { mates1, mates2 } => {
+                return run_pe_five_base(config, mates1, mates2);
+            }
+        }
+    }
     match &config.layout {
         ReadLayout::SingleEnd { reads } => {
             if config.combined_index {
@@ -942,6 +1042,1666 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
+// ===========================================================================
+// #787 Illumina 5-Base single-end driver. Opt-in, never-silent, concordance-gated
+// (NOT byte-identical — Perl Bismark has no 5-Base oracle). Unlike the bisulfite
+// spine it does NOT convert the reads: it aligns the RAW reads to the UNCONVERTED
+// genome with ONE minimap2 instance, derives the strand from the SAM FLAG, and
+// reuses the byte-frozen genomic-extraction + (polarity-INVERTED) methylation_call
+// + single_end_sam_output. v1 = single-end + directional (guarded at resolve()).
+// ===========================================================================
+
+/// The aligner option string for a 5-Base run. minimap2 (the default) uses the
+/// resolved `-x sr …` options against the genome FASTA. bowtie2/hisat2 align the RAW
+/// reads to the user's NORMAL (unconverted) index with a permissive `--score-min`
+/// (the sparse C→T conversions are well within default scoring) — NOT the bisulfite
+/// option string. Used for BOTH the spawn argv and the report's "was run with" line.
+///
+/// Threads: the bisulfite minimap2 path hardcodes `-t 2` (Perl faithfulness, byte-
+/// frozen). The 5-Base path is NOT byte-identical, so there is no reason to throttle
+/// it. The aligner thread count is Bismark's `-p` (threads-to-aligner) knob, falling
+/// back to `--multicore`, then all logical CPUs — applied as minimap2 `-t N` /
+/// bowtie2,hisat2 `-p N`. (`-p` and `--multicore`/`--parallel` are different axes:
+/// `-p` = threads inside one aligner instance, `--multicore` = the fork model; for the
+/// single-instance 5-Base path `-p` is the right knob.)
+fn five_base_aligner_options(config: &RunConfig) -> String {
+    let n = config
+        .bowtie_threads
+        .filter(|&p| p > 0)
+        .or(if config.multicore > 1 {
+            Some(config.multicore)
+        } else {
+            None
+        })
+        .map(|p| p as usize)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|x| x.get())
+                .unwrap_or(2)
+        });
+    match config.aligner {
+        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n}"),
+        Aligner::Hisat2 => format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n}"),
+        // minimap2 (default 5-Base engine): reuse the resolved options but lift the
+        // faithful `-t 2` to `-t {n}` (all cores) for this non-byte-identical path.
+        _ => config.aligner_options.replace("-t 2", &format!("-t {n}")),
+    }
+}
+
+/// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
+/// <reads…>` (positional FASTA + reads). bowtie2/hisat2: `<opts> -x <index> {-U r |
+/// -1 r1 -2 r2}` against the user's unconverted index. `reads` is 1 (SE) or 2 (PE).
+fn five_base_build_argv(
+    config: &RunConfig,
+    opts: &str,
+    ref_path: &Path,
+    reads: &[&Path],
+) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    let mut args: Vec<OsString> = opts.split_whitespace().map(OsString::from).collect();
+    match config.aligner {
+        Aligner::Bowtie2 | Aligner::Hisat2 => {
+            let idx = config
+                .five_base_index
+                .as_ref()
+                .expect("five_base_index is required for bowtie2/hisat2 5-Base (guarded)");
+            args.push("-x".into());
+            args.push(idx.as_os_str().to_owned());
+            if reads.len() == 2 {
+                args.push("-1".into());
+                args.push(reads[0].as_os_str().to_owned());
+                args.push("-2".into());
+                args.push(reads[1].as_os_str().to_owned());
+            } else {
+                args.push("-U".into());
+                args.push(reads[0].as_os_str().to_owned());
+            }
+        }
+        _ => {
+            // minimap2: positional <genome.fa> then the read file(s).
+            args.push(ref_path.as_os_str().to_owned());
+            for r in reads {
+                args.push(r.as_os_str().to_owned());
+            }
+        }
+    }
+    args
+}
+
+/// Drive the 5-Base SE run: one aligner instance per read file against the
+/// unconverted reference/index, lockstep with the original FastQ, emitting a Bismark
+/// BAM and SE report. Mirrors `run_se`'s setup (genome / header / sinks / report) but
+/// swaps the convert+2-instance+merge core for [`five_base_align_and_call`].
+fn run_se_five_base(config: &RunConfig, reads: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token(); // minimap2 → "mm2"
+    let fb_opts = five_base_aligner_options(config); // engine option string (report + spawn)
+    // The single reference FASTA minimap2 aligns against (the UNCONVERTED genome).
+    let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
+
+    for read_file in reads {
+        let bam_path =
+            derive_output_path(read_file, config, &format!("_bismark_{tok}.bam"), ".bam");
+        eprintln!(
+            ">>> Writing 5-Base mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_sinks(read_file, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_file,
+            config,
+            &format!("_bismark_{tok}_SE_report.txt"),
+            "_SE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_file,
+                sequence_file2: None,
+                genome_folder: &genome_folder,
+                aligner_options: &fb_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+
+        let mut counters = Counters::default();
+        five_base_align_and_call(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_file),
+            &ref_path,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        // 5-Base is directional (the report's strand block is OT/OB only).
+        report::print_final_analysis_report_single_end(&mut report, &counters, true)?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+        eprintln!("{}", counters_summary(read_file, &counters));
+
+        // #787 optional variant/methylation deconvolution over the just-written BAM.
+        if config.five_base_deconvolution {
+            let deconv_path = derive_output_path(
+                read_file,
+                config,
+                &format!("_bismark_{tok}.5base_deconvolution.txt"),
+                ".5base_deconvolution.txt",
+            );
+            run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
+        }
+
+        // #787 the UMI swap model for the duplex key: read-name dual UMI (`A+B`),
+        // inline-bases (reverse-complement swap), or none (span-only key).
+        let umi_swap = if config.five_base_umi_qname {
+            Some(crate::five_base_duplex::UmiSwap::DualPlus)
+        } else if config.five_base_umi_len > 0 {
+            Some(crate::five_base_duplex::UmiSwap::RevComp)
+        } else {
+            None
+        };
+
+        // #787 optional duplex-consensus family pass over the just-written BAM.
+        if config.five_base_duplex {
+            let duplex_path = derive_output_path(
+                read_file,
+                config,
+                &format!("_bismark_{tok}.5base_duplex.txt"),
+                ".5base_duplex.txt",
+            );
+            run_five_base_duplex(&genome, &bam_path, &duplex_path, umi_swap)?;
+        }
+
+        // #787 optional duplex-consensus COLLAPSE → one consensus read per family.
+        if config.five_base_consensus {
+            let consensus_path = derive_output_path(
+                read_file,
+                config,
+                &format!("_bismark_{tok}.5base_consensus.bam"),
+                ".5base_consensus.bam",
+            );
+            run_five_base_consensus(
+                &genome,
+                &refid,
+                &[bam_path.as_path()],
+                &consensus_path,
+                &header,
+                umi_swap,
+                false, // SE
+                config.five_base_min_mapq,
+            )?;
+        }
+    }
+
+    // Delete the concatenated-reference temp, if one was written (multi-FASTA genome).
+    if let Some(tmp) = ref_tmp {
+        let _ = std::fs::remove_file(tmp);
+    }
+    Ok(())
+}
+
+/// Resolve the reference FASTA minimap2 will align against. A single-FASTA genome
+/// is passed through directly (no copy); a multi-FASTA genome is decompressed +
+/// concatenated once into a temp plain FASTA (so minimap2 sees one file, with the
+/// same contig names — hence the same RNAMEs the in-memory `genome`/`refid` use).
+/// Returns `(reference_path, Some(temp_to_delete))` for the multi-FASTA case.
+fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<PathBuf>)> {
+    let fastas = &config.genome.fastas;
+    if fastas.len() == 1 {
+        return Ok((fastas[0].clone(), None));
+    }
+    let tmp = config
+        .output
+        .output_dir
+        .join(".bismark_5base_concat_ref.fa");
+    let mut out = BufWriter::new(File::create(&tmp)?);
+    for f in fastas {
+        let file = File::open(f)?;
+        let mut r: Box<dyn BufRead> = if f.to_string_lossy().ends_with(".gz") {
+            Box::new(BufReader::new(MultiGzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+        std::io::copy(&mut r, &mut out)?;
+        out.write_all(b"\n")?; // guard against a missing trailing newline between files
+    }
+    out.flush()?;
+    Ok((tmp.clone(), Some(tmp)))
+}
+
+/// Spawn ONE minimap2 against `ref_path` (unconverted) with the RAW reads, then walk
+/// the original FastQ in lockstep with minimap2's primary SAM records (input order),
+/// emitting one Bismark record per read. `skip`/`upto` mirror `drive_merge`.
+fn five_base_align_and_call(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_file: &Path,
+    ref_path: &Path,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    // Per-engine argv against the UNCONVERTED reference/index (no read conversion):
+    // minimap2 reads the FASTA directly, bowtie2/hisat2 use the user's normal index.
+    let bin = &config.detected_aligner.path;
+    let opts = five_base_aligner_options(config);
+    let args = five_base_build_argv(config, &opts, ref_path, &[read_file]);
+    let mut child = std::process::Command::new(bin)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| {
+            AlignerError::Validation(format!(
+                "failed to spawn {} ({}): {e}",
+                config.aligner.name(),
+                bin.display()
+            ))
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+    let mut sam = BufReader::new(stdout);
+    let mut sam_line = String::new();
+
+    // Walk the original FastQ (4-line records) in lockstep with minimap2's primary
+    // records. minimap2 emits output in input order (one primary per read), so the
+    // pairing is positional; a qname mismatch is a hard desync error (never a silent
+    // miscall). `--secondary=no` + skipping supplementary keeps it 1:1.
+    let file = File::open(read_file)?;
+    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
+        Box::new(BufReader::new(MultiGzDecoder::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    // 5-Base forces whitespace-truncated qnames (the aligner truncates), so `icpc` is unused.
+    let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut count: u64 = 0;
+    // #787 UMI dedup: drop reads sharing (UMI, chrom, pos, strand). 0 ⇒ off.
+    let umi_len = config.five_base_umi_len;
+    let mut seen: std::collections::HashSet<(Vec<u8>, String, u32, u16)> =
+        std::collections::HashSet::new();
+    let mut dups: u64 = 0;
+    loop {
+        id.clear();
+        seq.clear();
+        plus.clear();
+        qual.clear();
+        let n1 = reader.read_until(b'\n', &mut id)?;
+        let n2 = reader.read_until(b'\n', &mut seq)?;
+        let n3 = reader.read_until(b'\n', &mut plus)?;
+        let n4 = reader.read_until(b'\n', &mut qual)?;
+        if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+            break;
+        }
+        count += 1;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            // skipped reads still consume their SAM primary to stay in lockstep.
+            let _ = five_base_next_primary(&mut sam, &mut sam_line)?;
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+
+        // #787: the 5-Base path hands the RAW FastQ to the aligner, which truncates the
+        // SAM QNAME at the first whitespace (SAM forbids spaces) — so a real Illumina
+        // header `@<name> 1:N:0:<index>` becomes just `<name>` in minimap2's output.
+        // Force whitespace truncation (icpc semantics) regardless of `--icpc` so the
+        // lockstep qname check matches; underscoring the comment would desync every read.
+        let fixed = convert::fix_id(convert::chomp_newline(&id), true);
+        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
+        let identifier = String::from_utf8_lossy(id_bytes).into_owned();
+        let seq_uc: Vec<u8> = convert::chomp_newline(&seq).to_ascii_uppercase();
+        let qual_bytes: Vec<u8> = convert::chomp_newline(&qual).to_vec();
+
+        let rec = five_base_next_primary(&mut sam, &mut sam_line)?.ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "minimap2 produced fewer records than reads (desync at read {identifier})"
+            ))
+        })?;
+        if rec.qname != identifier {
+            return Err(AlignerError::Validation(format!(
+                "5-Base SAM/FastQ desync: expected read {identifier}, minimap2 emitted {}",
+                rec.qname
+            )));
+        }
+
+        // UMI dedup (mapped reads only): drop a read whose (UMI, chrom, pos, strand)
+        // was already seen (a PCR/optical duplicate); the first survives.
+        if umi_len > 0 && rec.flag & 0x4 == 0 {
+            let umi: Vec<u8> = seq_uc.iter().take(umi_len).copied().collect();
+            if !seen.insert((umi, rec.rname.clone(), rec.pos, rec.flag & 0x10)) {
+                dups += 1;
+                continue;
+            }
+        }
+        counters.sequences_count += 1;
+        if let Some(mut record) = five_base_emit_record(
+            &rec,
+            &identifier,
+            &seq_uc,
+            &qual_bytes,
+            genome,
+            refid,
+            config.phred64,
+            config.five_base_baseq,
+            counters,
+        )? {
+            // #787 duplex: carry the raw UMI to the BAM (RX:Z:) so the duplex pass that
+            // re-reads the BAM can key families by it. Source it from the read NAME's
+            // dual-UMI tail (real Illumina) or from inline 5' bases (synthetic).
+            if config.five_base_umi_qname {
+                if let Some(rx) = bismark_io::umi::extract_barcode(identifier.as_bytes()) {
+                    record.set_rx(rx);
+                }
+            } else if umi_len > 0 {
+                let umi: Vec<u8> = seq_uc.iter().take(umi_len).copied().collect();
+                record.set_rx(&umi);
+            }
+            write_record(&mut sinks.bam, &record)?;
+        } else if rec.flag & 0x4 != 0 {
+            // unmapped → optional --unmapped FastQ (mirrors Decision::NoAlignment).
+            if let Some(w) = sinks.unmapped.as_mut() {
+                let seq_orig = convert::chomp_newline(&seq).to_vec();
+                write_se_aux_record(
+                    w,
+                    false,
+                    identifier.as_bytes(),
+                    &seq_orig,
+                    &plus,
+                    &qual_bytes,
+                )?;
+            }
+        }
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(AlignerError::Validation(format!(
+            "minimap2 exited with status {status}"
+        )));
+    }
+    if umi_len > 0 {
+        eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate read(s).");
+    }
+    Ok(())
+}
+
+/// Read the next PRIMARY SAM record from minimap2's stdout, skipping `@` headers
+/// and secondary (0x100) / supplementary (0x800) lines. `None` at EOF.
+fn five_base_next_primary<R: BufRead>(
+    reader: &mut R,
+    line: &mut String,
+) -> Result<Option<SamRecord>> {
+    loop {
+        line.clear();
+        let n = reader.read_line(line)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        if line.starts_with('@') {
+            continue;
+        }
+        let rec = SamRecord::parse(line)?;
+        if rec.flag & 0x100 != 0 || rec.flag & 0x800 != 0 {
+            continue; // secondary / supplementary — not the primary for this read
+        }
+        return Ok(Some(rec));
+    }
+}
+
+/// Mask read bases below the Phred base-quality threshold to `b'N'` for the methylation
+/// call ONLY (the BAM SEQ keeps the original read). `baseq == 0` ⇒ no masking (returns a
+/// plain copy). `offset` is 33 (Sanger/Phred+33) or 64 (`--phred64`). An `N` matches no
+/// genomic base, so `methylation_call` emits a no-call (`.`) there, cutting the per-base
+/// sequencing-error noise floor (#787 real-data finding; DRAGEN `--methylation-baseq`).
+fn mask_low_quality(seq: &[u8], qual: &[u8], baseq: u8, offset: u8) -> Vec<u8> {
+    if baseq == 0 {
+        return seq.to_vec();
+    }
+    let min = offset.saturating_add(baseq);
+    seq.iter()
+        .enumerate()
+        .map(|(i, &b)| match qual.get(i) {
+            Some(&q) if q < min => b'N',
+            _ => b,
+        })
+        .collect()
+}
+
+/// Turn one minimap2 primary [`SamRecord`] + the original read into a Bismark
+/// record with INVERTED (5-Base) methylation polarity, or `None` (unmapped, or the
+/// chromosome-edge length guard fired). Pure (no I/O) so it is unit-testable with a
+/// canned `SamRecord` + tiny in-memory genome. Increments the alignment-outcome and
+/// (via `methylation_call`/extraction) the methylation/strand counters.
+#[allow(clippy::too_many_arguments)]
+fn five_base_emit_record(
+    rec: &SamRecord,
+    identifier: &str,
+    seq_uc: &[u8],
+    qual_bytes: &[u8],
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    phred64: bool,
+    baseq: u8,
+    counters: &mut Counters,
+) -> Result<Option<bismark_io::BismarkRecord>> {
+    if rec.flag & 0x4 != 0 {
+        counters.no_single_alignment_found += 1;
+        return Ok(None);
+    }
+    counters.unique_best_alignment_count += 1;
+    // Strand from the FLAG: forward (0) → OT (index 0); reverse (0x10) → OB (index 1).
+    // Directional only in v1, so only the two original strands occur.
+    let index = if rec.flag & 0x10 != 0 { 1 } else { 0 };
+    let best = BestAlignment {
+        chromosome: rec.rname.clone(), // unconverted genome → no _CT_/_GA_ suffix
+        position: rec.pos,
+        index,
+        alignment_score: rec.alignment_score.unwrap_or(0),
+        alignment_score_second_best: rec.second_best,
+        md_tag: rec.md_tag.clone().unwrap_or_default(),
+        cigar: rec.cigar.clone(),
+        bowtie_sequence: rec.seq.clone(),
+        mapq: rec.mapq,
+    };
+    let ext = extract_corresponding_genomic_sequence_single_end(&best, genome, false, counters)?;
+    // Length guard (Perl 3127): the window must be read_len + 2; a shorter one means
+    // a chromosome-edge guard fired → skip (counted, not written).
+    if ext.unmodified_genomic_sequence.len() != seq_uc.len() + 2 {
+        counters.genomic_sequence_could_not_be_extracted_count += 1;
+        return Ok(None);
+    }
+    // THE inversion: five_base = true (5mC->T, the chemical inverse of bisulfite).
+    // Base-quality masking applies to the CALL ONLY; the BAM SEQ keeps the original read.
+    let call_seq = mask_low_quality(seq_uc, qual_bytes, baseq, if phred64 { 64 } else { 33 });
+    let methcall = methylation_call(
+        &call_seq,
+        &ext.unmodified_genomic_sequence,
+        ext.read_conversion,
+        true,
+        counters,
+    );
+    let record = single_end_sam_output(
+        identifier,
+        seq_uc,
+        qual_bytes,
+        &best,
+        &ext,
+        &methcall,
+        refid,
+        phred64,
+        // 5-Base UMIs are carried via --five_base_umi_qname (RX written by the 5-Base path);
+        // the general --barcode/--umi tag emission is not wired here, so pass no extra tags.
+        crate::output::BarcodeUmiTags::default(),
+    )?;
+    Ok(Some(record))
+}
+
+// ===========================================================================
+// #787 Illumina 5-Base PAIRED-END driver. Same model as the SE path, but minimap2
+// is run in PE mode (`<opts> ref.fa r1.fq r2.fq`) against the unconverted genome;
+// the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
+// byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
+// ===========================================================================
+
+/// Drive the 5-Base PE run: one minimap2 PE instance per mate-pair file against the
+/// unconverted reference, lockstep with the original FastQ pair, emitting a Bismark
+/// `_pe.bam` + PE report. Mirrors `run_pe`'s setup.
+fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
+    let started = Instant::now();
+    let genome = read_genome_into_memory(&config.genome.fastas)?;
+    let refid = build_refid(&genome);
+    let header = generate_sam_header(&genome, &config.command_line);
+    let genome_folder = format!("{}/", config.genome.genome_dir.display());
+    let tok = config.aligner.token();
+    let fb_opts = five_base_aligner_options(config);
+    let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
+
+    for (read_1, read_2) in mates1.iter().zip(mates2) {
+        let bam_path =
+            derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
+        eprintln!(
+            ">>> Writing 5-Base mapping results to {} <<<",
+            bam_path.display()
+        );
+        let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
+
+        let report_path = derive_output_path(
+            read_1,
+            config,
+            &format!("_bismark_{tok}_PE_report.txt"),
+            "_PE_report.txt",
+        );
+        let mut report = BufWriter::new(File::create(&report_path)?);
+        report::write_report_header(
+            &mut report,
+            &ReportHeader {
+                sequence_file: read_1,
+                sequence_file2: Some(read_2),
+                genome_folder: &genome_folder,
+                aligner_options: &fb_opts,
+                aligner: config.aligner,
+                library: config.library,
+            },
+        )?;
+
+        let mut counters = Counters::default();
+        five_base_align_and_call_pe(
+            config,
+            &genome,
+            &refid,
+            Path::new(read_1),
+            Path::new(read_2),
+            &ref_path,
+            &mut sinks,
+            &mut counters,
+        )?;
+
+        report::print_final_analysis_report_paired_ends(&mut report, &counters, true)?;
+        report::write_completion_line(&mut report, started.elapsed().as_secs())?;
+        report.flush()?;
+        sinks.finish()?;
+        eprintln!("{}", counters_summary_pe(read_1, read_2, &counters));
+
+        // #787 optional variant/methylation deconvolution over the just-written BAM.
+        if config.five_base_deconvolution {
+            let deconv_path = derive_output_path(
+                read_1,
+                config,
+                &format!("_bismark_{tok}_pe.5base_deconvolution.txt"),
+                "_pe.5base_deconvolution.txt",
+            );
+            run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
+        }
+
+        // #787 optional PAIRED-END duplex family pass over the just-written _pe.bam.
+        if config.five_base_duplex {
+            let umi_swap = if config.five_base_umi_qname {
+                Some(crate::five_base_duplex::UmiSwap::DualPlus)
+            } else if config.five_base_umi_len > 0 {
+                Some(crate::five_base_duplex::UmiSwap::RevComp)
+            } else {
+                None
+            };
+            let duplex_path = derive_output_path(
+                read_1,
+                config,
+                &format!("_bismark_{tok}_pe.5base_duplex.txt"),
+                "_pe.5base_duplex.txt",
+            );
+            run_five_base_duplex_pe(&genome, &bam_path, &duplex_path, umi_swap)?;
+
+            // #787 optional PE consensus COLLAPSE (one consensus read per duplex family).
+            if config.five_base_consensus {
+                let consensus_path = derive_output_path(
+                    read_1,
+                    config,
+                    &format!("_bismark_{tok}_pe.5base_consensus.bam"),
+                    "_pe.5base_consensus.bam",
+                );
+                run_five_base_consensus(
+                    &genome,
+                    &refid,
+                    &[bam_path.as_path()],
+                    &consensus_path,
+                    &header,
+                    umi_swap,
+                    true, // PE
+                    config.five_base_min_mapq,
+                )?;
+            }
+        }
+    }
+
+    if let Some(tmp) = ref_tmp {
+        let _ = std::fs::remove_file(tmp);
+    }
+    Ok(())
+}
+
+/// Spawn ONE minimap2 PE instance (`<opts> ref.fa r1.fq r2.fq`) and walk both FastQ
+/// files in lockstep with minimap2's primary records (two per pair, in input order).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn five_base_align_and_call_pe(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    ref_path: &Path,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<()> {
+    let bin = &config.detected_aligner.path;
+    let opts = five_base_aligner_options(config);
+    let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
+    let mut child = std::process::Command::new(bin)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| {
+            AlignerError::Validation(format!(
+                "failed to spawn {} ({}): {e}",
+                config.aligner.name(),
+                bin.display()
+            ))
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+    let mut sam = BufReader::new(stdout);
+    let mut sam_line = String::new();
+
+    let mut r1 = open_maybe_gz(read_1)?;
+    let mut r2 = open_maybe_gz(read_2)?;
+    let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
+    let mut count: u64 = 0;
+    // #787 UMI dedup (PE): key on both mates' UMIs + the R1 chrom/pos/strand.
+    let umi_len = config.five_base_umi_len;
+    let mut seen: std::collections::HashSet<(Vec<u8>, Vec<u8>, String, u32, u16)> =
+        std::collections::HashSet::new();
+    let mut dups: u64 = 0;
+    while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
+        let Some((_id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
+            break;
+        };
+        count += 1;
+        // Each pair always yields TWO minimap2 primaries (mapped or unmapped); consume
+        // them to stay in lockstep even for skipped reads.
+        let a = five_base_next_primary(&mut sam, &mut sam_line)?;
+        let b = five_base_next_primary(&mut sam, &mut sam_line)?;
+        if let Some(s) = skip
+            && s > 0
+            && count <= s
+        {
+            continue;
+        }
+        if let Some(u) = upto
+            && u > 0
+            && count > u
+        {
+            break;
+        }
+        let (Some(a), Some(b)) = (a, b) else {
+            return Err(AlignerError::Validation(
+                "minimap2 produced fewer PE records than read pairs (desync)".into(),
+            ));
+        };
+        // Identify R1 (FLAG 0x40) and R2 (FLAG 0x80) within the pair.
+        let (rec1, rec2) = if a.flag & 0x40 != 0 {
+            (&a, &b)
+        } else {
+            (&b, &a)
+        };
+
+        // #787: force whitespace truncation (see the SE path) — minimap2 PE truncates the
+        // QNAME at the first space, so the real Illumina header's `1:N:0:` comment must be
+        // dropped here too or every pair desyncs.
+        let fixed = convert::fix_id(convert::chomp_newline(&id1), true);
+        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
+        let identifier = strip_mate_suffix(&String::from_utf8_lossy(id_bytes));
+        let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
+        let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
+        let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
+        let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
+
+        // UMI dedup (proper pairs only): drop a pair whose (R1 UMI, R2 UMI, chrom,
+        // R1 pos, R1 strand) was already seen.
+        if umi_len > 0 && rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 {
+            let u1: Vec<u8> = seq1_uc.iter().take(umi_len).copied().collect();
+            let u2: Vec<u8> = seq2_uc.iter().take(umi_len).copied().collect();
+            if !seen.insert((u1, u2, rec1.rname.clone(), rec1.pos, rec1.flag & 0x10)) {
+                dups += 1;
+                continue;
+            }
+        }
+        counters.sequences_count += 1;
+        if let Some((mut out1, mut out2)) = five_base_emit_pe_record(
+            rec1,
+            rec2,
+            &identifier,
+            &seq1_uc,
+            &qual1_bytes,
+            &seq2_uc,
+            &qual2_bytes,
+            genome,
+            refid,
+            config.phred64,
+            config.dovetail,
+            config.five_base_baseq,
+            counters,
+        )? {
+            // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
+            if config.five_base_umi_qname {
+                if let Some(rx) = bismark_io::umi::extract_barcode(identifier.as_bytes()) {
+                    out1.set_rx(rx);
+                    out2.set_rx(rx);
+                }
+            } else if umi_len > 0 {
+                out1.set_rx(&seq1_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
+                out2.set_rx(&seq2_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
+            }
+            write_record(&mut sinks.bam, &out1)?;
+            write_record(&mut sinks.bam, &out2)?;
+        }
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(AlignerError::Validation(format!(
+            "minimap2 exited with status {status}"
+        )));
+    }
+    if umi_len > 0 {
+        eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).");
+    }
+    Ok(())
+}
+
+/// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
+/// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
+/// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
+/// a directional library produces. Pure (unit-testable), inverted polarity.
+#[allow(clippy::too_many_arguments)]
+fn five_base_emit_pe_record(
+    rec1: &SamRecord,
+    rec2: &SamRecord,
+    identifier: &str,
+    seq1_uc: &[u8],
+    qual1: &[u8],
+    seq2_uc: &[u8],
+    qual2: &[u8],
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    phred64: bool,
+    dovetail: bool,
+    baseq: u8,
+    counters: &mut Counters,
+) -> Result<Option<(bismark_io::BismarkRecord, bismark_io::BismarkRecord)>> {
+    // Require a proper pair with both mates mapped (5-Base v1: concordant pairs only).
+    let proper = rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 && rec2.flag & 0x4 == 0;
+    if !proper {
+        counters.no_single_alignment_found += 1;
+        return Ok(None);
+    }
+    counters.unique_best_alignment_count += 1;
+    let index = if rec1.flag & 0x10 != 0 { 3 } else { 0 }; // R1 reverse → OB, else OT
+    let best = BestAlignmentPaired {
+        chromosome: rec1.rname.clone(),
+        index,
+        position_1: rec1.pos,
+        position_2: rec2.pos,
+        cigar_1: rec1.cigar.clone(),
+        cigar_2: rec2.cigar.clone(),
+        md_tag_1: rec1.md_tag.clone().unwrap_or_default(),
+        md_tag_2: rec2.md_tag.clone().unwrap_or_default(),
+        bowtie_sequence_1: rec1.seq.clone(),
+        bowtie_sequence_2: rec2.seq.clone(),
+        flag_1: rec1.flag,
+        flag_2: rec2.flag,
+        sum_of_alignment_scores: rec1.alignment_score.unwrap_or(0)
+            + rec2.alignment_score.unwrap_or(0),
+        sum_of_alignment_scores_second_best: None,
+        mapq: rec1.mapq.min(rec2.mapq),
+    };
+    let ext = extract_corresponding_genomic_sequence_paired_end(&best, genome, counters)?;
+    if ext.unmodified_genomic_sequence_1.len() != seq1_uc.len() + 2
+        || ext.unmodified_genomic_sequence_2.len() != seq2_uc.len() + 2
+    {
+        counters.genomic_sequence_could_not_be_extracted_count += 1;
+        return Ok(None);
+    }
+    let off = if phred64 { 64 } else { 33 };
+    let call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
+    let call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
+    let mc1 = methylation_call(
+        &call1,
+        &ext.unmodified_genomic_sequence_1,
+        ext.read_conversion_1,
+        true,
+        counters,
+    );
+    let mc2 = methylation_call(
+        &call2,
+        &ext.unmodified_genomic_sequence_2,
+        ext.read_conversion_2,
+        true,
+        counters,
+    );
+    let (out1, out2) = paired_end_sam_output(
+        identifier,
+        seq1_uc,
+        seq2_uc,
+        qual1,
+        qual2,
+        &best,
+        &ext,
+        &mc1,
+        &mc2,
+        refid,
+        phred64,
+        dovetail,
+        // 5-Base UMIs use --five_base_umi_qname (RX written by the 5-Base path); the general
+        // --barcode/--umi tag emission is not wired here, so pass no extra tags.
+        crate::output::BarcodeUmiTags::default(),
+    )?;
+    Ok(Some((out1, out2)))
+}
+
+/// #787 deconvolution pass: read back the just-written 5-Base BAM, build the per-CpG
+/// two-strand pileup against the genome, classify each cytosine (variant vs 5mC) and
+/// write `<report_path>`. Reads are in SAM forward orientation; OT reads sequence the
+/// `+` strand, OB reads the `-` strand (in forward orientation). At a genomic `C` (CpG)
+/// the own strand is OT and the T-equivalent allele is `T`; at a genomic `G` the own
+/// strand is OB and the T-equivalent allele is `A`.
+fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &Path) -> Result<()> {
+    use crate::five_base_deconv::{DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC, Deconvoluter};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+        .map_err(|e| AlignerError::Validation(format!("deconvolution: open BAM: {e}")))?;
+    let mut dec = Deconvoluter::default();
+
+    for rec in reader.records() {
+        let rec = rec.map_err(|e| AlignerError::Validation(format!("deconvolution: {e}")))?;
+        let inner = rec.inner();
+        if u16::from(inner.flags()) & 0x4 != 0 {
+            continue; // unmapped
+        }
+        let xr = bismark_io::tags::xr(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("deconvolution: XR: {e}")))?;
+        let xg = bismark_io::tags::xg(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("deconvolution: XG: {e}")))?;
+        let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+            .map_err(|e| AlignerError::Validation(format!("deconvolution: strand: {e}")))?;
+        let (is_ot, is_ob) = (
+            strand == bismark_io::BismarkStrand::OT,
+            strand == bismark_io::BismarkStrand::OB,
+        );
+        if !is_ot && !is_ob {
+            continue; // directional 5-Base only ever yields OT/OB
+        }
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            continue;
+        };
+        let Some(chrom) = genome.sq_order.get(ref_id) else {
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else { continue };
+        let seq = inner.sequence().as_ref();
+        let Some(start) = inner.alignment_start() else {
+            continue;
+        };
+        let ref_start = usize::from(start) - 1; // 1-based POS → 0-based
+
+        let (mut ri, mut rp) = (0usize, ref_start);
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            match op.kind() {
+                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                    for _ in 0..len {
+                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
+                            // CpG `+`-strand cytosine: genomic C followed by G.
+                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
+                                dec.observe(
+                                    chrom,
+                                    rp as u32,
+                                    true,
+                                    is_ot,
+                                    base.eq_ignore_ascii_case(&b'T'),
+                                );
+                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                                // CpG `-`-strand cytosine: genomic G preceded by C.
+                                dec.observe(
+                                    chrom,
+                                    rp as u32,
+                                    false,
+                                    is_ob,
+                                    base.eq_ignore_ascii_case(&b'A'),
+                                );
+                            }
+                        }
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Kind::Insertion | Kind::SoftClip => ri += len,
+                Kind::Deletion | Kind::Skip => rp += len,
+                _ => {}
+            }
+        }
+    }
+
+    let mut w = BufWriter::new(File::create(report_path)?);
+    let s = dec.write_report(&mut w, DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)?;
+    w.flush()?;
+    eprintln!(
+        "5-Base deconvolution: {} variant CpG(s), {} methylation site(s), {} undetermined \
+         ({}/{} methylated calls kept). Report: {}",
+        s.variants,
+        s.methylation_sites,
+        s.undetermined,
+        s.methylated_calls,
+        s.total_calls,
+        report_path.display()
+    );
+    Ok(())
+}
+
+/// #787 DUPLEX-consensus pass: re-read the 5-Base BAM, group reads into duplex families
+/// (same genomic span + canonical swap-collapsed UMI, one OT + one OB member), and
+/// reconcile the 5mC->T signal per molecule into `<out>.5base_duplex.txt`. The UMI is
+/// read from the `RX:Z:` tag the emit path wrote when `--five_base_umi_len > 0`; without
+/// it, families key on span alone (a never-silent collision notice fires).
+fn run_five_base_duplex(
+    genome: &Genome,
+    bam_path: &Path,
+    report_path: &Path,
+    umi_swap: Option<crate::five_base_duplex::UmiSwap>,
+) -> Result<()> {
+    use crate::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, canonical_umi};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+        .map_err(|e| AlignerError::Validation(format!("duplex: open BAM: {e}")))?;
+    let mut fams = DuplexFamilies::default();
+    let mut missing_umi = false;
+
+    for rec in reader.records() {
+        let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex: {e}")))?;
+        let inner = rec.inner();
+        if u16::from(inner.flags()) & 0x4 != 0 {
+            continue; // unmapped
+        }
+        let xr = bismark_io::tags::xr(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("duplex: XR: {e}")))?;
+        let xg = bismark_io::tags::xg(inner.data())
+            .map_err(|e| AlignerError::Validation(format!("duplex: XG: {e}")))?;
+        let strand = bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+            .map_err(|e| AlignerError::Validation(format!("duplex: strand: {e}")))?;
+        let is_ot = strand == bismark_io::BismarkStrand::OT;
+        let is_ob = strand == bismark_io::BismarkStrand::OB;
+        if !is_ot && !is_ob {
+            continue; // directional 5-Base only ever yields OT/OB
+        }
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            continue;
+        };
+        let Some(chrom) = genome.sq_order.get(ref_id) else {
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else { continue };
+        let seq = inner.sequence().as_ref();
+        let Some(start) = inner.alignment_start() else {
+            continue;
+        };
+        let ref_start = usize::from(start) - 1; // 1-based POS → 0-based
+
+        // Canonical UMI from the RX tag (swap-collapsed so both members hash equal).
+        let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
+            match bismark_io::tags::rx(inner.data()) {
+                Ok(Some(raw)) => canonical_umi(raw, swap),
+                _ => {
+                    missing_umi = true;
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // One CIGAR walk: collect CpG-cytosine observations AND the reference end.
+        let (mut ri, mut rp) = (0usize, ref_start);
+        let mut obs: Vec<SiteObs> = Vec::new();
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            match op.kind() {
+                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                    for _ in 0..len {
+                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
+                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: true,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'T'),
+                                });
+                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: false,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'A'),
+                                });
+                            }
+                        }
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Kind::Insertion | Kind::SoftClip => ri += len,
+                Kind::Deletion | Kind::Skip => rp += len,
+                _ => {}
+            }
+        }
+        let key = DuplexKey {
+            chrom: chrom.clone(),
+            start: ref_start as u32,
+            end: rp as u32,
+            canon_umi,
+        };
+        // SE: the record's coverage-strand equals its molecule strand (OT ⇔ forward).
+        let coverage_forward = u16::from(inner.flags()) & 0x10 == 0;
+        fams.add_read(key, is_ot, coverage_forward, obs);
+    }
+
+    if umi_swap.is_none() || missing_umi {
+        eprintln!(
+            "Note: --five_base_duplex without per-read UMIs (use --five_base_umi_len or \
+             --five_base_umi_qname) keys families on genomic span alone; reads from DIFFERENT \
+             molecules sharing a span may be merged into one family."
+        );
+    }
+
+    let mut w = BufWriter::new(File::create(report_path)?);
+    let s = w_duplex_report(&mut w, &fams)?;
+    w.flush()?;
+    eprintln!(
+        "5-Base duplex: {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
+         site(s), {} variant site(s), {} undetermined. Report: {}",
+        s.total_families,
+        s.duplex_paired,
+        s.singletons,
+        s.methylation_sites,
+        s.variant_sites,
+        s.undetermined_sites,
+        report_path.display()
+    );
+    Ok(())
+}
+
+/// #787 PAIRED-END duplex pass over a 5-Base `_pe.bam`. The nonrandom-duplex library
+/// sequences each molecule as TWO read-pairs (top-strand + bottom-strand) with swapped
+/// UMIs; both map to the SAME fragment, so families key on the FRAGMENT outer span
+/// (POS + mate-pos + TLEN) plus the canonical dual UMI, and the two pairs land in one
+/// family without explicit R1/R2 pairing. Two strand concepts (cf. SE, where they
+/// coincide): the MOLECULE strand (which duplex pair: `R1-forward == OT`) drives family
+/// pairing; the COVERAGE strand (the record's FLAG orientation) drives per-CpG
+/// own/opposite reconciliation — R2 covers the opposite genomic strand from its R1, so
+/// strand is taken from the FLAG, never from R2's `CTOT`/`CTOB` tag.
+fn run_five_base_duplex_pe(
+    genome: &Genome,
+    bam_path: &Path,
+    report_path: &Path,
+    umi_swap: Option<crate::five_base_duplex::UmiSwap>,
+) -> Result<()> {
+    use crate::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, canonical_umi};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+        .map_err(|e| AlignerError::Validation(format!("duplex-pe: open BAM: {e}")))?;
+    let mut fams = DuplexFamilies::default();
+    let mut missing_umi = false;
+
+    for rec in reader.records() {
+        let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex-pe: {e}")))?;
+        let inner = rec.inner();
+        let flag = u16::from(inner.flags());
+        // Concordant primary pairs only (the 5-Base PE path emits proper pairs).
+        if flag & 0x4 != 0 || flag & 0x2 == 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
+            continue;
+        }
+        let tlen = inner.template_length();
+        if tlen == 0 {
+            continue;
+        }
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            continue;
+        };
+        let Some(chrom) = genome.sq_order.get(ref_id) else {
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else { continue };
+        let Some(start) = inner.alignment_start() else {
+            continue;
+        };
+        let pos0 = usize::from(start) - 1;
+        let Some(mate) = inner.mate_alignment_start() else {
+            continue;
+        };
+        let mate0 = usize::from(mate) - 1;
+        // Fragment outer span: identical for both mates and for the swapped-UMI partner.
+        let frag_start = pos0.min(mate0) as u32;
+        let frag_end = frag_start + tlen.unsigned_abs();
+
+        // Coverage strand (forward reads cover `+`), and molecule strand (which duplex
+        // pair): R1-forward / R2-reverse ⇒ top-strand pair (OT); R1-reverse / R2-forward
+        // ⇒ bottom-strand pair (OB).
+        let coverage_forward = flag & 0x10 == 0;
+        let is_r1 = flag & 0x40 != 0;
+        let molecule_is_ot = is_r1 == coverage_forward;
+
+        let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
+            match bismark_io::tags::rx(inner.data()) {
+                Ok(Some(raw)) => canonical_umi(raw, swap),
+                _ => {
+                    missing_umi = true;
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // CpG-cytosine observations from this record's CIGAR walk (BAM-forward bases).
+        let seq = inner.sequence().as_ref();
+        let (mut ri, mut rp) = (0usize, pos0);
+        let mut obs: Vec<SiteObs> = Vec::new();
+        for op in inner.cigar().as_ref().iter() {
+            let len = op.len();
+            match op.kind() {
+                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                    for _ in 0..len {
+                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
+                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: true,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'T'),
+                                });
+                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: false,
+                                    t_equivalent: base.eq_ignore_ascii_case(&b'A'),
+                                });
+                            }
+                        }
+                        ri += 1;
+                        rp += 1;
+                    }
+                }
+                Kind::Insertion | Kind::SoftClip => ri += len,
+                Kind::Deletion | Kind::Skip => rp += len,
+                _ => {}
+            }
+        }
+        let key = DuplexKey {
+            chrom: chrom.clone(),
+            start: frag_start,
+            end: frag_end,
+            canon_umi,
+        };
+        fams.add_read(key, molecule_is_ot, coverage_forward, obs);
+    }
+
+    if umi_swap.is_none() || missing_umi {
+        eprintln!(
+            "Note: --five_base_duplex (PE) without per-read UMIs (use --five_base_umi_qname) \
+             keys families on fragment span alone; reads from DIFFERENT molecules sharing a \
+             fragment may be merged into one family."
+        );
+    }
+
+    let mut w = BufWriter::new(File::create(report_path)?);
+    let s = w_duplex_report(&mut w, &fams)?;
+    w.flush()?;
+    eprintln!(
+        "5-Base duplex (PE): {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
+         site(s), {} variant site(s), {} undetermined. Report: {}",
+        s.total_families,
+        s.duplex_paired,
+        s.singletons,
+        s.methylation_sites,
+        s.variant_sites,
+        s.undetermined_sites,
+        report_path.display()
+    );
+    Ok(())
+}
+
+/// Thin wrapper so the duplex report uses the module's default thresholds.
+fn w_duplex_report<W: std::io::Write>(
+    w: &mut W,
+    fams: &crate::five_base_duplex::DuplexFamilies,
+) -> std::io::Result<crate::five_base_duplex::DuplexSummary> {
+    use crate::five_base_deconv::DEFAULT_VARIANT_OPP_FRAC;
+    use crate::five_base_duplex::DUPLEX_MIN_OPP_DEPTH;
+    fams.write_report(w, DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)
+}
+
+/// #787 duplex CONSENSUS collapse: re-read the 5-Base BAM, group reads into duplex
+/// families (same as the duplex pass), and emit ONE consensus read per paired family
+/// into a separate `<out>.5base_consensus.bam`. The consensus uses the asymmetric 5mC>T
+/// rule ([`crate::five_base_duplex::consensus_base`]): at a CpG the own strand carries
+/// the call and the opposite strand is the variant check (a cytosine gone on both
+/// strands is masked to `N`, so the methylation call becomes `.`); other positions
+/// reconcile by agreement/quality. The consensus carries a standard single-strand
+/// Bismark `XM`/`XR`/`XG`. Each member is mapped to reference coordinates by a CIGAR
+/// walk, so soft-clips (e.g. an inline UMI prefix) and indels are handled; only singleton
+/// (unpaired) families are skipped.
+///
+/// Unified SE + PE: families are keyed like the duplex passes (SE = the read's alignment
+/// span; PE = the FRAGMENT outer span from POS + mate-pos + TLEN). The MOLECULE strand
+/// (which duplex pair) gates pairing; the COVERAGE strand (FLAG orientation) buckets reads
+/// for reconciliation. At each reference position the forward-covering reads and the
+/// reverse-covering reads are each reduced to their highest-quality base, then combined by
+/// [`consensus_base`] (own = forward at a `+` CpG / reverse at a `-` CpG).
+#[allow(clippy::too_many_arguments)]
+fn run_five_base_consensus(
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    bam_paths: &[&Path],
+    consensus_bam_path: &Path,
+    header: &noodles_sam::Header,
+    umi_swap: Option<crate::five_base_duplex::UmiSwap>,
+    paired_end: bool,
+    min_mapq: u8,
+) -> Result<()> {
+    use crate::five_base_duplex::{SiteKind, canonical_umi, consensus_base};
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    use std::collections::{HashMap, HashSet};
+
+    /// One member's aligned read, as a reference-position → `(base, phred)` map built by
+    /// walking the CIGAR (soft-clips/indels handled). `start`/`end` bound the span.
+    struct Member {
+        start: u32,
+        end: u32,
+        covered: HashMap<u32, (u8, u8)>,
+        mapq: u8,
+    }
+    impl Member {
+        fn at(&self, p: u32) -> Option<(u8, u8)> {
+            self.covered.get(&p).copied()
+        }
+    }
+    /// A family's reads split by **molecule strand** (OT vs OB), plus the chrom + canonical
+    /// UMI for emission (PASS 2 only). The methylation call at a CpG is carried by the
+    /// molecule strand that owns that cytosine (OT for a `+` CpG, OB for a `-` CpG), so the
+    /// reconciliation MUST bucket by molecule strand, not coverage strand: a `-`-molecule
+    /// (OB) read can be coverage-forward yet shows the unmethylated `+` base (it reads the
+    /// complementary strand), which would dilute the `+` CpG 5mC signal by ~2× if mixed into
+    /// the "own" bucket. See [`consensus_base`] (`ot`/`ob` args == molecule strand).
+    #[derive(Default)]
+    struct Fam {
+        ot: Vec<Member>,
+        ob: Vec<Member>,
+        ref_id: usize,
+        canon_umi: Vec<u8>,
+    }
+    fn reduce(members: &[Member], p: u32) -> Option<(u8, u8)> {
+        members
+            .iter()
+            .filter_map(|m| m.at(p))
+            .max_by_key(|&(_, q)| q)
+    }
+    /// Compact, `Copy`, heap-free family key — keeps memory bounded across the millions of
+    /// (mostly singleton) families at WGS depth. The UMI is folded into a 64-bit hash;
+    /// collisions only matter WITHIN one identical `(ref_id, start, end)` fragment span,
+    /// where distinct UMIs are few, so they are effectively impossible.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    struct CKey {
+        ref_id: u32,
+        start: u32,
+        end: u32,
+        umi_hash: u64,
+    }
+    fn umi_hash(umi: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in umi {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+    /// Per-record key info (no covered map) shared by both passes.
+    struct KeyInfo {
+        ckey: CKey,
+        molecule_is_ot: bool,
+        ref_id: usize,
+        ref_start: u32,
+        canon_umi: Vec<u8>,
+    }
+    // Per-record key extraction (no covered map), or None to skip the record.
+    let key_of = |inner: &noodles_sam::alignment::RecordBuf| -> Result<Option<KeyInfo>> {
+        let flag = u16::from(inner.flags());
+        if flag & 0x4 != 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
+            return Ok(None);
+        }
+        // #787 MAPQ filter (DRAGEN's MAPQ<20): drop mis-mapped reads (repeat/satellite
+        // pile-ups) before they form/inflate a consensus family. Both passes use key_of,
+        // so the family counts AND the covered maps see the same filtered read set.
+        if min_mapq > 0 && inner.mapping_quality().map(u8::from).unwrap_or(255) < min_mapq {
+            return Ok(None);
+        }
+        let coverage_forward = flag & 0x10 == 0;
+        let Some(ref_id) = inner.reference_sequence_id() else {
+            return Ok(None);
+        };
+        if genome.sq_order.get(ref_id).is_none() {
+            return Ok(None);
+        }
+        let Some(start) = inner.alignment_start() else {
+            return Ok(None);
+        };
+        let ref_start = (usize::from(start) - 1) as u32;
+        let (molecule_is_ot, kstart, kend);
+        if paired_end {
+            if flag & 0x2 == 0 {
+                return Ok(None);
+            }
+            let tlen = inner.template_length();
+            let Some(mate) = inner.mate_alignment_start() else {
+                return Ok(None);
+            };
+            if tlen == 0 {
+                return Ok(None);
+            }
+            let mate0 = (usize::from(mate) - 1) as u32;
+            kstart = ref_start.min(mate0);
+            kend = kstart + tlen.unsigned_abs();
+            molecule_is_ot = (flag & 0x40 != 0) == coverage_forward;
+        } else {
+            let xr = bismark_io::tags::xr(inner.data())
+                .map_err(|e| AlignerError::Validation(format!("consensus: XR: {e}")))?;
+            let xg = bismark_io::tags::xg(inner.data())
+                .map_err(|e| AlignerError::Validation(format!("consensus: XG: {e}")))?;
+            match bismark_io::BismarkStrand::from_xr_xg(xr, xg)
+                .map_err(|e| AlignerError::Validation(format!("consensus: strand: {e}")))?
+            {
+                bismark_io::BismarkStrand::OT => molecule_is_ot = true,
+                bismark_io::BismarkStrand::OB => molecule_is_ot = false,
+                _ => return Ok(None),
+            }
+            // SE keys on the read's own span; walk ref-consuming CIGAR ops for the end.
+            let mut end = ref_start;
+            for op in inner.cigar().as_ref().iter() {
+                match op.kind() {
+                    Kind::Match
+                    | Kind::SequenceMatch
+                    | Kind::SequenceMismatch
+                    | Kind::Deletion
+                    | Kind::Skip => end += op.len() as u32,
+                    _ => {}
+                }
+            }
+            kstart = ref_start;
+            kend = end;
+        }
+        let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
+            match bismark_io::tags::rx(inner.data()) {
+                Ok(Some(raw)) => canonical_umi(raw, swap),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let ckey = CKey {
+            ref_id: ref_id as u32,
+            start: kstart,
+            end: kend,
+            umi_hash: umi_hash(&canon_umi),
+        };
+        Ok(Some(KeyInfo {
+            ckey,
+            molecule_is_ot,
+            ref_id,
+            ref_start,
+            canon_umi,
+        }))
+    };
+
+    // PASS 1 — count OT/OB reads per family (compact key only); find the paired families.
+    // Iterate ALL input BAMs so a molecule's two strands pair even across lanes/files.
+    let mut counts: HashMap<CKey, (u32, u32)> = HashMap::new();
+    for bam_path in bam_paths {
+        let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+            .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 1): {e}")))?;
+        for rec in reader.records() {
+            let rec = rec.map_err(|e| AlignerError::Validation(format!("consensus: {e}")))?;
+            if let Some(ki) = key_of(rec.inner())? {
+                let e = counts.entry(ki.ckey).or_default();
+                if ki.molecule_is_ot {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                }
+            }
+        }
+    }
+    let paired: HashSet<CKey> = counts
+        .iter()
+        .filter(|(_, (ot, ob))| *ot > 0 && *ob > 0)
+        .map(|(k, _)| *k)
+        .collect();
+    drop(counts); // free the per-family counters before pass 2
+
+    // PASS 2 — store members for the (few) paired families only; build their covered maps.
+    let mut fams: HashMap<CKey, Fam> = HashMap::new();
+    for bam_path in bam_paths {
+        let mut reader = bismark_io::BamReader::from_path_without_sort_check(bam_path)
+            .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 2): {e}")))?;
+        for rec in reader.records() {
+            let rec = rec.map_err(|e| AlignerError::Validation(format!("consensus: {e}")))?;
+            let inner = rec.inner();
+            let Some(ki) = key_of(inner)? else {
+                continue;
+            };
+            if !paired.contains(&ki.ckey) {
+                continue; // singleton family — never produces a consensus, so don't store it
+            }
+            let (molecule_is_ot, ref_id, ref_start) = (ki.molecule_is_ot, ki.ref_id, ki.ref_start);
+            // Build the per-reference-position (base, phred) map for this read.
+            let seq = inner.sequence().as_ref();
+            let quals = inner.quality_scores().as_ref();
+            let mut covered: HashMap<u32, (u8, u8)> = HashMap::new();
+            let (mut ri, mut rp) = (0usize, ref_start);
+            for op in inner.cigar().as_ref().iter() {
+                let len = op.len();
+                match op.kind() {
+                    Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                        for _ in 0..len {
+                            if let Some(&b) = seq.get(ri) {
+                                let q = quals.get(ri).copied().unwrap_or(40);
+                                covered.insert(rp, (b.to_ascii_uppercase(), q));
+                            }
+                            ri += 1;
+                            rp += 1;
+                        }
+                    }
+                    Kind::Insertion | Kind::SoftClip => ri += len,
+                    Kind::Deletion | Kind::Skip => rp += len as u32,
+                    Kind::HardClip | Kind::Pad => {}
+                }
+            }
+            let member = Member {
+                start: ref_start,
+                end: rp,
+                covered,
+                mapq: inner.mapping_quality().map(u8::from).unwrap_or(255),
+            };
+            let fam = fams.entry(ki.ckey).or_default();
+            fam.ref_id = ref_id;
+            if fam.canon_umi.is_empty() {
+                fam.canon_umi = ki.canon_umi;
+            }
+            if molecule_is_ot {
+                fam.ot.push(member);
+            } else {
+                fam.ob.push(member);
+            }
+        }
+    }
+
+    let mut writer = bismark_io::BamWriter::from_path(consensus_bam_path, header.clone())
+        .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?;
+    let (mut emitted, mut skipped) = (0u64, 0u64);
+
+    for fam in fams.values() {
+        // All families here are paired (filtered in pass 2).
+        let Some(chrom) = genome.sq_order.get(fam.ref_id) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(g) = genome.get(chrom) else {
+            skipped += 1;
+            continue;
+        };
+        let members = fam.ot.iter().chain(fam.ob.iter());
+        let start = members.clone().map(|m| m.start).min().unwrap_or(0);
+        let end = members.clone().map(|m| m.end).max().unwrap_or(0);
+        let mapq = members.map(|m| m.mapq).min().unwrap_or(0);
+        if end <= start {
+            skipped += 1;
+            continue;
+        }
+        let mut cons_seq: Vec<u8> = Vec::with_capacity((end - start) as usize);
+        let mut cons_qual: Vec<u8> = Vec::with_capacity((end - start) as usize);
+        for p in start..end {
+            let pu = p as usize;
+            let kind = if g.get(pu) == Some(&b'C') && g.get(pu + 1) == Some(&b'G') {
+                SiteKind::PlusCpG
+            } else if g.get(pu) == Some(&b'G') && pu > 0 && g.get(pu - 1) == Some(&b'C') {
+                SiteKind::MinusCpG
+            } else {
+                SiteKind::Other
+            };
+            let (b, q) = consensus_base(kind, reduce(&fam.ot, p), reduce(&fam.ob, p));
+            cons_seq.push(b);
+            cons_qual.push(q.saturating_add(33)); // phred → ASCII for the SAM QUAL field
+        }
+
+        // Synthesize the consensus and run it through the same inverted-call emit path as a
+        // normal 5-Base read. `cons_seq` is +ref-oriented and already holds BOTH strands'
+        // calls (PlusCpG → T/C at a genomic C; MinusCpG → A/G at a genomic G), so we emit it
+        // TWICE: a forward record (FLAG 0 → CT call → `+`-strand CpGs) AND a reverse record
+        // (FLAG 0x10 → GA call → `-`-strand CpGs). This lifts the former "+ strand only"
+        // limitation and doubles per-CpG-site coverage (each CpG dinucleotide is now scored
+        // from both cytosines). The BAM SEQ stays +ref-oriented for both (SAM convention).
+        let umi_str = if fam.canon_umi.is_empty() {
+            "NA".to_string()
+        } else {
+            String::from_utf8_lossy(&fam.canon_umi).into_owned()
+        };
+        let qname = format!("dpx:{chrom}:{start}-{end}:{umi_str}");
+        let mut wrote_any = false;
+        for flag in [0u16, 0x10] {
+            // The emit path takes the read in READ (5'->3') orientation: for a reverse record
+            // single_end_sam_output revcomps it back to +ref for the BAM, and the GA call +
+            // genomic extraction are read-oriented. cons_seq/cons_qual are +ref, so the
+            // reverse record passes their reverse-complement / reverse (matching a real OB
+            // read, whose raw FastQ seq is read-oriented).
+            let (eseq, equal): (Vec<u8>, Vec<u8>) = if flag & 0x10 != 0 {
+                let mut q = cons_qual.clone();
+                q.reverse();
+                (crate::output::revcomp(&cons_seq), q)
+            } else {
+                (cons_seq.clone(), cons_qual.clone())
+            };
+            let sam = SamRecord {
+                qname: qname.clone(),
+                flag,
+                rname: chrom.clone(),
+                pos: start + 1,
+                mapq,
+                cigar: format!("{}M", eseq.len()),
+                seq: String::from_utf8_lossy(&eseq).into_owned(),
+                qual: String::from_utf8_lossy(&equal).into_owned(),
+                alignment_score: Some(0),
+                second_best: None,
+                md_tag: None,
+                raw_line: String::new(),
+            };
+            let mut counters = Counters::default();
+            if let Some(record) = five_base_emit_record(
+                &sam,
+                &qname,
+                &eseq,
+                &equal,
+                genome,
+                refid,
+                false, // consensus QUAL is phred33
+                0,     // no base-quality masking on the consensus
+                &mut counters,
+            )? {
+                write_record(&mut writer, &record)?;
+                wrote_any = true;
+            }
+        }
+        if wrote_any {
+            emitted += 1;
+        } else {
+            skipped += 1; // chromosome-edge guard, etc.
+        }
+    }
+
+    writer
+        .finish()
+        .map_err(|e| AlignerError::Validation(format!("consensus: finalise BAM: {e}")))?;
+    eprintln!(
+        "5-Base duplex consensus ({}): {emitted} consensus read(s) emitted, {skipped} family(ies) \
+         skipped. BAM: {}",
+        if paired_end { "PE" } else { "SE" },
+        consensus_bam_path.display()
+    );
+    Ok(())
+}
+
+/// Open a (optionally gzipped) reader.
+fn open_maybe_gz(path: &Path) -> Result<Box<dyn BufRead>> {
+    let file = File::open(path)?;
+    if path.to_string_lossy().ends_with(".gz") {
+        Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))
+    } else {
+        Ok(Box::new(BufReader::new(file)))
+    }
+}
+
+/// Read one 4-line FastQ record (owned id/seq/plus/qual lines incl. trailing `\n`),
+/// or `None` at EOF / a truncated final record.
+#[allow(clippy::type_complexity)]
+fn read_fastq_record<R: BufRead>(
+    reader: &mut R,
+) -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)>> {
+    let (mut id, mut seq, mut plus, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let n1 = reader.read_until(b'\n', &mut id)?;
+    let n2 = reader.read_until(b'\n', &mut seq)?;
+    let n3 = reader.read_until(b'\n', &mut plus)?;
+    let n4 = reader.read_until(b'\n', &mut qual)?;
+    if n1 == 0 || n2 == 0 || n3 == 0 || n4 == 0 {
+        return Ok(None);
+    }
+    Ok(Some((id, seq, plus, qual)))
+}
+
+/// Strip a trailing `/1` or `/2` mate suffix from a read id (minimap2 reports the
+/// bare name for both mates; the PE record name carries no mate suffix).
+fn strip_mate_suffix(id: &str) -> String {
+    id.strip_suffix("/1")
+        .or_else(|| id.strip_suffix("/2"))
+        .unwrap_or(id)
+        .to_string()
+}
+
 /// A per-record aux writer (`--unmapped`/`--ambiguous`). The single-core path
 /// writes gzip inline (`Gz`); a Phase-9b chunk worker writes **plain** (`Plain`)
 /// to a temp file that the ordered merge re-emits through ONE `GzEncoder`
@@ -1278,6 +3038,7 @@ fn route_se_decision(
                 seq_uc,
                 &ext.unmodified_genomic_sequence,
                 ext.read_conversion,
+                false, // bisulfite polarity (frozen path)
                 counters,
             );
             let barcode_umi = config.barcode_umi_tags();
@@ -3336,12 +5097,14 @@ fn route_pe_decision(
                 seq1_uc,
                 &ext.unmodified_genomic_sequence_1,
                 ext.read_conversion_1,
+                false, // bisulfite polarity (frozen path)
                 counters,
             );
             let mc2 = methylation_call(
                 seq2_uc,
                 &ext.unmodified_genomic_sequence_2,
                 ext.read_conversion_2,
+                false, // bisulfite polarity (frozen path)
                 counters,
             );
             let barcode_umi = config.barcode_umi_tags();
@@ -5067,6 +6830,183 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- #787 Illumina 5-Base per-record emission (hermetic, no minimap2) ----
+
+    fn five_base_genome(chr: &str, seq: &[u8]) -> Genome {
+        let mut chromosomes = std::collections::HashMap::new();
+        chromosomes.insert(chr.to_string(), seq.to_vec());
+        Genome {
+            chromosomes,
+            sq_order: vec![chr.to_string()],
+        }
+    }
+
+    /// A forward (FLAG 0) read with a read `T` at a genomic C (downstream G) is a
+    /// METHYLATED CpG under 5-Base polarity → XM `Z` (the inverse of bisulfite, where
+    /// a read T at C is unmethylated `z`). Genome "AACGAATTTT": read "TGAA" at POS 3
+    /// (window "CGAATT") → i0 T vs C, downstream G → meCpG; i1..3 match/non-C → '.'.
+    #[test]
+    fn five_base_emit_forward_methylated_cpg() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_record(
+            &rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, 0, &mut c,
+        )
+        .unwrap()
+        .expect("forward mapped read emits a record");
+        let inner = out.inner();
+        assert_eq!(u16::from(inner.flags()), 0); // forward
+        let xm = bismark_io::tags::xm(inner.data()).unwrap();
+        assert_eq!(
+            xm, b"Z...",
+            "5-Base: read T at genomic C (CpG) = methylated Z"
+        );
+        assert_eq!(c.total_me_cpg, 1);
+        assert_eq!(c.total_unme_cpg, 0);
+        assert_eq!(c.unique_best_alignment_count, 1);
+    }
+
+    /// The same locus but the read keeps the C (read "CGAA") is UNMETHYLATED under
+    /// 5-Base → lower-case `z` (the exact inverse of bisulfite's `Z`).
+    #[test]
+    fn five_base_emit_forward_unmethylated_cpg() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tCGAA\tIIII\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_record(
+            &rec, "r1", b"CGAA", b"IIII", &genome, &refid, false, 0, &mut c,
+        )
+        .unwrap()
+        .unwrap();
+        let xm = bismark_io::tags::xm(out.inner().data()).unwrap();
+        assert_eq!(xm, b"z...");
+        assert_eq!(c.total_unme_cpg, 1);
+        assert_eq!(c.total_me_cpg, 0);
+    }
+
+    /// `mask_low_quality`: bases below the Phred threshold become `N`; `baseq=0` is a
+    /// passthrough.
+    #[test]
+    fn mask_low_quality_masks_below_threshold() {
+        // qual "!" = Phred 0, "I" = Phred 40 (Phred+33). threshold 20 → only the '!' masks.
+        assert_eq!(mask_low_quality(b"ACGT", b"!III", 20, 33), b"NCGT");
+        assert_eq!(mask_low_quality(b"ACGT", b"!III", 0, 33), b"ACGT"); // off
+        assert_eq!(mask_low_quality(b"ACGT", b"IIII", 20, 33), b"ACGT"); // all high-Q
+    }
+
+    /// With `--five_base_baseq`, a low-quality read base at a methylated CpG is masked to
+    /// a no-call (`.`) instead of `Z` — cutting the sequencing-error noise floor.
+    #[test]
+    fn five_base_emit_baseq_masks_low_quality_call() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\t!III\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_record(
+            &rec, "r1", b"TGAA", b"!III", &genome, &refid, false, 20, &mut c,
+        )
+        .unwrap()
+        .unwrap();
+        let xm = bismark_io::tags::xm(out.inner().data()).unwrap();
+        assert_eq!(xm, b"....", "low-Q CpG base is a no-call, not Z");
+        assert_eq!(c.total_me_cpg, 0);
+    }
+
+    /// An unmapped primary (FLAG 4) yields no record and counts as no-alignment.
+    #[test]
+    fn five_base_emit_unmapped_is_none() {
+        let genome = five_base_genome("chr1", b"AACGAATTTT");
+        let refid = build_refid(&genome);
+        let rec = SamRecord::parse("r1\t4\t*\t0\t0\t*\t*\t0\t0\tTGAA\tIIII").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_record(
+            &rec, "r1", b"TGAA", b"IIII", &genome, &refid, false, 0, &mut c,
+        )
+        .unwrap();
+        assert!(out.is_none());
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    /// A proper FR pair (R1 forward FLAG 99, R2 reverse FLAG 147) → PE index 0 (OT);
+    /// R1's window is identical to the SE index-0 case, so a read `T` at a genomic CpG
+    /// C is methylated (`Z`) under 5-Base. Output FLAGs are the Bismark PE 99/147, and
+    /// the pair counts as one unique-best alignment.
+    #[test]
+    fn five_base_emit_pe_forward_pair_methylated_and_flags() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA"); // 16 bp
+        let refid = build_refid(&genome);
+        let r1 = SamRecord::parse("p\t99\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t147\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII\tAS:i:0").unwrap();
+        let mut c = Counters::default();
+        let (o1, o2) = five_base_emit_pe_record(
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
+            &mut c,
+        )
+        .unwrap()
+        .expect("proper pair emits two records");
+        assert_eq!(u16::from(o1.inner().flags()), 99); // R1 OT output FLAG
+        assert_eq!(u16::from(o2.inner().flags()), 147); // R2 OT output FLAG
+        let xm1 = bismark_io::tags::xm(o1.inner().data()).unwrap();
+        assert_eq!(
+            xm1, b"Z...",
+            "R1 5-Base: read T at genomic CpG C = methylated Z"
+        );
+        assert_eq!(c.unique_best_alignment_count, 1);
+        assert_eq!(c.total_me_cpg, 1);
+    }
+
+    /// A non-proper pair (R1 not flagged 0x2, e.g. one mate unmapped) emits nothing and
+    /// counts as no-alignment.
+    #[test]
+    fn five_base_emit_pe_improper_pair_is_none() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        // R1 mapped but NOT a proper pair (no 0x2); R2 unmapped (0x4).
+        let r1 = SamRecord::parse("p\t73\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t133\t*\t0\t0\t*\t*\t0\t0\tGAAT\tIIII").unwrap();
+        let mut c = Counters::default();
+        let out = five_base_emit_pe_record(
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
+            &mut c,
+        )
+        .unwrap();
+        assert!(out.is_none());
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    /// `five_base_next_primary` skips `@` headers + secondary (0x100) / supplementary
+    /// (0x800) lines and returns primaries in order.
+    #[test]
+    fn five_base_next_primary_skips_headers_and_secondary() {
+        let sam = "@HD\tVN:1.0\n\
+                   @SQ\tSN:chr1\tLN:10\n\
+                   r1\t0\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\n\
+                   r1\t256\tchr1\t7\t0\t4M\t*\t0\t0\tTGAA\tIIII\n\
+                   r2\t16\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\n";
+        let mut reader = std::io::BufReader::new(sam.as_bytes());
+        let mut line = String::new();
+        let a = five_base_next_primary(&mut reader, &mut line)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.qname, "r1");
+        assert_eq!(a.flag, 0);
+        let b = five_base_next_primary(&mut reader, &mut line)
+            .unwrap()
+            .unwrap();
+        assert_eq!(b.qname, "r2"); // the 0x100 secondary line was skipped
+        assert_eq!(b.flag, 16);
+        assert!(
+            five_base_next_primary(&mut reader, &mut line)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn barcode_umi_notice_emitted_when_fields_missing() {

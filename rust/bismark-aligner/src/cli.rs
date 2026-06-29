@@ -82,6 +82,89 @@ pub struct Cli {
     /// inert (the in-process path isn't compiled, so the subprocess runs).
     #[arg(long = "rammap_inprocess")]
     pub rammap_inprocess: bool,
+    /// `[v2, opt-in, never-silent, concordance-gated]` Illumina 5-Base (5mC->T)
+    /// mode. Unlike bisulfite, the 5-Base chemistry converts METHYLATED C to T and
+    /// leaves unmethylated C intact, so reads keep full complexity and align to the
+    /// UNCONVERTED genome with a standard aligner; methylation is then called with
+    /// inverted polarity (a read T at a genomic C = methylated). v1 is single-end +
+    /// directional only and aligns with minimap2 (`-x sr`) against the raw genome
+    /// FASTA. NOT byte-identical (Perl Bismark has no 5-Base oracle); validated by
+    /// concordance with DRAGEN. See FelixKrueger/Bismark#787.
+    #[arg(long = "illumina_5base", visible_alias = "five_base")]
+    pub illumina_5base: bool,
+    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, deconvolute
+    /// methylation from C>T/G>A genetic variants using both strands (DRAGEN's rule), and
+    /// write a per-CpG report `<out>.5base_deconvolution.txt` (chrom, pos, strand,
+    /// verdict, methylated, total, %). A CpG whose OPPOSITE strand also lost the cytosine
+    /// is a variant, not 5mC, and is excluded from the methylation totals. Requires
+    /// `--illumina_5base`. EXPERIMENTAL: not byte-identity- or per-site-concordance-gated;
+    /// the supported output is the core per-read 5-Base BAM.
+    #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
+    pub five_base_deconvolution: bool,
+    /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
+    /// used by `--illumina_5base --bowtie2`/`--hisat2`. 5-Base reads keep full
+    /// complexity, so they align to the plain genome index (build it once with
+    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
+    /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
+    #[arg(long = "five_base_index", value_name = "BASENAME")]
+    pub five_base_index: Option<PathBuf>,
+    /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI
+    /// plus 1 spacer of the Illumina 5-Base `OverrideCycles U7N1Y#`). When greater than
+    /// zero, reads are deduplicated by (UMI, chromosome, position, strand): PCR/optical
+    /// duplicates are dropped (the first survives), removing methylation bias. 0 = off
+    /// (the default; the aligner soft-clips any UMI bases). Requires `--illumina_5base`.
+    #[arg(long = "five_base_umi_len", value_name = "int", default_value_t = 0)]
+    pub five_base_umi_len: usize,
+    /// `[#787]` Minimum Phred base quality for a 5-Base methylation call. Read bases
+    /// below this are ignored in the call (emitted as no-call), cutting the per-base
+    /// sequencing-error noise floor that otherwise inflates non-CpG "methylation"
+    /// (DRAGEN's `--methylation-baseq-threshold` precedent). 0 = off. The BAM SEQ is
+    /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
+    #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
+    pub five_base_baseq: u8,
+    /// `[#787]` Minimum read MAPQ for a 5-Base methylation call / consensus family. Reads
+    /// below this are dropped (DRAGEN filters alt reads at MAPQ < 20). This removes
+    /// mis-mapped pile-ups in satellite/repeat regions (e.g. pericentromeric reads that
+    /// minimap2 places at MAPQ ~1), which otherwise inflate consensus coverage and diverge
+    /// from DRAGEN. 0 = off. Requires `--illumina_5base`.
+    #[arg(long = "five_base_min_mapq", value_name = "MAPQ", default_value_t = 0)]
+    pub five_base_min_mapq: u8,
+    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
+    /// of each original molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and
+    /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`. PE keys
+    /// each family on the FRAGMENT span (POS + mate-pos + TLEN) + canonical dual UMI — the
+    /// real workflow (Illumina 5-Base is paired-end). SE-duplex is a KNOWN LIMITATION:
+    /// single-end OT/OB reads cover opposite fragment ends with different spans, so they do
+    /// not pair on real data (SE is not a real 5-Base workflow). Use `--five_base_umi_qname`
+    /// (real data) or `--five_base_umi_len` for the UMI key. EXPERIMENTAL: not gated.
+    /// Requires `--illumina_5base`.
+    #[arg(long = "five_base_duplex")]
+    pub five_base_duplex: bool,
+    /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to a consensus in
+    /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
+    /// `--five_base_duplex` (SE + PE; PE is the real workflow). Reconciled by MOLECULE strand
+    /// (the OT molecule owns a `+` CpG, the OB molecule a `-` CpG); the opposite strand is the
+    /// variant check (a cytosine gone on BOTH strands is masked to `N`). Emits a forward AND a
+    /// reverse record per family, so BOTH strands of every CpG are scored. DRAGEN-validated on
+    /// real NA12878 (both strands r ≈ 0.77). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
+    #[arg(long = "five_base_consensus")]
+    pub five_base_consensus: bool,
+    /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of
+    /// inline read bases. Real Illumina 5-Base data carries a DUAL UMI as the tail
+    /// `:`-field of the qname written `A+B` (e.g. `...:1070:ANCGTTG+NGGTGTA`), with the
+    /// duplex partner's halves swapped (`B+A`); canonicalizing collapses the swap into one
+    /// family key. Use this instead of `--five_base_umi_len` for real data (mutually
+    /// exclusive). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
+    #[arg(long = "five_base_umi_qname")]
+    pub five_base_umi_qname: bool,
+    /// `[#787 EXPERIMENTAL/PREVIEW]` Run ONLY the duplex-consensus collapse over one or more
+    /// EXISTING 5-Base `_pe.bam`/`.bam` files (repeat the flag per file) — no re-alignment.
+    /// Families pair ACROSS all the given BAMs, so passing every lane's BAM yields a
+    /// full-depth consensus. Writes `<output_dir>/five_base_consensus.bam`. Requires
+    /// `--illumina_5base` + `--genome`; honours `--five_base_umi_qname`. When set, the normal
+    /// align pipeline is skipped.
+    #[arg(long = "five_base_consensus_from_bam", value_name = "BAM")]
+    pub five_base_consensus_from_bam: Vec<std::path::PathBuf>,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

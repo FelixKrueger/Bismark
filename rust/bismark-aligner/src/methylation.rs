@@ -556,10 +556,24 @@ pub fn extract_corresponding_genomic_sequence_paired_end(
 /// (4832–4912; the SE-directional spine) or the GA branch (4913–4998; non-dir/
 /// pbat — ported for Phase 8, inert here). Context look-ups past the window end
 /// behave as Perl's out-of-range access (a non-`G`/non-`C`/non-`N`/`X` sentinel).
+///
+/// ## `five_base` — the Illumina 5-Base polarity inversion (#787)
+///
+/// Bisulfite/EM-seq convert *un*methylated C to T, so a read base that MATCHES a
+/// genomic C means the C was protected = **methylated** (upper-case), and a read
+/// `T` at a genomic C means it was converted = **unmethylated** (lower-case).
+/// Illumina 5-Base is the chemical INVERSE: the enzyme converts **5mC -> T** and
+/// leaves unmethylated C as C. So with `five_base = true` the two C-position
+/// verdicts swap: a matched C is **unmethylated** and a read `T` (or `A` on the
+/// GA branch) at a genomic C/G is **methylated**. Nothing else changes — context
+/// classification (CpG/CHG/CHH) and the `.`/unknown cases are polarity-agnostic,
+/// and the emitted `XM` vocabulary (`z/Z x/X h/H u/U .`) stays Bismark-standard.
+/// `five_base = false` is byte-identical to the frozen bisulfite path.
 pub fn methylation_call(
     seq: &[u8],
     genomic: &[u8],
     read_conversion: Conversion,
+    five_base: bool,
     counters: &mut Counters,
 ) -> Vec<u8> {
     let mut call = Vec::with_capacity(seq.len());
@@ -572,12 +586,14 @@ pub fn methylation_call(
                 let g = at(i);
                 if base == g {
                     if g == b'C' {
-                        push_ct_context(at(i + 1), at(i + 2), true, &mut call, counters);
+                        // bisulfite: matched C = methylated; 5-Base: unmethylated.
+                        push_ct_context(at(i + 1), at(i + 2), !five_base, &mut call, counters);
                     } else {
                         call.push(b'.');
                     }
                 } else if g == b'C' && base == b'T' {
-                    push_ct_context(at(i + 1), at(i + 2), false, &mut call, counters);
+                    // bisulfite: read T at C = unmethylated; 5-Base: methylated (5mC->T).
+                    push_ct_context(at(i + 1), at(i + 2), five_base, &mut call, counters);
                 } else {
                     call.push(b'.');
                 }
@@ -590,12 +606,12 @@ pub fn methylation_call(
                 let g = at(i + 2);
                 if base == g {
                     if g == b'G' {
-                        push_ga_context(at(i + 1), at(i), true, &mut call, counters);
+                        push_ga_context(at(i + 1), at(i), !five_base, &mut call, counters);
                     } else {
                         call.push(b'.');
                     }
                 } else if g == b'G' && base == b'A' {
-                    push_ga_context(at(i + 1), at(i), false, &mut call, counters);
+                    push_ga_context(at(i + 1), at(i), five_base, &mut call, counters);
                 } else {
                     call.push(b'.');
                 }
@@ -898,7 +914,7 @@ mod tests {
         // i0: seq C == g[0] C, downstream g[1]=G → Z (meCpG)
         // i1: seq C != g[1] G (and not C→T) → '.'
         // i2: seq C == g[2] C, downstream g[3]=A, 2nd g[4]=A → H (meCHH)
-        let call = methylation_call(b"CCC", b"CGCAAA", Conversion::Ct, &mut c);
+        let call = methylation_call(b"CCC", b"CGCAAA", Conversion::Ct, false, &mut c);
         assert_eq!(call, b"Z.H");
         assert_eq!(c.total_me_cpg, 1);
         assert_eq!(c.total_me_chh, 1);
@@ -908,7 +924,7 @@ mod tests {
     fn methylation_call_unmethylated_cpg_lowercase_z() {
         // read T where genomic C, downstream G → converted CpG → 'z'
         let mut c = Counters::default();
-        let call = methylation_call(b"T", b"CGA", Conversion::Ct, &mut c);
+        let call = methylation_call(b"T", b"CGA", Conversion::Ct, false, &mut c);
         assert_eq!(call, b"z");
         assert_eq!(c.total_unme_cpg, 1);
     }
@@ -917,7 +933,7 @@ mod tests {
     fn methylation_call_unknown_context_via_n() {
         // C==C, downstream N → unknown methylated → 'U'
         let mut c = Counters::default();
-        let call = methylation_call(b"C", b"CNA", Conversion::Ct, &mut c);
+        let call = methylation_call(b"C", b"CNA", Conversion::Ct, false, &mut c);
         assert_eq!(call, b"U");
         assert_eq!(c.total_me_c_unknown, 1);
     }
@@ -926,7 +942,7 @@ mod tests {
     fn methylation_call_unknown_via_padding_x_context() {
         // C==C, downstream X (insertion/soft-clip padding as the context base) → 'U'
         let mut c = Counters::default();
-        let call = methylation_call(b"C", b"CXA", Conversion::Ct, &mut c);
+        let call = methylation_call(b"C", b"CXA", Conversion::Ct, false, &mut c);
         assert_eq!(call, b"U");
         assert_eq!(c.total_me_c_unknown, 1);
     }
@@ -934,7 +950,66 @@ mod tests {
     #[test]
     fn methylation_call_non_cytosine_is_dot() {
         let mut c = Counters::default();
-        let call = methylation_call(b"AT", b"ATGG", Conversion::Ct, &mut c);
+        let call = methylation_call(b"AT", b"ATGG", Conversion::Ct, false, &mut c);
+        assert_eq!(call, b"..");
+    }
+
+    // ---- 5-Base polarity inversion (#787): the SAME inputs as the bisulfite ----
+    // ---- CT/GA tests above, but with five_base=true, flip Z<->z, X<->x, H<->h. -
+
+    #[test]
+    fn methylation_call_five_base_ct_inverts_polarity() {
+        // Mirror of `methylation_call_ct_contexts` (read "CCC" vs "CGCAAA"): with
+        // five_base=true a matched genomic C is UNMETHYLATED (lower-case), so
+        // Z.H (bisulfite) becomes z.h (5-Base). Context (CpG/CHH) is unchanged.
+        let mut c = Counters::default();
+        let call = methylation_call(b"CCC", b"CGCAAA", Conversion::Ct, true, &mut c);
+        assert_eq!(call, b"z.h");
+        assert_eq!(c.total_unme_cpg, 1);
+        assert_eq!(c.total_unme_chh, 1);
+        assert_eq!(c.total_me_cpg, 0);
+    }
+
+    #[test]
+    fn methylation_call_five_base_ct_read_t_at_c_is_methylated() {
+        // Mirror of `methylation_call_unmethylated_cpg_lowercase_z` (read T at
+        // genomic C, downstream G): 5mC -> T, so five_base=true calls it METHYLATED
+        // CpG -> upper-case 'Z' (the exact inverse of the bisulfite 'z').
+        let mut c = Counters::default();
+        let call = methylation_call(b"T", b"CGA", Conversion::Ct, true, &mut c);
+        assert_eq!(call, b"Z");
+        assert_eq!(c.total_me_cpg, 1);
+        assert_eq!(c.total_unme_cpg, 0);
+    }
+
+    #[test]
+    fn methylation_call_five_base_ga_inverts_polarity() {
+        // GA branch mirror of `methylation_call_ga_*`: a matched genomic G is
+        // UNMETHYLATED under 5-Base; a read 'A' at a genomic G is METHYLATED.
+        // read "GCGTAC" vs genomic "TTGCGTAC" (the bisulfite case yields "H.Z..."):
+        // five_base=true flips the called cytosines to lower-case -> "h.z...".
+        let mut c = Counters::default();
+        let call = methylation_call(b"GCGTAC", b"TTGCGTAC", Conversion::Ga, true, &mut c);
+        assert_eq!(call, b"h.z...");
+        assert_eq!(c.total_me_cpg, 0);
+        assert_eq!(c.total_unme_cpg, 1);
+    }
+
+    #[test]
+    fn methylation_call_five_base_ga_read_a_at_g_is_methylated() {
+        // Mirror of the GA unmethylated case (read 'A' at genomic G, CpG context):
+        // five_base=true calls it METHYLATED -> upper-case 'Z'.
+        let mut c = Counters::default();
+        let call = methylation_call(b"A", b"CCG", Conversion::Ga, true, &mut c);
+        assert_eq!(call, b"Z");
+        assert_eq!(c.total_me_cpg, 1);
+    }
+
+    #[test]
+    fn methylation_call_five_base_leaves_non_cytosine_and_dot_unchanged() {
+        // Non-cytosine and mismatch positions are polarity-agnostic ('.').
+        let mut c = Counters::default();
+        let call = methylation_call(b"AT", b"ATGG", Conversion::Ct, true, &mut c);
         assert_eq!(call, b"..");
     }
 
@@ -1112,7 +1187,7 @@ mod tests {
         //  i2 g=genomic[4]=G, read G == → meC; upstream genomic[3]=C → CpG 'Z'
         //  i3 g=T '.' ; i4 g=A '.' ; i5 g=C '.'
         let mut c = Counters::default();
-        let call = methylation_call(b"GCGTAC", b"TTGCGTAC", Conversion::Ga, &mut c);
+        let call = methylation_call(b"GCGTAC", b"TTGCGTAC", Conversion::Ga, false, &mut c);
         assert_eq!(call, b"H.Z...");
         assert_eq!(c.total_me_chh, 1);
         assert_eq!(c.total_me_cpg, 1);
@@ -1123,7 +1198,7 @@ mod tests {
         // GA branch, a converted (unmethylated) base: read 'A' where genomic[i+2]='G'
         // → converted; upstream genomic[1]='C' → CpG → lower-case 'z'.
         let mut c = Counters::default();
-        let call = methylation_call(b"A", b"CCG", Conversion::Ga, &mut c);
+        let call = methylation_call(b"A", b"CCG", Conversion::Ga, false, &mut c);
         assert_eq!(call, b"z");
         assert_eq!(c.total_unme_cpg, 1);
     }

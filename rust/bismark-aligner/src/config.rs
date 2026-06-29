@@ -177,6 +177,34 @@ pub struct RunConfig {
     /// by `lib::use_se_inprocess_rammap` (always-compiled) so it is never a feature-off
     /// dead field. `resolve` requires `--rammap` whenever it is set.
     pub rammap_inprocess: bool,
+    /// Illumina 5-Base (5mC->T) mode (#787): align to the UNCONVERTED genome and
+    /// call methylation with inverted polarity. v1 = single-end + directional,
+    /// minimap2 backend. Opt-in, never-silent, concordance-gated (no Perl oracle).
+    pub five_base: bool,
+    /// #787: run the post-alignment variant/methylation deconvolution pass + report.
+    /// Requires `five_base` (guarded at resolve()).
+    pub five_base_deconvolution: bool,
+    /// #787: basename of the NORMAL (unconverted) bowtie2/hisat2 index for a 5-Base
+    /// `--bowtie2`/`--hisat2` run (`None` ⇒ minimap2-on-FASTA default).
+    pub five_base_index: Option<PathBuf>,
+    /// #787: inline UMI length for 5-Base UMI dedup (0 = off). Requires `five_base`.
+    pub five_base_umi_len: usize,
+    /// #787: min Phred base quality for a 5-Base methylation call (0 = off; mask low-Q
+    /// read bases as no-call). Requires `five_base`.
+    pub five_base_baseq: u8,
+    /// #787: min read MAPQ for a 5-Base call / consensus family (0 = off; drop reads below
+    /// it — DRAGEN's MAPQ<20 filter, removes mis-mapped repeat pile-ups). Requires `five_base`.
+    pub five_base_min_mapq: u8,
+    /// #787: run the post-alignment DUPLEX-consensus family pass + report (per-molecule
+    /// reconciliation). SE only this PR. Requires `five_base` (guarded at resolve()).
+    pub five_base_duplex: bool,
+    /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
+    /// (implies `five_base_duplex`). SE only. Requires `five_base`.
+    pub five_base_consensus: bool,
+    /// #787: take the duplex UMI from the read NAME tail (`A+B` dual UMI) instead of inline
+    /// read bases; the duplex partner carries `B+A`. Requires `five_base`; mutually
+    /// exclusive with `five_base_umi_len`.
+    pub five_base_umi_qname: bool,
     /// Library type.
     pub library: LibraryType,
     /// Read layout + files.
@@ -232,6 +260,10 @@ pub struct RunConfig {
     /// For HISAT2 this is forced to `1` when `--multicore N` is remapped to `-p N`
     /// (see `hisat2_multicore_remap`) — the fork model is not faithful for HISAT2.
     pub multicore: u32,
+    /// `-p` (threads passed to the aligner instance, Perl Bismark `-p`). Used by the
+    /// 5-Base path to set minimap2 `-t` / bowtie2,hisat2 `-p` (precedence over
+    /// `--multicore`, then all logical CPUs). `None` ⇒ aligner default / all cores.
+    pub bowtie_threads: Option<u32>,
     /// HISAT2 Approach B-faithful (`--hisat2 --multicore N`): when set, `--multicore N`
     /// was interpreted as a single HISAT2 instance with `-p N --reorder` (NOT the fork
     /// model — HISAT2 splice discovery is not chunk-invariant; the `-p N` threading is
@@ -318,6 +350,66 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 .into(),
         ));
     }
+    // #787: deconvolution is a post-pass over a 5-Base BAM — meaningless without it.
+    if cli.five_base_deconvolution && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_deconvolution requires --illumina_5base: it deconvolutes variant vs \
+             methylation over a 5-Base run's output."
+                .into(),
+        ));
+    }
+    if cli.five_base_umi_len > 0 && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_len requires --illumina_5base (UMI dedup applies to a 5-Base run)."
+                .into(),
+        ));
+    }
+    if cli.five_base_baseq > 0 && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_baseq requires --illumina_5base (it masks low-quality bases in the \
+             5-Base methylation call)."
+                .into(),
+        ));
+    }
+    if cli.five_base_min_mapq > 0 && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_min_mapq requires --illumina_5base (it filters low-MAPQ reads in the \
+             5-Base methylation call / consensus)."
+                .into(),
+        ));
+    }
+    // #787: the duplex-consensus pass groups two strands of one molecule over a 5-Base
+    // BAM — meaningless without a 5-Base run.
+    if cli.five_base_duplex && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_duplex requires --illumina_5base: it pairs the two strands of each \
+             molecule over a 5-Base run's output."
+                .into(),
+        ));
+    }
+    // #787: qname-UMI source requires a 5-Base run and excludes the inline-UMI flag.
+    if cli.five_base_umi_qname && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_qname requires --illumina_5base (it sources the duplex UMI from \
+             a 5-Base run's read names)."
+                .into(),
+        ));
+    }
+    if cli.five_base_umi_qname && cli.five_base_umi_len > 0 {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_qname and --five_base_umi_len are mutually exclusive: choose the \
+             read-name dual UMI OR an inline UMI length."
+                .into(),
+        ));
+    }
+    // #787: consensus collapse builds on duplex families — meaningless without a 5-Base run.
+    if cli.five_base_consensus && !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus requires --illumina_5base: it collapses duplex families \
+             over a 5-Base run's output."
+                .into(),
+        ));
+    }
     // The minimap2-only preset/length flags (Perl 8329-8356): outside minimap2
     // mode every `--mm2_*` flag dies (the `unless($mm2)` block); in minimap2 mode
     // `--mm2_maximum_length` is range-checked + defaults to 10000. Returns the
@@ -381,7 +473,46 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
-    reject_unsupported_paired_aligner(aligner, &layout)?;
+    // --illumina_5base (#787) v1 scope guards. The 5-Base path is single-end +
+    // directional, FASTQ, single-instance only; everything else is a deferred
+    // follow-up phase. Reject loudly (never silently degrade) BEFORE the generic
+    // minimap2 guards so the error names --illumina_5base, not --minimap2.
+    if cli.illumina_5base {
+        if cli.non_directional || cli.pbat {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is directional only in v1 (drop --non_directional/--pbat): \
+                 the 5-Base library is directional."
+                    .into(),
+            ));
+        }
+        if cli.slam {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is not supported with --slam.".into(),
+            ));
+        }
+        if cli.fasta {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base requires FASTQ input in v1 (drop --fasta).".into(),
+            ));
+        }
+        // --multicore N is honoured: it sets the single aligner instance's thread count
+        // (minimap2 -t N / bowtie2,hisat2 -p N), the HISAT2 --multicore→-p precedent.
+        if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is not supported with --combined_index (a separate bisulfite \
+                 alignment model)."
+                    .into(),
+            ));
+        }
+    }
+
+    // PE-minimap2/rammap is NOT byte-identity-reachable and is deferred (Felix 2026-06-05):
+    // the Perl minimap2 paired-end path is unfinished WIP with no trustworthy byte-identity
+    // oracle. 5-Base PE (#787) is its OWN path (run_pe_five_base) — unconverted minimap2 PE,
+    // concordance-gated, NOT the rejected bisulfite minimap2 PE — so it is exempt.
+    if !cli.illumina_5base {
+        reject_unsupported_paired_aligner(aligner, &layout)?;
+    }
 
     // --combined_index (v2) scope guard: SE (directional OR non-directional)
     // Bowtie 2 only. Reject every not-yet-supported combination loudly (never
@@ -431,6 +562,17 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         aligner,
         // Phase 4 (epic 06152026): in-process opt-in flag (guarded above: requires --rammap).
         rammap_inprocess: cli.rammap_inprocess,
+        // #787 5-Base mode (guarded above: SE + directional, minimap2 unconverted path).
+        five_base: cli.illumina_5base,
+        five_base_deconvolution: cli.five_base_deconvolution,
+        five_base_index: cli.five_base_index.clone(),
+        five_base_umi_len: cli.five_base_umi_len,
+        five_base_baseq: cli.five_base_baseq,
+        five_base_min_mapq: cli.five_base_min_mapq,
+        // --five_base_consensus implies the duplex family pass.
+        five_base_duplex: cli.five_base_duplex || cli.five_base_consensus,
+        five_base_consensus: cli.five_base_consensus,
+        five_base_umi_qname: cli.five_base_umi_qname,
         library,
         layout,
         format,
@@ -461,6 +603,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         } else {
             cli.multicore.unwrap_or(1)
         },
+        bowtie_threads: cli.bowtie_threads,
         hisat2_multicore_remap,
         // v2 combined-index mode (guarded above; the combined index is present).
         combined_index: cli.combined_index,
@@ -701,6 +844,51 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
     if cli.rammap && cli.minimap2 {
         return Err(AlignerError::Validation(
             "You may not select both --rammap and --minimap2. Make your pick!".into(),
+        ));
+    }
+    // --illumina_5base (5-Base, #787) aligns to the UNCONVERTED genome with minimap2
+    // (v1). It is mutually exclusive with the bisulfite engines that have no
+    // unconverted-index path yet; `--minimap2` may co-occur (5-Base IS a minimap2
+    // run). Ordered before the engine `Ok`s so the conflict fires, never a silent pick.
+    if cli.illumina_5base {
+        if cli.rammap {
+            return Err(AlignerError::Validation(
+                "--illumina_5base is not supported with --rammap. Use --bowtie2/--hisat2 (with \
+                 --five_base_index) or the default minimap2 (genome FASTA)."
+                    .into(),
+            ));
+        }
+        // bowtie2/hisat2 5-Base align the RAW reads to a user-provided UNCONVERTED
+        // index (5-Base keeps full complexity, so a normal index works). minimap2 (the
+        // default) reads the genome FASTA directly and needs no index.
+        if cli.bowtie2 || cli.hisat2 {
+            if cli.five_base_index.is_none() {
+                return Err(AlignerError::Validation(
+                    "--illumina_5base with --bowtie2/--hisat2 requires --five_base_index \
+                     <basename>: a NORMAL (unconverted) index of the genome, built once with \
+                     bowtie2-build/hisat2-build. (Without an engine flag, 5-Base uses minimap2 \
+                     against the genome FASTA directly.)"
+                        .into(),
+                ));
+            }
+            return Ok(if cli.hisat2 {
+                Aligner::Hisat2
+            } else {
+                Aligner::Bowtie2
+            });
+        }
+        if cli.five_base_index.is_some() {
+            return Err(AlignerError::Validation(
+                "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2; the \
+                 default minimap2 5-Base path reads the genome FASTA directly."
+                    .into(),
+            ));
+        }
+        return Ok(Aligner::Minimap2);
+    }
+    if cli.five_base_index.is_some() {
+        return Err(AlignerError::Validation(
+            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2.".into(),
         ));
     }
     if cli.hisat2 {
@@ -1256,6 +1444,179 @@ mod tests {
     fn rammap_inprocess_flag_parses() {
         assert!(cli_from(&["--rammap", "--rammap_inprocess"]).rammap_inprocess);
         assert!(!cli_from(&["--rammap"]).rammap_inprocess);
+    }
+
+    // ---- #787 Illumina 5-Base mode guards ----------------------------------
+
+    /// The `--illumina_5base` flag (and its `--five_base` alias) parses, off by default.
+    #[test]
+    fn illumina_5base_flag_parses() {
+        assert!(cli_from(&["--illumina_5base"]).illumina_5base);
+        assert!(cli_from(&["--five_base"]).illumina_5base);
+        assert!(!cli_from(&["--minimap2"]).illumina_5base);
+    }
+
+    /// `--illumina_5base` resolves to the minimap2 (unconverted) backend (fires in
+    /// `resolve_aligner`, before genome discovery — no on-disk index needed).
+    #[test]
+    fn illumina_5base_resolves_to_minimap2() {
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--illumina_5base"])).unwrap(),
+            Aligner::Minimap2
+        );
+        // `--minimap2` may co-occur (5-Base IS a minimap2 run).
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--illumina_5base", "--minimap2"])).unwrap(),
+            Aligner::Minimap2
+        );
+    }
+
+    /// `--five_base_deconvolution` requires `--illumina_5base` (it post-processes a
+    /// 5-Base run). Fires early in resolve() (before genome discovery).
+    #[test]
+    fn five_base_deconvolution_requires_illumina_5base() {
+        let err = resolve(&cli_from(&["--five_base_deconvolution"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_deconvolution requires --illumina_5base"),
+            "got: {err}"
+        );
+        // accepted together (parses; resolves to minimap2).
+        assert!(
+            cli_from(&["--illumina_5base", "--five_base_deconvolution"]).five_base_deconvolution
+        );
+    }
+
+    /// `--five_base_duplex` requires `--illumina_5base` and is SE-only (rejects `-2`).
+    #[test]
+    fn five_base_duplex_guards() {
+        let err = resolve(&cli_from(&["--five_base_duplex"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_duplex requires --illumina_5base"),
+            "got: {err}"
+        );
+        // PE + duplex is ALLOWED (the PE duplex report): no single-end rejection. resolve
+        // may still fail for unrelated reasons (no genome), but not on the SE guard.
+        if let Err(e) = resolve(
+            &cli_from(&[
+                "--illumina_5base",
+                "--five_base_duplex",
+                "-1",
+                "r1.fq",
+                "-2",
+                "r2.fq",
+            ]),
+            "cmd".into(),
+        ) {
+            assert!(
+                !e.to_string().contains("single-end only"),
+                "PE duplex must not be rejected as single-end: {e}"
+            );
+        }
+    }
+
+    /// `--five_base_consensus` requires `--illumina_5base` and implies `five_base_duplex`
+    /// in the resolved config; it is now supported for PE too (no single-end rejection).
+    #[test]
+    fn five_base_consensus_guards_and_implies_duplex() {
+        let err = resolve(&cli_from(&["--five_base_consensus"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_consensus requires --illumina_5base"),
+            "got: {err}"
+        );
+        // PE consensus is ALLOWED now (no single-end rejection).
+        if let Err(e) = resolve(
+            &cli_from(&[
+                "--illumina_5base",
+                "--five_base_consensus",
+                "-1",
+                "r1.fq",
+                "-2",
+                "r2.fq",
+            ]),
+            "cmd".into(),
+        ) {
+            assert!(
+                !e.to_string().contains("single-end only"),
+                "PE consensus must not be rejected as single-end: {e}"
+            );
+        }
+    }
+
+    /// `--five_base_umi_qname` requires `--illumina_5base` and is mutually exclusive with
+    /// `--five_base_umi_len`.
+    #[test]
+    fn five_base_umi_qname_guards() {
+        let err = resolve(&cli_from(&["--five_base_umi_qname"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_umi_qname requires --illumina_5base"),
+            "got: {err}"
+        );
+        let err = resolve(
+            &cli_from(&[
+                "--illumina_5base",
+                "--five_base_umi_qname",
+                "--five_base_umi_len",
+                "8",
+            ]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"), "got: {err}");
+        assert!(cli_from(&["--illumina_5base", "--five_base_umi_qname"]).five_base_umi_qname);
+    }
+
+    /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/
+    /// `--hisat2` need `--five_base_index` (a normal unconverted index) and then resolve
+    /// to that engine; no engine flag → minimap2 (genome FASTA).
+    #[test]
+    fn illumina_5base_engine_selection() {
+        // rammap: rejected outright.
+        let err = resolve_aligner(&cli_from(&["--illumina_5base", "--rammap"])).unwrap_err();
+        assert!(
+            err.to_string().contains("not supported with --rammap"),
+            "{err}"
+        );
+        // bowtie2/hisat2 without an index: fail loud.
+        for flag in ["--bowtie2", "--hisat2"] {
+            let err = resolve_aligner(&cli_from(&["--illumina_5base", flag])).unwrap_err();
+            assert!(
+                err.to_string().contains("requires --five_base_index"),
+                "{flag}: {err}"
+            );
+        }
+        // bowtie2/hisat2 WITH an index: resolve to that engine.
+        assert_eq!(
+            resolve_aligner(&cli_from(&[
+                "--illumina_5base",
+                "--bowtie2",
+                "--five_base_index",
+                "idx"
+            ]))
+            .unwrap(),
+            Aligner::Bowtie2
+        );
+        assert_eq!(
+            resolve_aligner(&cli_from(&[
+                "--illumina_5base",
+                "--hisat2",
+                "--five_base_index",
+                "idx"
+            ]))
+            .unwrap(),
+            Aligner::Hisat2
+        );
+        // --five_base_index without an engine flag is rejected (minimap2 needs no index).
+        let err = resolve_aligner(&cli_from(&["--illumina_5base", "--five_base_index", "idx"]))
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--five_base_index only applies to"),
+            "{err}"
+        );
     }
 
     #[test]

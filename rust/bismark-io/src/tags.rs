@@ -15,6 +15,7 @@ const TAG_XR: [u8; 2] = *b"XR";
 const TAG_XG: [u8; 2] = *b"XG";
 const TAG_MD: [u8; 2] = *b"MD";
 const TAG_NM: [u8; 2] = *b"NM";
+const TAG_RX: [u8; 2] = *b"RX";
 
 /// Extract the `XM:Z:` methylation-call string from a record's data.
 pub fn xm(data: &Data) -> Result<&[u8], BismarkIoError> {
@@ -59,6 +60,12 @@ pub fn nm(data: &Data) -> Result<Option<u32>, BismarkIoError> {
             reason: format!("expected integer, got {other:?}"),
         }),
     }
+}
+
+/// Extract the optional `RX:Z:` raw-UMI tag (SAM standard; written by the 5-Base path
+/// when `--five_base_umi_len > 0`). Returns `Ok(None)` if absent.
+pub fn rx(data: &Data) -> Result<Option<&[u8]>, BismarkIoError> {
+    optional_string_tag(data, &TAG_RX, "RX")
 }
 
 fn string_tag<'a>(
