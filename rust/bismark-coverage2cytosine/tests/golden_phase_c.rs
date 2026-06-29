@@ -33,7 +33,7 @@ fn file_set(dir: &Path) -> BTreeSet<String> {
 fn run(stem: &str, flags: &[&str]) -> tempfile::TempDir {
     let d = data_dir();
     let tmp = tempfile::tempdir().unwrap();
-    let mut cmd = Command::cargo_bin("coverage2cytosine_rs").unwrap();
+    let mut cmd = Command::cargo_bin("coverage2cytosine").unwrap();
     cmd.arg("-o")
         .arg(stem)
         .arg("-g")
@@ -187,7 +187,7 @@ fn split_reappearance_truncates_and_summary_in_last_chr() {
     .unwrap();
     let out = tmp.path().join("out");
     std::fs::create_dir(&out).unwrap();
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg("-o")
         .arg("s")

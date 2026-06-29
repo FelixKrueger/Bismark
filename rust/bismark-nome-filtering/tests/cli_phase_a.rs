@@ -10,7 +10,7 @@ use std::io::Write;
 use assert_cmd::Command;
 
 fn bin() -> Command {
-    Command::cargo_bin("NOMe_filtering_rs").unwrap()
+    Command::cargo_bin("NOMe_filtering").unwrap()
 }
 
 #[test]

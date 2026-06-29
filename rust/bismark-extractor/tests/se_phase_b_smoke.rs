@@ -170,7 +170,7 @@ fn smoke_se_directional_produces_all_12_files_and_report() {
 
     let output_dir = workdir.path().join("out");
 
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(&bam_path)
         .arg("--single-end")
         .arg("--output_dir")
@@ -251,7 +251,7 @@ fn smoke_se_rejects_record_with_paired_flag_set() {
 
     let output_dir = workdir.path().join("out");
 
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(&bam_path)
         .arg("--single-end")
         .arg("--output_dir")
@@ -289,7 +289,7 @@ fn smoke_se_empty_bam_writes_only_header_files() {
 
     let output_dir = workdir.path().join("out");
 
-    let mut cmd = Command::cargo_bin("bismark_methylation_extractor_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg(&bam_path)
         .arg("--single-end")
         .arg("--output_dir")

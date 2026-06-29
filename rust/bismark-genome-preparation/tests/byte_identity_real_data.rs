@@ -29,7 +29,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-const RUST_BIN: &str = env!("CARGO_BIN_EXE_bismark_genome_preparation_rs");
+const RUST_BIN: &str = env!("CARGO_BIN_EXE_bismark_genome_preparation");
 
 /// Create a fake `bowtie2-build` that exits 0, so Step III completes without a
 /// real indexer (the gate is the converted FASTA, not the index). Returns the

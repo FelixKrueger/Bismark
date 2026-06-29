@@ -15,7 +15,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "bismark_methylation_extractor_rs"
+name = "bismark_methylation_extractor"
 path = "src/main.rs"
 
 [dependencies]

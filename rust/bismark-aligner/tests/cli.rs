@@ -13,7 +13,7 @@ use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn bin() -> Command {
-    Command::cargo_bin("bismark_rs").unwrap()
+    Command::cargo_bin("bismark").unwrap()
 }
 
 #[cfg(unix)]

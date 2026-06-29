@@ -235,7 +235,7 @@ fn run_byte_identity_at_parallel_for(parallel: Option<u32>, spec: &DatasetSpec) 
 
     // Run from the dataset dir with the basename so the report includes
     // exactly the same `file_label` as the Perl baseline.
-    let mut cmd = Command::cargo_bin("deduplicate_bismark_rs").unwrap();
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
     cmd.current_dir(&dataset_dir)
         .arg("--paired")
         .arg("--output_dir")

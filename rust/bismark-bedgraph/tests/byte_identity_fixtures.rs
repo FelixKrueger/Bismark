@@ -83,7 +83,7 @@ fn run_cell_with_files(cell: &str, flags: &[&str], files: &[&str], outputs: &[Ou
         fs::copy(fx.join(f), tmp.path().join(f)).unwrap();
     }
 
-    let mut cmd = Command::cargo_bin("bismark2bedGraph_rs").unwrap();
+    let mut cmd = Command::cargo_bin("bismark2bedGraph").unwrap();
     cmd.current_dir(tmp.path());
     cmd.args(flags);
     cmd.args(["-o", "out.bedGraph"]);

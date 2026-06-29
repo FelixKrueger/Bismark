@@ -101,7 +101,7 @@ fn run_case(data: &Path, case: &Case) {
     std::fs::copy(case_dir.join(&case.inbase), tmp.path().join(&case.inbase))
         .expect("copy input bam");
 
-    let mut cmd = AssertCommand::cargo_bin("filter_non_conversion_rs").unwrap();
+    let mut cmd = AssertCommand::cargo_bin("filter_non_conversion").unwrap();
     cmd.current_dir(tmp.path());
     for f in &case.flags {
         cmd.arg(f);

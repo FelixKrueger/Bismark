@@ -74,7 +74,7 @@ fn binary_end_to_end_mfa_bytes() {
     .unwrap();
     let bin = fake_indexer_dir(tmp.path());
 
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg(&genome)
@@ -108,7 +108,7 @@ fn binary_combined_genome_is_ct_concat_ga() {
     fs::write(genome.join("b.fa"), b">chr2\nGGCC\n").unwrap();
     let bin = fake_indexer_dir(tmp.path());
 
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg("--combined_genome")
@@ -131,7 +131,7 @@ fn binary_genomic_composition_freq_table_bytes() {
     fs::write(genome.join("g.fa"), b">chr1\nACGT\n").unwrap();
     let bin = fake_indexer_dir(tmp.path());
 
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg("--genomic_composition")
@@ -156,7 +156,7 @@ fn binary_no_genomic_composition_flag_writes_no_table() {
     fs::write(genome.join("g.fa"), b">chr1\nACGT\n").unwrap();
     let bin = fake_indexer_dir(tmp.path());
 
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg(&genome)
@@ -175,7 +175,7 @@ fn binary_no_fasta_dir_errors() {
     let genome = tmp.path().join("empty_genome");
     fs::create_dir_all(&genome).unwrap();
     let bin = fake_indexer_dir(tmp.path());
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg(&genome)
@@ -229,7 +229,7 @@ fn perl_vs_rust_byte_identical_mfa() {
     assert!(perl_status.success(), "perl genome prep failed");
 
     // Rust: fake indexer via BISMARK_BIN.
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg(&rust_dir)
@@ -287,7 +287,7 @@ fn perl_vs_rust_byte_identical_single_fasta() {
         .expect("failed to run perl");
     assert!(perl_status.success(), "perl genome prep failed");
 
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .env("BISMARK_BIN", &bin)
         .arg("--single_fasta")
@@ -326,7 +326,7 @@ fn bad_path_to_aligner_fails_before_conversion() {
     fs::write(genome.join("g.fa"), b">chr1\nACGT\n").unwrap();
     let badpath = tmp.path().join("no_such_aligner_dir");
 
-    Command::cargo_bin("bismark_genome_preparation_rs")
+    Command::cargo_bin("bismark_genome_preparation")
         .unwrap()
         .arg("--path_to_aligner")
         .arg(&badpath)
@@ -372,7 +372,7 @@ fn oracle_compare(setup: impl Fn(&Path), extra_args: &[&str], rel_files: &[&str]
     pcmd.arg(&perl_dir).env("PATH", &path_env);
     assert!(pcmd.status().expect("run perl").success(), "perl failed");
 
-    let mut rcmd = Command::cargo_bin("bismark_genome_preparation_rs").unwrap();
+    let mut rcmd = Command::cargo_bin("bismark_genome_preparation").unwrap();
     rcmd.env("BISMARK_BIN", &bin);
     for a in extra_args {
         rcmd.arg(a);

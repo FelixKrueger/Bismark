@@ -119,7 +119,7 @@ fn sep() -> String {
 }
 
 fn run(dir: &TempDir, args: &[&str]) -> assert_cmd::assert::Assert {
-    let mut cmd = Command::cargo_bin("methylation_consistency_rs").unwrap();
+    let mut cmd = Command::cargo_bin("methylation_consistency").unwrap();
     cmd.current_dir(dir.path());
     cmd.args(args);
     cmd.assert()
@@ -545,7 +545,7 @@ fn assert_perl_rust_identical(records: &[RecordBuf], so: Option<&str>, extra_arg
     );
 
     // Rust run.
-    let mut rust = Command::cargo_bin("methylation_consistency_rs").unwrap();
+    let mut rust = Command::cargo_bin("methylation_consistency").unwrap();
     rust.args(extra_args).arg(rust_dir.join("in.bam"));
     rust.assert().success();
 

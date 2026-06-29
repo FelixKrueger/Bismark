@@ -14,7 +14,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "NOMe_filtering_rs"
+name = "NOMe_filtering"
 path = "src/main.rs"
 
 [dependencies]

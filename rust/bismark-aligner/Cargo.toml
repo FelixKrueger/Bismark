@@ -15,7 +15,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "bismark_rs"
+name = "bismark"
 path = "src/main.rs"
 
 [dependencies]

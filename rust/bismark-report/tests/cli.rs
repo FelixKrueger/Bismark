@@ -7,7 +7,7 @@ use assert_cmd::Command;
 use tempfile::tempdir;
 
 fn bin() -> Command {
-    Command::cargo_bin("bismark2report_rs").unwrap()
+    Command::cargo_bin("bismark2report").unwrap()
 }
 
 fn minimal_pe_report() -> Vec<u8> {

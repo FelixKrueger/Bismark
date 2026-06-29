@@ -180,7 +180,7 @@ fn run_oracle(ds: &AlignerDataset) {
         ds.label,
         base.display()
     );
-    Command::cargo_bin("bismark_rs")
+    Command::cargo_bin("bismark")
         .unwrap()
         .arg("--genome")
         .arg(&genome)

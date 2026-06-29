@@ -84,7 +84,7 @@ fn methylseq_coverage2cytosine_empty_runtime_emits_required_outputs() {
     enc.write_all(b"").unwrap();
     enc.finish().unwrap();
 
-    Command::cargo_bin("coverage2cytosine_rs")
+    Command::cargo_bin("coverage2cytosine")
         .unwrap()
         .arg(&cov)
         .arg("--genome")

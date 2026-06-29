@@ -15,7 +15,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "deduplicate_bismark_rs"
+name = "deduplicate_bismark"
 path = "src/main.rs"
 
 [dependencies]

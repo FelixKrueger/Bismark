@@ -15,7 +15,7 @@ categories = ["science::bioinformatics", "command-line-utilities"]
 path = "src/lib.rs"
 
 [[bin]]
-name = "bismark_genome_preparation_rs"
+name = "bismark_genome_preparation"
 path = "src/main.rs"
 
 [dependencies]
