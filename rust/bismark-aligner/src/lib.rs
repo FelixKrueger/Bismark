@@ -510,9 +510,8 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
 
     let paths: Vec<&Path> = bams.iter().map(PathBuf::as_path).collect();
     eprintln!(
-        "Note: 5-Base consensus-from-BAM over {} file(s) ({}); no re-alignment. Output: {}",
+        "Note: 5-Base consensus-from-BAM over {} file(s) (PE); no re-alignment. Output: {}",
         paths.len(),
-        if paired_end { "PE" } else { "SE" },
         out_path.display()
     );
     run_five_base_consensus(
@@ -522,7 +521,6 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         &out_path,
         &header,
         umi_swap,
-        paired_end,
         cli.five_base_min_mapq,
     )
 }
@@ -1388,7 +1386,6 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                     &consensus_path,
                     &header,
                     umi_swap,
-                    true, // PE
                     config.five_base_min_mapq,
                 )?;
             }
@@ -1907,7 +1904,6 @@ fn run_five_base_consensus(
     consensus_bam_path: &Path,
     header: &noodles_sam::Header,
     umi_swap: Option<crate::five_base_duplex::UmiSwap>,
-    paired_end: bool,
     min_mapq: u8,
 ) -> Result<()> {
     use crate::five_base_duplex::{SiteKind, canonical_umi, consensus_base};
@@ -1998,48 +1994,20 @@ fn run_five_base_consensus(
         };
         let ref_start = (usize::from(start) - 1) as u32;
         let (molecule_is_ot, kstart, kend);
-        if paired_end {
-            if flag & 0x2 == 0 {
-                return Ok(None);
-            }
-            let tlen = inner.template_length();
-            let Some(mate) = inner.mate_alignment_start() else {
-                return Ok(None);
-            };
-            if tlen == 0 {
-                return Ok(None);
-            }
-            let mate0 = (usize::from(mate) - 1) as u32;
-            kstart = ref_start.min(mate0);
-            kend = kstart + tlen.unsigned_abs();
-            molecule_is_ot = (flag & 0x40 != 0) == coverage_forward;
-        } else {
-            let xr = bismark_io::tags::xr(inner.data())
-                .map_err(|e| AlignerError::Validation(format!("consensus: XR: {e}")))?;
-            let xg = bismark_io::tags::xg(inner.data())
-                .map_err(|e| AlignerError::Validation(format!("consensus: XG: {e}")))?;
-            match bismark_io::BismarkStrand::from_xr_xg(xr, xg)
-                .map_err(|e| AlignerError::Validation(format!("consensus: strand: {e}")))?
-            {
-                bismark_io::BismarkStrand::OT => molecule_is_ot = true,
-                bismark_io::BismarkStrand::OB => molecule_is_ot = false,
-                _ => return Ok(None),
-            }
-            // SE keys on the read's own span; walk ref-consuming CIGAR ops for the end.
-            let mut end = ref_start;
-            for op in inner.cigar().as_ref().iter() {
-                match op.kind() {
-                    Kind::Match
-                    | Kind::SequenceMatch
-                    | Kind::SequenceMismatch
-                    | Kind::Deletion
-                    | Kind::Skip => end += op.len() as u32,
-                    _ => {}
-                }
-            }
-            kstart = ref_start;
-            kend = end;
+        if flag & 0x2 == 0 {
+            return Ok(None);
         }
+        let tlen = inner.template_length();
+        let Some(mate) = inner.mate_alignment_start() else {
+            return Ok(None);
+        };
+        if tlen == 0 {
+            return Ok(None);
+        }
+        let mate0 = (usize::from(mate) - 1) as u32;
+        kstart = ref_start.min(mate0);
+        kend = kstart + tlen.unsigned_abs();
+        molecule_is_ot = (flag & 0x40 != 0) == coverage_forward;
         let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match bismark_io::tags::rx(inner.data()) {
                 Ok(Some(raw)) => canonical_umi(raw, swap),
@@ -2251,9 +2219,8 @@ fn run_five_base_consensus(
         .finish()
         .map_err(|e| AlignerError::Validation(format!("consensus: finalise BAM: {e}")))?;
     eprintln!(
-        "5-Base duplex consensus ({}): {emitted} consensus read(s) emitted, {skipped} family(ies) \
+        "5-Base duplex consensus (PE): {emitted} consensus read(s) emitted, {skipped} family(ies) \
          skipped. BAM: {}",
-        if paired_end { "PE" } else { "SE" },
         consensus_bam_path.display()
     );
     Ok(())
