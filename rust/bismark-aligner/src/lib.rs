@@ -1051,15 +1051,6 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
-// ===========================================================================
-// #787 Illumina 5-Base single-end driver. Opt-in, never-silent, concordance-gated
-// (NOT byte-identical — Perl Bismark has no 5-Base oracle). Unlike the bisulfite
-// spine it does NOT convert the reads: it aligns the RAW reads to the UNCONVERTED
-// genome with ONE minimap2 instance, derives the strand from the SAM FLAG, and
-// reuses the byte-frozen genomic-extraction + (polarity-INVERTED) methylation_call
-// + single_end_sam_output. v1 = single-end + directional (guarded at resolve()).
-// ===========================================================================
-
 /// The aligner option string for a 5-Base run. minimap2 (the default) uses the
 /// resolved `-x sr …` options against the genome FASTA. bowtie2/hisat2 align the RAW
 /// reads to the user's NORMAL (unconverted) index with a permissive `--score-min`
@@ -1098,8 +1089,8 @@ fn five_base_aligner_options(config: &RunConfig) -> String {
 }
 
 /// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
-/// <reads…>` (positional FASTA + reads). bowtie2/hisat2: `<opts> -x <index> {-U r |
-/// -1 r1 -2 r2}` against the user's unconverted index. `reads` is 1 (SE) or 2 (PE).
+/// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`
+/// against the user's unconverted index. `reads` is always 2 (5-Base is paired-end).
 fn five_base_build_argv(
     config: &RunConfig,
     opts: &str,
@@ -1116,15 +1107,11 @@ fn five_base_build_argv(
                 .expect("five_base_index is required for bowtie2/hisat2 5-Base (guarded)");
             args.push("-x".into());
             args.push(idx.as_os_str().to_owned());
-            if reads.len() == 2 {
-                args.push("-1".into());
-                args.push(reads[0].as_os_str().to_owned());
-                args.push("-2".into());
-                args.push(reads[1].as_os_str().to_owned());
-            } else {
-                args.push("-U".into());
-                args.push(reads[0].as_os_str().to_owned());
-            }
+            // 5-Base is paired-end (guarded at resolve()): always -1/-2.
+            args.push("-1".into());
+            args.push(reads[0].as_os_str().to_owned());
+            args.push("-2".into());
+            args.push(reads[1].as_os_str().to_owned());
         }
         _ => {
             // minimap2: positional <genome.fa> then the read file(s).
@@ -1278,8 +1265,10 @@ fn five_base_emit_record(
 }
 
 // ===========================================================================
-// #787 Illumina 5-Base PAIRED-END driver. Same model as the SE path, but minimap2
-// is run in PE mode (`<opts> ref.fa r1.fq r2.fq`) against the unconverted genome;
+// #787 Illumina 5-Base PAIRED-END driver. Opt-in, never-silent, concordance-gated
+// (NOT byte-identical: Perl Bismark has no 5-Base oracle). It does NOT convert the
+// reads: minimap2 is run in PE mode (`<opts> ref.fa r1.fq r2.fq`) against the
+// unconverted genome (bowtie2/hisat2 via `--five_base_index`);
 // the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
 // byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
 // ===========================================================================
@@ -1890,8 +1879,8 @@ fn w_duplex_report<W: std::io::Write>(
 /// walk, so soft-clips (e.g. an inline UMI prefix) and indels are handled; only singleton
 /// (unpaired) families are skipped.
 ///
-/// Unified SE + PE: families are keyed like the duplex passes (SE = the read's alignment
-/// span; PE = the FRAGMENT outer span from POS + mate-pos + TLEN). The MOLECULE strand
+/// Families are keyed like the duplex pass on the FRAGMENT outer span (POS + mate-pos +
+/// TLEN; 5-Base is paired-end). The MOLECULE strand
 /// (which duplex pair) gates pairing; the COVERAGE strand (FLAG orientation) buckets reads
 /// for reconciliation. At each reference position the forward-covering reads and the
 /// reverse-covering reads are each reduced to their highest-quality base, then combined by

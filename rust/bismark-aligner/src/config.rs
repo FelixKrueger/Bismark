@@ -274,7 +274,7 @@ pub struct RunConfig {
     pub hisat2_multicore_remap: Option<u32>,
     /// `--combined_index` (v2, opt-in, never-silent, concordance-gated): align
     /// against the single combined CT+GA index in one both-strands pass instead of
-    /// the faithful per-strand instances. PE directional only; the
+    /// the faithful per-strand instances. SE directional only this phase; the
     /// `reject_combined_index_unsupported` guard rejects every other combination,
     /// and `resolve` errors if the combined index is absent (it is `genome.
     /// combined_index_basename.is_some()` whenever this is `true`).

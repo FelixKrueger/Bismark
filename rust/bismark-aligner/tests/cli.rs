@@ -5472,7 +5472,7 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
 /// `mm2` naming, the `-x sr` option string, and "Bismark was run with minimap2".
 #[cfg(unix)]
 #[test]
-fn five_base_se_end_to_end_inverts_polarity() {
+fn five_base_pe_end_to_end_inverts_polarity() {
     let genome = TempDir::new().unwrap();
     make_genome_mmi(genome.path()); // genome.fa = chr1 ACGTACGT + BS_*.mmi for discovery
     let bins = TempDir::new().unwrap();
