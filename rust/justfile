@@ -6,7 +6,7 @@
 
 # Install/update config for the `install-suite*` recipes (bump `suite_tag` on release).
 repo := "https://github.com/FelixKrueger/Bismark"
-suite_tag := "bismark-rust-v2.0.0-beta.13"
+suite_tag := "bismark-rust-v2.0.0"
 suite_crates := "bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc bismark-report bismark-summary"
 
 # Local benchmark dataset root for the aligner Apple Silicon perf work
@@ -46,11 +46,11 @@ test:
 test-release:
     cargo test --workspace --release
 
-# Build all 12 release binaries (target/release/*_rs).
+# Build all 12 release binaries (canonical names under target/release/).
 build:
     cargo build --workspace --release
 
-# Install all 12 `*_rs` binaries from the pinned release tag into ~/.cargo/bin.
+# Install all 12 canonical-named binaries from the pinned release tag into ~/.cargo/bin.
 install-suite:
     cargo install --git {{repo}} --tag {{suite_tag}} --locked {{suite_crates}}
 
@@ -60,10 +60,10 @@ install-suite-dev:
 
 # Print every suite binary's --version (provenance + suite-version check).
 version: build
-    @for b in bismark_rs deduplicate_bismark_rs bismark_methylation_extractor_rs \
-              bismark2bedGraph_rs coverage2cytosine_rs bismark_genome_preparation_rs \
-              bam2nuc_rs NOMe_filtering_rs filter_non_conversion_rs \
-              methylation_consistency_rs bismark2report_rs bismark2summary_rs; do \
+    @for b in bismark deduplicate_bismark bismark_methylation_extractor \
+              bismark2bedGraph coverage2cytosine bismark_genome_preparation \
+              bam2nuc NOMe_filtering filter_non_conversion \
+              methylation_consistency bismark2report bismark2summary; do \
         printf '%-34s ' "$b:"; ./target/release/$b --version 2>&1 | grep -iEm1 'version|/' || true; \
     done
 
@@ -78,10 +78,10 @@ reproduce:
     cargo clean
     SOURCE_DATE_EPOCH=1700000000 cargo build --workspace --release
     rm -rf /tmp/bismark_repro2 && cp -R target/release /tmp/bismark_repro2
-    @for b in bismark_rs deduplicate_bismark_rs bismark_methylation_extractor_rs \
-              bismark2bedGraph_rs coverage2cytosine_rs bismark_genome_preparation_rs \
-              bam2nuc_rs NOMe_filtering_rs filter_non_conversion_rs \
-              methylation_consistency_rs bismark2report_rs bismark2summary_rs; do \
+    @for b in bismark deduplicate_bismark bismark_methylation_extractor \
+              bismark2bedGraph coverage2cytosine bismark_genome_preparation \
+              bam2nuc NOMe_filtering filter_non_conversion \
+              methylation_consistency bismark2report bismark2summary; do \
         if cmp -s /tmp/bismark_repro1/$b /tmp/bismark_repro2/$b; then echo "✓ $b bit-identical"; \
         else echo "✗ $b DIFFERS"; fi; \
     done
@@ -107,7 +107,7 @@ build-native:
 aligner-golden genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 out=rrbs_gold:
     cargo build --release -p bismark-aligner
     rm -rf {{out}} && mkdir -p {{out}}
-    ./target/release/bismark_rs --genome {{genome}} -1 {{r1}} -2 {{r2}} -o {{out}}
+    ./target/release/bismark --genome {{genome}} -1 {{r1}} -2 {{r2}} -o {{out}}
     cp {{out}}/*_bismark_bt2_pe.bam {{out}}/golden.bam
     cp {{out}}/*_PE_report.txt {{out}}/golden.report.txt
     @echo "✓ golden captured in {{out}}"
@@ -119,7 +119,7 @@ aligner-golden genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 out=rrbs_gold:
 aligner-oracle genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 gold=rrbs_gold:
     cargo build --release -p bismark-aligner
     rm -rf /tmp/aligner_oracle && mkdir -p /tmp/aligner_oracle
-    ./target/release/bismark_rs --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_oracle
+    ./target/release/bismark --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_oracle
     # Records only (no -h): the @PG CL header line embeds the -o path and so
     # differs by design; the record stream carries no paths and must match.
     samtools view /tmp/aligner_oracle/*_bismark_bt2_pe.bam > /tmp/aligner_oracle/cur.sam
@@ -130,11 +130,11 @@ aligner-oracle genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 gold=rrbs_gold:
     grep -vE '/Users/|/tmp/|/var/folders/|/private/|Bismark completed in' /tmp/aligner_oracle/*_PE_report.txt > /tmp/aligner_oracle/cur.report
     @cmp -s /tmp/aligner_oracle/gold.report /tmp/aligner_oracle/cur.report && echo "✓ report numbers byte-identical" || { echo "✗ report DIFFERS"; diff /tmp/aligner_oracle/gold.report /tmp/aligner_oracle/cur.report | head; exit 1; }
 
-# Record a samply CPU profile of the aligner process (Apple Silicon). bismark_rs
+# Record a samply CPU profile of the aligner process (Apple Silicon). bismark
 # is profiled; bowtie2 is a separate PID. `parallel=1` = clean hot path;
 # `parallel=8` surfaces allocator contention.
 profile-aligner parallel="1" genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2: build-profiling
-    samply record --rate 1000 -- ./target/profiling/bismark_rs --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_prof --parallel {{parallel}}
+    samply record --rate 1000 -- ./target/profiling/bismark --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_prof --parallel {{parallel}}
 
 # Show all recipes.
 help:

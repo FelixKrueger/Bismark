@@ -108,7 +108,7 @@ jobs:
       - name: Build the whole suite
         env:
           BISMARK_SUITE_VERSION: ${{ needs.check-release.outputs.version }}
-        # Compile bismark_rs with the in-process rammap backend ON so the shipped
+        # Compile the `bismark` aligner with the in-process rammap backend ON so the shipped
         # binary's `--rammap_inprocess` opt-in is functional (default `--rammap`
         # stays subprocess), AND with `binseq-input` ON so the shipped binary can read
         # BINSEQ `.vbq` files (#1025 Phase 2 — a default `cargo build` rejects `.vbq`
@@ -123,10 +123,10 @@ jobs:
           ARCHIVE="bismark-rust-${{ needs.check-release.outputs.version }}-${{ matrix.name }}"
           BINDIR="rust/target/${{ matrix.target }}/release"
           mkdir -p "staging/${ARCHIVE}"
-          for b in bismark_rs deduplicate_bismark_rs bismark_methylation_extractor_rs \
-                   bismark2bedGraph_rs coverage2cytosine_rs bismark_genome_preparation_rs \
-                   bam2nuc_rs NOMe_filtering_rs filter_non_conversion_rs \
-                   methylation_consistency_rs bismark2report_rs bismark2summary_rs; do
+          for b in bismark deduplicate_bismark bismark_methylation_extractor \
+                   bismark2bedGraph coverage2cytosine bismark_genome_preparation \
+                   bam2nuc NOMe_filtering filter_non_conversion \
+                   methylation_consistency bismark2report bismark2summary; do
             cp "${BINDIR}/${b}" "staging/${ARCHIVE}/"
           done
           cp license.txt "staging/${ARCHIVE}/LICENSE"
@@ -157,15 +157,172 @@ jobs:
           cd /tmp/binaries
           tar xzf bismark-rust-${{ needs.check-release.outputs.version }}-linux-x86_64.tar.gz
           DIR="bismark-rust-${{ needs.check-release.outputs.version }}-linux-x86_64"
-          for b in bismark_rs deduplicate_bismark_rs bismark_methylation_extractor_rs \
-                   bismark2bedGraph_rs coverage2cytosine_rs bismark_genome_preparation_rs \
-                   bam2nuc_rs NOMe_filtering_rs filter_non_conversion_rs \
-                   methylation_consistency_rs bismark2report_rs bismark2summary_rs; do
+          for b in bismark deduplicate_bismark bismark_methylation_extractor \
+                   bismark2bedGraph coverage2cytosine bismark_genome_preparation \
+                   bam2nuc NOMe_filtering filter_non_conversion \
+                   methylation_consistency bismark2report bismark2summary; do
             echo "--- $b ---"
             "$DIR/$b" --version
             "$DIR/$b" --help > /dev/null
           done
           echo "✓ all 12 binaries smoke-tested"
+
+  # ── crates.io publish (GA only) ───────────────────────────────────────────
+  # Publishes the 14-member workspace to crates.io in dependency (DAG) order.
+  # Runs on every REAL release, but the work is branch-gated INSIDE the script:
+  #   - dry-run (any version): validate only — per-crate `cargo publish
+  #     --dry-run` + a version-presence assert on every intra-workspace dep + a
+  #     topological-order assert. No registry contact, no OIDC. (`--dry-run`
+  #     resolves path-deps LOCALLY and never hits the registry, so it CANNOT
+  #     catch a wrong publish order — the topo assert is what covers that.)
+  #   - prerelease real (beta): NO-OP. Betas are never published (the immutable-
+  #     publish / exact-pin-cascade trap). Exiting 0 lets the downstream tag/
+  #     `:latest` jobs proceed unchanged on the beta track.
+  #   - GA real (non-prerelease, from master): OIDC trusted-publishing token →
+  #     ordered `cargo publish` L0 → L1 → L2, each verified-available before the
+  #     next (cargo's built-in index-propagation wait).
+  #
+  # Publish DAG (verified GA-epic Phase 1 against the live Cargo.tomls):
+  #   L0 (independent roots):  bismark-io, bismark-meta
+  #   L1 (depend only on L0):  bismark-aligner bismark-dedup bismark-bedgraph
+  #                            bismark-coverage2cytosine bismark-bam2nuc
+  #                            bismark-filter-nonconversion bismark-nome-filtering
+  #                            bismark-methylation-consistency
+  #                            bismark-genome-preparation bismark-report bismark-summary
+  #   L2 (publish LAST):       bismark-extractor (→ bedgraph + coverage2cytosine)
+  #
+  # SAFETY: docker-merge (moves `:latest`) and create-release (pushes the GA tag)
+  # `needs:` this job, so on a GA publish FAILURE they are skipped — a partial
+  # publish never strands a moved `:latest` or a pushed tag.
+  #
+  # PARTIAL-PUBLISH RUNBOOK (crates.io is yank-only — NO delete): a mid-cascade
+  # failure leaves earlier crates permanently published. Do NOT retry the SAME
+  # versions (republishing an existing version is rejected). Fix forward: patch
+  # the failing crate(s), BUMP the affected crate version(s) (+ the dependent
+  # exact-pins), and re-run from the first unpublished crate. The bare-`bismark`
+  # reserve crate (OD-3) is published separately at the Ph5 cut.
+  #
+  # OIDC PREREQ (real GA only): each crate needs a crates.io-side Trusted
+  # Publisher entry for this repo + `release.yml`. Confirm before the live Ph5
+  # cut — the dry-run skips the OIDC handshake, so it does NOT validate this.
+  publish-crates:
+    name: Publish to crates.io (GA only)
+    needs: [check-release, build-binaries, smoke-test-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # OIDC trusted-publishing token exchange
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # OIDC trusted-publishing token — ONLY on a real GA publish (betas no-op;
+      # dry-run never contacts the registry, so neither needs a token).
+      - name: Authenticate to crates.io (OIDC)
+        id: auth
+        if: needs.check-release.outputs.is_dry_run != 'true' && needs.check-release.outputs.is_prerelease != 'true'
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish (or validate) the workspace in DAG order
+        working-directory: rust
+        env:
+          DRY_RUN: ${{ needs.check-release.outputs.is_dry_run }}
+          IS_PRERELEASE: ${{ needs.check-release.outputs.is_prerelease }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          L0="bismark-io bismark-meta"
+          L1="bismark-aligner bismark-dedup bismark-bedgraph bismark-coverage2cytosine bismark-bam2nuc bismark-filter-nonconversion bismark-nome-filtering bismark-methylation-consistency bismark-genome-preparation bismark-report bismark-summary"
+          L2="bismark-extractor"
+          ORDER="$L0 $L1 $L2"
+
+          if [ "$DRY_RUN" != "true" ] && [ "$IS_PRERELEASE" = "true" ]; then
+            echo "Prerelease ($IS_PRERELEASE) — crates.io publish is deferred to the GA cut. No-op."
+            exit 0
+          fi
+
+          # --- Invariant 0: ORDER covers EVERY workspace member exactly once. A
+          # crate added to the workspace but forgotten here would silently never
+          # publish; assert set-equality against the [workspace] members list.
+          echo "::group::ORDER covers all workspace members"
+          members=$(grep -E '^members' Cargo.toml | grep -oE 'bismark-[a-z0-9-]+' | sort -u)
+          order_sorted=$(printf '%s\n' $ORDER | sort -u)
+          if [ "$members" != "$order_sorted" ]; then
+            echo "::error::publish ORDER does not match the [workspace] members:"
+            diff <(echo "$members") <(echo "$order_sorted") || true
+            exit 1
+          fi
+          # ORDER must list each crate exactly once (a duplicate would re-publish).
+          n_order=$(printf '%s\n' $ORDER | wc -l | xargs)
+          n_uniq=$(printf '%s\n' $ORDER | sort -u | wc -l | xargs)
+          [ "$n_order" = "$n_uniq" ] || { echo "::error::ORDER has a duplicate crate ($n_order entries, $n_uniq unique)"; exit 1; }
+          echo "✓ ORDER covers all $(echo "$members" | wc -l | xargs) workspace members, no duplicates"
+          echo "::endgroup::"
+
+          # --- Invariant 1: every intra-workspace dep carries a `version =`
+          # (crates.io rejects a published crate whose path-dep has no version).
+          echo "::group::version-presence on intra-workspace deps"
+          bad_deps=$(for c in $ORDER; do grep -HE '^bismark-[a-z0-9-]+ *=' "$c/Cargo.toml"; done | grep -v 'version' || true)
+          if [ -n "$bad_deps" ]; then
+            echo "::error::these bismark-* path-deps lack a 'version =' (crates.io will reject the publish):"
+            echo "$bad_deps"
+            exit 1
+          fi
+          echo "✓ all intra-workspace deps carry a version"
+          echo "::endgroup::"
+
+          # --- Invariant 1b: NO dependency uses a git source without a `version =`.
+          # crates.io rejects ANY git dep — even an optional, feature-gated one
+          # (e.g. bismark-aligner's optional rammap-core git rev). Invariant 1's
+          # bismark-* scan can't see third-party git deps, so guard them here.
+          echo "::group::git-deps carry a version"
+          git_unversioned=$(for c in $ORDER; do grep -HnE '(^|[,{[:space:]])git[[:space:]]*=' "$c/Cargo.toml"; done | grep -v 'version' || true)
+          if [ -n "$git_unversioned" ]; then
+            echo "::error::these git deps have no 'version =' (crates.io will reject the publish):"
+            echo "$git_unversioned"
+            exit 1
+          fi
+          echo "✓ all git deps carry a version"
+          echo "::endgroup::"
+
+          # --- Invariant 2: ORDER is a valid topological sort (each crate's
+          # bismark-* deps appear EARLIER). Catches a wrong publish order, which
+          # `cargo publish --dry-run` cannot (it resolves deps via local path).
+          echo "::group::topological-order check"
+          done_list=" "
+          bad=0
+          for c in $ORDER; do
+            for dep in $(grep -oE '^bismark-[a-z0-9-]+' "$c/Cargo.toml" | sort -u); do
+              case "$done_list" in
+                *" $dep "*) : ;;
+                *) echo "ORDER BUG: $c depends on $dep, which is not published earlier in ORDER"; bad=1 ;;
+              esac
+            done
+            done_list="$done_list$c "
+          done
+          [ "$bad" = 0 ] || { echo "::error::publish ORDER is not a valid topological sort"; exit 1; }
+          echo "✓ publish order is a valid topological sort"
+          echo "::endgroup::"
+
+          # --- Publish (real GA) or validate (dry-run) each crate IN ORDER.
+          for c in $ORDER; do
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::group::validate $c (dry-run)"
+              # `--dry-run` packages + verify-builds the crate and asserts deps
+              # carry versions; it subsumes `cargo package`. The ordering gap is
+              # covered by Invariant 2 above.
+              cargo publish -p "$c" --locked --dry-run --allow-dirty
+              echo "::endgroup::"
+            else
+              echo "::group::publish $c"
+              cargo publish -p "$c" --locked
+              echo "::endgroup::"
+            fi
+          done
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "✓ DRY-RUN: 14 crates packaged + dry-published; deps versioned; order valid"
+          else
+            echo "✓ PUBLISHED all 14 crates to crates.io in DAG order"
+          fi
 
   docker-build:
     name: Docker ${{ matrix.platform }}
@@ -218,7 +375,11 @@ jobs:
 
   docker-merge:
     name: Docker merge + tag
-    needs: [check-release, docker-build]
+    # publish-crates is in needs so a GA crates.io publish FAILURE skips this job
+    # (default skip-propagation) — `:latest` is never moved onto an image whose
+    # crates didn't publish. On the beta track publish-crates no-ops (succeeds),
+    # so this still runs and moves `:beta`/`:<version>` as before.
+    needs: [check-release, docker-build, publish-crates]
     if: needs.check-release.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -256,22 +417,29 @@ jobs:
       - name: Pull + test
         run: |
           IMG="ghcr.io/${{ env.IMAGE_NAME }}:${{ needs.check-release.outputs.version }}"
-          docker run --rm "$IMG" bismark_rs --version
-          docker run --rm "$IMG" bismark_methylation_extractor_rs --version
+          # `bismark` is the version-probe WRAPPER (execs the real aligner for
+          # everything else); the real aligner binary is `bismark.bin`.
+          docker run --rm "$IMG" bismark --version
+          docker run --rm "$IMG" bismark.bin --version
+          docker run --rm "$IMG" bismark_methylation_extractor --version
           docker run --rm "$IMG" bowtie2 --version
           docker run --rm "$IMG" samtools --version | head -1
-          # Canonical names (methylseq drop-in) resolve to the _rs binaries.
+          # Canonical names (methylseq drop-in) resolve; `bismark --help` also
+          # exercises the wrapper's exec of the real `bismark.bin`.
           docker run --rm "$IMG" bismark --help >/dev/null
           docker run --rm "$IMG" coverage2cytosine --help >/dev/null
           docker run --rm "$IMG" deduplicate_bismark --help >/dev/null
-          # Version probe: BOTH methylseq parser shapes must capture EXACTLY 0.25.1
-          # from `bismark` (the provenance line must NOT leak — the contract that
-          # keeps methylseq's versions.yml + nf-test snapshots unchanged).
+          # Version probe: BOTH methylseq parser shapes must capture EXACTLY the
+          # suite version from `bismark` (GA: the wrapper reports the TRUE suite
+          # version — at the 2.0.0 cut this is "2.0.0"; methylseq re-baselines its
+          # version snapshots, OD-7). Compared against the release version (not a
+          # hardcoded literal) so this stays correct for every later release/beta.
+          EXPECT="${{ needs.check-release.outputs.version }}"
           p1=$(docker run --rm "$IMG" bismark --version | grep Version | sed -e 's/Bismark Version: v//' | xargs)
           p2=$(echo $(docker run --rm "$IMG" bismark -v 2>&1) | sed 's/^.*Bismark Version: v//; s/Copyright.*$//' | xargs)
-          echo "version capture: parser1='$p1' parser2='$p2'"
-          [ "$p1" = "0.25.1" ] || { echo "FAIL: align-module parser captured '$p1'"; exit 1; }
-          [ "$p2" = "0.25.1" ] || { echo "FAIL: versions.yml parser captured '$p2' (provenance leak?)"; exit 1; }
+          echo "version capture: parser1='$p1' parser2='$p2' (expect '$EXPECT')"
+          [ "$p1" = "$EXPECT" ] || { echo "FAIL: align-module parser captured '$p1' (expected '$EXPECT')"; exit 1; }
+          [ "$p2" = "$EXPECT" ] || { echo "FAIL: versions.yml parser captured '$p2' (expected '$EXPECT')"; exit 1; }
           # Tools methylseq shells out to (genomeprep → *-build; extractor → gzip).
           # NB assert each individually — `command -v a b c` only resolves the FIRST
           # operand (POSIX), so a single multi-arg call would silently pass.
@@ -285,7 +453,10 @@ jobs:
   # (the check-release collision guard).
   create-release:
     name: Create tag + draft release
-    needs: [check-release, build-binaries, smoke-test-binaries, docker-build]
+    # publish-crates is in needs so a GA crates.io publish FAILURE skips the tag
+    # push + draft (nothing public is created on a partial publish). Betas no-op
+    # publish-crates (succeeds), so the tag/draft still happen on that track.
+    needs: [check-release, build-binaries, smoke-test-binaries, docker-build, publish-crates]
     if: needs.check-release.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
     steps:
