@@ -98,6 +98,16 @@ Compiling 12 crates from source is a non-trivial one-time build; cargo does not 
 - **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**. `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
 - Ensure **`~/.cargo/bin` is on your `PATH`** to run the installed `*_rs` binaries.
 
+### Legacy: the Perl Bismark (v0.25.1)
+
+The final Perl release is **v0.25.1** — the byte-identity target the Rust suite reproduces. To install the Perl Bismark independently of the Rust suite:
+
+```bash
+conda install -c bioconda bismark=0.25.1            # bioconda
+```
+
+Or run it from source: download the [v0.25.1 release](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1) (or `git checkout v0.25.1`) — the Perl scripts (`bismark`, `deduplicate_bismark`, `bismark_methylation_extractor`, …) live at the repository root and need **Perl** + a **Bowtie 2 / HISAT2** backend + **samtools** on `PATH`.
+
 ## Combined-index alignment (v2, opt-in — beta)
 
 `bismark_rs` can align against a **single combined CT+GA index** instead of the faithful 2 (directional) / 4
