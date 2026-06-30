@@ -197,10 +197,10 @@ pub struct RunConfig {
     /// NOT filter the core per-read calls / primary BAM. Requires `five_base`.
     pub five_base_min_mapq: u8,
     /// #787: run the post-alignment DUPLEX-consensus family pass + report (per-molecule
-    /// reconciliation). SE + PE (PE is the real workflow). Requires `five_base` (guarded at resolve()).
+    /// reconciliation). Paired-end only. Requires `five_base` (guarded at resolve()).
     pub five_base_duplex: bool,
     /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
-    /// (implies `five_base_duplex`). SE + PE (PE is the real workflow). Requires `five_base`.
+    /// (implies `five_base_duplex`). Paired-end only. Requires `five_base`.
     pub five_base_consensus: bool,
     /// #787: take the duplex UMI from the read NAME tail (`A+B` dual UMI) instead of inline
     /// read bases; the duplex partner carries `B+A`. Requires `five_base`; mutually
@@ -274,7 +274,7 @@ pub struct RunConfig {
     pub hisat2_multicore_remap: Option<u32>,
     /// `--combined_index` (v2, opt-in, never-silent, concordance-gated): align
     /// against the single combined CT+GA index in one both-strands pass instead of
-    /// the faithful per-strand instances. SE directional only this phase; the
+    /// the faithful per-strand instances. PE directional only; the
     /// `reject_combined_index_unsupported` guard rejects every other combination,
     /// and `resolve` errors if the combined index is absent (it is `genome.
     /// combined_index_basename.is_some()` whenever this is `true`).
@@ -471,14 +471,30 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         }
     }
 
+    // --illumina_5base (#787) scope guards. The 5-Base path is paired-end +
+    // directional, FASTQ, single-instance only; everything else is rejected.
+    // Reject loudly (never silently degrade) BEFORE the generic minimap2 guards
+    // so the error names --illumina_5base, not --minimap2.
+    // Early CLI-level SE rejection fires before layout resolution (no -1/-2 supplied).
+    if cli.illumina_5base && cli.mates1.is_none() {
+        return Err(AlignerError::Unsupported(
+            "--illumina_5base is paired-end only: the 5-Base library is paired-end. \
+             Provide -1/-2 (single-end was an early scaffold and is no longer supported)."
+                .into(),
+        ));
+    }
+
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
 
-    // --illumina_5base (#787) v1 scope guards. The 5-Base path is single-end +
-    // directional, FASTQ, single-instance only; everything else is a deferred
-    // follow-up phase. Reject loudly (never silently degrade) BEFORE the generic
-    // minimap2 guards so the error names --illumina_5base, not --minimap2.
     if cli.illumina_5base {
+        if matches!(layout, ReadLayout::SingleEnd { .. }) {
+            return Err(AlignerError::Unsupported(
+                "--illumina_5base is paired-end only: the 5-Base library is paired-end. \
+                 Provide -1/-2 (single-end was an early scaffold and is no longer supported)."
+                    .into(),
+            ));
+        }
         if cli.non_directional || cli.pbat {
             return Err(AlignerError::Unsupported(
                 "--illumina_5base is directional only in v1 (drop --non_directional/--pbat): \
@@ -563,7 +579,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         aligner,
         // Phase 4 (epic 06152026): in-process opt-in flag (guarded above: requires --rammap).
         rammap_inprocess: cli.rammap_inprocess,
-        // #787 5-Base mode (guarded above: SE + directional, minimap2 unconverted path).
+        // #787 5-Base mode (guarded above: PE + directional, minimap2 unconverted path).
         five_base: cli.illumina_5base,
         five_base_deconvolution: cli.five_base_deconvolution,
         five_base_index: cli.five_base_index.clone(),
@@ -1488,7 +1504,7 @@ mod tests {
         );
     }
 
-    /// `--five_base_duplex` requires `--illumina_5base` and is SE-only (rejects `-2`).
+    /// `--five_base_duplex` requires `--illumina_5base` and is paired-end only.
     #[test]
     fn five_base_duplex_guards() {
         let err = resolve(&cli_from(&["--five_base_duplex"]), "cmd".into()).unwrap_err();
@@ -1513,6 +1529,27 @@ mod tests {
             assert!(
                 !e.to_string().contains("single-end only"),
                 "PE duplex must not be rejected as single-end: {e}"
+            );
+        }
+    }
+
+    /// `--illumina_5base` is paired-end only: single-end input is rejected loud.
+    #[test]
+    fn illumina_5base_rejects_single_end() {
+        let err = resolve(&cli_from(&["--illumina_5base", "reads.fq"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--illumina_5base is paired-end only"),
+            "got: {err}"
+        );
+        // PE still resolves past the SE guard (may fail later for no genome, but not here).
+        if let Err(e) = resolve(
+            &cli_from(&["--illumina_5base", "-1", "r1.fq", "-2", "r2.fq"]),
+            "cmd".into(),
+        ) {
+            assert!(
+                !e.to_string().contains("paired-end only"),
+                "PE 5-Base must not hit the SE guard: {e}"
             );
         }
     }

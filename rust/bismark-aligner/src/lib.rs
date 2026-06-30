@@ -488,6 +488,14 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         .map(|r| u16::from(r.inner().flags()) & 0x1 != 0)
         .unwrap_or(false);
 
+    if !paired_end {
+        return Err(AlignerError::Validation(format!(
+            "5-Base consensus is paired-end only: {} looks single-end (FLAG 0x1 unset). \
+             5-Base is a paired-end library.",
+            bams[0].display()
+        )));
+    }
+
     let umi_swap = if cli.five_base_umi_qname {
         Some(crate::five_base_duplex::UmiSwap::DualPlus)
     } else if cli.five_base_umi_len > 0 {
