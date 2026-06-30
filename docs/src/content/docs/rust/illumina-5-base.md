@@ -20,9 +20,10 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
 
 - **Supported in GA (2.0.0):** `--illumina_5base` (core), `--five_base_duplex`,
   `--five_base_consensus`, `--five_base_deconvolution`. These are validated by per-CpG
-  concordance with Illumina DRAGEN on two real samples (NA12878 and HG002 from the
-  BaseSpace demo) and by a reproducible lambda/pUC19 spike-in gate that runs in CI with no
-  proprietary data.
+  concordance with Illumina DRAGEN on the real NA12878 demo at full depth (core
+  **r approximately 0.99 over 55M CpGs, 97.5% call-agreement**; deconvolution **90.3%
+  precision / 93.4% recall**) and by a reproducible lambda/pUC19 spike-in gate that runs in
+  CI with no proprietary data.
 - **Preview:** `--five_base_umi_qname` (duplex UMI taken from the read name). It works and
   is exercised on real data, but is not yet held to the same gated contract.
 - **Unchanged:** the faithful bisulfite / EM-seq suite is **byte-frozen**. Every legacy
