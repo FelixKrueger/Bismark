@@ -20,7 +20,7 @@ path = "src/main.rs"
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 bismark-io = { version = "=1.0.0", path = "../bismark-io" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 thiserror = "=2.0.18"
 # Phase B: always-gzipped `.manOwar.txt.gz` output + gz-aware yacht input.
 flate2 = "=1.1.9"

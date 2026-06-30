@@ -25,7 +25,7 @@ bismark-io = { version = "=1.0.0", path = "../bismark-io" }
 # IN-PROCESS via these crates' `Cli`/`run()` (no fork/exec, no Perl subprocess).
 bismark-bedgraph = { version = "1.0.0", path = "../bismark-bedgraph" }
 bismark-coverage2cytosine = { version = "1.0.0", path = "../bismark-coverage2cytosine" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 # Multithreaded allocator (#884). The default system allocator's arena locks
 # were the dominant cost of the extractor's parallel pipeline: 4-8 worker
 # threads blocked in malloc/free on per-record allocations, causing N>1 to run

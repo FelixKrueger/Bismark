@@ -25,7 +25,7 @@ bismark-io = { version = "=1.0.0", path = "../bismark-io" }
 # Needed directly for `Header` (returned by `bismark_io::open_reader`
 # via `AnyReader::header`) and for test-helper types.
 noodles-sam = "=0.85.0"
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 rustc-hash = "=2.1.0"
 thiserror = "=2.0.18"
 anyhow = "=1.0.103"

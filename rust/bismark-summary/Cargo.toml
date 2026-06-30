@@ -23,7 +23,7 @@ bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 # bismark2summary opens NO BAM/SAM/CRAM (filename-only) and writes plain-text
 # outputs — so NO bismark-io, NO noodles, NO flate2. Pure CLI + text parsers +
 # string templating.
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 thiserror = "=2.0.18"
 anyhow = "=1.0.103"
 

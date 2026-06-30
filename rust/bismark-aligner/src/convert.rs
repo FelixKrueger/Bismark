@@ -39,6 +39,9 @@ pub struct ConvertOptions {
     pub maximum_length_cutoff: Option<u32>,
     /// `--paraseq`: use the paraseq fast parser (#1025; opt-in, byte-identical).
     pub paraseq: bool,
+    /// `--mim`: opportunistic mim gzip-index parallel decode when a `.mim` sidecar is
+    /// present (#1025; opt-in, byte-identical, falls back to the serial parser otherwise).
+    pub mim: bool,
 }
 
 impl ConvertOptions {
@@ -53,6 +56,7 @@ impl ConvertOptions {
             icpc: cfg.read_processing.icpc,
             maximum_length_cutoff: cfg.read_processing.maximum_length_cutoff,
             paraseq: cfg.read_processing.paraseq,
+            mim: cfg.read_processing.mim,
         }
     }
 }
@@ -266,6 +270,36 @@ fn convert_fastq_impl(
     if opts.paraseq {
         return convert_fastq_impl_paraseq(input, temp_dir, opts, kind, id_suffix, file_base);
     }
+    // #1025 Phase 3b: opt-in mim opportunistic gzip-index path. Engages ONLY when the input
+    // is gzipped AND a `<input>.mim` sidecar exists; otherwise a never-silent note + fall
+    // through to the serial loop ("use the .mim if it's there, else normal parsing").
+    #[cfg(feature = "mim-input")]
+    if opts.mim {
+        let is_gz = input.to_string_lossy().ends_with(".gz");
+        let sidecar = mim_index::default_index_path(input, None);
+        if is_gz && sidecar.exists() {
+            return convert_fastq_impl_mim(input, temp_dir, opts, kind, id_suffix, file_base);
+        }
+        eprintln!(
+            "Note: --mim set but {} for '{}'; using the standard FastQ parser.",
+            if is_gz {
+                "no .mim sidecar was found"
+            } else {
+                "the input is not gzipped"
+            },
+            input.display()
+        );
+        // fall through to the serial loop below.
+    }
+    #[cfg(not(feature = "mim-input"))]
+    if opts.mim {
+        return Err(AlignerError::Validation(
+            "this bismark_rs build was compiled without `--mim` support; rebuild with \
+             `--features mim-input` (requires Rust >= 1.91), or drop --mim to use the built-in \
+             FastQ parser."
+                .into(),
+        ));
+    }
 
     // ---- output name + path (raw concat, Perl ${temp_dir}${name}) -----------
     let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
@@ -376,6 +410,43 @@ fn convert_fastq_impl(
     })
 }
 
+/// Shared per-record emit for the paraseq (#1025 Phase 3c) and mim (Phase 3b) convert
+/// paths: reconstruct the 4 FastQ lines from a parsed record's raw fields and write the
+/// converted record, byte-for-byte identical to the serial [`convert_fastq_impl`] loop.
+/// `id` is the header WITHOUT the leading `@` (paraseq `id()`); `sep` is the separator line
+/// WITH its leading `+` (paraseq `sep()`); `seq`/`qual` are the raw line bodies (a CRLF
+/// `\r` is carried through unchanged). `fix_id` runs here (only for records that are
+/// actually written) so a skipped record costs nothing, matching the serial path where a
+/// skipped record produced no output. The dead tab counter is omitted (it is always 0).
+#[cfg(any(feature = "paraseq-convert", feature = "mim-input"))]
+#[allow(clippy::too_many_arguments)]
+fn emit_converted<W: Write>(
+    w: &mut W,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    icpc: bool,
+    id: &[u8],
+    seq: &[u8],
+    sep: &[u8],
+    qual: &[u8],
+    id_scratch: &mut Vec<u8>,
+) -> Result<()> {
+    id_scratch.clear();
+    id_scratch.push(b'@');
+    id_scratch.extend_from_slice(id);
+    let mut fixed_id = fix_id(id_scratch, icpc);
+    fixed_id.extend_from_slice(id_suffix);
+    fixed_id.push(b'\n');
+    w.write_all(&fixed_id)?;
+    w.write_all(&convert_one(seq, kind))?;
+    w.write_all(b"\n")?;
+    w.write_all(sep)?;
+    w.write_all(b"\n")?;
+    w.write_all(qual)?;
+    w.write_all(b"\n")?;
+    Ok(())
+}
+
 /// #1025 Phase 3c, paraseq fast-parse variant of [`convert_fastq_impl`]. Reads the input
 /// FastQ with paraseq's serial reader (zero-copy borrowed record views) instead of the
 /// `read_until`×4 loop, reconstructs the chomped ID line (`@`+`id()`; `id()` omits the
@@ -432,8 +503,7 @@ fn convert_fastq_impl_paraseq(
     });
 
     let mut count: u64 = 0;
-    let mut seqid_tab_count: u64 = 0;
-    let mut id_line: Vec<u8> = Vec::new(); // reused scratch: "@" + id()
+    let mut id_scratch: Vec<u8> = Vec::new();
     let mut rset = reader.new_record_set();
 
     'outer: while rset
@@ -445,19 +515,10 @@ fn convert_fastq_impl_paraseq(
                 AlignerError::Validation(format!("failed to parse FastQ '{input:?}': {e}"))
             })?;
             count += 1;
-
-            // ID: "@" + raw header (paraseq id() is after '@', before '\n', spaces + a CRLF
-            // '\r' preserved) -> fix_id -> (PE: /1/1 or /2/2) -> '\n'. Matches the serial
-            // path's fix_id(chomp_newline(&id)) exactly.
-            id_line.clear();
-            id_line.push(b'@');
-            id_line.extend_from_slice(rec.id());
-            let mut fixed_id = fix_id(&id_line, opts.icpc);
-            fixed_id.extend_from_slice(id_suffix);
-            fixed_id.push(b'\n');
-
             // skip/upto (Perl falsy-0). count is already incremented (matches serial: the
-            // upto-triggering record is counted, then the loop stops).
+            // upto-triggering record is counted, then the loop stops). fix_id runs inside
+            // emit_converted (only for written records); a skipped record produced no output
+            // in the serial path either, so deferring it is byte-identical.
             if let Some(s) = opts.skip
                 && s > 0
                 && count <= s
@@ -470,7 +531,6 @@ fn convert_fastq_impl_paraseq(
             {
                 break 'outer;
             }
-
             let seq = rec.seq_raw();
             // max-length guard (mm2-only, inert on the Bowtie 2 spine). The serial path
             // measures the raw seq line length INCLUDING its terminator, so add 1 for the
@@ -480,25 +540,17 @@ fn convert_fastq_impl_paraseq(
             {
                 continue;
             }
-
-            // tab-in-ID counter (dead: fix_id removed tabs above, a faithful replica of
-            // Perl's likewise-dead check, kept so ConvertedReads.seqid_tab_count matches).
-            if fixed_id.contains(&b'\t') {
-                seqid_tab_count += 1;
-            }
-            // (The serial path's record-1 FastQ sanity is omitted: fixed_id always starts
-            // with '@' and the separator with '+' on this path, and paraseq has already
-            // fail-loud-rejected any non-FastQ input above, so the check can never fire.)
-
-            // uc + C→T/G→A + write; separator (paraseq sep() already includes the leading
-            // '+', unlike id() which omits '@') and qual verbatim, each + '\n'.
-            writer.write_all(&fixed_id)?;
-            writer.write_all(&convert_one(seq, kind))?;
-            writer.write_all(b"\n")?;
-            writer.write_all(rec.sep())?;
-            writer.write_all(b"\n")?;
-            writer.write_all(rec.qual().unwrap_or(b""))?;
-            writer.write_all(b"\n")?;
+            emit_converted(
+                &mut writer,
+                kind,
+                id_suffix,
+                opts.icpc,
+                rec.id(),
+                seq,
+                rec.sep(),
+                rec.qual().unwrap_or(b""),
+                &mut id_scratch,
+            )?;
         }
     }
 
@@ -507,8 +559,10 @@ fn convert_fastq_impl_paraseq(
     Ok(ConvertedReads {
         name,
         path: full_path,
+        // seqid_tab_count is always 0 (fix_id strips tabs before the dead Perl check); the
+        // serial path returns the same 0.
         count,
-        seqid_tab_count,
+        seqid_tab_count: 0,
     })
 }
 
@@ -529,6 +583,210 @@ fn convert_fastq_impl_paraseq(
          to use the built-in FastQ parser."
             .into(),
     ))
+}
+
+/// #1025 Phase 3b, mim opportunistic gzip-index variant of [`convert_fastq_impl`]. When the
+/// input `.fq.gz` has a pre-built `.mim` sidecar, mim assigns the file's record-aligned
+/// chunks to `num_workers` CONTIGUOUS, ascending ranges; each worker decodes its gzip range
+/// in parallel and converts its records into a private buffer, and the buffers are
+/// concatenated in worker order = file order. Each worker drives our own
+/// `paraseq::fastq::Reader` over mim's `GzipStreamReader` and reuses [`emit_converted`], so
+/// the converted temp FastQ is byte-identical to the serial path AND worker-count-invariant
+/// (the parallel split changes only speed). `--skip`/`--upto`/count stay exact because each
+/// worker derives its global 1-based record count from the chunk's `next_record_idx`. With
+/// `--gzip` the temp is **decompression-identical** rather than byte-identical: zlib's
+/// block-split decisions depend on write-chunk sizes, so the parallel assembly's deflate
+/// framing can differ, but the decompressed reads (and thus the alignment + final output)
+/// are byte-identical.
+#[cfg(feature = "mim-input")]
+fn convert_fastq_impl_mim(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    file_base: &str,
+) -> Result<ConvertedReads> {
+    let nw = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    convert_fastq_impl_mim_with_workers(input, temp_dir, opts, kind, id_suffix, file_base, nw)
+}
+
+/// The worker-count-parameterised core (so tests can prove worker-count invariance).
+#[cfg(feature = "mim-input")]
+fn convert_fastq_impl_mim_with_workers(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    file_base: &str,
+    num_workers: usize,
+) -> Result<ConvertedReads> {
+    use mim_index::MimReader;
+
+    // ---- output name + path (IDENTICAL to convert_fastq_impl) ----------------
+    let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
+    })?;
+    let mut name = match &opts.prefix {
+        Some(p) => format!("{p}.{basename}"),
+        None => basename.to_string(),
+    };
+    name.push_str(file_base);
+    name.push_str(if opts.gzip { ".fastq.gz" } else { ".fastq" });
+    let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
+    let full_path = PathBuf::from(&full);
+
+    let mreader = MimReader::new(input, num_workers.max(1));
+    // Stale-sidecar guard: the `.mim` must match the `.gz` it indexes (blake3), else we would
+    // silently mis-decode against an outdated index. Fail loud.
+    if !mreader.index.verify_hash(input) {
+        return Err(AlignerError::Validation(format!(
+            "the mim sidecar for '{}' does not match the input file (stale or wrong index); \
+             rebuild it, or drop --mim.",
+            input.display()
+        )));
+    }
+    let nw = mreader.num_workers;
+    let total = mreader.index.total_num_records.max(0) as u64;
+
+    // Per-worker converted buffers (uncompressed), assembled in worker order = file order.
+    let mut buffers: Vec<Vec<u8>> = vec![Vec::new(); nw];
+    std::thread::scope(|scope| -> Result<()> {
+        let mut handles = Vec::with_capacity(nw);
+        for w in 0..nw {
+            let range = mreader.chunk_assignments[w].clone();
+            if range.is_empty() {
+                // Excess worker (num_workers > chunks): no records, empty buffer.
+                handles.push(None);
+                continue;
+            }
+            // Global 0-based rank of this worker's first record (chunks are contiguous).
+            let start_rank = mreader
+                .index
+                .checkpoints
+                .get(range.start)
+                .map(|c| c.next_record_idx)
+                .unwrap_or(total);
+            let mreader_ref = &mreader;
+            handles.push(Some(scope.spawn(move || {
+                convert_mim_worker(mreader_ref, w, start_rank, opts, kind, id_suffix, input)
+            })));
+        }
+        for (w, h) in handles.into_iter().enumerate() {
+            if let Some(h) = h {
+                buffers[w] = h
+                    .join()
+                    .map_err(|_| AlignerError::Validation(format!("mim worker {w} panicked")))??;
+            }
+        }
+        Ok(())
+    })?;
+
+    // ---- writer (gz or plain): concatenate the buffers in worker (= file) order ----
+    let out = File::create(&full_path)?;
+    let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(if opts.gzip {
+        Box::new(GzEncoder::new(out, Compression::default()))
+    } else {
+        Box::new(out)
+    });
+    for buf in &buffers {
+        writer.write_all(buf)?;
+    }
+    writer.flush()?;
+    drop(writer);
+
+    // count matches the serial loop: every record is counted; an active --upto stops after
+    // counting record upto+1. seqid_tab_count is always 0 (fix_id strips tabs).
+    let count = match opts.upto {
+        Some(u) if u > 0 && u < total => u + 1,
+        _ => total,
+    };
+    Ok(ConvertedReads {
+        name,
+        path: full_path,
+        count,
+        seqid_tab_count: 0,
+    })
+}
+
+/// One mim worker: decode + convert this worker's contiguous chunk range into a buffer.
+/// `start_rank` is the global 0-based record index of the worker's first record, so the
+/// 1-based global `count` used by `--skip`/`--upto` is `start_rank + local + 1`.
+#[cfg(feature = "mim-input")]
+#[allow(clippy::too_many_arguments)]
+fn convert_mim_worker(
+    mreader: &mim_index::MimReader,
+    worker_id: usize,
+    start_rank: u64,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    input: &Path,
+) -> Result<Vec<u8>> {
+    use paraseq::Record as _;
+    use paraseq::fastq::Reader;
+
+    let stream = mreader.get_reader(worker_id).map_err(|e| {
+        AlignerError::Validation(format!(
+            "mim worker {worker_id} on '{}': {e}",
+            input.display()
+        ))
+    })?;
+    let mut reader = Reader::new(stream);
+    let mut out: Vec<u8> = Vec::new();
+    let mut id_scratch: Vec<u8> = Vec::new();
+    let mut rset = reader.new_record_set();
+    let mut local: u64 = 0;
+    'outer: while rset.fill(&mut reader).map_err(|e| {
+        AlignerError::Validation(format!(
+            "mim worker {worker_id} parse '{}': {e}",
+            input.display()
+        ))
+    })? {
+        for rec in rset.iter() {
+            let rec = rec.map_err(|e| {
+                AlignerError::Validation(format!(
+                    "mim worker {worker_id} parse '{}': {e}",
+                    input.display()
+                ))
+            })?;
+            let count = start_rank + local + 1; // 1-based global record number
+            local += 1;
+            if let Some(s) = opts.skip
+                && s > 0
+                && count <= s
+            {
+                continue;
+            }
+            if let Some(u) = opts.upto
+                && u > 0
+                && count > u
+            {
+                break 'outer;
+            }
+            let seq = rec.seq_raw();
+            if let Some(cutoff) = opts.maximum_length_cutoff
+                && (seq.len() as u64 + 1) > cutoff as u64
+            {
+                continue;
+            }
+            emit_converted(
+                &mut out,
+                kind,
+                id_suffix,
+                opts.icpc,
+                rec.id(),
+                seq,
+                rec.sep(),
+                rec.qual().unwrap_or(b""),
+                &mut id_scratch,
+            )?;
+        }
+    }
+    Ok(out)
 }
 
 // ===========================================================================
@@ -1157,6 +1415,7 @@ mod tests {
             icpc,
             maximum_length_cutoff: None,
             paraseq: false,
+            mim: false,
         }
     }
 
@@ -1942,6 +2201,7 @@ mod paraseq_byte_identity {
             icpc: false,
             maximum_length_cutoff: None,
             paraseq: false,
+            mim: false,
         }
     }
 
@@ -2062,5 +2322,177 @@ GGGGCCCCAAAATTTT\n\
         let mut o = base_opts();
         o.gzip = true;
         assert_concordant(TRICKY, &o, bisulfite_convert_fastq_se);
+    }
+}
+
+// ===========================================================================
+// #1025 Phase 3b, mim gzip-index byte-identity gate.
+//
+// Concordance: the `--mim` parallel path must produce byte-identical converted FastQ to the
+// serial loop over the same `.fq.gz` (which is byte-identical to Perl v0.25.1), AND be
+// worker-count-invariant. Build a real `.fq.gz` + `.mim` sidecar, then assert serial == mim
+// at 1/2/4 workers (proving the contiguous-chunk parallel split + global-rank skip/upto
+// bookkeeping are exact).
+// ===========================================================================
+#[cfg(all(test, feature = "mim-input"))]
+mod mim_byte_identity {
+    use super::*;
+    use flate2::read::MultiGzDecoder;
+    use std::io::Read as _;
+
+    fn base_opts() -> ConvertOptions {
+        ConvertOptions {
+            prefix: None,
+            gzip: false,
+            skip: None,
+            upto: None,
+            icpc: false,
+            maximum_length_cutoff: None,
+            paraseq: false,
+            mim: false,
+        }
+    }
+
+    fn read_bytes(p: &Path) -> Vec<u8> {
+        let mut v = Vec::new();
+        File::open(p).unwrap().read_to_end(&mut v).unwrap();
+        v
+    }
+
+    fn gzip_to(path: &Path, data: &[u8]) {
+        // Flush every ~1 KiB so the deflate stream has MANY block boundaries; mim can only
+        // checkpoint at a block boundary, so a single giant block would yield one chunk and
+        // never exercise the worker split.
+        let mut enc = GzEncoder::new(File::create(path).unwrap(), Compression::default());
+        for chunk in data.chunks(1024) {
+            enc.write_all(chunk).unwrap();
+            enc.flush().unwrap();
+        }
+        enc.finish().unwrap();
+    }
+
+    /// A tricky FastQ: spaced + tabbed headers (fix_id), lowercase bases (uc), `+readname`
+    /// separators on every 3rd record (sep reconstruction), and varying lengths.
+    fn tricky_fastq(n: usize) -> Vec<u8> {
+        let mut v = Vec::new();
+        for i in 0..n {
+            let header = format!("read{i} some comment\tcol {i}");
+            v.push(b'@');
+            v.extend_from_slice(header.as_bytes());
+            v.push(b'\n');
+            let seq: &[u8] = if i % 2 == 0 {
+                b"acgtACGTnNCCGGAATT"
+            } else {
+                b"CCGGAATTCCGG"
+            };
+            v.extend_from_slice(seq);
+            v.push(b'\n');
+            if i % 3 == 0 {
+                v.push(b'+');
+                v.extend_from_slice(header.as_bytes());
+            } else {
+                v.push(b'+');
+            }
+            v.push(b'\n');
+            let qual: &[u8] = if i % 2 == 0 {
+                b"IIIIIIIIIIIIIIIIII"
+            } else {
+                b"############"
+            };
+            v.extend_from_slice(qual);
+            v.push(b'\n');
+        }
+        v
+    }
+
+    fn assert_concordant(opts: &ConvertOptions, kind: ConvKind, id_suffix: &[u8], file_base: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let gz = dir.path().join("reads.fastq.gz");
+        gzip_to(&gz, &tricky_fastq(300));
+        // Small chunk size forces MANY record-aligned chunks so the worker split is real.
+        mim_index::build_mim_index(&gz, 256, None, None).unwrap();
+        let sidecar = mim_index::default_index_path(&gz, None);
+        let idx = mim_index::types::MimIndex::read_path(&sidecar).unwrap();
+        assert!(
+            idx.checkpoints.len() > 3,
+            "fixture must span multiple chunks; got {}",
+            idx.checkpoints.len()
+        );
+
+        // For a gzipped temp, compare the DECOMPRESSED content: the deflate framing can
+        // differ (zlib's block-split decisions depend on write-chunk sizes, and the parallel
+        // assembly feeds the encoder differently than the per-record serial path), but the
+        // decompressed reads, hence the bowtie2 input and the final output, are byte-identical.
+        // A plain temp is compared byte-for-byte.
+        let read_content = |p: &Path| -> Vec<u8> {
+            let raw = read_bytes(p);
+            if opts.gzip {
+                let mut out = Vec::new();
+                MultiGzDecoder::new(&raw[..]).read_to_end(&mut out).unwrap();
+                out
+            } else {
+                raw
+            }
+        };
+
+        // serial baseline over the .gz (mim off).
+        let mut serial_opts = opts.clone();
+        serial_opts.mim = false;
+        let serial_dir = dir.path().join("serial");
+        std::fs::create_dir_all(&serial_dir).unwrap();
+        let a =
+            convert_fastq_impl(&gz, &serial_dir, &serial_opts, kind, id_suffix, file_base).unwrap();
+        let a_content = read_content(&a.path);
+
+        for nw in [1usize, 2, 4] {
+            let wdir = dir.path().join(format!("mim{nw}"));
+            std::fs::create_dir_all(&wdir).unwrap();
+            let b = convert_fastq_impl_mim_with_workers(
+                &gz, &wdir, opts, kind, id_suffix, file_base, nw,
+            )
+            .unwrap();
+            assert_eq!(
+                a_content,
+                read_content(&b.path),
+                "serial vs mim (workers={nw}) converted content differs"
+            );
+            assert_eq!(a.count, b.count, "record count differs (workers={nw})");
+        }
+    }
+
+    #[test]
+    fn se_ct_concordant() {
+        assert_concordant(&base_opts(), ConvKind::Ct, b"", "_C_to_T");
+    }
+
+    #[test]
+    fn se_ga_concordant() {
+        assert_concordant(&base_opts(), ConvKind::Ga, b"", "_G_to_A");
+    }
+
+    #[test]
+    fn pe_r1_concordant() {
+        assert_concordant(&base_opts(), ConvKind::Ct, b"/1/1", "_C_to_T");
+    }
+
+    #[test]
+    fn skip_concordant() {
+        let mut o = base_opts();
+        o.skip = Some(50);
+        assert_concordant(&o, ConvKind::Ct, b"", "_C_to_T");
+    }
+
+    #[test]
+    fn upto_concordant() {
+        let mut o = base_opts();
+        o.upto = Some(123);
+        assert_concordant(&o, ConvKind::Ct, b"", "_C_to_T");
+    }
+
+    #[test]
+    fn gzip_output_concordant() {
+        let mut o = base_opts();
+        o.gzip = true;
+        assert_concordant(&o, ConvKind::Ct, b"", "_C_to_T");
     }
 }

@@ -20,7 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 # PATH-based discovery of the external aligner (bowtie2). Same crate + pin the
 # genome-preparation port uses for subprocess discovery.
 which = "=7.0.3"
@@ -107,6 +107,20 @@ binseq = { version = "=0.9.2", default-features = false, features = ["anyhow"], 
 # defaults; we feed it an already-decompressed stream (flate2 `MultiGzDecoder`), so no
 # compression backend is needed. Exact-pinned per convention.
 paraseq = { version = "=0.4.13", default-features = false, optional = true }
+# #1025 Phase 3b: mim opportunistic gzip index. OPTIONAL + behind the default-OFF
+# `mim-input` feature. Opt-in `--mim`: when the input `.fq.gz` has a pre-built `.mim`
+# sidecar, decode it in parallel (record-aligned chunk ranges) via mim's `GzipStreamReader`,
+# driving our OWN `paraseq::fastq::Reader` over each worker's stream for byte-identical
+# reconstruction (so the converted temp FastQ is byte-identical to the serial path; workers
+# write contiguous chunk ranges, concatenated in worker order = file order). NB: mim-index is
+# **edition 2024 / MSRV 1.91** (feature therefore requires Rust >= 1.91; the default
+# build + all other features stay on the workspace MSRV 1.89); a dedicated 1.91 CI job covers
+# it (rust_ci.yml). We drive our OWN `paraseq::fastq::Reader` over mim's unconditional
+# `get_reader` (not mim's `get_paraseq_reader`/`get_needletail_iter`), so mim's `paraseq`
+# feature is dropped. `needletail` is enabled ONLY because mim 0.1.1's `lib.rs` re-exports
+# needletail-gated types (`MultiMimReader`/`ReadIter`) unconditionally, so the lib does not
+# compile without it (an upstream quirk, not something we use).
+mim-index = { version = "=0.1.1", default-features = false, features = ["needletail"], optional = true }
 
 [features]
 # Default-OFF: compiles the in-process rammap backend (`inprocess.rs`) + its rammap-typed
@@ -122,6 +136,11 @@ binseq-input = ["dep:binseq"]
 # only the actual paraseq decode is gated here. Opt-in at runtime so the byte-frozen serial
 # convert loop stays the default.
 paraseq-convert = ["dep:paraseq"]
+# Default-OFF: compiles the mim opportunistic gzip-index convert path
+# (`convert::convert_fastq_impl_mim`). Requires Rust >= 1.91 (mim-index is edition 2024). The
+# `--mim` flag parses + is rejected never-silently on ANY build (feature-independent); only
+# the actual mim decode is gated here. Pulls `paraseq` too (the reconstruction is shared).
+mim-input = ["dep:mim-index", "dep:paraseq"]
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

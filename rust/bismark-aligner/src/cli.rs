@@ -385,6 +385,14 @@ pub struct Cli {
     /// than on the gzip-output/alignment-dominated Bowtie2/HISAT2 path).
     #[arg(long = "paraseq")]
     pub paraseq: bool,
+    /// Opportunistically use a `mim` gzip index (#1025): when an input `.fq.gz` has a
+    /// pre-built `<file>.mim` sidecar, decode it in parallel (record-aligned chunk ranges)
+    /// in the bisulfite-convert step; otherwise fall back to the standard parser (never
+    /// silent). Opt-in; requires a build with the `mim-input` feature (Rust >= 1.91),
+    /// rejected fail-loud otherwise. Output is byte-identical to the default path. Mutually
+    /// exclusive with `--paraseq`.
+    #[arg(long = "mim")]
+    pub mim: bool,
     /// minimap2 short-read preset (`-x sr`; minimap2 mode only).
     #[arg(long = "mm2_short_reads")]
     pub mm2_short_read: bool,

@@ -20,7 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 # gzip input (.fa.gz / .fasta.gz). MultiGzDecoder handles multi-member files
 # (some genome .gz are concatenated members); a plain GzDecoder would truncate.
 flate2 = "=1.1.9"

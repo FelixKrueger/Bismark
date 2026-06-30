@@ -14,6 +14,8 @@ the `XM`/`XR`/`XG` methylation call, and writes the Bismark BAM + reports.
 
 **Fast FastQ parsing (`--paraseq`):** opt-in flag (#1025) that parses the input FastQ with the [`paraseq`](https://github.com/noamteyssier/paraseq) reader in the bisulfite-convert step instead of the built-in line reader. Output is **byte-identical** to the default path (verified by a serial-vs-paraseq concordance gate); the win is faster raw-read parsing, most relevant on the in-process backend where parsing is a larger share of wall time than on the gzip-output / alignment-dominated Bowtie2 / HISAT2 path. Behind the default-OFF / release-ON `paraseq-convert` feature; a default build rejects `--paraseq` fail-loud.
 
+**Opportunistic gzip index (`--mim`):** opt-in flag (#1025) that, when an input `.fq.gz` has a pre-built `<file>.mim` sidecar (from the [`mim`](https://crates.io/crates/mim-index) indexer), decodes it in parallel (record-aligned chunk ranges, one per worker) in the bisulfite-convert step; otherwise it emits a note and falls back to the standard parser. Output is **byte-identical** to the default path and **worker-count-invariant** (verified by a serial-vs-mim concordance gate at 1/2/4 workers); with `--gzip` the temp is decompression-identical (the decompressed reads, and thus the alignment and final output, are byte-identical). Behind the default-OFF / release-ON `mim-input` feature, which (unlike the others) requires **Rust >= 1.91** because `mim-index` is edition 2024; a default build rejects `--mim` fail-loud. Mutually exclusive with `--paraseq`.
+
 ## Status — built phase by phase
 
 This crate is implemented incrementally against a phased epic

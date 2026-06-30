@@ -19,7 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 thiserror = "=2.0.18"
 # Genome FASTA reading (mirrors bismark-io/src/cram_ref.rs pins).
 noodles-fasta = "=0.61.0"

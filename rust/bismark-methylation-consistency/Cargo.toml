@@ -21,7 +21,7 @@ path = "src/main.rs"
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 bismark-io = { version = "=1.0.0", path = "../bismark-io" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 # noodles-sam pinned to match bismark-io's transitive choice (dedup/extractor
 # precedent). Needed directly for `Header` (returned by the reader's
 # `header()`) and for the @HD SO:coordinate PE sort guard.

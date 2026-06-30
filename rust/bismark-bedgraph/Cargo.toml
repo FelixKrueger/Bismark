@@ -20,7 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
-clap = { version = "=4.5.30", features = ["derive"] }
+clap = { version = "=4.5.61", features = ["derive"] }
 thiserror = "=2.0.18"
 # Multithreaded global allocator (see src/main.rs). The parallel per-file parse
 # (parallel.rs) is allocation-heavy (per-thread hashmap growth); under the

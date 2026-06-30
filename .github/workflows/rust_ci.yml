@@ -168,6 +168,36 @@ jobs:
       - name: cargo test -p bismark-aligner --features paraseq-convert
         run: cargo test -p bismark-aligner --features paraseq-convert
 
+  mim-input:
+    name: cargo build/test (mim-input feature)
+    # The mim opportunistic gzip-index convert path (`convert::convert_fastq_impl_mim` + the
+    # `mim_byte_identity` concordance tests, all `#[cfg(feature = "mim-input")]`) is otherwise
+    # NEVER compiled in CI (#1025 Phase 3b). UNLIKE the other feature jobs this runs on Rust
+    # **1.91** (not the workspace MSRV 1.89): `mim-index` is edition 2024 / MSRV 1.91. The
+    # default build + all other features stay 1.89-valid (mim is default-OFF), so only this
+    # opt-in feature needs the newer toolchain. The hermetic tests build a real `.fq.gz` +
+    # `.mim` sidecar and assert serial == mim output at 1/2/4 workers.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build -p bismark-aligner --features mim-input
+        run: cargo build -p bismark-aligner --all-targets --features mim-input
+      - name: cargo clippy -p bismark-aligner --features mim-input -D warnings
+        run: cargo clippy -p bismark-aligner --all-targets --features mim-input -- -D warnings
+      - name: cargo test -p bismark-aligner --features mim-input
+        run: cargo test -p bismark-aligner --features mim-input
+
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest

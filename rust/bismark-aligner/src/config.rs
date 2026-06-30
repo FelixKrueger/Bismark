@@ -163,6 +163,9 @@ pub struct ReadProcessing {
     /// `--paraseq`: parse the input FastQ with the paraseq fast parser in the convert
     /// step (#1025; opt-in, byte-identical, requires the `paraseq-convert` feature).
     pub paraseq: bool,
+    /// `--mim`: opportunistic mim gzip-index parallel decode in the convert step (#1025;
+    /// opt-in, byte-identical, requires the `mim-input` feature; falls back if no sidecar).
+    pub mim: bool,
 }
 
 /// The fully-resolved configuration (the seam consumed by later phases).
@@ -552,6 +555,15 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let (score_min_intercept, score_min_slope) = options::score_min_params(cli, aligner)?;
     let score_min_local = cli.local; // --local: ln() scMin + the local MAPQ ladder
     reject_unsupported_output_flags(cli)?;
+    // #1025: --paraseq and --mim both replace the FastQ reader in the convert step; allowing
+    // both is ambiguous, so reject the combination never-silently.
+    if cli.paraseq && cli.mim {
+        return Err(AlignerError::Validation(
+            "--paraseq and --mim are mutually exclusive (both replace the FastQ reader in the \
+             bisulfite-convert step); pick one."
+                .into(),
+        ));
+    }
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {
         skip: cli.skip,
@@ -560,6 +572,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // Resolved above (minimap2: Some(value-or-default-10000); else None).
         maximum_length_cutoff,
         paraseq: cli.paraseq,
+        mim: cli.mim,
     };
 
     Ok(RunConfig {
