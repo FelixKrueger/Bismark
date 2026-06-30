@@ -431,32 +431,56 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
 /// truncates the SAM QNAME at the first whitespace, so the 5-Base lockstep must derive
 /// its read identifier the same way (whitespace-truncated) regardless of `--icpc`;
 /// otherwise every read desyncs ("expected ..._1:N:0:..., minimap2 emitted ..."). This
-/// gate feeds Illumina-style spaced headers through the real-minimap2 5-Base path and
-/// asserts it runs and still recovers the methylation calls.
+/// gate feeds Illumina-style spaced headers through the real-minimap2 5-Base PE path and
+/// asserts it runs and still recovers the methylation calls (no lockstep desync from
+/// the spaced header).
 #[test]
 fn five_base_groundtruth_illumina_spaced_header_no_desync() {
     if !have_minimap2() {
         eprintln!("skipping: minimap2 not on PATH (spaced-header regression)");
         return;
     }
-    let reference = gen_reference(600);
+    let reference = gen_reference(900);
     let genome = TempDir::new().unwrap();
     write_genome(genome.path(), &reference);
     let (plain, truth) = make_methylated_reads(&reference, 120, 5);
-    // Rewrite each `@<name>` header to `@<name> 1:N:0:GTAACTGAAG+TCNCGACTCC` (a real
-    // Illumina dual-index comment), leaving seq/qual lines untouched.
-    let mut fastq = Vec::new();
-    for (i, line) in plain.split_inclusive(|&b| b == b'\n').enumerate() {
-        if i % 4 == 0 {
-            let trimmed = &line[..line.len() - 1]; // drop '\n'
-            fastq.extend_from_slice(trimmed);
-            fastq.extend_from_slice(b" 1:N:0:GTAACTGAAG+TCNCGACTCC\n");
-        } else {
-            fastq.extend_from_slice(line);
-        }
+    // Rewrite each `@<name>` header line in the plain FASTQ to add the Illumina
+    // dual-index comment, producing R1 (` 1:N:0:...`) and R2 (` 2:N:0:...`) files.
+    // R2 carries the reverse-complement of the R1 sequence (FR orientation).
+    let lines: Vec<&[u8]> = plain.split_inclusive(|&b| b == b'\n').collect();
+    let n_reads = lines.len() / 4;
+    let mut fq1 = Vec::new();
+    let mut fq2 = Vec::new();
+    for r in 0..n_reads {
+        let base = r * 4;
+        // Header: strip the trailing newline and append the comment.
+        let hdr = &lines[base][..lines[base].len() - 1]; // drop '\n'
+        let seq_line = lines[base + 1];
+        let seq_bytes = &seq_line[..seq_line.len() - 1]; // drop '\n'
+
+        // R1: same sequence, comment suffix ` 1:N:0:GTAACTGAAG+TCNCGACTCC`.
+        fq1.extend_from_slice(hdr);
+        fq1.extend_from_slice(b" 1:N:0:GTAACTGAAG+TCNCGACTCC\n");
+        fq1.extend_from_slice(seq_bytes);
+        fq1.push(b'\n');
+        fq1.extend_from_slice(b"+\n");
+        fq1.extend_from_slice(&vec![b'I'; seq_bytes.len()]);
+        fq1.push(b'\n');
+
+        // R2: revcomp of the same sequence, comment suffix ` 2:N:0:GTAACTGAAG+TCNCGACTCC`.
+        let rc = revcomp(seq_bytes);
+        fq2.extend_from_slice(hdr);
+        fq2.extend_from_slice(b" 2:N:0:GTAACTGAAG+TCNCGACTCC\n");
+        fq2.extend_from_slice(&rc);
+        fq2.push(b'\n');
+        fq2.extend_from_slice(b"+\n");
+        fq2.extend_from_slice(&vec![b'I'; rc.len()]);
+        fq2.push(b'\n');
     }
-    let read = genome.path().join("reads.fq");
-    fs::write(&read, &fastq).unwrap();
+    let read1 = genome.path().join("r1.fq");
+    let read2 = genome.path().join("r2.fq");
+    fs::write(&read1, &fq1).unwrap();
+    fs::write(&read2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
 
@@ -464,22 +488,30 @@ fn five_base_groundtruth_illumina_spaced_header_no_desync() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("-1")
+        .arg(&read1)
+        .arg("-2")
+        .arg(&read2)
         .arg("--temp_dir")
         .arg(temp.path())
         .arg("--output_dir")
         .arg(outdir.path())
-        .arg(&read)
         .assert()
         .success();
 
-    let bam = outdir.path().join("reads_bismark_mm2.bam");
+    let bam = outdir.path().join("r1_bismark_mm2_pe.bam");
     let mut reader = bismark_io::BamReader::from_path(&bam).unwrap();
-    let (mut n, mut checked_meth) = (0usize, 0usize);
+    let (mut n_r1, mut checked_meth) = (0usize, 0usize);
     for rec in reader.records() {
         let rec = rec.unwrap();
-        n += 1;
         let inner = rec.inner();
-        // The BAM qname is whitespace-truncated (the comment dropped) → matches truth keys.
+        let flag = u16::from(inner.flags());
+        // Only check R1 records for methylation (R2 XM is in revcomp orientation).
+        if flag & 0x80 != 0 {
+            continue;
+        }
+        n_r1 += 1;
+        // The BAM qname is whitespace-truncated (the comment dropped); matches truth keys.
         let qname = String::from_utf8_lossy(inner.name().unwrap().as_ref()).into_owned();
         assert!(!qname.contains(' '), "qname must not contain the comment");
         let Some(expect) = truth.get(&qname) else {
@@ -514,9 +546,10 @@ fn five_base_groundtruth_illumina_spaced_header_no_desync() {
             }
         }
     }
-    assert!(
-        n >= 1,
-        "reads with Illumina spaced headers must align (no desync)"
+    assert_eq!(
+        n_r1,
+        truth.len(),
+        "spaced-header lockstep desync: expected one R1 record per input pair"
     );
     assert!(
         checked_meth >= 1,
@@ -734,36 +767,6 @@ fn write_genome_multi(dir: &Path, contigs: &[(&str, &[u8])]) {
     fs::write(dir.join("genome.fa"), fa).unwrap();
 }
 
-/// Append forward SE reads tiled across `seq`; if `methylated`, convert every `+` CpG
-/// C→T (the 5mC→T signal). The qname `prefix` records the control of origin (truth).
-fn emit_se_control(
-    fq: &mut Vec<u8>,
-    prefix: &str,
-    seq: &[u8],
-    methylated: bool,
-    read_len: usize,
-    step: usize,
-) {
-    let (mut i, mut n) = (0usize, 0usize);
-    while i + read_len <= seq.len() {
-        let mut read = seq[i..i + read_len].to_vec();
-        if methylated {
-            for k in 0..read_len.saturating_sub(1) {
-                if read[k] == b'C' && read[k + 1] == b'G' {
-                    read[k] = b'T'; // 5mC -> T at a + CpG
-                }
-            }
-        }
-        fq.extend_from_slice(format!("@{prefix}_{n}\n").as_bytes());
-        fq.extend_from_slice(&read);
-        fq.extend_from_slice(b"\n+\n");
-        fq.extend_from_slice(&vec![b'I'; read_len]);
-        fq.push(b'\n');
-        i += step;
-        n += 1;
-    }
-}
-
 /// Count CpG calls (`Z` meth / `z` unmeth) in a BAM, bucketed by a key derived from the
 /// qname (the control of origin). `key` maps a qname to its bucket. Returns
 /// `key -> (meth, unmeth)`.
@@ -802,6 +805,7 @@ fn pct_meth(counts: Option<&(u64, u64)>) -> (f64, u64) {
 
 /// CORE control gate: the per-read 5-Base call must recover ~0% 5mC from unmethylated
 /// lambda and ~100% CpG 5mC from CpG-methylated pUC19 (the kit's spike-in truth).
+/// Uses PE duplex emission (same as the consensus gate) to exercise the PE path.
 #[test]
 fn five_base_controls_core_recovers_lambda_and_puc19() {
     if !have_minimap2() {
@@ -817,28 +821,34 @@ fn five_base_controls_core_recovers_lambda_and_puc19() {
     let genome = TempDir::new().unwrap();
     write_genome_multi(genome.path(), &[("lambda", lambda_sub), ("pUC19", &puc19)]);
 
-    let mut fq = Vec::new();
-    emit_se_control(&mut fq, "lam", lambda_sub, false, 120, 60); // unmethylated
-    emit_se_control(&mut fq, "puc", &puc19, true, 120, 30); // CpG-methylated
-    let read = genome.path().join("reads.fq");
-    fs::write(&read, &fq).unwrap();
+    // Emit PE duplex pairs (OT + OB) for each control (mirrors the consensus gate).
+    let (mut fq1, mut fq2) = (Vec::new(), Vec::new());
+    emit_pe_control_duplex(&mut fq1, &mut fq2, "lam", lambda_sub, false, 60, 40);
+    emit_pe_control_duplex(&mut fq1, &mut fq2, "puc", &puc19, true, 30, 40);
+    let (r1, r2) = (genome.path().join("r1.fq"), genome.path().join("r2.fq"));
+    fs::write(&r1, &fq1).unwrap();
+    fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
 
+    // Core path: no --five_base_consensus / --five_base_duplex.
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
         .arg("--temp_dir")
         .arg(temp.path())
         .arg("--output_dir")
         .arg(outdir.path())
-        .arg(&read)
         .assert()
         .success();
 
     // Bucket by qname prefix (`lam`/`puc`) = the control of origin.
-    let counts = count_cpg_keyed(&outdir.path().join("reads_bismark_mm2.bam"), |q| {
+    let counts = count_cpg_keyed(&outdir.path().join("r1_bismark_mm2_pe.bam"), |q| {
         q.split('_').next().unwrap_or("").to_string()
     });
     let (lam_pct, lam_n) = pct_meth(counts.get("lam"));
