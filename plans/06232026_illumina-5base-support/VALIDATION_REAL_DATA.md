@@ -298,14 +298,29 @@ bismark_methylation_extractor -p --comprehensive --cytosine_report \
 
 ### 2. Fetch the matching DRAGEN reference outputs (BaseSpace `bs` CLI)
 
-Each demo sample ships a DRAGEN `illumina.dragen.complete` AppResult. Pull the per-CpG
-report, the global metrics, and the germline VCF:
+Each demo sample ships a DRAGEN `illumina.dragen.complete` dataset (project "Illumina
+5-Base DNA", id 471431965). **HG001 = NA12878, HG002 = NA24385** (the two real samples to
+validate). Use the `validation/fetch_dragen.sh` wrapper to pull only the small reference
+files (`CX_report.txt.gz`, `methyl_metrics.csv`, `hard-filtered.vcf.gz`), not the multi-TB
+BAM/FASTQ:
 
 ```sh
-bs download dataset --id <ds.id-for-$S> --extension CX_report.txt.gz    -o "$OUT/dragen"
-bs download dataset --id <ds.id-for-$S> --extension methyl_metrics.csv  -o "$OUT/dragen"
-bs download dataset --id <ds.id-for-$S> --extension hard-filtered.vcf.gz -o "$OUT/dragen"
+# NA12878 (HG001), Sample8 100ng (the metrics sample)
+validation/fetch_dragen.sh ds.258e74420ab8417a89de572ec1571b55 "$OUT/dragen"
+# HG002 (NA24385), Sample40 50ng
+validation/fetch_dragen.sh ds.48b7596730dd47ef97699b59ccd3641d "$OUT/dragen"
 ```
+
+The matching RAW READS for alignment input are SEPARATE `illumina.fastq.v1.8` datasets;
+list and pull them with:
+
+```sh
+bs list dataset --project-id 471431965 | grep -i fastq
+bs download dataset --id <fastq_ds_id> -o "$OUT/reads"
+```
+
+(NA12878 full-depth uses the 8 lanes already aligned locally; only the DRAGEN reference is
+fetched here. HG002 needs both the FASTQ and the DRAGEN reference.)
 
 ### 3. Compute concordance
 
