@@ -250,7 +250,11 @@ jobs:
             diff <(echo "$members") <(echo "$order_sorted") || true
             exit 1
           fi
-          echo "✓ ORDER covers all $(echo "$members" | wc -l | xargs) workspace members"
+          # ORDER must list each crate exactly once (a duplicate would re-publish).
+          n_order=$(printf '%s\n' $ORDER | wc -l | xargs)
+          n_uniq=$(printf '%s\n' $ORDER | sort -u | wc -l | xargs)
+          [ "$n_order" = "$n_uniq" ] || { echo "::error::ORDER has a duplicate crate ($n_order entries, $n_uniq unique)"; exit 1; }
+          echo "✓ ORDER covers all $(echo "$members" | wc -l | xargs) workspace members, no duplicates"
           echo "::endgroup::"
 
           # --- Invariant 1: every intra-workspace dep carries a `version =`
@@ -263,6 +267,20 @@ jobs:
             exit 1
           fi
           echo "✓ all intra-workspace deps carry a version"
+          echo "::endgroup::"
+
+          # --- Invariant 1b: NO dependency uses a git source without a `version =`.
+          # crates.io rejects ANY git dep — even an optional, feature-gated one
+          # (e.g. bismark-aligner's optional rammap-core git rev). Invariant 1's
+          # bismark-* scan can't see third-party git deps, so guard them here.
+          echo "::group::git-deps carry a version"
+          git_unversioned=$(for c in $ORDER; do grep -HnE '(^|[,{[:space:]])git[[:space:]]*=' "$c/Cargo.toml"; done | grep -v 'version' || true)
+          if [ -n "$git_unversioned" ]; then
+            echo "::error::these git deps have no 'version =' (crates.io will reject the publish):"
+            echo "$git_unversioned"
+            exit 1
+          fi
+          echo "✓ all git deps carry a version"
           echo "::endgroup::"
 
           # --- Invariant 2: ORDER is a valid topological sort (each crate's
