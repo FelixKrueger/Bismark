@@ -259,3 +259,86 @@ fail-loud in CI, no DRAGEN):
 
 This is the concordance gate the experimental modes (consensus / duplex / deconvolution)
 need to graduate out of preview: it locks a known-truth floor with no proprietary data.
+
+## GA graduation: reproducible validation runbook (two real samples)
+
+To back the GA graduation of core + duplex + consensus + deconvolution, the per-CpG
+concordance vs DRAGEN is now reproducible via a committed script,
+`validation/concordance.py` (pure stdlib, reads plain or `.gz`; `--selftest` checks the
+math on a synthetic pair). Run it over TWO real samples: **NA12878** (already local, 8
+lanes, ~44x) and **HG002** (the second BaseSpace demo sample, an independent genome).
+
+The runs themselves are operator-driven (BaseSpace credentials + GRCh38 + compute); the
+binary is the canonical `bismark` (post #1038).
+
+### 1. Align + call each sample (whole GRCh38, paired-end)
+
+```sh
+GENOME=/path/to/GRCh38            # bismark_genome_preparation'd
+S=NA12878                         # then repeat with S=HG002
+OUT=/scratch/5base/$S
+
+# core per-read path (for the methylation concordance)
+bismark --illumina_5base --genome "$GENOME" -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz \
+        --output_dir "$OUT" --temp_dir "$OUT/tmp" --multicore 8
+# duplex + consensus (real dual-UMI in the read name)
+bismark --illumina_5base --five_base_umi_qname --five_base_duplex   --genome "$GENOME" \
+        -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz --output_dir "$OUT"
+bismark --illumina_5base --five_base_umi_qname --five_base_consensus --genome "$GENOME" \
+        -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz --output_dir "$OUT"
+# deconvolution (variant vs 5mC)
+bismark --illumina_5base --five_base_deconvolution --genome "$GENOME" \
+        -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz --output_dir "$OUT"
+
+# genome-wide CpG cytosine report for the methylation diff (core BAM, and the
+# consensus BAM for the per-molecule view)
+bismark_methylation_extractor -p --comprehensive --cytosine_report \
+        --genome_folder "$GENOME" "$OUT"/*_pe.bam
+```
+
+### 2. Fetch the matching DRAGEN reference outputs (BaseSpace `bs` CLI)
+
+Each demo sample ships a DRAGEN `illumina.dragen.complete` AppResult. Pull the per-CpG
+report, the global metrics, and the germline VCF:
+
+```sh
+bs download dataset --id <ds.id-for-$S> --extension CX_report.txt.gz    -o "$OUT/dragen"
+bs download dataset --id <ds.id-for-$S> --extension methyl_metrics.csv  -o "$OUT/dragen"
+bs download dataset --id <ds.id-for-$S> --extension hard-filtered.vcf.gz -o "$OUT/dragen"
+```
+
+### 3. Compute concordance
+
+```sh
+# methylation: core (and again with the consensus cytosine report) vs DRAGEN CX
+python3 validation/concordance.py methyl \
+    --ours "$OUT"/*_pe.CX_report.txt --dragen "$OUT"/dragen/*.CX_report.txt.gz
+
+# deconvolution: our per-CpG variant verdicts vs DRAGEN's germline SNVs
+python3 validation/concordance.py deconv \
+    --variants "$OUT"/*_pe.5base_deconvolution.txt --vcf "$OUT"/dragen/*.vcf.gz
+```
+
+`methyl` prints, at coverage >= 1/5/10: Pearson r, coverage-weighted r, mean |delta %|,
+call-agreement at 50%, and a 5x5 confusion matrix. `deconv` prints precision (our
+`variant` CpGs coinciding with a DRAGEN C>T/G>A SNV) and recall (DRAGEN homozygous
+CpG-disrupting SNVs we cover and flag). The reference numbers to reproduce are the
+existing NA12878 full-depth results above (core r ~ 0.98 / 97.5% call agreement;
+deconvolution 90.3% / 93.4% at ~40x).
+
+### GA graduation evidence: two real samples
+
+Paste the per-sample, per-mode results here once the runs land (NA12878 first as the
+self-consistency check, then HG002 as the independent second sample):
+
+| sample | mode | depth | Pearson r (cov>=10) | call agree @50 | precision | recall |
+|---|---|---|---|---|---|---|
+| NA12878 | core | ~44x | _pending_ | _pending_ | n/a | n/a |
+| NA12878 | consensus | ~44x | _pending_ | _pending_ | n/a | n/a |
+| NA12878 | deconvolution | ~40x | n/a | n/a | _pending_ | _pending_ |
+| HG002 | core | _pending_ | _pending_ | _pending_ | n/a | n/a |
+| HG002 | consensus | _pending_ | _pending_ | _pending_ | n/a | n/a |
+| HG002 | deconvolution | _pending_ | n/a | n/a | _pending_ | _pending_ |
+
+Two independent real samples reproducing DRAGEN to this level is the evidence the GA
+concordance contract stands on (alongside the deterministic lambda/pUC19 gates above).
