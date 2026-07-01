@@ -165,6 +165,14 @@ jobs:
         run: cargo build -p bismark-aligner --all-targets --features paraseq-convert
       - name: cargo clippy -p bismark-aligner --features paraseq-convert -D warnings
         run: cargo clippy -p bismark-aligner --all-targets --features paraseq-convert -- -D warnings
+      - name: Install minimap2 (5-Base #787 ground-truth gates)
+        # `cargo test -p bismark-aligner` runs the 5-Base real-aligner gates, which panic
+        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
+        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+        run: |
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minimap2
+          minimap2 --version
       - name: cargo test -p bismark-aligner --features paraseq-convert
         run: cargo test -p bismark-aligner --features paraseq-convert
 
@@ -195,6 +203,14 @@ jobs:
         run: cargo build -p bismark-aligner --all-targets --features mim-input
       - name: cargo clippy -p bismark-aligner --features mim-input -D warnings
         run: cargo clippy -p bismark-aligner --all-targets --features mim-input -- -D warnings
+      - name: Install minimap2 (5-Base #787 ground-truth gates)
+        # `cargo test -p bismark-aligner` runs the 5-Base real-aligner gates, which panic
+        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
+        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+        run: |
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minimap2
+          minimap2 --version
       - name: cargo test -p bismark-aligner --features mim-input
         run: cargo test -p bismark-aligner --features mim-input
 
