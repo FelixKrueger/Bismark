@@ -7,7 +7,7 @@ Two subcommands, both pure stdlib (gzip + math), reading plain or .gz:
           Per-CpG methylation concordance. Both inputs are Bismark-format CX
           cytosine reports (DRAGEN emits one too):
               chrom  pos(1-based)  strand  count_meth  count_unmeth  context  tri
-          CpG rows only (context == "CpG"). Reports, at coverage >= 1/5/10 in
+          CpG rows only (context "CG"). Reports, at coverage >= 1/5/10 in
           BOTH: Pearson r, coverage-weighted r, mean |delta %|, call-agreement
           at the 50% threshold, and a 5x5 methylation-bin confusion matrix.
 
@@ -56,7 +56,8 @@ def parse_cx(path):
             if len(f) < 6:
                 continue
             context = f[5]
-            if context != "CpG":
+            # Bismark/DRAGEN CX reports label CpG context "CG"; accept "CpG" too.
+            if context not in ("CG", "CpG"):
                 continue
             meth, unmeth = int(f[3]), int(f[4])
             cov = meth + unmeth
@@ -213,17 +214,17 @@ def _selftest():
     ours_cx = os.path.join(d, "ours.CX_report.txt")
     drg_cx = os.path.join(d, "dragen.CX_report.txt.gz")
     ours_rows = [
-        ("chr1", "100", "+", 0, 20, "CpG"),   # 0%
-        ("chr1", "200", "+", 19, 1, "CpG"),   # 95%
-        ("chr1", "300", "+", 10, 10, "CpG"),  # 50%
-        ("chr1", "400", "+", 18, 2, "CpG"),   # 90% (DRAGEN says 0% -> discordant)
+        ("chr1", "100", "+", 0, 20, "CG"),   # 0%
+        ("chr1", "200", "+", 19, 1, "CG"),   # 95%
+        ("chr1", "300", "+", 10, 10, "CG"),  # 50%
+        ("chr1", "400", "+", 18, 2, "CG"),   # 90% (DRAGEN says 0% -> discordant)
         ("chr1", "500", "+", 5, 5, "CHH"),    # non-CpG, ignored
     ]
     drg_rows = [
-        ("chr1", "100", "+", 1, 19, "CpG"),   # 5%  (call low, agree)
-        ("chr1", "200", "+", 20, 0, "CpG"),   # 100% (call high, agree)
-        ("chr1", "300", "+", 11, 9, "CpG"),   # 55% (call high vs our 50% high, agree)
-        ("chr1", "400", "+", 0, 20, "CpG"),   # 0%  (call low vs our high, DISagree)
+        ("chr1", "100", "+", 1, 19, "CG"),   # 5%  (call low, agree)
+        ("chr1", "200", "+", 20, 0, "CG"),   # 100% (call high, agree)
+        ("chr1", "300", "+", 11, 9, "CG"),   # 55% (call high vs our 50% high, agree)
+        ("chr1", "400", "+", 0, 20, "CG"),   # 0%  (call low vs our high, DISagree)
     ]
     with open(ours_cx, "w") as fh:
         for r in ours_rows:
