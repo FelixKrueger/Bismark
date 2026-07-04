@@ -1,6 +1,6 @@
-Bismark report for: /var/folders/jj/v73y0qn92zzdyz0prxb5ywb40000gn/T/.tmppuYncj/reads.fq (version: v0.25.1)
+Bismark report for: /tmp/claude-501/.tmpajftee/reads.fq (version: v0.25.1)
 Option '--pbat' specified: alignments to original strands (OT and OB) strands were ignored (i.e. not performed)
-Bismark was run with Bowtie 2 against the bisulfite genome of /private/var/folders/jj/v73y0qn92zzdyz0prxb5ywb40000gn/T/.tmppuYncj/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals
+Bismark was run with Bowtie 2 against the bisulfite genome of /private/tmp/claude-501/.tmpajftee/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals
 
 Final Alignment report
 ======================
