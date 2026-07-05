@@ -179,9 +179,9 @@ jobs:
   #   - prerelease real (beta): NO-OP. Betas are never published (the immutable-
   #     publish / exact-pin-cascade trap). Exiting 0 lets the downstream tag/
   #     `:latest` jobs proceed unchanged on the beta track.
-  #   - GA real (non-prerelease, from master): OIDC trusted-publishing token →
-  #     ordered `cargo publish` L0 → L1 → L2, each verified-available before the
-  #     next (cargo's built-in index-propagation wait).
+  #   - GA real (non-prerelease, from master): classic `CARGO_REGISTRY_TOKEN`
+  #     secret → ordered `cargo publish` L0 → L1 → L2, each verified-available
+  #     before the next (cargo's built-in index-propagation wait).
   #
   # Publish DAG (verified GA-epic Phase 1 against the live Cargo.tomls):
   #   L0 (independent roots):  bismark-io, bismark-meta
@@ -203,31 +203,30 @@ jobs:
   # exact-pins), and re-run from the first unpublished crate. The bare-`bismark`
   # reserve crate (OD-3) is published separately at the Ph5 cut.
   #
-  # OIDC PREREQ (real GA only): each crate needs a crates.io-side Trusted
-  # Publisher entry for this repo + `release.yml`. Confirm before the live Ph5
-  # cut — the dry-run skips the OIDC handshake, so it does NOT validate this.
+  # AUTH — classic token, NOT OIDC (deliberate, GA-epic Ph5 pre-flight): crates.io
+  # Trusted Publishing (OIDC) CANNOT do a crate's FIRST-ever publish — it requires a
+  # manual/token first publish per crate (name-squat prevention). At the 2.0.0 cut,
+  # 12 of the 14 crates are brand-new, so the GA publish uses a classic scoped
+  # `CARGO_REGISTRY_TOKEN` repo secret. A classic token also avoids OIDC's 30-min
+  # token expiring mid-cascade across 14 sequential verify-build+publish steps.
+  # POST-GA (2.0.1+): once every crate exists, configure a Trusted Publisher per
+  # crate (repo + this workflow, + a GH Environment), then switch this job back to
+  # OIDC (`rust-lang/crates-io-auth-action`) and drop the secret.
   publish-crates:
     name: Publish to crates.io (GA only)
     needs: [check-release, build-binaries, smoke-test-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # OIDC trusted-publishing token exchange
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # OIDC trusted-publishing token — ONLY on a real GA publish (betas no-op;
-      # dry-run never contacts the registry, so neither needs a token).
-      - name: Authenticate to crates.io (OIDC)
-        id: auth
-        if: needs.check-release.outputs.is_dry_run != 'true' && needs.check-release.outputs.is_prerelease != 'true'
-        uses: rust-lang/crates-io-auth-action@v1
       - name: Publish (or validate) the workspace in DAG order
         working-directory: rust
         env:
           DRY_RUN: ${{ needs.check-release.outputs.is_dry_run }}
           IS_PRERELEASE: ${{ needs.check-release.outputs.is_prerelease }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
           L0="bismark-io bismark-meta"
@@ -320,6 +319,15 @@ jobs:
             echo "::endgroup::"
             echo "✓ DRY-RUN: workspace packaged + dry-published (siblings resolved locally); deps versioned; order valid"
           else
+            # Fail LOUD + EARLY if the publish token secret is missing — before any
+            # crate is published — so a forgotten secret can't strand a partial
+            # cascade (crates.io is yank-only). Set it via: repo Settings → Secrets
+            # and variables → Actions → CARGO_REGISTRY_TOKEN (a crates.io token
+            # scoped publish-new + publish-update).
+            if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+              echo "::error::CARGO_REGISTRY_TOKEN secret is empty — cannot publish. Add the crates.io token as a repo secret before the GA cut."
+              exit 1
+            fi
             # Real GA publish: ordered L0 → L1 → L2, per-crate so each is verified
             # available on the index before the next resolves it (and so the
             # partial-publish/fix-forward runbook above maps to a specific crate).
