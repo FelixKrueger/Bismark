@@ -69,10 +69,14 @@ aligner soft-clipping the UMI prefix; soft-clipped bases produce no methylation 
 
 The supported path is the **core per-read SE+PE 5-Base BAM** above. On the real Illumina
 5-Base demo (NA12878 100 ng, BaseSpace; ~44×, whole GRCh38), the extracted per-CpG
-cytosine report is **per-CpG equivalent to DRAGEN's `CX_report`**: Pearson **r ≈ 0.99**,
-call agreement **97.5 %** over **55 M** shared CpGs, global CpG 49.7–50.1 % vs DRAGEN
-49.98–50.48 %, with non-CpG at DRAGEN's own lambda-control floor and directional-only
-confirmed (DRAGEN CTOT/CTOB = 0). It is **NOT byte-identical** (Perl Bismark has no
+cytosine report is **per-CpG equivalent to DRAGEN's `CX_report`**. DRAGEN's `CX_report` is
+a **deduplicated, overlap-trimmed, full-depth pileup** (verified from DRAGEN's own
+`methyl_metrics.csv`: 24.6 B C's over 438 M unique pairs, OT/OB only, no consensus row;
+Illumina docs: "we use dedupping"), so the honest comparison deduplicates our side too.
+After `deduplicate_bismark -p` (6.70 % removed), the iso-methodo core is Pearson
+**r = 0.991 (cov≥1) → 0.998 (cov≥10)**, call agreement **98.8 → 99.3 %** over **55 M**
+shared CpGs, global CpG 50.1 % vs DRAGEN 50.5 %, with non-CpG at DRAGEN's own lambda-control
+floor and directional-only confirmed (DRAGEN CTOT/CTOB = 0). It is **NOT byte-identical** (Perl Bismark has no
 5-Base oracle); the reproducible CI gate is synthetic ground-truth vs the real minimap2
 (`tests/five_base_groundtruth.rs`, which **fail loud in CI if minimap2 is absent**). See
 `plans/06232026_illumina-5base-support/VALIDATION_REAL_DATA.md`.
@@ -93,10 +97,14 @@ byte-identity- or per-site-CI-gated** — treat them as preview:
   spans and do not pair on real data, so SE-duplex is a degenerate non-workflow.
 - **`--five_base_consensus`** — collapses each duplex family to a consensus (a forward +
   reverse record per family in `<out>.5base_consensus.bam`) via the asymmetric 5mC>T rule,
-  reconciled by **molecule strand** (OT carries a `+` CpG, OB a `-` CpG). DRAGEN-validated on
-  real NA12878 (24×, both strands r ≈ 0.77; per-CpG r 0.77 at cov≥1 → 0.86 at cov≥3). The
-  high-resolution methylation path is still the core per-read BAM (r ≈ 0.99); the consensus
-  is the per-molecule duplex view. Replay it on existing BAMs (no re-alignment) with
+  reconciled by **molecule strand** (OT carries a `+` CpG, OB a `-` CpG). Validated against
+  DRAGEN by **per-strand mean-methylation agreement** (~47.9 % vs ~48 %, bias-free): DRAGEN
+  builds a duplex-consensus methylation track only for UMI/enrichment kits, so on this WGS
+  sample there is **no DRAGEN consensus CX** to correlate against — the per-CpG r ≈ 0.77 is
+  our sparse consensus (mean ~2.3×) measured against DRAGEN's full-depth pileup (mean ~21.9×),
+  a ~10× depth mismatch, **not** a consensus-vs-consensus number, and not the mode's headline
+  metric. The high-resolution methylation path is the core per-read BAM (r ≈ 0.99); the
+  consensus is the per-molecule duplex view. Replay it on existing BAMs (no re-alignment) with
   `--five_base_consensus_from_bam <bam>` (repeatable; families pair across files).
 - **`--five_base_umi_qname`** — takes the duplex dual-UMI from the read NAME (`A+B`, with
   the partner's halves swapped) instead of inline bases; this is the real-data UMI form.

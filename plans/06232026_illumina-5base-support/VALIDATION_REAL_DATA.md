@@ -351,7 +351,7 @@ results from this document's runs (core: the 55M-CpG table above; deconvolution:
 
 | mode | depth | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
 |---|---|---|---|---|---|---|
-| core (per-read) | ~44x | 55.5M (cov>=1) | 0.981 (0.988 cov>=10) | 97.2% (97.5% cov>=10) | n/a | n/a |
+| core (per-read, deduplicated — iso-DRAGEN) | ~44x | 55.5M (cov>=1) | 0.991 (0.998 cov>=10) | 98.8% (99.3% cov>=10) | n/a | n/a |
 | deconvolution | ~40x | 167,978 DRAGEN hom CpG-SNVs | n/a | n/a | 90.3% | 93.4% |
 | consensus (duplex view) | ~44x seq | 6.5M (cov>=1) / 90k (cov>=5) | 0.78 (0.91 cov>=5) | 85% (90% cov>=5) | n/a | n/a |
 
@@ -364,6 +364,36 @@ Notes:
   sequencing depth (duplex families are sparse, mean approximately 2.3x, 83% of CpGs at
   cov=2), so its r climbs with coverage (0.78 at cov>=1 to 0.91 at cov>=5). The supported
   high-confidence number is the core per-read path; the consensus is the per-molecule view.
+
+#### What DRAGEN's `CX_report` actually is (verified, not assumed)
+
+The per-CpG comparison above rests on knowing how DRAGEN builds its CX report. Verified two
+ways — from DRAGEN's own `methyl_metrics.csv` on Sample8, and from Illumina's docs:
+
+- **DRAGEN's CX is a deduplicated, overlap-trimmed, FULL-DEPTH pileup — not a consensus.**
+  Its metrics file reports `Total number of C's analyzed = 24,610,709,315` over
+  `438,530,726` uniquely-mapped pairs (~56 C/pair) with only `OT`/`OB` strands populated
+  (`CTOT`/`CTOB` = 0, directional), and carries **no** dedup/duplex/consensus row in the
+  methylation section — the exact Bismark strand model. Illumina confirms the counting set:
+  "we use dedupping" and values correspond to "the sequencing reads (deduplicated and
+  overlap trimmed)" with R1 winning on R1/R2 disagreement (FAQ 000009952).
+- **Consequence for the core row (measured):** the honest apples-to-apples comparison
+  deduplicates our side too. Re-ran the full 128 GB core BAM through `deduplicate_bismark -p`
+  (removed **6.70%**, 32.8M/490M alignments) → extract → per-CpG concordance. The
+  deduplicated, iso-methodo core is **r = 0.991 (cov>=1) → 0.998 (cov>=10) → 0.999
+  (cov>=20)** over 55.5M shared CpGs, **98.8-99.5% call-agreement**, mean methylation
+  50.1% vs DRAGEN 50.5% (cov>=1). Dedup *tightens* the correlation vs the non-deduplicated
+  0.988 (cov>=10) — PCR-copy noise removed — confirming dedup is r-positive, not r-negative,
+  and that we now match DRAGEN's exact counting set (deduplicated + overlap-trimmed).
+- **Consequence for the consensus row:** DRAGEN builds a duplex-**consensus** methylation
+  track only for **UMI / enrichment** kits, not for this WGS gDNA sample. So there is **no
+  DRAGEN consensus CX** to compare against here — the r=0.78-vs-CX is our sparse per-molecule
+  consensus (mean ~2.3x coverage) measured against DRAGEN's full-depth pileup (mean **21.9x**
+  per strand-cytosine over 55.8M CpGs — a ~10x depth mismatch), not a consensus-vs-consensus
+  validation. The consensus is therefore validated by (a) mean-
+  methylation agreement with DRAGEN per strand (~47.9% vs ~48%, bias-free after the two
+  reconciliation fixes above) and (b) the structural lambda/pUC19 control gates — **not** by
+  its per-CpG r against the CX report. Do not headline a consensus-vs-CX r.
 
 A second independent sample (HG002 = NA24385, present in the same BaseSpace project,
 `ds.48b7596730dd47ef97699b59ccd3641d`) can be run with the same runbook to add cross-sample

@@ -19,11 +19,17 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
 `--rammap` and `--combined_index` paths:
 
 - **Supported in GA (2.0.0):** `--illumina_5base` (core), `--five_base_duplex`,
-  `--five_base_consensus`, `--five_base_deconvolution`. These are validated by per-CpG
-  concordance with Illumina DRAGEN on the real NA12878 demo at full depth (core
-  **r approximately 0.99 over 55M CpGs, 97.5% call-agreement**; deconvolution **90.3%
-  precision / 93.4% recall**) and by a reproducible lambda/pUC19 spike-in gate that runs in
-  CI with no proprietary data.
+  `--five_base_consensus`, `--five_base_deconvolution`. Each is validated against Illumina
+  DRAGEN on the real NA12878 demo at full depth by the metric appropriate to what it
+  produces: **core** by per-CpG concordance with DRAGEN's (deduplicated, full-depth) CX
+  report (deduplicated, iso-DRAGEN) — **r approximately 0.99 over 55M CpGs (0.998 at
+  cov>=10), 99.3% call-agreement**; **deconvolution**
+  by variant precision/recall vs DRAGEN's germline VCF — **90.3% / 93.4%**; **duplex /
+  consensus** (per-molecule collapse — DRAGEN builds a duplex-consensus methylation track
+  only for UMI/enrichment kits, so there is no WGS consensus-CX to correlate against) by
+  per-strand **mean-methylation agreement** with DRAGEN (~47.9% vs ~48%, bias-free). All
+  four are additionally held to a reproducible lambda/pUC19 spike-in gate that runs in CI
+  with no proprietary data.
 - **Preview:** `--five_base_umi_qname` (duplex UMI taken from the read name). It works and
   is exercised on real data, but is not yet held to the same gated contract.
 - **Unchanged:** the faithful bisulfite / EM-seq suite is **byte-frozen**. Every legacy
