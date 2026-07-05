@@ -170,11 +170,12 @@ jobs:
   # ── crates.io publish (GA only) ───────────────────────────────────────────
   # Publishes the 14-member workspace to crates.io in dependency (DAG) order.
   # Runs on every REAL release, but the work is branch-gated INSIDE the script:
-  #   - dry-run (any version): validate only — per-crate `cargo publish
-  #     --dry-run` + a version-presence assert on every intra-workspace dep + a
-  #     topological-order assert. No registry contact, no OIDC. (`--dry-run`
-  #     resolves path-deps LOCALLY and never hits the registry, so it CANNOT
-  #     catch a wrong publish order — the topo assert is what covers that.)
+  #   - dry-run (any version): validate only — `cargo publish --workspace
+  #     --dry-run` (resolves unpublished workspace siblings locally, so dependents
+  #     verify-build) + structural asserts (member-coverage / version-presence /
+  #     git-dep / topological-order). No OIDC. NB per-crate `cargo publish -p X
+  #     --dry-run` does NOT work for a dependent (it resolves the dep from crates.io
+  #     where the sibling isn't published yet) — hence `--workspace`.
   #   - prerelease real (beta): NO-OP. Betas are never published (the immutable-
   #     publish / exact-pin-cascade trap). Exiting 0 lets the downstream tag/
   #     `:latest` jobs proceed unchanged on the beta track.
@@ -302,25 +303,31 @@ jobs:
           echo "✓ publish order is a valid topological sort"
           echo "::endgroup::"
 
-          # --- Publish (real GA) or validate (dry-run) each crate IN ORDER.
-          for c in $ORDER; do
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "::group::validate $c (dry-run)"
-              # `--dry-run` packages + verify-builds the crate and asserts deps
-              # carry versions; it subsumes `cargo package`. The ordering gap is
-              # covered by Invariant 2 above.
-              cargo publish -p "$c" --locked --dry-run --allow-dirty
-              echo "::endgroup::"
-            else
+          # --- Publish (real GA) or validate (dry-run) the workspace.
+          if [ "$DRY_RUN" = "true" ]; then
+            # Validate the WHOLE workspace in ONE dry-run. Modern cargo (>=1.90)
+            # resolves unpublished workspace SIBLINGS locally, so each dependent's
+            # verify-build works even though its intra-workspace deps aren't on the
+            # registry yet. Per-crate `cargo publish -p X --dry-run` CANNOT do this:
+            # for publishing it strips `path=` and resolves the dep from crates.io,
+            # so a dependent (e.g. bismark-aligner needs `bismark-io =1.0.0`) fails
+            # because that version isn't published yet — only betas are (this is what
+            # the first 4c dry-run surfaced). `--workspace` computes the publish order
+            # itself; the structural asserts above (member-coverage / version-presence
+            # / git-dep / topo) still cover manifest + ordering correctness.
+            echo "::group::validate workspace (cargo publish --workspace --dry-run)"
+            cargo publish --workspace --locked --dry-run --allow-dirty
+            echo "::endgroup::"
+            echo "✓ DRY-RUN: workspace packaged + dry-published (siblings resolved locally); deps versioned; order valid"
+          else
+            # Real GA publish: ordered L0 → L1 → L2, per-crate so each is verified
+            # available on the index before the next resolves it (and so the
+            # partial-publish/fix-forward runbook above maps to a specific crate).
+            for c in $ORDER; do
               echo "::group::publish $c"
               cargo publish -p "$c" --locked
               echo "::endgroup::"
-            fi
-          done
-
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "✓ DRY-RUN: 14 crates packaged + dry-published; deps versioned; order valid"
-          else
+            done
             echo "✓ PUBLISHED all 14 crates to crates.io in DAG order"
           fi
 

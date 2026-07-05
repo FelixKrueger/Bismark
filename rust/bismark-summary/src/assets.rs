@@ -13,9 +13,16 @@
 
 use std::sync::OnceLock;
 
-const PLOTLY_RAW: &str = include_str!("../../../plotly/plot.ly");
-const BISMARK_LOGO_RAW: &str = include_str!("../../../plotly/bismark.logo");
-const BIOINF_LOGO_RAW: &str = include_str!("../../../plotly/bioinf.logo");
+// Vendored copies of the repo `plotly/` files live in the crate-local `assets/`
+// so the crate is SELF-CONTAINED and publishable to crates.io (a `.crate` tarball
+// can only carry files inside the crate root; the earlier `../../../plotly/` embed
+// failed `cargo package`'s verify-build). The drift-guard test below keeps them
+// byte-identical to the canonical repo `plotly/` files.
+const PLOTLY_RAW: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/plot.ly"));
+const BISMARK_LOGO_RAW: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/bismark.logo"));
+const BIOINF_LOGO_RAW: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/bioinf.logo"));
 
 /// Normalize an asset the way Perl `read_report_template` does. Pure, total.
 #[must_use]
@@ -91,5 +98,23 @@ mod tests {
         assert!(bioinf_logo().ends_with('\n'));
         // No stray carriage returns survive normalization.
         assert!(!plotly().contains('\r'));
+    }
+
+    #[test]
+    fn vendored_assets_match_repo_plotly_files() {
+        // Drift guard: the vendored `assets/` bytes embedded via `include_str!`
+        // must equal the CANONICAL repo `plotly/` files (Perl's source of truth),
+        // so the publishable vendored copy can't silently drift. Runs only under
+        // `cargo test` (workspace present) — reads `../../plotly` at runtime, so
+        // it does NOT affect `cargo package`'s verify-build.
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plotly");
+        for (name, raw) in [
+            ("plot.ly", PLOTLY_RAW),
+            ("bismark.logo", BISMARK_LOGO_RAW),
+            ("bioinf.logo", BIOINF_LOGO_RAW),
+        ] {
+            let on_disk = std::fs::read_to_string(base.join(name)).unwrap();
+            assert_eq!(on_disk, raw, "vendored {name} drifted from plotly/{name}");
+        }
     }
 }
