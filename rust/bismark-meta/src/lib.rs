@@ -37,4 +37,21 @@ mod tests {
         assert!(l.contains(SUITE_VERSION));
         assert!(l.contains(GIT_SHORT_HASH));
     }
+
+    #[test]
+    fn vendored_version_matches_repo_version() {
+        // Drift guard: the VENDORED crate-local `VERSION` (build.rs's registry-build
+        // fallback so a bare `cargo install` doesn't report "unknown") must equal the
+        // canonical single-source `rust/VERSION`. Runs only under `cargo test`
+        // (workspace present) — reads both at runtime, so it does not affect a
+        // `cargo package` verify-build.
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let vendored = std::fs::read_to_string(format!("{dir}/VERSION")).unwrap();
+        let repo = std::fs::read_to_string(format!("{dir}/../VERSION")).unwrap();
+        assert_eq!(
+            vendored.trim(),
+            repo.trim(),
+            "vendored bismark-meta/VERSION drifted from rust/VERSION"
+        );
+    }
 }

@@ -65,8 +65,15 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (year, m, d)
 }
 
-/// The SUITE version: `$BISMARK_SUITE_VERSION` (set by the release workflow) or
-/// the single-source `rust/VERSION` file (one level up from this crate).
+/// The SUITE version, resolved in priority order:
+/// 1. `$BISMARK_SUITE_VERSION` — set by the release workflow / Docker build.
+/// 2. `../VERSION` — the single-source `rust/VERSION`, for workspace/local builds.
+/// 3. crate-local `VERSION` — a VENDORED copy of `rust/VERSION`, for a crates.io
+///    registry build (`cargo install <crate>`): the tarball can't reach `../VERSION`
+///    (outside the crate root), so WITHOUT this a bare registry install reports
+///    "unknown". Kept in lockstep with `rust/VERSION` by the
+///    `vendored_version_matches_repo_version` test.
+/// 4. `"unknown"` — last-resort fallback.
 fn suite_version() -> String {
     if let Ok(v) = env::var("BISMARK_SUITE_VERSION") {
         let v = v.trim();
@@ -75,12 +82,18 @@ fn suite_version() -> String {
         }
     }
     let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let path = std::path::Path::new(&manifest).join("..").join("VERSION");
-    std::fs::read_to_string(&path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+    let repo_version = std::path::Path::new(&manifest).join("..").join("VERSION");
+    let vendored = std::path::Path::new(&manifest).join("VERSION");
+    for path in [repo_version, vendored] {
+        if let Some(v) = std::fs::read_to_string(&path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return v;
+        }
+    }
+    "unknown".to_string()
 }
 
 /// Resolve the real path of a git metadata file (`HEAD`/`index`) via git so the
@@ -115,6 +128,7 @@ fn main() {
         }
     }
     println!("cargo:rerun-if-changed=../VERSION");
+    println!("cargo:rerun-if-changed=VERSION"); // vendored copy (registry-build fallback)
     println!("cargo:rerun-if-env-changed=BISMARK_SUITE_VERSION");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 }

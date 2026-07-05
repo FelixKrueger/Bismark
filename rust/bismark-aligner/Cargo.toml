@@ -61,16 +61,18 @@ bstr = "=1.10.0"
 # OPTIONAL + gated behind the default-OFF `rammap-inprocess` feature (Rev 2.1, Felix
 # decision) so the default/local/Mac `cargo build` NEVER compiles rammap-core; the
 # experimental in-process backend is a compile-time opt-in (release Linux binaries ship
-# with the feature ON). Pinned to a git REV (rammap v1.1.1 = the tagged commit, matching
-# `aligner::PINNED_RAMMAP_VERSION`) for reproducibility. The crate's lib name is `rammap`
+# with the feature ON). Pinned to a git REV (`5ea62cd` = rammap's "bump to v1.1.1" commit,
+# whose Cargo.toml declares version 1.1.1 — matching `aligner::PINNED_RAMMAP_VERSION` + the
+# `=1.1.1` pin below; the `v1.1.1` tag itself sits on a sibling commit). The crate's lib name is `rammap`
 # (workspace member `rammap-core`); imported as `rammap::{Aligner, Preset, Strand, MapOpts,
 # Mapping}`. `default-features = false` drops rammap-core's own `parallel`/`wasm-threads`
 # defaults; we re-add `parallel` explicitly. rammap pulls NO noodles (the tight noodles
 # pins are safe); its `flate2 = "1"` is satisfied by our `=1.1.9` pin (one shared flate2).
 # `version = "=1.1.1"` is REQUIRED for the crates.io publish (GA): crates.io rejects a git
-# dependency that carries no version, even an optional/feature-gated one. The git `rev` is
-# the rammap v1.1.1 tagged commit, so local/release builds keep building from it; the
-# PUBLISHED manifest references rammap-core 1.1.1 from crates.io (same code, same version).
+# dependency that carries no version, even an optional/feature-gated one. The git `rev`
+# (rammap's "bump to v1.1.1" commit) is used by local/release builds; the PUBLISHED manifest
+# references rammap-core 1.1.1 from crates.io (same version — the registry build of the
+# experimental --rammap_inprocess path resolves to crates.io 1.1.1, git builds to the rev).
 rammap-core = { version = "=1.1.1", git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
 # #995: rayon for the in-process parallel per-read map (the shared `ThreadPool`). OPTIONAL,
 # only under `rammap-inprocess` — already transitive via rammap-core's `parallel` feature, so
