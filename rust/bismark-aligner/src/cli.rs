@@ -86,10 +86,11 @@ pub struct Cli {
     /// mode. Unlike bisulfite, the 5-Base chemistry converts METHYLATED C to T and
     /// leaves unmethylated C intact, so reads keep full complexity and align to the
     /// UNCONVERTED genome with a standard aligner; methylation is then called with
-    /// inverted polarity (a read T at a genomic C = methylated). v1 is single-end +
-    /// directional only and aligns with minimap2 (`-x sr`) against the raw genome
-    /// FASTA. NOT byte-identical (Perl Bismark has no 5-Base oracle); validated by
-    /// concordance with DRAGEN. See FelixKrueger/Bismark#787.
+    /// inverted polarity (a read T at a genomic C = methylated). Paired-end only
+    /// (the 5-Base library is paired-end); single-end input is rejected. Aligns with
+    /// minimap2 (`-x sr`) against the raw genome FASTA by default; bowtie2/hisat2 via
+    /// `--five_base_index`. NOT byte-identical (Perl Bismark has no 5-Base oracle);
+    /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
     /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, deconvolute
@@ -136,18 +137,17 @@ pub struct Cli {
     pub five_base_min_mapq: u8,
     /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
     /// of each original molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and
-    /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`. PE keys
-    /// each family on the FRAGMENT span (POS + mate-pos + TLEN) + canonical dual UMI — the
-    /// real workflow (Illumina 5-Base is paired-end). SE-duplex is a KNOWN LIMITATION:
-    /// single-end OT/OB reads cover opposite fragment ends with different spans, so they do
-    /// not pair on real data (SE is not a real 5-Base workflow). Use `--five_base_umi_qname`
-    /// (real data) or `--five_base_umi_len` for the UMI key. EXPERIMENTAL: not gated.
+    /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`.
+    /// Paired-end only: each family is keyed on the FRAGMENT span (POS, mate-pos, TLEN)
+    /// and canonical dual UMI, pairing the two strands of the same PE molecule by their
+    /// shared insert coordinates. Use `--five_base_umi_qname` (real data) or
+    /// `--five_base_umi_len` for the UMI key. EXPERIMENTAL: not gated.
     /// Requires `--illumina_5base`.
     #[arg(long = "five_base_duplex")]
     pub five_base_duplex: bool,
     /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to a consensus in
     /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
-    /// `--five_base_duplex` (SE + PE; PE is the real workflow). Reconciled by MOLECULE strand
+    /// `--five_base_duplex` (paired-end only). Reconciled by MOLECULE strand
     /// (the OT molecule owns a `+` CpG, the OB molecule a `-` CpG); the opposite strand is the
     /// variant check (a cytosine gone on BOTH strands is masked to `N`). Emits a forward AND a
     /// reverse record per family, so BOTH strands of every CpG are scored. DRAGEN-validated on
