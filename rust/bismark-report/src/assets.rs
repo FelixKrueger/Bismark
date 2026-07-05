@@ -1,31 +1,29 @@
 //! The four embedded Plotly assets + the faithful `read_report_template`
 //! line-normalizer (SPEC §2.6 / §8.2).
 //!
-//! Embedding strategy (PLAN A5): `include_str!` via `CARGO_MANIFEST_DIR` so the
-//! bytes come from the repo's `plotly/` directory at compile time (no 3 MB
-//! duplication into the crate); the inline `embedded_assets_match_repo_plotly_files` test asserts the
-//! embedded bytes still equal the on-disk files. No workspace crate embeds
-//! assets, so this is a new pattern — *not* a genomeprep mirror.
+//! Embedding strategy: `include_str!` from the crate-local `assets/` directory
+//! (VENDORED copies of the repo `plotly/` files) so the crate is SELF-CONTAINED
+//! and publishable to crates.io — a `.crate` tarball can only carry files inside
+//! the crate root, so the earlier `../../plotly/` embed failed `cargo package`'s
+//! verify-build (the files aren't in the tarball). The `embedded_assets_match_repo_plotly_files`
+//! test asserts the vendored bytes still equal the canonical repo `plotly/` files
+//! (drift guard — keeps the vendored copy in lockstep with Perl's source of truth).
 
 use std::sync::OnceLock;
 
 /// Raw `plotly_template.tpl` (the `{{placeholder}}` HTML skeleton).
 const RAW_TEMPLATE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../plotly/plotly_template.tpl"
+    "/assets/plotly_template.tpl"
 ));
 /// Raw `plot.ly` (~3 MB plotly.js v1.48.3, already wrapped in `<script>`).
-const RAW_PLOTLY: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../plotly/plot.ly"));
+const RAW_PLOTLY: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/plot.ly"));
 /// Raw `bismark.logo` (base64 `<img>` tag).
-const RAW_BISMARK_LOGO: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../plotly/bismark.logo"
-));
+const RAW_BISMARK_LOGO: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/bismark.logo"));
 /// Raw `bioinf.logo` (base64 `<img>` tag).
-const RAW_BIOINF_LOGO: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../plotly/bioinf.logo"
-));
+const RAW_BIOINF_LOGO: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/bioinf.logo"));
 
 /// Faithful reproduction of Perl `read_report_template` (`bismark2report:1025-1038`):
 /// read line-by-line, `chomp`, strip **all** `\r` (`s/\r//g`, not just a trailing
@@ -119,8 +117,11 @@ mod tests {
 
     #[test]
     fn embedded_assets_match_repo_plotly_files() {
-        // Drift guard (PLAN A5): the `include_str!`-embedded bytes must equal the
-        // on-disk `plotly/` files, so the embed can't silently go stale.
+        // Drift guard: the vendored `assets/` bytes embedded via `include_str!`
+        // must equal the CANONICAL repo `plotly/` files (Perl's source of truth),
+        // so the publishable vendored copy can't silently drift. Runs only under
+        // `cargo test` (workspace present) — it reads `../../plotly` at runtime, so
+        // it does NOT affect `cargo package`'s verify-build.
         let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plotly");
         for (name, raw) in [
             ("plotly_template.tpl", RAW_TEMPLATE),
