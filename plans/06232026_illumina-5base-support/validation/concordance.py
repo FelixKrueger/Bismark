@@ -137,6 +137,13 @@ def cmd_methyl(args):
     return result
 
 
+def _norm_chrom(c):
+    """Normalize chromosome names so 'chr1' (DRAGEN) and '1' (Ensembl) match.
+    DRAGEN CX/VCF prefix contigs with 'chr'; a genome with Ensembl naming
+    ('1', '2', ... 'MT') does not. Strip a leading 'chr' from both sides."""
+    return c[3:] if c.startswith("chr") else c
+
+
 def parse_our_variants(path):
     """Our deconvolution report -> dict {(chrom,pos): (strand, verdict)} for all CpGs."""
     out = {}
@@ -147,7 +154,7 @@ def parse_our_variants(path):
             f = line.rstrip("\n").split("\t")
             if len(f) < 4:
                 continue
-            out[(f[0], f[1])] = (f[2], f[3])
+            out[(_norm_chrom(f[0]), f[1])] = (f[2], f[3])
     return out
 
 
@@ -170,7 +177,7 @@ def parse_dragen_cpg_snvs(path):
             if len(f) >= 10:
                 gt = f[9].split(":")[0].replace("|", "/")
                 is_hom = gt in ("1/1",)
-            out[(chrom, pos)] = (ref, alt, is_hom)
+            out[(_norm_chrom(chrom), pos)] = (ref, alt, is_hom)
     return out
 
 

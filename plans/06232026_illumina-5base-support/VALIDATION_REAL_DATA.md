@@ -395,7 +395,28 @@ ways — from DRAGEN's own `methyl_metrics.csv` on Sample8, and from Illumina's 
   reconciliation fixes above) and (b) the structural lambda/pUC19 control gates — **not** by
   its per-CpG r against the CX report. Do not headline a consensus-vs-CX r.
 
-A second independent sample (HG002 = NA24385, present in the same BaseSpace project,
-`ds.48b7596730dd47ef97699b59ccd3641d`) can be run with the same runbook to add cross-sample
-evidence; it is not required for the core/deconvolution GA contract, which the NA12878
-full-depth results plus the reproducible lambda/pUC19 CI gates already establish.
+### Cross-sample confirmation — HG002 (NA24385), full depth (2026-07-05)
+
+Ran the identical end-to-end chain on a **second independent individual** (HG002 = NA24385,
+same BaseSpace project) — download → merge → align → extract → per-CpG concordance vs its
+own DRAGEN v4.4.6 reference. HG002 is biologically **more methylated** than NA12878 (global
+CpG ~64.7% vs ~50%), and DRAGEN agrees, so this is a genuine cross-sample test, not a repeat
+of the same distribution:
+
+| mode | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
+|---|---|---|---|---|---|
+| core (per-read) | 55.7M (cov>=1) | 0.988 (0.996 cov>=10) | 98.3% (98.6% cov>=10) | n/a | n/a |
+| deconvolution | 161,709 DRAGEN hom CpG-SNVs | n/a | n/a | 94.3% | 95.7% |
+| consensus (duplex view) | 23.9M (cov>=1) | 0.756 (0.892 cov>=3) | 85.7% (90.1% cov>=3) | n/a | n/a |
+
+Mean CpG methylation ours 64.7% vs DRAGEN 65.1% (cov>=1). The core reproduces DRAGEN on a
+second individual (r 0.988 → 0.996), the deconvolution actually **exceeds** the NA12878
+numbers (94.3% / 95.7% vs 90.3% / 93.4%), and the consensus shows the same depth-limited
+per-CpG r (0.76 sparse → 0.89 at cov>=3) — the expected per-molecule-view behaviour, not a
+regression. (Chrom-naming note: HG002 was aligned against an Ensembl-named genome ('1' not
+'chr1'); the `concordance.py deconv` parser now strips a leading `chr` on both sides so
+DRAGEN's `chr1` VCF and our `1` output match — earlier this silently scored 0% precision.)
+
+This is not required for the core/deconvolution GA contract — the NA12878 full-depth results
+plus the reproducible lambda/pUC19 CI gates already establish it — but it is strong
+independent cross-sample corroboration.
