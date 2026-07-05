@@ -149,9 +149,10 @@ pub struct Cli {
     /// `--five_base_duplex` (paired-end only). Reconciled by MOLECULE strand
     /// (the OT molecule owns a `+` CpG, the OB molecule a `-` CpG); the opposite strand is the
     /// variant check (a cytosine gone on BOTH strands is masked to `N`). Emits a forward AND a
-    /// reverse record per family, so BOTH strands of every CpG are scored. DRAGEN-validated on
-    /// real NA12878 (both strands r ≈ 0.77). Concordance-gated (not byte-identical);
-    /// see the 5-Base guide. Requires `--illumina_5base`.
+    /// reverse record per family, so BOTH strands of every CpG are scored. Per-molecule duplex
+    /// view (inherently sparse) — validated vs DRAGEN by per-strand mean-methylation agreement
+    /// (DRAGEN has no WGS consensus-CX to correlate against), not a per-CpG r. Concordance-gated
+    /// (not byte-identical); see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
     /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of

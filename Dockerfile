@@ -20,7 +20,7 @@ ENV BISMARK_SUITE_VERSION=${BISMARK_SUITE_VERSION}
 # Copy the whole repo (context = repo root) and build the workspace --locked.
 # (A dep-only cache layer is omitted: the 14-crate workspace makes the dummy-src
 # trick brittle; a clean --locked build is correct and CI caches via the registry.)
-# `--features bismark-aligner/rammap-inprocess` compiles bismark_rs's in-process
+# `--features bismark-aligner/rammap-inprocess` compiles the `bismark` aligner's in-process
 # rammap backend ON so the shipped `--rammap_inprocess` opt-in is functional
 # (default `--rammap` stays subprocess). The feature is bismark-aligner-only, so
 # the other 11 binaries are byte-unaffected; the rammap-core git dep is fetched at
@@ -34,7 +34,7 @@ RUN cargo build --release --locked --manifest-path rust/Cargo.toml --features bi
 FROM mambaorg/micromamba:1.5.8-bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/FelixKrueger/Bismark"
-LABEL org.opencontainers.image.description="Bismark Rust suite (beta) — bisulfite aligner + methylation tools, byte-identical to Perl v0.25.1"
+LABEL org.opencontainers.image.description="Bismark Rust suite — bisulfite aligner + methylation tools; faithful core byte-identical to Perl v0.25.1"
 LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 
 # The micromamba base ends on `USER mambauser` (an unprivileged user); installing into the
@@ -59,44 +59,45 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends procps \
     && rm -rf /var/lib/apt/lists/*
 
-# The 12 suite binaries (uniform `_rs` names during the beta/Perl-coexistence track).
+# The 12 suite binaries under their CANONICAL names (GA: the `_rs` suffix is
+# retired — Ph3a renamed every `[[bin]]`). The 11 non-aligner tools install
+# directly under their canonical names; the aligner lands as `bismark.bin` so
+# `/usr/local/bin/bismark` can be the version-probe wrapper (installed below).
 COPY --from=builder \
-    /build/rust/target/release/bismark_rs \
-    /build/rust/target/release/deduplicate_bismark_rs \
-    /build/rust/target/release/bismark_methylation_extractor_rs \
-    /build/rust/target/release/bismark2bedGraph_rs \
-    /build/rust/target/release/coverage2cytosine_rs \
-    /build/rust/target/release/bismark_genome_preparation_rs \
-    /build/rust/target/release/bam2nuc_rs \
-    /build/rust/target/release/NOMe_filtering_rs \
-    /build/rust/target/release/filter_non_conversion_rs \
-    /build/rust/target/release/methylation_consistency_rs \
-    /build/rust/target/release/bismark2report_rs \
-    /build/rust/target/release/bismark2summary_rs \
+    /build/rust/target/release/deduplicate_bismark \
+    /build/rust/target/release/bismark_methylation_extractor \
+    /build/rust/target/release/bismark2bedGraph \
+    /build/rust/target/release/coverage2cytosine \
+    /build/rust/target/release/bismark_genome_preparation \
+    /build/rust/target/release/bam2nuc \
+    /build/rust/target/release/NOMe_filtering \
+    /build/rust/target/release/filter_non_conversion \
+    /build/rust/target/release/methylation_consistency \
+    /build/rust/target/release/bismark2report \
+    /build/rust/target/release/bismark2summary \
     /usr/local/bin/
+# The aligner, renamed to `bismark.bin` (the wrapper installed below execs it).
+COPY --from=builder /build/rust/target/release/bismark /usr/local/bin/bismark.bin
 
-# ── Canonical tool names (nf-core/methylseq drop-in) ─────────
-# methylseq calls the Bismark tools by canonical name (no `_rs`) and captures the
-# suite version from the `bismark` binary via `bismark -v`/`--version`. Exposing
-# canonical names lets a methylseq container-swap PR use only a `withName` override
-# (no module script edits):
-#   - `bismark` is a version-probe WRAPPER — its `-v`/`--version` output is kept
-#     byte-identical to the Perl v0.25.1 oracle so methylseq's versions.yml + the
-#     bismark nf-test snapshots are unchanged (docker/bismark-canonical-wrapper.sh).
-#   - the other 11 are plain symlinks (methylseq scrapes ONLY `bismark`, so their
-#     `--version` stays the truthful Rust-suite banner).
+# ── Canonical `bismark` version-probe wrapper (nf-core/methylseq drop-in) ─────
+# methylseq calls the Bismark tools by canonical name and captures the suite
+# version from the `bismark` binary via `bismark -v`/`--version`. The 11 tools
+# above already carry their canonical names; only `bismark` needs special
+# handling, because methylseq scrapes its version banner in a shape the real
+# aligner binary does NOT emit (`Bismark Aligner (Rust port) Version: …`):
+#   - `/usr/local/bin/bismark` is the version-probe WRAPPER — its `-v`/`--version`
+#     prints the methylseq-parseable `Bismark Version: v<suite>` banner carrying
+#     the TRUE GA suite version; every other invocation execs the real aligner
+#     (`bismark.bin`). See docker/bismark-canonical-wrapper.sh.
+#   - the other 11 tools ARE the real binaries (methylseq scrapes ONLY `bismark`,
+#     so their `--version` stays the truthful Rust-suite banner).
 ARG BISMARK_SUITE_VERSION=unknown
 COPY docker/bismark-canonical-wrapper.sh /tmp/bismark-wrapper.sh
 RUN set -eu; \
     sed "s|__SUITE_VERSION__|${BISMARK_SUITE_VERSION}|" /tmp/bismark-wrapper.sh \
         > /usr/local/bin/bismark; \
     chmod +x /usr/local/bin/bismark; \
-    rm /tmp/bismark-wrapper.sh; \
-    for t in deduplicate_bismark bismark_methylation_extractor bismark2bedGraph \
-             coverage2cytosine bismark_genome_preparation bam2nuc NOMe_filtering \
-             filter_non_conversion methylation_consistency bismark2report bismark2summary; do \
-      ln -s "${t}_rs" "/usr/local/bin/${t}"; \
-    done
+    rm /tmp/bismark-wrapper.sh
 
 # License + third-party notices.
 COPY license.txt /usr/local/share/bismark/LICENSE

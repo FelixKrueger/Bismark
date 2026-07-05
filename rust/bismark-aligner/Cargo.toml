@@ -67,7 +67,11 @@ bstr = "=1.10.0"
 # Mapping}`. `default-features = false` drops rammap-core's own `parallel`/`wasm-threads`
 # defaults; we re-add `parallel` explicitly. rammap pulls NO noodles (the tight noodles
 # pins are safe); its `flate2 = "1"` is satisfied by our `=1.1.9` pin (one shared flate2).
-rammap-core = { git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
+# `version = "=1.1.1"` is REQUIRED for the crates.io publish (GA): crates.io rejects a git
+# dependency that carries no version, even an optional/feature-gated one. The git `rev` is
+# the rammap v1.1.1 tagged commit, so local/release builds keep building from it; the
+# PUBLISHED manifest references rammap-core 1.1.1 from crates.io (same code, same version).
+rammap-core = { version = "=1.1.1", git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
 # #995: rayon for the in-process parallel per-read map (the shared `ThreadPool`). OPTIONAL,
 # only under `rammap-inprocess` — already transitive via rammap-core's `parallel` feature, so
 # one shared rayon. `"1"` unifies with rammap-core's transitive pin (the default build never sees it).
