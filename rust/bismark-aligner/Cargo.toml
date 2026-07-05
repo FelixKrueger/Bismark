@@ -1,0 +1,124 @@
+[package]
+name = "bismark-aligner"
+version = "1.0.0"
+description = "Rust port of the Bismark Perl aligner wrapper (bismark)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "alignment", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark"
+path = "src/main.rs"
+
+[dependencies]
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+clap = { version = "=4.5.30", features = ["derive"] }
+# PATH-based discovery of the external aligner (bowtie2). Same crate + pin the
+# genome-preparation port uses for subprocess discovery.
+which = "=7.0.3"
+# gzip read (.fq.gz input) + optional gzip write (--gzip temp). MultiGzDecoder
+# handles concatenated-member .gz (Perl uses `gunzip -c`); same pin as genome-prep.
+flate2 = "=1.1.9"
+thiserror = "=2.0.18"
+anyhow = "=1.0.103"
+# Multithreaded global allocator (Apple Silicon perf epic, 06222026). The
+# aligner allocates heavily per record on the Rust side — bowtie2-output parse
+# (`SamRecord::parse`: ~7 owned String/Vec per line × 2-4 records/read), the
+# C->T / G->A conversion loop, and the methylation/tag path — and `--multicore`
+# chunk workers contend on the system allocator's arena locks (the same
+# anti-scaling that made the extractor's `--parallel N>1` slower than N=1 until
+# mimalloc: 155.8s -> 23.5s). Allocator choice does NOT affect computed output —
+# byte-identity holds (guarded by tests/byte_identity_real_data.rs + `just
+# reproduce`). Exact-pinned to the sibling crates' choice so the workspace links
+# one shared mimalloc.
+mimalloc = { version = "=0.1.52", default-features = false }
+# Phase 5: BAM output via the shared noodles writer layer. Pins MUST match
+# bismark-io's transitive choice (same as bismark-dedup declares) so the
+# workspace links one shared noodles.
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
+noodles-sam = "=0.85.0"
+noodles-core = "=0.20.0"
+# Phase 9b: the order-preserving BAM merge reads per-chunk BAMs as RAW `RecordBuf`
+# (no Bismark-tag validation — the --ambig_bam holds bare aligner records, no XR/XG/XM).
+# Pinned to bismark-io's transitive choice so the workspace links one shared noodles-bam.
+noodles-bam = "=0.89.0"
+# Issue #1019: BGZF-compress the `--combined_index_sequential` pass-1 spill (~7x less
+# scratch, wall-neutral — parallel encode hides behind pass-1 alignment). MultithreadedWriter
+# (write) + io::Reader (read). Pinned to the workspace's shared noodles-bgzf (bismark-io + 3
+# others declare =0.47.0; also transitive via noodles-bam) — the spill resolves to this direct
+# =0.47.0. (A separate noodles-bgzf 0.42.0 reachable via noodles-csi is pre-existing, not added here.)
+noodles-bgzf = "=0.47.0"
+bstr = "=1.10.0"
+# Phase 1 (epic 06152026): the in-process rammap backend (`inprocess::InProcessAlignerStream`).
+# OPTIONAL + gated behind the default-OFF `rammap-inprocess` feature (Rev 2.1, Felix
+# decision) so the default/local/Mac `cargo build` NEVER compiles rammap-core; the
+# experimental in-process backend is a compile-time opt-in (release Linux binaries ship
+# with the feature ON). Pinned to a git REV (rammap v1.1.1 = the tagged commit, matching
+# `aligner::PINNED_RAMMAP_VERSION`) for reproducibility. The crate's lib name is `rammap`
+# (workspace member `rammap-core`); imported as `rammap::{Aligner, Preset, Strand, MapOpts,
+# Mapping}`. `default-features = false` drops rammap-core's own `parallel`/`wasm-threads`
+# defaults; we re-add `parallel` explicitly. rammap pulls NO noodles (the tight noodles
+# pins are safe); its `flate2 = "1"` is satisfied by our `=1.1.9` pin (one shared flate2).
+# `version = "=1.1.1"` is REQUIRED for the crates.io publish (GA): crates.io rejects a git
+# dependency that carries no version, even an optional/feature-gated one. The git `rev` is
+# the rammap v1.1.1 tagged commit, so local/release builds keep building from it; the
+# PUBLISHED manifest references rammap-core 1.1.1 from crates.io (same code, same version).
+rammap-core = { version = "=1.1.1", git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
+# #995: rayon for the in-process parallel per-read map (the shared `ThreadPool`). OPTIONAL,
+# only under `rammap-inprocess` — already transitive via rammap-core's `parallel` feature, so
+# one shared rayon. `"1"` unifies with rammap-core's transitive pin (the default build never sees it).
+rayon = { version = "1", optional = true }
+# #1025 Phase 2: Arc Institute BINSEQ (.vbq) read input (the `binseq_decode` backend).
+# OPTIONAL + behind the default-OFF `binseq-input` feature (Rev 1 R7), mirroring the
+# `rammap-inprocess` precedent so the default/local/Mac `cargo build` NEVER compiles the
+# `binseq` crate (and its zstd C build). Release Linux binaries ship with the feature ON
+# (see release.yml), and a default build still REJECTS a `.vbq`/`.cbq`/`.bq` input
+# never-silently via the always-compiled extension detection (see `binseq_decode`).
+# `default-features = false` drops binseq's `paraseq` + `parking_lot` defaults (we use only
+# the serial `vbq::MmapReader` + the low-level writer for test fixtures — never the
+# paraseq-gated `encode_fastx`), but we MUST re-enable `anyhow`: binseq's CBQ EliasFano
+# path (`cbq/core/block.rs` — `EliasFanoBuilder::new(..)?` / `EliasFano::deserialize_from(..)?`
+# on `sucds`, which returns `anyhow::Error`) `?`-converts into `binseq::Error`, whose
+# `From<anyhow::Error>` impl is `#[cfg(feature = "anyhow")]`. So the crate does NOT compile
+# without `anyhow` (verified empirically: a `default-features=false` build fails with
+# "From<anyhow::Error> is not implemented"). It is an implicit `?` conversion, invisible to a
+# grep for "anyhow". NOTE: `zstd` (cc-based, NOT cmake) is a NON-optional binseq dependency,
+# so `default-features = false` does NOT drop it; the feature gate is what keeps it out of the
+# default build. Two workspace pin bumps are forced: `thiserror` (binseq's unconditional
+# `^2.0.17` dep) and `anyhow` (the feature above needs `^1.0.100`). Exact-pinned per convention.
+binseq = { version = "=0.9.2", default-features = false, features = ["anyhow"], optional = true }
+
+[features]
+# Default-OFF: compiles the in-process rammap backend (`inprocess.rs`) + its rammap-typed
+# tests. The feature-independent CIGAR-reconstruction unit test runs on ANY toolchain.
+# `dep:rayon` is the in-process parallel-map pool (#995).
+rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
+# Default-OFF: compiles the BINSEQ (.vbq) decode path (`binseq_decode::vbq_impl`) + its
+# tests. The extension-detection + the CBQ/BQ/feature-off fail-loud rejects compile on ANY
+# toolchain (feature-independent); only the actual `binseq`-crate decode is gated here.
+binseq-input = ["dep:binseq"]
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
+# Function-level micro-benchmarks (06222026 perf epic). Dev-only: never compiled
+# into the shipped binary. Demonstrates the SamRecord::parse byte-split speedup
+# that is real at the function level but below end-to-end (bowtie2-dominated) noise.
+# `cargo_bench_support` is REQUIRED for `cargo bench` to actually measure (the
+# criterion harness's arg parsing + timing live behind it); `default-features =
+# false` otherwise drops the heavy `plotters`/`rayon` HTML-report machinery we do
+# not need for a CI-reproducible number.
+criterion = { version = "=0.5.1", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "parse_bench"
+harness = false

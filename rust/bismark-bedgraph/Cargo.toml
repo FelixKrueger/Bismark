@@ -1,0 +1,59 @@
+[package]
+name = "bismark-bedgraph"
+version = "1.0.0"
+description = "Rust port of Bismark Perl's bismark2bedGraph script"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "bedgraph", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark2bedGraph"
+path = "src/main.rs"
+
+[dependencies]
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.18"
+# Multithreaded global allocator (see src/main.rs). The parallel per-file parse
+# (parallel.rs) is allocation-heavy (per-thread hashmap growth); under the
+# default system allocator, concurrent map growth blocks on arena locks, making
+# `--parallel N>1` anti-scale (slower than N=1 on a full --CX gate). mimalloc's
+# per-thread heaps remove that contention (same fix as the extractor, #884).
+# Allocator-only — output is byte-identical.
+mimalloc = { version = "=0.1.52", default-features = false }
+# Plain/gzipped text I/O — bismark2bedGraph reads the extractor's
+# per-context call files and writes gzipped bedGraph + coverage. No BAM,
+# so no bismark-io / noodles dependency (SPEC §5).
+#
+# Backend: `zlib-rs` (pure-Rust port of zlib-ng) instead of the default
+# `miniz_oxide` — markedly faster DEFLATE on the two large output streams,
+# with NO C/cmake build dependency. Decompressed-content identity (SPEC D1)
+# is independent of the compression backend, so this is a safe perf-only
+# change. Follow-up to the PR #893 real-data walk, where miniz_oxide made
+# the port ~0.4–0.5× Perl's speed (byte-identical but slower).
+flate2 = { version = "=1.1.9", default-features = false, features = ["zlib-rs"] }
+# Faster HashMap for the (chr,pos) aggregation map; lowers the per-entry
+# constant for the large --CX case (SPEC §1.1 D3 / I3).
+rustc-hash = "=2.1.0"
+# Parallel block-gzip for the two large output streams (bedGraph +
+# coverage). A flamegraph (PR #893 follow-up, 10M PE) showed ~70% of
+# runtime is serial DEFLATE — parallel gzip is the main perf lever.
+# `deflate_rust` keeps it C/cmake-free; under Cargo feature unification
+# with our `flate2` `zlib-rs` feature, gzp's flate2 codec resolves to the
+# zlib-rs (`any_zlib`) backend — i.e. parallel zlib-rs. Output is a valid
+# gzip stream that decompresses to identical bytes, so the decompressed-
+# content byte-identity contract (SPEC D1) is preserved.
+gzp = { version = "=0.11.3", default-features = false, features = ["deflate_rust"] }
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"

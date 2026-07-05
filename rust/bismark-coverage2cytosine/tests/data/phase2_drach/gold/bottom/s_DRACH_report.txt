@@ -1,0 +1,1 @@
+chr1	5	-	3	3	GAACA	CAT

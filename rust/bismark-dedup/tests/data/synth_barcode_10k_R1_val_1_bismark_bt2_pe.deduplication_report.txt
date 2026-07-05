@@ -1,0 +1,7 @@
+
+Total number of alignments analysed in synth_barcode_10k_R1_val_1_bismark_bt2_pe.bam (UMI mode):	6487
+Total number duplicated alignments removed:	0 (0.00%)
+Duplicated alignments were found at:	0 different position(s)
+
+Total count of deduplicated leftover sequences: 6487 (100.00% of total)
+

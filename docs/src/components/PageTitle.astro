@@ -1,0 +1,8 @@
+---
+/* Suppress the auto page-title <h1> on the home page (Home.astro renders its
+   own hero). Default behaviour everywhere else. */
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import { isHomePage } from '../site';
+const isHome = isHomePage(Astro.locals.starlightRoute);
+---
+{!isHome && <Default><slot /></Default>}

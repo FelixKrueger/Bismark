@@ -1,0 +1,7 @@
+---
+import Logo from './Logo.astro';
+const { siteTitleHref } = Astro.locals.starlightRoute;
+---
+<a href={siteTitleHref} class="site-title bismark sl-flex" aria-label="Bismark home">
+  <Logo />
+</a>

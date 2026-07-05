@@ -1,0 +1,16 @@
+Bismark methylation extractor version v0.25.1
+r	+	1	10	Z
+r	-	1	10	z
+r	-	1	10	z
+r	+	1	20	Z
+r	+	2	5	Z
+r	-	2	5	z
+r	+	10	100	Z
+r	+	10	100	Z
+r	+	10	100	Z
+r	+	10	100	Z
+r	+	10	100	Z
+r	+	10	100	Z
+r	-	10	100	z
+r	+	GL000|1	7	Z
+r	-	GL000|1	7	z

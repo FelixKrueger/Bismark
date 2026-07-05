@@ -1,0 +1,73 @@
+[package]
+name = "bismark-extractor"
+version = "1.0.0"
+description = "Rust port of Bismark Perl's bismark_methylation_extractor script (Phase G: bedGraph + cytosine_report subprocess chain)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "extractor", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bismark_methylation_extractor"
+path = "src/main.rs"
+
+[dependencies]
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+bismark-io = { version = "=1.0.0", path = "../bismark-io" }
+# Inline-streaming epic Phase 2: the extractor drives bedGraph + cytosine_report
+# IN-PROCESS via these crates' `Cli`/`run()` (no fork/exec, no Perl subprocess).
+bismark-bedgraph = { version = "1.0.0", path = "../bismark-bedgraph" }
+bismark-coverage2cytosine = { version = "1.0.0", path = "../bismark-coverage2cytosine" }
+clap = { version = "=4.5.30", features = ["derive"] }
+# Multithreaded allocator (#884). The default system allocator's arena locks
+# were the dominant cost of the extractor's parallel pipeline: 4-8 worker
+# threads blocked in malloc/free on per-record allocations, causing N>1 to run
+# ~2x SLOWER than N=1 (measured: default N=4 155.8s -> 23.5s with mimalloc;
+# anti-scaling eliminated). Allocator-only — output is byte-identical.
+mimalloc = { version = "=0.1.52", default-features = false }
+# Parallel gzip for the `--gzip` split-file writers (#884 R2). gzp's
+# `ParCompress<Gzip>` fans compression across its own thread pool (decoupled
+# from `--parallel`; see output.rs::GZIP_COMPRESS_THREADS), capturing the
+# single-threaded ~52 s gzip wall measured in the Phase-0 spike (.gz 75 s ->
+# ~18 s, ~4.1x). Emits a SINGLE-member gzip (one header + sync-flushed DEFLATE
+# blocks + one stream-wide CRC footer), so plain `GzDecoder` reads it.
+# deflate_rust = pure-Rust backend (no cmake/C; matches TG-OE's gzp config).
+gzp = { version = "=0.11.3", default-features = false, features = ["deflate_rust"] }
+thiserror = "=2.0.18"
+# noodles-sam pinned to match bismark-io's transitive choice (matches dedup precedent).
+# Used for `Header` in the chr-name lookup table builder (header.rs) and in tests.
+noodles-sam = "=0.85.0"
+# Phase F: bounded MPMC channels for producer→worker (N×32) and
+# worker→collector (N×8). Pin verified via cargo tree.
+crossbeam-channel = "=0.5.15"
+# (the `which` dependency was dropped in the inline-streaming epic Phase 2:
+# the bedGraph/cytosine_report chain now runs IN-PROCESS, so there is no
+# subprocess to discover on PATH / via BISMARK_BIN.)
+# (rayon was added then dropped during Phase F implementation. Reason:
+# `rayon::ThreadPool::scope()` consumes one pool thread for its closure,
+# deadlocking at N=1 with our producer/worker/collector pattern. Switched
+# to `std::thread::spawn` for workers; rayon was no longer referenced
+# anywhere, so the dep was removed in the post-implementation review pass.)
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
+# Used by tests for synthetic record + header construction.
+bstr = "=1.10.0"
+noodles-core = "=0.20.0"
+# flate2 is still compiled into the binary at RUNTIME — it is gzp's
+# `deflate_rust` backend and noodles_bgzf's encoder (both transitive). This
+# explicit entry only became a *dev*-dependency in #884 R2: src no longer names
+# flate2 (the `--gzip` writer is now gzp), but tests still decode the `.gz`
+# split files via `flate2::read::GzDecoder` to assert decompressed-content
+# byte-identity. Pinned to =1.1.9 to match the single transitive flate2 in the
+# lock (pulled by gzp + noodles_bgzf) — verified via `cargo tree -i flate2`.
+flate2 = "=1.1.9"

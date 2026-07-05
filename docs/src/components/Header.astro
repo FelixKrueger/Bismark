@@ -1,0 +1,86 @@
+---
+import config from 'virtual:starlight/user-config';
+import Search from 'virtual:starlight/components/Search';
+import SiteTitle from 'virtual:starlight/components/SiteTitle';
+import SocialIcons from 'virtual:starlight/components/SocialIcons';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+import { base } from '../site';
+
+const shouldRenderSearch =
+  config.pagefind || config.components.Search !== '@astrojs/starlight/components/Search.astro';
+
+const links = [
+  { label: 'docs', href: `${base}usage/genome-preparation/` },
+  { label: 'quick start', href: `${base}quick-reference/` },
+  { label: 'faq', href: `${base}faq/` },
+];
+
+// Resolve the latest GitHub release at build time (cached once per build).
+const REPO = 'FelixKrueger/Bismark';
+const g = globalThis as { __bmRelease?: Promise<{ label: string; url: string }> };
+g.__bmRelease ??= (async () => {
+  const fallback = { label: 'Releases', url: `https://github.com/${REPO}/releases` };
+  try {
+    const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=1`, { headers });
+    if (!res.ok) return fallback;
+    const releases = (await res.json()) as Array<{ tag_name: string; html_url: string }>;
+    if (!Array.isArray(releases) || releases.length === 0) return fallback;
+    return { label: releases[0].tag_name, url: releases[0].html_url };
+  } catch {
+    return fallback;
+  }
+})();
+const { label: versionLabel, url: versionUrl } = await g.__bmRelease;
+---
+
+<div class="header bismark-header">
+  <div class="title-wrapper sl-flex">
+    <SiteTitle />
+  </div>
+
+  <div class="bismark-nav sl-hidden md:sl-flex print:hidden">
+    <nav class="bismark-topnav" aria-label="Primary">
+      {links.map(({ label, href }) => <a class="link" href={href}>{label}</a>)}
+    </nav>
+    <a class="bismark-ver" href={versionUrl}>{versionLabel}</a>
+    {shouldRenderSearch && <Search />}
+    <div class="sl-flex social-icons"><SocialIcons /></div>
+    <ThemeSelect />
+  </div>
+
+  <div class="bismark-nav-mobile sl-flex md:sl-hidden print:hidden">
+    {shouldRenderSearch && <Search />}
+    <ThemeSelect />
+  </div>
+</div>
+
+<style>
+  @layer starlight.core {
+    .header {
+      display: flex;
+      gap: var(--sl-nav-gap);
+      justify-content: space-between;
+      align-items: center;
+      height: 100%;
+    }
+    .title-wrapper {
+      overflow: clip;
+      padding: 0.25rem;
+      margin: -0.25rem;
+      min-width: 0;
+    }
+    .bismark-nav,
+    .bismark-nav-mobile,
+    .social-icons {
+      gap: 0.7rem;
+      align-items: center;
+    }
+    .social-icons::after {
+      content: '';
+      height: 1.8rem;
+      border-inline-end: 1px solid var(--sl-color-gray-5);
+    }
+  }
+</style>
