@@ -1,0 +1,4 @@
+chr2	10	+	0	0	CG	CGT
+chr2	11	-	0	0	CG	CGT
+chr2	14	+	0	0	CG	CGT
+chr2	15	-	0	0	CG	CGG

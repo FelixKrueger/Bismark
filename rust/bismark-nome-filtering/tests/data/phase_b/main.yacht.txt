@@ -1,0 +1,7 @@
+Bismark methylation extractor; NOMe-Seq test fixture
+r1	+	chr1	4	Z	4	32	+
+r1	-	chr1	9	z	4	32	+
+r1	+	chr1	14	Z	4	32	+
+r1	+	chr1	20	X	4	32	+
+r1	-	chr1	27	h	4	32	+
+r1	-	chr1	32	z	4	32	+

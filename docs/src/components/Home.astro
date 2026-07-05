@@ -1,0 +1,183 @@
+---
+import Logo from './Logo.astro';
+import { base } from '../site';
+const gh = 'https://github.com/FelixKrueger/Bismark';
+---
+<div class="home">
+
+  <!-- HERO -->
+  <section class="hero">
+    <Logo class="big" />
+    <p class="hero-sub">Map bisulfite-treated reads to your reference genome and call cytosine methylation in <b>CpG</b>, <b>CHG</b> and <b>CHH</b> context. One command, one pass, byte-stable output.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href={`${base}quick-reference/`}>quick start <span class="arr" aria-hidden="true">&rarr;</span></a>
+      <a class="btn btn-ghost" href={gh}>
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>
+        view on github
+      </a>
+    </div>
+
+    <div class="terminal" role="img" aria-label="Terminal session: installing Bismark, preparing a genome, aligning paired-end reads, and a CpG, CHG and CHH methylation summary.">
+      <div class="term-bar">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="term-title">~/wgbs/run01 — bismark</span>
+      </div>
+      <div class="term-body" id="home-term" aria-hidden="true"></div>
+    </div>
+
+    <div class="hero-meta">
+      <span><i class="d"></i><b>Bowtie2 · HISAT2 · minimap2</b></span>
+      <span><i class="d"></i><b>single &amp; paired-end</b></span>
+      <span><i class="d"></i><b>WGBS · RRBS · PBAT</b></span>
+      <span><i class="d"></i><b>Perl today, Rust in progress</b></span>
+    </div>
+  </section>
+
+  <!-- WHAT IS -->
+  <section>
+    <div class="section-head"><span class="n">01</span><h2>What is Bismark</h2></div>
+    <div class="what-grid">
+      <div>
+        <p>Bisulfite sequencing turns the methylation state of every cytosine into a base change: unmethylated <strong>C</strong> reads as <strong>T</strong>, methylated <strong>C</strong> stays <strong>C</strong>. That conversion breaks ordinary aligners.</p>
+        <p>Bismark handles both halves at once. It maps bisulfite-treated reads to your reference, then reads methylation calls straight off the alignments, keeping <strong>CpG</strong>, <strong>CHG</strong> and <strong>CHH</strong> context separate. No second caller, no glue scripts.</p>
+        <p>It is a command-line tool, written in Perl, used across whole-genome (WGBS), reduced-representation (RRBS) and PBAT libraries. A Rust rewrite is underway for faster runs with byte-identical results.</p>
+      </div>
+      <div class="strand-panel" aria-label="Lollipop notation legend">
+        <h3>Lollipop notation</h3>
+        <div class="legend-row">
+          <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+            <line x1="11" y1="22" x2="11" y2="11" stroke="var(--ink-mute)" stroke-width="2"></line>
+            <circle cx="11" cy="7" r="5" fill="var(--lime)"></circle>
+          </svg>
+          <span><b>filled</b> — methylated cytosine</span>
+        </div>
+        <div class="legend-row">
+          <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+            <line x1="11" y1="22" x2="11" y2="11" stroke="var(--ink-mute)" stroke-width="2"></line>
+            <circle cx="11" cy="7" r="4.3" fill="none" stroke="var(--ink-dim)" stroke-width="1.8"></circle>
+          </svg>
+          <span><b>open</b> — unmethylated cytosine</span>
+        </div>
+        <svg class="strand-svg" viewBox="0 0 340 78" aria-hidden="true">
+          <line x1="6" y1="62" x2="334" y2="62" stroke="var(--line)" stroke-width="2"></line>
+          <g stroke="var(--ink-mute)" stroke-width="2">
+            <line x1="24" y1="62" x2="24" y2="34"></line><line x1="58" y1="62" x2="58" y2="34"></line>
+            <line x1="92" y1="62" x2="92" y2="34"></line><line x1="126" y1="62" x2="126" y2="34"></line>
+            <line x1="160" y1="62" x2="160" y2="34"></line><line x1="194" y1="62" x2="194" y2="34"></line>
+            <line x1="228" y1="62" x2="228" y2="34"></line><line x1="262" y1="62" x2="262" y2="34"></line>
+            <line x1="296" y1="62" x2="296" y2="34"></line><line x1="330" y1="62" x2="330" y2="34"></line>
+          </g>
+          <g>
+            <circle cx="24" cy="26" r="7" fill="var(--lime)"></circle>
+            <circle cx="58" cy="26" r="6" fill="none" stroke="var(--ink-dim)" stroke-width="2"></circle>
+            <circle cx="92" cy="26" r="7" fill="var(--lime)"></circle>
+            <circle cx="126" cy="26" r="6" fill="none" stroke="var(--ink-dim)" stroke-width="2"></circle>
+            <circle cx="160" cy="26" r="6" fill="none" stroke="var(--ink-dim)" stroke-width="2"></circle>
+            <circle cx="194" cy="26" r="7" fill="var(--lime)"></circle>
+            <circle cx="228" cy="26" r="6" fill="none" stroke="var(--ink-dim)" stroke-width="2"></circle>
+            <circle cx="262" cy="26" r="7" fill="var(--lime)"></circle>
+            <circle cx="296" cy="26" r="7" fill="var(--lime)"></circle>
+            <circle cx="330" cy="26" r="6" fill="none" stroke="var(--ink-dim)" stroke-width="2"></circle>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section>
+    <div class="section-head"><span class="n">02</span><h2>What you get</h2></div>
+    <p class="lede">Everything a bisulfite workflow needs, exposed as flags you can read.</p>
+    <div class="feat-list">
+      <div class="feat"><div class="k">reads</div><div class="v"><b>Single- and paired-end</b>, directional and non-directional libraries. FastQ or FastA, gzipped input read directly.</div></div>
+      <div class="feat"><div class="k">aligners</div><div class="v"><b>Bowtie2, HISAT2 or minimap2</b> under the hood, with Samtools for BAM handling. Pick the backend that fits your genome and read length.</div></div>
+      <div class="feat"><div class="k">methylation</div><div class="v"><b>Per-cytosine calls in every context</b>, kept separate so you never conflate them.<span class="ctx"><span class="chip m">CpG</span><span class="chip">CHG</span><span class="chip">CHH</span></span></div></div>
+      <div class="feat"><div class="k">protocols</div><div class="v">First-class support for <b>WGBS, RRBS and PBAT</b> BS-Seq, with the conversion handling each protocol expects.</div></div>
+      <div class="feat"><div class="k">reports</div><div class="v"><b>HTML reports out of the box</b> via <span class="mono">bismark2report</span> and <span class="mono">bismark2summary</span>: alignment rates, M-bias, context coverage, the lot.</div></div>
+    </div>
+  </section>
+
+  <!-- QUICK START -->
+  <section>
+    <div class="section-head"><span class="n">03</span><h2>From genome to methylation calls</h2></div>
+    <p class="lede">Install, prep a genome, align, deduplicate, extract. Copy each block as you go.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="idx"><span class="sl" aria-hidden="true"></span>1</div>
+        <div class="body"><h4>Install</h4><p>Via Bioconda, or grab a release from GitHub.</p>
+          <div class="code"><pre><span class="ps">conda install -c bioconda bismark</span></pre></div></div>
+      </div>
+      <div class="step">
+        <div class="idx"><span class="sl" aria-hidden="true"></span>2</div>
+        <div class="body"><h4>Prepare the genome</h4><p>Build the bisulfite-converted indices once per reference.</p>
+          <div class="code"><pre><span class="ps">bismark_genome_preparation</span> <span class="arg">/ref/GRCh38/</span></pre></div></div>
+      </div>
+      <div class="step">
+        <div class="idx"><span class="sl" aria-hidden="true"></span>3</div>
+        <div class="body"><h4>Align reads</h4><p>Paired-end here; pass a single <span class="mono">-1</span> for single-end.</p>
+          <div class="code"><pre><span class="ps">bismark</span> <span class="flag">--genome</span> <span class="arg">/ref/GRCh38/</span> <span class="flag">-1</span> <span class="arg">R1.fq.gz</span> <span class="flag">-2</span> <span class="arg">R2.fq.gz</span></pre></div></div>
+      </div>
+      <div class="step">
+        <div class="idx"><span class="sl" aria-hidden="true"></span>4</div>
+        <div class="body"><h4>Deduplicate</h4><p>Remove PCR duplicates (skip for RRBS libraries).</p>
+          <div class="code"><pre><span class="ps">deduplicate_bismark</span> <span class="flag">--bam</span> <span class="arg">R1_bismark_bt2_pe.bam</span></pre></div></div>
+      </div>
+      <div class="step">
+        <div class="idx"><span class="sl" aria-hidden="true"></span>5</div>
+        <div class="body"><h4>Extract methylation</h4><p>Write per-cytosine calls and a bedGraph, then build the reports.</p>
+          <div class="code"><pre><span class="ps">bismark_methylation_extractor</span> <span class="flag">--gzip</span> <span class="flag">--bedGraph</span> <span class="arg">sample.bam</span></pre></div></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  const term = document.getElementById('home-term');
+  if (term) {
+    const lines = [
+      { prompt: true, type: true, toks: [{ t: 'conda install -c bioconda bismark', c: '' }] },
+      { out: true, toks: [{ t: '  ✓ bismark  samtools  bowtie2  installed', c: 'ok' }] },
+      { blank: true },
+      { prompt: true, type: true, toks: [{ t: 'bismark_genome_preparation ', c: '' }, { t: '/ref/GRCh38/', c: 'out' }] },
+      { out: true, toks: [{ t: '  building C→T and G→A indices ', c: 'out' }, { t: 'done', c: 'ok' }] },
+      { blank: true },
+      { prompt: true, type: true, toks: [{ t: 'bismark ', c: '' }, { t: '--genome', c: 'flag' }, { t: ' /ref/GRCh38/ ', c: 'out' }, { t: '-1', c: 'flag' }, { t: ' R1.fq.gz ', c: 'out' }, { t: '-2', c: 'flag' }, { t: ' R2.fq.gz', c: 'out' }] },
+      { out: true, toks: [{ t: '  bisulfite read:  ', c: 'out' }, { t: 'C', c: 'conv' }, { t: 'GAA', c: 'out' }, { t: 'C', c: 'conv' }, { t: 'GG  →  ', c: 'out' }, { t: 'T', c: 'conv' }, { t: 'GAA', c: 'out' }, { t: 'T', c: 'conv' }, { t: 'GG', c: 'out' }] },
+      { out: true, toks: [{ t: '  91.4% uniquely aligned', c: 'ok' }] },
+      { blank: true },
+      { out: true, toks: [{ t: '  CpG  ', c: 'dim' }, { t: '●●○●○●●○●○', c: 'ok' }, { t: '  78.6% methylated', c: 'out' }] },
+      { out: true, toks: [{ t: '  CHG  ', c: 'dim' }, { t: '○○○○●○○○○○', c: 'out' }, { t: '   2.1% methylated', c: 'out' }] },
+      { out: true, toks: [{ t: '  CHH  ', c: 'dim' }, { t: '○○○○○○●○○○', c: 'out' }, { t: '   1.4% methylated', c: 'out' }] },
+    ];
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const tok = (t) => { const s = document.createElement('span'); s.className = t.c || ''; s.textContent = t.t; return s; };
+    if (reduce) {
+      lines.forEach((ln) => {
+        const d = document.createElement('span'); d.className = 'ln';
+        if (ln.blank) { d.appendChild(document.createTextNode('\n')); term.appendChild(d); return; }
+        if (ln.prompt) d.classList.add('ps');
+        (ln.toks || []).forEach((t) => d.appendChild(tok(t)));
+        d.appendChild(document.createTextNode('\n')); term.appendChild(d);
+      });
+    } else {
+      let li = 0, ti = 0, ci = 0, lineEl = null;
+      const cur = document.createElement('span'); cur.className = 'cursor'; term.appendChild(cur);
+      const newLine = (ln) => { lineEl = document.createElement('span'); lineEl.className = 'ln' + (ln.prompt ? ' ps' : ''); term.insertBefore(lineEl, cur); };
+      const step = () => {
+        if (li >= lines.length) return;
+        const ln = lines[li];
+        if (ti === 0 && ci === 0) { newLine(ln); if (ln.blank) { lineEl.appendChild(document.createTextNode('\n')); li++; setTimeout(step, 90); return; } }
+        if (ln.out) { (ln.toks || []).forEach((t) => lineEl.appendChild(tok(t))); lineEl.appendChild(document.createTextNode('\n')); li++; ti = 0; ci = 0; setTimeout(step, 260); return; }
+        const toks = ln.toks, t = toks[ti];
+        if (!t) { lineEl.appendChild(document.createTextNode('\n')); li++; ti = 0; ci = 0; setTimeout(step, 200); return; }
+        let span = lineEl.childNodes[ti];
+        if (!span || ci === 0) { span = tok({ t: '', c: t.c }); lineEl.appendChild(span); }
+        span.textContent = t.t.slice(0, ci + 1); ci++;
+        if (ci >= t.t.length) { ti++; ci = 0; }
+        setTimeout(step, 22 + Math.random() * 26);
+      };
+      setTimeout(step, 420);
+    }
+  }
+</script>

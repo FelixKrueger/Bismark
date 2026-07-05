@@ -1,0 +1,310 @@
+/* ============================================================
+   Bismark docs — brand theme for Starlight.
+   Dark is the default scene; light is a first-class companion.
+   Palette: amber + Trim-Galore lime on a blue-neutral near-black.
+   Fonts: Bricolage Grotesque (display/headings/wordmark),
+          Inter (body), JetBrains Mono (code/terminal/labels).
+   ============================================================ */
+
+@import "@fontsource/bricolage-grotesque/latin-600.css";
+@import "@fontsource/bricolage-grotesque/latin-700.css";
+@import "@fontsource/inter/latin-400.css";
+@import "@fontsource/inter/latin-500.css";
+@import "@fontsource/inter/latin-600.css";
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-700.css";
+
+/* ---- Brand tokens: DARK (default) ---- */
+:root {
+  --bg:        oklch(0.18 0.012 260);
+  --bg-deep:   oklch(0.155 0.012 262);
+  --surface:   oklch(0.22 0.013 260);
+  --surface-2: oklch(0.255 0.014 260);
+  --line:      oklch(0.32 0.016 260);
+  --line-soft: oklch(0.27 0.014 260);
+  --ink:       oklch(0.93 0.006 260);
+  --ink-dim:   oklch(0.74 0.012 260);
+  --ink-mute:  oklch(0.6 0.014 262);
+  --rule-strong: oklch(0.46 0.018 260);
+  --amber:      oklch(0.8 0.15 75);
+  --amber-soft: oklch(0.8 0.15 75 / 0.13);
+  --amber-line: oklch(0.8 0.15 75 / 0.35);
+  --amber-ink:  oklch(0.2 0.02 75);
+  --lime:       oklch(0.86 0.21 130);   /* Trim Galore --brand-lime (constant across themes) */
+  --lime-soft:  oklch(0.86 0.21 130 / 0.13);
+  /* text/stroke variants: same bright accent in dark, deepened only on light
+     for contrast (mirrors TG's brand-lime vs brand-lime-deep) */
+  --amber-text: var(--amber);
+  --lime-text:  var(--lime);
+  --glow:       oklch(0.8 0.15 75 / 0.06);
+  --slash:      14deg;
+  --ease:       cubic-bezier(0.16, 1, 0.3, 1);
+  --display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+}
+
+/* ---- Brand tokens: LIGHT ---- */
+:root[data-theme='light'] {
+  --bg:        oklch(0.976 0.005 255);
+  --bg-deep:   oklch(0.955 0.006 255);
+  --surface:   oklch(0.945 0.007 255);
+  --surface-2: oklch(0.912 0.009 255);
+  --line:      oklch(0.855 0.011 255);
+  --line-soft: oklch(0.9 0.008 255);
+  --ink:       oklch(0.245 0.014 262);
+  --ink-dim:   oklch(0.41 0.014 262);
+  --ink-mute:  oklch(0.53 0.015 262);
+  --rule-strong: oklch(0.7 0.015 255);
+  /* amber + lime stay the SAME bright accents as dark (brand reads identical);
+     only the text/stroke variants deepen for contrast on the light surface */
+  --amber-text: oklch(0.52 0.15 68);
+  --lime-text:  oklch(0.72 0.215 131);  /* vivid green; the bold wordmark carries it on light */
+  --glow:       oklch(0.8 0.15 75 / 0.05);
+}
+
+/* ---- Drive Starlight tokens from the brand ---- */
+:root,
+:root[data-theme='light'] {
+  --sl-color-bg:            var(--bg);
+  --sl-color-bg-nav:        color-mix(in oklab, var(--bg) 85%, transparent);
+  --sl-color-bg-sidebar:    var(--bg);
+  --sl-color-bg-inline-code: var(--surface-2);
+  --sl-color-bg-accent:     var(--amber);
+
+  --sl-color-text:          var(--ink-dim);
+  --sl-color-text-accent:   var(--amber-text);
+  --sl-color-text-invert:   var(--amber-ink);
+
+  --sl-color-white:         var(--ink);
+  --sl-color-gray-1:        var(--ink);
+  --sl-color-gray-2:        var(--ink-dim);
+  --sl-color-gray-3:        var(--ink-mute);
+  --sl-color-gray-4:        var(--rule-strong);
+  --sl-color-gray-5:        var(--line);
+  --sl-color-gray-6:        var(--surface);
+  --sl-color-gray-7:        var(--surface-2);
+  --sl-color-black:         var(--bg);
+
+  --sl-color-hairline-light: var(--line-soft);
+  --sl-color-hairline:       var(--line-soft);
+  --sl-color-hairline-shade: var(--line);
+
+  --sl-color-accent-low:    var(--amber-soft);
+  --sl-color-accent:        var(--amber-text);
+  --sl-color-accent-high:   var(--ink);
+
+  --sl-color-bg-codeblock:  var(--bg-deep);
+
+  --sl-font: "Inter", -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sl-font-system-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* subtle brand glow behind the page */
+body {
+  background:
+    radial-gradient(1200px 600px at 80% -8%, var(--glow), transparent 60%),
+    var(--sl-color-bg);
+}
+
+/* ---- Headings in Bricolage ---- */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+.content-panel h1#_top,
+h1.hero-title {
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.sidebar-content .group-label > span,
+summary .group-label span { letter-spacing: 0.04em; }
+
+/* active sidebar link: amber */
+nav.sidebar a[aria-current="page"],
+nav.sidebar a[aria-current="page"]:hover {
+  color: var(--amber-text);
+  background-color: var(--amber-soft);
+}
+
+/* ============================================================
+   Logo wordmark (SiteTitle + hero). Two-tone: Bis lime, mark ink,
+   amber leading slash, open-circle dot on the i that fills on hover.
+   ============================================================ */
+.bismark-logo { display: block; }
+.bismark-logo .i-dot {
+  fill: var(--lime-text); fill-opacity: 0;
+  transition: fill-opacity 0.5s var(--ease);
+}
+.bismark-logo:hover .i-dot,
+a:hover .bismark-logo .i-dot { fill-opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .bismark-logo .i-dot { transition: none; } }
+
+.site-title.bismark { display: inline-flex; align-items: center; }
+.site-title.bismark .bismark-logo { height: 23px; width: auto; }
+
+/* ============================================================
+   HOME PAGE  (rendered by Home.astro, scoped under .home)
+   ============================================================ */
+.home { color: var(--ink-dim); font-size: 16px; line-height: 1.65; }
+.home a { color: inherit; text-decoration: none; }
+.home .mono { font-family: var(--sl-font-system-mono); }
+
+.home .hero { padding: 8px 0 64px; border-bottom: 1px solid var(--line-soft); }
+.home .hero .bismark-logo.big { width: clamp(280px, 42vw, 520px); height: auto; margin: 0 0 26px; }
+.home .hero-sub {
+  max-width: 56ch; font-size: 18px; color: var(--ink-dim); margin: 0 0 28px;
+}
+.home .hero-sub b { color: var(--ink); font-weight: 600; }
+
+.home .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.home .btn {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--sl-font-system-mono); font-size: 13px; font-weight: 700;
+  padding: 11px 17px; border-radius: 7px; border: 1px solid; cursor: pointer;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.home .btn .arr { transition: transform 0.2s var(--ease); }
+.home .btn:hover .arr { transform: translateX(3px); }
+@media (prefers-reduced-motion: reduce) { .home .btn:hover .arr { transform: none; } }
+.home .btn-primary { background: var(--amber); color: var(--amber-ink); border-color: var(--amber-text); }
+.home .btn-primary:hover { background: color-mix(in oklab, var(--amber) 86%, white); }
+.home .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.home .btn-ghost:hover { border-color: var(--amber-line); }
+.home .btn svg { width: 15px; height: 15px; }
+
+/* terminal (fixed dark in both themes) */
+.home .terminal {
+  --t-bg: oklch(0.155 0.012 262); --t-surface: oklch(0.22 0.013 260);
+  --t-line: oklch(0.32 0.016 260); --t-line-soft: oklch(0.27 0.014 260);
+  --t-text: oklch(0.93 0.006 260); --t-dim: oklch(0.74 0.012 260); --t-mute: oklch(0.6 0.014 262);
+  margin-top: 34px; border: 1px solid var(--t-line); border-radius: 12px; background: var(--t-bg);
+  box-shadow: 0 28px 60px -34px oklch(0.1 0.02 262 / 0.9); overflow: hidden;
+}
+.home .term-bar {
+  display: flex; align-items: center; gap: 8px; padding: 11px 14px;
+  border-bottom: 1px solid var(--t-line-soft); background: var(--t-surface);
+}
+.home .term-bar .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--t-line); }
+.home .term-bar .dot.y { background: oklch(0.8 0.15 75); }
+.home .term-bar .dot.g { background: var(--lime); }
+.home .term-bar .dot.r { background: oklch(0.65 0.16 25); }
+.home .term-title { margin-left: 8px; font-family: var(--sl-font-system-mono); font-size: 12px; color: var(--t-mute); }
+.home .term-body {
+  padding: 20px; font-family: var(--sl-font-system-mono); font-size: 13.5px; line-height: 1.85;
+  min-height: 320px; white-space: pre-wrap; word-break: break-word; color: var(--t-text);
+}
+.home .term-body .ln { display: block; }
+.home .term-body .ps::before { content: "\276F  "; color: oklch(0.8 0.15 75); }
+.home .term-body .flag { color: var(--lime); }
+.home .term-body .out { color: var(--t-dim); }
+.home .term-body .ok { color: var(--lime); }
+.home .term-body .dim { color: var(--t-mute); }
+.home .term-body .conv { color: oklch(0.8 0.15 75); }
+.home .cursor { display: none; }
+
+.home .hero-meta {
+  display: flex; flex-wrap: wrap; gap: 9px 22px; margin-top: 26px;
+  font-family: var(--sl-font-system-mono); font-size: 12.5px; color: var(--ink-mute);
+}
+.home .hero-meta span { display: inline-flex; align-items: center; gap: 8px; }
+.home .hero-meta b { color: var(--ink-dim); font-weight: 500; }
+.home .hero-meta i.d { width: 5px; height: 5px; border-radius: 50%; background: var(--lime); flex: none; }
+
+/* sections */
+.home section { padding: 64px 0; border-bottom: 1px solid var(--line-soft); }
+.home .section-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; }
+.home .section-head .n {
+  font-family: var(--sl-font-system-mono); font-size: 12px; color: var(--amber-text);
+  border: 1px solid var(--amber-line); border-radius: 6px; padding: 2px 7px;
+}
+.home h2 {
+  font-family: var(--display); font-weight: 600; font-size: clamp(24px, 3vw, 32px);
+  letter-spacing: -0.02em; margin: 0; color: var(--ink); border: 0; padding: 0;
+}
+.home .lede { max-width: 68ch; color: var(--ink-dim); font-size: 16.5px; margin: 6px 0 0; }
+
+/* what-is grid */
+.home .what-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 40px; align-items: start; margin-top: 24px; }
+.home .what-grid p { margin: 0 0 14px; max-width: 62ch; }
+.home .what-grid p:last-child { margin-bottom: 0; }
+.home .what-grid strong { color: var(--ink); font-weight: 600; }
+.home .strand-panel { border: 1px solid var(--line-soft); border-radius: 11px; background: var(--surface); padding: 18px 20px; }
+.home .strand-panel h3 {
+  font-family: var(--display); font-size: 13px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-mute); margin: 0 0 14px;
+}
+.home .legend-row { display: flex; align-items: center; gap: 12px; font-family: var(--sl-font-system-mono); font-size: 13px; color: var(--ink-dim); padding: 6px 0; }
+.home .legend-row b { color: var(--ink); font-weight: 500; }
+.home .strand-svg { width: 100%; height: auto; margin-top: 14px; display: block; }
+
+/* features spec list */
+.home .feat-list { margin-top: 26px; display: grid; gap: 0; }
+.home .feat { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 24px; padding: 19px 0; border-top: 1px solid var(--line-soft); }
+.home .feat:last-child { border-bottom: 1px solid var(--line-soft); }
+.home .feat .k { font-family: var(--sl-font-system-mono); font-size: 13px; color: var(--amber-text); display: flex; gap: 9px; }
+.home .feat .k::before { content: "/"; color: var(--ink-mute); }
+.home .feat .v { color: var(--ink-dim); }
+.home .feat .v b { color: var(--ink); font-weight: 600; }
+.home .feat .ctx { display: inline-flex; gap: 6px; margin-top: 8px; }
+.home .chip { font-family: var(--sl-font-system-mono); font-size: 11px; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--line); color: var(--ink-dim); }
+.home .chip.m { color: var(--lime-text); border-color: var(--lime-soft); background: var(--lime-soft); }
+
+/* quick-start: / slash step numerals */
+.home .steps { margin-top: 28px; display: grid; gap: 22px; }
+.home .step { display: grid; grid-template-columns: 3.1rem minmax(0,1fr); gap: 16px; }
+.home .step .idx {
+  display: flex; align-items: center; gap: 5px; margin-top: 3px;
+  font-family: var(--sl-font-system-mono); font-size: 1.3rem; font-weight: 700; color: var(--amber-text); line-height: 1;
+}
+.home .step .idx .sl { width: 0.3em; height: 1.02em; background: var(--amber-text); transform: skewX(calc(-1 * var(--slash))); display: inline-block; flex: none; }
+.home .step .body { min-width: 0; }
+.home .step h4 { font-family: var(--display); font-size: 16px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 7px; color: var(--ink); }
+.home .step p { margin: 0 0 10px; font-size: 14.5px; color: var(--ink-mute); max-width: 64ch; }
+.home .code { position: relative; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-deep); font-family: var(--sl-font-system-mono); font-size: 13px; line-height: 1.7; overflow: hidden; }
+:root[data-theme='light'] .home .code { background: var(--surface); }
+.home .code pre { margin: 0; padding: 13px 16px; overflow-x: auto; white-space: pre; }
+.home .code .ps { color: var(--amber-text); }
+.home .code .flag { color: var(--lime-text); }
+.home .code .arg { color: var(--ink-dim); }
+
+@media (max-width: 1100px) { .home .what-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .home .feat { grid-template-columns: 1fr; gap: 6px; } }
+
+/* ============================================================
+   Home page layout: left-aligned, wider than the prose column
+   ============================================================ */
+.sl-container:has(.home) {
+  max-width: 60rem;
+  margin-inline-start: 0;
+  margin-inline-end: auto;
+}
+
+/* ============================================================
+   Custom top navbar (Header.astro): top-nav links, version pill,
+   github, and a sun/moon theme TOGGLE (ThemeSelect override).
+   ============================================================ */
+.bismark-topnav { display: flex; align-items: center; gap: 2px; }
+.bismark-topnav a.link {
+  font-family: var(--sl-font-system-mono); font-size: 13px; color: var(--ink-dim);
+  padding: 7px 11px; border-radius: 7px; white-space: nowrap; text-decoration: none;
+  transition: color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.bismark-ver { text-decoration: none; }
+.bismark-topnav a.link:hover { color: var(--ink); background: var(--surface-2); }
+
+.bismark-ver {
+  font-family: var(--sl-font-system-mono); font-size: 12px; color: var(--ink-dim);
+  padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap;
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.bismark-ver:hover { color: var(--ink); border-color: var(--amber-line); }
+
+.bismark-theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0;
+  border: 1px solid transparent; border-radius: 8px;
+  color: var(--ink-dim); background: transparent; cursor: pointer;
+  transition: color 0.2s var(--ease), background 0.2s var(--ease);
+}
+.bismark-theme-toggle:hover { color: var(--ink); background: var(--surface-2); }
+.bismark-theme-toggle svg { width: 18px; height: 18px; display: block; }
+.bismark-theme-toggle .moon { display: none; }
+:root[data-theme='dark'] .bismark-theme-toggle .sun { display: none; }
+:root[data-theme='dark'] .bismark-theme-toggle .moon { display: block; }

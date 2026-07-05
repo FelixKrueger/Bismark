@@ -1,0 +1,39 @@
+[package]
+name = "bismark-coverage2cytosine"
+version = "1.0.0"
+description = "Rust port of Bismark Perl's coverage2cytosine script (Phase A: scaffold + CLI + genome reader)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["bisulfite", "methylation", "bismark", "cytosine", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "coverage2cytosine"
+path = "src/main.rs"
+
+[dependencies]
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.18"
+# Genome FASTA reading (mirrors bismark-io/src/cram_ref.rs pins).
+noodles-fasta = "=0.61.0"
+# Plain-gzip .fa.gz / .fasta.gz (Perl uses `gunzip -c`); MultiGzDecoder also
+# decodes gzip-framed BGZF. noodles `build_from_path` is BGZF-only, so we feed
+# a decompressed stream to noodles' generic Reader.
+flate2 = "=1.1.9"
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
+# BGZF fixture writer for the .fa.gz BGZF test (genome.rs V12b).
+noodles-bgzf = "=0.47.0"
+# NOTE: the Phase C golden tests decompress the binary's `--gzip` output via
+# flate2 — but flate2 is already a regular dependency (used by report.rs), and
+# integration tests can use the package's regular deps, so no dev-dep is needed.

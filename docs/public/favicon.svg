@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#0e1217"/>
+  <!-- "Bi" — B + dotless i with an open-circle dot (= unmethylated cytosine) -->
+  <text x="3.5" y="24" font-family="ui-sans-serif, system-ui, Arial, sans-serif" font-weight="800" font-size="22" fill="#aee659">B</text>
+  <rect x="20.1" y="13.2" width="2.9" height="10.8" rx="1.4" fill="#aee659"/>
+  <circle cx="21.55" cy="8.8" r="2.7" fill="none" stroke="#aee659" stroke-width="1.7"/>
+</svg>

@@ -1,0 +1,4 @@
+chr1	6	+	10	0	CG	CGC
+chr1	7	-	0	5	CG	CGC
+chr1	12	+	0	0	CG	CGG
+chr1	13	-	0	0	CG	CGC

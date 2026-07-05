@@ -1,0 +1,220 @@
+name: Rust CI
+
+on:
+  push:
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust_ci.yml"
+  pull_request:
+    paths:
+      - "rust/**"
+      - ".github/workflows/rust_ci.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy, rustfmt
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install minimap2 (5-Base #787 ground-truth gates)
+        # The Illumina 5-Base real-aligner gates shell out to minimap2; without it they
+        # would no-op silently. CI must guarantee it so the gates can't pass vacuously
+        # (the tests themselves panic if minimap2 is missing while $CI is set).
+        run: |
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minimap2
+          minimap2 --version
+      - name: cargo build --workspace
+        run: cargo build --workspace --all-targets
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  rammap-inprocess:
+    name: cargo build/test (rammap-inprocess feature)
+    # The default `test`/`clippy` jobs build FEATURE-OFF, so the in-process rammap
+    # backend (`inprocess.rs` + the `lib.rs`/`config.rs` wiring, all
+    # `#[cfg(feature = "rammap-inprocess")]`) is otherwise NEVER compiled in CI. This
+    # job compiles + tests it (epic 06152026 Phase 2). `rammap-core` is an OPTIONAL
+    # git-dep — the runner fetches it from GitHub (network); the env-gated
+    # `rammap_inprocess_crosscheck` test auto-skips here (no `.mmi`/binary) and the
+    # oxy byte-identity gate covers the real cross-check.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build -p bismark-aligner --features rammap-inprocess
+        run: cargo build -p bismark-aligner --all-targets --features rammap-inprocess
+      - name: cargo clippy -p bismark-aligner --features rammap-inprocess -D warnings
+        run: cargo clippy -p bismark-aligner --all-targets --features rammap-inprocess -- -D warnings
+      - name: Install minimap2 (5-Base #787 ground-truth gates)
+        # `cargo test -p bismark-aligner` runs the 5-Base real-aligner gates, which panic
+        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
+        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+        run: |
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minimap2
+          minimap2 --version
+      - name: cargo test -p bismark-aligner --features rammap-inprocess
+        run: cargo test -p bismark-aligner --features rammap-inprocess
+
+  binseq-input:
+    name: cargo build/test (binseq-input feature)
+    # The default `test`/`clippy` jobs build FEATURE-OFF, so the BINSEQ (.vbq) decode
+    # path (`binseq_decode::vbq_impl` + the `binseq_transcode` integration test, all
+    # `#[cfg(feature = "binseq-input")]`) is otherwise NEVER compiled in CI (#1025
+    # Phase 2). This job compiles + tests it. `binseq` is an OPTIONAL crates.io dep that
+    # pulls a `cc`-built `zstd` (NOT cmake); the hermetic `binseq_transcode` tests build
+    # their own `.vbq` fixtures with the `binseq` writer, and the oxy gate covers the
+    # real `bqtools encode`/`decode` equivalence.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: cargo build -p bismark-aligner --features binseq-input
+        run: cargo build -p bismark-aligner --all-targets --features binseq-input
+      - name: cargo clippy -p bismark-aligner --features binseq-input -D warnings
+        run: cargo clippy -p bismark-aligner --all-targets --features binseq-input -- -D warnings
+      - name: Install minimap2 (5-Base #787 ground-truth gates)
+        # `cargo test -p bismark-aligner` runs the 5-Base real-aligner gates, which panic
+        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
+        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+        run: |
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minimap2
+          minimap2 --version
+      - name: cargo test -p bismark-aligner --features binseq-input
+        run: cargo test -p bismark-aligner --features binseq-input
+
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+  perl-oracle:
+    name: perl-oracle byte-identity
+    # Runs the live-Perl byte-identity oracle tests (issue #796): install Perl
+    # Bismark's tooling, run the per-crate oracles that diff Rust output against
+    # the in-repo Perl v0.25.1 scripts, and PROVE all of them ran (they auto-skip
+    # when tooling is absent, which would otherwise pass green without comparing).
+    runs-on: ubuntu-latest # intentionally Linux-only: oracle parity with the Perl
+                           # environment; the fake-indexer plumbing is #[cfg(unix)].
+    timeout-minutes: 15    # guard against a hung Perl subprocess
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install samtools
+        run: |
+          sudo apt-get update || sudo apt-get update # transient-mirror retry
+          sudo apt-get install -y --no-install-recommends samtools
+      - name: Preflight — assert oracle tooling present
+        # This job must NEVER add a Bismark install / the repo root to PATH —
+        # doing so would erode bismark-extractor's phase_g_discovery "not-found"
+        # test. The oracle scripts are invoked by relative path, not via PATH.
+        run: |
+          set -euo pipefail
+          command -v perl     >/dev/null || { echo "perl missing";     exit 1; }
+          command -v gzip     >/dev/null || { echo "gzip missing";     exit 1; }
+          command -v gunzip   >/dev/null || { echo "gunzip missing";   exit 1; }
+          command -v samtools >/dev/null || { echo "samtools missing"; exit 1; }
+          perl -v
+          samtools --version >/dev/null
+      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 12 ran)
+        env:
+          BISMARK_REQUIRE_PERL: "1"
+        run: |
+          set -euo pipefail
+          EXPECTED=12
+          out=$(cargo test -p bismark-genome-preparation -p bismark-methylation-consistency \
+                  -p bismark-dedup -p bismark-extractor \
+                  -- --exact \
+                  perl_vs_rust_byte_identical_mfa \
+                  perl_vs_rust_byte_identical_single_fasta \
+                  perl_vs_rust_edge_inputs_mfa \
+                  perl_vs_rust_mixed_case_glob_order \
+                  perl_vs_rust_slam \
+                  perl_vs_rust_genomic_composition \
+                  perl_vs_rust_gzip_input \
+                  perl_vs_rust_se_three_way \
+                  perl_vs_rust_pe_three_way \
+                  perl_vs_rust_chh_se \
+                  perl_vs_rust_nondirectional_pe_dedup \
+                  perl_vs_rust_nondirectional_pe_extractor \
+                  2>&1 | tee /dev/stderr)
+          n=$(printf '%s\n' "$out" | grep -cE '^test .* \.\.\. ok$' || true)
+          test "$n" -eq "$EXPECTED" || { echo "::error::expected $EXPECTED oracle tests, $n ran ok"; exit 1; }
+          if printf '%s\n' "$out" | grep -q '^skipping:'; then
+            echo "::error::an oracle silently skipped"; exit 1
+          fi

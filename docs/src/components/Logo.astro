@@ -1,0 +1,12 @@
+---
+/* Bismark wordmark. Inline single-viewBox SVG (no <symbol>/<use> to avoid
+   clipping). Two-tone "Bis" (lime) + "mark" (ink), amber TG-spec slash,
+   open-circle dot on the i (fills on hover via custom.css). */
+interface Props { class?: string }
+const { class: className = "" } = Astro.props;
+---
+<svg class:list={["bismark-logo", className]} viewBox="18 0 507 120" role="img" aria-label="Bismark">
+  <polygon points="24,110.5 60.5,110.5 86.68,5.5 50.18,5.5" fill="var(--amber)"></polygon>
+  <text x="115" y="96" font-family="'Bricolage Grotesque', sans-serif" font-weight="700" font-size="100"><tspan fill="var(--lime-text)">Bıs</tspan><tspan fill="var(--ink)">mark</tspan></text>
+  <circle class="i-dot" cx="197.1" cy="30" r="8" fill="none" stroke="var(--lime-text)" stroke-width="2.2"></circle>
+</svg>

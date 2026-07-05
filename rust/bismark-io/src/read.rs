@@ -61,10 +61,20 @@ pub enum AlignmentKind {
 }
 
 impl AlignmentKind {
-    /// Infer from a file path's extension. Returns
-    /// [`BismarkIoError::UnsupportedKind`] if the extension is none of
-    /// `.bam`, `.sam`, `.cram`.
-    pub fn from_path(path: &Path) -> Result<Self, BismarkIoError> {
+    /// Infer from a file path's **extension**. I/O-free.
+    ///
+    /// Returns [`BismarkIoError::UnsupportedKind`] if the extension is
+    /// none of `.bam`, `.sam`, `.cram` (case-insensitive).
+    ///
+    /// Used by [`crate::open_writer`] (where the file doesn't exist yet,
+    /// so content sniffing is impossible) and by any caller that wants
+    /// explicit extension-only dispatch. Reader-side dispatch should
+    /// prefer [`Self::from_path`] (magic-byte sniff).
+    ///
+    /// This function preserves the pre-`v1.0.0-beta.3` behaviour of
+    /// `AlignmentKind::from_path` byte-for-byte; the relocation allows
+    /// the magic-byte variant below to take the more general name.
+    pub fn from_extension(path: &Path) -> Result<Self, BismarkIoError> {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -75,6 +85,127 @@ impl AlignmentKind {
             Some("cram") => Ok(Self::Cram),
             _ => Err(BismarkIoError::UnsupportedKind(path.to_path_buf())),
         }
+    }
+
+    /// Detect the file format by reading + (for BGZF) decompressing
+    /// enough bytes to authoritatively identify BAM/SAM/CRAM. Opens the
+    /// file; for the BGZF/BAM case, decompresses the first block
+    /// (~100-700 µs, dominated by the inflate of a 32-64 KiB BGZF block)
+    /// and verifies the BAM-specific `BAM\x01` magic in the
+    /// decompressed payload.
+    ///
+    /// Returns:
+    /// - [`AlignmentKind::Bam`] if the file starts with BGZF magic AND the
+    ///   decompressed first block starts with `BAM\x01`.
+    /// - [`AlignmentKind::Sam`] if the first byte is `@` (SAM header).
+    /// - [`AlignmentKind::Cram`] if the first 4 bytes are `CRAM`.
+    /// - [`BismarkIoError::UnrecognizedFormat`] if no magic matches.
+    /// - [`BismarkIoError::UnrecognizedBgzfPayload`] if BGZF magic
+    ///   matched but the inflated payload isn't `BAM\x01`.
+    /// - [`BismarkIoError::TooShortToDetect`] if the file is too small.
+    /// - [`BismarkIoError::Io`] on a system I/O error.
+    ///
+    /// Used by [`crate::open_reader`] and any caller that wants
+    /// tolerance for mis-named files. For writer-side dispatch (where
+    /// the file doesn't exist yet) prefer [`Self::from_extension`].
+    pub fn from_path(path: &Path) -> Result<Self, BismarkIoError> {
+        let mut file = std::fs::File::open(path)?;
+        // `Read::read` is permitted to return short even when more data
+        // is available, so use the take+read_to_end loop pattern that
+        // either fills the buffer or hits real EOF.
+        let mut first_byte = Vec::with_capacity(1);
+        (&mut file).take(1).read_to_end(&mut first_byte)?;
+        if first_byte.is_empty() {
+            return Err(BismarkIoError::TooShortToDetect {
+                path: path.to_path_buf(),
+                bytes_read: 0,
+            });
+        }
+        match first_byte[0] {
+            // BGZF/BAM: gzip magic byte 1. Re-open the file fresh and
+            // let `noodles_bgzf::Reader` validate the full block, then
+            // check the payload for `BAM\x01`.
+            0x1f => detect_bgzf_payload(path),
+            // SAM header line marker.
+            b'@' => Ok(Self::Sam),
+            // CRAM file definition starts with the ASCII string `CRAM`.
+            b'C' => detect_cram_magic(&mut file, path),
+            // No recognised magic.
+            other => Err(BismarkIoError::UnrecognizedFormat {
+                path: path.to_path_buf(),
+                magic_first_byte: other,
+            }),
+        }
+    }
+}
+
+/// Open the path as a BGZF stream and read 4 bytes from the
+/// decompressed payload. If those bytes are `BAM\x01` it's a BAM file;
+/// otherwise it's some other BGZF-wrapped format (VCF, BCF, etc.) and we
+/// return [`BismarkIoError::UnrecognizedBgzfPayload`].
+///
+/// Implementation note: this helper re-opens the file fresh rather than
+/// seeking the caller's existing `File` handle back to offset 0 and
+/// wrapping it. Two reasons: (1) `noodles_bgzf::Reader::new` expects a
+/// `Read` source positioned at the start of a BGZF stream — passing a
+/// `File` whose cursor we've already advanced (even after `seek(0)`)
+/// couples error semantics across the two read attempts; (2) the second
+/// `open(2)` syscall is ~1 µs on a warm page cache, dwarfed by the
+/// inflate cost. Cleaner code wins.
+fn detect_bgzf_payload(path: &Path) -> Result<AlignmentKind, BismarkIoError> {
+    let file = std::fs::File::open(path)?;
+    let bgzf = noodles_bgzf::io::Reader::new(file);
+    // `noodles_bgzf::Reader::read` returns one BGZF block at a time per
+    // the `Read` contract — a single `read()` call may legally return
+    // fewer than 4 bytes even when more data is available. Use
+    // take+read_to_end so we loop until we have 4 bytes OR genuine EOF.
+    let mut payload_head_buf = Vec::with_capacity(4);
+    bgzf.take(4).read_to_end(&mut payload_head_buf)?;
+    if payload_head_buf.len() < 4 {
+        return Err(BismarkIoError::TooShortToDetect {
+            path: path.to_path_buf(),
+            bytes_read: payload_head_buf.len(),
+        });
+    }
+    let payload_head: [u8; 4] = payload_head_buf
+        .as_slice()
+        .try_into()
+        .expect("we just checked len == 4");
+    if &payload_head == b"BAM\x01" {
+        Ok(AlignmentKind::Bam)
+    } else {
+        Err(BismarkIoError::UnrecognizedBgzfPayload {
+            path: path.to_path_buf(),
+            payload_head,
+        })
+    }
+}
+
+/// Verify that a file whose first byte is `C` is actually CRAM (full
+/// magic `CRAM`). The caller has already consumed the first byte from
+/// `file`; this helper reads the remaining 3 bytes.
+fn detect_cram_magic(
+    file: &mut std::fs::File,
+    path: &Path,
+) -> Result<AlignmentKind, BismarkIoError> {
+    // `Read::read` may return short even with more data available; use
+    // take+read_to_end to loop until 3 bytes OR genuine EOF.
+    let mut rest_buf = Vec::with_capacity(3);
+    file.take(3).read_to_end(&mut rest_buf)?;
+    if rest_buf.len() < 3 {
+        return Err(BismarkIoError::TooShortToDetect {
+            path: path.to_path_buf(),
+            // First-byte peek (1) + however many we got here.
+            bytes_read: 1 + rest_buf.len(),
+        });
+    }
+    if rest_buf.as_slice() == b"RAM" {
+        Ok(AlignmentKind::Cram)
+    } else {
+        Err(BismarkIoError::UnrecognizedFormat {
+            path: path.to_path_buf(),
+            magic_first_byte: b'C',
+        })
     }
 }
 
@@ -94,6 +225,18 @@ impl BamReader<BufReader<File>> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Self::new(reader)
+    }
+
+    /// Open a BAM file from a path WITHOUT rejecting coordinate-sorted
+    /// input. For SE-only callers (single-end methylation extraction does
+    /// not depend on record order, so coordinate-sorted input is valid —
+    /// faithful to Perl `bismark_methylation_extractor`, which only
+    /// sort-checks paired-end input). Used as the BAM arm of
+    /// [`open_reader_without_sort_check`].
+    pub fn from_path_without_sort_check(path: &Path) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        Self::without_sort_check(reader)
     }
 }
 
@@ -129,6 +272,112 @@ impl<R: BufRead> BamReader<R> {
             .record_bufs(header)
             .filter_map(filter_unmapped_then_classify)
     }
+
+    /// Iterator yielding one [`BismarkRecord`] per mapped alignment, with
+    /// the UMI pre-extracted from each record's qname using `extractor`.
+    ///
+    /// `extractor` is typically [`crate::umi::extract_barcode`] (for
+    /// `--barcode` / `--umi` mode) or [`crate::umi::extract_bclconvert`]
+    /// (for `--bclconvert` mode). Records whose qname does NOT match the
+    /// extractor's pattern still flow through with `umi == None`; the
+    /// downstream dedup pipeline emits `UmiExtractionFailed` faithful to
+    /// Perl `deduplicate_bismark:662-663`.
+    ///
+    /// Added in `bismark-io` v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
+    }
+}
+
+/// **Threaded** BAM reader that uses [`noodles_bgzf::io::MultithreadedReader`]
+/// for parallel BGZF block decompression.
+///
+/// This is a separate concrete type from [`BamReader`] (which is generic
+/// over `R: BufRead` and uses noodles' default single-threaded BGZF
+/// reader). The threaded variant always wraps a `File` directly with a
+/// worker-thread pool sized at construction time.
+///
+/// Use this when `--parallel N > 1` is requested AND the input is BAM
+/// (SAM is text — no BGZF — and CRAM uses its own container format).
+/// For `N == 1`, prefer [`BamReader::from_path`] — the threaded
+/// constructor always spawns at least one worker thread regardless of
+/// the worker count.
+///
+/// Public API mirrors [`BamReader`]'s exactly: `header()`, `records()`,
+/// and a no-sort-check variant via [`Self::from_path_without_sort_check`].
+///
+/// Added in `bismark-io` v1.0.0-beta.2 to support `bismark-dedup`'s
+/// `--parallel N` flag (parallel-BAM-I/O variant).
+pub struct ThreadedBamReader {
+    inner: noodles_bam::io::Reader<noodles_bgzf::io::MultithreadedReader<File>>,
+    header: Header,
+}
+
+impl ThreadedBamReader {
+    /// Open a BAM file with `parallel` BGZF decoder worker threads.
+    /// Reads the header eagerly and rejects coordinate-sorted input.
+    ///
+    /// `parallel` must be ≥ 1 (enforced by the [`std::num::NonZero`]
+    /// type). For `parallel == 1`, prefer [`BamReader::from_path`]
+    /// — this constructor still spawns one worker thread per noodles'
+    /// `MultithreadedReader` contract.
+    pub fn from_path(
+        path: &Path,
+        parallel: std::num::NonZero<usize>,
+    ) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let bgzf = noodles_bgzf::io::MultithreadedReader::with_worker_count(parallel, file);
+        let mut inner = noodles_bam::io::Reader::from(bgzf);
+        let header = inner.read_header()?;
+        check_not_coordinate_sorted(&header)?;
+        Ok(Self { inner, header })
+    }
+
+    /// Open a BAM file with `parallel` workers, without rejecting
+    /// coordinate-sorted input. For SE-only callers.
+    pub fn from_path_without_sort_check(
+        path: &Path,
+        parallel: std::num::NonZero<usize>,
+    ) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let bgzf = noodles_bgzf::io::MultithreadedReader::with_worker_count(parallel, file);
+        let mut inner = noodles_bam::io::Reader::from(bgzf);
+        let header = inner.read_header()?;
+        Ok(Self { inner, header })
+    }
+
+    /// Header from the BAM file.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
+    /// Unmapped reads (SAM FLAG & 0x4) are silently filtered.
+    pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(filter_unmapped_then_classify)
+    }
+
+    /// As [`Self::records`] but pre-extracts a UMI from each record's
+    /// qname using `extractor`. See [`BamReader::records_with_umi`] for
+    /// details. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
+    }
 }
 
 /// SAM reader producing [`BismarkRecord`]s.
@@ -143,6 +392,16 @@ impl SamReader<BufReader<File>> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         Self::new(reader)
+    }
+
+    /// Open a SAM file from a path WITHOUT rejecting coordinate-sorted
+    /// input. For SE-only callers (see
+    /// [`BamReader::from_path_without_sort_check`]). Used as the SAM arm
+    /// of [`open_reader_without_sort_check`].
+    pub fn from_path_without_sort_check(path: &Path) -> Result<Self, BismarkIoError> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        Self::without_sort_check(reader)
     }
 }
 
@@ -173,6 +432,19 @@ impl<R: BufRead> SamReader<R> {
         self.inner
             .record_bufs(header)
             .filter_map(filter_unmapped_then_classify)
+    }
+
+    /// As [`Self::records`] but pre-extracts a UMI per record. See
+    /// [`BamReader::records_with_umi`] for details. Added in v1.0.0-beta.5
+    /// for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .record_bufs(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
     }
 }
 
@@ -228,6 +500,18 @@ impl<R: Read + Seek> CramReader<R> {
             .records(header)
             .filter_map(filter_unmapped_then_classify)
     }
+
+    /// As [`Self::records`] but pre-extracts a UMI per record. See
+    /// [`BamReader::records_with_umi`] for details. Added in v1.0.0-beta.5.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
+        let header = &self.header;
+        self.inner
+            .records(header)
+            .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
+    }
 }
 
 // `build_fasta_repository` is imported at the top of this file; it lives
@@ -271,6 +555,20 @@ impl<R: BufRead, RC: Read + Seek> AnyReader<R, RC> {
             Self::Cram(r) => Box::new(r.records()),
         }
     }
+
+    /// As [`Self::records`] but pre-extracts a UMI from each record's
+    /// qname using `extractor`. See [`BamReader::records_with_umi`] for
+    /// details. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+    pub fn records_with_umi(
+        &mut self,
+        extractor: fn(&[u8]) -> Option<&[u8]>,
+    ) -> Box<dyn Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_> {
+        match self {
+            Self::Bam(r) => Box::new(r.records_with_umi(extractor)),
+            Self::Sam(r) => Box::new(r.records_with_umi(extractor)),
+            Self::Cram(r) => Box::new(r.records_with_umi(extractor)),
+        }
+    }
 }
 
 /// Open a BAM, SAM, or CRAM file by path, dispatching on extension.
@@ -281,8 +579,8 @@ impl<R: BufRead, RC: Read + Seek> AnyReader<R, RC> {
 ///
 /// The returned `AnyReader` enforces the coordinate-sort check by default
 /// (`UnsortedInput` error for coordinate-sorted input). SE-only callers
-/// that need to opt out should construct the concrete reader directly via
-/// its `without_sort_check` constructor.
+/// that need to accept coordinate-sorted input should use
+/// [`open_reader_without_sort_check`] instead.
 pub fn open_reader(
     path: &Path,
     cram_ref: Option<&Path>,
@@ -294,6 +592,35 @@ pub fn open_reader(
             let cram_ref =
                 cram_ref.ok_or_else(|| BismarkIoError::MissingCramReference(path.to_path_buf()))?;
             Ok(AnyReader::Cram(CramReader::from_path(path, cram_ref)?))
+        }
+    }
+}
+
+/// As [`open_reader`] but WITHOUT rejecting coordinate-sorted input.
+///
+/// For SE-only callers: single-end methylation extraction is independent
+/// of record order, so coordinate-sorted input is valid — this mirrors
+/// Perl `bismark_methylation_extractor`, whose positional-sorting check is
+/// gated on paired-end input only. Paired-end callers must use
+/// [`open_reader`] (the checking variant) so coordinate-sorted PE input —
+/// which breaks adjacent-mate pairing — is rejected with `UnsortedInput`.
+pub fn open_reader_without_sort_check(
+    path: &Path,
+    cram_ref: Option<&Path>,
+) -> Result<AnyReader<BufReader<File>, File>, BismarkIoError> {
+    match AlignmentKind::from_path(path)? {
+        AlignmentKind::Bam => Ok(AnyReader::Bam(BamReader::from_path_without_sort_check(
+            path,
+        )?)),
+        AlignmentKind::Sam => Ok(AnyReader::Sam(SamReader::from_path_without_sort_check(
+            path,
+        )?)),
+        AlignmentKind::Cram => {
+            let cram_ref =
+                cram_ref.ok_or_else(|| BismarkIoError::MissingCramReference(path.to_path_buf()))?;
+            Ok(AnyReader::Cram(CramReader::from_path_without_sort_check(
+                path, cram_ref,
+            )?))
         }
     }
 }
@@ -317,6 +644,26 @@ fn filter_unmapped_then_classify(
     }
 }
 
+/// Companion to [`filter_unmapped_then_classify`] that also pre-extracts
+/// the UMI via `extractor`. Used by `records_with_umi` on all reader
+/// variants. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
+fn filter_unmapped_then_classify_with_umi(
+    item: std::io::Result<RecordBuf>,
+    extractor: fn(&[u8]) -> Option<&[u8]>,
+) -> Option<Result<BismarkRecord, BismarkIoError>> {
+    match item {
+        Ok(rec) => {
+            let flags = u16::from(rec.flags());
+            if (flags & 0x4) != 0 {
+                None
+            } else {
+                Some(BismarkRecord::from_noodles_record_with_umi(rec, extractor))
+            }
+        }
+        Err(e) => Some(Err(BismarkIoError::Io(e))),
+    }
+}
+
 /// Verify that the BAM/SAM header does not declare coordinate sort.
 ///
 /// The SO sort-order field is in the HD map's `other_fields`. We compare
@@ -333,6 +680,85 @@ fn check_not_coordinate_sorted(header: &Header) -> Result<(), BismarkIoError> {
     Ok(())
 }
 
+/// Auto-detect library mode (single-end vs paired-end) from a Bismark
+/// BAM header.
+///
+/// Walks the `@PG` lines, finds the Bismark-aligner entry (ID starting
+/// with `Bismark`), and inspects its command line for `-1`/`--1` AND
+/// `-2`/`--2` arguments (which Bismark only passes in paired-end mode).
+///
+/// Returns:
+/// - `Some(true)` — PE (Bismark @PG found with both `-1`/`--1` and `-2`/`--2`)
+/// - `Some(false)` — SE (Bismark @PG found, missing one or both of those)
+/// - `None` — no Bismark @PG line in the header; caller must error out
+///   (typically by demanding the user pass `--single`/`--paired` explicitly).
+///
+/// Mirrors Perl `deduplicate_bismark` lines 90–116 / `filter_non_conversion`
+/// `determine_file_type` lines 374–399. Promoted from
+/// `bismark-dedup/src/pipeline.rs:137` in `bismark-io 1.0.0-beta.7` to share
+/// the same header-detection logic with `bismark-extractor`.
+///
+/// **Last-Bismark-`@PG` wins.** If the header carries more than one
+/// `ID:Bismark` `@PG` line, the result reflects the **last** one — matching
+/// Perl's `while` loop, which re-assigns `$paired`/`$single` for every Bismark
+/// `@PG` it sees so the final occurrence decides. Byte-neutral for all real
+/// Bismark BAMs (exactly one Bismark `@PG`); only a re-processed BAM with two
+/// distinct Bismark `@PG` lines is affected. (Fix for the two-`@PG`
+/// first-vs-last divergence surfaced by the `filter_non_conversion` port's
+/// code review.)
+#[must_use]
+pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
+    // Serialize the header to its on-disk SAM text representation and
+    // search for the Bismark @PG line. This is robust to noodles API
+    // shape changes across versions (the SAM text format is the stable
+    // contract here, not the in-memory `Programs` type).
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut writer = noodles_sam::io::Writer::new(&mut buf);
+        if writer.write_header(header).is_err() {
+            return None;
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let mut result = None;
+    for line in text.lines() {
+        // SAM header @PG line format: `@PG\tID:<id>\t...\tCL:<args>...`
+        // The `ID:Bismark` substring identifies the Bismark @PG.
+        if !line.starts_with("@PG") || !line.contains("ID:Bismark") {
+            continue;
+        }
+        // Look for -1/--1 AND -2/--2 in the command-line args. Bismark's
+        // PE invocation always has both; SE has neither.
+        // We accept space-separated, tab-separated, or end-of-line
+        // boundaries to be robust to argument quoting differences.
+        let has_1 = arg_present(line, "-1") || arg_present(line, "--1");
+        let has_2 = arg_present(line, "-2") || arg_present(line, "--2");
+        // Do NOT return here: keep scanning so the LAST Bismark @PG wins
+        // (Perl re-assigns on each match).
+        result = Some(has_1 && has_2);
+    }
+    result
+}
+
+/// True if `arg` appears as a standalone token in `text`, delimited by
+/// whitespace or tab on **both** sides.
+///
+/// Matches Perl's `/\s+--?1\s+/` semantics: a `-1` at the very end of the
+/// line (without trailing whitespace) is NOT considered present, even
+/// though Bismark in practice always appends a path after `-1`/`-2`.
+/// Being strict here matches Perl exactly — important for byte-identity
+/// when the same input is run through both implementations.
+fn arg_present(text: &str, arg: &str) -> bool {
+    let arg_space = format!(" {arg} ");
+    let arg_tab_left = format!("\t{arg} ");
+    let arg_tab_right = format!(" {arg}\t");
+    let arg_tab_both = format!("\t{arg}\t");
+    text.contains(&arg_space)
+        || text.contains(&arg_tab_left)
+        || text.contains(&arg_tab_right)
+        || text.contains(&arg_tab_both)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +766,7 @@ mod tests {
     use noodles_sam::header::record::value::Map;
     use noodles_sam::header::record::value::map::header::Version;
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     /// Build a SAM header with the given SO value (or no SO if `so` is None).
     fn header_with_sort_order(so: Option<&[u8]>) -> Header {
@@ -352,44 +779,184 @@ mod tests {
         noodles_sam::Header::builder().set_header(hd).build()
     }
 
+    // ─────────────── from_extension (legacy extension dispatch) ───────────────
+
     #[test]
-    fn alignment_kind_from_path_bam() {
+    fn alignment_kind_from_extension_bam() {
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.bam")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.bam")).unwrap(),
             AlignmentKind::Bam
         );
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.BAM")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.BAM")).unwrap(),
             AlignmentKind::Bam
         );
     }
 
     #[test]
-    fn alignment_kind_from_path_sam() {
+    fn alignment_kind_from_extension_sam() {
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.sam")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.sam")).unwrap(),
             AlignmentKind::Sam
         );
     }
 
     #[test]
-    fn alignment_kind_from_path_cram() {
+    fn alignment_kind_from_extension_cram() {
         assert_eq!(
-            AlignmentKind::from_path(Path::new("x.cram")).unwrap(),
+            AlignmentKind::from_extension(Path::new("x.cram")).unwrap(),
             AlignmentKind::Cram
         );
     }
 
     #[test]
-    fn alignment_kind_from_path_unknown_errors() {
-        let err = AlignmentKind::from_path(Path::new("x.txt")).unwrap_err();
+    fn alignment_kind_from_extension_unknown_errors() {
+        let err = AlignmentKind::from_extension(Path::new("x.txt")).unwrap_err();
         assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
     }
 
     #[test]
-    fn alignment_kind_from_path_no_extension_errors() {
-        let err = AlignmentKind::from_path(Path::new("noext")).unwrap_err();
+    fn alignment_kind_from_extension_no_extension_errors() {
+        let err = AlignmentKind::from_extension(Path::new("noext")).unwrap_err();
         assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    }
+
+    // ─────────────── from_path (new magic-byte sniff) ───────────────
+
+    /// The fixture BAM produced by Perl Bismark is the canonical
+    /// real-data BAM for sniff verification.
+    #[test]
+    fn from_path_detects_bam_via_bgzf_payload_on_fixture() {
+        let fixture = Path::new("test_files/tiny_pe_bismark.bam");
+        assert_eq!(
+            AlignmentKind::from_path(fixture).unwrap(),
+            AlignmentKind::Bam
+        );
+    }
+
+    /// SAM bytes in a file: classification follows content, not extension.
+    /// The temp file has no specific extension (NamedTempFile gives it a
+    /// random one), but `from_path` should ignore extension and classify
+    /// by the `@HD` first-byte content.
+    #[test]
+    fn from_path_detects_sam_by_at_sign_first_byte() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"@HD\tVN:1.6\n").unwrap();
+        assert_eq!(
+            AlignmentKind::from_path(tmp.path()).unwrap(),
+            AlignmentKind::Sam
+        );
+    }
+
+    /// CRAM magic in a file with no extension at all.
+    #[test]
+    fn from_path_detects_cram_by_magic() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"CRAM\x03\x00").unwrap();
+        assert_eq!(
+            AlignmentKind::from_path(tmp.path()).unwrap(),
+            AlignmentKind::Cram
+        );
+    }
+
+    #[test]
+    fn from_path_errors_on_empty_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Empty file (NamedTempFile::new is empty by default).
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::TooShortToDetect { bytes_read: 0, .. } => {}
+            other => panic!("expected TooShortToDetect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_path_errors_on_unrecognized_first_byte() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"XXXX").unwrap();
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::UnrecognizedFormat {
+                magic_first_byte: b'X',
+                ..
+            } => {}
+            other => panic!("expected UnrecognizedFormat with byte=0x58, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_path_errors_on_missing_file() {
+        let err = AlignmentKind::from_path(Path::new("/nonexistent/path/should-not-exist.bam"))
+            .unwrap_err();
+        assert!(matches!(err, BismarkIoError::Io(_)));
+    }
+
+    #[test]
+    fn from_path_errors_on_partial_cram_magic() {
+        // 2 bytes: matches `C` first-byte dispatch, then reads 1 of the
+        // expected 3 trailing bytes before EOF. Total bytes read = 1 + 1 = 2.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"CR").unwrap();
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::TooShortToDetect { bytes_read: 2, .. } => {}
+            other => panic!("expected TooShortToDetect with bytes_read=2, got {other:?}"),
+        }
+    }
+
+    /// End-to-end test for the load-bearing case: a real BGZF stream
+    /// whose decompressed payload starts with non-BAM bytes (e.g. a
+    /// `.vcf.gz` mis-routed to a BAM-expecting caller). Synthesizes the
+    /// BGZF wrapper via `noodles_bgzf::io::Writer` so the BGZF block
+    /// structure is spec-valid.
+    #[test]
+    fn from_path_rejects_bgzf_non_bam_payload() {
+        use std::io::Write;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Build a valid BGZF stream whose payload starts with VCF magic.
+        {
+            let file = std::fs::File::create(tmp.path()).unwrap();
+            let mut bgzf = noodles_bgzf::io::Writer::new(file);
+            bgzf.write_all(b"##fileformat=VCFv4.2\n").unwrap();
+            bgzf.finish().unwrap();
+        }
+        match AlignmentKind::from_path(tmp.path()).unwrap_err() {
+            BismarkIoError::UnrecognizedBgzfPayload { payload_head, .. } => {
+                // The first 4 decompressed bytes are `##fi`.
+                assert_eq!(
+                    &payload_head, b"##fi",
+                    "payload_head should reflect the first 4 inflated bytes"
+                );
+            }
+            other => panic!("expected UnrecognizedBgzfPayload, got {other:?}"),
+        }
+    }
+
+    /// New `UnrecognizedBgzfPayload` Display: includes path + hex head.
+    #[test]
+    fn unrecognized_bgzf_payload_display_includes_path_and_head() {
+        let err = BismarkIoError::UnrecognizedBgzfPayload {
+            path: PathBuf::from("/tmp/x.bam"),
+            payload_head: [b'V', b'C', b'F', 0x02],
+        };
+        let s = err.to_string();
+        assert!(s.contains("/tmp/x.bam"), "Display omits path: {s}");
+        assert!(s.contains("bgzipped"), "Display omits 'bgzipped': {s}");
+        assert!(s.contains("BAM"), "Display omits 'BAM' reference: {s}");
+    }
+
+    /// `UnrecognizedFormat` Display: includes the `samtools view -h` hint
+    /// so users with headerless SAM get an actionable next step.
+    #[test]
+    fn unrecognized_format_display_includes_samtools_hint() {
+        let err = BismarkIoError::UnrecognizedFormat {
+            path: PathBuf::from("/tmp/y"),
+            magic_first_byte: b'X',
+        };
+        let s = err.to_string();
+        assert!(
+            s.contains("samtools view -h"),
+            "Display omits samtools-view-h hint: {s}"
+        );
+        assert!(s.contains("0x58"), "Display omits hex first-byte: {s}");
     }
 
     #[test]
@@ -428,6 +995,100 @@ mod tests {
         // A header with no @HD record at all (Default header).
         let header = noodles_sam::Header::default();
         assert!(check_not_coordinate_sorted(&header).is_ok());
+    }
+
+    // ─────────── no-check constructors / dispatcher (SE coord-sorted) ───────────
+
+    /// Write a header-only BAM (with the given SO) to `path`. The readers
+    /// under test read only the header, so zero records is sufficient.
+    fn write_bam_header_only(path: &Path, so: Option<&[u8]>) {
+        let header = header_with_sort_order(so);
+        let file = File::create(path).unwrap();
+        let mut w = noodles_bam::io::Writer::new(file);
+        w.write_header(&header).unwrap();
+        w.try_finish().unwrap();
+    }
+
+    /// A header-only SAM with the given SO line.
+    fn sam_header_bytes(so: &str) -> Vec<u8> {
+        format!("@HD\tVN:1.6\tSO:{so}\n@SQ\tSN:chr1\tLN:1000\n").into_bytes()
+    }
+
+    #[test]
+    fn bam_from_path_without_sort_check_accepts_coordinate() {
+        let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        write_bam_header_only(tmp.path(), Some(b"coordinate"));
+        // The checking constructor rejects it ...
+        assert!(matches!(
+            BamReader::from_path(tmp.path()),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        // ... the no-check constructor accepts it.
+        assert!(BamReader::from_path_without_sort_check(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn sam_from_path_without_sort_check_accepts_coordinate() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), sam_header_bytes("coordinate")).unwrap();
+        assert!(matches!(
+            SamReader::from_path(tmp.path()),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        assert!(SamReader::from_path_without_sort_check(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn open_reader_without_sort_check_accepts_coordinate_bam() {
+        let tmp = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        write_bam_header_only(tmp.path(), Some(b"coordinate"));
+        // open_reader (checking) rejects; the no-check dispatcher accepts.
+        assert!(matches!(
+            open_reader(tmp.path(), None),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        assert!(open_reader_without_sort_check(tmp.path(), None).is_ok());
+    }
+
+    #[test]
+    fn open_reader_without_sort_check_accepts_coordinate_sam() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), sam_header_bytes("coordinate")).unwrap();
+        assert!(matches!(
+            open_reader(tmp.path(), None),
+            Err(BismarkIoError::UnsortedInput)
+        ));
+        assert!(open_reader_without_sort_check(tmp.path(), None).is_ok());
+    }
+
+    /// Parity: the no-check path must NOT change classification of
+    /// non-coordinate headers — queryname / unsorted / unknown / no-SO all
+    /// still open successfully (same as the checking path).
+    #[test]
+    fn no_check_path_unchanged_for_non_coordinate_headers() {
+        for so in ["queryname", "unsorted", "unknown"] {
+            // BAM
+            let bam = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+            write_bam_header_only(bam.path(), Some(so.as_bytes()));
+            assert!(
+                BamReader::from_path(bam.path()).is_ok(),
+                "checking BAM open should accept SO:{so}"
+            );
+            assert!(
+                BamReader::from_path_without_sort_check(bam.path()).is_ok(),
+                "no-check BAM open should accept SO:{so}"
+            );
+            // SAM
+            let sam = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(sam.path(), sam_header_bytes(so)).unwrap();
+            assert!(open_reader(sam.path(), None).is_ok());
+            assert!(open_reader_without_sort_check(sam.path(), None).is_ok());
+        }
+        // No @HD/SO at all (header-only BAM with no SO field).
+        let bam = tempfile::Builder::new().suffix(".bam").tempfile().unwrap();
+        write_bam_header_only(bam.path(), None);
+        assert!(BamReader::from_path(bam.path()).is_ok());
+        assert!(BamReader::from_path_without_sort_check(bam.path()).is_ok());
     }
 
     /// Minimal SAM bytes with a single mapped record carrying valid Bismark
@@ -496,10 +1157,13 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
 
     #[test]
     fn open_reader_cram_without_cram_ref_errors() {
-        // A .cram path with no cram_ref should fail with MissingCramReference,
-        // even before any file I/O is attempted (we check the missing-ref
-        // condition before opening the CRAM).
-        let err = expect_err(open_reader(Path::new("nonexistent.cram"), None));
+        // A CRAM-magic file with no cram_ref should fail with
+        // MissingCramReference. Since v1.0.0-beta.3 `open_reader` uses
+        // magic-byte sniff (not extension), the file must exist for the
+        // sniff to detect CRAM before the cram_ref check fires.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"CRAM\x03\x00").unwrap();
+        let err = expect_err(open_reader(tmp.path(), None));
         assert!(
             matches!(err, BismarkIoError::MissingCramReference(_)),
             "expected MissingCramReference, got {err:?}"
@@ -507,15 +1171,35 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
     }
 
     #[test]
-    fn open_reader_unsupported_extension_errors() {
-        let err = expect_err(open_reader(Path::new("foo.txt"), None));
-        assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    fn open_reader_unrecognized_format_errors() {
+        // A file whose contents match no recognised magic byte:
+        // post-beta.3 this is `UnrecognizedFormat`, regardless of
+        // extension (which is no longer consulted).
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"XXXX").unwrap();
+        let err = expect_err(open_reader(tmp.path(), None));
+        assert!(
+            matches!(
+                err,
+                BismarkIoError::UnrecognizedFormat {
+                    magic_first_byte: b'X',
+                    ..
+                }
+            ),
+            "expected UnrecognizedFormat with byte=0x58, got {err:?}"
+        );
     }
 
     #[test]
-    fn open_reader_no_extension_errors() {
-        let err = expect_err(open_reader(Path::new("noext"), None));
-        assert!(matches!(err, BismarkIoError::UnsupportedKind(_)));
+    fn open_reader_too_short_to_detect_errors() {
+        // Empty file: too short for any magic. Post-beta.3 this is
+        // TooShortToDetect.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let err = expect_err(open_reader(tmp.path(), None));
+        assert!(
+            matches!(err, BismarkIoError::TooShortToDetect { bytes_read: 0, .. }),
+            "expected TooShortToDetect with bytes_read=0, got {err:?}"
+        );
     }
 
     #[test]
@@ -550,6 +1234,40 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
         );
     }
 
+    // ─── Phase B (v1.2 UMI): records_with_umi() reader tests ───────────
+
+    /// SAM with one mapped record whose qname has a `--barcode`-format
+    /// UMI tail. Used to verify `records_with_umi` populates the `umi`
+    /// field at parse time.
+    const SAM_ONE_MAPPED_WITH_UMI: &[u8] = b"@HD\tVN:1.6\tSO:unsorted\n\
+@SQ\tSN:chr1\tLN:1000\n\
+read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\tXG:Z:CT\n";
+
+    #[test]
+    fn sam_records_with_umi_populates_umi_field() {
+        let mut reader = SamReader::new(Cursor::new(SAM_ONE_MAPPED_WITH_UMI)).unwrap();
+        let records: Vec<_> = reader
+            .records_with_umi(crate::umi::extract_barcode)
+            .collect();
+        assert_eq!(records.len(), 1);
+        let rec = records.into_iter().next().unwrap().unwrap();
+        assert_eq!(rec.umi().unwrap().as_slice(), b"CTCCTTAG");
+    }
+
+    #[test]
+    fn sam_records_with_umi_no_umi_in_qname_yields_none() {
+        // SAM_ONE_MAPPED's qname is `read1` (no `:`). With --barcode mode,
+        // extractor returns None → record's umi field is None → dedup
+        // pipeline will surface UmiExtractionFailed downstream.
+        let mut reader = SamReader::new(Cursor::new(SAM_ONE_MAPPED)).unwrap();
+        let records: Vec<_> = reader
+            .records_with_umi(crate::umi::extract_barcode)
+            .collect();
+        assert_eq!(records.len(), 1);
+        let rec = records.into_iter().next().unwrap().unwrap();
+        assert!(rec.umi().is_none());
+    }
+
     #[test]
     fn cram_reader_from_path_missing_fai_errors() {
         // The .fai existence check short-circuits before the cram is opened.
@@ -563,5 +1281,109 @@ read1\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXG:Z:CT\n";
             "expected MissingFastaIndex (the .fai sidecar of the nonexistent ref \
              doesn't exist), got {err:?}"
         );
+    }
+
+    // ─── detect_paired_from_header tests (promoted from bismark-dedup in v1.0.0-beta.7) ───
+
+    use noodles_sam::header::record::value::map::Program;
+
+    /// Build a SAM header with a `@PG` line whose ID and CL fields are as
+    /// given. CL is set as-is (verbatim) so tests can construct PE vs SE
+    /// arg patterns.
+    fn header_with_pg(id: &str, cl: Option<&str>) -> Header {
+        let mut builder = Header::builder();
+        let mut prog = Map::<Program>::default();
+        if let Some(cl_text) = cl {
+            use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+            prog.other_fields_mut()
+                .insert(COMMAND_LINE, BString::from(cl_text.as_bytes().to_vec()));
+        }
+        builder = builder.add_program(BString::from(id.as_bytes().to_vec()), prog);
+        builder.build()
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_some_true_for_pe_bismark_pg() {
+        let header = header_with_pg(
+            "Bismark",
+            Some("bismark --genome /path/genome -1 R1.fq.gz -2 R2.fq.gz"),
+        );
+        assert_eq!(detect_paired_from_header(&header), Some(true));
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_some_false_for_se_bismark_pg() {
+        let header = header_with_pg("Bismark", Some("bismark --genome /path/genome reads.fq.gz"));
+        assert_eq!(detect_paired_from_header(&header), Some(false));
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_none_when_no_bismark_pg() {
+        let header = header_with_pg("bowtie2", Some("bowtie2 -x index -U reads.fq.gz"));
+        assert_eq!(detect_paired_from_header(&header), None);
+    }
+
+    #[test]
+    fn detect_paired_from_header_returns_none_for_empty_header() {
+        let header = Header::default();
+        assert_eq!(detect_paired_from_header(&header), None);
+    }
+
+    #[test]
+    fn detect_paired_from_header_accepts_double_dash_form() {
+        // Bismark also accepts `--1` / `--2` (long form).
+        let header = header_with_pg("Bismark_v0.25.1", Some("bismark --1 R1.fq --2 R2.fq"));
+        assert_eq!(detect_paired_from_header(&header), Some(true));
+    }
+
+    #[test]
+    fn arg_present_strict_boundary_check() {
+        // Token must have whitespace/tab on both sides — `-1` at end-of-line
+        // (no trailing space) is NOT considered present. Matches Perl's
+        // `/\s+--?1\s+/` strict semantics.
+        assert!(arg_present("foo -1 bar", "-1"));
+        assert!(arg_present("foo\t-1\tbar", "-1"));
+        assert!(arg_present("foo -1\tbar", "-1"));
+        assert!(arg_present("foo\t-1 bar", "-1"));
+        assert!(!arg_present("foo -1", "-1"));
+        assert!(!arg_present("-1 bar", "-1"));
+        assert!(!arg_present("foo--1 bar", "-1")); // no preceding boundary
+    }
+
+    /// Build a header with TWO Bismark `@PG` lines in the given CL order.
+    fn header_with_two_bismark_pg(first_cl: &str, second_cl: &str) -> Header {
+        use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+        let mut p1 = Map::<Program>::default();
+        p1.other_fields_mut()
+            .insert(COMMAND_LINE, BString::from(first_cl.as_bytes().to_vec()));
+        let mut p2 = Map::<Program>::default();
+        p2.other_fields_mut()
+            .insert(COMMAND_LINE, BString::from(second_cl.as_bytes().to_vec()));
+        // Distinct IDs (SAM requires unique @PG IDs); both contain "ID:Bismark".
+        Header::builder()
+            .add_program(BString::from("Bismark"), p1)
+            .add_program(BString::from("Bismark.1"), p2)
+            .build()
+    }
+
+    #[test]
+    fn detect_paired_two_bismark_pg_last_wins_se() {
+        // PE-style @PG first, SE-style @PG last → the LAST wins → SE.
+        // Matches Perl `determine_file_type`'s re-assign-on-each-match loop.
+        let header = header_with_two_bismark_pg(
+            "bismark --genome /g -1 R1.fq -2 R2.fq",
+            "bismark --genome /g reads.fq",
+        );
+        assert_eq!(detect_paired_from_header(&header), Some(false));
+    }
+
+    #[test]
+    fn detect_paired_two_bismark_pg_last_wins_pe() {
+        // SE-style first, PE-style last → the LAST wins → PE.
+        let header = header_with_two_bismark_pg(
+            "bismark --genome /g reads.fq",
+            "bismark --genome /g -1 R1.fq -2 R2.fq",
+        );
+        assert_eq!(detect_paired_from_header(&header), Some(true));
     }
 }

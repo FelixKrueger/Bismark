@@ -1,0 +1,4 @@
+chr1	3	+	8	2	CG	CGT
+chr1	4	-	1	1	CG	CGT
+chr1	9	+	3	3	CG	CGT
+chr1	10	-	0	4	CG	CGT

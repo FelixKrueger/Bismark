@@ -17,18 +17,25 @@
 pub mod cigar;
 pub mod cram_ref;
 pub mod error;
+pub mod genome;
 pub mod pair;
 pub mod read;
 pub mod record;
 pub mod strand;
 pub mod tags;
+pub mod umi;
 pub mod write;
 
 pub use cigar::{AlignedPosition, AlignedPositions, CigarExt};
 pub use cram_ref::reconstitute_cram_reference_from_bismark_genome;
 pub use error::BismarkIoError;
+pub use genome::{Genome, GenomeError};
 pub use pair::BismarkPair;
-pub use read::{AlignmentKind, AnyReader, BamReader, CramReader, SamReader, open_reader};
-pub use record::{BismarkRecord, ReadIdentity};
+pub use read::{
+    AlignmentKind, AnyReader, BamReader, CramReader, SamReader, ThreadedBamReader,
+    detect_paired_from_header, open_reader, open_reader_without_sort_check,
+};
+pub use record::{AlignedXmCall, BismarkRecord, ReadIdentity, Umi};
 pub use strand::BismarkStrand;
-pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, open_writer};
+pub use umi::{extract_barcode, extract_bclconvert};
+pub use write::{AnyWriter, BamWriter, CramWriter, SamWriter, ThreadedBamWriter, open_writer};

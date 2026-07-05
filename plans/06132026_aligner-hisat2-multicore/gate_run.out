@@ -1,0 +1,21 @@
+### gate start Sun Jun 14 08:43:10 UTC 2026
+### rust: 
+### subsampling SE...
+### subsampling PE...
+### [08:43:43] se_cell se_dir_p2 (N=2 )
+[se_dir_p2] PASS — rust==perl body (rust 844296 rec / perl 844296 / 1307 spliced / md5 f05ee7e586257a5348043e81cc9cf891)
+### [08:47:07] se_cell se_dir_p4 (N=4 )
+[se_dir_p4] PASS — rust==perl body (rust 844305 rec / perl 844305 / 1303 spliced / md5 3bc6b7da5aff78aa6c026bbd88ae75d4)
+### [08:49:51] se_cell se_dir_p8 (N=8 )
+[se_dir_p8] PASS — rust==perl body (rust 844316 rec / perl 844316 / 1298 spliced / md5 bfbf38b091434be38f70136a0f72ffcd)
+### [08:52:17] se_cell se_nondir_p4 (N=4 --non_directional)
+[se_nondir_p4] PASS — rust==perl body (rust 843807 rec / perl 843807 / 1393 spliced / md5 69907701812ddc05e21e53cf34ff6d0d)
+### [08:55:21] se_cell se_pbat_p4 (N=4 --pbat)
+[se_pbat_p4] PASS — rust==perl body (rust 5615 rec / perl 5615 / 432 spliced / md5 6043a7139df4ca987d0bd15ed9b135a4)
+### [08:57:11] se_cell se_dir_ambig_p4 (N=4 --ambig_bam)
+[se_dir_ambig_p4] MISSING bam (rust='' perl='') — see /var/tmp/hisat2mc_gate/r_se_dir_ambig_p4/log / /var/tmp/hisat2mc_gate/p_se_dir_ambig_p4/log
+### [08:59:33] pe_cell pe_dir_p4 (N=4 )
+[pe_dir_p4] PASS — rust==perl pe body (1620340 rec / md5 7b23af3b039c159a1e4e68b5c69d10bb)
+
+=== GATE SUMMARY: PASS=6 FAIL=1 SKIP=0 ===
+### gate done Sun Jun 14 09:03:07 UTC 2026
