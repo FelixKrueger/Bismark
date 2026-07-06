@@ -1,6 +1,6 @@
 [package]
 name = "bismark-report"
-version = "1.0.0"
+version = "1.0.1"
 description = "Rust port of Bismark Perl's bismark2report script (per-sample graphical HTML report)"
 edition.workspace = true
 rust-version.workspace = true

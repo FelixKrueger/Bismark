@@ -1,6 +1,6 @@
 [package]
 name = "bismark-coverage2cytosine"
-version = "1.0.0"
+version = "1.0.1"
 description = "Rust port of Bismark Perl's coverage2cytosine script (Phase A: scaffold + CLI + genome reader)"
 edition.workspace = true
 rust-version.workspace = true

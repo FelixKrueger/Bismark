@@ -232,7 +232,10 @@ jobs:
           L0="bismark-io bismark-meta"
           L1="bismark-aligner bismark-dedup bismark-bedgraph bismark-coverage2cytosine bismark-bam2nuc bismark-filter-nonconversion bismark-nome-filtering bismark-methylation-consistency bismark-genome-preparation bismark-report bismark-summary"
           L2="bismark-extractor"
-          ORDER="$L0 $L1 $L2"
+          # The `bismark` whole-suite meta-crate depends on every tool crate, so it
+          # publishes LAST (after L2). Its own version is independent (2.x).
+          L3="bismark"
+          ORDER="$L0 $L1 $L2 $L3"
 
           if [ "$DRY_RUN" != "true" ] && [ "$IS_PRERELEASE" = "true" ]; then
             echo "Prerelease ($IS_PRERELEASE) — crates.io publish is deferred to the GA cut. No-op."
@@ -243,7 +246,8 @@ jobs:
           # crate added to the workspace but forgotten here would silently never
           # publish; assert set-equality against the [workspace] members list.
           echo "::group::ORDER covers all workspace members"
-          members=$(grep -E '^members' Cargo.toml | grep -oE 'bismark-[a-z0-9-]+' | sort -u)
+          # `bismark[a-z0-9-]*` (not `bismark-…+`) so the bare `bismark` meta-crate member is captured too.
+          members=$(grep -E '^members' Cargo.toml | grep -oE 'bismark[a-z0-9-]*' | sort -u)
           order_sorted=$(printf '%s\n' $ORDER | sort -u)
           if [ "$members" != "$order_sorted" ]; then
             echo "::error::publish ORDER does not match the [workspace] members:"
@@ -371,7 +375,7 @@ jobs:
             done
             set -e
             [ $fail -eq 0 ] || { echo "::error::crates.io publish incomplete — see the failed crate above"; exit 1; }
-            echo "✓ PUBLISHED (or verified already-present) all 14 crates to crates.io in DAG order"
+            echo "✓ PUBLISHED (or verified already-present) all 15 crates to crates.io in DAG order"
           fi
 
   docker-build:

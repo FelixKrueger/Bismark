@@ -1,6 +1,6 @@
 [package]
 name = "bismark-summary"
-version = "1.0.0"
+version = "1.0.1"
 description = "Rust port of Bismark Perl's bismark2summary project-level multi-sample aggregator"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "bismark-aligner"
-version = "1.0.0"
+version = "1.0.1"
 description = "Rust port of the Bismark Perl aligner wrapper (bismark)"
 edition.workspace = true
 rust-version.workspace = true
