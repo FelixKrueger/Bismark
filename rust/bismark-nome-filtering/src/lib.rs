@@ -32,6 +32,29 @@ pub fn version_string() -> String {
     bismark_meta::version_line("NOMe_filtering")
 }
 
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `NOMe_filtering` bin (so `cargo install bismark` and `cargo
+/// install bismark-nome-filtering` behave identically). Parses the CLI, handles
+/// `--version` (clap's auto-version is disabled in `cli.rs`), then dispatches to
+/// [`run`]. Exit: `0` ok · `1` [`BismarkNomeError`] (clap handles `2` parse
+/// errors). The `#[global_allocator]`, if any, stays in each binary crate root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = Cli::parse();
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+    match run(cli) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 /// End-to-end entry point: validate the CLI, create the output directory,
 /// resolve the `--dir`-relative input/output paths, verify the input exists,
 /// load the genome via the promoted [`bismark_io::genome`] reader (two plain

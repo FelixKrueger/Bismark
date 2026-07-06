@@ -85,3 +85,25 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
 pub fn version_string() -> String {
     bismark_meta::version_line("coverage2cytosine")
 }
+
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `coverage2cytosine` bin (so `cargo install bismark` and
+/// `cargo install bismark-coverage2cytosine` behave identically). Parses the
+/// CLI, handles `--version`, validates, and runs. Exit: `0` ok · `1` error
+/// (clap handles `2` parse errors before this).
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = Cli::parse();
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+    match cli.validate().and_then(|config| run(&config)) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}

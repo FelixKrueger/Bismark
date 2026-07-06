@@ -37,3 +37,31 @@ pub use report::Tally;
 pub fn version_string() -> String {
     bismark_meta::version_line("methylation_consistency")
 }
+
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `methylation_consistency` bin (so `cargo install bismark` and
+/// `cargo install bismark-methylation-consistency` behave identically). Parses
+/// the CLI, handles `--version` (clap's auto-version is disabled in `cli.rs`),
+/// validates into a [`ResolvedConfig`], then runs the per-file consistency split
+/// via [`pipeline::run`]. Exit: `0` ok · `1` [`MethConsError`] (clap handles `2`
+/// parse errors). The `#[global_allocator]`, if any, stays in each binary crate
+/// root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = Cli::parse();
+
+    // `--version` / `-V` handled here (clap auto-version disabled in cli.rs).
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    match cli.validate().and_then(|config| pipeline::run(&config)) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
