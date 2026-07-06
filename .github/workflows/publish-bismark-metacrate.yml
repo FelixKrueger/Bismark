@@ -1,0 +1,42 @@
+name: Publish bismark meta-crate (one-off)
+
+# Publishes ONLY the `bismark` whole-suite meta-crate to crates.io (so
+# `cargo install bismark` works from the registry). Separate from release.yml
+# because the GA tag already exists (a full release re-run is guarded off) and
+# the meta-crate is not yet in the release publish DAG. Idempotent: no-ops if the
+# version is already published. The 12 tool crates it depends on are already
+# live on crates.io at their GA versions.
+#
+# Safe to delete after the meta-crate is published (or keep as a maintainer tool
+# until `bismark` is folded into release.yml's publish-crates DAG).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish the `bismark` meta-crate
+        working-directory: rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN secret is empty — cannot publish."
+            exit 1
+          fi
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' bismark/Cargo.toml | head -1)
+          echo "bismark meta-crate version: $ver"
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'User-Agent: bismark-release' "https://crates.io/api/v1/crates/bismark/$ver")" = "200" ]; then
+            echo "✓ bismark $ver already on crates.io — nothing to do"
+            exit 0
+          fi
+          cargo publish -p bismark --locked
+          echo "✓ published bismark $ver to crates.io"
