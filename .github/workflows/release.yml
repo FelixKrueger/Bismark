@@ -328,15 +328,50 @@ jobs:
               echo "::error::CARGO_REGISTRY_TOKEN secret is empty — cannot publish. Add the crates.io token as a repo secret before the GA cut."
               exit 1
             fi
-            # Real GA publish: ordered L0 → L1 → L2, per-crate so each is verified
-            # available on the index before the next resolves it (and so the
-            # partial-publish/fix-forward runbook above maps to a specific crate).
+            # Real GA publish: ordered L0 → L1 → L2. RESUMABLE + RATE-LIMIT-AWARE:
+            #  - SKIP any crate+version already on crates.io (so a re-run after a
+            #    partial publish resumes cleanly — crates.io is yank-only, and
+            #    re-publishing an existing version is a hard error).
+            #  - crates.io throttles NEW crates (burst 5, then 1 per 10 min) and
+            #    cargo has NO built-in 429 backoff, so on a 429 we sleep 11 min and
+            #    retry (publishing >5 new crates ALWAYS trips this — rust-lang/crates.io#1643).
+            #  - then wait for the crate to appear on the index before the next
+            #    crate's verify-build tries to resolve it.
+            ua='User-Agent: bismark-release'
+            set +e   # manual retry/skip handling below (do not let -e abort mid-loop)
+            fail=0
             for c in $ORDER; do
-              echo "::group::publish $c"
-              cargo publish -p "$c" --locked
+              cver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$c/Cargo.toml" | head -1)
+              if [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$ua" "https://crates.io/api/v1/crates/$c/$cver")" = "200" ]; then
+                echo "✓ $c $cver already on crates.io — skip (resume)"
+                continue
+              fi
+              echo "::group::publish $c $cver"
+              ok=0
+              for attempt in $(seq 1 12); do
+                out=$(cargo publish -p "$c" --locked 2>&1); rc=$?
+                echo "$out"
+                if [ $rc -eq 0 ]; then ok=1; break; fi
+                if echo "$out" | grep -qiE 'already (exists|uploaded)|is already (uploaded|being)'; then
+                  echo "✓ $c $cver already uploaded — treat as done"; ok=1; break
+                fi
+                if echo "$out" | grep -qiE '429|too many|rate limit'; then
+                  echo "::warning::rate-limited on $c (attempt $attempt/12) — sleeping 11 min then retrying"
+                  sleep 660; continue
+                fi
+                echo "::error::$c failed with a non-rate-limit error (see log above)"; break
+              done
               echo "::endgroup::"
+              if [ $ok -ne 1 ]; then fail=1; break; fi
+              # Index-propagation wait (≤5 min) so the next crate can resolve this dep.
+              for _ in $(seq 1 60); do
+                [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$ua" "https://crates.io/api/v1/crates/$c/$cver")" = "200" ] && break
+                sleep 5
+              done
             done
-            echo "✓ PUBLISHED all 14 crates to crates.io in DAG order"
+            set -e
+            [ $fail -eq 0 ] || { echo "::error::crates.io publish incomplete — see the failed crate above"; exit 1; }
+            echo "✓ PUBLISHED (or verified already-present) all 14 crates to crates.io in DAG order"
           fi
 
   docker-build:
