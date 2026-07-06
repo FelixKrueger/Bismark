@@ -193,15 +193,16 @@ Notes:
 - A paired-end uBAM is passed as **one positional file**, not via `-1`/`-2`; a uBAM supplied through `-1`/`-2` is rejected with guidance.
 - uBAM input is incompatible with `-f`/`--fasta` (BAM carries qualities → FASTQ), and — like FASTQ/FASTA — paired-end is unsupported for the minimap2/rammap backends.
 
-## BINSEQ (`.vbq`) input (Rust suite beta)
+## BINSEQ (`.vbq` + `.cbq`) input (Rust suite beta)
 
-The Rust `bismark` aligner also accepts an [Arc Institute **BINSEQ**](https://github.com/arcinstitute/binseq) `.vbq` file as read input, decoded **in-process** (via the `binseq` crate — no `bqtools` needed at runtime) and auto-detected by the `.vbq` extension:
+The Rust `bismark` aligner also accepts an [Arc Institute **BINSEQ**](https://github.com/arcinstitute/binseq) file as read input, decoded **in-process** (via the `binseq` crate — no `bqtools` needed at runtime) and auto-detected by extension. Both the verbose `.vbq` and the columnar `.cbq` variant are supported:
 
 ```bash
-# single-end VBQ
+# single-end VBQ (or CBQ)
 bismark --genome /data/genomes/GRCh38/ reads.vbq
+bismark --genome /data/genomes/GRCh38/ reads.cbq
 
-# paired-end: a single VBQ carries BOTH mates per record —
+# paired-end: a single BINSEQ file carries BOTH mates per record —
 # auto-detected as paired and split into R1/R2 automatically
 bismark --genome /data/genomes/GRCh38/ pairs.vbq
 ```
@@ -209,7 +210,7 @@ bismark --genome /data/genomes/GRCh38/ pairs.vbq
 The reads are decoded to a temporary FASTQ matching `bqtools decode` and fed into the unchanged bisulfite-convert → align → merge pipeline, so the result is **identical to running Bismark on the corresponding `bqtools decode` output** (the same equivalence contract as the uBAM front-end above). All library types and aligner backends work; it is purely an input front-end.
 
 Notes:
-- **VBQ only.** `.cbq` and `.bq` are recognised but **rejected with a clear message** (they are not yet supported): `.bq` carries no per-read quality or names and cannot be faithfully aligned; CBQ is a planned follow-up. Convert to VBQ or FASTQ first.
+- **VBQ and CBQ are supported; `.bq` is not.** `.bq` is recognised but **rejected with a clear message** — it carries no per-read quality or names and cannot be faithfully aligned. Convert it to VBQ/CBQ or FASTQ first. (`.cbq` decoding requires `binseq >= 0.9.3`, which fixed an upstream `N`-decode defect; the Rust suite pins it.)
 - A VBQ **must carry per-read quality scores and headers** (encode with `bqtools encode` preserving both). A quality-less or name-less VBQ is rejected rather than silently filled — Bismark needs real qualities and original read names (output QNAMEs).
 - A paired-end VBQ is passed as **one positional file**, not via `-1`/`-2`; `.vbq` via `-1`/`-2` is rejected, and `.vbq` + `-f`/`--fasta` is rejected (it carries qualities → FASTQ).
-- **Prebuilt release binaries and the container image support `.vbq` out of the box.** A *from-source* build enables it with the `binseq-input` Cargo feature — `cargo build -p bismark-aligner --features binseq-input` (or add it to the suite `cargo install`). A default source build still recognises `.vbq` and exits with a clear "compiled without BINSEQ support" message rather than mis-reading it.
+- **Prebuilt release binaries and the container image support `.vbq`/`.cbq` out of the box.** A *from-source* build enables it with the `binseq-input` Cargo feature — `cargo build -p bismark-aligner --features binseq-input` (or add it to the suite `cargo install`). A default source build still recognises a BINSEQ file and exits with a clear "compiled without BINSEQ support" message rather than mis-reading it.
