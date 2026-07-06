@@ -2,7 +2,7 @@
 //!
 //! This crate is the first downstream binary of the Bismark Rust rewrite, built
 //! on top of [`bismark_io`] for all BAM/SAM/CRAM I/O. The binary is installed as
-//! `deduplicate_bismark_rs` during the v0.26 → v1.0 coexistence period.
+//! `deduplicate_bismark` during the v0.26 → v1.0 coexistence period.
 //!
 //! See `~/.claude/plans/05242026_bismark-dedup-v1/PLAN.md` (rev 3) for the
 //! design contract, behaviour specification, and phased implementation plan.
@@ -44,18 +44,9 @@ pub use dedup::{DedupKey, DedupState, UmiDedupKey, UmiDedupState};
 pub use error::BismarkDedupError;
 pub use report::DedupReport;
 
-/// Returns a TG-style provenance string for the binary's `--version` output.
-///
-/// Format: `deduplicate_bismark_rs <semver> (<os>/<arch>)`.
-///
-/// Phase A keeps the provenance minimal. Phase G will extend this with git
-/// commit hash and ISO-8601 build timestamp via a `build.rs` step.
+/// The uniform suite `--version` one-liner via [`bismark_meta::version_line`]:
+/// `deduplicate_bismark (Bismark Rust suite) v<version> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "deduplicate_bismark_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("deduplicate_bismark")
 }

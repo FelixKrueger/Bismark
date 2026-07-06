@@ -1,4 +1,4 @@
-//! Binary entry point for `deduplicate_bismark_rs`.
+//! Binary entry point for `deduplicate_bismark`.
 //!
 //! Parses CLI via [`bismark_dedup::cli::Cli`], validates the flag
 //! combinations into a [`bismark_dedup::cli::ResolvedConfig`], then

@@ -83,7 +83,7 @@ pub fn is_binseq_input(path: &Path) -> bool {
 /// CBQ-not-yet-supported reject (v1 scope; documented fast-follow).
 fn reject_cbq() -> AlignerError {
     AlignerError::Validation(
-        "CBQ (.cbq) BINSEQ input is not yet supported by bismark_rs (only VBQ is). \
+        "CBQ (.cbq) BINSEQ input is not yet supported by bismark (only VBQ is). \
          Convert it to VBQ (`bqtools`) or to FASTQ, then re-run."
             .into(),
     )
@@ -343,7 +343,7 @@ mod vbq_impl {
     /// reject explicitly rather than mis-feed the FASTQ parser.
     fn unsupported() -> AlignerError {
         AlignerError::Validation(
-            "this bismark_rs build was compiled without BINSEQ (.vbq) support; rebuild with \
+            "this bismark build was compiled without BINSEQ (.vbq) support; rebuild with \
              `--features binseq-input` (the released Linux binaries include it), or convert the \
              input to FASTQ first."
                 .into(),

@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark2summary_rs`.
+//! Binary entry point for `bismark2summary`.
 //!
 //! Parses the CLI, discovers Bismark BAMs (or takes them from argv), parses
 //! each sample's report set, and writes the project summary outputs.

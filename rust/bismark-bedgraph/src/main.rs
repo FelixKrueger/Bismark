@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark2bedGraph_rs`.
+//! Binary entry point for `bismark2bedGraph`.
 //!
 //! Parses CLI via [`bismark_bedgraph::cli::Cli`], handles `--version` /
 //! `--man` short-circuits, validates into a

@@ -1,6 +1,6 @@
 //! Phase A sanity tests.
 //!
-//! Spawns the `bismark_methylation_extractor_rs` binary with basic flags
+//! Spawns the `bismark_methylation_extractor` binary with basic flags
 //! and asserts the binary boots correctly + `--help` lists all 35 flags
 //! + `--version` matches the provenance regex.
 
@@ -11,8 +11,10 @@ use predicates::str::is_match;
 fn version_output_matches_provenance_regex() {
     let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
     cmd.arg("--version").assert().success().stdout(
-        is_match(r"^bismark_methylation_extractor_rs \d+\.\d+\.\d+(-[\w.]+)? \(\S+/\S+\)\n$")
-            .unwrap(),
+        is_match(
+            r"^bismark_methylation_extractor \(Bismark Rust suite\) v\d+\.\d+\.\d+(-[\w.]+)? \(.+\)\n$",
+        )
+        .unwrap(),
     );
 }
 
@@ -22,7 +24,7 @@ fn short_version_flag_works_too() {
     cmd.arg("-V")
         .assert()
         .success()
-        .stdout(is_match(r"^bismark_methylation_extractor_rs ").unwrap());
+        .stdout(is_match(r"^bismark_methylation_extractor \(Bismark Rust suite\) ").unwrap());
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Command-line interface for `filter_non_conversion_rs`.
+//! Command-line interface for `filter_non_conversion`.
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] reproduces Perl
 //! `filter_non_conversion`'s `process_commandline` validation (lines
@@ -24,10 +24,13 @@ use clap::Parser;
 use crate::error::BismarkFilterError;
 use crate::filter::FilterMode;
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to resolve.
 #[derive(Parser, Debug)]
 #[command(
-    name = "filter_non_conversion_rs",
+    name = "filter_non_conversion",
     about = "Filter reads/read-pairs with apparent incomplete bisulfite conversion \
              (too much non-CG methylation) from Bismark BAM files",
     long_about = None,
@@ -35,7 +38,8 @@ use crate::filter::FilterMode;
     // Accept negative-number values (e.g. `--threshold -1`) so they reach the
     // Perl-style validation checks rather than being mis-parsed as flags.
     // Matches Perl `GetOptions(...=i)`. See cli.rs module docs.
-    allow_negative_numbers = true
+    allow_negative_numbers = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Bismark BAM file(s) to filter. Each is processed independently.
@@ -74,7 +78,7 @@ pub struct Cli {
     pub samtools_path: Option<PathBuf>,
 
     /// Print version information and exit.
-    #[arg(long = "version")]
+    #[arg(short = 'V', long = "version")]
     pub version: bool,
 }
 
@@ -179,7 +183,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["filter_non_conversion_rs"];
+        let mut full = vec!["filter_non_conversion"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

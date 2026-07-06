@@ -14,12 +14,16 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// The Bismark aligner wrapper (Rust port): parse + discover + detect, then convert, align, and merge.
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark_rs",
+    name = "bismark",
     about = "Bisulfite read aligner — wraps Bowtie 2 against a bisulfite-converted genome.",
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     // ---- genome + reads ----------------------------------------------------
@@ -399,6 +403,10 @@ pub struct Cli {
     #[arg(long)]
     pub quiet: bool,
     /// Print version information and exit.
-    #[arg(long = "version")]
+    #[arg(
+        short = 'V',
+        long = "version",
+        help = "Print version information and exit"
+    )]
     pub version: bool,
 }

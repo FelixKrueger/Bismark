@@ -296,7 +296,7 @@ fn version_flag_long_prints_version_and_exits_zero() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicates::str::contains("bam2nuc_rs "))
+        .stdout(predicates::str::contains("bam2nuc (Bismark Rust suite) "))
         .stdout(predicates::str::contains(std::env::consts::OS));
 }
 
@@ -306,7 +306,7 @@ fn version_flag_short_prints_version_and_exits_zero() {
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicates::str::contains("bam2nuc_rs "));
+        .stdout(predicates::str::contains("bam2nuc (Bismark Rust suite) "));
 }
 
 #[test]

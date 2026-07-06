@@ -1,4 +1,4 @@
-//! Binary entry point for `filter_non_conversion_rs`.
+//! Binary entry point for `filter_non_conversion`.
 //!
 //! Exit codes: `0` success; `1` any [`BismarkFilterError`] or no input files;
 //! `2` clap parse error (clap convention).

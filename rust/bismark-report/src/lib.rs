@@ -34,13 +34,7 @@ pub const BISMARK_VERSION: &str = "v0.25.1";
 
 /// `--version` banner (dedup/genomeprep precedent). Not part of the gate.
 pub fn version_string() -> String {
-    format!(
-        "\n          Bismark - Bisulfite Mapper and Methylation Caller.\n\n          \
-         Bismark HTML Report Module (Rust port) Version: {}\n        \
-         Copyright 2010-25, Felix Krueger, Altos Bioinformatics\n\n               \
-         https://github.com/FelixKrueger/Bismark\n",
-        bismark_meta::SUITE_VERSION
-    )
+    bismark_meta::version_line("bismark2report")
 }
 
 /// Top-level: resolve the output dir, the alignment report(s) and their

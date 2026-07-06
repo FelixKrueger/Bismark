@@ -1,4 +1,4 @@
-//! Command-line interface for `bam2nuc_rs`.
+//! Command-line interface for `bam2nuc`.
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], reproducing Perl `bam2nuc`'s `process_commandline`
@@ -20,14 +20,19 @@ use clap::Parser;
 
 use crate::error::BismarkBam2nucError;
 
+/// `--help` footer: the per-tool last-modified date (git commit date of this
+/// crate, embedded by `build.rs` via `bismark_meta::last_modified_date`).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to convert to a
 /// [`ResolvedConfig`].
 #[derive(Parser, Debug)]
 #[command(
-    name = "bam2nuc_rs",
+    name = "bam2nuc",
     about = "Calculate mono- and di-nucleotide coverage of a Bismark alignment (genomic-sequence composition QC)",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Input alignment file(s) in BAM format (`*.bam`). One stats file is
@@ -134,7 +139,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["bam2nuc_rs"];
+        let mut full = vec!["bam2nuc"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

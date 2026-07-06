@@ -26,7 +26,7 @@ pub enum MethConsError {
 
     /// No positional input files. Mirrors Perl's usage `die` (line 131).
     #[error(
-        "No input file(s) supplied. USAGE is:\n\n\tmethylation_consistency_rs [--min-count=5] [bam file(s)]\n"
+        "No input file(s) supplied. USAGE is:\n\n\tmethylation_consistency [--min-count=5] [bam file(s)]\n"
     )]
     NoInputFiles,
 

@@ -431,7 +431,7 @@ mod tests {
     use clap::Parser;
 
     fn cli_from(args: &[&str]) -> Cli {
-        let mut v = vec!["bismark_rs"];
+        let mut v = vec!["bismark"];
         v.extend_from_slice(args);
         Cli::parse_from(v)
     }

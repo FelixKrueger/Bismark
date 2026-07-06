@@ -1,4 +1,4 @@
-//! Typed errors for `filter_non_conversion_rs`.
+//! Typed errors for `filter_non_conversion`.
 //!
 //! Display strings echo the Perl `filter_non_conversion` `die`/`warn`
 //! messages where practical. These are surfaced on STDERR (not part of the

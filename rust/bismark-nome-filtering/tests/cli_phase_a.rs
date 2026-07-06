@@ -19,7 +19,9 @@ fn version_prints_provenance() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicates::str::starts_with("NOMe_filtering_rs "));
+        .stdout(predicates::str::starts_with(
+            "NOMe_filtering (Bismark Rust suite) v",
+        ));
 }
 
 #[test]

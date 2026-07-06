@@ -8,7 +8,7 @@
 //! - `<basename>.txt` — a 15-column tab-delimited table, one row per sample.
 //! - `<basename>.html` — a self-contained plot.ly report (Phase B).
 //!
-//! The binary is installed as `bismark2summary_rs`. The byte-identity target
+//! The binary is installed as `bismark2summary`. The byte-identity target
 //! is Perl Bismark v0.25.1: the `.txt` fully byte-identical, the `.html`
 //! byte-identical modulo the single `localtime` timestamp line.
 //!
@@ -44,16 +44,10 @@ pub use parse::SampleMetrics;
 /// constant (`bismark2summary:25`) so the HTML is byte-identical (SPEC O1).
 pub const BISMARK_VERSION: &str = "0.25.1";
 
-/// Returns a TG-style provenance string for the binary's `--version` output.
-///
-/// Format: `bismark2summary_rs <semver> (<os>/<arch>)`. Help/version text is
+/// The uniform suite `--version` one-liner via [`bismark_meta::version_line`]:
+/// `bismark2summary (Bismark Rust suite) v<version> (…)`. Help/version text is
 /// not byte-gated against Perl (SPEC §4.4).
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "bismark2summary_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("bismark2summary")
 }

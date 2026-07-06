@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark_rs` (Phase 1).
+//! Binary entry point for `bismark` (Phase 1).
 //!
 //! Exit codes: `0` success · `1` any [`bismark_aligner::AlignerError`] ·
 //! `2` clap parse error.

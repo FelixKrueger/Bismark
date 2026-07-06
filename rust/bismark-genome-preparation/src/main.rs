@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark_genome_preparation_rs`.
+//! Binary entry point for `bismark_genome_preparation`.
 //!
 //! Exit codes: `0` success · `1` any [`GenomePrepError`] · `2` clap parse error.
 

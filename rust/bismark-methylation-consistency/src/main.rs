@@ -1,4 +1,4 @@
-//! Binary entry point for `methylation_consistency_rs`.
+//! Binary entry point for `methylation_consistency`.
 //!
 //! Parses CLI via [`bismark_methylation_consistency::Cli`], validates into a
 //! [`ResolvedConfig`], then runs the per-file consistency split via

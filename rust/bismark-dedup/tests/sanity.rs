@@ -1,7 +1,7 @@
 //! Phase A sanity test.
 //!
-//! Spawns the `deduplicate_bismark_rs` binary with `--version` and asserts the
-//! output matches the documented provenance regex. This is the minimum bar for
+//! Spawns the `deduplicate_bismark` binary with `--version` and asserts the
+//! output matches the uniform suite provenance regex. This is the minimum bar for
 //! Phase A: the binary builds, runs, and emits a recognisable identity string.
 
 use assert_cmd::Command;
@@ -14,10 +14,14 @@ fn version_output_matches_provenance_regex() {
     cmd.arg("--version")
         .assert()
         .success()
-        // `deduplicate_bismark_rs <semver> (<os>/<arch>)` where <semver>
-        // may include a pre-release suffix (e.g. `1.0.0-beta.1`).
+        // Uniform suite one-liner:
+        // `deduplicate_bismark (Bismark Rust suite) v<semver> (<hash> — <os>/<arch> — built <ts>)`
+        // — canonical name (no `_rs`), suite version, provenance body.
         .stdout(
-            is_match(r"^deduplicate_bismark_rs \d+\.\d+\.\d+(-[\w.]+)? \(\S+/\S+\)\n$").unwrap(),
+            is_match(
+                r"^deduplicate_bismark \(Bismark Rust suite\) v\d+\.\d+\.\d+(-[\w.]+)? \(.+\)\n$",
+            )
+            .unwrap(),
         );
 }
 
@@ -27,7 +31,7 @@ fn short_version_flag_works_too() {
     cmd.arg("-V")
         .assert()
         .success()
-        .stdout(is_match(r"^deduplicate_bismark_rs ").unwrap());
+        .stdout(is_match(r"^deduplicate_bismark \(Bismark Rust suite\) ").unwrap());
 }
 
 #[test]

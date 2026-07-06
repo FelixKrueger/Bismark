@@ -225,11 +225,7 @@ mod tests {
     fn explicit_companion_applies_to_first_report_only() {
         // Perl's line-1256 reset: an explicit `--dedup_report` applies to report
         // #0; report #1 falls back to auto-detect (no match in cwd → None).
-        let cli = Cli::parse_from([
-            "bismark2report_rs",
-            "--dedup_report",
-            "explicit_companion.txt",
-        ]);
+        let cli = Cli::parse_from(["bismark2report", "--dedup_report", "explicit_companion.txt"]);
         let alns = vec![
             PathBuf::from("first_PE_report.txt"),
             PathBuf::from("second_PE_report.txt"),
@@ -244,7 +240,7 @@ mod tests {
 
     #[test]
     fn none_skips_a_companion() {
-        let cli = Cli::parse_from(["bismark2report_rs", "--mbias_report", "none"]);
+        let cli = Cli::parse_from(["bismark2report", "--mbias_report", "none"]);
         let jobs = resolve_companions(&cli, &[PathBuf::from("x_PE_report.txt")]).unwrap();
         assert_eq!(jobs[0].mbias, None);
     }

@@ -41,11 +41,5 @@ pub const BISMARK_VERSION: &str = "v0.25.1";
 /// `--version` banner. Reports the SUITE version (via `bismark_meta`, single
 /// source `rust/VERSION`); not part of the byte-identity gate.
 pub fn version_string() -> String {
-    format!(
-        "\n          Bismark - Bisulfite Mapper and Methylation Caller.\n\n          \
-         Bismark Genome Preparation (Rust port) Version: {}\n        \
-         Copyright 2010-25, Felix Krueger, Altos Bioinformatics\n\n               \
-         https://github.com/FelixKrueger/Bismark\n",
-        bismark_meta::SUITE_VERSION
-    )
+    bismark_meta::version_line("bismark_genome_preparation")
 }

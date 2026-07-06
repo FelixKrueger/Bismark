@@ -6,7 +6,7 @@
 //! reverse-complementing for reverse-strand reads, then compares the read-
 //! derived composition against the whole-genome composition (cached in
 //! `genomic_nucleotide_frequencies.txt`). The binary is installed as
-//! `bam2nuc_rs`.
+//! `bam2nuc`.
 //!
 //! Acceptance gate: **byte-identity** of `*.nucleotide_stats.txt` and
 //! `genomic_nucleotide_frequencies.txt` vs Perl `bam2nuc` v0.25.1. See
@@ -89,15 +89,10 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
     Ok(())
 }
 
-/// TG-style provenance string for the binary's `--version` output.
-///
-/// Format: `bam2nuc_rs <semver> (<os>/<arch>)`.
+/// One-line `--version` string for the binary (suite-wide shape via
+/// [`bismark_meta::version_line`]):
+/// `bam2nuc (Bismark Rust suite) v<semver> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "bam2nuc_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("bam2nuc")
 }

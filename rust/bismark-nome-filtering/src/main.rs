@@ -1,4 +1,4 @@
-//! Binary entry point for `NOMe_filtering_rs`.
+//! Binary entry point for `NOMe_filtering`.
 //!
 //! Parses the CLI via [`bismark_nome_filtering::cli::Cli`], handles `--version`
 //! (clap's auto-version is disabled so we can emit a custom provenance string),

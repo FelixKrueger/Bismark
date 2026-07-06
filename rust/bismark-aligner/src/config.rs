@@ -1073,7 +1073,7 @@ fn resolve_genome_and_positional(cli: &Cli) -> Result<(PathBuf, Vec<String>)> {
             let mut it = cli.positional.iter();
             let genome = it.next().ok_or_else(|| {
                 AlignerError::Validation(
-                    "No genome folder specified! USAGE: bismark_rs [options] <genome_folder> \
+                    "No genome folder specified! USAGE: bismark [options] <genome_folder> \
                      {-1 <mates1> -2 <mates2> | <singles>}"
                         .into(),
                 )
@@ -1243,7 +1243,7 @@ mod tests {
     use clap::Parser;
 
     fn cli_from(args: &[&str]) -> Cli {
-        let mut v = vec!["bismark_rs"];
+        let mut v = vec!["bismark"];
         v.extend_from_slice(args);
         Cli::parse_from(v)
     }

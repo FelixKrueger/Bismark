@@ -1,4 +1,4 @@
-//! Command-line interface for `bismark_methylation_extractor_rs`.
+//! Command-line interface for `bismark_methylation_extractor`.
 //!
 //! All 35 Perl flags from [SPEC §3](../../SPEC.md) are mapped to clap-derived
 //! fields below. [`Cli::validate`] returns a [`ResolvedConfig`] after
@@ -19,14 +19,19 @@ use clap::Parser;
 
 use crate::error::BismarkExtractorError;
 
+/// `--help` footer: the per-tool last-modified date (git commit date of this
+/// crate, embedded by `build.rs` via `bismark_meta::last_modified_date`).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to convert to a
 /// [`ResolvedConfig`] after parsing.
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark_methylation_extractor_rs",
+    name = "bismark_methylation_extractor",
     about = "Extract methylation calls from Bismark-aligned BAM/SAM/CRAM files",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Bismark BAM/SAM/CRAM file(s) to extract methylation calls from.
@@ -241,7 +246,7 @@ pub struct Cli {
     pub parallel: u32,
 
     // ─── Version (SPEC §3 row 11, Perl 967) ───
-    /// Print TG-style provenance string and exit.
+    /// Print version information and exit.
     #[arg(short = 'V', long = "version")]
     pub version: bool,
 }
@@ -555,7 +560,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["bismark_methylation_extractor_rs"];
+        let mut full = vec!["bismark_methylation_extractor"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

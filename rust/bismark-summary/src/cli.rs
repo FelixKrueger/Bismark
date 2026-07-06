@@ -1,4 +1,4 @@
-//! Command-line interface for `bismark2summary_rs`.
+//! Command-line interface for `bismark2summary`.
 //!
 //! [`Cli`] is the clap-derived parser. [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], applying Perl's basename/title defaults with Perl
@@ -26,14 +26,18 @@ pub const DEFAULT_BASENAME: &str = "bismark_summary_report";
 /// Default HTML report title (Perl `bismark2summary:211`).
 pub const DEFAULT_TITLE: &str = "Bismark Summary Report";
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to convert to a
 /// [`ResolvedConfig`] after parsing.
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark2summary_rs",
+    name = "bismark2summary",
     about = "Generate a project-level multi-sample summary (.txt + .html) from Bismark report files",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Optional explicit Bismark BAM file(s). If none are given, the current
@@ -119,7 +123,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["bismark2summary_rs"];
+        let mut full = vec!["bismark2summary"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

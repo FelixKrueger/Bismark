@@ -8,11 +8,15 @@
 
 use clap::Parser;
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark2report_rs",
+    name = "bismark2report",
     about = "Generate a graphical HTML report from a Bismark alignment report (+ optional companion reports).",
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Bismark alignment report (mandatory data source). If omitted, auto-detect

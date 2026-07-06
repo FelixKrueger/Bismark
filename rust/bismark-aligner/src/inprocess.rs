@@ -1,5 +1,5 @@
 //! In-process rammap [`SamStream`] — the load-bearing seam for byte-identical
-//! `bismark_rs --rammap` WITHOUT spawning the `rammap` subprocess (epic
+//! `bismark --rammap` WITHOUT spawning the `rammap` subprocess (epic
 //! `06152026_rammap-library-integration`, Phase 1).
 //!
 //! For each converted FastQ read, [`InProcessAlignerStream`] calls
