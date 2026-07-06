@@ -1,0 +1,45 @@
+name: GA candidate image (on-demand test build)
+
+# On-demand build+push of the Bismark Rust suite container to a NON-release
+# `:ga-candidate` GHCR tag — for pre-release validation (e.g. an nf-core/methylseq
+# drop-in run against the real canonical container) WITHOUT the irreversible
+# release.yml path (no crates.io publish, no GA tag, no `:latest`, no GH release).
+#
+# Single-arch linux/amd64 (matches the benchmark hosts) for a fast turnaround.
+# Safe to delete after use, or keep as a handy pre-release test utility.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+      - name: Suite version (from rust/VERSION)
+        id: ver
+        run: echo "v=$(tr -d '[:space:]' < rust/VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build + push :ga-candidate (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: |
+            BISMARK_SUITE_VERSION=${{ steps.ver.outputs.v }}
+          tags: ghcr.io/${{ env.IMAGE_NAME }}:ga-candidate
+          push: true
+      - run: echo "Pushed ghcr.io/${{ env.IMAGE_NAME }}:ga-candidate (suite ${{ steps.ver.outputs.v }})" >> "$GITHUB_STEP_SUMMARY"
