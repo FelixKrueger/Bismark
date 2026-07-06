@@ -125,7 +125,9 @@ fn version_flag_prints_provenance_and_exits_zero() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("bismark2bedGraph_rs"));
+        .stdout(predicate::str::contains(
+            "bismark2bedGraph (Bismark Rust suite) ",
+        ));
 }
 
 #[test]

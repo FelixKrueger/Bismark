@@ -4,7 +4,7 @@
 //! emits a genome-wide per-cytosine report (CpG by default; all-context with
 //! `--CX`). This crate is the second producer (after `bismark-bedgraph`,
 //! epic #797) that unblocks the extractor's Phase H sub-gate 2 byte-identity
-//! gate. The binary is installed as `coverage2cytosine_rs`.
+//! gate. The binary is installed as `coverage2cytosine`.
 //!
 //! See `plans/05292026_bismark-coverage2cytosine/SPEC.md` (rev 3) for the
 //! design contract and the byte-identity-vs-Perl-v0.25.1 discipline.
@@ -78,15 +78,10 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
     Ok(())
 }
 
-/// TG-style provenance string for the binary's `--version` output.
-///
-/// Format: `coverage2cytosine_rs <semver> (<os>/<arch>)`.
+/// One-line `--version` string for the binary (suite-wide shape via
+/// [`bismark_meta::version_line`]):
+/// `coverage2cytosine (Bismark Rust suite) v<semver> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "coverage2cytosine_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("coverage2cytosine")
 }

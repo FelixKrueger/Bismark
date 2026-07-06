@@ -1,4 +1,4 @@
-//! Command-line interface for `NOMe_filtering_rs`.
+//! Command-line interface for `NOMe_filtering`.
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], enforcing the SPEC §4 rules:
@@ -23,13 +23,17 @@ use clap::Parser;
 use crate::error::BismarkNomeError;
 use crate::filename::derive_manowar_name;
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to resolve.
 #[derive(Parser, Debug)]
 #[command(
-    name = "NOMe_filtering_rs",
+    name = "NOMe_filtering",
     about = "Per-read NOMe-Seq methylation filtering (standalone Bismark NOMe_filtering)",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Yacht input file (from `bismark_methylation_extractor --yacht`).
@@ -149,7 +153,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["NOMe_filtering_rs"];
+        let mut full = vec!["NOMe_filtering"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

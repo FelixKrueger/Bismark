@@ -3,7 +3,7 @@
 //! Consumes the methylation extractor's per-context call files
 //! (`CpG_OT_*`, `CpG_OB_*`, … and the CHG/CHH equivalents with `--CX`) and
 //! emits a sorted, gzip-compressed bedGraph + coverage file. Installed as
-//! `bismark2bedGraph_rs` during the v0.26 → v1.0 coexistence period.
+//! `bismark2bedGraph` during the v0.26 → v1.0 coexistence period.
 //!
 //! See `SPEC.md` (rev 1) for the binding contract — decompressed-content
 //! byte-identity to Perl v0.25.1, the argv-order chromosome ownership rule,
@@ -35,16 +35,12 @@ pub use error::BismarkBedgraphError;
 
 use std::path::Path;
 
-/// Returns a TG-style provenance string for the binary's `--version`
-/// output. Format: `bismark2bedGraph_rs <semver> (<os>/<arch>)`.
+/// One-line `--version` string for the binary (suite-wide shape via
+/// [`bismark_meta::version_line`]):
+/// `bismark2bedGraph (Bismark Rust suite) v<semver> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "bismark2bedGraph_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("bismark2bedGraph")
 }
 
 /// Run the full conversion for a validated [`ResolvedConfig`].

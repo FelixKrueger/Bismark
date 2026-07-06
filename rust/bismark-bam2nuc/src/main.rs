@@ -1,4 +1,4 @@
-//! Binary entry point for `bam2nuc_rs`.
+//! Binary entry point for `bam2nuc`.
 //!
 //! Parses [`Cli`], handles `--version`, validates into a [`ResolvedConfig`],
 //! then runs the nucleotide-coverage report.

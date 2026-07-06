@@ -1,4 +1,4 @@
-//! Binary entry point for `coverage2cytosine_rs`.
+//! Binary entry point for `coverage2cytosine`.
 //!
 //! Parses [`Cli`], handles `--version`, validates into a `ResolvedConfig`,
 //! then runs the genome-wide cytosine report (Phase B).

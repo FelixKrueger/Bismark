@@ -437,7 +437,9 @@ fn version_flag_prints_provenance() {
     let dir = TempDir::new().unwrap();
     run(&dir, &["--version"])
         .success()
-        .stdout(predicates::str::contains("methylation_consistency_rs"));
+        .stdout(predicates::str::starts_with(
+            "methylation_consistency (Bismark Rust suite) v",
+        ));
 }
 
 // ── Perl-vs-Rust byte identity (the §7 gate; auto-skips if tooling absent) ──

@@ -28,17 +28,11 @@ pub use report::FilterReport;
 use std::io::Write as _;
 use std::time::Instant;
 
-/// Version provenance string for the `--version` flag.
-///
-/// Format: `filter_non_conversion_rs <semver> (<os>/<arch>)`.
+/// The uniform suite `--version` one-liner via [`bismark_meta::version_line`]:
+/// `filter_non_conversion (Bismark Rust suite) v<version> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "filter_non_conversion_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("filter_non_conversion")
 }
 
 /// Run the filter over every configured input file, each independently

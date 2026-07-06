@@ -16,7 +16,7 @@ pub enum BismarkC2cError {
     /// No positional coverage infile was supplied. Perl prints help + exits
     /// (`:2059`); the Rust port surfaces a clear error instead.
     #[error(
-        "no coverage input file supplied — usage: coverage2cytosine_rs -o <out> -g <genome_dir> <input.bismark.cov[.gz]>"
+        "no coverage input file supplied — usage: coverage2cytosine -o <out> -g <genome_dir> <input.bismark.cov[.gz]>"
     )]
     MissingCovInput,
 

@@ -25,17 +25,11 @@ pub mod substr;
 use crate::cli::Cli;
 use crate::error::BismarkNomeError;
 
-/// TG-style provenance string for the binary's `--version` output.
-///
-/// Format: `NOMe_filtering_rs <semver> (<os>/<arch>)`.
+/// The uniform suite `--version` one-liner via [`bismark_meta::version_line`]:
+/// `NOMe_filtering (Bismark Rust suite) v<version> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "NOMe_filtering_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("NOMe_filtering")
 }
 
 /// End-to-end entry point: validate the CLI, create the output directory,
@@ -86,7 +80,10 @@ mod tests {
     #[test]
     fn version_string_has_binary_name_and_semver() {
         let v = version_string();
-        assert!(v.starts_with("NOMe_filtering_rs "), "got: {v}");
+        assert!(
+            v.starts_with("NOMe_filtering (Bismark Rust suite) v"),
+            "got: {v}"
+        );
         // Reports the SUITE version (single source: rust/VERSION), not the crate's own.
         assert!(v.contains(bismark_meta::SUITE_VERSION), "got: {v}");
         assert!(v.contains(std::env::consts::OS), "got: {v}");

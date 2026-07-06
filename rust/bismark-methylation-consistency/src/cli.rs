@@ -1,4 +1,4 @@
-//! Command-line interface for `methylation_consistency_rs`.
+//! Command-line interface for `methylation_consistency`.
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], applying defaults and the Perl threshold range checks.
@@ -16,13 +16,17 @@ use clap::Parser;
 
 use crate::error::MethConsError;
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] after parsing.
 #[derive(Parser, Debug)]
 #[command(
-    name = "methylation_consistency_rs",
+    name = "methylation_consistency",
     about = "Split a Bismark BAM into three BAMs by read-level methylation consistency",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Bismark BAM file(s) to split by read methylation consistency.
@@ -169,7 +173,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["methylation_consistency_rs"];
+        let mut full = vec!["methylation_consistency"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

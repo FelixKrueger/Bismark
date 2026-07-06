@@ -52,9 +52,8 @@
 //!
 //! ## Binary
 //!
-//! Installs as `bismark_methylation_extractor_rs` (with `_rs` suffix
-//! during the Perl → Rust coexistence period; matches the `bismark-dedup`
-//! precedent).
+//! Installs as `bismark_methylation_extractor` (the canonical name; the
+//! beta-era `_rs` suffix is retired at GA).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -93,17 +92,10 @@ pub use params::ExtractParams;
 // without replacing the byte-identity oracle.
 pub use pipeline::{extract_pe, extract_se};
 
-/// Returns a TG-style provenance string for the binary's `--version` output.
-///
-/// Format: `bismark_methylation_extractor_rs <semver> (<os>/<arch>)`.
-/// Matches the `bismark-dedup` precedent. Phase H will extend this with
-/// git commit hash + ISO-8601 build timestamp via `build.rs`.
+/// One-line `--version` string for the binary (suite-wide shape via
+/// [`bismark_meta::version_line`]):
+/// `bismark_methylation_extractor (Bismark Rust suite) v<semver> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "bismark_methylation_extractor_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("bismark_methylation_extractor")
 }

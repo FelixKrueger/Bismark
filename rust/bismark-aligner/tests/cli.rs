@@ -83,12 +83,13 @@ esac
 }
 
 #[test]
-fn version_flag_prints_banner() {
+fn version_flag_prints_uniform_suite_line() {
+    // Uniform suite one-liner: `bismark (Bismark Rust suite) v<version> (…)`.
     bin()
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Bismark Aligner (Rust port)"));
+        .stdout(predicate::str::contains("bismark (Bismark Rust suite) v"));
 }
 
 #[test]

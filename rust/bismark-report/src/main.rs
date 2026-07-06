@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark2report_rs`.
+//! Binary entry point for `bismark2report`.
 //!
 //! Exit codes: `0` success · `1` any [`ReportError`] · `2` clap parse error.
 //! `--help`/`--man`/`--version` all exit `0` (Perl's exit-1-on-help quirk is

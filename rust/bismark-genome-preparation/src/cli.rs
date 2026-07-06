@@ -34,11 +34,15 @@ impl Aligner {
     }
 }
 
+/// `--help` footer: the per-tool last-modified date (embedded by build.rs).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark_genome_preparation_rs",
+    name = "bismark_genome_preparation",
     about = "Prepare bisulfite-converted genome references (CT + GA) and index them.",
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Path to the folder containing the genome FASTA file(s). Mandatory

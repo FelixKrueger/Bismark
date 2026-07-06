@@ -28,7 +28,7 @@ pub enum BismarkBam2nucError {
     /// No input alignment file supplied AND not `--genomic_composition_only`
     /// (Perl prints help + exits; the Rust port surfaces a clear error).
     #[error(
-        "you need to provide one or more BAM files to continue — usage: bam2nuc_rs -g <genome_dir> <input.bam> [more.bam ...]"
+        "you need to provide one or more BAM files to continue — usage: bam2nuc -g <genome_dir> <input.bam> [more.bam ...]"
     )]
     MissingInput,
 

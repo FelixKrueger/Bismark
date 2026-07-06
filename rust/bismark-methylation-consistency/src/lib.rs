@@ -6,7 +6,7 @@
 //! consistently methylated (`>= upper_threshold`), consistently unmethylated
 //! (`<= lower_threshold`), and mixed — plus a `_consistency_report.txt`. Built
 //! on [`bismark_io`] for all BAM I/O (pure Rust, no `samtools` subprocess);
-//! the binary installs as `methylation_consistency_rs`.
+//! the binary installs as `methylation_consistency`.
 //!
 //! Acceptance contract: byte-identical to the Perl original for the report and
 //! (at the decompressed-record level) the three BAMs. See
@@ -30,15 +30,10 @@ pub use report::Tally;
 
 /// Provenance string for the binary's `--version` output.
 ///
-/// Format: `methylation_consistency_rs <semver> (<os>/<arch>)`. Mirrors
-/// `bismark-dedup`'s `version_string`; uses the crate version, **not** the
-/// Bismark `0.25.1` constant (which methcons never injects into any header).
+/// The uniform suite one-liner via [`bismark_meta::version_line`]:
+/// `methylation_consistency (Bismark Rust suite) v<version> (…)` — the SUITE
+/// version, **not** the Bismark `0.25.1` constant (methcons injects no header).
 #[must_use]
 pub fn version_string() -> String {
-    format!(
-        "methylation_consistency_rs {} ({}/{})",
-        bismark_meta::SUITE_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
+    bismark_meta::version_line("methylation_consistency")
 }

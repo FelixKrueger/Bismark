@@ -15,7 +15,12 @@ fn version_output_matches_provenance_regex() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(is_match(r"^coverage2cytosine_rs \d+\.\d+\.\d+(-[\w.]+)? \(\S+/\S+\)\n$").unwrap());
+        .stdout(
+            is_match(
+                r"^coverage2cytosine \(Bismark Rust suite\) v\d+\.\d+\.\d+(-[\w.]+)? \(.+\)\n$",
+            )
+            .unwrap(),
+        );
 }
 
 #[test]
@@ -25,7 +30,7 @@ fn short_version_flag_works_too() {
         .arg("-V")
         .assert()
         .success()
-        .stdout(is_match(r"^coverage2cytosine_rs ").unwrap());
+        .stdout(is_match(r"^coverage2cytosine \(Bismark Rust suite\) ").unwrap());
 }
 
 #[test]

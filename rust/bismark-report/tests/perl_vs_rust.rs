@@ -77,10 +77,10 @@ fn run_both_and_compare(work: &Path, label: &str) {
         .args(["--dir", "rust/", "--__test_timestamp", "0"])
         .current_dir(work)
         .output()
-        .expect("run bismark2report_rs");
+        .expect("run bismark2report");
     assert!(
         rust_status.status.success(),
-        "bismark2report_rs failed for `{label}`"
+        "bismark2report failed for `{label}`"
     );
 
     let mut html_count = 0;

@@ -17,6 +17,10 @@ path = "src/lib.rs"
 name = "bismark2report"
 path = "src/main.rs"
 
+[build-dependencies]
+# Build-time only: `last_modified_date()` for the `--help` footer.
+bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
+
 [dependencies]
 bismark-meta = { version = "1.0.0", path = "../bismark-meta" }
 clap = { version = "=4.5.30", features = ["derive"] }

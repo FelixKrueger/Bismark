@@ -1,4 +1,4 @@
-//! Command-line interface for `coverage2cytosine_rs`.
+//! Command-line interface for `coverage2cytosine`.
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], reproducing every Perl `process_commandline`
@@ -18,14 +18,19 @@ use clap::Parser;
 
 use crate::error::BismarkC2cError;
 
+/// `--help` footer: the per-tool last-modified date (git commit date of this
+/// crate, embedded by `build.rs` via `bismark_meta::last_modified_date`).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to convert to a
 /// [`ResolvedConfig`].
 #[derive(Parser, Debug)]
 #[command(
-    name = "coverage2cytosine_rs",
+    name = "coverage2cytosine",
     about = "Generate a genome-wide cytosine methylation report from a Bismark coverage file",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Bismark coverage file (`*.bismark.cov[.gz]`). 1-based, tab-separated.
@@ -289,7 +294,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["coverage2cytosine_rs"];
+        let mut full = vec!["coverage2cytosine"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

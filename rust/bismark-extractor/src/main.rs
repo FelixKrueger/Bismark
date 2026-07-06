@@ -1,4 +1,4 @@
-//! Binary entry point for `bismark_methylation_extractor_rs`.
+//! Binary entry point for `bismark_methylation_extractor`.
 //!
 //! Processes EACH input file independently (per-file outputs, no
 //! cross-file pooling — faithful to Perl's `foreach my $filename`), then

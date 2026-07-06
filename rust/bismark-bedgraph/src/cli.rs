@@ -1,4 +1,4 @@
-//! Command-line interface for `bismark2bedGraph_rs`.
+//! Command-line interface for `bismark2bedGraph`.
 //!
 //! [`Cli`] is the clap-derived parser; [`Cli::validate`] resolves it into a
 //! [`ResolvedConfig`], rejecting unsupported / conflicting flag combos with
@@ -24,13 +24,18 @@ use clap::Parser;
 use crate::error::BismarkBedgraphError;
 use crate::filename;
 
+/// `--help` footer: the per-tool last-modified date (git commit date of this
+/// crate, embedded by `build.rs` via `bismark_meta::last_modified_date`).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] after parsing.
 #[derive(Parser, Debug)]
 #[command(
-    name = "bismark2bedGraph_rs",
+    name = "bismark2bedGraph",
     about = "Generate a sorted bedGraph + coverage file from Bismark methylation-extractor output",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Methylation-extractor call file(s) (`.txt` or `.txt.gz`). Default
@@ -101,7 +106,7 @@ pub struct Cli {
     pub man: bool,
 
     /// Print version information and exit.
-    #[arg(long = "version")]
+    #[arg(short = 'V', long = "version")]
     pub version: bool,
 }
 
@@ -240,7 +245,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["bismark2bedGraph_rs"];
+        let mut full = vec!["bismark2bedGraph"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }

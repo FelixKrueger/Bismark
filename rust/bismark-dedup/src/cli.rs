@@ -1,4 +1,4 @@
-//! Command-line interface for `deduplicate_bismark_rs`.
+//! Command-line interface for `deduplicate_bismark`.
 //!
 //! [`Cli`] is the clap-derived parser. [`Cli::validate`] resolves the
 //! parsed arguments into a [`ResolvedConfig`] and rejects unsupported /
@@ -37,14 +37,19 @@ use clap::Parser;
 
 use crate::error::BismarkDedupError;
 
+/// `--help` footer: the per-tool last-modified date (git commit date of this
+/// crate, embedded by `build.rs` via `bismark_meta::last_modified_date`).
+const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
+
 /// Parsed command-line arguments. Use [`Cli::validate`] to convert to a
 /// [`ResolvedConfig`] after parsing.
 #[derive(Parser, Debug)]
 #[command(
-    name = "deduplicate_bismark_rs",
+    name = "deduplicate_bismark",
     about = "Remove PCR duplicate alignments from Bismark BAM/SAM/CRAM files",
     long_about = None,
-    disable_version_flag = true
+    disable_version_flag = true,
+    after_help = HELP_FOOTER
 )]
 pub struct Cli {
     /// Bismark BAM/SAM/CRAM file(s) to deduplicate.
@@ -250,7 +255,7 @@ mod tests {
     use clap::CommandFactory;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        let mut full = vec!["deduplicate_bismark_rs"];
+        let mut full = vec!["deduplicate_bismark"];
         full.extend(args.iter().copied());
         Cli::try_parse_from(full)
     }
