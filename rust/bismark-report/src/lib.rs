@@ -37,6 +37,41 @@ pub fn version_string() -> String {
     bismark_meta::version_line("bismark2report")
 }
 
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `bismark2report` bin (so `cargo install bismark` and `cargo
+/// install bismark-report` behave identically). Parses the CLI, handles
+/// `--version` (clap's auto-version is disabled) and `--man` (aliases `--help`,
+/// exit 0), then runs. Exit: `0` ok · `1` [`ReportError`] (clap handles `2`
+/// parse errors). The `#[global_allocator]`, if any, stays in each binary crate
+/// root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use crate::cli::Cli;
+    use clap::{CommandFactory, Parser};
+    let cli = Cli::parse();
+
+    // `--version` handled manually (clap auto-version disabled) so we print the
+    // Bismark provenance banner.
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+    // `--man` aliases `--help` (Perl behavior): print the long help.
+    if cli.man {
+        let _ = Cli::command().print_long_help();
+        println!();
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    match run(&cli) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 /// Top-level: resolve the output dir, the alignment report(s) and their
 /// companions, then build + write one HTML per alignment report.
 pub fn run(cli: &cli::Cli) -> Result<(), ReportError> {

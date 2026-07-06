@@ -104,6 +104,33 @@ pub fn version_string() -> String {
     bismark_meta::version_line("bismark")
 }
 
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `bismark` bin (so `cargo install bismark` and `cargo install
+/// bismark-aligner` behave identically). Captures the verbatim argv for the
+/// `@PG` `CL:` string BEFORE parsing, handles `--version`, then runs. Exit: `0`
+/// ok · `1` [`AlignerError`] (clap handles `2` parse errors). The
+/// `#[global_allocator]` stays in each binary crate root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    // Verbatim argv (program name excluded) = the `@PG` `CL:` string (Perl
+    // captures `join(" ",@ARGV)` at startup).
+    let raw: Vec<String> = std::env::args().collect();
+    let command_line = raw.get(1..).unwrap_or(&[]).join(" ");
+    let cli = crate::cli::Cli::parse_from(&raw);
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+    match run(&cli, command_line) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 /// Never-silent notice for the HISAT2 `--multicore N` → `-p N` semantic remap (Approach
 /// B-faithful). Pure so it is unit-testable; emitted by `run` when the remap fires.
 fn hisat2_multicore_remap_notice(n: u32) -> String {

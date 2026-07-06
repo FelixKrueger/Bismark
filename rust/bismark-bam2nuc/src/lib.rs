@@ -96,3 +96,25 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
 pub fn version_string() -> String {
     bismark_meta::version_line("bam2nuc")
 }
+
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `bam2nuc` bin (so `cargo install bismark` and `cargo install
+/// bismark-bam2nuc` behave identically). Parses the CLI, handles `--version`,
+/// validates, and runs. Exit: `0` ok · `1` error (clap handles `2` parse errors
+/// before this). The `#[global_allocator]` stays in each binary crate root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = Cli::parse();
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+    match cli.validate().and_then(|config| run(&config)) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}

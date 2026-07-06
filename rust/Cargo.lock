@@ -149,6 +149,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bismark"
+version = "2.0.0"
+dependencies = [
+ "bismark-aligner",
+ "bismark-bam2nuc",
+ "bismark-bedgraph",
+ "bismark-coverage2cytosine",
+ "bismark-dedup",
+ "bismark-extractor",
+ "bismark-filter-nonconversion",
+ "bismark-genome-preparation",
+ "bismark-methylation-consistency",
+ "bismark-nome-filtering",
+ "bismark-report",
+ "bismark-summary",
+ "mimalloc",
+]
+
+[[package]]
 name = "bismark-aligner"
 version = "1.0.0"
 dependencies = [

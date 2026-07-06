@@ -43,6 +43,41 @@ pub fn version_string() -> String {
     bismark_meta::version_line("bismark2bedGraph")
 }
 
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `bismark2bedGraph` bin (so `cargo install bismark` and
+/// `cargo install bismark-bedgraph` behave identically). Parses the CLI,
+/// handles `--version` / `--man` short-circuits, validates, and runs. Exit:
+/// `0` ok · `1` error (clap handles `2` parse errors before this).
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::{CommandFactory, Parser};
+    let cli = Cli::parse();
+
+    // `--version` is handled here (clap's auto-version is disabled in
+    // src/cli.rs so we can emit our custom provenance string).
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    // `--man` is Perl's alias for the long help text.
+    if cli.man {
+        let mut cmd = Cli::command();
+        // print_long_help writes to stdout; ignore the unlikely write error.
+        let _ = cmd.print_long_help();
+        println!();
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    match cli.validate().and_then(|config| run(&config)) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 /// Run the full conversion for a validated [`ResolvedConfig`].
 ///
 /// Steps:

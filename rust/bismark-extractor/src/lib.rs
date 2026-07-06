@@ -92,10 +92,101 @@ pub use params::ExtractParams;
 // without replacing the byte-identity oracle.
 pub use pipeline::{extract_pe, extract_se};
 
+use std::path::Path;
+
+use bismark_io::{detect_paired_from_header, open_reader_without_sort_check};
+
 /// One-line `--version` string for the binary (suite-wide shape via
 /// [`bismark_meta::version_line`]):
 /// `bismark_methylation_extractor (Bismark Rust suite) v<semver> (<hash> — <os>/<arch> — built <ts>)`.
 #[must_use]
 pub fn version_string() -> String {
     bismark_meta::version_line("bismark_methylation_extractor")
+}
+
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `bismark_methylation_extractor` bin (so `cargo install bismark`
+/// and `cargo install bismark-extractor` behave identically). Parses the CLI,
+/// handles `--version`, then dispatches to [`run`]. Exit: `0` ok · `1` error
+/// (clap handles `2` parse errors before this). The `#[global_allocator]` stays
+/// in each binary crate root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = Cli::parse();
+
+    // `--version` / `-V` handled here (clap auto-version disabled in cli.rs
+    // so we can emit the TG-style provenance string).
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    match run(cli) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
+    let config = cli.validate()?;
+
+    // Multiple input files (v1.x): process EACH file independently, in
+    // command-line order, with full per-file state — faithful to Perl's
+    // `foreach my $filename (@filenames)` loop (no cross-file pooling; each
+    // file's split files / M-bias / splitting report / bedGraph / cytosine
+    // report are named from that file's basename). Fail-fast: the first
+    // file that errors aborts the run (propagate via `?`), matching Perl's
+    // `die`; files already completed keep their outputs. The empty-file-list
+    // case is handled earlier by `validate()` (`NoInputFiles`), so this loop
+    // always runs at least once.
+    for input in &config.files {
+        process_one_file(input, &config)?;
+    }
+    Ok(())
+}
+
+/// Extract one input file end-to-end. Dispatches on `paired_mode`:
+///   - `SingleEnd` → `extract_se_parallel` (accepts coordinate-sorted input).
+///   - `PairedEnd` → `extract_pe_parallel` (rejects coordinate-sorted input).
+///   - `AutoDetect` → probe the `@PG ID:Bismark` header (without the sort
+///     check, so a coordinate-sorted SE file can be inspected), then
+///     dispatch. The PE branch re-opens WITH the sort check, so a
+///     coordinate-sorted PE file is still rejected with `UnsortedInput`.
+///
+/// The parallel pipeline is byte-identical to `--parallel 1` for any N by
+/// construction (SPEC §9). The legacy single-threaded `extract_se` /
+/// `extract_pe` remain the byte-identity reference for the test suite.
+fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
+    match config.paired_mode {
+        PairedMode::SingleEnd => extract_se_parallel(input, config),
+        PairedMode::PairedEnd => extract_pe_parallel(input, config),
+        PairedMode::AutoDetect => {
+            // Open reader once for header inspection, WITHOUT the
+            // coordinate-sort check (detection must work on a coord-sorted
+            // SE file). The probe is dropped before extract_*_parallel
+            // re-opens the file — OS caches the header bytes.
+            let probe = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
+            let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
+                BismarkExtractorError::AutoDetectFailed {
+                    message: format!(
+                        "no `@PG` line with `ID:Bismark*` found in {}'s header; \
+                         pass `--single-end` or `--paired-end` explicitly",
+                        input.display()
+                    ),
+                }
+            })?;
+            drop(probe);
+            if is_paired {
+                // PE re-opens with the checking constructor → coordinate-sorted
+                // PE input is rejected here with `UnsortedInput`.
+                extract_pe_parallel(input, config)
+            } else {
+                extract_se_parallel(input, config)
+            }
+        }
+    }
 }

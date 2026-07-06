@@ -43,3 +43,36 @@ pub const BISMARK_VERSION: &str = "v0.25.1";
 pub fn version_string() -> String {
     bismark_meta::version_line("bismark_genome_preparation")
 }
+
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `bismark_genome_preparation` bin (so `cargo install bismark`
+/// and `cargo install bismark-genome-preparation` behave identically). Parses
+/// the CLI, handles `--version` / `--man` (Perl alias for `--help`), then
+/// dispatches to [`run`]. Exit: `0` ok · `1` error (clap handles `2` parse
+/// errors before this).
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::{CommandFactory, Parser};
+    let cli = crate::cli::Cli::parse();
+
+    // `--version` / `-V` handled manually (clap auto-version disabled) so we
+    // can print the Bismark provenance banner.
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+    // `--man` aliases `--help` (Perl behavior): print the long help.
+    if cli.man {
+        let _ = crate::cli::Cli::command().print_long_help();
+        println!();
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    match run(cli) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}

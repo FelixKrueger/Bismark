@@ -1,0 +1,36 @@
+[package]
+name = "bismark"
+version = "2.0.0"
+description = "The Bismark bisulfite-sequencing suite (Rust) — installs all tools: the bismark aligner, deduplicate_bismark, bismark_methylation_extractor, bismark2bedGraph, coverage2cytosine, bismark_genome_preparation, bam2nuc, NOMe_filtering, filter_non_conversion, methylation_consistency, bismark2report, bismark2summary."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["bisulfite", "methylation", "bismark", "sequencing", "bioinformatics"]
+categories = ["science::bioinformatics", "command-line-utilities"]
+
+# Meta / batteries-included crate: `cargo install bismark` builds every suite
+# binary. Each `src/bin/<tool>.rs` is a thin wrapper over that tool crate's
+# `run_main()` — byte-identical to installing the individual crate. Exact-pinned
+# to the coordinated GA (2.0.0) suite versions.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bismark-aligner = { version = "=1.0.0", path = "../bismark-aligner" }
+bismark-dedup = { version = "=1.2.1", path = "../bismark-dedup" }
+bismark-extractor = { version = "=1.0.0", path = "../bismark-extractor" }
+bismark-bedgraph = { version = "=1.0.0", path = "../bismark-bedgraph" }
+bismark-coverage2cytosine = { version = "=1.0.0", path = "../bismark-coverage2cytosine" }
+bismark-genome-preparation = { version = "=1.0.0", path = "../bismark-genome-preparation" }
+bismark-bam2nuc = { version = "=1.0.0", path = "../bismark-bam2nuc" }
+bismark-nome-filtering = { version = "=1.0.0", path = "../bismark-nome-filtering" }
+bismark-filter-nonconversion = { version = "=1.0.0", path = "../bismark-filter-nonconversion" }
+bismark-methylation-consistency = { version = "=1.0.0", path = "../bismark-methylation-consistency" }
+bismark-report = { version = "=1.0.0", path = "../bismark-report" }
+bismark-summary = { version = "=1.0.0", path = "../bismark-summary" }
+# Same multithreaded allocator the standalone tool binaries use (byte-inert;
+# each bin sets its own `#[global_allocator]`).
+mimalloc = "=0.1.52"

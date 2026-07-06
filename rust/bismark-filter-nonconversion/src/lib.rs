@@ -35,6 +35,53 @@ pub fn version_string() -> String {
     bismark_meta::version_line("filter_non_conversion")
 }
 
+/// Binary entry point — shared by this crate's own `main.rs` and the `bismark`
+/// meta-crate's `filter_non_conversion` bin (so `cargo install bismark` and
+/// `cargo install bismark-filter-nonconversion` behave identically). Parses the
+/// CLI, handles `--version` (clap's auto-version is disabled in `cli.rs`),
+/// enforces the no-files check (Perl's `@ARGV`-empty at :513, before option
+/// validation), then validates and runs. Error prints carry no `error:` prefix
+/// (faithful to Perl). Exit: `0` ok · `1` [`BismarkFilterError`] or no input
+/// files (clap handles `2` parse errors). The `#[global_allocator]` stays in the
+/// binary crate root.
+#[must_use]
+pub fn run_main() -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = Cli::parse();
+
+    // `--version` handled here (clap auto-version disabled in cli.rs).
+    if cli.version {
+        println!("{}", version_string());
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    // No-files check precedes option validation (Perl `@ARGV`-empty at line
+    // 513, before the percentage/threshold checks) — so a bad option value
+    // with no files yields the no-files message, not the option error.
+    if cli.files.is_empty() {
+        eprintln!(
+            "Please provide one or more Bismark output files for non-bisulfite conversion filtering"
+        );
+        return std::process::ExitCode::from(1);
+    }
+
+    let config = match cli.validate() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return std::process::ExitCode::from(1);
+        }
+    };
+
+    match run(&config) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 /// Run the filter over every configured input file, each independently
 /// (Perl's `foreach my $file (@ARGV)` loop — there is no `--multiple`).
 ///
