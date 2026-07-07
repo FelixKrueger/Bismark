@@ -93,8 +93,21 @@ fn version_flag_prints_uniform_suite_line() {
 }
 
 #[test]
-fn no_genome_errors() {
+fn no_args_shows_multicall_help() {
+    // Phase 3 (D7): the `bismark` bin is the multicall ROOT, so bare `bismark` with
+    // no args prints the composed suite help (exit 0) — NOT the aligner's "no genome"
+    // error. That error path is re-homed to `bismark align` (see below).
     bin()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SUBCOMMANDS"));
+}
+
+#[test]
+fn align_no_genome_errors() {
+    // The aligner's no-genome error, via the explicit `bismark align` subcommand.
+    bin()
+        .arg("align")
         .assert()
         .failure()
         .code(1)

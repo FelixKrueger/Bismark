@@ -62,8 +62,19 @@ pub fn version_string() -> String {
 /// `#[global_allocator]`, if any, stays in each binary crate root.
 #[must_use]
 pub fn run_main() -> std::process::ExitCode {
+    run_from_args(std::env::args_os())
+}
+
+/// Same as [`run_main`] but parses from an explicit argv — used by the multicall
+/// `bismark <subcommand>` dispatcher (argv reconstructed with the subcommand token
+/// stripped and `argv[0]` pinned to `bismark <sub>`).
+pub fn run_from_args<I>(argv: I) -> std::process::ExitCode
+where
+    I: IntoIterator,
+    I::Item: Into<std::ffi::OsString> + Clone,
+{
     use clap::{CommandFactory, Parser};
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv);
 
     // `--version` / `--man` handled here (clap auto-version is disabled so we
     // can emit the custom provenance string; `--man` aliases `--help`).
