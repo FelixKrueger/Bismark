@@ -1,0 +1,582 @@
+//! #1025 Phase 2 + Phase 3, Arc Institute BINSEQ (`.vbq` / `.cbq`) read input.
+//!
+//! Bismark has no native BINSEQ input. This module transcodes a BINSEQ file into a
+//! temporary FASTQ that byte-matches what `bqtools decode` would emit, so the
+//! **existing, byte-frozen** bisulfite-convert -> align -> merge pipeline consumes
+//! it unchanged. The contract is therefore "a BINSEQ run is identical to the
+//! equivalent `bqtools decode` -> FASTQ run" (the convert path's Perl byte-identity
+//! is inherited transitively, exactly as for the uBAM backend in [`crate::aligner::ubam`]).
+//!
+//! ## Scope: VBQ (Phase 2) + CBQ (Phase 3); BQ rejected
+//! `.vbq` (verbose) and `.cbq` (columnar) are decoded. `.bq` is detected (so the input
+//! is never silently mis-fed to the FASTQ parser) but **rejected fail-loud**: BQ is
+//! 2-bit fixed-length with **no quality and no names**, it cannot be faithfully aligned
+//! (Bismark needs real read names for output QNAMEs + real qualities), so it is rejected
+//! wholesale (D2).
+//!
+//! ## Reader choice (load-bearing, plan R1)
+//! Both variants decode via a **concrete, single-threaded, file-order** reader: VBQ via
+//! `vbq::MmapReader` (`read_block_into` + `block.iter()`), CBQ via the streaming
+//! `cbq::Reader` (`read_block` + `block.iter_records`). The unified `binseq::BinseqReader`
+//! enum exposes ONLY the parallel `process_parallel` path, which fans blocks across
+//! threads and flushes first-come-first-served -> nondeterministic FASTQ order (gate
+//! failure) and independent R1/R2 reordering (every paired mate mis-pairs). A serial
+//! reader avoids both. CBQ's own `MmapReader` is used only for the cheap header peek
+//! (its block iteration is crate-private), so the streaming `cbq::Reader` drives the
+//! actual in-order decode.
+//!
+//! ## Quality / header reject (file-level, plan R2)
+//! D2 (reject quality-less / name-less BINSEQ) is enforced at the **file header**
+//! level, NOT per record. The crate **masks** the absence of either: a missing quality
+//! column is back-filled with `DEFAULT_QUALITY_SCORE` (`?`) so `squal()` is non-empty,
+//! and a missing header is synthesized to the record's numeric index so `sheader()` is
+//! never empty. A per-record emptiness check would therefore silently emit `?`-quality /
+//! index-named FASTQ; the file-header flags are the only faithful signal. VBQ exposes
+//! the flags as public `FileHeader` fields (`qual`/`headers`); CBQ exposes them as
+//! methods (`has_qualities()`/`has_headers()`).
+//!
+//! ## `bqtools decode` parity (bqtools 0.5.7, pinned from source)
+//! `bqtools`'s `write_fastq_parts` emits exactly `@<header>\n<seq>\n+\n<qual>\n`.
+//! The stored header carries **no** leading `@` (it is the record's `id()`); bqtools
+//! prepends one, so this decoder prepends `@` rather than storing it. Quality is the
+//! stored bytes **verbatim**, raw ASCII, because binseq stores `record.qual()` as-is,
+//! so there is NO phred offset to add (unlike the uBAM path). The separator is a bare
+//! `+` line. Because both `bqtools decode` and this decoder call the SAME `binseq`
+//! crate to decode the 2-bit/4-bit sequence, the decoded *values* are identical by
+//! construction; only this line formatting must match. The contract is scoped to
+//! quality+header-bearing files (we reject otherwise, where `bqtools decode` would
+//! `?`-fill, a deliberate, never-silent divergence, plan R3).
+
+use std::path::Path;
+
+use crate::aligner::error::AlignerError;
+use crate::aligner::error::Result;
+
+/// Which BINSEQ variant an input path's extension names. Classified by extension
+/// only (plan R4, the crate has no magic-byte API; `.vbq`/`.cbq`/`.bq` are disjoint
+/// from BAM magic and from FASTQ/FASTA, so the normal path is never misfired on).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BinseqExt {
+    Vbq,
+    Cbq,
+    Bq,
+}
+
+/// Classify a path by its final extension. `None` for anything that is not BINSEQ.
+fn binseq_ext(path: &Path) -> Option<BinseqExt> {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("vbq") => Some(BinseqExt::Vbq),
+        Some("cbq") => Some(BinseqExt::Cbq),
+        Some("bq") => Some(BinseqExt::Bq),
+        _ => None,
+    }
+}
+
+/// Is `path` a BINSEQ input? Extension-based (plan R4). Returns `true` for
+/// `.vbq`/`.cbq`/`.bq`. This is **feature-independent** (always compiled) so a build
+/// WITHOUT the `binseq-input` feature still routes a `.vbq`/`.cbq` into this backend and
+/// rejects it never-silently, rather than mis-feeding it to the FASTQ parser.
+pub fn is_binseq_input(path: &Path) -> bool {
+    binseq_ext(path).is_some()
+}
+
+/// BQ reject (D2): BQ has no per-read quality and no names → cannot be aligned.
+fn reject_bq() -> AlignerError {
+    AlignerError::Validation(
+        "BQ (.bq) BINSEQ input carries no per-read quality scores and no read names, so it \
+         cannot be faithfully aligned by Bismark (which needs real qualities and output \
+         QNAMEs). Re-encode as VBQ preserving quality + headers (`bqtools encode`)."
+            .into(),
+    )
+}
+
+/// Single- vs paired-end (peek the file header; a paired input is auto-split into
+/// mates by the shared resolver). `.bq` fails loud here (D2); a `.vbq`/`.cbq` in a
+/// build without the `binseq-input` feature fails loud too.
+pub fn is_paired(path: &Path) -> Result<bool> {
+    match binseq_ext(path) {
+        Some(BinseqExt::Vbq) => vbq_impl::vbq_is_paired(path),
+        Some(BinseqExt::Cbq) => cbq_impl::cbq_is_paired(path),
+        Some(BinseqExt::Bq) => Err(reject_bq()),
+        // Unreachable in practice: only called after `is_binseq_input` returned true.
+        None => Err(AlignerError::Validation(format!(
+            "'{}' is not a recognised BINSEQ file (.vbq/.cbq/.bq)",
+            path.display()
+        ))),
+    }
+}
+
+/// Transcode a single-end BINSEQ input → one temp FASTQ named `<stem>.fastq`
+/// (plan R6: `Path::file_stem` strips the `.vbq`/`.cbq` so the downstream output stem is
+/// what the equivalent `bqtools decode > <stem>.fastq` run would produce).
+pub fn transcode_binseq_to_fastq_se(path: &Path, temp_dir: &Path) -> Result<std::path::PathBuf> {
+    match binseq_ext(path) {
+        Some(BinseqExt::Vbq) => vbq_impl::vbq_transcode_se(path, temp_dir),
+        Some(BinseqExt::Cbq) => cbq_impl::cbq_transcode_se(path, temp_dir),
+        Some(BinseqExt::Bq) => Err(reject_bq()),
+        None => Err(AlignerError::Validation(format!(
+            "'{}' is not a recognised BINSEQ file (.vbq/.cbq/.bq)",
+            path.display()
+        ))),
+    }
+}
+
+/// Transcode a paired-end BINSEQ input → (R1, R2) temp FASTQs `<stem>_1/2.fastq`.
+/// One BINSEQ record carries BOTH mates (plan R5), so there is no collation step: the
+/// primary sequence → R1, the extended sequence → R2.
+pub fn transcode_binseq_to_fastq_pe(
+    path: &Path,
+    temp_dir: &Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    match binseq_ext(path) {
+        Some(BinseqExt::Vbq) => vbq_impl::vbq_transcode_pe(path, temp_dir),
+        Some(BinseqExt::Cbq) => cbq_impl::cbq_transcode_pe(path, temp_dir),
+        Some(BinseqExt::Bq) => Err(reject_bq()),
+        None => Err(AlignerError::Validation(format!(
+            "'{}' is not a recognised BINSEQ file (.vbq/.cbq/.bq)",
+            path.display()
+        ))),
+    }
+}
+
+// ===========================================================================
+// Shared helpers (feature ON), format-agnostic, used by both VBQ and CBQ.
+// ===========================================================================
+#[cfg(feature = "binseq-input")]
+mod common {
+    use std::io::Write;
+    use std::path::Path;
+
+    use crate::aligner::error::{AlignerError, Result};
+
+    /// Map a `binseq` crate error into an `AlignerError` (kept as a closure-friendly
+    /// helper so `error.rs` never has to take a feature-gated `binseq` dependency).
+    pub fn binseq_err(path: &Path, e: &binseq::Error) -> AlignerError {
+        AlignerError::Validation(format!(
+            "failed to read BINSEQ file '{}': {e}",
+            path.display()
+        ))
+    }
+
+    /// File stem for naming the temp FASTQ (basename minus the final `.vbq`/`.cbq`).
+    pub fn file_stem(path: &Path) -> String {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("reads")
+            .to_string()
+    }
+
+    /// Append one record's 4 FASTQ lines, matching `bqtools decode`'s
+    /// `write_fastq_parts`: `@<header>\n<seq>\n+\n<qual>\n`. The header is stored
+    /// WITHOUT a leading `@` (we prepend it); quality is the stored bytes verbatim
+    /// (raw ASCII, no phred offset). `bqtools` slices quality to `seq.len()`; with the
+    /// file-level quality guarantee, `qual.len() == seq.len()`, so the slice is a no-op
+    /// (kept defensively so a malformed equal-length-but-padded buffer can't overrun).
+    pub fn write_fastq_record<W: Write>(
+        w: &mut W,
+        header: &[u8],
+        seq: &[u8],
+        qual: &[u8],
+    ) -> Result<()> {
+        w.write_all(b"@")?;
+        w.write_all(header)?;
+        w.write_all(b"\n")?;
+        w.write_all(seq)?;
+        w.write_all(b"\n+\n")?;
+        w.write_all(&qual[..seq.len()])?;
+        w.write_all(b"\n")?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn write_fastq_record_matches_bqtools_layout() {
+            // `@<header>\n<seq>\n+\n<qual>\n`; header WITHOUT a stored `@`; qual verbatim.
+            let mut out = Vec::new();
+            write_fastq_record(&mut out, b"read1 comment", b"ACGTN", b"IIIII").unwrap();
+            assert_eq!(out, b"@read1 comment\nACGTN\n+\nIIIII\n");
+        }
+
+        #[test]
+        fn write_fastq_record_quality_is_verbatim_not_phred_shifted() {
+            // Unlike the uBAM path (phred +33), BINSEQ stores raw ASCII quality, as-is.
+            let mut out = Vec::new();
+            write_fastq_record(&mut out, b"r", b"AC", b"#%").unwrap();
+            assert_eq!(out, b"@r\nAC\n+\n#%\n");
+        }
+    }
+}
+
+// ===========================================================================
+// VBQ decode, feature ON: real `binseq`-crate decode.
+// ===========================================================================
+#[cfg(feature = "binseq-input")]
+mod vbq_impl {
+    use std::fs::File;
+    use std::io::{BufWriter, Write};
+    use std::path::{Path, PathBuf};
+
+    use binseq::BinseqRecord;
+    use binseq::vbq::{FileHeader, MmapReader};
+
+    use super::common::{binseq_err, file_stem, write_fastq_record};
+    use crate::aligner::error::{AlignerError, Result};
+
+    /// D2 (plan R2): reject a VBQ that lacks per-read quality or per-read headers, at
+    /// the FILE-HEADER level (the crate masks per-record absence, so per-record checks
+    /// would silently pass). Both are required for a faithful FASTQ reconstruction.
+    fn require_quality_and_headers(header: &FileHeader, path: &Path) -> Result<()> {
+        if !header.qual {
+            return Err(AlignerError::Validation(format!(
+                "BINSEQ input '{}' carries no per-read quality scores, so it cannot be \
+                 faithfully aligned by Bismark. Re-encode it preserving quality (and headers) \
+                 with `bqtools encode`.",
+                path.display()
+            )));
+        }
+        if !header.headers {
+            return Err(AlignerError::Validation(format!(
+                "BINSEQ input '{}' carries no per-read names/headers, so the aligned reads would \
+                 have synthesized numeric QNAMEs rather than their original names. Re-encode it \
+                 preserving headers (and quality) with `bqtools encode`.",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// `true` iff the VBQ file header marks records paired (`xlen > 0` per record).
+    pub fn vbq_is_paired(path: &Path) -> Result<bool> {
+        let reader = MmapReader::new(path).map_err(|e| binseq_err(path, &e))?;
+        Ok(reader.is_paired())
+    }
+
+    /// Transcode a single-end VBQ into a temp FASTQ. Deterministic file order: blocks
+    /// are read sequentially and each block iterates in stored order.
+    pub fn vbq_transcode_se(path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        std::fs::create_dir_all(temp_dir)?;
+        let out_path = temp_dir.join(format!("{}.fastq", file_stem(path)));
+        let mut reader = MmapReader::new(path).map_err(|e| binseq_err(path, &e))?;
+        require_quality_and_headers(&reader.header(), path)?;
+
+        let mut w = BufWriter::new(File::create(&out_path)?);
+        let mut block = reader.new_block();
+        let mut seqbuf: Vec<u8> = Vec::new();
+        while reader
+            .read_block_into(&mut block)
+            .map_err(|e| binseq_err(path, &e))?
+        {
+            for rec in block.iter() {
+                // `decode_s` APPENDS the decoded bases; clear the reused buffer first.
+                seqbuf.clear();
+                rec.decode_s(&mut seqbuf)
+                    .map_err(|e| binseq_err(path, &e))?;
+                write_fastq_record(&mut w, rec.sheader(), &seqbuf, rec.squal())?;
+            }
+        }
+        w.flush()?;
+        Ok(out_path)
+    }
+
+    /// Transcode a paired-end VBQ into (R1, R2) temp FASTQs. One record carries both
+    /// mates (plan R5): primary (`decode_s`/`sheader`/`squal`) → R1, extended
+    /// (`decode_x`/`xheader`/`xqual`) → R2. No collation / desync logic is needed.
+    pub fn vbq_transcode_pe(path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        std::fs::create_dir_all(temp_dir)?;
+        let stem = file_stem(path);
+        let p1 = temp_dir.join(format!("{stem}_1.fastq"));
+        let p2 = temp_dir.join(format!("{stem}_2.fastq"));
+        let mut reader = MmapReader::new(path).map_err(|e| binseq_err(path, &e))?;
+        require_quality_and_headers(&reader.header(), path)?;
+
+        let mut w1 = BufWriter::new(File::create(&p1)?);
+        let mut w2 = BufWriter::new(File::create(&p2)?);
+        let mut block = reader.new_block();
+        let mut sbuf: Vec<u8> = Vec::new();
+        let mut xbuf: Vec<u8> = Vec::new();
+        while reader
+            .read_block_into(&mut block)
+            .map_err(|e| binseq_err(path, &e))?
+        {
+            for rec in block.iter() {
+                // Deliberate divergence from `bqtools decode`, which silently skips just the
+                // R2 write for a mate-less record (`if !xbuf.is_empty()`). For an aligner that
+                // would desync R1/R2, every following read mis-pairs, so we fail loud
+                // instead (never-silent). A well-formed paired VBQ never hits this.
+                if !rec.is_paired() {
+                    return Err(AlignerError::Validation(format!(
+                        "paired BINSEQ input '{}' has a record with no second mate (xlen == 0); \
+                         the file is malformed for paired-end use.",
+                        path.display()
+                    )));
+                }
+                sbuf.clear();
+                xbuf.clear();
+                rec.decode_s(&mut sbuf).map_err(|e| binseq_err(path, &e))?;
+                rec.decode_x(&mut xbuf).map_err(|e| binseq_err(path, &e))?;
+                write_fastq_record(&mut w1, rec.sheader(), &sbuf, rec.squal())?;
+                write_fastq_record(&mut w2, rec.xheader(), &xbuf, rec.xqual())?;
+            }
+        }
+        w1.flush()?;
+        w2.flush()?;
+        Ok((p1, p2))
+    }
+}
+
+// ===========================================================================
+// CBQ decode, feature ON: real `binseq`-crate columnar decode (#1025 Phase 3).
+// ===========================================================================
+#[cfg(feature = "binseq-input")]
+mod cbq_impl {
+    use std::fs::File;
+    use std::io::{BufWriter, Read, Write};
+    use std::path::{Path, PathBuf};
+
+    use binseq::BinseqRecord;
+    use binseq::cbq::{BlockRange, FileHeader, Reader};
+
+    use super::common::{binseq_err, file_stem, write_fastq_record};
+    use crate::aligner::error::{AlignerError, Result};
+
+    /// D2 (plan R2) for CBQ. CBQ's `FileHeader` exposes presence as METHODS
+    /// (`has_qualities`/`has_headers`), unlike VBQ's public fields, but the contract is
+    /// identical: reject quality-less / name-less files at the file-header level.
+    fn require_quality_and_headers(header: &FileHeader, path: &Path) -> Result<()> {
+        if !header.has_qualities() {
+            return Err(AlignerError::Validation(format!(
+                "BINSEQ input '{}' carries no per-read quality scores, so it cannot be \
+                 faithfully aligned by Bismark. Re-encode it preserving quality (and headers) \
+                 with `bqtools encode`.",
+                path.display()
+            )));
+        }
+        if !header.has_headers() {
+            return Err(AlignerError::Validation(format!(
+                "BINSEQ input '{}' carries no per-read names/headers, so the aligned reads would \
+                 have synthesized numeric QNAMEs rather than their original names. Re-encode it \
+                 preserving headers (and quality) with `bqtools encode`.",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Read the CBQ `FileHeader` directly from the file's leading bytes (the same read
+    /// `Reader::new` does internally). Used for the D2 guard + SE/PE classification. This
+    /// avoids `cbq::MmapReader`, which builds the footer index and fails on a zero-record
+    /// CBQ, reading the fixed-size header is empty-safe and matches the VBQ path's graceful
+    /// empty handling.
+    fn read_cbq_header(path: &Path) -> Result<FileHeader> {
+        let mut f = File::open(path)?;
+        let mut buf = [0u8; std::mem::size_of::<FileHeader>()];
+        f.read_exact(&mut buf)?;
+        FileHeader::from_bytes(&buf).map_err(|e| binseq_err(path, &e))
+    }
+
+    /// Classify SE vs PE from the file header (no record order is involved).
+    pub fn cbq_is_paired(path: &Path) -> Result<bool> {
+        Ok(read_cbq_header(path)?.is_paired())
+    }
+
+    /// Transcode a single-end CBQ into a temp FASTQ. Deterministic file order: the
+    /// streaming `cbq::Reader` reads blocks sequentially (`read_block`) and each block
+    /// iterates in stored order (`block.iter_records`).
+    pub fn cbq_transcode_se(path: &Path, temp_dir: &Path) -> Result<PathBuf> {
+        std::fs::create_dir_all(temp_dir)?;
+        let out_path = temp_dir.join(format!("{}.fastq", file_stem(path)));
+
+        // Header peek for the D2 guard; the in-order decode below uses the streaming
+        // `Reader` because CBQ's `MmapReader` only exposes the reordering parallel path
+        // (and its block iteration is crate-private).
+        let header = read_cbq_header(path)?;
+        require_quality_and_headers(&header, path)?;
+
+        let mut reader = Reader::new(File::open(path)?).map_err(|e| binseq_err(path, &e))?;
+        let mut w = BufWriter::new(File::create(&out_path)?);
+        let mut seqbuf: Vec<u8> = Vec::new();
+        let mut cumulative: u64 = 0;
+        while let Some(bh) = reader.read_block().map_err(|e| binseq_err(path, &e))? {
+            cumulative += bh.num_records;
+            // `read_block` only loads the compressed columns; decode them in place before
+            // iterating (the streaming reader's documented serial pattern). The block is
+            // reused, so each block is decompressed exactly once.
+            reader
+                .block
+                .decompress_columns()
+                .map_err(|e| binseq_err(path, &e))?;
+            // `cumulative_records` only feeds the synthesized numeric-index header the
+            // crate emits when headers are ABSENT; we require headers, so the value is
+            // never observed, but track it correctly-by-construction regardless.
+            let range = BlockRange::new(0, cumulative);
+            for rec in reader.block.iter_records(range) {
+                seqbuf.clear();
+                rec.decode_s(&mut seqbuf)
+                    .map_err(|e| binseq_err(path, &e))?;
+                write_fastq_record(&mut w, rec.sheader(), &seqbuf, rec.squal())?;
+            }
+        }
+        w.flush()?;
+        Ok(out_path)
+    }
+
+    /// Transcode a paired-end CBQ into (R1, R2) temp FASTQs. One record carries both
+    /// mates (plan R5): primary → R1, extended → R2. The `!is_paired()` desync guard
+    /// mirrors the VBQ path (never-silent on a malformed paired file).
+    pub fn cbq_transcode_pe(path: &Path, temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        std::fs::create_dir_all(temp_dir)?;
+        let stem = file_stem(path);
+        let p1 = temp_dir.join(format!("{stem}_1.fastq"));
+        let p2 = temp_dir.join(format!("{stem}_2.fastq"));
+
+        let header = read_cbq_header(path)?;
+        require_quality_and_headers(&header, path)?;
+
+        let mut reader = Reader::new(File::open(path)?).map_err(|e| binseq_err(path, &e))?;
+        let mut w1 = BufWriter::new(File::create(&p1)?);
+        let mut w2 = BufWriter::new(File::create(&p2)?);
+        let mut sbuf: Vec<u8> = Vec::new();
+        let mut xbuf: Vec<u8> = Vec::new();
+        let mut cumulative: u64 = 0;
+        while let Some(bh) = reader.read_block().map_err(|e| binseq_err(path, &e))? {
+            cumulative += bh.num_records;
+            reader
+                .block
+                .decompress_columns()
+                .map_err(|e| binseq_err(path, &e))?;
+            let range = BlockRange::new(0, cumulative);
+            for rec in reader.block.iter_records(range) {
+                // Kept for VBQ parity, but structurally unreachable for CBQ: CBQ paired-ness
+                // is a FILE-header property (we only reach here when the header says paired),
+                // so every record in a paired `.cbq` carries a second mate. The guard stays
+                // never-silent regardless, matching the VBQ PE path exactly.
+                if !rec.is_paired() {
+                    return Err(AlignerError::Validation(format!(
+                        "paired BINSEQ input '{}' has a record with no second mate (xlen == 0); \
+                         the file is malformed for paired-end use.",
+                        path.display()
+                    )));
+                }
+                sbuf.clear();
+                xbuf.clear();
+                rec.decode_s(&mut sbuf).map_err(|e| binseq_err(path, &e))?;
+                rec.decode_x(&mut xbuf).map_err(|e| binseq_err(path, &e))?;
+                write_fastq_record(&mut w1, rec.sheader(), &sbuf, rec.squal())?;
+                write_fastq_record(&mut w2, rec.xheader(), &xbuf, rec.xqual())?;
+            }
+        }
+        w1.flush()?;
+        w2.flush()?;
+        Ok((p1, p2))
+    }
+}
+
+// ===========================================================================
+// VBQ decode, feature OFF: fail loud (never-silent).
+// ===========================================================================
+#[cfg(not(feature = "binseq-input"))]
+mod vbq_impl {
+    use std::path::{Path, PathBuf};
+
+    use crate::aligner::error::{AlignerError, Result};
+
+    /// This build was compiled without the `binseq-input` feature, so the `binseq`
+    /// crate (and its zstd decode) is absent. Detection still fired (extension), so we
+    /// reject explicitly rather than mis-feed the FASTQ parser.
+    fn unsupported() -> AlignerError {
+        AlignerError::Validation(
+            "this bismark build was compiled without BINSEQ (.vbq) support; rebuild with \
+             `--features binseq-input` (the released Linux binaries include it), or convert the \
+             input to FASTQ first."
+                .into(),
+        )
+    }
+
+    pub fn vbq_is_paired(_path: &Path) -> Result<bool> {
+        Err(unsupported())
+    }
+    pub fn vbq_transcode_se(_path: &Path, _temp_dir: &Path) -> Result<PathBuf> {
+        Err(unsupported())
+    }
+    pub fn vbq_transcode_pe(_path: &Path, _temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        Err(unsupported())
+    }
+}
+
+// ===========================================================================
+// CBQ decode, feature OFF: fail loud (never-silent).
+// ===========================================================================
+#[cfg(not(feature = "binseq-input"))]
+mod cbq_impl {
+    use std::path::{Path, PathBuf};
+
+    use crate::aligner::error::{AlignerError, Result};
+
+    fn unsupported() -> AlignerError {
+        AlignerError::Validation(
+            "this bismark build was compiled without BINSEQ (.cbq) support; rebuild with \
+             `--features binseq-input` (the released Linux binaries include it), or convert the \
+             input to FASTQ first."
+                .into(),
+        )
+    }
+
+    pub fn cbq_is_paired(_path: &Path) -> Result<bool> {
+        Err(unsupported())
+    }
+    pub fn cbq_transcode_se(_path: &Path, _temp_dir: &Path) -> Result<PathBuf> {
+        Err(unsupported())
+    }
+    pub fn cbq_transcode_pe(_path: &Path, _temp_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        Err(unsupported())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Feature-INDEPENDENT tests: extension detection + the BQ reject compile and run on
+    //! ANY build (default feature-off CI exercises these).
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn detects_binseq_extensions_only() {
+        assert!(is_binseq_input(Path::new("reads.vbq")));
+        assert!(is_binseq_input(Path::new("reads.cbq")));
+        assert!(is_binseq_input(Path::new("reads.bq")));
+        // Never misfire on the normal read formats (plan R4).
+        assert!(!is_binseq_input(Path::new("reads.fastq")));
+        assert!(!is_binseq_input(Path::new("reads.fq.gz")));
+        assert!(!is_binseq_input(Path::new("reads.fa")));
+        assert!(!is_binseq_input(Path::new("reads.bam")));
+        assert!(!is_binseq_input(Path::new("reads")));
+    }
+
+    #[test]
+    fn bq_is_rejected_fail_loud() {
+        let err = transcode_binseq_to_fastq_se(Path::new("x.bq"), Path::new("/tmp")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("BQ (.bq)") && msg.contains("cannot be faithfully aligned"),
+            "got: {msg}"
+        );
+    }
+
+    /// On a default (feature-OFF) build, a `.cbq` is detected and rejected never-silently
+    /// (rather than mis-fed to the FASTQ parser). The feature-ON CBQ decode is covered by
+    /// the `binseq_transcode` integration test.
+    #[cfg(not(feature = "binseq-input"))]
+    #[test]
+    fn cbq_feature_off_is_rejected_fail_loud() {
+        let err = transcode_binseq_to_fastq_se(Path::new("x.cbq"), Path::new("/tmp")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("without BINSEQ (.cbq) support"), "got: {msg}");
+        assert!(
+            format!("{}", is_paired(Path::new("x.cbq")).unwrap_err())
+                .contains("without BINSEQ (.cbq) support")
+        );
+    }
+}

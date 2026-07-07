@@ -1,5 +1,5 @@
 //! `bismark` — one of the binaries installed by `cargo install bismark`.
-//! Thin wrapper over [`bismark_aligner::run_main`]; byte-identical to that tool's own
+//! Thin wrapper over [`bismark::aligner::run_main`]; byte-identical to that tool's own
 //! binary (each sets the same multithreaded allocator).
 use std::process::ExitCode;
 
@@ -7,5 +7,5 @@ use std::process::ExitCode;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    bismark_aligner::run_main()
+    bismark::aligner::run_main()
 }
