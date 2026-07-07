@@ -29,7 +29,7 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
       <span><i class="d"></i><b>Bowtie2 · HISAT2 · minimap2</b></span>
       <span><i class="d"></i><b>single &amp; paired-end</b></span>
       <span><i class="d"></i><b>WGBS · RRBS · PBAT</b></span>
-      <span><i class="d"></i><b>Perl today, Rust in progress</b></span>
+      <span><i class="d"></i><b>Rust · byte-identical to Perl v0.25.1</b></span>
     </div>
   </section>
 
@@ -40,7 +40,7 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
       <div>
         <p>Bisulfite sequencing turns the methylation state of every cytosine into a base change: unmethylated <strong>C</strong> reads as <strong>T</strong>, methylated <strong>C</strong> stays <strong>C</strong>. That conversion breaks ordinary aligners.</p>
         <p>Bismark handles both halves at once. It maps bisulfite-treated reads to your reference, then reads methylation calls straight off the alignments, keeping <strong>CpG</strong>, <strong>CHG</strong> and <strong>CHH</strong> context separate. No second caller, no glue scripts.</p>
-        <p>It is a command-line tool, written in Perl, used across whole-genome (WGBS), reduced-representation (RRBS) and PBAT libraries. A Rust rewrite is underway for faster runs with byte-identical results.</p>
+        <p>It is a command-line tool used across whole-genome (WGBS), reduced-representation (RRBS) and PBAT libraries. Bismark is now a single Rust binary — faster and lower-memory, with output byte-identical to Perl <strong>v0.25.1</strong>; the original Perl scripts are archived as legacy.</p>
       </div>
       <div class="strand-panel" aria-label="Lollipop notation legend">
         <h3>Lollipop notation</h3>
@@ -90,10 +90,10 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
     <p class="lede">Everything a bisulfite workflow needs, exposed as flags you can read.</p>
     <div class="feat-list">
       <div class="feat"><div class="k">reads</div><div class="v"><b>Single- and paired-end</b>, directional and non-directional libraries. FastQ or FastA, gzipped input read directly.</div></div>
-      <div class="feat"><div class="k">aligners</div><div class="v"><b>Bowtie2, HISAT2 or minimap2</b> under the hood, with Samtools for BAM handling. Pick the backend that fits your genome and read length.</div></div>
+      <div class="feat"><div class="k">aligners</div><div class="v"><b>Bowtie2, HISAT2 or minimap2</b> under the hood; BAM/SAM/CRAM I/O is pure-Rust (no Samtools needed). Pick the backend that fits your genome and read length.</div></div>
       <div class="feat"><div class="k">methylation</div><div class="v"><b>Per-cytosine calls in every context</b>, kept separate so you never conflate them.<span class="ctx"><span class="chip m">CpG</span><span class="chip">CHG</span><span class="chip">CHH</span></span></div></div>
       <div class="feat"><div class="k">protocols</div><div class="v">First-class support for <b>WGBS, RRBS and PBAT</b> BS-Seq, with the conversion handling each protocol expects.</div></div>
-      <div class="feat"><div class="k">reports</div><div class="v"><b>HTML reports out of the box</b> via <span class="mono">bismark2report</span> and <span class="mono">bismark2summary</span>: alignment rates, M-bias, context coverage, the lot.</div></div>
+      <div class="feat"><div class="k">reports</div><div class="v"><b>HTML reports out of the box</b> via <span class="mono">bismark report</span> and <span class="mono">bismark summary</span>: alignment rates, M-bias, context coverage, the lot.</div></div>
     </div>
   </section>
 
@@ -104,13 +104,13 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
     <div class="steps">
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>1</div>
-        <div class="body"><h4>Install</h4><p>Via Bioconda, or grab a release from GitHub.</p>
-          <div class="code"><pre><span class="ps">conda install -c bioconda bismark</span></pre></div></div>
+        <div class="body"><h4>Install</h4><p>One command via crates.io, or grab a release from GitHub.</p>
+          <div class="code"><pre><span class="ps">cargo install bismark</span></pre></div></div>
       </div>
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>2</div>
         <div class="body"><h4>Prepare the genome</h4><p>Build the bisulfite-converted indices once per reference.</p>
-          <div class="code"><pre><span class="ps">bismark_genome_preparation</span> <span class="arg">/ref/GRCh38/</span></pre></div></div>
+          <div class="code"><pre><span class="ps">bismark prepare</span> <span class="arg">/ref/GRCh38/</span></pre></div></div>
       </div>
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>3</div>
@@ -120,12 +120,12 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>4</div>
         <div class="body"><h4>Deduplicate</h4><p>Remove PCR duplicates (skip for RRBS libraries).</p>
-          <div class="code"><pre><span class="ps">deduplicate_bismark</span> <span class="flag">--bam</span> <span class="arg">R1_bismark_bt2_pe.bam</span></pre></div></div>
+          <div class="code"><pre><span class="ps">bismark dedup</span> <span class="flag">--bam</span> <span class="arg">R1_bismark_bt2_pe.bam</span></pre></div></div>
       </div>
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>5</div>
         <div class="body"><h4>Extract methylation</h4><p>Write per-cytosine calls and a bedGraph, then build the reports.</p>
-          <div class="code"><pre><span class="ps">bismark_methylation_extractor</span> <span class="flag">--gzip</span> <span class="flag">--bedGraph</span> <span class="arg">sample.bam</span></pre></div></div>
+          <div class="code"><pre><span class="ps">bismark extract</span> <span class="flag">--gzip</span> <span class="flag">--bedGraph</span> <span class="arg">sample.bam</span></pre></div></div>
       </div>
     </div>
   </section>
@@ -136,10 +136,10 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
   const term = document.getElementById('home-term');
   if (term) {
     const lines = [
-      { prompt: true, type: true, toks: [{ t: 'conda install -c bioconda bismark', c: '' }] },
-      { out: true, toks: [{ t: '  ✓ bismark  samtools  bowtie2  installed', c: 'ok' }] },
+      { prompt: true, type: true, toks: [{ t: 'cargo install bismark', c: '' }] },
+      { out: true, toks: [{ t: '  ✓ bismark  bowtie2  installed', c: 'ok' }] },
       { blank: true },
-      { prompt: true, type: true, toks: [{ t: 'bismark_genome_preparation ', c: '' }, { t: '/ref/GRCh38/', c: 'out' }] },
+      { prompt: true, type: true, toks: [{ t: 'bismark prepare ', c: '' }, { t: '/ref/GRCh38/', c: 'out' }] },
       { out: true, toks: [{ t: '  building C→T and G→A indices ', c: 'out' }, { t: 'done', c: 'ok' }] },
       { blank: true },
       { prompt: true, type: true, toks: [{ t: 'bismark ', c: '' }, { t: '--genome', c: 'flag' }, { t: ' /ref/GRCh38/ ', c: 'out' }, { t: '-1', c: 'flag' }, { t: ' R1.fq.gz ', c: 'out' }, { t: '-2', c: 'flag' }, { t: ' R2.fq.gz', c: 'out' }] },
