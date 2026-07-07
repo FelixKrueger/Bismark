@@ -1,6 +1,6 @@
 ---
 title: "Genome Preparation"
-description: "A full list of options can also be viewed by typing: bismarkgenomepreparation --help"
+description: "Options for bismark prepare — building the C→T and G→A bisulfite genome indices. See bismark prepare --help for the full list."
 ---
 
 ## Appendix (I): Bismark Genome Preparation

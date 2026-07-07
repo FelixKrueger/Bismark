@@ -1,6 +1,6 @@
 ---
 title: "Methylation Extraction"
-description: "A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing bismarkmethylationextractor --help"
+description: "Options for bismark extract — the Bismark methylation extractor. See bismark extract --help for the full list."
 ---
 
 ## Appendix (IV): Bismark Methylation Extractor

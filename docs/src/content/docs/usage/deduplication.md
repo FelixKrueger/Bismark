@@ -1,6 +1,6 @@
 ---
 title: "Deduplication"
-description: "./deduplicatebismark [options] filename(s)"
+description: "bismark dedup removes alignments to the same genomic position and strand from Bismark mapping output — recommended for whole-genome bisulfite samples."
 ---
 
 **USAGE:**
