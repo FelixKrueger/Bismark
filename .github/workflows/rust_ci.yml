@@ -196,10 +196,11 @@ jobs:
           BISMARK_REQUIRE_PERL: "1"
         run: |
           set -euo pipefail
-          EXPECTED=12
+          EXPECTED=13
           out=$(cargo test -p bismark \
                   -- --exact \
                   perl_vs_rust_byte_identical_mfa \
+                  perl_vs_rust_prepare_subcommand \
                   perl_vs_rust_byte_identical_single_fasta \
                   perl_vs_rust_edge_inputs_mfa \
                   perl_vs_rust_mixed_case_glob_order \

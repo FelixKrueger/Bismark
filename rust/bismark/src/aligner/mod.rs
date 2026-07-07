@@ -113,12 +113,20 @@ pub fn version_string() -> String {
 /// `#[global_allocator]` stays in each binary crate root.
 #[must_use]
 pub fn run_main() -> std::process::ExitCode {
-    use clap::Parser;
     // Verbatim argv (program name excluded) = the `@PG` `CL:` string (Perl
     // captures `join(" ",@ARGV)` at startup).
     let raw: Vec<String> = std::env::args().collect();
     let command_line = raw.get(1..).unwrap_or(&[]).join(" ");
-    let cli = crate::aligner::cli::Cli::parse_from(&raw);
+    run_dispatch(raw, command_line)
+}
+
+/// Multicall dispatcher entry: parse from an explicit `argv` with a pre-sliced
+/// `command_line` (the `@PG` `CL:` string). Bare `bismark` passes `argv[1..]`;
+/// `bismark align` passes `argv[2..]` (subcommand token stripped) — both yield a
+/// byte-identical `@PG CL`. Keeps `run_main`'s `--version` short-circuit.
+pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::ExitCode {
+    use clap::Parser;
+    let cli = crate::aligner::cli::Cli::parse_from(&argv);
     if cli.version {
         println!("{}", version_string());
         return std::process::ExitCode::SUCCESS;

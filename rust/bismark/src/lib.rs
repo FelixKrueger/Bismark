@@ -14,6 +14,7 @@
 pub mod aligner;
 pub mod bam2nuc;
 pub mod bedgraph;
+pub mod cli;
 pub mod coverage2cytosine;
 pub mod dedup;
 pub mod extractor;

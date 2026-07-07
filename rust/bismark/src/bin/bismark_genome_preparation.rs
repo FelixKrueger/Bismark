@@ -7,5 +7,5 @@ use std::process::ExitCode;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    bismark::genome_prep::run_main()
+    bismark::cli::dispatch()
 }

@@ -515,3 +515,66 @@ fn perl_vs_rust_gzip_input() {
         ],
     );
 }
+
+/// Perl-oracle for the **`bismark prepare` multicall subcommand** (Phase 3): same
+/// byte-identity contract as `perl_vs_rust_byte_identical_mfa`, but the Rust side is
+/// driven via `bismark prepare` instead of the classic `bismark_genome_preparation`
+/// binary — proving the subcommand path is byte-identical to Perl (and thus to the
+/// classic name). Auto-skips if `perl` is unavailable.
+#[test]
+fn perl_vs_rust_prepare_subcommand() {
+    if !have_perl() {
+        skip_or_panic("perl_vs_rust_prepare_subcommand: perl not available");
+        return;
+    }
+    let perl = perl_script();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_indexer_dir(tmp.path());
+
+    let make_genome = |dir: &Path| {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("chr1.fa"),
+            b">chr1 Homo sapiens chromosome 1\nACGTacgtNRYKMSWB\nTTTTCCCCGGGGAAAA\n",
+        )
+        .unwrap();
+        fs::write(dir.join("chr10.fa"), b">chr10\nGGGCCCttt").unwrap();
+        fs::write(dir.join("chr2.fa"), b">chr2\nacgtACGT\n").unwrap();
+    };
+
+    let perl_dir = tmp.path().join("perl_genome");
+    let rust_dir = tmp.path().join("rust_genome");
+    make_genome(&perl_dir);
+    make_genome(&rust_dir);
+
+    let path_env = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let perl_status = std::process::Command::new("perl")
+        .arg(&perl)
+        .arg(&perl_dir)
+        .env("PATH", &path_env)
+        .status()
+        .expect("failed to run perl");
+    assert!(perl_status.success(), "perl genome prep failed");
+
+    // Rust via the `bismark prepare` multicall subcommand.
+    Command::cargo_bin("bismark")
+        .unwrap()
+        .env("BISMARK_BIN", &bin)
+        .arg("prepare")
+        .arg(&rust_dir)
+        .assert()
+        .success();
+
+    for sub in [
+        "Bisulfite_Genome/CT_conversion/genome_mfa.CT_conversion.fa",
+        "Bisulfite_Genome/GA_conversion/genome_mfa.GA_conversion.fa",
+    ] {
+        let p = fs::read(perl_dir.join(sub)).unwrap();
+        let r = fs::read(rust_dir.join(sub)).unwrap();
+        assert_eq!(p, r, "byte mismatch vs Perl in {sub} (bismark prepare)");
+    }
+}
