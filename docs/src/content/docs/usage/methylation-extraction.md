@@ -1,11 +1,11 @@
 ---
 title: "Methylation extraction"
-description: "Bismark comes with a supplementary bismarkmethylationextractor script which operates on Bismark result files and extracts the methylation call for every…"
+description: "The Bismark methylation extractor (bismark extract) operates on Bismark alignment files and extracts the methylation call for every single cytosine analysed."
 ---
 
-Bismark comes with a supplementary `bismark_methylation_extractor` script which operates on Bismark result files and extracts the methylation call for every single C analysed. The position of every single C will be written out to a new output file, depending on its context (CpG, CHG or CHH), whereby methylated Cs will be labelled as forward reads (+), non-methylated Cs as reverse reads (-). The resulting files can be imported into a genome viewer such as SeqMonk (using the generic text import filter) and the analysis of methylation data can commence. Alternatively, the output of the methylation extractor can be transformed into a `bedGraph` and `coverage` file using the option `--bedGraph` (see also `--counts`). This step can also be accomplished from the methylation extractor output using the stand-alone script `bismark2bedGraph` (also part of the Bismark package available for download at [bioinformatics.babraham.ac.uk](http://www.bioinformatics.babraham.ac.uk/projects/bismark/)). The `coverage` file can also be imported into SeqMonk directly using `Import Data > Bismark (cov)`. Optionally, the bedGraph counts output can be used to generate a genome-wide cytosine report which reports the number on every single CpG (optionally every single cytosine) in the genome, irrespective of whether it was covered by any reads or not. As this type of report is informative for cytosines on both strands the output may be fairly large (~46mn CpG positions or >1.2bn total cytosine positions in the human genome...). The bedGraph to genome-wide cytosine report conversion can also be run individually using the stand- alone module `coverage2cytosine` (also part of the Bismark package available for download at [bioinformatics.babraham.ac.uk](http://www.bioinformatics.babraham.ac.uk/projects/bismark/)).
+Bismark's methylation extractor, `bismark extract` (classic alias: `bismark_methylation_extractor`), operates on Bismark result files and extracts the methylation call for every single C analysed. The position of every single C will be written out to a new output file, depending on its context (CpG, CHG or CHH), whereby methylated Cs will be labelled as forward reads (+), non-methylated Cs as reverse reads (-). The resulting files can be imported into a genome viewer such as SeqMonk (using the generic text import filter) and the analysis of methylation data can commence. Alternatively, the output of the methylation extractor can be transformed into a `bedGraph` and `coverage` file using the option `--bedGraph` (see also `--counts`). This step can also be accomplished from the methylation extractor output using the `bismark bedgraph` subcommand. The `coverage` file can also be imported into SeqMonk directly using `Import Data > Bismark (cov)`. Optionally, the bedGraph counts output can be used to generate a genome-wide cytosine report which reports the number on every single CpG (optionally every single cytosine) in the genome, irrespective of whether it was covered by any reads or not. As this type of report is informative for cytosines on both strands the output may be fairly large (~46mn CpG positions or >1.2bn total cytosine positions in the human genome...). The bedGraph to genome-wide cytosine report conversion can also be run individually using the `bismark cov2cyt` subcommand.
 
-As of Bismark version 0.6 or higher the default input format for the `bismark_methylation_extractor` is BAM/SAM (or potentially CRAM if you’ve got Samtools 1.2+ installed).
+The default input format for `bismark extract` is BAM/SAM (or CRAM).
 
 ### The methylation extractor output looks like this (tab separated):
 
@@ -37,17 +37,17 @@ Examples for cytosines in CHH context:
 HWUSI-EAS611_0006:3:1:1054:1405#0/1 - 7 89920184 h
 ```
 
-The `bismark_methylation_extractor` comes with a few options, such as ignoring the first <int> number of positions in the methylation call string, e.g. to remove a restriction enzyme site (if RRBS is performed with non-directional BS-Seq libraries it might be required to remove reconstituted MspI sites at the beginning of each read as they will introduce a bias into the first methylation call). Another useful option for paired-end reads is called `--no_overlap` (on by default): specifying this option will extract the methylation calls of overlapping parts in the middle of paired-end reads only once (using the calls from the first read which is presumably the one with a lowest error rate).
+`bismark extract` comes with a few options, such as ignoring the first <int> number of positions in the methylation call string, e.g. to remove a restriction enzyme site (if RRBS is performed with non-directional BS-Seq libraries it might be required to remove reconstituted MspI sites at the beginning of each read as they will introduce a bias into the first methylation call). Another useful option for paired-end reads is called `--no_overlap` (on by default): specifying this option will extract the methylation calls of overlapping parts in the middle of paired-end reads only once (using the calls from the first read which is presumably the one with a lowest error rate).
 
-For a full list of options type: `bismark_methylation_extractor --help` on the command line or refer to the Appendix section at the end of this User Guide.
+For a full list of options type: `bismark extract --help` on the command line or refer to the Appendix section at the end of this User Guide.
 
 ### Methylation extractor output
 
-By default, the `bismark_methylation_extractor` discriminates between cytosines in CpG, CHG or CHH context. If desired, CHG and CHH contexts can be merged into a single non-CpG context by specifying the option `--merge_non_CpG` (as a word of warning, this might produce files with up to several hundred million lines...).
+By default, `bismark extract` discriminates between cytosines in CpG, CHG or CHH context. If desired, CHG and CHH contexts can be merged into a single non-CpG context by specifying the option `--merge_non_CpG` (as a word of warning, this might produce files with up to several hundred million lines...).
 
 ### Strand-specific methylation output files (default):
 
-As its default option, the `bismark_methylation_extractor` will produce a strand-specific output which will use the following abbreviations in the output file name to indicate the strand the alignment came from:
+As its default option, `bismark extract` will produce a strand-specific output which will use the following abbreviations in the output file name to indicate the strand the alignment came from:
 
     OT    –  original top strand
     CTOT  –  complementary to original top strand
@@ -56,7 +56,7 @@ As its default option, the `bismark_methylation_extractor` will produce a strand
 
 Methylation calls from OT and CTOT will be informative for cytosine methylation positions on the original top strand, calls from OB and CTOB will be informative for cytosine methylation positions on the original bottom strand. Please note that specifying the `--directional` (the default mode) option in the Bismark alignment step will not report any alignments to the CTOT or CTOB strands.
 
-As cytosines can exist in any of three different sequence contexts (CpG, CHG or CHH) the `bismark_methylation_extractor` default output will consist of 12 individual output files per input file (`CpG_OT_...`, `CpG_CTOT_...`, `CpG_OB_...` etc.).
+As cytosines can exist in any of three different sequence contexts (CpG, CHG or CHH) the `bismark extract` default output will consist of 12 individual output files per input file (`CpG_OT_...`, `CpG_CTOT_...`, `CpG_OB_...` etc.).
 
 ### Context-dependent methylation output files (`--comprehensive` option):
 
@@ -66,13 +66,13 @@ Both strand-specific and context-dependent options can be combined with the `--m
 
 ### Optional bedGraph output
 
-The Bismark methylation extractor can optionally also output a file in [`bedGraph`](http://genome.ucsc.edu/goldenPath/help/bedgraph.html) format which uses 0-based genomic start and 1- based end coordinates. The module `bismark2bedGraph` (part of the Bismark package) may also be run individually. It will be sorted by chromosomal coordinates and looks like this:
+The Bismark methylation extractor can optionally also output a file in [`bedGraph`](http://genome.ucsc.edu/goldenPath/help/bedgraph.html) format which uses 0-based genomic start and 1- based end coordinates. The `bismark bedgraph` subcommand may also be run individually. It will be sorted by chromosomal coordinates and looks like this:
 
 ```
 <chromosome> <start position> <end position> <methylation percentage>
 ```
 
-As the methylation percentage is _per se_ not informative of the actual read coverage of detected methylated or unmethylated reads at a position, `bismark2bedGraph` also writes out a coverage file (using 1-based genomic genomic coordinates) that features two additional columns:
+As the methylation percentage is _per se_ not informative of the actual read coverage of detected methylated or unmethylated reads at a position, `bismark bedgraph` also writes out a coverage file (using 1-based genomic genomic coordinates) that features two additional columns:
 
 ```
 <chromosome> <start position> <end position> <methylation percentage> <count methylated> <count unmethylated>
@@ -82,7 +82,7 @@ These two additional columns enable basically any downstream processing from the
 
 ### (Optional): genome-wide cytosine report output
 
-Starting from the `coverage` output, the Bismark methylation extractor can optionally also output a genome-wide cytosine methylation report. The module `coverage2cytosine` (part of the Bismark package) may also be run individually. It is also sorted by chromosomal coordinates but also contains the sequence context and is in the following format:
+Starting from the `coverage` output, the Bismark methylation extractor can optionally also output a genome-wide cytosine methylation report. The `bismark cov2cyt` subcommand may also be run individually. It is also sorted by chromosomal coordinates but also contains the sequence context and is in the following format:
 
 ```
 <chromosome> <position> <strand> <count methylated> <count unmethylated> <C-context> <trinucleotide context>
@@ -92,7 +92,7 @@ The main difference to the `bedGraph` or `coverage` output is that **every** cyt
 
 #### GpC methylation assessment: Context-specific methylation summary report
 
-Every time `coverage2cytosine` is run, the counts for each cytosine context are recorded and printed to a special file called `*.cytosine_context_summary.txt` for each input coverage file. 
+Every time `bismark cov2cyt` is run, the counts for each cytosine context are recorded and printed to a special file called `*.cytosine_context_summary.txt` for each input coverage file. 
 
 The report ([introduced here](https://github.com/FelixKrueger/Bismark/issues/321)) looks at 2 bp downstream, as well as 1 bp upstream of the cytosine taking part in the methylation call. This is useful for looking at methylation in specific contexts (e.g. `CpA` only), and also when using `GpC` methylases that introduce methylation in `GpC` context. The report looks like this: 
 
@@ -111,7 +111,7 @@ C	CAC	CCAC	409749	89154	17.87
 
 #### (Optional): NOMe-seq or scNMT-seq
 
-The `coverage2cytosine` module can be instructed that a sample is a NOMe-seq ([**N**ucleosome **O**ccupancy and **Me**thylome sequencing](https://genome.cshlp.org/content/22/12/2497.long)) or scNMT-seq ([**s**ingle-**c**ell **N**ucleosome, **M**ethylation and **T**ranscription sequencing](https://www.nature.com/articles/s41467-018-03149-4)) sample, where accessible DNA gets methylated in a GpC context (sets option `--gc` as well). The option `--nome-seq`:
+The `bismark cov2cyt` subcommand can be instructed that a sample is a NOMe-seq ([**N**ucleosome **O**ccupancy and **Me**thylome sequencing](https://genome.cshlp.org/content/22/12/2497.long)) or scNMT-seq ([**s**ingle-**c**ell **N**ucleosome, **M**ethylation and **T**ranscription sequencing](https://www.nature.com/articles/s41467-018-03149-4)) sample, where accessible DNA gets methylated in a GpC context (sets option `--gc` as well). The option `--nome-seq`:
 
 ```
  (i) filters the genome-wide CpG-report to only output cytosines in ACG and TCG context
@@ -122,7 +122,7 @@ Both of these measures aim to reduce unwanted biases, i.e. the influence of `G-C
 
 #### (Optional): extract tetra-, penta- or hexamer sequence context
 
-The `coverage2cytosine` module can be instructed to also extract a **f**our-, **f**ive- and **s**ix-nucleotide context (`--ffs`) for cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored.
+The `bismark cov2cyt` subcommand can be instructed to also extract a **f**our-, **f**ive- and **s**ix-nucleotide context (`--ffs`) for cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored.
 
   ```
   Example:
@@ -154,30 +154,30 @@ For more on this topic please also see [this post on QCFail.com](https://sequenc
 
 The M-bias plot should enable researchers to make an informed decision whether or not to leave the bias in the final data or to remove it (e.g. using the methylation extractor option `--ignore`).
 
-### (III) Running `bismark_methylation_extractor`
+### (III) Running `bismark extract`
 
-**USAGE:** `bismark_methylation_extractor [options] <filenames>`
+**USAGE:** `bismark extract [options] <filenames>`
 
 A typical command for a single-end file could look like this:
 
 ```
-bismark_methylation_extractor --gzip sample_bismark_bt2.bam
+bismark extract --gzip sample_bismark_bt2.bam
 ```
 
 A typical command for a paired-end file could look like this:
 
 ```
-bismark_methylation_extractor --gzip sample_bismark_bt2_pe.bam
+bismark extract --gzip sample_bismark_bt2_pe.bam
 ```
 
 The methylation extractor can also auto-detect the alignment mode and will set the options above automatically. A typical command including the optional `bedGraph` output could look like this:
 
 ```
-bismark_methylation_extractor --gzip --bedGraph --buffer_size 10G sample_bismark_bt2.bam
+bismark extract --gzip --bedGraph --buffer_size 10G sample_bismark_bt2.bam
 ```
 
 A typical command including the optional genome-wide cytosine methylation report could look like this:
 
 ```
-bismark_methylation_extractor --gzip --bedGraph --buffer_size 10G --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
+bismark extract --gzip --bedGraph --buffer_size 10G --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
 ```

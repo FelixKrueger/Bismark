@@ -1,60 +1,59 @@
 ---
 title: "Installation"
-description: "Bismark is written in Perl and is executed from the command line. To install Bismark simply copy the bismarkv0.X.Y.tar.gz file into a Bismark installation…"
+description: "Bismark is the Rust bisulfite aligner and methylation suite — a single binary, byte-identical to Perl v0.25.1. Install via cargo, a container image, or prebuilt binaries."
 ---
 
-Bismark is written in Perl and is executed from the command line. To install Bismark simply copy the bismark_v0.X.Y.tar.gz file into a Bismark installation folder and extract all files by typing:
+Bismark is the Rust bisulfite aligner and methylation suite, executed from the command line. It ships as a **single `bismark` binary**: run `bismark <subcommand>` (e.g. `bismark align`, `bismark extract`) or use the classic tool names (`deduplicate_bismark`, `bismark_methylation_extractor`, …), which are supported aliases of the same binary. Output is **byte-identical** to Perl Bismark `v0.25.1` on the faithful default path. The original Perl scripts are now archived as tagged legacy (see [Legacy: the Perl Bismark](#legacy-the-perl-bismark) below).
+
+## The Bismark Rust suite
+
+There are three ways to install the Rust suite.
+
+### Install from source with `cargo`
+
+Installs the single `bismark` binary (all tools, via subcommands + classic-name aliases) into `~/.cargo/bin` in one command (requires a Rust toolchain — see Prerequisites):
 
 ```bash
-tar xzf bismark_v0.X.Y.tar.gz
+cargo install bismark
 ```
 
-## Bismark Rust suite (beta)
+For the latest development build instead of the published release:
 
-A faster, lower-memory reimplementation of the Bismark tools in Rust is available as a public beta, producing **byte-identical** output to Perl Bismark `v0.25.1`. There are three ways to install it.
+```bash
+cargo install --git https://github.com/FelixKrueger/Bismark --branch master --locked bismark
+```
+
+**Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; re-running `cargo install bismark` is a no-op unless a newer version is published — add `--force` to reinstall in place.
+
+**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**. No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
 
 ### Prebuilt binaries (no toolchain)
 
-Each [release](https://github.com/FelixKrueger/Bismark/releases) attaches prebuilt binaries for common Linux/macOS platforms — download the archive for your platform, extract it, and put the binaries on your `PATH`. The Rust tools carry an `_rs` suffix (e.g. `bismark_rs`, `deduplicate_bismark_rs`) so they sit alongside the Perl scripts on the same `PATH` without clashing.
+Each [release](https://github.com/FelixKrueger/Bismark/releases) attaches prebuilt binaries for common Linux/macOS platforms — download the archive for your platform, extract it, and put the contents on your `PATH`. The archive ships the single `bismark` binary plus the classic tool names as symlinks to it (`deduplicate_bismark`, `bismark_methylation_extractor`, …), so it is a drop-in for existing pipelines.
 
 ### Container image
 
 A multi-arch image is published to the GitHub Container Registry, exposing the tools under their **canonical** names — so it is a drop-in for pipelines such as nf-core/methylseq:
 
 ```bash
-docker pull ghcr.io/felixkrueger/bismark:beta          # latest beta
-docker pull ghcr.io/felixkrueger/bismark:2.0.0-beta.13  # pinned
+docker pull ghcr.io/felixkrueger/bismark:latest        # latest release
+docker pull ghcr.io/felixkrueger/bismark:<version>     # pinned  <!-- TODO(phase6): version -->
 ```
-
-### Install from source with `cargo`
-
-Installs all 12 binaries into `~/.cargo/bin` in a single command (requires a Rust toolchain — see Prerequisites):
-
-```bash
-cargo install --git https://github.com/FelixKrueger/Bismark \
-  --tag bismark-rust-v2.0.0-beta.13 --locked \
-  bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor \
-  bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency \
-  bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc \
-  bismark-report bismark-summary
-```
-
-For the latest development build instead of a pinned release, replace `--tag bismark-rust-v2.0.0-beta.13` with `--branch rust/iron-chancellor`. **Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; to move between pinned releases, bump the `--tag` (re-running the same `--tag` is a no-op — add `--force` to reinstall in place).
-
-**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89, the one-command install verified on cargo 1.95); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**. No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
-
-> The `_rs` suffix on host installs lets the Rust binaries coexist with the Perl Bismark scripts; inside the container they are exposed under the canonical names. At the v1.0 release the `_rs` suffix is dropped and the Rust binaries become the defaults.
 
 The Rust aligner also adds an opt-in, lower-memory [combined-index alignment mode](/Bismark/usage/alignment/) (one combined C→T + G→A index instead of separate per-strand instances) — see the Alignment page.
 
 ## Dependencies
 
-Bismark requires a working of Perl and [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)) to be installed on your machine. Bismark will assume that the Bowtie 2/ HISAT2 executable is in your path unless the path to Bowtie/ HISAT2 is specified manually with:
+Bismark requires [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)) to be installed on your machine. Bismark will assume that the Bowtie 2/ HISAT2 executable is in your path unless the path to Bowtie/ HISAT2 is specified manually with:
 
 ```
 --path_to_bowtie2 </../../bowtie2> or
 --path_to_hisat2 </../../hisat2>
 ```
+
+## Legacy: the Perl Bismark
+
+Bismark began as a suite of Perl scripts. From the Rust general release the Perl implementation is in maintenance freeze (critical correctness and security fixes only) and is archived as tagged legacy on GitHub, following the precedent of Salmon's `cpp` branch. Because the Rust suite is byte-identical to Perl `v0.25.1` on the faithful default path, it is a drop-in replacement — existing pipelines need no change. If you specifically need the Perl scripts, check out the corresponding legacy tag from the [repository](https://github.com/FelixKrueger/Bismark).
 
 ## Hardware requirements
 

@@ -3,7 +3,7 @@ title: "Filtering out non-bisulfite converted reads"
 description: "Filtering incomplete bisulfite conversion from Bismark BAM files (optional). This script examines the methylation calls of reads, or read pairs for…"
 ---
 
-Filtering incomplete bisulfite conversion from Bismark BAM files (optional). This script examines the methylation calls of reads, or read pairs for paired-end sequencing, and filters out reads that exceed a certain threshold of methylated calls in non-CG context (the default is 3). By default, `filter_non_conversion` looks for a certain number of methylated non-CG calls, but a percentage methylation cutoff may be specified alternatively.
+Filtering incomplete bisulfite conversion from Bismark BAM files (optional). This script examines the methylation calls of reads, or read pairs for paired-end sequencing, and filters out reads that exceed a certain threshold of methylated calls in non-CG context (the default is 3). By default, `bismark filter` (classic alias: `filter_non_conversion`) looks for a certain number of methylated non-CG calls, but a percentage methylation cutoff may be specified alternatively.
 
 **Please Note**: Be aware that this kind of filtering is not advisable - and _will_ introduce biases - if you work with organisms which exhibit any appreciable levels of non-CG methylation (e.g. most plants).
 
@@ -12,10 +12,10 @@ Writes out a file called _nonCG_filtered.bam_, also a file called _nonCG_removed
 **USAGE:**
 
 ```
-filter_non_conversion [options] [Bismark BAM files]
+bismark filter [options] [Bismark BAM files]
 ```
 
-**Please also note** that for paired-end BAM files `filter_non_conversion` expects Read 1 and Read 2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using `samtools sort -n`)
+**Please also note** that for paired-end BAM files `bismark filter` expects Read 1 and Read 2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using `samtools sort -n`)
 
 - `-s/--single`
 

@@ -5,9 +5,9 @@ description: "A full list of options can also be viewed by typing: bismarkgenome
 
 ## Appendix (I): Bismark Genome Preparation
 
-A full list of options can also be viewed by typing: `bismark_genome_preparation --help`
+A full list of options can also be viewed by typing: `bismark prepare --help`
 
-#### USAGE: `bismark_genome_preparation [options] <arguments>`
+#### USAGE: `bismark prepare [options] <arguments>`
 
 #### OPTIONS:
 
@@ -49,7 +49,7 @@ Use several threads for each indexing process to speed up the genome preparation
 
 - `--genomic_composition`
 
-  Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table _genomic_nucleotide_frequencies.txt_ to the genome folder. This may be useful later on when using `bam2nuc` or the Bismark option `--nucleotide_coverage`.
+  Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table _genomic_nucleotide_frequencies.txt_ to the genome folder. This may be useful later on when using `bismark bam2nuc` or the Bismark option `--nucleotide_coverage`.
 
 - `--slam`
 

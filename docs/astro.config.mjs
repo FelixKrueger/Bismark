@@ -15,7 +15,7 @@ export default defineConfig({
         'Bismark maps bisulfite-treated sequencing reads to a reference genome and calls cytosine methylation in CpG, CHG and CHH context, in a single pass.',
       favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/FelixKrueger/Bismark' }],
-      editLink: { baseUrl: 'https://github.com/FelixKrueger/Bismark/edit/rust/iron-chancellor/docs/' },
+      editLink: { baseUrl: 'https://github.com/FelixKrueger/Bismark/edit/master/docs/' },
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
         PageTitle: './src/components/PageTitle.astro',

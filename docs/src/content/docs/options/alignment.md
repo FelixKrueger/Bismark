@@ -18,7 +18,7 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 - `<genome_folder>`
 
-  The full path to the folder containing the unmodified reference genome as well as the sub folders created by the `bismark_genome_preparation` script (`Bisulfite_Genome/CT_conversion/` and `Bisulfite_Genome/GA_conversion/`). Bismark expects one or more `FastA` files in this folder (file extension: `.fa` or `.fasta`). The path to the genome folder can be relative or absolute. The path may also be set as `--genome_folder /path/to/genome/folder/`.
+  The full path to the folder containing the unmodified reference genome as well as the sub folders created by `bismark prepare` (`Bisulfite_Genome/CT_conversion/` and `Bisulfite_Genome/GA_conversion/`). Bismark expects one or more `FastA` files in this folder (file extension: `.fa` or `.fasta`). The path to the genome folder can be relative or absolute. The path may also be set as `--genome_folder /path/to/genome/folder/`.
 
 - `-1 <mates1>`
 
@@ -211,7 +211,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--nucleotide_coverage`
 
-  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete by calling `bam2nuc`. Since this calculation may take a while, `bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. If a file _nucleotide_stats.txt_ is found with the Bismark reports it will be automatically detected and used for the Bismark HTML report. This option works only for BAM or CRAM files.
+  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete by calling `bismark bam2nuc`. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. If a file _nucleotide_stats.txt_ is found with the Bismark reports it will be automatically detected and used for the Bismark HTML report. This option works only for BAM or CRAM files.
 
 ##### Other:
 

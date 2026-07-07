@@ -3,7 +3,7 @@
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/bismark/README.html)
 
 > [!IMPORTANT]
-> **Bismark is now the Rust suite — v2.0.0 is generally available.** The bisulfite aligner and
+> **Bismark is now the Rust suite, generally available.** The bisulfite aligner and
 > methylation tools have been rewritten from Perl to Rust: **byte-identical** to Perl `v0.25.1` on the
 > faithful default path, faster, and lower-memory — and this is the **supported default**. Get it via
 > [Installation](#installation) (`cargo install bismark`, container, or prebuilt binaries) and see the
@@ -30,14 +30,14 @@ There is also an overview of the alignment modes that are currently supported by
 
 ## Installation
 
-Bismark **v2.0.0+** is the Rust suite. Pick one:
+Bismark is now the Rust suite. Pick one:
 
 ```bash
 # 1. crates.io — installs the whole suite (all tools) into ~/.cargo/bin
 cargo install bismark
 
 # 2. Container image (nothing to install; drop-in for nf-core/methylseq)
-docker pull ghcr.io/felixkrueger/bismark:2.0.0     # or :latest
+docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :<version>
 
 # 3. Prebuilt binaries — download from the Releases page and put on your PATH
 #    https://github.com/FelixKrueger/Bismark/releases
@@ -62,4 +62,4 @@ Bismark was written by Felix Krueger, part of the [Babraham Bioinformatics](http
 
 ## Licences
 
-Bismark itself is free software, `bismark2report` and `bismark2summary` produce HTML graphs powered by [Plot.ly](https://plot.ly/javascript/) which are also free to use and look at!
+Bismark itself is free software, `bismark report` and `bismark summary` produce HTML graphs powered by [Plot.ly](https://plot.ly/javascript/) which are also free to use and look at!

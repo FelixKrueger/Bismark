@@ -118,9 +118,9 @@ Expanding on our observation that single-cell BS-seq, or PBAT libraries in gener
 **Please note** that we still do not recommend using local alignments as a means to _magically_ increase mapping efficiencies (please see [here](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/)), but we do acknowledge that PBAT/scBSs-seq/scNMT-seq are exceptional applications where local alignments might indeed make a difference (there is only so much data to be had from a single cell...).
 We didn't have the time yet to set more appropriate or stringent default values for local alignments (suggestions welcome), nor did we investigate whether the methylation extraction will require an additional `--ignore` flag if a read was found to the be soft-clipped (the so called 'micro-homology domains'). This might be added in the near future.
 
-## Combined-index alignment (Rust suite beta, opt-in)
+## Combined-index alignment (opt-in)
 
-The [Bismark Rust suite](/Bismark/installation/) adds an opt-in **combined-index** alignment mode to `bismark_rs`. Instead of running 2 (directional) or 4 (non-directional) separate per-strand aligner instances, it aligns against a **single combined C→T + G→A index** in one both-strands pass per read-conversion.
+The [Bismark Rust suite](/Bismark/installation/) adds an opt-in **combined-index** alignment mode to `bismark`. Instead of running 2 (directional) or 4 (non-directional) separate per-strand aligner instances, it aligns against a **single combined C→T + G→A index** in one both-strands pass per read-conversion.
 
 It is **opt-in, never-silent, and concordance-gated — NOT byte-identical** to the faithful per-strand default (a small, benign churn vs the per-strand oracle: directional ~0.013%, non-directional ~0.022–0.044%, pbat ~0.044%, almost all unique↔ambiguous flips). The faithful default path is unchanged; combined mode is used only when you ask for it. minimap2 and `--multicore` are not supported in combined mode (they fail loudly).
 
@@ -137,7 +137,7 @@ See [Which mode to choose](#which-mode-to-choose) below for the per-mode wall-cl
 **Build the combined index once** (genome preparation adds a `Bisulfite_Genome/Combined/` directory):
 
 ```bash
-bismark_genome_preparation_rs --combined_genome /path/to/genome/   # add --hisat2 for a HISAT2 combined index
+bismark prepare --combined_genome /path/to/genome/   # add --hisat2 for a HISAT2 combined index
 ```
 
 **Coverage:** single-end and paired-end · Bowtie 2 and HISAT2 · directional / non-directional / pbat.
@@ -150,10 +150,10 @@ bismark_genome_preparation_rs --combined_genome /path/to/genome/   # add --hisat
 
 ```bash
 # directional, combined index, one both-strands pass:
-bismark_rs --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
+bismark --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
 
 # non-directional, faithful low-memory (one index resident at a time):
-bismark_rs --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
+bismark --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
 ```
 
 ### Which mode to choose
@@ -173,7 +173,7 @@ Figures are a real 10M-read WGBS GRCh38 run (single-end, 16-core budget); the fu
 
 **Directional / pbat:** plain `--combined_index` is fastest (one index load — e.g. directional 176 s vs 229 s faithful) but is **not** a memory saving: one large combined index is about the size of the two per-strand indices it replaces.
 
-## Unaligned BAM (uBAM) input (Rust suite beta)
+## Unaligned BAM (uBAM) input
 
 The Rust `bismark` aligner accepts an **unaligned BAM** as read input in addition to FASTQ/FASTA — useful for the increasingly common uBAM raw-read container (ONT/PacBio basecaller output, 10x, archival). It is **auto-detected by the file's BAM magic bytes** (not the extension), so no extra flag is needed:
 
@@ -193,7 +193,7 @@ Notes:
 - A paired-end uBAM is passed as **one positional file**, not via `-1`/`-2`; a uBAM supplied through `-1`/`-2` is rejected with guidance.
 - uBAM input is incompatible with `-f`/`--fasta` (BAM carries qualities → FASTQ), and — like FASTQ/FASTA — paired-end is unsupported for the minimap2/rammap backends.
 
-## BINSEQ (`.vbq` + `.cbq`) input (Rust suite beta)
+## BINSEQ (`.vbq` + `.cbq`) input
 
 The Rust `bismark` aligner also accepts an [Arc Institute **BINSEQ**](https://github.com/arcinstitute/binseq) file as read input, decoded **in-process** (via the `binseq` crate — no `bqtools` needed at runtime) and auto-detected by extension. Both the verbose `.vbq` and the columnar `.cbq` variant are supported:
 
