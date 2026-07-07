@@ -129,9 +129,9 @@ dependencies = [
 
 [[package]]
 name = "binseq"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e7957aa0407815497da2fef04777631074911a6fded5a17193c7d05ca8dda46"
+checksum = "4a13f582514a444c2c91c74fb4f90315e0abf38b27be5596448eb7c93971769e"
 dependencies = [
  "anyhow",
  "auto_impl",

@@ -10,7 +10,7 @@ the `XM`/`XR`/`XG` methylation call, and writes the Bismark BAM + reports.
 
 **Binary:** `bismark_rs`.
 
-**Input formats:** FastQ, FastA, and **unaligned BAM (uBAM)** — a uBAM is auto-detected by its BAM magic bytes (single-end, or a single name-collated paired-end uBAM that is auto-split into mates) and transcoded to a temp FASTQ matching `samtools fastq`, so output is byte-identical to the equivalent FASTQ run. See the [Alignment usage docs](https://felixkrueger.github.io/Bismark/usage/alignment/) for details.
+**Input formats:** FastQ, FastA, **unaligned BAM (uBAM)**, and **BINSEQ** (`.vbq` + `.cbq`). A uBAM is auto-detected by its BAM magic bytes (single-end, or a single name-collated paired-end uBAM that is auto-split into mates) and transcoded to a temp FASTQ matching `samtools fastq`, so output is byte-identical to the equivalent FASTQ run. A BINSEQ `.vbq` (verbose) or `.cbq` (columnar) is decoded in-process via the `binseq` crate to a temp FASTQ matching `bqtools decode` (SE + PE; one record carries both mates; quality + headers required; `.bq` is rejected fail-loud), behind the default-OFF / release-ON `binseq-input` feature. See the [Alignment usage docs](https://felixkrueger.github.io/Bismark/usage/alignment/) for details.
 
 ## Status — built phase by phase
 
