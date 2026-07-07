@@ -79,16 +79,27 @@ fn align_version_short_circuits() {
 }
 
 #[test]
-fn every_subcommand_routes_with_pinned_argv0() {
-    // Dual-path routing (subcommand side): `bismark <sub> --help` reaches the tool
-    // (not the aligner fallthrough) AND pins argv[0] so the usage line reads
-    // `bismark <sub>`. Covers all 11 non-aligner subcommands (was a 2-tool spot-check).
-    for (sub, _classic) in PAIRS {
+fn every_subcommand_routes_to_its_tool() {
+    // Dual-path routing (subcommand side), for all 11 non-aligner subcommands:
+    //  - `bismark <sub> --help` pins argv[0] so the usage line reads `bismark <sub>`
+    //    (proves the token routes to a tool, not the aligner fallthrough), AND
+    //  - `bismark <sub> --version` reaches the CORRECT tool — it reports that tool's
+    //    canonical name, so a mis-wire (e.g. `"dedup" => extractor::run_from_args`)
+    //    would report the wrong name and fail here (the `--help` check alone can't
+    //    catch that — the pinned usage line is identical regardless of the target).
+    for (sub, classic) in PAIRS {
         bismark()
             .args([sub, "--help"])
             .assert()
             .success()
             .stdout(predicate::str::contains(format!("Usage: bismark {sub}")));
+        bismark()
+            .args([sub, "--version"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                "{classic} (Bismark Rust suite) v"
+            )));
     }
 }
 

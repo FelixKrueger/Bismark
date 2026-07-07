@@ -10,7 +10,7 @@ Bismark is now a single Rust binary; the Perl scripts are archived as tagged leg
 - **Byte-identical to Perl Bismark `v0.25.1`** on the faithful default path — a drop-in replacement, and faster / lower-memory.
 - The original **Perl Bismark (`v0.25.x`)** is archived as tagged legacy (maintenance-freeze; critical/security fixes only).
 
-Since the last `2.0.0-beta`, the suite was consolidated from 14 crates/binaries into one; see the `bismark-rust-v2.0.0-beta.*` history below and the single-binary-suite epic for the full per-phase detail.
+Since the last `2.0.0-beta`, the suite was consolidated from 14 crates/binaries into one; see the `bismark-rust-v2.0.0-beta.*` GitHub releases/tags and the single-binary-suite epic for the full per-phase detail.
 
 ## Changelog for Bismark v0.25.1dev
 

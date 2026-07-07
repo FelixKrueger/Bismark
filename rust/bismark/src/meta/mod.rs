@@ -16,7 +16,7 @@ pub const BUILD_TIMESTAMP: &str = env!("BUILD_TIMESTAMP");
 pub const VERSION_BODY: &str = env!("VERSION_BODY");
 
 /// A one-line `--version` string for a suite tool, e.g.
-/// `bismark (Bismark Rust suite) v2.0.0 (abc1234 — linux/x86_64 — built 2026-…Z)`.
+/// `bismark (Bismark Rust suite) v3.0.0 (abc1234 — linux/x86_64 — built 2026-…Z)`.
 /// Every suite binary's `--version` is this exact shape (pass the CANONICAL tool
 /// name — no `_rs` suffix).
 pub fn version_line(tool: &str) -> String {

@@ -175,11 +175,11 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `--cram`
 
-  Writes the output to a `CRAM` file instead of `BAM`. The Rust suite reads and writes CRAM via pure-Rust `noodles` — no Samtools is required.
+  Requests `CRAM` output instead of `BAM`. **Not supported by the Rust aligner in v1 (BAM only)** — a `--cram` run is rejected fail-loud; CRAM *output* is deferred to a later release. (CRAM *input* elsewhere in the suite is read via pure-Rust `noodles`, no Samtools required.)
 
 - `--cram_ref <ref_file>`
 
-`CRAM` output requires you to specify a reference genome as a single FastA file. If this single-FastA reference file is not supplied explicitly it will be regenerated from the genome `.fa` sequence(s) used for the Bismark run and written to a file called `Bismark_genome_CRAM_reference.mfa` into the output directory.
+Once CRAM output is supported, it requires you to specify a reference genome as a single FastA file. If this single-FastA reference file is not supplied explicitly it will be regenerated from the genome `.fa` sequence(s) used for the Bismark run and written to a file called `Bismark_genome_CRAM_reference.mfa` into the output directory.
 
 - `--samtools_path`
 
