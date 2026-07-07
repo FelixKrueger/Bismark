@@ -37,7 +37,7 @@ Bismark is now the Rust suite. Pick one:
 cargo install bismark
 
 # 2. Container image (nothing to install; drop-in for nf-core/methylseq)
-docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :<version>
+docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :3.0.0
 
 # 3. Prebuilt binaries — download from the Releases page and put on your PATH
 #    https://github.com/FelixKrueger/Bismark/releases

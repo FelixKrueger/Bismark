@@ -44,7 +44,7 @@ A multi-arch image is published to the GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:latest      # latest release
-docker pull ghcr.io/felixkrueger/bismark:<version>   # pinned  <!-- TODO(phase6): version -->
+docker pull ghcr.io/felixkrueger/bismark:3.0.0       # pinned
 ```
 
 The tools use their **canonical** names (`bismark`, `deduplicate_bismark`, …), so the image is a drop-in for pipelines such as nf-core/methylseq. (The `bismark` command in the container is a thin version-probe wrapper that reports the suite version in methylseq's expected format, then execs the real aligner; every other tool is the real binary.)

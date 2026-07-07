@@ -15,6 +15,28 @@ fn bismark() -> Command {
     Command::cargo_bin("bismark").unwrap()
 }
 
+/// The 11 non-aligner subcommand ↔ classic-name (argv[0] alias) pairs, mirroring
+/// `cli.rs` (`run_subcommand` / `run_legacy_alias` / `print_top_level_help`). The
+/// aligner (bare `bismark` / `bismark align` ↔ the `bismark` binary) is exercised
+/// separately (`bare_version_prints_suite_line`, `align_version_short_circuits`).
+/// This table drives the dual-path routing gate: proving both entrypoints reach
+/// each tool means `bismark <sub>` is byte-identical to the classic path *by
+/// construction*, so the per-tool byte-identity gates (which run via the classic
+/// names) transitively cover the subcommand path — no per-tool oracle duplication.
+const PAIRS: &[(&str, &str)] = &[
+    ("dedup", "deduplicate_bismark"),
+    ("extract", "bismark_methylation_extractor"),
+    ("bedgraph", "bismark2bedGraph"),
+    ("cov2cyt", "coverage2cytosine"),
+    ("prepare", "bismark_genome_preparation"),
+    ("bam2nuc", "bam2nuc"),
+    ("nome", "NOMe_filtering"),
+    ("filter", "filter_non_conversion"),
+    ("consistency", "methylation_consistency"),
+    ("report", "bismark2report"),
+    ("summary", "bismark2summary"),
+];
+
 #[test]
 fn bare_version_prints_suite_line() {
     for flag in ["--version", "-V"] {
@@ -57,12 +79,11 @@ fn align_version_short_circuits() {
 }
 
 #[test]
-fn subcommand_help_uses_pinned_argv0() {
-    // argv[0] pin: `bismark <sub> --help` usage line reads `bismark <sub>`, not the path.
-    for (sub, _classic) in [
-        ("dedup", "deduplicate_bismark"),
-        ("extract", "bismark_methylation_extractor"),
-    ] {
+fn every_subcommand_routes_with_pinned_argv0() {
+    // Dual-path routing (subcommand side): `bismark <sub> --help` reaches the tool
+    // (not the aligner fallthrough) AND pins argv[0] so the usage line reads
+    // `bismark <sub>`. Covers all 11 non-aligner subcommands (was a 2-tool spot-check).
+    for (sub, _classic) in PAIRS {
         bismark()
             .args([sub, "--help"])
             .assert()
@@ -84,14 +105,19 @@ fn typo_falls_through_to_aligner() {
 }
 
 #[test]
-fn classic_alias_binary_reports_its_own_name() {
-    // The classic-named binary (argv[0] alias) routes to its tool's run_main.
-    Command::cargo_bin("deduplicate_bismark")
-        .unwrap()
-        .arg("--version")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "deduplicate_bismark (Bismark Rust suite) v",
-        ));
+fn every_classic_alias_routes_to_its_tool() {
+    // Dual-path routing (alias side): each classic-named binary (argv[0] alias)
+    // reaches its tool's run_main and reports its own canonical name. Combined with
+    // the per-tool byte-identity gates (which run via these classic names), this is
+    // the by-construction proof that `bismark <sub>` == the classic path for all 11.
+    for (_sub, classic) in PAIRS {
+        Command::cargo_bin(classic)
+            .unwrap()
+            .arg("--version")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                "{classic} (Bismark Rust suite) v"
+            )));
+    }
 }

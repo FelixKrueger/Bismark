@@ -1,16 +1,16 @@
 # Bismark Changelog
 
 
-## Bismark 3.0.0 (unreleased) — the Rust suite    <!-- TODO(phase6): finalize version + date at the GA cut -->
+## Bismark 3.0.0 — the Rust suite
 
-Bismark is now a single Rust binary (the Perl scripts move to tagged legacy). Highlights of this release:
+Bismark is now a single Rust binary; the Perl scripts are archived as tagged legacy. Highlights:
 
-- **One crate, one binary.** The Rust suite is consolidated into a single `bismark` crate that builds one multicall binary. Invoke it as `bismark <subcommand>` (`bismark align`, `bismark dedup`, `bismark extract`, …); every classic tool name (`deduplicate_bismark`, `bismark_methylation_extractor`, …) remains a fully supported `argv[0]` alias, so existing pipelines are byte-identical drop-ins.
-- **`cargo install bismark`** installs the whole suite in one command.
-- **Byte-identical** to Perl Bismark `v0.25.1` on the faithful default path.
+- **One crate, one binary.** The Rust suite is consolidated into a single `bismark` crate that builds one multicall binary. Invoke it as `bismark <subcommand>` (`bismark align`, `bismark dedup`, `bismark extract`, …); every classic tool name (`deduplicate_bismark`, `bismark_methylation_extractor`, …) remains a fully supported `argv[0]` alias, so existing pipelines (nf-core/methylseq, user scripts) are byte-identical drop-ins.
+- **`cargo install bismark`** installs the whole suite in one command; prebuilt binaries and a multi-arch container (`ghcr.io/felixkrueger/bismark:3.0.0` / `:latest`) are also published.
+- **Byte-identical to Perl Bismark `v0.25.1`** on the faithful default path — a drop-in replacement, and faster / lower-memory.
 - The original **Perl Bismark (`v0.25.x`)** is archived as tagged legacy (maintenance-freeze; critical/security fixes only).
 
-_(Full release notes + the exact version and date are finalized at the GA cut — see the single-binary-suite epic.)_
+Since the last `2.0.0-beta`, the suite was consolidated from 14 crates/binaries into one; see the `bismark-rust-v2.0.0-beta.*` history below and the single-binary-suite epic for the full per-phase detail.
 
 ## Changelog for Bismark v0.25.1dev
 

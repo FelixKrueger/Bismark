@@ -98,7 +98,7 @@ The full path `</../../>` to the HISAT2 installation on your system. If not spec
 
 (May also be --multicore <int>). Sets the number of parallel instances of Bismark to be run concurrently. This forks the Bismark alignment step very early on so that each individual Spawn of Bismark processes only every n-th sequence (n being set by `--multicore`). Once all processes have completed, the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged into single files in very much the same way as they would have been generated running Bismark conventionally with only a single instance.
 
-If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, Samtools, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
+If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
 **WARNING:** Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. _You have been warned_.
 
 - `--local`
@@ -175,7 +175,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `--cram`
 
-  Writes the output to a `CRAM` file instead of `BAM`. This requires the use of Samtools 1.2 or higher.
+  Writes the output to a `CRAM` file instead of `BAM`. The Rust suite reads and writes CRAM via pure-Rust `noodles` — no Samtools is required.
 
 - `--cram_ref <ref_file>`
 
@@ -183,7 +183,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `--samtools_path`
 
-  The path to your `Samtools` installation, e.g. `/home/user/samtools/`. Does not need to be specified explicitly if `Samtools` is in the `PATH` already.
+  Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required.
 
 - `--prefix <prefix>`
 

@@ -61,4 +61,21 @@ mod tests {
             Err(_) => { /* packaged context: ../VERSION absent — nothing to compare */ }
         }
     }
+
+    /// **Publish-version guard (load-bearing for a GA cut).** `cargo publish` registers
+    /// the version literal in `bismark/Cargo.toml` (`CARGO_PKG_VERSION`), which is NOT
+    /// `version.workspace` and is decoupled from `rust/VERSION`. If it drifts, the crate
+    /// on crates.io reports a different version than the binary's `--version` / the release
+    /// tag / the image — the exact 2.0.1 `cargo install` bug. Unlike the vendored guard
+    /// above this NEVER skips (it runs in every context, incl. the packaged crate), so a
+    /// GA that bumped `rust/VERSION` but forgot `Cargo.toml` fails `cargo test` before the
+    /// irreversible publish.
+    #[test]
+    fn cargo_pkg_version_matches_suite_version() {
+        assert_eq!(
+            env!("CARGO_PKG_VERSION"),
+            SUITE_VERSION,
+            "bismark/Cargo.toml version (what `cargo publish` registers) drifted from the suite version (rust/VERSION)"
+        );
+    }
 }

@@ -43,7 +43,7 @@ Non-CG methylation has to be found on consecutive non-CGs. Any kind of unmethyla
 
 - `--samtools_path`
 
-The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.
+Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required.
 
 - `--help`
 

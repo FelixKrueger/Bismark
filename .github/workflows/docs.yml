@@ -2,9 +2,7 @@ name: Docs site (Astro + Starlight)
 
 on:
   push:
-    # `master` keeps docs deploying after the GA master-takeover; iron-chancellor
-    # stays so docs still build from the integration branch pre-takeover.
-    branches: [rust/iron-chancellor, master]
+    branches: [master]
     paths:
       - 'docs/**'
       - '.github/workflows/docs.yml'

@@ -37,7 +37,7 @@ A multi-arch image is published to the GitHub Container Registry, exposing the t
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:latest        # latest release
-docker pull ghcr.io/felixkrueger/bismark:<version>     # pinned  <!-- TODO(phase6): version -->
+docker pull ghcr.io/felixkrueger/bismark:3.0.0         # pinned
 ```
 
 The Rust aligner also adds an opt-in, lower-memory [combined-index alignment mode](/Bismark/usage/alignment/) (one combined C→T + G→A index instead of separate per-strand instances) — see the Alignment page.

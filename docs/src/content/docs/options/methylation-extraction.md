@@ -82,7 +82,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--samtools_path`
 
-  The path to your Samtools installation, e.g. /home/user/samtools/. Does not need to be specified explicitly if Samtools is in the PATH already.
+  Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required.
 
 - `--gzip`
 
@@ -98,7 +98,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--multicore <int>`
 
-  Sets the number of cores to be used for the methylation extraction process. If system resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out `.gz` output streams will in fact use ~3 cores per value of `--multicore <int>` specified (1 for the methylation extractor itself, 1 for a Samtools stream, 1 for a GZIP stream), so `--multicore 10` is likely to use around 30 cores of system resources. This option has no bearing on the `bismark bedgraph` or `bismark cov2cyt` (genome-wide cytosine report) processes.
+  Sets the number of cores to be used for the methylation extraction process. If system resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out `.gz` output streams will use more than one core per value of `--multicore <int>` specified (the extractor itself plus a GZIP output stream — the Rust suite runs no Samtools stream), so a high `--multicore` value uses correspondingly more cores of system resources. This option has no bearing on the `bismark bedgraph` or `bismark cov2cyt` (genome-wide cytosine report) processes.
 
 - `--version`
 
