@@ -7,7 +7,8 @@
 # Install/update config for the `install-suite*` recipes (bump `suite_tag` on release).
 repo := "https://github.com/FelixKrueger/Bismark"
 suite_tag := "bismark-rust-v2.0.0"
-suite_crates := "bismark-genome-preparation bismark-aligner bismark-dedup bismark-extractor bismark-bedgraph bismark-coverage2cytosine bismark-methylation-consistency bismark-nome-filtering bismark-filter-nonconversion bismark-bam2nuc bismark-report bismark-summary"
+# Post-fold the whole suite is ONE crate — installing `bismark` yields all 12 binaries.
+suite_crates := "bismark"
 
 # Local benchmark dataset root for the aligner Apple Silicon perf work
 # (`genomes/`, `RRBS_PE/`, `aligner_golden/`). Override on the command line.
@@ -56,7 +57,7 @@ install-suite:
 
 # Install all 12 from the latest dev branch; re-run to update (no --force needed).
 install-suite-dev:
-    cargo install --git {{repo}} --branch rust/iron-chancellor {{suite_crates}}
+    cargo install --git {{repo}} --branch master {{suite_crates}}
 
 # Print every suite binary's --version (provenance + suite-version check).
 version: build
@@ -86,26 +87,26 @@ reproduce:
         else echo "✗ $b DIFFERS"; fi; \
     done
 
-# ── Apple Silicon perf helpers (bismark-aligner) ────────────────────────────
+# ── Apple Silicon perf helpers (aligner) ────────────────────────────────────
 # Discipline: profile -> prove byte-identity -> measure. See
 # plans/06222026_aligner-apple-silicon/PLAN.md.
 
 # Symbol-keeping build for samply/Instruments (the `profiling` profile keeps
 # DWARF; it is NEVER built by ci/reproduce/build, so the gates are untouched).
 build-profiling:
-    cargo build --profile profiling -p bismark-aligner
+    cargo build --profile profiling -p bismark
 
 # Non-portable build tuned for the host CPU. OPT-IN ONLY — never the CI/release
 # default (would break portable + bit-reproducible binaries).
 build-native:
-    RUSTFLAGS="-C target-cpu=native" cargo build --release -p bismark-aligner
+    RUSTFLAGS="-C target-cpu=native" cargo build --release -p bismark
 
 # Capture the golden aligner output from the CURRENT (baseline) binary so the
 # Rust-vs-Rust byte-identity oracle has a reference. Run ONCE from a known
 # byte-identical commit BEFORE optimizing; re-capture only when output
 # legitimately changes (never during pure perf work).
 aligner-golden genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 out=rrbs_gold:
-    cargo build --release -p bismark-aligner
+    cargo build --release -p bismark
     rm -rf {{out}} && mkdir -p {{out}}
     ./target/release/bismark --genome {{genome}} -1 {{r1}} -2 {{r2}} -o {{out}}
     cp {{out}}/*_bismark_bt2_pe.bam {{out}}/golden.bam
@@ -115,9 +116,9 @@ aligner-golden genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 out=rrbs_gold:
 # Rust-vs-Rust byte-identity oracle (fast iteration loop). Runs the CURRENT
 # binary and asserts decompressed BAM + report bytes equal the captured golden.
 # Uses samtools only as a local decompressor (not shipped logic); the committed
-# in-repo equivalent is bismark-aligner/tests/byte_identity_real_data.rs.
+# in-repo equivalent is bismark/tests/aligner_byte_identity_real_data.rs.
 aligner-oracle genome=rrbs_genome r1=rrbs_r1 r2=rrbs_r2 gold=rrbs_gold:
-    cargo build --release -p bismark-aligner
+    cargo build --release -p bismark
     rm -rf /tmp/aligner_oracle && mkdir -p /tmp/aligner_oracle
     ./target/release/bismark --genome {{genome}} -1 {{r1}} -2 {{r2}} -o /tmp/aligner_oracle
     # Records only (no -h): the @PG CL header line embeds the -o path and so

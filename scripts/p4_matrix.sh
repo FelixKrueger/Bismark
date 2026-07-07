@@ -30,7 +30,7 @@ fi
 
 # Build the release binary (incremental; ~0s if already current at this commit).
 echo "==> building bismark-methylation-extractor-rs (release)..." >&2
-( cd "$REPO/rust" && cargo build --release -p bismark-extractor ) > /var/tmp/p4_build.log 2>&1 \
+( cd "$REPO/rust" && cargo build --release -p bismark ) > /var/tmp/p4_build.log 2>&1 \
   || { echo "FATAL: cargo build failed — see /var/tmp/p4_build.log" >&2; exit 1; }
 G="$HOME/bismark_benchmarks/genome"
 SE_FULL="$HOME/bismark_benchmarks/full_size/SRR24827373_Homo_sapiens_Bisulfite-Seq_SE_trimmed_full_size_bismark_bt2.bam"

@@ -1,23 +1,23 @@
 name: Release (Bismark Rust suite)
 
 # ------------------------------------------------------------------
-# Beta release machinery for the Bismark Rust SUITE (12 binaries + the
-# bismark-io lib). Modeled on the Trim Galore Rust release workflow, adapted
-# for a multi-binary workspace.
+# Release machinery for the Bismark Rust SUITE — post-fold a SINGLE `bismark`
+# crate that builds ONE multicall binary (the 12 classic tool names ship as
+# symlinks / `argv[0]` aliases). Modeled on the Trim Galore Rust release workflow.
 #
 # Release invariant: never push a `bismark-rust-v*` tag manually — this workflow
 # creates and pushes the tag itself. For validation, dispatch with dry_run=true:
-# all destructive side effects (tag push, GHCR push, GH release) are suppressed.
+# all destructive side effects (tag push, GHCR push, GH release, crates.io publish)
+# are suppressed, and the branch guard is bypassed so it runs from any branch.
 #
-# Versioning: the SUITE version is the single-source `rust/VERSION` file (NOT a
-# crate version — the workspace is virtual). Tag = `bismark-rust-v<version>`
-# (distinct from the Perl `v*` tags and the per-crate `bismark-io-v*` tags).
+# Versioning: the SUITE version is the single-source `rust/VERSION` file. Tag =
+# `bismark-rust-v<version>` (distinct from the Perl `v*` tags).
 #
-# Branch guard (beta track): prereleases only from `rust/iron-chancellor`
-# (version carries a `-beta`/`-rc` suffix); GA (no suffix) only from `master`.
+# Branch guard: prereleases only from `rust/iron-chancellor` (version carries a
+# `-beta`/`-rc` suffix); GA (no suffix) only from `master`; dry-run from anywhere.
 #
-# NO crates.io publish: deferred to GA (the immutable-publish / no-bump-during-
-# beta / exact-pin-cascade trap — see plans/06062026_rust-suite-packaging/PLAN.md).
+# crates.io: publishes the ONE `bismark` crate (`cargo publish -p bismark`) on a
+# GA cut — no more 14-crate DAG. See the publish-crates job.
 # ------------------------------------------------------------------
 
 on:
@@ -63,7 +63,10 @@ jobs:
           [[ "$RAW_VERSION" == *-* ]] && IS_PRERELEASE=true
 
           # Branch guard: GA only from master; prereleases from iron-chancellor.
-          if [ "${{ github.ref_name }}" = "master" ]; then
+          # A dry-run (validation) is allowed from ANY branch — it pushes nothing.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            : # dry-run validation — permitted from any branch
+          elif [ "${{ github.ref_name }}" = "master" ]; then
             : # GA (or prerelease) from master is allowed
           elif [ "${{ github.ref_name }}" = "rust/iron-chancellor" ] && [ "$IS_PRERELEASE" = "true" ]; then
             : # prereleases only from the integration branch
@@ -105,29 +108,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Build the whole suite
+      - name: Build the bismark binary
         env:
           BISMARK_SUITE_VERSION: ${{ needs.check-release.outputs.version }}
-        # Compile the `bismark` aligner with the in-process rammap backend ON so the shipped
-        # binary's `--rammap_inprocess` opt-in is functional (default `--rammap`
-        # stays subprocess), AND with `binseq-input` ON so the shipped binary can read
-        # BINSEQ `.vbq` files (#1025 Phase 2 — a default `cargo build` rejects `.vbq`
-        # fail-loud; release binaries decode it). `pkg/feature` syntax: both features
-        # live only on bismark-aligner; this still builds all 14 workspace members, and
-        # the other 11 binaries are byte-unaffected. The rammap-core git dep + the
-        # binseq crates.io dep are fetched at build (network available on the runner).
-        run: cargo build --release --locked --manifest-path rust/Cargo.toml --target ${{ matrix.target }} --features bismark-aligner/rammap-inprocess,bismark-aligner/binseq-input
+        # ONE multicall binary (post-fold: the 12 classic names all resolve to the
+        # same `bismark::cli::dispatch()`, self-routing on argv[0]; the tarball ships
+        # `bismark` + symlinks). Built with `rammap-inprocess` ON (so the shipped
+        # `--rammap_inprocess` opt-in works; default `--rammap` stays subprocess) AND
+        # `binseq-input` ON (so it decodes BINSEQ `.vbq`/`.cbq`; a default build rejects
+        # them fail-loud). Both features now live on the single `bismark` crate. The
+        # rammap-core git dep + the binseq crates.io dep are fetched at build.
+        run: cargo build --release --locked --manifest-path rust/Cargo.toml --target ${{ matrix.target }} --bin bismark --features bismark/rammap-inprocess,bismark/binseq-input
       - name: Package the suite tarball
         id: package
         run: |
           ARCHIVE="bismark-rust-${{ needs.check-release.outputs.version }}-${{ matrix.name }}"
           BINDIR="rust/target/${{ matrix.target }}/release"
           mkdir -p "staging/${ARCHIVE}"
-          for b in bismark deduplicate_bismark bismark_methylation_extractor \
+          # ONE multicall binary + relative symlinks for the 11 classic names (the
+          # binary self-routes on argv[0]; GNU tar stores symlinks as symlinks).
+          cp "${BINDIR}/bismark" "staging/${ARCHIVE}/"
+          for b in deduplicate_bismark bismark_methylation_extractor \
                    bismark2bedGraph coverage2cytosine bismark_genome_preparation \
                    bam2nuc NOMe_filtering filter_non_conversion \
                    methylation_consistency bismark2report bismark2summary; do
-            cp "${BINDIR}/${b}" "staging/${ARCHIVE}/"
+            ln -s bismark "staging/${ARCHIVE}/${b}"
           done
           cp license.txt "staging/${ARCHIVE}/LICENSE"
           cp rust/THIRD-PARTY-NOTICES.md "staging/${ARCHIVE}/"
@@ -168,50 +173,19 @@ jobs:
           echo "✓ all 12 binaries smoke-tested"
 
   # ── crates.io publish (GA only) ───────────────────────────────────────────
-  # Publishes the 14-member workspace to crates.io in dependency (DAG) order.
-  # Runs on every REAL release, but the work is branch-gated INSIDE the script:
-  #   - dry-run (any version): validate only — `cargo publish --workspace
-  #     --dry-run` (resolves unpublished workspace siblings locally, so dependents
-  #     verify-build) + structural asserts (member-coverage / version-presence /
-  #     git-dep / topological-order). No OIDC. NB per-crate `cargo publish -p X
-  #     --dry-run` does NOT work for a dependent (it resolves the dep from crates.io
-  #     where the sibling isn't published yet) — hence `--workspace`.
-  #   - prerelease real (beta): NO-OP. Betas are never published (the immutable-
-  #     publish / exact-pin-cascade trap). Exiting 0 lets the downstream tag/
-  #     `:latest` jobs proceed unchanged on the beta track.
-  #   - GA real (non-prerelease, from master): classic `CARGO_REGISTRY_TOKEN`
-  #     secret → ordered `cargo publish` L0 → L1 → L2, each verified-available
-  #     before the next (cargo's built-in index-propagation wait).
+  # Post-fold the suite is ONE crate (`bismark`) — the 14-crate publish DAG + the
+  # ordering invariants are gone; a single `cargo publish -p bismark` suffices (no
+  # intra-workspace path-deps remain). Dry-run validates packaging + verify-build;
+  # a prerelease real cut is a no-op; a GA real cut token-publishes (idempotent
+  # skip-if-already-present). crates.io strips the optional `rammap-core` git source
+  # to its `=1.1.1` version req at publish (that version is live on crates.io —
+  # proven by the GA `bismark-aligner` publish); registry acceptance is exercised
+  # only at the live cut, not by `--dry-run`.
   #
-  # Publish DAG (verified GA-epic Phase 1 against the live Cargo.tomls):
-  #   L0 (independent roots):  bismark-io, bismark-meta
-  #   L1 (depend only on L0):  bismark-aligner bismark-dedup bismark-bedgraph
-  #                            bismark-coverage2cytosine bismark-bam2nuc
-  #                            bismark-filter-nonconversion bismark-nome-filtering
-  #                            bismark-methylation-consistency
-  #                            bismark-genome-preparation bismark-report bismark-summary
-  #   L2 (publish LAST):       bismark-extractor (→ bedgraph + coverage2cytosine)
-  #
-  # SAFETY: docker-merge (moves `:latest`) and create-release (pushes the GA tag)
-  # `needs:` this job, so on a GA publish FAILURE they are skipped — a partial
-  # publish never strands a moved `:latest` or a pushed tag.
-  #
-  # PARTIAL-PUBLISH RUNBOOK (crates.io is yank-only — NO delete): a mid-cascade
-  # failure leaves earlier crates permanently published. Do NOT retry the SAME
-  # versions (republishing an existing version is rejected). Fix forward: patch
-  # the failing crate(s), BUMP the affected crate version(s) (+ the dependent
-  # exact-pins), and re-run from the first unpublished crate. The bare-`bismark`
-  # reserve crate (OD-3) is published separately at the Ph5 cut.
-  #
-  # AUTH — classic token, NOT OIDC (deliberate, GA-epic Ph5 pre-flight): crates.io
-  # Trusted Publishing (OIDC) CANNOT do a crate's FIRST-ever publish — it requires a
-  # manual/token first publish per crate (name-squat prevention). At the 2.0.0 cut,
-  # 12 of the 14 crates are brand-new, so the GA publish uses a classic scoped
-  # `CARGO_REGISTRY_TOKEN` repo secret. A classic token also avoids OIDC's 30-min
-  # token expiring mid-cascade across 14 sequential verify-build+publish steps.
-  # POST-GA (2.0.1+): once every crate exists, configure a Trusted Publisher per
-  # crate (repo + this workflow, + a GH Environment), then switch this job back to
-  # OIDC (`rust-lang/crates-io-auth-action`) and drop the secret.
+  # SAFETY: docker-merge (moves `:latest`) + create-release (pushes the tag) `needs:`
+  # this job, so a publish FAILURE skips them — a failed publish never strands a
+  # moved `:latest` or a pushed tag. crates.io is yank-only: on failure, fix forward
+  # + bump the version, then re-run (skip-if-present resumes cleanly).
   publish-crates:
     name: Publish to crates.io (GA only)
     needs: [check-release, build-binaries, smoke-test-binaries]
@@ -221,7 +195,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish (or validate) the workspace in DAG order
+      - name: Publish (or validate) the bismark crate
         working-directory: rust
         env:
           DRY_RUN: ${{ needs.check-release.outputs.is_dry_run }}
@@ -229,149 +203,33 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          L0="bismark-io bismark-meta"
-          L1="bismark-aligner bismark-dedup bismark-bedgraph bismark-coverage2cytosine bismark-bam2nuc bismark-filter-nonconversion bismark-nome-filtering bismark-methylation-consistency bismark-genome-preparation bismark-report bismark-summary"
-          L2="bismark-extractor"
-          ORDER="$L0 $L1 $L2"
 
+          # Prerelease REAL publish: no-op (betas are never published).
           if [ "$DRY_RUN" != "true" ] && [ "$IS_PRERELEASE" = "true" ]; then
-            echo "Prerelease ($IS_PRERELEASE) — crates.io publish is deferred to the GA cut. No-op."
+            echo "Prerelease ($IS_PRERELEASE) — crates.io publish deferred to GA. No-op."
             exit 0
           fi
 
-          # --- Invariant 0: ORDER covers EVERY workspace member exactly once. A
-          # crate added to the workspace but forgotten here would silently never
-          # publish; assert set-equality against the [workspace] members list.
-          echo "::group::ORDER covers all workspace members"
-          members=$(grep -E '^members' Cargo.toml | grep -oE 'bismark-[a-z0-9-]+' | sort -u)
-          order_sorted=$(printf '%s\n' $ORDER | sort -u)
-          if [ "$members" != "$order_sorted" ]; then
-            echo "::error::publish ORDER does not match the [workspace] members:"
-            diff <(echo "$members") <(echo "$order_sorted") || true
-            exit 1
-          fi
-          # ORDER must list each crate exactly once (a duplicate would re-publish).
-          n_order=$(printf '%s\n' $ORDER | wc -l | xargs)
-          n_uniq=$(printf '%s\n' $ORDER | sort -u | wc -l | xargs)
-          [ "$n_order" = "$n_uniq" ] || { echo "::error::ORDER has a duplicate crate ($n_order entries, $n_uniq unique)"; exit 1; }
-          echo "✓ ORDER covers all $(echo "$members" | wc -l | xargs) workspace members, no duplicates"
-          echo "::endgroup::"
-
-          # --- Invariant 1: every intra-workspace dep carries a `version =`
-          # (crates.io rejects a published crate whose path-dep has no version).
-          echo "::group::version-presence on intra-workspace deps"
-          bad_deps=$(for c in $ORDER; do grep -HE '^bismark-[a-z0-9-]+ *=' "$c/Cargo.toml"; done | grep -v 'version' || true)
-          if [ -n "$bad_deps" ]; then
-            echo "::error::these bismark-* path-deps lack a 'version =' (crates.io will reject the publish):"
-            echo "$bad_deps"
-            exit 1
-          fi
-          echo "✓ all intra-workspace deps carry a version"
-          echo "::endgroup::"
-
-          # --- Invariant 1b: NO dependency uses a git source without a `version =`.
-          # crates.io rejects ANY git dep — even an optional, feature-gated one
-          # (e.g. bismark-aligner's optional rammap-core git rev). Invariant 1's
-          # bismark-* scan can't see third-party git deps, so guard them here.
-          echo "::group::git-deps carry a version"
-          git_unversioned=$(for c in $ORDER; do grep -HnE '(^|[,{[:space:]])git[[:space:]]*=' "$c/Cargo.toml"; done | grep -v 'version' || true)
-          if [ -n "$git_unversioned" ]; then
-            echo "::error::these git deps have no 'version =' (crates.io will reject the publish):"
-            echo "$git_unversioned"
-            exit 1
-          fi
-          echo "✓ all git deps carry a version"
-          echo "::endgroup::"
-
-          # --- Invariant 2: ORDER is a valid topological sort (each crate's
-          # bismark-* deps appear EARLIER). Catches a wrong publish order, which
-          # `cargo publish --dry-run` cannot (it resolves deps via local path).
-          echo "::group::topological-order check"
-          done_list=" "
-          bad=0
-          for c in $ORDER; do
-            for dep in $(grep -oE '^bismark-[a-z0-9-]+' "$c/Cargo.toml" | sort -u); do
-              case "$done_list" in
-                *" $dep "*) : ;;
-                *) echo "ORDER BUG: $c depends on $dep, which is not published earlier in ORDER"; bad=1 ;;
-              esac
-            done
-            done_list="$done_list$c "
-          done
-          [ "$bad" = 0 ] || { echo "::error::publish ORDER is not a valid topological sort"; exit 1; }
-          echo "✓ publish order is a valid topological sort"
-          echo "::endgroup::"
-
-          # --- Publish (real GA) or validate (dry-run) the workspace.
           if [ "$DRY_RUN" = "true" ]; then
-            # Validate the WHOLE workspace in ONE dry-run. Modern cargo (>=1.90)
-            # resolves unpublished workspace SIBLINGS locally, so each dependent's
-            # verify-build works even though its intra-workspace deps aren't on the
-            # registry yet. Per-crate `cargo publish -p X --dry-run` CANNOT do this:
-            # for publishing it strips `path=` and resolves the dep from crates.io,
-            # so a dependent (e.g. bismark-aligner needs `bismark-io =1.0.0`) fails
-            # because that version isn't published yet — only betas are (this is what
-            # the first 4c dry-run surfaced). `--workspace` computes the publish order
-            # itself; the structural asserts above (member-coverage / version-presence
-            # / git-dep / topo) still cover manifest + ordering correctness.
-            echo "::group::validate workspace (cargo publish --workspace --dry-run)"
-            cargo publish --workspace --locked --dry-run --allow-dirty
+            echo "::group::validate (cargo publish -p bismark --dry-run)"
+            cargo publish -p bismark --locked --dry-run --allow-dirty
             echo "::endgroup::"
-            echo "✓ DRY-RUN: workspace packaged + dry-published (siblings resolved locally); deps versioned; order valid"
+            echo "✓ DRY-RUN: bismark packaged + verify-built (registry acceptance runs only at the live cut)"
           else
-            # Fail LOUD + EARLY if the publish token secret is missing — before any
-            # crate is published — so a forgotten secret can't strand a partial
-            # cascade (crates.io is yank-only). Set it via: repo Settings → Secrets
-            # and variables → Actions → CARGO_REGISTRY_TOKEN (a crates.io token
-            # scoped publish-new + publish-update).
+            # Fail LOUD + EARLY if the token is missing (crates.io is yank-only).
             if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-              echo "::error::CARGO_REGISTRY_TOKEN secret is empty — cannot publish. Add the crates.io token as a repo secret before the GA cut."
+              echo "::error::CARGO_REGISTRY_TOKEN secret is empty — cannot publish."
               exit 1
             fi
-            # Real GA publish: ordered L0 → L1 → L2. RESUMABLE + RATE-LIMIT-AWARE:
-            #  - SKIP any crate+version already on crates.io (so a re-run after a
-            #    partial publish resumes cleanly — crates.io is yank-only, and
-            #    re-publishing an existing version is a hard error).
-            #  - crates.io throttles NEW crates (burst 5, then 1 per 10 min) and
-            #    cargo has NO built-in 429 backoff, so on a 429 we sleep 11 min and
-            #    retry (publishing >5 new crates ALWAYS trips this — rust-lang/crates.io#1643).
-            #  - then wait for the crate to appear on the index before the next
-            #    crate's verify-build tries to resolve it.
+            ver=$(sed -n 's/^version = "\(.*\)"/\1/p' bismark/Cargo.toml | head -1)
             ua='User-Agent: bismark-release'
-            set +e   # manual retry/skip handling below (do not let -e abort mid-loop)
-            fail=0
-            for c in $ORDER; do
-              cver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$c/Cargo.toml" | head -1)
-              if [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$ua" "https://crates.io/api/v1/crates/$c/$cver")" = "200" ]; then
-                echo "✓ $c $cver already on crates.io — skip (resume)"
-                continue
-              fi
-              echo "::group::publish $c $cver"
-              ok=0
-              for attempt in $(seq 1 12); do
-                out=$(cargo publish -p "$c" --locked 2>&1); rc=$?
-                echo "$out"
-                if [ $rc -eq 0 ]; then ok=1; break; fi
-                if echo "$out" | grep -qiE 'already (exists|uploaded)|is already (uploaded|being)'; then
-                  echo "✓ $c $cver already uploaded — treat as done"; ok=1; break
-                fi
-                if echo "$out" | grep -qiE '429|too many|rate limit'; then
-                  echo "::warning::rate-limited on $c (attempt $attempt/12) — sleeping 11 min then retrying"
-                  sleep 660; continue
-                fi
-                echo "::error::$c failed with a non-rate-limit error (see log above)"; break
-              done
-              echo "::endgroup::"
-              if [ $ok -ne 1 ]; then fail=1; break; fi
-              # Index-propagation wait (≤5 min) so the next crate can resolve this dep.
-              for _ in $(seq 1 60); do
-                [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$ua" "https://crates.io/api/v1/crates/$c/$cver")" = "200" ] && break
-                sleep 5
-              done
-            done
-            set -e
-            [ $fail -eq 0 ] || { echo "::error::crates.io publish incomplete — see the failed crate above"; exit 1; }
-            echo "✓ PUBLISHED (or verified already-present) all 14 crates to crates.io in DAG order"
+            # Idempotent: skip if this version is already published (yank-only registry).
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' -H "$ua" "https://crates.io/api/v1/crates/bismark/$ver")" = "200" ]; then
+              echo "✓ bismark $ver already on crates.io — nothing to do"
+            else
+              cargo publish -p bismark --locked
+              echo "✓ published bismark $ver to crates.io"
+            fi
           fi
 
   docker-build:

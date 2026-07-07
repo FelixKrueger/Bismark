@@ -41,4 +41,24 @@ mod tests {
         // Canonical name only — the `_rs` dev suffix is retired at GA.
         assert!(!l.contains("_rs"));
     }
+
+    /// Drift guard: the crate-local vendored `VERSION` (build.rs's registry-build
+    /// fallback so a bare `cargo install bismark` doesn't report "unknown") must equal
+    /// the single-source `rust/VERSION`. SKIPS gracefully when `../VERSION` is absent
+    /// (the packaged-crate context — only the vendored copy ships in the tarball), so
+    /// it doesn't reintroduce the parked-2.0.1 fragility.
+    #[test]
+    fn vendored_version_matches_repo_version() {
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let vendored = std::fs::read_to_string(format!("{dir}/VERSION"))
+            .expect("crate-local bismark/VERSION must exist (Phase-4 vendored copy)");
+        match std::fs::read_to_string(format!("{dir}/../VERSION")) {
+            Ok(repo) => assert_eq!(
+                vendored.trim(),
+                repo.trim(),
+                "vendored bismark/VERSION drifted from rust/VERSION"
+            ),
+            Err(_) => { /* packaged context: ../VERSION absent — nothing to compare */ }
+        }
+    }
 }
