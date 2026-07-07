@@ -17,17 +17,17 @@ WORKDIR /build
 ARG BISMARK_SUITE_VERSION=unknown
 ENV BISMARK_SUITE_VERSION=${BISMARK_SUITE_VERSION}
 
-# Copy the whole repo (context = repo root) and build the workspace --locked.
-# (A dep-only cache layer is omitted: the 14-crate workspace makes the dummy-src
-# trick brittle; a clean --locked build is correct and CI caches via the registry.)
-# `--features bismark-aligner/rammap-inprocess` compiles the `bismark` aligner's in-process
-# rammap backend ON so the shipped `--rammap_inprocess` opt-in is functional
-# (default `--rammap` stays subprocess). The feature is bismark-aligner-only, so
-# the other 11 binaries are byte-unaffected; the rammap-core git dep is fetched at
-# build (network available in the build stage). Changing this line invalidates the
-# buildx layer cache once (expected — a one-time cold compile per arch).
+# Copy the whole repo (context = repo root) and build the ONE `bismark` multicall
+# binary --locked. `--features bismark/rammap-inprocess` compiles the in-process
+# rammap backend ON (the shipped `--rammap_inprocess` opt-in; default `--rammap`
+# stays subprocess), and `binseq-input` ON (so it decodes BINSEQ `.vbq`/`.cbq`; a
+# default build rejects them fail-loud). Both features now live on the single
+# `bismark` crate; the rammap-core git dep + the binseq crates.io dep are fetched at
+# build (network available in the build stage). `--bin bismark` builds only the one
+# binary — the 12 classic names are symlinks to it in the runtime stage. Changing
+# this line invalidates the buildx layer cache once (a one-time cold compile/arch).
 COPY . .
-RUN cargo build --release --locked --manifest-path rust/Cargo.toml --features bismark-aligner/rammap-inprocess
+RUN cargo build --release --locked --manifest-path rust/Cargo.toml -p bismark --bin bismark --features bismark/rammap-inprocess,bismark/binseq-input
 
 # ── Runtime stage ────────────────────────────────────────────
 # micromamba base so the pinned aligners + samtools install cleanly from bioconda.
@@ -42,6 +42,11 @@ LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 USER root
 
 # Pinned external tools (byte-identity requires these exact versions).
+# NB the Rust suite itself needs NO samtools (pure-Rust noodles I/O; --samtools_path
+# is accepted-but-ignored). samtools is kept ONLY for nf-core/methylseq co-residency
+# (smoke-test-docker asserts it among methylseq's shell-out tools).
+# TODO(phase4-followup): drop samtools once methylseq's Bismark modules are audited
+# to confirm they never `samtools sort/index/flagstat` inside this image.
 RUN micromamba install -y -n base -c bioconda -c conda-forge \
       bowtie2=2.5.5 \
       hisat2=2.2.2 \
@@ -59,25 +64,19 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends procps \
     && rm -rf /var/lib/apt/lists/*
 
-# The 12 suite binaries under their CANONICAL names (GA: the `_rs` suffix is
-# retired — Ph3a renamed every `[[bin]]`). The 11 non-aligner tools install
-# directly under their canonical names; the aligner lands as `bismark.bin` so
-# `/usr/local/bin/bismark` can be the version-probe wrapper (installed below).
-COPY --from=builder \
-    /build/rust/target/release/deduplicate_bismark \
-    /build/rust/target/release/bismark_methylation_extractor \
-    /build/rust/target/release/bismark2bedGraph \
-    /build/rust/target/release/coverage2cytosine \
-    /build/rust/target/release/bismark_genome_preparation \
-    /build/rust/target/release/bam2nuc \
-    /build/rust/target/release/NOMe_filtering \
-    /build/rust/target/release/filter_non_conversion \
-    /build/rust/target/release/methylation_consistency \
-    /build/rust/target/release/bismark2report \
-    /build/rust/target/release/bismark2summary \
-    /usr/local/bin/
-# The aligner, renamed to `bismark.bin` (the wrapper installed below execs it).
+# Post-fold there is ONE multicall binary; install it as `bismark.bin` and symlink
+# the 11 classic tool names to it (each self-routes on `argv[0]` via
+# `bismark::cli::dispatch`, so `deduplicate_bismark …` runs the dedup path).
+# `/usr/local/bin/bismark` is the version-probe WRAPPER (installed below) that
+# execs `bismark.bin` — so the 11 symlinks point at `bismark.bin`, NOT the wrapper
+# (a symlink to the wrapper would lose the classic `argv[0]` and run the aligner).
 COPY --from=builder /build/rust/target/release/bismark /usr/local/bin/bismark.bin
+RUN set -eu; cd /usr/local/bin; for b in \
+      deduplicate_bismark bismark_methylation_extractor bismark2bedGraph \
+      coverage2cytosine bismark_genome_preparation bam2nuc NOMe_filtering \
+      filter_non_conversion methylation_consistency bismark2report bismark2summary; do \
+      ln -s bismark.bin "$b"; \
+    done
 
 # ── Canonical `bismark` version-probe wrapper (nf-core/methylseq drop-in) ─────
 # methylseq calls the Bismark tools by canonical name and captures the suite

@@ -8,7 +8,7 @@
 //! one (epic `plans/07062026_single-binary-suite/`). Two deliberate changes vs the
 //! former per-crate build.rs:
 //!  - the SUITE version comes from `$BISMARK_SUITE_VERSION` (CI) or `../VERSION`
-//!    (`rust/VERSION`); the crate-local vendored `VERSION` tier is dropped (D4 — a
+//!    (`rust/VERSION`); a crate-local vendored `VERSION` tier (re-added in Phase 4 — a
 //!    registry-build fallback is re-added in the Phase-4 packaging rework if needed).
 //!  - a SINGLE `BISMARK_LAST_MODIFIED` (D4 uniform footer): `git log -1` HEAD date,
 //!    not a per-module date (`git log -- src/<mod>/` can't follow the fold rename).
@@ -68,9 +68,9 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (year, m, d)
 }
 
-/// SUITE version: `$BISMARK_SUITE_VERSION` (CI/Docker) → `../VERSION` (`rust/VERSION`)
-/// → `"unknown"`. (The crate-local vendored tier of the former per-crate build.rs is
-/// dropped — D4; Phase-4 packaging re-adds a registry-build fallback if required.)
+/// SUITE version: `$BISMARK_SUITE_VERSION` (CI/Docker) → `../VERSION` (`rust/VERSION`,
+/// workspace/local) → crate-local vendored `VERSION` (registry `cargo install`) →
+/// `"unknown"`. (The vendored tier was re-added in the Phase-4 packaging rework.)
 fn suite_version() -> String {
     if let Ok(v) = env::var("BISMARK_SUITE_VERSION") {
         let v = v.trim();
@@ -80,11 +80,21 @@ fn suite_version() -> String {
     }
     let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let repo_version = std::path::Path::new(&manifest).join("..").join("VERSION");
-    std::fs::read_to_string(&repo_version)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+    // crate-local vendored `VERSION`: a registry `cargo install bismark` tarball
+    // can't reach `../VERSION` (outside the crate root), so without this a bare
+    // registry install reports "unknown" (the parked-2.0.1 bug class). Kept in
+    // lockstep with `rust/VERSION` by `meta::tests::vendored_version_matches_repo_version`.
+    let vendored = std::path::Path::new(&manifest).join("VERSION");
+    for path in [repo_version, vendored] {
+        if let Some(v) = std::fs::read_to_string(&path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return v;
+        }
+    }
+    "unknown".to_string()
 }
 
 /// A SINGLE suite-wide "Last modified" date (`YYYY-MM-DD`) — the HEAD commit date
@@ -141,6 +151,7 @@ fn main() {
         }
     }
     println!("cargo:rerun-if-changed=../VERSION");
+    println!("cargo:rerun-if-changed=VERSION"); // crate-local vendored copy (registry-build fallback)
     println!("cargo:rerun-if-env-changed=BISMARK_SUITE_VERSION");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 }

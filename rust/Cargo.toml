@@ -1,13 +1,8 @@
 [workspace]
 resolver = "2"
+# Post-fold the whole suite is the single `bismark` crate (14 modules + 12
+# `src/bin/*.rs` multicall shims). `cargo install bismark` installs all 12 binaries.
 members = ["bismark"]
-# The `bismark` meta-crate re-declares every tool's canonical `[[bin]]` (so
-# `cargo install bismark` builds the whole suite). Those bin names collide with
-# the individual tool crates' bins, so exclude it from default builds — release
-# tarball + plain `cargo build` (neither passes --workspace) build only the tool
-# crates, collision-free. Build/install the meta-crate explicitly: `cargo build
-# -p bismark` / `cargo install bismark`. (An explicit `--workspace` still builds
-# it and warns about the collisions — cosmetic; CI stays green.)
 default-members = ["bismark"]
 
 [workspace.package]

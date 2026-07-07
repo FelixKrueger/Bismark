@@ -450,7 +450,7 @@ fi
 
 SPEEDUP_TABLE="$OUT_DIR/speedup_table.md"
 GIT_HEAD=$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null || echo "(unknown)")
-CRATE_VERSION=$(grep -E '^version = ' "$REPO_ROOT/rust/bismark-extractor/Cargo.toml" | head -1 | sed -E 's/^version = "([^"]+)"$/\1/' || echo "(unknown)")
+CRATE_VERSION=$(grep -E '^version = ' "$REPO_ROOT/rust/bismark/Cargo.toml" | head -1 | sed -E 's/^version = "([^"]+)"$/\1/' || echo "(unknown)")
 BAM_SIZE=$(wc -c < "$BAM" | tr -d ' ')
 
 {

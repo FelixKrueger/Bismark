@@ -135,7 +135,7 @@ PERL_BIN="${PERL_BIN:-$REPO_ROOT/bismark_methylation_extractor}"
 # Build the Rust binary in release mode for fair speed comparison.
 if [[ -z "${RUST_BIN:-}" ]]; then
   echo "==> building bismark-methylation-extractor-rs (release)..." >&2
-  (cd "$REPO_ROOT/rust" && cargo build --release -p bismark-extractor) >&2
+  (cd "$REPO_ROOT/rust" && cargo build --release -p bismark) >&2
   RUST_BIN="$REPO_ROOT/rust/target/release/bismark-methylation-extractor-rs"
 fi
 

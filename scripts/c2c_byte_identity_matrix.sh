@@ -132,7 +132,7 @@ if [[ -z "$RUST_C2C" ]]; then
   RUST_C2C="$REPO_ROOT/rust/target/release/coverage2cytosine_rs"
   if [[ ! -x "$RUST_C2C" ]]; then
     echo "==> building Rust coverage2cytosine_rs (--release) ..." >&2
-    ( cd "$REPO_ROOT/rust" && cargo build --release -p bismark-coverage2cytosine ) >&2 \
+    ( cd "$REPO_ROOT/rust" && cargo build --release -p bismark ) >&2 \
       || usage_err "cargo build --release failed"
   fi
 fi
