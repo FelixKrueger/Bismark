@@ -1,6 +1,17 @@
 # Bismark Changelog
 
 
+## Bismark 3.0.0 (unreleased) — the Rust suite    <!-- TODO(phase6): finalize version + date at the GA cut -->
+
+Bismark is now a single Rust binary (the Perl scripts move to tagged legacy). Highlights of this release:
+
+- **One crate, one binary.** The Rust suite is consolidated into a single `bismark` crate that builds one multicall binary. Invoke it as `bismark <subcommand>` (`bismark align`, `bismark dedup`, `bismark extract`, …); every classic tool name (`deduplicate_bismark`, `bismark_methylation_extractor`, …) remains a fully supported `argv[0]` alias, so existing pipelines are byte-identical drop-ins.
+- **`cargo install bismark`** installs the whole suite in one command.
+- **Byte-identical** to Perl Bismark `v0.25.1` on the faithful default path.
+- The original **Perl Bismark (`v0.25.x`)** is archived as tagged legacy (maintenance-freeze; critical/security fixes only).
+
+_(Full release notes + the exact version and date are finalized at the GA cut — see the single-binary-suite epic.)_
+
 ## Changelog for Bismark v0.25.1dev
 
 ### deduplicate_bismark

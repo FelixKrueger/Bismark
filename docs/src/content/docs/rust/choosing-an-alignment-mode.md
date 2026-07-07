@@ -12,7 +12,7 @@ it are on the [Benchmarks](/Bismark/rust/benchmarks/) page, and each flag is des
 All combined modes need a one-time combined index:
 
 ```bash
-bismark_genome_preparation --combined_genome /path/to/genome/
+bismark prepare --combined_genome /path/to/genome/
 ```
 
 and they scale with Bowtie 2 threads (`-p`), not `--multicore` (which is rejected in combined mode).

@@ -1,13 +1,13 @@
 ---
 title: "Methylation Extraction"
-description: "A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing bismarkmethylationextractor --help"
+description: "Options for bismark extract — the Bismark methylation extractor. See bismark extract --help for the full list."
 ---
 
 ## Appendix (IV): Bismark Methylation Extractor
 
-A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing `bismark_methylation_extractor --help`
+A brief description of the Bismark methylation extractor and a full list of options can also be viewed by typing `bismark extract --help`
 
-#### USAGE: `bismark_methylation_extractor [options] <filenames>`
+#### USAGE: `bismark extract [options] <filenames>`
 
 #### ARGUMENTS:
 
@@ -98,7 +98,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--multicore <int>`
 
-  Sets the number of cores to be used for the methylation extraction process. If system resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out `.gz` output streams will in fact use ~3 cores per value of `--multicore <int>` specified (1 for the methylation extractor itself, 1 for a Samtools stream, 1 for a GZIP stream), so `--multicore 10` is likely to use around 30 cores of system resources. This option has no bearing on the `bismark2bedGraph` or `coverage2cytosine` (genome-wide cytosine report) processes.
+  Sets the number of cores to be used for the methylation extraction process. If system resources are plentiful this is a viable option to speed up the extraction process (we observed a near linear speed increase for up to 10 cores used). Please note that a typical process of extracting a BAM file and writing out `.gz` output streams will in fact use ~3 cores per value of `--multicore <int>` specified (1 for the methylation extractor itself, 1 for a Samtools stream, 1 for a GZIP stream), so `--multicore 10` is likely to use around 30 cores of system resources. This option has no bearing on the `bismark bedgraph` or `bismark cov2cyt` (genome-wide cytosine report) processes.
 
 - `--version`
 
@@ -112,7 +112,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--bedGraph`
 
-  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the external module `bismark2bedGraph`; this script needs to reside in the same folder as the bismark_methylation_extractor itself.
+  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
 
 - `--zero_based`
 
@@ -146,7 +146,7 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
 - `--cytosine_report`
 
-  After the conversion to bedGraph has completed, the option `--cytosine_report` produces a genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all cytosine context is optional). The output considers all Cs on both forward and reverse strands and reports their position, strand, trinucleotide content and methylation state (counts are 0 if not covered). The cytosine report conversion step is performed by the external module `coverage2cytosine`; this script needs to reside in the same folder as the bismark_methylation_extractor itself.
+  After the conversion to bedGraph has completed, the option `--cytosine_report` produces a genome-wide methylation report for all cytosines in the genome. By default, the output uses 1-based chromosome coordinates (zero-based start coords are optional) and reports CpG context only (all cytosine context is optional). The output considers all Cs on both forward and reverse strands and reports their position, strand, trinucleotide content and methylation state (counts are 0 if not covered). The cytosine report conversion step is performed by the `bismark cov2cyt` subcommand.
 
 - `--CX/--CX_context`
 
@@ -166,7 +166,7 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
 - `--ffs`
 
-  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. This option needs to be run via `coverage2cytosine` itself.
+  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. This option needs to be run via `bismark cov2cyt`.
 
   ```
   Example:
@@ -178,7 +178,7 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
 ##### Extractor output
 
-The bismark_methylation_extractor output is in the form (tab delimited, 1-based coords):
+The `bismark extract` output is in the form (tab delimited, 1-based coords):
 
     <seq-ID> <methylation state*> <chromosome> <start position (= end position)> <methylation call>
 

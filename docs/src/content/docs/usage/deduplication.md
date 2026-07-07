@@ -1,15 +1,15 @@
 ---
 title: "Deduplication"
-description: "./deduplicatebismark [options] filename(s)"
+description: "bismark dedup removes alignments to the same genomic position and strand from Bismark mapping output — recommended for whole-genome bisulfite samples."
 ---
 
 **USAGE:**
 
 ```bash
-./deduplicate_bismark [options] filename(s)
+bismark dedup [options] filename(s)
 ```
 
-The script `deduplicate_bismark` is supposed to remove alignments to the same position in the genome from the Bismark mapping output (both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. Sequences which align to the same genomic position but on different strands are scored individually.
+`bismark dedup` (classic alias: `deduplicate_bismark`) removes alignments to the same position in the genome from the Bismark mapping output (both single and paired-end SAM/BAM files), which can arise by e.g. excessive PCR amplification. Sequences which align to the same genomic position but on different strands are scored individually.
 
 **It is important to note that deduplication is not recommended for RRBS, amplicon or other target enrichment-type libraries!**
 

@@ -33,10 +33,10 @@ To rescue as much data from a paired-end PBAT library with low mapping efficienc
 - unmapped R1 is then mapped in single-end mode (`--pbat`)
 - unmapped R2 is then mapped in single-end mode (in default = directional mode)
 
-Single-end aligned R1 and R2 can then be methylation extracted normally as they should in theory map to different places in the genome anyway so don’t require attention to overlapping reads. Finally, the methylation calls from the PE and SE alignments can merged together before proceeding to the `bismark2bedGraph` or further downstream steps. A sample command for this would be:
+Single-end aligned R1 and R2 can then be methylation extracted normally as they should in theory map to different places in the genome anyway so don’t require attention to overlapping reads. Finally, the methylation calls from the PE and SE alignments can merged together before proceeding to `bismark bedgraph` or further downstream steps. A sample command for this would be:
 
 ```
-bismark2bedGraph -o SE_and_PE_merged.bedGraph CpG*
+bismark bedgraph -o SE_and_PE_merged.bedGraph CpG*
 ```
 
 If you are feeling adventurous you could also attempt using local alignments (option `--local` in Bismark) for either the paired-end step, or the second single-end step, or both. (Please also see our thoughts on [local alignments/ soft-clipping](https://sequencing.qcfail.com/articles/soft-clipping-of-reads-may-add-potentially-unwanted-alignments-to-repetitive-regions/).

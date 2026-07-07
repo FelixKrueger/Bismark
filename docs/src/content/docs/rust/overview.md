@@ -3,7 +3,7 @@ title: "Scope of the rewrite"
 description: "Why Bismark is being reimplemented in Rust, what stays byte-identical to Perl v0.25.1, and the additional capabilities the Rust architecture enables."
 ---
 
-The [Bismark Rust suite](/Bismark/installation/#bismark-rust-suite-beta) reimplements Bismark's tools
+The [Bismark Rust suite](/Bismark/installation/#the-bismark-rust-suite) reimplements Bismark's tools
 in Rust with two aims: to match Perl Bismark `v0.25.1` output byte-for-byte, so the Rust build is a
 drop-in replacement, and to remove the post-alignment bottlenecks that a faithful reimplementation can
 actually address. This page explains the reasoning behind the rewrite, what is kept identical to the
@@ -35,13 +35,14 @@ on a maintainable modern codebase, while producing output that is **byte-identic
 Byte-identity is the correctness contract that lets the Rust suite stand in for the Perl one without
 revalidating an established pipeline. The measured speed-ups for each tool are on the
 [benchmarks page](/Bismark/rust/benchmarks/). The Perl version is in maintenance
-freeze (critical correctness and security fixes only) and will be archived as tagged legacy at the Rust
-general release, following the precedent of Salmon's `cpp` branch.
+freeze (critical correctness and security fixes only) and is archived as tagged legacy, following the
+precedent of Salmon's `cpp` branch.
 
 ## What stays the same
 
-All twelve Bismark tools, together with a shared `bismark-io` library, are reimplemented in Rust and
-validated to be byte-identical to Perl `v0.25.1`. The aligner faithfully wraps the **same** external
+All twelve Bismark tools are reimplemented in Rust as a single `bismark` crate — one multicall binary,
+with the shared BAM/SAM/CRAM I/O in its `bismark::io` module — and validated to be byte-identical to
+Perl `v0.25.1`. The aligner faithfully wraps the **same** external
 Bowtie 2 / HISAT2 / minimap2 binaries, so read mapping is unchanged; the Rust work is the per-read
 in-silico bisulfite conversion and methylation-call tagging that surrounds the mapper. Its
 `--multicore` parallelism is worker-invariant, meaning the output does not depend on the number of
@@ -69,10 +70,9 @@ end of this section.
    Measurements are on the [benchmarks page](/Bismark/rust/benchmarks/#combined-index-modes).
 2. **rammap, an experimental fourth aligner.** `--rammap` adds
    [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, for
-   long-read bisulfite data such as EM-seq Nanopore. Run in-process with `--rammap_inprocess`
-   (available from `2.0.0-beta.11`) the converted index is loaded once and shared across the strand
-   instances, which uses about 54 % less memory and runs roughly 1.8× faster than the subprocess
-   backend. It is opt-in, concordance-gated, and not byte-identical to minimap2; see the
+   long-read bisulfite data such as EM-seq Nanopore. Run in-process with `--rammap_inprocess`, the
+   converted index is loaded once and shared across the strand instances, which uses about 54 % less
+   memory and runs roughly 1.8× faster than the subprocess backend. It is opt-in, concordance-gated, and not byte-identical to minimap2; see the
    [benchmarks page](/Bismark/rust/benchmarks/#rammap-experimental).
 3. **In-process post-alignment streaming.** The Rust methylation extractor drives bedGraph generation
    and coverage2cytosine in memory, in the same process, instead of launching separate Perl
@@ -87,8 +87,8 @@ end of this section.
    from Perl `v0.25.1`, where deduplication and coverage2cytosine instead exit with an error on empty
    input. It keeps a no-alignment sample from aborting an automated pipeline such as nf-core/methylseq.
    Non-empty runs remain byte-identical.
-6. **Pure-Rust BAM/SAM/CRAM I/O.** The shared `bismark-io` library reads and writes alignment files
-   directly, so the tools no longer depend on an external `samtools` for file I/O.
+6. **Pure-Rust BAM/SAM/CRAM I/O.** The suite reads and writes alignment files directly (via its
+   `bismark::io` module), so the tools no longer depend on an external `samtools` for file I/O.
 
 :::note[Byte-identical versus concordance-gated]
 The combined-index modes and rammap are **opt-in and concordance-gated**: they trade byte-identity for
