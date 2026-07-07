@@ -597,7 +597,7 @@ fn cbq_preserves_n_bases_se() {
         got, expected,
         "CBQ N bases must round-trip verbatim (0.9.3 fix; 0.9.2 gave N->A)"
     );
-    // Belt-and-braces vs the exact 0.9.2 bug: the input had 12 `N`s and 0 stray `A`s in the
+    // Belt-and-braces vs the exact 0.9.2 bug: the input had 11 `N`s and 0 stray `A`s in the
     // N-only record — count them in the decoded sequence lines to prove none silently became `A`.
     let seq_lines: Vec<&[u8]> = got
         .split(|&b| b == b'\n')
@@ -606,7 +606,11 @@ fn cbq_preserves_n_bases_se() {
         .map(|(_, l)| l)
         .collect();
     let n_count: usize = seq_lines.iter().map(|l| bytecount(l, b'N')).sum();
-    assert_eq!(n_count, 1 + 1 + 1 + 8, "all 11 N bases preserved, not decoded to A");
+    assert_eq!(
+        n_count,
+        1 + 1 + 1 + 8,
+        "all 11 N bases preserved, not decoded to A"
+    );
 }
 
 #[test]
@@ -616,14 +620,7 @@ fn cbq_preserves_n_bases_pe() {
     let cbq = dir.path().join("ns_pe.cbq");
     write_cbq_pe(
         &cbq,
-        &[(
-            "np1",
-            b"NNACGT",
-            b"IIIIII",
-            "np1",
-            b"ACGTNN",
-            b"JJJJJJ",
-        )],
+        &[("np1", b"NNACGT", b"IIIIII", "np1", b"ACGTNN", b"JJJJJJ")],
     );
 
     let (r1, r2) = binseq_decode::transcode_binseq_to_fastq_pe(&cbq, dir.path()).unwrap();

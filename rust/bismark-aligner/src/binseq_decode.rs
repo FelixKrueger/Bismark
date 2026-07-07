@@ -449,6 +449,10 @@ mod cbq_impl {
                 .map_err(|e| binseq_err(path, &e))?;
             let range = BlockRange::new(0, cumulative);
             for rec in reader.block.iter_records(range) {
+                // Kept for VBQ parity, but structurally unreachable for CBQ: CBQ paired-ness
+                // is a FILE-header property (we only reach here when the header says paired),
+                // so every record in a paired `.cbq` carries a second mate. The guard stays
+                // never-silent regardless, matching the VBQ PE path exactly.
                 if !rec.is_paired() {
                     return Err(AlignerError::Validation(format!(
                         "paired BINSEQ input '{}' has a record with no second mate (xlen == 0); \
@@ -513,7 +517,7 @@ mod cbq_impl {
 
     fn unsupported() -> AlignerError {
         AlignerError::Validation(
-            "this bismark_rs build was compiled without BINSEQ (.cbq) support; rebuild with \
+            "this bismark build was compiled without BINSEQ (.cbq) support; rebuild with \
              `--features binseq-input` (the released Linux binaries include it), or convert the \
              input to FASTQ first."
                 .into(),

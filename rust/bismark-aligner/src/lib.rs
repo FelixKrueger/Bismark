@@ -310,10 +310,11 @@ impl InputDecoder for UbamDecoder {
     }
 }
 
-/// BINSEQ backend — thin adapter over [`binseq_decode`] (#1025 Phase 2). Decodes
-/// Arc Institute `.vbq` files; `.cbq`/`.bq` are detected then rejected fail-loud
-/// (v1 scope / D2). Detection is feature-independent so a build without the
-/// `binseq-input` feature still rejects a `.vbq` never-silently.
+/// BINSEQ backend — thin adapter over [`binseq_decode`] (#1025 Phase 2 `.vbq`,
+/// Phase 3a `.cbq`). Decodes Arc Institute `.vbq` and `.cbq` files; `.bq` is
+/// detected then rejected fail-loud (D2 — no per-read quality/names). Detection is
+/// feature-independent so a build without the `binseq-input` feature still rejects a
+/// BINSEQ input never-silently.
 struct BinseqDecoder;
 impl InputDecoder for BinseqDecoder {
     fn detect(&self, path: &Path) -> bool {
