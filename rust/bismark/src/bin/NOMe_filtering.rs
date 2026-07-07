@@ -1,5 +1,5 @@
 //! `NOMe_filtering` — one of the binaries installed by `cargo install bismark`.
-//! Thin wrapper over [`bismark_nome_filtering::run_main`]; byte-identical to that tool's own
+//! Thin wrapper over [`bismark::nome_filtering::run_main`]; byte-identical to that tool's own
 //! binary (each sets the same multithreaded allocator).
 use std::process::ExitCode;
 
@@ -7,5 +7,5 @@ use std::process::ExitCode;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    bismark_nome_filtering::run_main()
+    bismark::nome_filtering::run_main()
 }

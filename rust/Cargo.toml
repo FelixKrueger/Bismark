@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bismark-meta", "bismark-io", "bismark-dedup", "bismark-extractor", "bismark-methylation-consistency", "bismark-bedgraph", "bismark-coverage2cytosine", "bismark-genome-preparation", "bismark-nome-filtering", "bismark-bam2nuc", "bismark-filter-nonconversion", "bismark-report", "bismark-summary", "bismark-aligner", "bismark"]
+members = ["bismark"]
 # The `bismark` meta-crate re-declares every tool's canonical `[[bin]]` (so
 # `cargo install bismark` builds the whole suite). Those bin names collide with
 # the individual tool crates' bins, so exclude it from default builds — release
@@ -8,7 +8,7 @@ members = ["bismark-meta", "bismark-io", "bismark-dedup", "bismark-extractor", "
 # crates, collision-free. Build/install the meta-crate explicitly: `cargo build
 # -p bismark` / `cargo install bismark`. (An explicit `--workspace` still builds
 # it and warns about the collisions — cosmetic; CI stays green.)
-default-members = ["bismark-meta", "bismark-io", "bismark-dedup", "bismark-extractor", "bismark-methylation-consistency", "bismark-bedgraph", "bismark-coverage2cytosine", "bismark-genome-preparation", "bismark-nome-filtering", "bismark-bam2nuc", "bismark-filter-nonconversion", "bismark-report", "bismark-summary", "bismark-aligner"]
+default-members = ["bismark"]
 
 [workspace.package]
 edition = "2024"

@@ -86,20 +86,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: cargo build -p bismark-aligner --features rammap-inprocess
-        run: cargo build -p bismark-aligner --all-targets --features rammap-inprocess
-      - name: cargo clippy -p bismark-aligner --features rammap-inprocess -D warnings
-        run: cargo clippy -p bismark-aligner --all-targets --features rammap-inprocess -- -D warnings
+      - name: cargo build -p bismark --features rammap-inprocess
+        run: cargo build -p bismark --all-targets --features rammap-inprocess
+      - name: cargo clippy -p bismark --features rammap-inprocess -D warnings
+        run: cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings
       - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # `cargo test -p bismark-aligner` runs the 5-Base real-aligner gates, which panic
+        # `cargo test -p bismark` runs the 5-Base real-aligner gates, which panic
         # when $CI is set and minimap2 is missing (they must not pass vacuously). This
         # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
         run: |
           sudo apt-get update || sudo apt-get update
           sudo apt-get install -y --no-install-recommends minimap2
           minimap2 --version
-      - name: cargo test -p bismark-aligner --features rammap-inprocess
-        run: cargo test -p bismark-aligner --features rammap-inprocess
+      - name: cargo test -p bismark --features rammap-inprocess
+        run: cargo test -p bismark --features rammap-inprocess
 
   binseq-input:
     name: cargo build/test (binseq-input feature)
@@ -124,20 +124,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: cargo build -p bismark-aligner --features binseq-input
-        run: cargo build -p bismark-aligner --all-targets --features binseq-input
-      - name: cargo clippy -p bismark-aligner --features binseq-input -D warnings
-        run: cargo clippy -p bismark-aligner --all-targets --features binseq-input -- -D warnings
+      - name: cargo build -p bismark --features binseq-input
+        run: cargo build -p bismark --all-targets --features binseq-input
+      - name: cargo clippy -p bismark --features binseq-input -D warnings
+        run: cargo clippy -p bismark --all-targets --features binseq-input -- -D warnings
       - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # `cargo test -p bismark-aligner` runs the 5-Base real-aligner gates, which panic
+        # `cargo test -p bismark` runs the 5-Base real-aligner gates, which panic
         # when $CI is set and minimap2 is missing (they must not pass vacuously). This
         # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
         run: |
           sudo apt-get update || sudo apt-get update
           sudo apt-get install -y --no-install-recommends minimap2
           minimap2 --version
-      - name: cargo test -p bismark-aligner --features binseq-input
-        run: cargo test -p bismark-aligner --features binseq-input
+      - name: cargo test -p bismark --features binseq-input
+        run: cargo test -p bismark --features binseq-input
 
   fmt:
     name: cargo fmt --check
@@ -197,8 +197,7 @@ jobs:
         run: |
           set -euo pipefail
           EXPECTED=12
-          out=$(cargo test -p bismark-genome-preparation -p bismark-methylation-consistency \
-                  -p bismark-dedup -p bismark-extractor \
+          out=$(cargo test -p bismark \
                   -- --exact \
                   perl_vs_rust_byte_identical_mfa \
                   perl_vs_rust_byte_identical_single_fasta \
