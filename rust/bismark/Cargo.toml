@@ -1,7 +1,7 @@
 [package]
 name = "bismark"
 version = "2.0.0"
-description = "The Bismark bisulfite-sequencing suite (Rust) — installs all tools: the bismark aligner, deduplicate_bismark, bismark_methylation_extractor, bismark2bedGraph, coverage2cytosine, bismark_genome_preparation, bam2nuc, NOMe_filtering, filter_non_conversion, methylation_consistency, bismark2report, bismark2summary."
+description = "The Bismark bisulfite-sequencing suite (Rust) — the bismark aligner, deduplicate_bismark, bismark_methylation_extractor, bismark2bedGraph, coverage2cytosine, bismark_genome_preparation, bam2nuc, NOMe_filtering, filter_non_conversion, methylation_consistency, bismark2report, bismark2summary, all in one crate."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,26 +11,52 @@ readme = "README.md"
 keywords = ["bisulfite", "methylation", "bismark", "sequencing", "bioinformatics"]
 categories = ["science::bioinformatics", "command-line-utilities"]
 
-# Meta / batteries-included crate: `cargo install bismark` builds every suite
-# binary. Each `src/bin/<tool>.rs` is a thin wrapper over that tool crate's
-# `run_main()` — byte-identical to installing the individual crate. Exact-pinned
-# to the coordinated GA (2.0.0) suite versions.
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-bismark-aligner = { version = "=1.0.0", path = "../bismark-aligner" }
-bismark-dedup = { version = "=1.2.1", path = "../bismark-dedup" }
-bismark-extractor = { version = "=1.0.0", path = "../bismark-extractor" }
-bismark-bedgraph = { version = "=1.0.0", path = "../bismark-bedgraph" }
-bismark-coverage2cytosine = { version = "=1.0.0", path = "../bismark-coverage2cytosine" }
-bismark-genome-preparation = { version = "=1.0.0", path = "../bismark-genome-preparation" }
-bismark-bam2nuc = { version = "=1.0.0", path = "../bismark-bam2nuc" }
-bismark-nome-filtering = { version = "=1.0.0", path = "../bismark-nome-filtering" }
-bismark-filter-nonconversion = { version = "=1.0.0", path = "../bismark-filter-nonconversion" }
-bismark-methylation-consistency = { version = "=1.0.0", path = "../bismark-methylation-consistency" }
-bismark-report = { version = "=1.0.0", path = "../bismark-report" }
-bismark-summary = { version = "=1.0.0", path = "../bismark-summary" }
-# Same multithreaded allocator the standalone tool binaries use (byte-inert;
-# each bin sets its own `#[global_allocator]`).
-mimalloc = "=0.1.52"
+# --- tool crates still being folded in (each removed as its src becomes a module) ---
+# --- shared library crates (folded last: io = Step 3, meta = Step 4) ---
+# --- third-party union across all folded tools (exact-pinned; flate2 = zlib-rs
+#     backend per bedgraph, mimalloc default-features=false) ---
+clap = { version = "=4.5.30", features = ["derive"] }
+thiserror = "=2.0.18"
+anyhow = "=1.0.103"
+bstr = "=1.10.0"
+smallvec = "=1.13.2"
+rustc-hash = "=2.1.0"
+which = "=7.0.3"
+libc = "=0.2.186"
+crossbeam-channel = "=0.5.15"
+flate2 = { version = "=1.1.9", default-features = false, features = ["zlib-rs"] }
+gzp = { version = "=0.11.3", default-features = false, features = ["deflate_rust"] }
+noodles-sam = "=0.85.0"
+noodles-bam = "=0.89.0"
+noodles-bgzf = "=0.47.0"
+noodles-fasta = "=0.61.0"
+noodles-core = "=0.20.0"
+noodles-cram = "=0.93.0"
+noodles-csi = "=0.50.0"
+mimalloc = { version = "=0.1.52", default-features = false }
+# --- aligner optional backends (feature-gated below; default-OFF / release-ON) ---
+rammap-core = { version = "=1.1.1", git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
+rayon = { version = "1", optional = true }
+binseq = { version = "=0.9.2", default-features = false, features = ["anyhow"], optional = true }
+
+[features]
+# Default-OFF (release-ON): in-process rammap backend (aligner `inprocess.rs`).
+rammap-inprocess = ["dep:rammap-core", "dep:rayon"]
+# Default-OFF (release-ON): BINSEQ (.vbq) in-process decode (aligner `binseq_decode`).
+binseq-input = ["dep:binseq"]
+
+[dev-dependencies]
+assert_cmd = "=2.0.16"
+predicates = "=3.1.2"
+tempfile = "=3.10.1"
+proptest = "1"
+# Aligner function-level micro-benchmark (dev-only; never in the shipped binary).
+criterion = { version = "=0.5.1", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "parse_bench"
+harness = false

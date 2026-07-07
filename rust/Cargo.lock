@@ -152,179 +152,17 @@ dependencies = [
 name = "bismark"
 version = "2.0.0"
 dependencies = [
- "bismark-aligner",
- "bismark-bam2nuc",
- "bismark-bedgraph",
- "bismark-coverage2cytosine",
- "bismark-dedup",
- "bismark-extractor",
- "bismark-filter-nonconversion",
- "bismark-genome-preparation",
- "bismark-methylation-consistency",
- "bismark-nome-filtering",
- "bismark-report",
- "bismark-summary",
- "mimalloc",
-]
-
-[[package]]
-name = "bismark-aligner"
-version = "1.0.0"
-dependencies = [
  "anyhow",
  "assert_cmd",
  "binseq",
- "bismark-io",
- "bismark-meta",
  "bstr",
  "clap",
  "criterion",
- "flate2",
- "mimalloc",
- "noodles-bam",
- "noodles-bgzf 0.47.0",
- "noodles-core 0.20.0",
- "noodles-sam",
- "predicates",
- "rammap-core",
- "rayon",
- "tempfile",
- "thiserror 2.0.18",
- "which",
-]
-
-[[package]]
-name = "bismark-bam2nuc"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-io",
- "bismark-meta",
- "bstr",
- "clap",
- "flate2",
- "mimalloc",
- "noodles-bam",
- "noodles-bgzf 0.47.0",
- "noodles-core 0.20.0",
- "noodles-fasta",
- "noodles-sam",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-bedgraph"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-meta",
- "clap",
- "flate2",
- "gzp",
- "mimalloc",
- "predicates",
- "rustc-hash",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-coverage2cytosine"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-meta",
- "clap",
- "flate2",
- "noodles-bgzf 0.47.0",
- "noodles-fasta",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-dedup"
-version = "1.2.1"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "bismark-io",
- "bismark-meta",
- "bstr",
- "clap",
- "noodles-core 0.20.0",
- "noodles-sam",
- "predicates",
- "rustc-hash",
- "smallvec",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-extractor"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-bedgraph",
- "bismark-coverage2cytosine",
- "bismark-io",
- "bismark-meta",
- "bstr",
- "clap",
  "crossbeam-channel",
  "flate2",
  "gzp",
+ "libc",
  "mimalloc",
- "noodles-core 0.20.0",
- "noodles-sam",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-filter-nonconversion"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-io",
- "bismark-meta",
- "bstr",
- "clap",
- "mimalloc",
- "noodles-bam",
- "noodles-bgzf 0.47.0",
- "noodles-core 0.20.0",
- "noodles-sam",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-genome-preparation"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "bismark-meta",
- "clap",
- "flate2",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
- "which",
-]
-
-[[package]]
-name = "bismark-io"
-version = "1.0.0"
-dependencies = [
- "bstr",
- "flate2",
  "noodles-bam",
  "noodles-bgzf 0.47.0",
  "noodles-core 0.20.0",
@@ -332,71 +170,15 @@ dependencies = [
  "noodles-csi 0.50.0",
  "noodles-fasta",
  "noodles-sam",
+ "predicates",
  "proptest",
+ "rammap-core",
+ "rayon",
+ "rustc-hash",
  "smallvec",
  "tempfile",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-meta"
-version = "1.0.0"
-
-[[package]]
-name = "bismark-methylation-consistency"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-io",
- "bismark-meta",
- "bstr",
- "clap",
- "noodles-bam",
- "noodles-core 0.20.0",
- "noodles-sam",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-nome-filtering"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-io",
- "bismark-meta",
- "clap",
- "flate2",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-report"
-version = "1.0.0"
-dependencies = [
- "assert_cmd",
- "bismark-meta",
- "clap",
- "libc",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "bismark-summary"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "bismark-meta",
- "clap",
- "predicates",
- "tempfile",
- "thiserror 2.0.18",
+ "which",
 ]
 
 [[package]]

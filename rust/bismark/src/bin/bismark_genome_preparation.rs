@@ -1,5 +1,5 @@
 //! `bismark_genome_preparation` — one of the binaries installed by `cargo install bismark`.
-//! Thin wrapper over [`bismark_genome_preparation::run_main`]; byte-identical to that tool's own
+//! Thin wrapper over [`bismark::genome_prep::run_main`]; byte-identical to that tool's own
 //! binary (each sets the same multithreaded allocator).
 use std::process::ExitCode;
 
@@ -7,5 +7,5 @@ use std::process::ExitCode;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    bismark_genome_preparation::run_main()
+    bismark::genome_prep::run_main()
 }

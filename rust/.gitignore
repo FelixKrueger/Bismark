@@ -1,1 +1,5 @@
 /target
+
+# aligner test-regenerated outputs (do not track)
+bismark/reads_bismark_bt2.bam
+bismark/reads_bismark_bt2_SE_report.txt
