@@ -1,7 +1,7 @@
 # Bismark Changelog
 
 
-## Bismark 3.0.0 — the Rust suite
+## Bismark 3.0.0 (released 2026-07-07) — the Rust suite
 
 Bismark is now a single Rust binary; the Perl scripts are archived as tagged legacy. Highlights:
 
