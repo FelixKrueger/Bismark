@@ -20,7 +20,7 @@ Aligned BAM files. `bismark bam2nuc` handles both Bismark single-end and paired-
 
 :::note
 
-Both BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is required for CRAM files.
+Both BAM and CRAM files work as input; the Rust suite reads CRAM via pure-Rust `noodles`, so no Samtools is required.
 :::
 ### Options
 
@@ -34,7 +34,7 @@ Enter the genome folder you wish to use to extract sequences from (full path onl
 
 - `--samtools_path`
 
-The path to your Samtools installation, e.g. `/home/user/samtools/`. Does not need to be specified explicitly if Samtools is in the `PATH` already
+Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required
 
 - `--genomic_composition_only`
 

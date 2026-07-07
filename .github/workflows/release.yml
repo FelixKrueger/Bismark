@@ -339,7 +339,7 @@ jobs:
           docker run --rm "$IMG" deduplicate_bismark --help >/dev/null
           # Version probe: BOTH methylseq parser shapes must capture EXACTLY the
           # suite version from `bismark` (GA: the wrapper reports the TRUE suite
-          # version — at the 2.0.0 cut this is "2.0.0"; methylseq re-baselines its
+          # version — at the 3.0.0 cut this is "3.0.0"; methylseq re-baselines its
           # version snapshots, OD-7). Compared against the release version (not a
           # hardcoded literal) so this stays correct for every later release/beta.
           EXPECT="${{ needs.check-release.outputs.version }}"

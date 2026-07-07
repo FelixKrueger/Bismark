@@ -13,8 +13,8 @@
 # Version: v<v>` line + a `Copyright`-prefixed line) but emits the TRUE suite
 # version. GA: honest provenance — this DROPS the beta-era impersonation of
 # v0.25.1 and reports the real suite version, so every run records `bismark
-# 2.0.0`. Result for suite version 2.0.0:
-#   Parser-1 → "2.0.0"   Parser-2 → "2.0.0"
+# 3.0.0`. Result for suite version 3.0.0:
+#   Parser-1 → "3.0.0"   Parser-2 → "3.0.0"
 #
 # __SUITE_VERSION__ is injected from $BISMARK_SUITE_VERSION at image build (=
 # rust/VERSION). methylseq re-baselines its nf-test version snapshots on this GA
