@@ -1,0 +1,74 @@
+{% set version = "3.0.0" %}
+
+package:
+  name: bismark
+  version: {{ version }}
+
+source:
+  # The Rust GA is tagged `bismark-rust-v<version>` (distinct from the Perl `v*` tags).
+  # NB GitHub archive tarballs are not guaranteed byte-stable forever — recompute the
+  # sha256 at submission (`curl -sL <url> | shasum -a 256`) and update if it ever drifts.
+  # Re-verified 2026-07-08: unchanged.
+  url: https://github.com/FelixKrueger/Bismark/archive/refs/tags/bismark-rust-v{{ version }}.tar.gz
+  sha256: da04c2dccd234877d61bc217afa39474eba4aca56f34fc3752ef3bc891c11636
+
+build:
+  number: 0
+  # A compiled binary (no longer `noarch: generic` like the Perl 0.25.1 recipe).
+  # Build the same three platforms the GA release.yml ships (linux-64 default +
+  # the two below); skip osx-x86_64 (Intel Mac), which the release does not build.
+  skip: True  # [osx and x86_64]
+  run_exports:
+    - {{ pin_subpackage('bismark', max_pin="x") }}
+
+requirements:
+  build:
+    - {{ compiler('rust') }}       # needs rustc >= 1.89 (edition 2024); conda-forge ships 1.96+
+    - {{ compiler('c') }}          # required: the mimalloc allocator compiles C at build
+    - {{ stdlib('c') }}
+    - make
+    - pkg-config
+  run:
+    # External aligner backends only. Bowtie2 is byte-identity-pinned (the version the
+    # faithful path is validated against; it is bioconda's current bowtie2). NO samtools
+    # (pure-Rust noodles BAM/SAM/CRAM I/O), NO perl (this is the Rust suite), NO coreutils
+    # (the suite does its own I/O + gzip via pure-Rust gzp/zlib-rs). rammap is compiled in
+    # (--rammap / --rammap_inprocess), not an external dep.
+    - bowtie2 =2.5.5
+    - hisat2
+    - minimap2
+
+test:
+  commands:
+    - bismark --version | grep -q "3.0.0"
+    - bismark --help > /dev/null
+    # every classic-name alias resolves to the one multicall binary (self-routes on argv[0])
+    - for t in deduplicate_bismark bismark_methylation_extractor bismark2bedGraph coverage2cytosine bismark_genome_preparation bam2nuc NOMe_filtering filter_non_conversion methylation_consistency bismark2report bismark2summary ; do $t --version > /dev/null ; done
+
+about:
+  home: https://github.com/FelixKrueger/Bismark
+  license: GPL-3.0-only
+  license_family: GPL3
+  license_file: license.txt
+  summary: "Bisulfite read aligner and methylation caller (Rust suite) — byte-identical to Perl Bismark v0.25.1"
+  description: |
+    Bismark maps bisulfite-treated sequencing reads to a reference genome and calls
+    cytosine methylation in CpG, CHG and CHH context. As of v3.0.0 it is a single Rust
+    multicall binary: run `bismark <subcommand>` or the classic tool names
+    (deduplicate_bismark, bismark_methylation_extractor, ...) as argv[0] aliases.
+    Output is byte-identical to Perl Bismark v0.25.1 on the faithful default path.
+    All BAM/SAM/CRAM I/O is pure-Rust (no samtools). The Perl v0.25.x remains available
+    as `bismark=0.25.1`.
+  dev_url: https://github.com/FelixKrueger/Bismark
+
+extra:
+  additional-platforms:
+    - linux-aarch64
+    - osx-arm64
+  recipe-maintainers:
+    - FelixKrueger
+    - ewels
+  identifiers:
+    - biotools:bismark
+    - usegalaxy-eu:bismark_bowtie2
+    - doi:10.1093/bioinformatics/btr167
