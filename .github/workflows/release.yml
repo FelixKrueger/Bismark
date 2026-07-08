@@ -331,7 +331,6 @@ jobs:
           docker run --rm "$IMG" bismark.bin --version
           docker run --rm "$IMG" bismark_methylation_extractor --version
           docker run --rm "$IMG" bowtie2 --version
-          docker run --rm "$IMG" samtools --version | head -1
           # Canonical names (methylseq drop-in) resolve; `bismark --help` also
           # exercises the wrapper's exec of the real `bismark.bin`.
           docker run --rm "$IMG" bismark --help >/dev/null
@@ -351,7 +350,8 @@ jobs:
           # Tools methylseq shells out to (genomeprep → *-build; extractor → gzip).
           # NB assert each individually — `command -v a b c` only resolves the FIRST
           # operand (POSIX), so a single multi-arg call would silently pass.
-          docker run --rm "$IMG" sh -c 'for t in gzip sed printf bowtie2-build hisat2-build samtools ps; do command -v "$t" >/dev/null || { echo "missing: $t"; exit 1; }; done' \
+          # (No samtools: dropped from the image — methylseq's bismark modules never use it.)
+          docker run --rm "$IMG" sh -c 'for t in gzip sed printf bowtie2-build hisat2-build ps; do command -v "$t" >/dev/null || { echo "missing: $t"; exit 1; }; done' \
             || { echo "FAIL: a required co-resident tool is missing"; exit 1; }
 
   # Create the tag + a DRAFT release (gated on the image building OK). Drafting
