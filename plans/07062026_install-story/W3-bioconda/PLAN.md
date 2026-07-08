@@ -2,7 +2,7 @@
 
 > **Epic:** `07062026_install-story/EPIC.md`, Workstream W3 (post-GA fast-follow)
 
-**Status:** ✅ Rev 2 — recipe **finalized + submission-ready**. Fully validated against the shipped GA source tarball (not just Trim Galore inference). Submission is prepped in [`SUBMISSION.md`](SUBMISSION.md) + [`PR_BODY.md`](PR_BODY.md) — Felix owns the fork/PR (external, flips the default package). bioconda CI is the authoritative build gate; no local conda-build on Altos infra needed.
+**Status:** ✅ **SUBMITTED — bioconda-recipes PR [#67004](https://github.com/bioconda/bioconda-recipes/pull/67004) (2026-07-08)**, awaiting bioconda CI (Lint + build/test incl. ARM). Recipe finalized (Rev 2) + validated against the shipped GA tarball + locally built/tested/installed clean on oxy (linux-64). Submission driven from a sparse+shallow upstream clone, pushed to the `FelixKrueger/bioconda-recipes` fork over SSH. Post-submission fixes (if CI fails) ranked in [`SUBMISSION.md`](SUBMISSION.md) §4.
 
 ## Revision history
 - **Rev 0 (2026-07-07)** — scaffold.

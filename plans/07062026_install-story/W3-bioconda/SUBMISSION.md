@@ -1,5 +1,7 @@
 # bioconda W3 — submission handoff (Felix owns the PR)
 
+> ✅ **SUBMITTED 2026-07-08 — [bioconda-recipes PR #67004](https://github.com/bioconda/bioconda-recipes/pull/67004)** (`FelixKrueger:bismark-rust-3.0.0 → master`). Steps 2–3 below are DONE; kept for the record. Now: watch CI (`gh pr checks 67004 -R bioconda/bioconda-recipes`) and §4 if anything fails.
+
 **Goal:** flip the default bioconda `bismark` package Perl v0.25.1 → the Rust suite **3.0.0**.
 This is an **external, outward** PR (changes the default package for every bioconda user), so
 **you submit it.** Everything below is prepped + verified; the recipe is in
