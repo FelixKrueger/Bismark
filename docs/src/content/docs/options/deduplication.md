@@ -11,9 +11,9 @@ This script is supposed to remove alignments to the same position in the genome 
 
 Please note that for paired-end BAM files the deduplication script expects Read1 and Read2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using `samtools sort -n`)
 :::
-A brief description of the Bismark deduplication and a full list of options can also be viewed by typing `deduplicate_bismark --help`.
+A brief description of the Bismark deduplication and a full list of options can also be viewed by typing `bismark dedup --help`.
 
-#### USAGE: `deduplicate_bismark [options] <filename(s)>`
+#### USAGE: `bismark dedup [options] <filename(s)>`
 
 #### ARGUMENTS:
 
@@ -46,7 +46,7 @@ In addition to chromosome, start position and orientation this will also take a 
 
 - `--bam`
 
-The output will be written out in BAM format. This script will attempt to use the path to Samtools that was specified with `--samtools_path`, or, if it hasn't been specified,attempt to find Samtools in the `PATH`. If no installation of Samtools can be found, a GZIP compressed output is written out instead (yielding a `.sam.gz` output file). Default: ON.
+The output will be written out in BAM format. The Rust suite writes BAM directly via pure-Rust `noodles`, so no Samtools installation is required (the legacy `--samtools_path` and the `.sam.gz` fallback no longer apply). Default: ON.
 
 - `--sam`
 
@@ -58,7 +58,7 @@ All specified input files are treated as one sample and concatenated together fo
 
 - `--samtools_path [path]`
 
-The path to your Samtools installation, e.g. `/home/user/samtools/`. Does not need to be specified explicitly if Samtools is in the `PATH` already
+Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required
 
 - `--version`
 

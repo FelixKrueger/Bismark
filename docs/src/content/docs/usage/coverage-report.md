@@ -1,9 +1,9 @@
 ---
 title: "Nucleotide coverage report"
-description: "The script bam2nuc reads BAM files and calculates the mono- and di-nucleotide coverage of the"
+description: "bismark bam2nuc reads BAM files and calculates the mono- and di-nucleotide coverage of aligned reads versus the genomic average."
 ---
 
-The script `bam2nuc` reads BAM files and calculates the mono- and di-nucleotide coverage of the
+`bismark bam2nuc` (classic alias: `bam2nuc`) reads BAM files and calculates the mono- and di-nucleotide coverage of the
 reads (using the genomic sequence rather than the observed sequence in the reads themselves)
 and compares it to the average genomic sequence composition. Reads harbouring InDels are not
 taken into consideration. Mono- or dinucleotides containing Ns are ignored as well.
@@ -11,16 +11,16 @@ taken into consideration. Mono- or dinucleotides containing Ns are ignored as we
 ## Usage
 
 ```
-bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
+bismark bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 ```
 
 ### Arguments
 
-Aligned BAM files. `bam2nuc` handles both Bismark single-end and paired-end files (determined automatically).
+Aligned BAM files. `bismark bam2nuc` handles both Bismark single-end and paired-end files (determined automatically).
 
 :::note
 
-Both BAM and CRAM files should work as input, but please note that Samtools version 1.2 or higher is required for CRAM files.
+Both BAM and CRAM files work as input; the Rust suite reads CRAM via pure-Rust `noodles`, so no Samtools is required.
 :::
 ### Options
 
@@ -34,7 +34,7 @@ Enter the genome folder you wish to use to extract sequences from (full path onl
 
 - `--samtools_path`
 
-The path to your Samtools installation, e.g. `/home/user/samtools/`. Does not need to be specified explicitly if Samtools is in the `PATH` already
+Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required
 
 - `--genomic_composition_only`
 
@@ -48,11 +48,11 @@ Displays this help message and exits
 
 ## Genomic composition
 
-Since the calculation of the average genomic (di-)nucleotide composition may take a while, `bam2nuc` attempts to write out a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The next time `bam2nuc` is run it will then use this file instead of calculating the average genome composition again. If writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory instead.
+Since the calculation of the average genomic (di-)nucleotide composition may take a while, `bismark bam2nuc` attempts to write out a file called 'genomic_nucleotide_frequencies.txt' to the genome folder if it wasn't there already. The next time `bismark bam2nuc` is run it will then use this file instead of calculating the average genome composition again. If writing to the genome folder fails (e.g. because of permission issues) it will be written out to the output directory instead.
 
 ## Output format
 
-`bam2nuc` writes out a file ending in `.nucleotide_stats.txt` in the following format (tab-delimited):
+`bismark bam2nuc` writes out a file ending in `.nucleotide_stats.txt` in the following format (tab-delimited):
 
 ```tsv title="sample.nucleotide_stats.txt"
 (di-)nucleotide count sample    percent sample  count genomic   percent genomic coverage
@@ -78,6 +78,6 @@ TG      2996    6.50    782761  6.44    0.004
 TT      5055    10.96   1314144 10.80   0.004
 ```
 
-This file is picked up and plotted by `bismark2report` automatically if found in the folder in the following manner:
+This file is picked up and plotted by `bismark report` automatically if found in the folder in the following manner:
 
 ![Nucleotide Coverage Plot](../../../assets/nucleocoverage.png)

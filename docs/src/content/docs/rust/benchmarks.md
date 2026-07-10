@@ -3,7 +3,7 @@ title: "Benchmarks"
 description: "Runtime, CPU and memory measurements for the Bismark Rust suite versus Perl Bismark v0.25.1: a default-mode comparison, how the aligner scales with cores, and parallel scaling of the post-alignment tools."
 ---
 
-The [Bismark Rust suite](/Bismark/installation/#bismark-rust-suite-beta) reimplements the Bismark
+The [Bismark Rust suite](/Bismark/installation/#the-bismark-rust-suite) reimplements the Bismark
 tools in Rust. Its output is byte-identical to Perl Bismark `v0.25.1`, so the two implementations can
 be compared on runtime and memory alone.
 
@@ -29,11 +29,13 @@ goal was only byte-identical output, and timing is incidental.
 | Tool | Rust vs Perl | Workload |
 |---|---|---|
 | `bismark` aligner | 2.6× (directional) / 1.4× (non-directional) faster | 10M WGBS reads, byte-identical |
-| `bismark_methylation_extractor` | ~4.8× (matched cores) — up to ~46× vs Perl's single-threaded default | full WGBS, 64.6M read pairs |
-| `coverage2cytosine` | ~12× (CpG report) / ~2.6× (`--CX`) | full hg38 |
-| `bismark2bedGraph` | ~3.4× (CpG) / ~4.4× (`--CX`) | WGBS PE |
-| `NOMe_filtering` | ~3.4× | 10M SE |
-| `deduplicate_bismark`, `bam2nuc`, `filter_non_conversion`, `methylation_consistency`, `bismark2report`, `bismark2summary`, `bismark_genome_preparation` | byte-identical; not separately timed | — |
+| `bismark extract` | ~4.8× (matched cores) — up to ~46× vs Perl's single-threaded default | full WGBS, 64.6M read pairs |
+| `bismark cov2cyt` | ~12× (CpG report) / ~2.6× (`--CX`) | full hg38 |
+| `bismark bedgraph` | ~3.4× (CpG) / ~4.4× (`--CX`) | WGBS PE |
+| `bismark nome` | ~3.4× | 10M SE |
+| `bismark dedup`, `bismark bam2nuc`, `bismark filter`, `bismark consistency`, `bismark report`, `bismark summary`, `bismark prepare` | byte-identical; not separately timed | — |
+
+> Tools are shown by their canonical `bismark <subcommand>` names; the classic names (`deduplicate_bismark`, `bismark_methylation_extractor`, …) remain supported aliases — see the [quick reference](/Bismark/quick-reference/).
 
 ## Aligner
 
@@ -217,7 +219,7 @@ process the sampler does not attribute to it).
 
 ## Deduplicator
 
-`deduplicate_bismark --parallel N` sets the number of BGZF compression threads for the output BAM. It
+`bismark dedup --parallel N` sets the number of BGZF compression threads for the output BAM. It
 scales the same way at 10M and at full scale (~64M single-end):
 
 ![Deduplication --parallel scaling, single-end, 10M vs full ~64M: wall, CPU and peak memory vs workers](../../../assets/dedup_scaling.png)
@@ -238,7 +240,7 @@ On 1M EM-seq Nanopore reads (GRCh38, through the Bismark wrapper), rammap and mi
 fate of 98.3 % of reads, with unique-versus-ambiguous classification differing for 0.011 % of reads,
 and on 99.8 % of per-CpG methylation calls at depth ≥ 1.
 
-Run in-process (`--rammap_inprocess`, available from `2.0.0-beta.11`) rather than as a subprocess, the
+Run in-process (`--rammap_inprocess`) rather than as a subprocess, the
 converted index is loaded once and shared across the strand instances, which makes it both faster and
 lighter. On 1M non-directional reads:
 

@@ -13,7 +13,7 @@ Bismark is being reimplemented in Rust. The
 and is byte-identical to Perl `v0.25.1` on the faithful default path (the opt-in combined-index and
 `rammap` modes are concordance-gated rather than byte-identical). It is faster, lower-memory,
 worker-invariant, and actively developed, and it adds capabilities the Perl architecture cannot reach.
-It is currently in beta. At the Rust general release the Perl code will be archived as tagged legacy,
+It is the generally available, supported default; the Perl code is now archived as tagged legacy,
 following the model of [Salmon's `cpp` branch](https://github.com/COMBINE-lab/salmon).
 
 This is a freeze, not a judgement on the quality of contributions. It lets development effort go where
@@ -30,7 +30,7 @@ frozen branch before you invest time in a pull request.
 ## What should go to the Rust suite instead
 
 Everything else: **new features, performance work, new aligners or modes, and refactors.** The Rust
-suite is developed on the **`rust/iron-chancellor`** branch. Good starting points:
+suite is developed on the **`master`** branch. Good starting points:
 
 - [Rust rewrite: scope and motivation](https://felixkrueger.github.io/Bismark/rust/overview/)
 - [Benchmarks](https://felixkrueger.github.io/Bismark/rust/benchmarks/)

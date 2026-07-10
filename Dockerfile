@@ -30,7 +30,7 @@ COPY . .
 RUN cargo build --release --locked --manifest-path rust/Cargo.toml -p bismark --bin bismark --features bismark/rammap-inprocess,bismark/binseq-input
 
 # ── Runtime stage ────────────────────────────────────────────
-# micromamba base so the pinned aligners + samtools install cleanly from bioconda.
+# micromamba base so the pinned aligners install cleanly from bioconda.
 FROM mambaorg/micromamba:1.5.8-bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/FelixKrueger/Bismark"
@@ -42,16 +42,14 @@ LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 USER root
 
 # Pinned external tools (byte-identity requires these exact versions).
-# NB the Rust suite itself needs NO samtools (pure-Rust noodles I/O; --samtools_path
-# is accepted-but-ignored). samtools is kept ONLY for nf-core/methylseq co-residency
-# (smoke-test-docker asserts it among methylseq's shell-out tools).
-# TODO(phase4-followup): drop samtools once methylseq's Bismark modules are audited
-# to confirm they never `samtools sort/index/flagstat` inside this image.
+# No samtools: the Rust suite does its own BAM/SAM/CRAM I/O (pure-Rust noodles;
+# --samtools_path is accepted-but-ignored), and nf-core/methylseq's Bismark modules
+# were audited (2026-07-08, methylseq 4.2.0) to never invoke samtools in this image —
+# its sort/index/flagstat/stats run in methylseq's separate samtools container.
 RUN micromamba install -y -n base -c bioconda -c conda-forge \
       bowtie2=2.5.5 \
       hisat2=2.2.2 \
       minimap2=2.31 \
-      samtools=1.23.1 \
     && micromamba clean --all --yes
 ENV PATH=/opt/conda/bin:$PATH
 

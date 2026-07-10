@@ -1,6 +1,6 @@
 [package]
 name = "bismark"
-version = "2.0.0"
+version = "3.0.0"
 description = "The Bismark bisulfite-sequencing suite (Rust) — the bismark aligner, deduplicate_bismark, bismark_methylation_extractor, bismark2bedGraph, coverage2cytosine, bismark_genome_preparation, bam2nuc, NOMe_filtering, filter_non_conversion, methylation_consistency, bismark2report, bismark2summary, all in one crate."
 edition.workspace = true
 rust-version.workspace = true

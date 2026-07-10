@@ -1,9 +1,9 @@
 ---
 title: "Quick Reference"
-description: "Bismark needs a working version of Perl and it is run from the command line. Furthermore, Bowtie 2 or HISAT2 needs to be installed on your computer. For…"
+description: "Quick command reference for the Bismark suite: genome preparation, alignment, deduplication, methylation extraction and reporting, with the bismark <subcommand> interface and its classic-name aliases."
 ---
 
-Bismark needs a working version of Perl and it is run from the command line. Furthermore, [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
+Bismark is run from the command line. [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) or [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) needs to be installed on your computer. For more information on how to run Bismark with Bowtie 2 please go to the end of this manual.
 
 As of version 0.14.0 or higher, Bismark may be run using parallelisation for both the alignment and the methylation extraction step. Search for `--parallel` / `--multicore` for more details below.
 
@@ -11,18 +11,37 @@ First you need to download a reference genome and place it in a genome folder. G
 
 The following examples will use the file `test_dataset.fastq` which is available for download from the Bismark project or Github pages (it contains 10,000 reads in FastQ format, Phred33 qualities, 50 bp long reads, from a human directional BS-Seq library). An example report can be found in Appendix IV.
 
+## Command reference
+
+Bismark ships as a **single `bismark` binary**. `bismark <subcommand>` is the recommended interface; the classic tool names remain fully supported as `argv[0]` aliases (a drop-in for existing pipelines and nf-core/methylseq).
+
+| Subcommand | Classic name | Purpose |
+|---|---|---|
+| `bismark` / `bismark align` | `bismark` | bisulfite read alignment |
+| `bismark dedup` | `deduplicate_bismark` | deduplicate alignments |
+| `bismark extract` | `bismark_methylation_extractor` | methylation extraction |
+| `bismark bedgraph` | `bismark2bedGraph` | bedGraph + coverage from extractor output |
+| `bismark cov2cyt` | `coverage2cytosine` | genome-wide cytosine report |
+| `bismark prepare` | `bismark_genome_preparation` | build the bisulfite genome indices |
+| `bismark bam2nuc` | `bam2nuc` | mono-/di-nucleotide coverage stats |
+| `bismark nome` | `NOMe_filtering` | NOMe-seq GpC/CpG separation |
+| `bismark filter` | `filter_non_conversion` | filter incompletely converted reads |
+| `bismark consistency` | `methylation_consistency` | split reads by methylation concordance |
+| `bismark report` | `bismark2report` | per-sample HTML report |
+| `bismark summary` | `bismark2summary` | project-level HTML summary |
+
 ## Genome preparation
 
 **USAGE:**
 
 ```bash
-bismark_genome_preparation [options] <path_to_genome_folder>
+bismark prepare [options] <path_to_genome_folder>
 ```
 
 A typical genome indexing could look like this:
 
 ```bash
-/bismark/bismark_genome_preparation --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
+bismark prepare --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh37/
 ```
 
 ## Alignment
@@ -51,7 +70,7 @@ In order to work properly the current working directory must contain the sequenc
 ## Deduplication
 
 ```bash
-deduplicate_bismark --bam [options] <filenames>
+bismark dedup --bam [options] <filenames>
 ```
 
 This command will deduplicate the Bismark alignment BAM file and remove all reads but one which align to the the very same position and in the same orientation. This step is recommended for whole-genome bisulfite samples, but should not be used for reduced representation libraries such as RRBS, amplicon or target enrichment libraries.
@@ -61,13 +80,13 @@ This command will deduplicate the Bismark alignment BAM file and remove all read
 **USAGE:**
 
 ```bash
-bismark_methylation_extractor [options] <filenames>
+bismark extract [options] <filenames>
 ```
 
 A typical command to extract context-dependent (CpG/CHG/CHH) methylation could look like this:
 
 ```bash
-bismark_methylation_extractor --gzip --bedGraph test_dataset_bismark_bt2.bam
+bismark extract --gzip --bedGraph test_dataset_bismark_bt2.bam
 ```
 
 This will produce three methytlation output files:
@@ -83,7 +102,7 @@ as well as a bedGraph and a Bismark coverage file. For more on these files and t
 **USAGE:**
 
 ```
-bismark2report [options]
+bismark report [options]
 ```
 
 This command attempts to find Bismark alignment, deduplication and methylation extraction (splitting) reports as well as M-bias files to generate a graphical HTML report such as this [example Bismark paired-end report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/PE_report.html) for each sample in a directory.
@@ -93,7 +112,7 @@ This command attempts to find Bismark alignment, deduplication and methylation e
 **USAGE:**
 
 ```
-bismark2summary [options]
+bismark summary [options]
 ```
 
-This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample [Bismark Summary Report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_WGBS.html). The Bismark summary report is meant to give you a quick visual overview of the alignment statistics for a large number of samples (tens, hundreds or thousands of samples); if you only want to look at a single report please check out the `bismark2report`.
+This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory. Here is a sample [Bismark Summary Report](http://www.bioinformatics.babraham.ac.uk/projects/bismark/bismark_summary_WGBS.html). The Bismark summary report is meant to give you a quick visual overview of the alignment statistics for a large number of samples (tens, hundreds or thousands of samples); if you only want to look at a single report please check out `bismark report`.

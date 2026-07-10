@@ -5,7 +5,7 @@ description: "This script uses Bismark report files of several (up to hundreds o
 
 This script uses Bismark report files of several (up to hundreds of!?) samples in a run folder to generate a graphical summary HTML report as well as a whopping big table (tab-delimited text) with all relevant alignment and methylation statistics which may be used for graphing purposes in R, Excel or the like.
 
-Unless certain BAM files are specified, `bismark2summary` first identifies Bismark BAM files in a folder (they need to use the Bismark naming conventions) and then automatically detects Bismark alignment, deduplication or methylation extractor (splitting) reports based on the input file basename.
+Unless certain BAM files are specified, `bismark summary` (classic alias: `bismark2summary`) first identifies Bismark BAM files in a folder (they need to use the Bismark naming conventions) and then automatically detects Bismark alignment, deduplication or methylation extractor (splitting) reports based on the input file basename.
 
 If splitting reports are found they overwrite the methylation statistics of the initial alignment report.
 
@@ -17,12 +17,12 @@ You can see an example [Bismark Summary Report here](http://www.bioinformatics.b
 
 The Bismark summary report is meant to give you a quick visual overview of the alignment statistics for a large number of samples (tens, hundreds or thousands of samples).
 
-If you only want to look at a single report please check out the `bismark2report`.
+If you only want to look at a single report please check out `bismark report`.
 :::
 ## Usage
 
 ```
-bismark2summary [options]
+bismark summary [options]
 ```
 
 This command scans the current working directory for different Bismark alignment, deduplication and methylation extraction (splitting) reports to produce a graphical summary HTML report, as well as a data table, for all files in a directory.

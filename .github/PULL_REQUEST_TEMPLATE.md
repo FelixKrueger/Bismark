@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **The Perl version of Bismark is in maintenance freeze** (this is the default branch). It accepts
 > **critical bug and security fixes only**. New features and performance changes should target the
-> **Bismark Rust suite** (`rust/iron-chancellor`) — please see [CONTRIBUTING.md](../CONTRIBUTING.md).
+> **Bismark Rust suite** (`master`) — please see [CONTRIBUTING.md](../CONTRIBUTING.md).
 > Thank you for understanding!
 
 ## What does this PR do?
@@ -14,7 +14,7 @@
 - [ ] Critical bug fix (allowed during the Perl maintenance freeze)
 - [ ] Security fix (allowed)
 - [ ] Documentation / typo
-- [ ] New feature or performance change — **please retarget to the Rust suite** (`rust/iron-chancellor`); see [CONTRIBUTING.md](../CONTRIBUTING.md)
+- [ ] New feature or performance change — **please retarget to the Rust suite** (`master`); see [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ## Checklist
 
