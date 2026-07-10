@@ -104,8 +104,8 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
     <div class="steps">
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>1</div>
-        <div class="body"><h4>Install</h4><p>One command via crates.io, or grab a release from GitHub.</p>
-          <div class="code"><pre><span class="ps">cargo install bismark</span></pre></div></div>
+        <div class="body"><h4>Install</h4><p>One command via bioconda — installs the aligners too.</p>
+          <div class="code"><pre><span class="ps">mamba install -c bioconda bismark</span></pre></div></div>
       </div>
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>2</div>
@@ -136,8 +136,8 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
   const term = document.getElementById('home-term');
   if (term) {
     const lines = [
-      { prompt: true, type: true, toks: [{ t: 'cargo install bismark', c: '' }] },
-      { out: true, toks: [{ t: '  ✓ bismark  bowtie2  installed', c: 'ok' }] },
+      { prompt: true, type: true, toks: [{ t: 'mamba install -c bioconda bismark', c: '' }] },
+      { out: true, toks: [{ t: '  ✓ bismark  bowtie2  hisat2  minimap2  installed', c: 'ok' }] },
       { blank: true },
       { prompt: true, type: true, toks: [{ t: 'bismark prepare ', c: '' }, { t: '/ref/GRCh38/', c: 'out' }] },
       { out: true, toks: [{ t: '  building C→T and G→A indices ', c: 'out' }, { t: 'done', c: 'ok' }] },

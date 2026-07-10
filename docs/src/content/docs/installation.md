@@ -1,13 +1,25 @@
 ---
 title: "Installation"
-description: "Bismark is the Rust bisulfite aligner and methylation suite — a single binary, byte-identical to Perl v0.25.1. Install via cargo, a container image, or prebuilt binaries."
+description: "Bismark is the Rust bisulfite aligner and methylation suite — a single binary, byte-identical to Perl v0.25.1. Install via conda/bioconda, cargo, a container image, or prebuilt binaries."
 ---
 
 Bismark is the Rust bisulfite aligner and methylation suite, executed from the command line. It ships as a **single `bismark` binary**: run `bismark <subcommand>` (e.g. `bismark align`, `bismark extract`) or use the classic tool names (`deduplicate_bismark`, `bismark_methylation_extractor`, …), which are supported aliases of the same binary. Output is **byte-identical** to Perl Bismark `v0.25.1` on the faithful default path. The original Perl scripts are now archived as tagged legacy (see [Legacy: the Perl Bismark](#legacy-the-perl-bismark) below).
 
 ## The Bismark Rust suite
 
-There are three ways to install the Rust suite.
+There are four ways to install the Rust suite.
+
+### Install with `conda` / `mamba` (bioconda)
+
+The simplest option — one command installs the `bismark` suite **and** its alignment backends (Bowtie 2, HISAT2, minimap2), so nothing else needs to be on your `PATH`:
+
+```bash
+conda install -c bioconda -c conda-forge bismark
+# or, faster:
+mamba install -c bioconda -c conda-forge bismark
+```
+
+You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
 
 ### Install from source with `cargo`
 
