@@ -1,5 +1,7 @@
 # Bismark
 
+[![CI](https://github.com/FelixKrueger/Bismark/actions/workflows/rust_ci.yml/badge.svg?branch=master)](https://github.com/FelixKrueger/Bismark/actions/workflows/rust_ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/bismark)](https://crates.io/crates/bismark)
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/bismark/README.html)
 
 > **See the documentation**: <https://felixkrueger.github.io/Bismark>
