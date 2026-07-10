@@ -8,7 +8,7 @@
 > **Bismark is now the Rust suite, generally available.** The bisulfite aligner and
 > methylation tools have been rewritten from Perl to Rust: **byte-identical** to Perl `v0.25.1` on the
 > faithful default path, faster, and lower-memory — and this is the **supported default**. Get it via
-> [Installation](#installation) (`cargo install bismark`, container, or prebuilt binaries) and see the
+> [Installation](#installation) (`mamba install -c bioconda bismark`, cargo, container, or prebuilt binaries) and see the
 > **[Rust suite overview](https://felixkrueger.github.io/Bismark/rust/overview/)**.
 > The original **Perl `v0.25.x`** (the scripts at this repo root) is now **legacy / maintenance-freeze**
 > (critical fixes only; tagged [`v0.25.1`](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1)).
@@ -35,19 +35,22 @@ There is also an overview of the alignment modes that are currently supported by
 Bismark is now the Rust suite. Pick one:
 
 ```bash
-# 1. crates.io — installs the whole suite (all tools) into ~/.cargo/bin
+# 1. bioconda — also installs the aligners (bowtie2/hisat2/minimap2) for you
+mamba install -c bioconda -c conda-forge bismark
+
+# 2. crates.io — installs the whole suite (all tools) into ~/.cargo/bin
 cargo install bismark
 
-# 2. Container image (nothing to install; drop-in for nf-core/methylseq)
+# 3. Container image (nothing to install; drop-in for nf-core/methylseq)
 docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :3.0.0
 
-# 3. Prebuilt binaries — download from the Releases page and put on your PATH
+# 4. Prebuilt binaries — download from the Releases page and put on your PATH
 #    https://github.com/FelixKrueger/Bismark/releases
 ```
 
 **External tools on your `PATH`:** an aligner — [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) (default), or optionally [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) or [minimap2](https://lh3.github.io/minimap2/minimap2.html). **No Samtools needed** — all BAM/SAM/CRAM I/O is pure-Rust. The container bundles the aligners for you. See [`rust/README.md`](rust/README.md#installing) for details and per-tool installs.
 
-> A bioconda `mamba install bismark` for the Rust suite is coming as a fast-follow; until then the bioconda `bismark` package is the legacy Perl `v0.25.x`.
+> The default bioconda `bismark` package is now the Rust suite (v3.0.0+); `mamba install bismark=0.25.1` still gets the legacy Perl.
 
 ### Legacy: the Perl Bismark (v0.25.x)
 
