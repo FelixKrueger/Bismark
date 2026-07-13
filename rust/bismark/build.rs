@@ -17,16 +17,64 @@ use std::env;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn git_short_hash() -> String {
-    Command::new("git")
+/// Git short-hash resolution, most-authoritative first:
+///  1. `$BISMARK_GIT_HASH` — an explicit override for CI/Docker builds whose
+///     context has no `.git` (e.g. a `git archive` tarball).
+///  2. `git rev-parse --short HEAD` — a working checkout (dev/CI).
+///  3. `.cargo_vcs_info.json` — the VCS record `cargo package`/`cargo publish`
+///     embeds in the crate tarball, so a registry `cargo install` still reports
+///     the real commit instead of `unknown`.
+///  4. `"unknown"` — genuinely no provenance available.
+///
+/// (4) previously fired for a bare `cargo install` from a source tree with no
+/// `.git`, producing the stray `unknown — …` a user reported on `-V`; the
+/// `.cargo_vcs_info.json` tier and the clean-formatting fallback in
+/// `meta::version_line` close that.
+fn git_short_hash(manifest_dir: &str) -> String {
+    if let Ok(h) = env::var("BISMARK_GIT_HASH") {
+        let h = h.trim();
+        if !h.is_empty() {
+            return h.to_string();
+        }
+    }
+    let from_git = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(h) = from_git {
+        return h;
+    }
+    if let Some(h) = cargo_vcs_short_hash(manifest_dir) {
+        return h;
+    }
+    "unknown".to_string()
+}
+
+/// Extract the short (7-char) commit hash from a `.cargo_vcs_info.json` embedded
+/// in a packaged crate. The file (at the crate root) looks like
+/// `{"git":{"sha1":"<40-hex>"},"path_in_vcs":"rust/bismark"}`; we do a minimal
+/// hand-parse (no serde in the build graph) tolerant of whitespace.
+fn cargo_vcs_short_hash(manifest_dir: &str) -> Option<String> {
+    let path = std::path::Path::new(manifest_dir).join(".cargo_vcs_info.json");
+    let content = std::fs::read_to_string(path).ok()?;
+    let after_key = content.split("\"sha1\"").nth(1)?;
+    let after_colon = after_key.split(':').nth(1)?;
+    let sha = after_colon
+        .trim()
+        .trim_start_matches('"')
+        .split('"')
+        .next()?
+        .trim();
+    let short: String = sha.chars().take(7).collect();
+    if short.len() == 7 && short.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(short)
+    } else {
+        None
+    }
 }
 
 fn build_epoch() -> u64 {
@@ -131,18 +179,22 @@ fn git_path(file: &str) -> Option<String> {
 }
 
 fn main() {
-    let hash = git_short_hash();
+    let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let hash = git_short_hash(&manifest);
     let timestamp = format_iso8601_utc(build_epoch());
     let version = suite_version();
     let last_mod = last_modified(&timestamp);
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| "unknown".to_string());
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| "unknown".to_string());
-    let version_body = format!("{hash} — {target_os}/{target_arch} — built {timestamp}");
+    let target = format!("{target_os}/{target_arch}");
 
+    // The parenthesised `--version` body is composed at RUNTIME in
+    // `meta::version_line` from these parts, so a hashless build drops the
+    // `<hash> — ` prefix cleanly rather than baking in a literal `unknown`.
     println!("cargo:rustc-env=BISMARK_SUITE_VERSION={version}");
     println!("cargo:rustc-env=GIT_SHORT_HASH={hash}");
     println!("cargo:rustc-env=BUILD_TIMESTAMP={timestamp}");
-    println!("cargo:rustc-env=VERSION_BODY={version_body}");
+    println!("cargo:rustc-env=BUILD_TARGET={target}");
     println!("cargo:rustc-env=BISMARK_LAST_MODIFIED={last_mod}");
 
     for f in ["HEAD", "index"] {
@@ -152,6 +204,8 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=../VERSION");
     println!("cargo:rerun-if-changed=VERSION"); // crate-local vendored copy (registry-build fallback)
+    println!("cargo:rerun-if-changed=.cargo_vcs_info.json"); // packaged-crate hash fallback
     println!("cargo:rerun-if-env-changed=BISMARK_SUITE_VERSION");
+    println!("cargo:rerun-if-env-changed=BISMARK_GIT_HASH");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 }
