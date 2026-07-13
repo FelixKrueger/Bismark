@@ -88,6 +88,7 @@ fn print_top_level_help() {
     println!("  <classic-name> [OPTIONS]          each tool's classic name also works (alias)\n");
     println!("SUBCOMMANDS (classic name in parentheses):");
     for (sub, classic) in [
+        ("align", "bismark"),
         ("dedup", "deduplicate_bismark"),
         ("extract", "bismark_methylation_extractor"),
         ("bedgraph", "bismark2bedGraph"),
@@ -100,7 +101,7 @@ fn print_top_level_help() {
         ("report", "bismark2report"),
         ("summary", "bismark2summary"),
     ] {
-        println!("  {sub:<12}  {classic}");
+        println!("  {sub:<12}  ({classic})");
     }
     println!("\nBare `bismark <args>` runs the aligner. Run `bismark <subcommand> --help` for a");
     println!("tool's options, or `bismark align --help` for the aligner's.");
