@@ -63,7 +63,7 @@ def parse_cx(path):
             cov = meth + unmeth
             if cov == 0:
                 continue
-            out[(f[0], f[1], f[2])] = (meth, cov)
+            out[(_norm_chrom(f[0]), f[1], f[2])] = (meth, cov)
     return out
 
 
@@ -103,6 +103,8 @@ def cmd_methyl(args):
     ours = parse_cx(args.ours)
     drg = parse_cx(args.dragen)
     shared = ours.keys() & drg.keys()
+    if not shared:
+        raise SystemExit("concordance: 0 shared CpGs — check chromosome naming (chr1 vs 1) or inputs")
     covs = [int(c) for c in args.covs.split(",")]
     print(f"shared CpGs (any cov): {len(shared)}")
     print(f"{'cov>=':>6} {'n':>12} {'pearson_r':>10} {'cov_wtd_r':>10} "

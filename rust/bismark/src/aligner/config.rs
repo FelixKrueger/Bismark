@@ -199,7 +199,7 @@ pub struct RunConfig {
     /// #787: min Phred base quality for a 5-Base methylation call (0 = off; mask low-Q
     /// read bases as no-call). Requires `five_base`.
     pub five_base_baseq: u8,
-    /// #787: min read MAPQ for the experimental duplex/consensus family pass (0 = off; drop
+    /// #787: min read MAPQ for the duplex/consensus family pass (0 = off; drop
     /// reads below it — DRAGEN's MAPQ<20 filter, removes mis-mapped repeat pile-ups). Does
     /// NOT filter the core per-read calls / primary BAM. Requires `five_base`.
     pub five_base_min_mapq: u8,

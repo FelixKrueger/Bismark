@@ -18,12 +18,12 @@ library is paired-end and directional; single-end input is rejected at startup).
 no byte-for-byte oracle. It is instead **concordance-gated**, the same contract as the
 `--rammap` and `--combined_index` paths:
 
-- **Supported in GA (2.0.0):** `--illumina_5base` (core), `--five_base_duplex`,
-  `--five_base_consensus`, `--five_base_deconvolution`. Each is validated against Illumina
+- **Supported in GA (3.0.0):** `--illumina_5base` (core), `--five_base_duplex`,
+  `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_deconvolution`. Each is validated against Illumina
   DRAGEN on the real NA12878 demo at full depth by the metric appropriate to what it
   produces: **core** by per-CpG concordance with DRAGEN's (deduplicated, full-depth) CX
   report (deduplicated, iso-DRAGEN) — **r approximately 0.99 over 55M CpGs (0.998 at
-  cov>=10), 99.3% call-agreement**; **deconvolution**
+  cov>=10), 99.3% call-agreement at cov>=10 (98.8% at cov>=1)**; **deconvolution**
   by variant precision/recall vs DRAGEN's germline VCF — **90.3% / 93.4%**; **duplex /
   consensus** (per-molecule collapse — DRAGEN builds a duplex-consensus methylation track
   only for UMI/enrichment kits, so there is no WGS consensus-CX to correlate against) by
@@ -71,6 +71,9 @@ strand-partner read pairs. These modes use that structure:
   per molecule.
 - **`--five_base_consensus`** collapses each duplex family to one consensus record per
   molecule, scoring both strands of every CpG.
+- **`--five_base_consensus_from_bam`** re-runs the duplex-consensus collapse over one or
+  more already-aligned 5-Base BAMs (same output as `--five_base_consensus`, skipping
+  re-alignment).
 - **`--five_base_umi_qname`** (preview) takes the duplex UMI from the read name (the real
   Illumina form, `A+B` with the partner swapped) instead of an inline read prefix.
 
@@ -84,7 +87,7 @@ bismark --illumina_5base --five_base_umi_qname --five_base_consensus \
 
 The concordance evidence (per-CpG Pearson r and call-agreement vs DRAGEN, and the
 deconvolution precision/recall vs DRAGEN's germline VCF) and a reproducible runbook live in
-the repository at `plans/06232026_illumina-5base-support/VALIDATION_REAL_DATA.md`, with the
+the repository at `validation/VALIDATION_REAL_DATA.md`, with the
 `validation/concordance.py` harness. The deterministic floor (lambda unmethylated control
 reads near 0%, pUC19 CpG-methylated control reads high) is locked by the
 `five_base_controls_*` gates that run in CI.

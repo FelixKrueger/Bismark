@@ -338,7 +338,7 @@ python3 validation/concordance.py deconv \
 call-agreement at 50%, and a 5x5 confusion matrix. `deconv` prints precision (our
 `variant` CpGs coinciding with a DRAGEN C>T/G>A SNV) and recall (DRAGEN homozygous
 CpG-disrupting SNVs we cover and flag). The reference numbers to reproduce are the
-existing NA12878 full-depth results above (core r ~ 0.98 / 97.5% call agreement;
+existing NA12878 full-depth results above (core r 0.991 (0.998 at cov>=10) / 98.8% (99.3% at cov>=10) call agreement;
 deconvolution 90.3% / 93.4% at ~40x).
 
 ### GA graduation evidence (real Illumina 5-Base, NA12878 Sample8 full depth)
@@ -356,7 +356,7 @@ results from this document's runs (core: the 55M-CpG table above; deconvolution:
 | consensus (duplex view) | ~44x seq | 6.5M (cov>=1) / 90k (cov>=5) | 0.78 (0.91 cov>=5) | 85% (90% cov>=5) | n/a | n/a |
 
 Notes:
-- **Core** is the headline supported path: r approximately 0.99 and 97.5% call-agreement
+- **Core** is the headline supported path: r 0.991 (0.998 at cov>=10) and 98.8% (99.3% at cov>=10) call-agreement
   vs DRAGEN over 53-55M CpGs is the GA evidence for `--illumina_5base`.
 - **Deconvolution** reproduces DRAGEN's variant exclusions at 90.3% precision / 93.4%
   recall (full depth).
