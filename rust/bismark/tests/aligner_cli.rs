@@ -2659,10 +2659,12 @@ fn rammap_se_mapped_names_report_and_notice() {
         .arg("--rammap")
         // This test validates the SUBPROCESS rammap backend (the fake `rammap` binary,
         // its positional `.mmi` invocation, naming, option string, supplementary
-        // handling). Phase 4 (Option A): `--rammap` DEFAULTS to the subprocess path on
-        // both builds (the in-process path is the explicit `--rammap_inprocess` opt-in),
-        // so a plain `--rammap` run is backend-stable here — no flag needed. The
-        // in-process backend is exercised by the oxy concordance gate (needs a real `.mmi`).
+        // handling). rev2 (Alt-1): `--rammap` now DEFAULTS to the in-process backend on a
+        // `--features rammap-inprocess` build, so we pin the subprocess path explicitly with
+        // `--rammap_subprocess` — backend-stable on BOTH builds (feature-off `--rammap` is
+        // subprocess anyway). The in-process backend is exercised by the oxy concordance gate
+        // (needs a real `.mmi`).
+        .arg("--rammap_subprocess")
         .arg("--path_to_rammap")
         .arg(bins.path())
         .arg("--temp_dir")
@@ -2678,10 +2680,10 @@ fn rammap_se_mapped_names_report_and_notice() {
                 "--rammap uses the rammap pure-Rust minimap2 reimplementation",
             )
             .and(predicate::str::contains("NOT byte-identical to minimap2"))
-            // V4b (Phase 4, review C2): a plain subprocess-default `--rammap` run must NOT
-            // emit any "fell back to subprocess" notice — those mention `--rammap_inprocess`
-            // and fire ONLY when the in-process backend was opted into but overridden.
-            .and(predicate::str::contains("--rammap_inprocess").not()),
+            // rev2 (Alt-1): the explicit `--rammap_subprocess` run must name the SUBPROCESS
+            // backend and must NOT claim the in-process backend (the new default).
+            .and(predicate::str::contains("subprocess rammap binary"))
+            .and(predicate::str::contains("in-process rammap-core").not()),
         );
 
     // Naming token is `rammap`, NOT bt2/hisat2/mm2.
@@ -2735,6 +2737,80 @@ fn rammap_paired_end_is_rejected() {
                 .and(predicate::str::contains("rammap"))
                 .and(predicate::str::contains("not supported")),
         );
+}
+
+/// A fake `rammap` for the FastA-note test. FastA input converts to a 2-line `.fa`
+/// temp (no `.fastq`), and the test only needs the run to reach the never-silent notice
+/// (printed before alignment) and complete cleanly — so emit every read UNMAPPED (flag
+/// 4) regardless of index, sidestepping FastA SEQ/QUAL/methylation-call detail.
+#[cfg(all(unix, feature = "rammap-inprocess"))]
+fn make_fake_rammap_fasta_unmapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "rammap 1.1.1"; exit 0;; esac
+inp=""
+for a in "$@"; do case "$a" in *.fa|*.fasta) inp="$a" ;; esac; done
+printf '@HD\tVN:1.0\n'
+awk '/^>/ { id=$1; sub(/^>/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\t*" }' "$inp"
+"#;
+    write_exec(&dir.join("rammap"), script);
+}
+
+/// rev2 (Alt-1), plan step 6(d) / Validation 4: the FastA never-silent explanatory note.
+/// `--rammap` now DEFAULTS to the in-process backend, but that stream is FastQ-only, so a
+/// **FastA** `--rammap` run falls back to the subprocess — and must SAY so (the re-keyed
+/// note, condition `!config.rammap_subprocess`). An explicit `--rammap_subprocess` run
+/// already asked for subprocess, so the note must NOT fire (no double-print). Feature-gated:
+/// the note only exists on a `--features rammap-inprocess` build.
+#[cfg(all(unix, feature = "rammap-inprocess"))]
+#[test]
+fn rammap_fasta_default_fires_note_subprocess_suppresses() {
+    const NOTE: &str = "supports FastQ input only";
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_fasta_unmapped(bins.path());
+    let read = genome.path().join("reads.fa");
+    fs::write(&read, b">r1\nACGTAC\n").unwrap();
+
+    // (1) default `--rammap` on FastA → in-process is FastQ-only → subprocess + note FIRES.
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        .arg("-f")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(NOTE));
+
+    // (2) explicit `--rammap_subprocess` on FastA → the user asked for subprocess, so the
+    // note must NOT fire (never double-print).
+    let temp2 = TempDir::new().unwrap();
+    let outdir2 = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        .arg("--rammap_subprocess")
+        .arg("-f")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp2.path())
+        .arg("--output_dir")
+        .arg(outdir2.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(NOTE).not());
 }
 
 // ===========================================================================
@@ -4369,8 +4445,14 @@ fn run_combined_nondir_records(
 
     let mut cmd = bin();
     cmd.arg("--combined_index").arg("--non_directional");
+    // #1018: sequential is now the DEFAULT, so the "model (a)" (parallel) baseline MUST
+    // pass --combined_index_parallel explicitly — otherwise `sequential == false` would ALSO
+    // route to sequential and the byte-identity tests below would silently compare
+    // sequential-vs-sequential (green, testing nothing).
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        cmd.arg("--combined_index_parallel");
     }
     if let Some(u) = upto {
         cmd.arg("--upto").arg(u);
@@ -4479,12 +4561,120 @@ fn combined_index_sequential_banner_and_report_marker() {
 
     let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
     assert!(report.contains("non-directional SEQUENTIAL"));
-    assert!(report.contains("byte-identical to the default parallel combined non-dir path"));
+    assert!(report.contains("BAM byte-identical to the --combined_index_parallel model (a)"));
     assert!(report.contains("Sequences analysed in total:\t4\n"));
     assert!(report.contains("CT/CT:\t1\t((converted) top strand)"));
     assert!(report.contains("GA/CT:\t1\t(complementary to (converted) top strand)"));
     assert!(report.contains("GA/GA:\t1\t(complementary to (converted) bottom strand)"));
     assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+}
+
+/// #1018 (THE flip): `--combined_index --non_directional` with NO exec flag now DEFAULTS to
+/// the SEQUENTIAL model; `--combined_index_parallel` opts back into the concurrent model (a)
+/// (its banner says NON-DIRECTIONAL but NOT SEQUENTIAL).
+#[cfg(unix)]
+#[test]
+fn combined_index_nondir_defaults_to_sequential() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let run = |exec_flag: Option<&str>| -> String {
+        let genome = TempDir::new().unwrap();
+        make_genome_combined(genome.path());
+        let bins = TempDir::new().unwrap();
+        make_fake_bowtie2_combined_nondir(bins.path());
+        let read = write_reads_ids(genome.path(), "reads.fq", &ids);
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let mut cmd = bin();
+        cmd.arg("--combined_index").arg("--non_directional");
+        if let Some(f) = exec_flag {
+            cmd.arg(f);
+        }
+        let assert = cmd
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .assert()
+            .success();
+        String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
+    };
+
+    // DEFAULT (no exec flag) → SEQUENTIAL model.
+    let default_err = run(None);
+    assert!(
+        default_err.contains("NON-DIRECTIONAL SEQUENTIAL"),
+        "default non-dir combined must now run the SEQUENTIAL model; got: {default_err}"
+    );
+
+    // --combined_index_parallel → concurrent model (a): NON-DIRECTIONAL banner, NOT SEQUENTIAL.
+    let parallel_err = run(Some("--combined_index_parallel"));
+    assert!(
+        parallel_err.contains("NON-DIRECTIONAL") && !parallel_err.contains("SEQUENTIAL"),
+        "--combined_index_parallel must run the concurrent model (a), not sequential; got: {parallel_err}"
+    );
+}
+
+/// #1018 scope guard (never-silent): `--combined_index_parallel` requires `--combined_index
+/// --non_directional` and is mutually exclusive with the other exec-model flags.
+#[cfg(unix)]
+#[test]
+fn combined_index_parallel_scope_guard_rejects() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = make_read(genome.path());
+
+    // parallel WITHOUT --combined_index
+    bin()
+        .arg("--combined_index_parallel")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --combined_index"));
+
+    // parallel + --combined_index but DIRECTIONAL (no --non_directional)
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_parallel")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --non_directional"));
+
+    // parallel + sequential together → competing exec models
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_parallel")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("competing execution models"));
+
+    // parallel + single_pass together → competing exec models
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_parallel")
+        .arg("--combined_index_single_pass")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("competing execution models"));
 }
 
 /// A read that misses BOTH passes → `NoAlignment` → 0 BAM records (the double-miss
@@ -4689,8 +4879,14 @@ fn run_combined_pe_nondir_records(
 
     let mut cmd = bin();
     cmd.arg("--combined_index").arg("--non_directional");
+    // #1018: sequential is now the DEFAULT, so the "model (a)" (parallel) baseline MUST
+    // pass --combined_index_parallel explicitly — otherwise `sequential == false` would ALSO
+    // route to sequential and the byte-identity tests below would silently compare
+    // sequential-vs-sequential (green, testing nothing).
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        cmd.arg("--combined_index_parallel");
     }
     if let Some(u) = upto {
         cmd.arg("--upto").arg(u);
@@ -4813,7 +5009,7 @@ fn combined_index_pe_sequential_banner_and_report_marker() {
     let report =
         fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
     assert!(report.contains("non-directional SEQUENTIAL"));
-    assert!(report.contains("byte-identical to the default parallel combined non-dir path"));
+    assert!(report.contains("BAM byte-identical to the --combined_index_parallel model (a)"));
 }
 
 /// A PE fake `bowtie2` for the model-(b) tagged run: one tagged interleaved input pair
@@ -5076,6 +5272,12 @@ fn run_combined_pe_hisat2_records(
         .arg("--non_directional");
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        // #1018: mirror the Bowtie 2 helpers — sequential is now the DEFAULT, so the "model (a)"
+        // (parallel) baseline MUST pass --combined_index_parallel explicitly; otherwise
+        // `sequential == false` would ALSO route to sequential and the HISAT2 byte-identity tests
+        // below would silently compare sequential-vs-sequential (green, testing nothing).
+        cmd.arg("--combined_index_parallel");
     }
     if let Some(u) = upto {
         cmd.arg("--upto").arg(u);
@@ -5132,6 +5334,12 @@ fn run_combined_se_hisat2_records(
         .arg("--non_directional");
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        // #1018: mirror the Bowtie 2 helpers — sequential is now the DEFAULT, so the "model (a)"
+        // (parallel) baseline MUST pass --combined_index_parallel explicitly; otherwise
+        // `sequential == false` would ALSO route to sequential and the HISAT2 byte-identity tests
+        // below would silently compare sequential-vs-sequential (green, testing nothing).
+        cmd.arg("--combined_index_parallel");
     }
     cmd.arg("--genome")
         .arg(genome.path())

@@ -77,14 +77,20 @@ pub struct Cli {
     /// Folder containing `rammap`.
     #[arg(long = "path_to_rammap", value_name = "PATH")]
     pub path_to_rammap: Option<PathBuf>,
-    /// `[v2/experimental]` Opt into the in-process `rammap-core` backend (single-end).
-    /// `--rammap` defaults to the proven SUBPROCESS path; this flag selects the
-    /// in-process path instead: **lower RAM, but slower (single-threaded)**, and
-    /// **concordant — NOT byte-identical — to the subprocess** (a handful of borderline
-    /// long-read alignments differ). Requires `--rammap` AND a `--features
-    /// rammap-inprocess` build; on a default (feature-OFF) binary it is accepted but
-    /// inert (the in-process path isn't compiled, so the subprocess runs).
-    #[arg(long = "rammap_inprocess")]
+    /// `[v2/experimental]` Force the SUBPROCESS rammap backend: spawn the external
+    /// `rammap` binary on `PATH` (exactly like `--minimap2`). `--rammap` now DEFAULTS to
+    /// the compiled-in in-process backend (auto-threaded, lower RAM, faster under
+    /// multiple cores); this flag opts back OUT to the subprocess path — for exact
+    /// rammap-CLI parity, or on a binary built without `--features rammap-inprocess`
+    /// (where in-process is not compiled and `--rammap` uses the subprocess anyway).
+    /// Requires `--rammap`. Concordant — NOT byte-identical — to the in-process backend.
+    #[arg(long = "rammap_subprocess")]
+    pub rammap_subprocess: bool,
+    /// DEPRECATED (hidden): the in-process `rammap-core` backend is now the `--rammap`
+    /// default, so this flag is inert — accepted for backward compatibility, removed in a
+    /// later release. To opt OUT to the external-binary path use `--rammap_subprocess`.
+    /// Requires `--rammap`; conflicts with `--rammap_subprocess`.
+    #[arg(long = "rammap_inprocess", hide = true)]
     pub rammap_inprocess: bool,
     /// `[v2, opt-in, never-silent, concordance-gated]` Illumina 5-Base (5mC->T)
     /// mode. Unlike bisulfite, the 5-Base chemistry converts METHYLATED C to T and
@@ -97,13 +103,12 @@ pub struct Cli {
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, deconvolute
+    /// `[#787]` After a `--illumina_5base` run, deconvolute
     /// methylation from C>T/G>A genetic variants using both strands (DRAGEN's rule), and
     /// write a per-CpG report `<out>.5base_deconvolution.txt` (chrom, pos, strand,
     /// verdict, methylated, total, %). A CpG whose OPPOSITE strand also lost the cytosine
     /// is a variant, not 5mC, and is excluded from the methylation totals. Requires
-    /// `--illumina_5base`. EXPERIMENTAL: not byte-identity- or per-site-concordance-gated;
-    /// the supported output is the core per-read 5-Base BAM.
+    /// `--illumina_5base`. Concordance-gated (not byte-identical); see the 5-Base guide.
     #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
     pub five_base_deconvolution: bool,
     /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
@@ -130,7 +135,7 @@ pub struct Cli {
     /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
-    /// `[#787]` Minimum read MAPQ for the experimental duplex/consensus family pass
+    /// `[#787]` Minimum read MAPQ for the duplex/consensus family pass
     /// (`--five_base_duplex` / `--five_base_consensus`). Reads below this are dropped from
     /// the consensus collapse (DRAGEN filters alt reads at MAPQ < 20), removing mis-mapped
     /// satellite/repeat pile-ups (e.g. pericentromeric reads minimap2 places at MAPQ ~1)
@@ -139,23 +144,25 @@ pub struct Cli {
     /// `--illumina_5base`.
     #[arg(long = "five_base_min_mapq", value_name = "MAPQ", default_value_t = 0)]
     pub five_base_min_mapq: u8,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
+    /// `[#787]` After a `--illumina_5base` run, group the two strands
     /// of each original molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and
     /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`.
     /// Paired-end only: each family is keyed on the FRAGMENT span (POS, mate-pos, TLEN)
     /// and canonical dual UMI, pairing the two strands of the same PE molecule by their
     /// shared insert coordinates. Use `--five_base_umi_qname` (real data) or
-    /// `--five_base_umi_len` for the UMI key. EXPERIMENTAL: not gated.
-    /// Requires `--illumina_5base`.
+    /// `--five_base_umi_len` for the UMI key. Concordance-gated (not byte-identical);
+    /// see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_duplex")]
     pub five_base_duplex: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to a consensus in
+    /// `[#787]` COLLAPSE each duplex family to a consensus in
     /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
     /// `--five_base_duplex` (paired-end only). Reconciled by MOLECULE strand
     /// (the OT molecule owns a `+` CpG, the OB molecule a `-` CpG); the opposite strand is the
     /// variant check (a cytosine gone on BOTH strands is masked to `N`). Emits a forward AND a
-    /// reverse record per family, so BOTH strands of every CpG are scored. DRAGEN-validated on
-    /// real NA12878 (both strands r ≈ 0.77). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
+    /// reverse record per family, so BOTH strands of every CpG are scored. Per-molecule duplex
+    /// view (inherently sparse) — validated vs DRAGEN by per-strand mean-methylation agreement
+    /// (DRAGEN has no WGS consensus-CX to correlate against), not a per-CpG r. Concordance-gated
+    /// (not byte-identical); see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
     /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of
@@ -166,7 +173,7 @@ pub struct Cli {
     /// exclusive). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_qname")]
     pub five_base_umi_qname: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` Run ONLY the duplex-consensus collapse over one or more
+    /// `[#787]` Run ONLY the duplex-consensus collapse over one or more
     /// EXISTING 5-Base `_pe.bam`/`.bam` files (repeat the flag per file) — no re-alignment.
     /// Families pair ACROSS all the given BAMs, so passing every lane's BAM yields a
     /// full-depth consensus. Writes `<output_dir>/five_base_consensus.bam`. Requires
@@ -218,17 +225,32 @@ pub struct Cli {
     #[arg(long = "combined_index_single_pass")]
     pub combined_index_single_pass: bool,
 
-    /// EXPERIMENTAL (v2, opt-in, never-silent): the SEQUENTIAL low-memory
-    /// execution model for `--combined_index --non_directional`. Runs model (a)'s
-    /// two both-strands passes ONE AT A TIME (pass 1's aligner exits, freeing the
-    /// index, before pass 2 starts) instead of concurrently — one combined index
-    /// resident at a time (~half the peak RSS). BYTE-IDENTICAL to the default
-    /// parallel path (the aligner's output is independent of when each pass runs);
-    /// the trade is wall time (the passes no longer overlap). Requires
-    /// `--combined_index --non_directional`; single-end or paired-end; Bowtie 2 or
-    /// HISAT2; mutually exclusive with `--combined_index_single_pass`.
+    /// EXPERIMENTAL (v2): the SEQUENTIAL low-memory execution model for
+    /// `--combined_index --non_directional`. Runs model (a)'s two both-strands passes
+    /// ONE AT A TIME (pass 1's aligner exits, freeing the index, before pass 2 starts)
+    /// instead of concurrently — one combined index resident at a time (~half the peak
+    /// RSS). **This is now the DEFAULT** for `--combined_index --non_directional`; the
+    /// flag is retained as an explicit selector (harmless — it selects the default).
+    /// BAM byte-identical to the parallel model (a) (`--combined_index_parallel`): the
+    /// aligner's per-read output is independent of when each pass runs; the trade is
+    /// wall time on small / index-load-bound inputs. Requires `--combined_index
+    /// --non_directional`; single-end or paired-end; Bowtie 2 or HISAT2; mutually
+    /// exclusive with `--combined_index_single_pass` and `--combined_index_parallel`.
     #[arg(long = "combined_index_sequential")]
     pub combined_index_sequential: bool,
+
+    /// EXPERIMENTAL (v2, opt-in): the PARALLEL "model (a)" execution model for
+    /// `--combined_index --non_directional` — run the two both-strands passes
+    /// CONCURRENTLY (two combined indexes co-resident, ~2× the peak RSS). This is the
+    /// OPT-IN since the sequential-default flip: `--combined_index --non_directional`
+    /// now defaults to the sequential model (~half the peak RSS, faster on large /
+    /// bandwidth-bound genomes). Use this to recover the concurrent model, which can be
+    /// faster on a small index with many cores (the passes overlap). BAM byte-identical
+    /// to the sequential default. Requires `--combined_index --non_directional`; Bowtie 2
+    /// or HISAT2; mutually exclusive with `--combined_index_sequential` and
+    /// `--combined_index_single_pass`.
+    #[arg(long = "combined_index_parallel")]
+    pub combined_index_parallel: bool,
 
     // ---- read trimming / quality ------------------------------------------
     /// Skip the first <int> reads/pairs.
