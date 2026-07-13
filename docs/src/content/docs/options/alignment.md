@@ -321,6 +321,26 @@ This option invokes the minmap2 preset setting `-x sr` and is intended for genom
 
 Maximum length cutoff for very long sequences (currently allowed 100-100,000 bp). Default: 10000.
 
+
+#### RAMMAP-SPECIFIC OPTIONS:
+
+
+- `--rammap/--ram`
+
+Uses [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, as the underlying read aligner. Intended for long-read bisulfite data (EM-seq Nanopore/PacBio). Single-end only, and like `--minimap2` uses the `map-ont` preset. **Experimental and concordance-gated — NOT byte-identical to minimap2.** rammap is compiled into the conda, Docker and release builds, so this works with no extra install. By default it runs the **in-process** backend (the converted index is loaded once and shared across strand instances; auto-threaded to the available cores, capped), which uses less memory and is faster than spawning the external binary. Default: OFF.
+
+- `--rammap_subprocess`
+
+Opt out of the in-process backend and spawn the external `rammap` binary on your `PATH` instead (exactly like `--minimap2`). Use this for exact rammap-CLI parity, or on a build compiled without the in-process backend. Requires `--rammap`. Default: OFF.
+
+- `--path_to_rammap <path>`
+
+The folder containing the `rammap` executable (used by `--rammap_subprocess`; not the executable itself).
+
+- `--rammap_inprocess`
+
+**Deprecated (hidden).** The in-process backend is now the `--rammap` default, so this flag is inert — accepted for backward compatibility and removed in a later release. Use `--rammap_subprocess` to opt out to the external binary.
+
 #### OUTPUT:
 
 The output is a BAM file by default, as well as a aligment report text file.

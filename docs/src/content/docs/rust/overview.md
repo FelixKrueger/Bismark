@@ -70,10 +70,15 @@ end of this section.
    Measurements are on the [benchmarks page](/Bismark/rust/benchmarks/#combined-index-modes).
 2. **rammap, an experimental fourth aligner.** `--rammap` adds
    [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, for
-   long-read bisulfite data such as EM-seq Nanopore. Run in-process with `--rammap_inprocess`, the
-   converted index is loaded once and shared across the strand instances, which uses about 54 % less
-   memory and runs roughly 1.8× faster than the subprocess backend. It is opt-in, concordance-gated, and not byte-identical to minimap2; see the
-   [benchmarks page](/Bismark/rust/benchmarks/#rammap-experimental).
+   long-read bisulfite data such as EM-seq Nanopore. It is **compiled into the conda, Docker and
+   release builds**, so `--rammap` works with no extra install. By default it runs the in-process
+   backend: the converted index is loaded once and shared across the strand instances, and the
+   alignment is auto-threaded (defaulting to the available cores, capped at 8), which uses about 54 %
+   less memory than spawning the external `rammap` binary (independent of thread count) and is faster —
+   up to ~1.8× at `--multicore 16`. Pass
+   `--rammap_subprocess` to opt out to that external binary (exact rammap-CLI parity, or a build
+   without the in-process backend). It is opt-in, concordance-gated, and not byte-identical to
+   minimap2; see the [benchmarks page](/Bismark/rust/benchmarks/#rammap-experimental).
 3. **In-process post-alignment streaming.** The Rust methylation extractor drives bedGraph generation
    and coverage2cytosine in memory, in the same process, instead of launching separate Perl
    subprocesses and re-reading intermediate files. This is part of why the post-alignment stage is

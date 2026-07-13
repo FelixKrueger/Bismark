@@ -1,6 +1,12 @@
 # Bismark Changelog
 
 
+## Unreleased (on `dev`)
+
+### bismark (aligner)
+
+- **`--rammap` now defaults to the bundled in-process backend, and auto-threads.** The pure-Rust in-process `rammap-core` backend is compiled into the conda, Docker and release builds, so `--rammap` now works with no extra install and no extra flag — and its alignment auto-threads to the available cores (capped at 8) unless you pass `--multicore N`, so the default is faster and much lighter than spawning the external `rammap` binary (−54 % peak RSS, independent of thread count), rather than single-threaded. The peak speedup (~1.8×) is at `--multicore 16`; the cap-8 default is faster than the subprocess but below that peak. Pass `--rammap_subprocess` to opt out to the external binary (exact rammap-CLI parity, or a build without the in-process backend). `--rammap_inprocess` is now a deprecated, inert, hidden alias. rammap remains experimental and concordance-gated (NOT byte-identical to minimap2); the divergence versus the subprocess is read-length dependent — none on short reads, ~1–2 in 10,000 on long ONT reads. The faithful Bowtie 2 / HISAT2 / minimap2 paths and the global `--multicore` default are unchanged.
+
 ## Bismark 3.0.0 (released 2026-07-07) — the Rust suite
 
 Bismark is now a single Rust binary; the Perl scripts are archived as tagged legacy. Highlights:
