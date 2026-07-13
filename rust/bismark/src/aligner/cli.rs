@@ -224,17 +224,32 @@ pub struct Cli {
     #[arg(long = "combined_index_single_pass")]
     pub combined_index_single_pass: bool,
 
-    /// EXPERIMENTAL (v2, opt-in, never-silent): the SEQUENTIAL low-memory
-    /// execution model for `--combined_index --non_directional`. Runs model (a)'s
-    /// two both-strands passes ONE AT A TIME (pass 1's aligner exits, freeing the
-    /// index, before pass 2 starts) instead of concurrently — one combined index
-    /// resident at a time (~half the peak RSS). BYTE-IDENTICAL to the default
-    /// parallel path (the aligner's output is independent of when each pass runs);
-    /// the trade is wall time (the passes no longer overlap). Requires
-    /// `--combined_index --non_directional`; single-end or paired-end; Bowtie 2 or
-    /// HISAT2; mutually exclusive with `--combined_index_single_pass`.
+    /// EXPERIMENTAL (v2): the SEQUENTIAL low-memory execution model for
+    /// `--combined_index --non_directional`. Runs model (a)'s two both-strands passes
+    /// ONE AT A TIME (pass 1's aligner exits, freeing the index, before pass 2 starts)
+    /// instead of concurrently — one combined index resident at a time (~half the peak
+    /// RSS). **This is now the DEFAULT** for `--combined_index --non_directional`; the
+    /// flag is retained as an explicit selector (harmless — it selects the default).
+    /// BAM byte-identical to the parallel model (a) (`--combined_index_parallel`): the
+    /// aligner's per-read output is independent of when each pass runs; the trade is
+    /// wall time on small / index-load-bound inputs. Requires `--combined_index
+    /// --non_directional`; single-end or paired-end; Bowtie 2 or HISAT2; mutually
+    /// exclusive with `--combined_index_single_pass` and `--combined_index_parallel`.
     #[arg(long = "combined_index_sequential")]
     pub combined_index_sequential: bool,
+
+    /// EXPERIMENTAL (v2, opt-in): the PARALLEL "model (a)" execution model for
+    /// `--combined_index --non_directional` — run the two both-strands passes
+    /// CONCURRENTLY (two combined indexes co-resident, ~2× the peak RSS). This is the
+    /// OPT-IN since the sequential-default flip: `--combined_index --non_directional`
+    /// now defaults to the sequential model (~half the peak RSS, faster on large /
+    /// bandwidth-bound genomes). Use this to recover the concurrent model, which can be
+    /// faster on a small index with many cores (the passes overlap). BAM byte-identical
+    /// to the sequential default. Requires `--combined_index --non_directional`; Bowtie 2
+    /// or HISAT2; mutually exclusive with `--combined_index_sequential` and
+    /// `--combined_index_single_pass`.
+    #[arg(long = "combined_index_parallel")]
+    pub combined_index_parallel: bool,
 
     // ---- read trimming / quality ------------------------------------------
     /// Skip the first <int> reads/pairs.

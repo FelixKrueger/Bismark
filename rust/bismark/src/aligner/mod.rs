@@ -600,14 +600,19 @@ fn pipeline(config: &RunConfig) -> Result<()> {
                     // (`reject_combined_index_unsupported`) guarantees the library is
                     // NonDirectional whenever this flag is set.
                     run_se_combined_nondir_tagged(config, reads)
-                } else if config.combined_index_sequential {
-                    // model (a) SEQUENTIAL low-RSS variant: two passes one at a time.
-                    // The scope guard guarantees NonDirectional (and rejects it
-                    // together with --combined_index_single_pass) whenever this is set.
-                    run_se_combined_nondir_sequential(config, reads)
                 } else {
                     match config.library {
-                        LibraryType::NonDirectional => run_se_combined_nondir(config, reads),
+                        // #1018: non-directional combined now defaults to the SEQUENTIAL
+                        // model (byte-identical to parallel model (a), ~half the peak RSS);
+                        // `--combined_index_parallel` opts back into the concurrent model (a).
+                        // (`--combined_index_sequential` selects this default and needs no
+                        // branch — it is not carried on RunConfig.)
+                        LibraryType::NonDirectional if config.combined_index_parallel => {
+                            run_se_combined_nondir(config, reads)
+                        }
+                        LibraryType::NonDirectional => {
+                            run_se_combined_nondir_sequential(config, reads)
+                        }
                         LibraryType::Pbat => run_se_combined_pbat(config, reads),
                         LibraryType::Directional => run_se_combined(config, reads),
                     }
@@ -645,13 +650,17 @@ fn pipeline(config: &RunConfig) -> Result<()> {
                 //    non-dir G→A half standalone).
                 if config.combined_index_single_pass {
                     run_pe_combined_nondir_tagged(config, mates1, mates2)
-                } else if config.combined_index_sequential {
-                    run_pe_combined_nondir_sequential(config, mates1, mates2)
                 } else {
                     match config.library {
                         LibraryType::Directional => run_pe_combined(config, mates1, mates2),
-                        LibraryType::NonDirectional => {
+                        // #1018: non-dir PE combined now defaults to the SEQUENTIAL model
+                        // (byte-identical to parallel model (a), ~half the peak RSS);
+                        // `--combined_index_parallel` opts back into the concurrent model (a).
+                        LibraryType::NonDirectional if config.combined_index_parallel => {
                             run_pe_combined_nondir(config, mates1, mates2)
+                        }
+                        LibraryType::NonDirectional => {
+                            run_pe_combined_nondir_sequential(config, mates1, mates2)
                         }
                         LibraryType::Pbat => run_pe_combined_pbat(config, mates1, mates2),
                     }
@@ -3595,10 +3604,11 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
             ">>> Combined-index mode, NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, concordance-gated — \
-             byte-identical to the default PARALLEL combined non-dir path, NOT to the faithful \
-             4-instance path): two both-strands {} passes (C->T then G->A) over {} (-k 2) run \
-             ONE AT A TIME — pass 1 exits before pass 2 starts, so one combined index is resident at \
-             a time (~half the peak RSS, ~2x the wall), unioned per read <<<",
+             BAM byte-identical to the --combined_index_parallel model (a), NOT to the faithful \
+             4-instance path; the default since #1018): two both-strands {} passes (C->T then G->A) \
+             over {} (-k 2) run ONE AT A TIME — pass 1 exits before pass 2 starts, so one combined \
+             index is resident at a time (~half the peak RSS; wall depends on the genome/core \
+             budget), unioned per read <<<",
             config.aligner.name(),
             combined_basename.display()
         );
@@ -3641,8 +3651,8 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
         writeln!(
             report,
             "Combined-index mode, non-directional SEQUENTIAL (experimental, concordance-gated; \
-             byte-identical to the default parallel combined non-dir path, one index resident at a \
-             time; NOT byte-identical to the faithful 4-instance per-strand path)"
+             BAM byte-identical to the --combined_index_parallel model (a), one index resident at a \
+             time; NOT byte-identical to the faithful 4-instance per-strand path; the default since #1018)"
         )?;
 
         let mut counters = Counters::default();
@@ -3710,7 +3720,7 @@ fn process_se_chunk_combined_nondir_sequential(
         .as_ref()
         .ok_or_else(|| {
             AlignerError::Validation(
-                "internal error: --combined_index_sequential reached alignment without a combined index"
+                "internal error: sequential combined non-directional path reached alignment without a combined index"
                     .into(),
             )
         })?;
@@ -5842,11 +5852,11 @@ fn run_pe_combined_nondir_sequential(
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
             ">>> Combined-index mode, paired-end NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, \
-             concordance-gated — byte-identical to the default PARALLEL combined non-dir path, \
-             NOT to the faithful 4-instance path): two both-strands {} PE passes (C->T then G->A \
-             reads) over {} (-k 2) run ONE AT A TIME — pass 1 exits before pass 2 starts, so one \
-             combined index is resident at a time (~half the peak RSS, ~2x the wall), unioned per \
-             pair <<<",
+             concordance-gated — BAM byte-identical to the --combined_index_parallel model (a), \
+             NOT to the faithful 4-instance path; the default since #1018): two both-strands {} PE \
+             passes (C->T then G->A reads) over {} (-k 2) run ONE AT A TIME — pass 1 exits before \
+             pass 2 starts, so one combined index is resident at a time (~half the peak RSS; wall \
+             depends on the genome/core budget), unioned per pair <<<",
             config.aligner.name(),
             combined_basename.display()
         );
@@ -5889,8 +5899,8 @@ fn run_pe_combined_nondir_sequential(
         writeln!(
             report,
             "Combined-index mode, non-directional SEQUENTIAL (experimental, concordance-gated; \
-             byte-identical to the default parallel combined non-dir path, one index resident at a \
-             time; NOT byte-identical to the faithful 4-instance per-strand path)"
+             BAM byte-identical to the --combined_index_parallel model (a), one index resident at a \
+             time; NOT byte-identical to the faithful 4-instance per-strand path; the default since #1018)"
         )?;
 
         let mut counters = Counters::default();
@@ -5976,7 +5986,7 @@ fn process_pe_chunk_combined_nondir_sequential(
         .as_ref()
         .ok_or_else(|| {
             AlignerError::Validation(
-                "internal error: --combined_index_sequential reached alignment without a combined index"
+                "internal error: sequential combined non-directional path reached alignment without a combined index"
                     .into(),
             )
         })?;

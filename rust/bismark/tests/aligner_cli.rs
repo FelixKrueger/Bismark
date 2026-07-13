@@ -4445,8 +4445,14 @@ fn run_combined_nondir_records(
 
     let mut cmd = bin();
     cmd.arg("--combined_index").arg("--non_directional");
+    // #1018: sequential is now the DEFAULT, so the "model (a)" (parallel) baseline MUST
+    // pass --combined_index_parallel explicitly — otherwise `sequential == false` would ALSO
+    // route to sequential and the byte-identity tests below would silently compare
+    // sequential-vs-sequential (green, testing nothing).
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        cmd.arg("--combined_index_parallel");
     }
     if let Some(u) = upto {
         cmd.arg("--upto").arg(u);
@@ -4555,12 +4561,120 @@ fn combined_index_sequential_banner_and_report_marker() {
 
     let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
     assert!(report.contains("non-directional SEQUENTIAL"));
-    assert!(report.contains("byte-identical to the default parallel combined non-dir path"));
+    assert!(report.contains("BAM byte-identical to the --combined_index_parallel model (a)"));
     assert!(report.contains("Sequences analysed in total:\t4\n"));
     assert!(report.contains("CT/CT:\t1\t((converted) top strand)"));
     assert!(report.contains("GA/CT:\t1\t(complementary to (converted) top strand)"));
     assert!(report.contains("GA/GA:\t1\t(complementary to (converted) bottom strand)"));
     assert!(report.contains("Sequences with no alignments under any condition:\t1\n"));
+}
+
+/// #1018 (THE flip): `--combined_index --non_directional` with NO exec flag now DEFAULTS to
+/// the SEQUENTIAL model; `--combined_index_parallel` opts back into the concurrent model (a)
+/// (its banner says NON-DIRECTIONAL but NOT SEQUENTIAL).
+#[cfg(unix)]
+#[test]
+fn combined_index_nondir_defaults_to_sequential() {
+    let ids = ["r_ot", "r_ctot", "r_ctob", "r_miss"];
+    let run = |exec_flag: Option<&str>| -> String {
+        let genome = TempDir::new().unwrap();
+        make_genome_combined(genome.path());
+        let bins = TempDir::new().unwrap();
+        make_fake_bowtie2_combined_nondir(bins.path());
+        let read = write_reads_ids(genome.path(), "reads.fq", &ids);
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let mut cmd = bin();
+        cmd.arg("--combined_index").arg("--non_directional");
+        if let Some(f) = exec_flag {
+            cmd.arg(f);
+        }
+        let assert = cmd
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .assert()
+            .success();
+        String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
+    };
+
+    // DEFAULT (no exec flag) → SEQUENTIAL model.
+    let default_err = run(None);
+    assert!(
+        default_err.contains("NON-DIRECTIONAL SEQUENTIAL"),
+        "default non-dir combined must now run the SEQUENTIAL model; got: {default_err}"
+    );
+
+    // --combined_index_parallel → concurrent model (a): NON-DIRECTIONAL banner, NOT SEQUENTIAL.
+    let parallel_err = run(Some("--combined_index_parallel"));
+    assert!(
+        parallel_err.contains("NON-DIRECTIONAL") && !parallel_err.contains("SEQUENTIAL"),
+        "--combined_index_parallel must run the concurrent model (a), not sequential; got: {parallel_err}"
+    );
+}
+
+/// #1018 scope guard (never-silent): `--combined_index_parallel` requires `--combined_index
+/// --non_directional` and is mutually exclusive with the other exec-model flags.
+#[cfg(unix)]
+#[test]
+fn combined_index_parallel_scope_guard_rejects() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let read = make_read(genome.path());
+
+    // parallel WITHOUT --combined_index
+    bin()
+        .arg("--combined_index_parallel")
+        .arg("--non_directional")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --combined_index"));
+
+    // parallel + --combined_index but DIRECTIONAL (no --non_directional)
+    bin()
+        .arg("--combined_index")
+        .arg("--combined_index_parallel")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --non_directional"));
+
+    // parallel + sequential together → competing exec models
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_parallel")
+        .arg("--combined_index_sequential")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("competing execution models"));
+
+    // parallel + single_pass together → competing exec models
+    bin()
+        .arg("--combined_index")
+        .arg("--non_directional")
+        .arg("--combined_index_parallel")
+        .arg("--combined_index_single_pass")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("competing execution models"));
 }
 
 /// A read that misses BOTH passes → `NoAlignment` → 0 BAM records (the double-miss
@@ -4765,8 +4879,14 @@ fn run_combined_pe_nondir_records(
 
     let mut cmd = bin();
     cmd.arg("--combined_index").arg("--non_directional");
+    // #1018: sequential is now the DEFAULT, so the "model (a)" (parallel) baseline MUST
+    // pass --combined_index_parallel explicitly — otherwise `sequential == false` would ALSO
+    // route to sequential and the byte-identity tests below would silently compare
+    // sequential-vs-sequential (green, testing nothing).
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        cmd.arg("--combined_index_parallel");
     }
     if let Some(u) = upto {
         cmd.arg("--upto").arg(u);
@@ -4889,7 +5009,7 @@ fn combined_index_pe_sequential_banner_and_report_marker() {
     let report =
         fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
     assert!(report.contains("non-directional SEQUENTIAL"));
-    assert!(report.contains("byte-identical to the default parallel combined non-dir path"));
+    assert!(report.contains("BAM byte-identical to the --combined_index_parallel model (a)"));
 }
 
 /// A PE fake `bowtie2` for the model-(b) tagged run: one tagged interleaved input pair
@@ -5152,6 +5272,12 @@ fn run_combined_pe_hisat2_records(
         .arg("--non_directional");
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        // #1018: mirror the Bowtie 2 helpers — sequential is now the DEFAULT, so the "model (a)"
+        // (parallel) baseline MUST pass --combined_index_parallel explicitly; otherwise
+        // `sequential == false` would ALSO route to sequential and the HISAT2 byte-identity tests
+        // below would silently compare sequential-vs-sequential (green, testing nothing).
+        cmd.arg("--combined_index_parallel");
     }
     if let Some(u) = upto {
         cmd.arg("--upto").arg(u);
@@ -5208,6 +5334,12 @@ fn run_combined_se_hisat2_records(
         .arg("--non_directional");
     if sequential {
         cmd.arg("--combined_index_sequential");
+    } else {
+        // #1018: mirror the Bowtie 2 helpers — sequential is now the DEFAULT, so the "model (a)"
+        // (parallel) baseline MUST pass --combined_index_parallel explicitly; otherwise
+        // `sequential == false` would ALSO route to sequential and the HISAT2 byte-identity tests
+        // below would silently compare sequential-vs-sequential (green, testing nothing).
+        cmd.arg("--combined_index_parallel");
     }
     cmd.arg("--genome")
         .arg(genome.path())

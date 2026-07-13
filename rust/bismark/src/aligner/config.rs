@@ -294,16 +294,17 @@ pub struct RunConfig {
     /// `reject_combined_index_unsupported` guard requires `combined_index &&
     /// non_directional` (SE Bowtie 2, single-core) whenever this is `true`.
     pub combined_index_single_pass: bool,
-    /// `--combined_index_sequential` (v2, opt-in): the SEQUENTIAL low-memory exec
-    /// model for `--combined_index --non_directional` — model (a)'s two both-strands
-    /// passes run ONE AT A TIME (pass 1's Bowtie 2 exits, freeing the index, before
-    /// pass 2 spawns), so only one combined index is resident at a time (~half the
-    /// peak RSS). **BYTE-IDENTICAL** to the default parallel model (a) (each pass sees
-    /// the same untagged converted file + index regardless of when it runs); the trade
-    /// is wall time. The `reject_combined_index_unsupported` guard requires
-    /// `combined_index && non_directional` (SE Bowtie 2, single-core) and rejects it
-    /// together with `combined_index_single_pass` (competing exec models).
-    pub combined_index_sequential: bool,
+    /// `--combined_index_parallel` (v2, opt-in): opt INTO the concurrent "model (a)"
+    /// execution for `--combined_index --non_directional` — both both-strands passes run
+    /// at once (two combined indexes co-resident, ~2× peak RSS). Since the
+    /// sequential-default flip (#1018) the non-dir combined default is the SEQUENTIAL
+    /// model, so this field is the ONLY exec-model bit the non-dir routing reads (the
+    /// `--combined_index_sequential` flag now selects the default and is not carried on
+    /// `RunConfig`). The `reject_combined_index_unsupported` guard requires
+    /// `combined_index && non_directional` (Bowtie 2 or HISAT2) and rejects it together
+    /// with `combined_index_sequential` / `combined_index_single_pass` (competing models).
+    /// **BAM byte-identical** to the sequential default (a pure scheduling/RSS trade).
+    pub combined_index_parallel: bool,
 }
 
 /// HISAT2 Approach B-faithful: for HISAT2, `--multicore N` (N > 1) is interpreted as a
@@ -510,7 +511,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 aligner.name()
             )));
         }
-        if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
+        if cli.combined_index
+            || cli.combined_index_sequential
+            || cli.combined_index_single_pass
+            || cli.combined_index_parallel
+        {
             return Err(AlignerError::Unsupported(
                 "--local is not supported with --combined_index (a separate alignment model); \
                  run --local against the faithful per-strand index."
@@ -562,7 +567,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         }
         // --multicore N is honoured: it sets the single aligner instance's thread count
         // (minimap2 -t N / bowtie2,hisat2 -p N), the HISAT2 --multicore→-p precedent.
-        if cli.combined_index || cli.combined_index_sequential || cli.combined_index_single_pass {
+        if cli.combined_index
+            || cli.combined_index_sequential
+            || cli.combined_index_single_pass
+            || cli.combined_index_parallel
+        {
             return Err(AlignerError::Unsupported(
                 "--illumina_5base is not supported with --combined_index (a separate bisulfite \
                  alignment model)."
@@ -690,10 +699,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // v2 model-(b) single-pass tagged exec model (guarded above: requires
         // combined_index && non_directional, SE Bowtie 2, single-core).
         combined_index_single_pass: cli.combined_index_single_pass,
-        // v2 sequential low-memory exec model (guarded above: requires
-        // combined_index && non_directional, SE Bowtie 2, single-core; mutually
-        // exclusive with combined_index_single_pass).
-        combined_index_sequential: cli.combined_index_sequential,
+        // v2 combined-index exec model (guarded above). Non-dir default is SEQUENTIAL
+        // (#1018); this opt-in bit selects the concurrent model (a). The
+        // `--combined_index_sequential` flag selects the default → not carried here.
+        combined_index_parallel: cli.combined_index_parallel,
     })
 }
 
@@ -798,6 +807,52 @@ fn reject_combined_index_unsupported(
                 "--combined_index_sequential requires Bowtie 2 or HISAT2: it is the faithful \
                  sequential low-memory execution model for the non-directional combined-index path. \
                  {0} combined-index is not supported — drop --combined_index_sequential.",
+                aligner.name()
+            )));
+        }
+    }
+    // --combined_index_parallel (#1018) opts INTO the concurrent model (a) — the inverse of
+    // the sequential default. Like the other exec-model flags it is non-directional-only,
+    // Bowtie 2 or HISAT2, and mutually exclusive with them. Checked BEFORE the
+    // !combined_index early return so the flag alone is also rejected loudly.
+    if cli.combined_index_parallel {
+        if cli.combined_index_sequential {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_parallel and --combined_index_sequential are competing execution \
+                 models for --combined_index --non_directional (concurrent model (a) vs sequential). \
+                 Sequential is the default — drop both to use it; choose at most one."
+                    .into(),
+            ));
+        }
+        if cli.combined_index_single_pass {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_parallel and --combined_index_single_pass are competing execution \
+                 models for --combined_index --non_directional; choose at most one."
+                    .into(),
+            ));
+        }
+        if !cli.combined_index {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_parallel requires --combined_index: it selects the concurrent \
+                 model (a) execution for the non-directional combined-index path, not a standalone \
+                 mode."
+                    .into(),
+            ));
+        }
+        if library != LibraryType::NonDirectional {
+            return Err(AlignerError::Unsupported(
+                "--combined_index_parallel is the concurrent NON-DIRECTIONAL execution model; it \
+                 requires --non_directional. Directional and pbat combined-index are already \
+                 single-pass (one both-strands pass), so the parallel/sequential distinction does \
+                 not apply. Drop --combined_index_parallel."
+                    .into(),
+            ));
+        }
+        if !matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
+            return Err(AlignerError::Unsupported(format!(
+                "--combined_index_parallel requires Bowtie 2 or HISAT2: it is the concurrent \
+                 execution model for the non-directional combined-index path. {0} combined-index is \
+                 not supported — drop --combined_index_parallel.",
                 aligner.name()
             )));
         }
