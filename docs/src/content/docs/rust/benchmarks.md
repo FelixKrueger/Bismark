@@ -142,24 +142,28 @@ faster at every core budget (10M and full scale) and uses about **22–28 % less
 reads). At full scale (real WGBS paired-end, 8-core budget) directional combined runs **5298 s versus
 7373 s** for the standard two-instance path (−28 %), at 43,200 versus 59,600 core-seconds.
 
-**Non-directional — `--combined_index_sequential` is the pick.** There are several concordance-gated
-execution models; measured at equal core budgets they rank cleanly:
+**Non-directional — the sequential model is the default, and the pick.** There are several
+concordance-gated execution models; measured at equal core budgets they rank cleanly:
 
 | Non-directional, full-scale PE, 16-core budget | Wall | Peak RSS |
 |---|---|---|
 | standard (four per-strand instances) | 7810 s | 16.5 GB |
-| `--combined_index` parallel (current default; two concurrent passes) | 6114 s | 19.3 GB |
+| `--combined_index_parallel` (concurrent, opt-in; two passes at once) | 6114 s | 19.3 GB |
 | `--combined_index_single_pass` (one conversion-tagged pass) | 5371 s | 11.3 GB |
-| **`--combined_index_sequential`** (two passes, one at a time) | **5043 s** | **11.3 GB** |
+| **`--combined_index` non-dir default** (sequential; two passes, one at a time) | **5043 s** | **11.3 GB** |
 
-Running the two both-strands passes **one at a time** (`--combined_index_sequential`) is the **fastest
-and leanest** non-directional mode: each pass gets the full core budget with a single ~11 GB index
-resident, which avoids the memory-bandwidth contention of two concurrent passes (the parallel default
-keeps two indexes co-resident at ~19 GB and is the slowest combined mode here). It is **byte-identical to
-the parallel default**, so it adds no correctness caveat beyond the combined index's concordance-gating,
-and at full scale it even edges out the single-pass mode — which is faster than standard but **not
-decision-equivalent** (it perturbs Bowtie 2's read-name-seeded RNG, so about 1 read in 10,000 gets a
-different, equally-valid placement). **Prefer `--combined_index_sequential` for non-directional data**;
+Running the two both-strands passes **one at a time** is the **fastest and leanest** non-directional
+mode on this large mammalian genome, and is now the **default** for `--combined_index --non_directional`:
+each pass gets the full core budget with a single ~11 GB index resident, which avoids the
+memory-bandwidth contention of two concurrent passes (the opt-in `--combined_index_parallel` model keeps
+two indexes co-resident at ~19 GB and is the slowest combined mode here). Its **BAM is byte-identical to
+the concurrent model (a)**, so it adds no correctness caveat beyond the combined index's concordance-gating
+(the `*_report.txt` marker and stderr banner name whichever model ran). On a **small index with many
+cores**, where index-load rather than bandwidth dominates, the concurrent `--combined_index_parallel` model
+can overlap the passes and be faster — the RAM win is unconditional, the wall win is for large genomes.
+At full scale the sequential default even edges out the single-pass mode — which is faster than standard
+but **not decision-equivalent** (it perturbs Bowtie 2's read-name-seeded RNG, so about 1 read in 10,000
+gets a different, equally-valid placement). **The sequential default is the pick for non-directional data**;
 reach for `--combined_index_single_pass` only for its marginal extra speed at small scale, when the
 non-decision-equivalence is acceptable.
 
