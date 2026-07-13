@@ -1,7 +1,7 @@
 # Bismark Changelog
 
 
-## Unreleased (on `dev`)
+## Bismark 3.1.0 (released 2026-07-13)
 
 ### bismark (aligner)
 
