@@ -169,14 +169,21 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
-    /// `[v2/experimental]` `--rammap_inprocess`: OPT INTO the in-process `rammap-core`
-    /// backend. `--rammap` defaults to the subprocess path (Phase-4, Option A); this flag
-    /// selects the in-process path instead — lower RAM, slower (single-threaded),
-    /// concordant-NOT-byte-identical. Effective only on a `--features rammap-inprocess`
-    /// build (inert otherwise — the in-process path isn't compiled). Read on BOTH builds
-    /// by `lib::use_se_inprocess_rammap` (always-compiled) so it is never a feature-off
-    /// dead field. `resolve` requires `--rammap` whenever it is set.
-    pub rammap_inprocess: bool,
+    /// `[v2/experimental]` `--rammap_subprocess`: OPT OUT to the subprocess rammap
+    /// backend (external `rammap` binary on `PATH`). `--rammap` now DEFAULTS to the
+    /// in-process `rammap-core` backend (auto-threaded); this flag forces the subprocess
+    /// path — exact rammap-CLI parity, or a feature-OFF build. Read on BOTH builds by
+    /// `use_se_inprocess_rammap` (always-compiled) so it is never a feature-off dead
+    /// field. `resolve` requires `--rammap` whenever it is set.
+    pub rammap_subprocess: bool,
+    /// Thread count for the in-process rammap pool (rev2 single-source-of-truth). Computed
+    /// ONCE in `resolve` (where `cli.multicore: Option` still distinguishes explicit from
+    /// default) by [`inprocess_rammap_threads`]: an explicit `--multicore N` verbatim, else
+    /// a capped `available_parallelism()`. Read by BOTH the backend notice (`lib.rs`) and
+    /// the pool builder (`build_se_inprocess_streams`) so the printed count and the built
+    /// pool can never disagree. Separate from `multicore` (never mutated) so auto-scaling
+    /// does NOT leak into the fork dispatch for FastA/other paths. Always ≥ 1.
+    pub rammap_inprocess_threads: usize,
     /// Illumina 5-Base (5mC->T) mode (#787): align to the UNCONVERTED genome and
     /// call methylation with inverted polarity. v1 = single-end + directional,
     /// minimap2 backend. Opt-in, never-silent, concordance-gated (no Perl oracle).
@@ -311,6 +318,29 @@ fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Opt
     }
 }
 
+/// Cap on the auto-selected thread count for the in-process rammap pool (rev2, Alt-1).
+/// The subprocess it replaces ran `-t 2` (`options::…`) × 2–4 strand instances = 4–8
+/// threads; 8 keeps the auto default within that envelope and avoids oversubscription on
+/// large/shared hosts. An explicit `--multicore N` overrides it (honored verbatim).
+const RAMMAP_INPROCESS_THREAD_CAP: usize = 8;
+
+/// Thread count for the in-process rammap pool (rev2, Alt-1 — the single source of truth
+/// read by both the backend notice and the pool builder). An explicit `--multicore N` is
+/// honored verbatim; otherwise the default auto-scales to `min(avail, CAP)` so the default
+/// `--rammap` run is multi-threaded (not the ~6× single-threaded regression Alt-1 exists to
+/// prevent). Pure (no I/O — `avail` is passed in) so it is unit-testable fixture-free.
+/// ALWAYS returns ≥ 1: `rayon`'s `num_threads(0)` means "all cores", which we must never
+/// select by accident, so both branches clamp with `.max(1)`.
+fn inprocess_rammap_threads(cli_multicore: Option<u32>, avail: usize) -> usize {
+    let n = match cli_multicore {
+        Some(n) => n as usize,
+        None => avail.min(RAMMAP_INPROCESS_THREAD_CAP),
+    }
+    .max(1);
+    debug_assert!(n >= 1, "rammap pool thread count must be >= 1 (never 0)");
+    n
+}
+
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 /// Reject a paired-end layout with an aligner that has no PE support / no
 /// byte-identity oracle (minimap2, rammap — minimap-like, SE-only).
@@ -341,13 +371,31 @@ pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) 
 
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
-    // `--rammap_inprocess` (opt into the in-process rammap backend) is meaningful only
+    // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
     // with `--rammap` — fail loud otherwise (never-silent; mirrors the rammap conflict
-    // dies in `resolve_aligner`).
+    // that dies in `resolve_aligner`).
+    if cli.rammap_subprocess && !cli.rammap {
+        return Err(AlignerError::Validation(
+            "--rammap_subprocess requires --rammap: it forces the subprocess rammap backend, \
+             which only applies to a --rammap run."
+                .into(),
+        ));
+    }
+    // `--rammap_inprocess` is the DEPRECATED, now-inert alias (in-process is the default);
+    // still requires `--rammap` — fail loud otherwise (never-silent; unchanged from Phase 4).
     if cli.rammap_inprocess && !cli.rammap {
         return Err(AlignerError::Validation(
-            "--rammap_inprocess requires --rammap: it selects the in-process rammap backend, \
-             which only applies to a --rammap run."
+            "--rammap_inprocess requires --rammap: it is the deprecated (now-default) in-process \
+             backend flag, which only applies to a --rammap run."
+                .into(),
+        ));
+    }
+    // Opt-in and opt-out of the same backend is a contradiction — fail loud.
+    if cli.rammap_subprocess && cli.rammap_inprocess {
+        return Err(AlignerError::Validation(
+            "--rammap_subprocess conflicts with --rammap_inprocess: the first forces the \
+             subprocess backend, the second (deprecated) selects the in-process backend — \
+             pick one (the in-process backend is the default; drop both to use it)."
                 .into(),
         ));
     }
@@ -577,8 +625,23 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     Ok(RunConfig {
         command_line,
         aligner,
-        // Phase 4 (epic 06152026): in-process opt-in flag (guarded above: requires --rammap).
-        rammap_inprocess: cli.rammap_inprocess,
+        // rev2: opt-OUT to the subprocess rammap backend (guarded above: requires --rammap).
+        rammap_subprocess: cli.rammap_subprocess,
+        // rev2 SINGLE SOURCE OF TRUTH for the in-process rammap pool size: explicit
+        // `--multicore N` verbatim, else a capped `available_parallelism()`. Computed here
+        // (where `cli.multicore: Option` still distinguishes explicit from default) so the
+        // backend notice and the pool builder read ONE value and can never disagree. NEVER
+        // mutates `multicore` — auto-scaling must not leak into the fork dispatch (a FastA
+        // `--rammap` run would otherwise fork N index-reloading workers).
+        rammap_inprocess_threads: inprocess_rammap_threads(
+            cli.multicore,
+            // On the rare platform where `available_parallelism()` fails, fall back to 2
+            // (not 1) so the default does not silently revert to the single-threaded path
+            // — matching the 5-Base aligner precedent.
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(2),
+        ),
         // #787 5-Base mode (guarded above: PE + directional, minimap2 unconverted path).
         five_base: cli.illumina_5base,
         five_base_deconvolution: cli.five_base_deconvolution,
@@ -1456,11 +1519,61 @@ mod tests {
         );
     }
 
-    /// Epic 06152026 Phase 4: the `--rammap_inprocess` flag parses and is off by default.
+    /// Epic 06152026 Phase 4: the (now-deprecated) `--rammap_inprocess` flag still parses
+    /// and is off by default — kept as an inert alias for backward compatibility (rev2).
     #[test]
     fn rammap_inprocess_flag_parses() {
         assert!(cli_from(&["--rammap", "--rammap_inprocess"]).rammap_inprocess);
         assert!(!cli_from(&["--rammap"]).rammap_inprocess);
+    }
+
+    /// rev2 (Alt-1): `--rammap_subprocess` (opt OUT to the subprocess backend) requires
+    /// `--rammap` — mirrors the `--rammap_inprocess` guard, so no on-disk index is needed.
+    #[test]
+    fn rammap_subprocess_requires_rammap() {
+        let err = resolve(&cli_from(&["--rammap_subprocess"]), "cmd".into()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--rammap_subprocess requires --rammap"),
+            "got: {err}"
+        );
+    }
+
+    /// rev2 (Alt-1): `--rammap_subprocess` + `--rammap_inprocess` is a contradiction
+    /// (opt-out AND opt-in of the same backend) — fail loud.
+    #[test]
+    fn rammap_subprocess_conflicts_inprocess() {
+        let err = resolve(
+            &cli_from(&["--rammap", "--rammap_subprocess", "--rammap_inprocess"]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--rammap_subprocess conflicts with --rammap_inprocess"),
+            "got: {err}"
+        );
+    }
+
+    /// rev2 (Alt-1): the in-process rammap pool thread count. Explicit `--multicore N` is
+    /// honored verbatim; the default auto-scales to `min(avail, CAP)`; never returns 0.
+    #[test]
+    fn inprocess_rammap_threads_derivation() {
+        // explicit --multicore honored verbatim (even above the cap).
+        assert_eq!(inprocess_rammap_threads(Some(4), 32), 4);
+        assert_eq!(inprocess_rammap_threads(Some(16), 32), 16);
+        assert_eq!(inprocess_rammap_threads(Some(1), 32), 1);
+        // default (no --multicore) → capped available_parallelism.
+        assert_eq!(
+            inprocess_rammap_threads(None, 32),
+            RAMMAP_INPROCESS_THREAD_CAP
+        );
+        // default on a small host → the (uncapped) core count.
+        assert_eq!(inprocess_rammap_threads(None, 2), 2);
+        // never 0: a degenerate explicit 0 clamps to 1 (validate_multicore also rejects 0
+        // upstream), and avail is always ≥ 1.
+        assert_eq!(inprocess_rammap_threads(Some(0), 8), 1);
+        assert_eq!(inprocess_rammap_threads(None, 1), 1);
     }
 
     // ---- #787 Illumina 5-Base mode guards ----------------------------------

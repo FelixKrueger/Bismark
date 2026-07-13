@@ -2659,10 +2659,12 @@ fn rammap_se_mapped_names_report_and_notice() {
         .arg("--rammap")
         // This test validates the SUBPROCESS rammap backend (the fake `rammap` binary,
         // its positional `.mmi` invocation, naming, option string, supplementary
-        // handling). Phase 4 (Option A): `--rammap` DEFAULTS to the subprocess path on
-        // both builds (the in-process path is the explicit `--rammap_inprocess` opt-in),
-        // so a plain `--rammap` run is backend-stable here — no flag needed. The
-        // in-process backend is exercised by the oxy concordance gate (needs a real `.mmi`).
+        // handling). rev2 (Alt-1): `--rammap` now DEFAULTS to the in-process backend on a
+        // `--features rammap-inprocess` build, so we pin the subprocess path explicitly with
+        // `--rammap_subprocess` — backend-stable on BOTH builds (feature-off `--rammap` is
+        // subprocess anyway). The in-process backend is exercised by the oxy concordance gate
+        // (needs a real `.mmi`).
+        .arg("--rammap_subprocess")
         .arg("--path_to_rammap")
         .arg(bins.path())
         .arg("--temp_dir")
@@ -2678,10 +2680,10 @@ fn rammap_se_mapped_names_report_and_notice() {
                 "--rammap uses the rammap pure-Rust minimap2 reimplementation",
             )
             .and(predicate::str::contains("NOT byte-identical to minimap2"))
-            // V4b (Phase 4, review C2): a plain subprocess-default `--rammap` run must NOT
-            // emit any "fell back to subprocess" notice — those mention `--rammap_inprocess`
-            // and fire ONLY when the in-process backend was opted into but overridden.
-            .and(predicate::str::contains("--rammap_inprocess").not()),
+            // rev2 (Alt-1): the explicit `--rammap_subprocess` run must name the SUBPROCESS
+            // backend and must NOT claim the in-process backend (the new default).
+            .and(predicate::str::contains("subprocess rammap binary"))
+            .and(predicate::str::contains("in-process rammap-core").not()),
         );
 
     // Naming token is `rammap`, NOT bt2/hisat2/mm2.
@@ -2735,6 +2737,80 @@ fn rammap_paired_end_is_rejected() {
                 .and(predicate::str::contains("rammap"))
                 .and(predicate::str::contains("not supported")),
         );
+}
+
+/// A fake `rammap` for the FastA-note test. FastA input converts to a 2-line `.fa`
+/// temp (no `.fastq`), and the test only needs the run to reach the never-silent notice
+/// (printed before alignment) and complete cleanly — so emit every read UNMAPPED (flag
+/// 4) regardless of index, sidestepping FastA SEQ/QUAL/methylation-call detail.
+#[cfg(all(unix, feature = "rammap-inprocess"))]
+fn make_fake_rammap_fasta_unmapped(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "rammap 1.1.1"; exit 0;; esac
+inp=""
+for a in "$@"; do case "$a" in *.fa|*.fasta) inp="$a" ;; esac; done
+printf '@HD\tVN:1.0\n'
+awk '/^>/ { id=$1; sub(/^>/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\t*" }' "$inp"
+"#;
+    write_exec(&dir.join("rammap"), script);
+}
+
+/// rev2 (Alt-1), plan step 6(d) / Validation 4: the FastA never-silent explanatory note.
+/// `--rammap` now DEFAULTS to the in-process backend, but that stream is FastQ-only, so a
+/// **FastA** `--rammap` run falls back to the subprocess — and must SAY so (the re-keyed
+/// note, condition `!config.rammap_subprocess`). An explicit `--rammap_subprocess` run
+/// already asked for subprocess, so the note must NOT fire (no double-print). Feature-gated:
+/// the note only exists on a `--features rammap-inprocess` build.
+#[cfg(all(unix, feature = "rammap-inprocess"))]
+#[test]
+fn rammap_fasta_default_fires_note_subprocess_suppresses() {
+    const NOTE: &str = "supports FastQ input only";
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_fasta_unmapped(bins.path());
+    let read = genome.path().join("reads.fa");
+    fs::write(&read, b">r1\nACGTAC\n").unwrap();
+
+    // (1) default `--rammap` on FastA → in-process is FastQ-only → subprocess + note FIRES.
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        .arg("-f")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(NOTE));
+
+    // (2) explicit `--rammap_subprocess` on FastA → the user asked for subprocess, so the
+    // note must NOT fire (never double-print).
+    let temp2 = TempDir::new().unwrap();
+    let outdir2 = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        .arg("--rammap_subprocess")
+        .arg("-f")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp2.path())
+        .arg("--output_dir")
+        .arg(outdir2.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(NOTE).not());
 }
 
 // ===========================================================================

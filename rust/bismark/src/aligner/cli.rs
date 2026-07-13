@@ -77,14 +77,20 @@ pub struct Cli {
     /// Folder containing `rammap`.
     #[arg(long = "path_to_rammap", value_name = "PATH")]
     pub path_to_rammap: Option<PathBuf>,
-    /// `[v2/experimental]` Opt into the in-process `rammap-core` backend (single-end).
-    /// `--rammap` defaults to the proven SUBPROCESS path; this flag selects the
-    /// in-process path instead: **lower RAM, but slower (single-threaded)**, and
-    /// **concordant — NOT byte-identical — to the subprocess** (a handful of borderline
-    /// long-read alignments differ). Requires `--rammap` AND a `--features
-    /// rammap-inprocess` build; on a default (feature-OFF) binary it is accepted but
-    /// inert (the in-process path isn't compiled, so the subprocess runs).
-    #[arg(long = "rammap_inprocess")]
+    /// `[v2/experimental]` Force the SUBPROCESS rammap backend: spawn the external
+    /// `rammap` binary on `PATH` (exactly like `--minimap2`). `--rammap` now DEFAULTS to
+    /// the compiled-in in-process backend (auto-threaded, lower RAM, faster under
+    /// multiple cores); this flag opts back OUT to the subprocess path — for exact
+    /// rammap-CLI parity, or on a binary built without `--features rammap-inprocess`
+    /// (where in-process is not compiled and `--rammap` uses the subprocess anyway).
+    /// Requires `--rammap`. Concordant — NOT byte-identical — to the in-process backend.
+    #[arg(long = "rammap_subprocess")]
+    pub rammap_subprocess: bool,
+    /// DEPRECATED (hidden): the in-process `rammap-core` backend is now the `--rammap`
+    /// default, so this flag is inert — accepted for backward compatibility, removed in a
+    /// later release. To opt OUT to the external-binary path use `--rammap_subprocess`.
+    /// Requires `--rammap`; conflicts with `--rammap_subprocess`.
+    #[arg(long = "rammap_inprocess", hide = true)]
     pub rammap_inprocess: bool,
     /// `[v2, opt-in, never-silent, concordance-gated]` Illumina 5-Base (5mC->T)
     /// mode. Unlike bisulfite, the 5-Base chemistry converts METHYLATED C to T and

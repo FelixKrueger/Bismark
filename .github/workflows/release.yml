@@ -113,8 +113,8 @@ jobs:
           BISMARK_SUITE_VERSION: ${{ needs.check-release.outputs.version }}
         # ONE multicall binary (post-fold: the 12 classic names all resolve to the
         # same `bismark::cli::dispatch()`, self-routing on argv[0]; the tarball ships
-        # `bismark` + symlinks). Built with `rammap-inprocess` ON (so the shipped
-        # `--rammap_inprocess` opt-in works; default `--rammap` stays subprocess) AND
+        # `bismark` + symlinks). Built with `rammap-inprocess` ON (so the in-process rammap
+        # backend is the shipped `--rammap` default; `--rammap_subprocess` opts out) AND
         # `binseq-input` ON (so it decodes BINSEQ `.vbq`/`.cbq`; a default build rejects
         # them fail-loud). Both features now live on the single `bismark` crate. The
         # rammap-core git dep + the binseq crates.io dep are fetched at build.

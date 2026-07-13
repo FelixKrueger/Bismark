@@ -19,8 +19,8 @@ ENV BISMARK_SUITE_VERSION=${BISMARK_SUITE_VERSION}
 
 # Copy the whole repo (context = repo root) and build the ONE `bismark` multicall
 # binary --locked. `--features bismark/rammap-inprocess` compiles the in-process
-# rammap backend ON (the shipped `--rammap_inprocess` opt-in; default `--rammap`
-# stays subprocess), and `binseq-input` ON (so it decodes BINSEQ `.vbq`/`.cbq`; a
+# rammap backend ON (it is the shipped `--rammap` default; `--rammap_subprocess`
+# opts out to the external binary), and `binseq-input` ON (so it decodes BINSEQ `.vbq`/`.cbq`; a
 # default build rejects them fail-loud). Both features now live on the single
 # `bismark` crate; the rammap-core git dep + the binseq crates.io dep are fetched at
 # build (network available in the build stage). `--bin bismark` builds only the one
