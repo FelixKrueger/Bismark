@@ -103,13 +103,12 @@ pub struct Cli {
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, deconvolute
+    /// `[#787]` After a `--illumina_5base` run, deconvolute
     /// methylation from C>T/G>A genetic variants using both strands (DRAGEN's rule), and
     /// write a per-CpG report `<out>.5base_deconvolution.txt` (chrom, pos, strand,
     /// verdict, methylated, total, %). A CpG whose OPPOSITE strand also lost the cytosine
     /// is a variant, not 5mC, and is excluded from the methylation totals. Requires
-    /// `--illumina_5base`. EXPERIMENTAL: not byte-identity- or per-site-concordance-gated;
-    /// the supported output is the core per-read 5-Base BAM.
+    /// `--illumina_5base`. Concordance-gated (not byte-identical); see the 5-Base guide.
     #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
     pub five_base_deconvolution: bool,
     /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
@@ -136,7 +135,7 @@ pub struct Cli {
     /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
-    /// `[#787]` Minimum read MAPQ for the experimental duplex/consensus family pass
+    /// `[#787]` Minimum read MAPQ for the duplex/consensus family pass
     /// (`--five_base_duplex` / `--five_base_consensus`). Reads below this are dropped from
     /// the consensus collapse (DRAGEN filters alt reads at MAPQ < 20), removing mis-mapped
     /// satellite/repeat pile-ups (e.g. pericentromeric reads minimap2 places at MAPQ ~1)
@@ -145,23 +144,25 @@ pub struct Cli {
     /// `--illumina_5base`.
     #[arg(long = "five_base_min_mapq", value_name = "MAPQ", default_value_t = 0)]
     pub five_base_min_mapq: u8,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` After a `--illumina_5base` run, group the two strands
+    /// `[#787]` After a `--illumina_5base` run, group the two strands
     /// of each original molecule into a DUPLEX family (DRAGEN `nonrandom-duplex`) and
     /// reconcile the 5mC->T signal PER MOLECULE, writing `<out>.5base_duplex.txt`.
     /// Paired-end only: each family is keyed on the FRAGMENT span (POS, mate-pos, TLEN)
     /// and canonical dual UMI, pairing the two strands of the same PE molecule by their
     /// shared insert coordinates. Use `--five_base_umi_qname` (real data) or
-    /// `--five_base_umi_len` for the UMI key. EXPERIMENTAL: not gated.
-    /// Requires `--illumina_5base`.
+    /// `--five_base_umi_len` for the UMI key. Concordance-gated (not byte-identical);
+    /// see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_duplex")]
     pub five_base_duplex: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` COLLAPSE each duplex family to a consensus in
+    /// `[#787]` COLLAPSE each duplex family to a consensus in
     /// `<out>.5base_consensus.bam` (DRAGEN-style duplex consensus). Implies
     /// `--five_base_duplex` (paired-end only). Reconciled by MOLECULE strand
     /// (the OT molecule owns a `+` CpG, the OB molecule a `-` CpG); the opposite strand is the
     /// variant check (a cytosine gone on BOTH strands is masked to `N`). Emits a forward AND a
-    /// reverse record per family, so BOTH strands of every CpG are scored. DRAGEN-validated on
-    /// real NA12878 (both strands r ≈ 0.77). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
+    /// reverse record per family, so BOTH strands of every CpG are scored. Per-molecule duplex
+    /// view (inherently sparse) — validated vs DRAGEN by per-strand mean-methylation agreement
+    /// (DRAGEN has no WGS consensus-CX to correlate against), not a per-CpG r. Concordance-gated
+    /// (not byte-identical); see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
     /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of
@@ -172,7 +173,7 @@ pub struct Cli {
     /// exclusive). EXPERIMENTAL: not gated. Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_qname")]
     pub five_base_umi_qname: bool,
-    /// `[#787 EXPERIMENTAL/PREVIEW]` Run ONLY the duplex-consensus collapse over one or more
+    /// `[#787]` Run ONLY the duplex-consensus collapse over one or more
     /// EXISTING 5-Base `_pe.bam`/`.bam` files (repeat the flag per file) — no re-alignment.
     /// Families pair ACROSS all the given BAMs, so passing every lane's BAM yields a
     /// full-depth consensus. Writes `<output_dir>/five_base_consensus.bam`. Requires

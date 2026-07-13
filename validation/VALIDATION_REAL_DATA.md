@@ -259,3 +259,164 @@ fail-loud in CI, no DRAGEN):
 
 This is the concordance gate the experimental modes (consensus / duplex / deconvolution)
 need to graduate out of preview: it locks a known-truth floor with no proprietary data.
+
+## GA graduation: reproducible validation runbook (two real samples)
+
+To back the GA graduation of core + duplex + consensus + deconvolution, the per-CpG
+concordance vs DRAGEN is now reproducible via a committed script,
+`validation/concordance.py` (pure stdlib, reads plain or `.gz`; `--selftest` checks the
+math on a synthetic pair). Run it over TWO real samples: **NA12878** (already local, 8
+lanes, ~44x) and **HG002** (the second BaseSpace demo sample, an independent genome).
+
+The runs themselves are operator-driven (BaseSpace credentials + GRCh38 + compute); the
+binary is the canonical `bismark` (post #1038).
+
+### 1. Align + call each sample (whole GRCh38, paired-end)
+
+```sh
+GENOME=/path/to/GRCh38            # bismark_genome_preparation'd
+S=NA12878                         # then repeat with S=HG002
+OUT=/scratch/5base/$S
+
+# core per-read path (for the methylation concordance)
+bismark --illumina_5base --genome "$GENOME" -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz \
+        --output_dir "$OUT" --temp_dir "$OUT/tmp" --multicore 8
+# duplex + consensus (real dual-UMI in the read name)
+bismark --illumina_5base --five_base_umi_qname --five_base_duplex   --genome "$GENOME" \
+        -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz --output_dir "$OUT"
+bismark --illumina_5base --five_base_umi_qname --five_base_consensus --genome "$GENOME" \
+        -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz --output_dir "$OUT"
+# deconvolution (variant vs 5mC)
+bismark --illumina_5base --five_base_deconvolution --genome "$GENOME" \
+        -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz --output_dir "$OUT"
+
+# genome-wide CpG cytosine report for the methylation diff (core BAM, and the
+# consensus BAM for the per-molecule view)
+bismark_methylation_extractor -p --comprehensive --cytosine_report \
+        --genome_folder "$GENOME" "$OUT"/*_pe.bam
+```
+
+### 2. Fetch the matching DRAGEN reference outputs (BaseSpace `bs` CLI)
+
+Each demo sample ships a DRAGEN `illumina.dragen.complete` dataset (project "Illumina
+5-Base DNA", id 471431965). **HG001 = NA12878, HG002 = NA24385** (the two real samples to
+validate). Use the `validation/fetch_dragen.sh` wrapper to pull only the small reference
+files (`CX_report.txt.gz`, `methyl_metrics.csv`, `hard-filtered.vcf.gz`), not the multi-TB
+BAM/FASTQ:
+
+```sh
+# NA12878 (HG001), Sample8 100ng (the metrics sample)
+validation/fetch_dragen.sh ds.258e74420ab8417a89de572ec1571b55 "$OUT/dragen"
+# HG002 (NA24385), Sample40 50ng
+validation/fetch_dragen.sh ds.48b7596730dd47ef97699b59ccd3641d "$OUT/dragen"
+```
+
+The matching RAW READS for alignment input are SEPARATE `illumina.fastq.v1.8` datasets;
+list and pull them with:
+
+```sh
+bs list dataset --project-id 471431965 | grep -i fastq
+bs download dataset --id <fastq_ds_id> -o "$OUT/reads"
+```
+
+(NA12878 full-depth uses the 8 lanes already aligned locally; only the DRAGEN reference is
+fetched here. HG002 needs both the FASTQ and the DRAGEN reference.)
+
+### 3. Compute concordance
+
+```sh
+# methylation: core (and again with the consensus cytosine report) vs DRAGEN CX
+python3 validation/concordance.py methyl \
+    --ours "$OUT"/*_pe.CX_report.txt --dragen "$OUT"/dragen/*.CX_report.txt.gz
+
+# deconvolution: our per-CpG variant verdicts vs DRAGEN's germline SNVs
+python3 validation/concordance.py deconv \
+    --variants "$OUT"/*_pe.5base_deconvolution.txt --vcf "$OUT"/dragen/*.vcf.gz
+```
+
+`methyl` prints, at coverage >= 1/5/10: Pearson r, coverage-weighted r, mean |delta %|,
+call-agreement at 50%, and a 5x5 confusion matrix. `deconv` prints precision (our
+`variant` CpGs coinciding with a DRAGEN C>T/G>A SNV) and recall (DRAGEN homozygous
+CpG-disrupting SNVs we cover and flag). The reference numbers to reproduce are the
+existing NA12878 full-depth results above (core r 0.991 (0.998 at cov>=10) / 98.8% (99.3% at cov>=10) call agreement;
+deconvolution 90.3% / 93.4% at ~40x).
+
+### GA graduation evidence (real Illumina 5-Base, NA12878 Sample8 full depth)
+
+The graduated modes were validated end-to-end on the real Illumina 5-Base demo (NA12878
+Sample8, 8 lanes, whole GRCh38) against the matching DRAGEN v4.4.6 reference, plus the
+deterministic lambda/pUC19 control gates that run in CI. Numbers below are the measured
+results from this document's runs (core: the 55M-CpG table above; deconvolution:
+`deconv_vs_vcf.py` over 8 lanes; consensus: the per-molecule duplex view):
+
+| mode | depth | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
+|---|---|---|---|---|---|---|
+| core (per-read, deduplicated — iso-DRAGEN) | ~44x | 55.5M (cov>=1) | 0.991 (0.998 cov>=10) | 98.8% (99.3% cov>=10) | n/a | n/a |
+| deconvolution | ~40x | 167,978 DRAGEN hom CpG-SNVs | n/a | n/a | 90.3% | 93.4% |
+| consensus (duplex view) | ~44x seq | 6.5M (cov>=1) / 90k (cov>=5) | 0.78 (0.91 cov>=5) | 85% (90% cov>=5) | n/a | n/a |
+
+Notes:
+- **Core** is the headline supported path: r 0.991 (0.998 at cov>=10) and 98.8% (99.3% at cov>=10) call-agreement
+  vs DRAGEN over 53-55M CpGs is the GA evidence for `--illumina_5base`.
+- **Deconvolution** reproduces DRAGEN's variant exclusions at 90.3% precision / 93.4%
+  recall (full depth).
+- **Consensus** is the per-MOLECULE duplex collapse: it is inherently low-coverage at this
+  sequencing depth (duplex families are sparse, mean approximately 2.3x, 83% of CpGs at
+  cov=2), so its r climbs with coverage (0.78 at cov>=1 to 0.91 at cov>=5). The supported
+  high-confidence number is the core per-read path; the consensus is the per-molecule view.
+
+#### What DRAGEN's `CX_report` actually is (verified, not assumed)
+
+The per-CpG comparison above rests on knowing how DRAGEN builds its CX report. Verified two
+ways — from DRAGEN's own `methyl_metrics.csv` on Sample8, and from Illumina's docs:
+
+- **DRAGEN's CX is a deduplicated, overlap-trimmed, FULL-DEPTH pileup — not a consensus.**
+  Its metrics file reports `Total number of C's analyzed = 24,610,709,315` over
+  `438,530,726` uniquely-mapped pairs (~56 C/pair) with only `OT`/`OB` strands populated
+  (`CTOT`/`CTOB` = 0, directional), and carries **no** dedup/duplex/consensus row in the
+  methylation section — the exact Bismark strand model. Illumina confirms the counting set:
+  "we use dedupping" and values correspond to "the sequencing reads (deduplicated and
+  overlap trimmed)" with R1 winning on R1/R2 disagreement (FAQ 000009952).
+- **Consequence for the core row (measured):** the honest apples-to-apples comparison
+  deduplicates our side too. Re-ran the full 128 GB core BAM through `deduplicate_bismark -p`
+  (removed **6.70%**, 32.8M/490M alignments) → extract → per-CpG concordance. The
+  deduplicated, iso-methodo core is **r = 0.991 (cov>=1) → 0.998 (cov>=10) → 0.999
+  (cov>=20)** over 55.5M shared CpGs, **98.8-99.5% call-agreement**, mean methylation
+  50.1% vs DRAGEN 50.5% (cov>=1). Dedup *tightens* the correlation vs the non-deduplicated
+  0.988 (cov>=10) — PCR-copy noise removed — confirming dedup is r-positive, not r-negative,
+  and that we now match DRAGEN's exact counting set (deduplicated + overlap-trimmed).
+- **Consequence for the consensus row:** DRAGEN builds a duplex-**consensus** methylation
+  track only for **UMI / enrichment** kits, not for this WGS gDNA sample. So there is **no
+  DRAGEN consensus CX** to compare against here — the r=0.78-vs-CX is our sparse per-molecule
+  consensus (mean ~2.3x coverage) measured against DRAGEN's full-depth pileup (mean **21.9x**
+  per strand-cytosine over 55.8M CpGs — a ~10x depth mismatch), not a consensus-vs-consensus
+  validation. The consensus is therefore validated by (a) mean-
+  methylation agreement with DRAGEN per strand (~47.9% vs ~48%, bias-free after the two
+  reconciliation fixes above) and (b) the structural lambda/pUC19 control gates — **not** by
+  its per-CpG r against the CX report. Do not headline a consensus-vs-CX r.
+
+### Cross-sample confirmation — HG002 (NA24385), full depth (2026-07-05)
+
+Ran the identical end-to-end chain on a **second independent individual** (HG002 = NA24385,
+same BaseSpace project) — download → merge → align → extract → per-CpG concordance vs its
+own DRAGEN v4.4.6 reference. HG002 is biologically **more methylated** than NA12878 (global
+CpG ~64.7% vs ~50%), and DRAGEN agrees, so this is a genuine cross-sample test, not a repeat
+of the same distribution:
+
+| mode | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
+|---|---|---|---|---|---|
+| core (per-read) | 55.7M (cov>=1) | 0.988 (0.996 cov>=10) | 98.3% (98.6% cov>=10) | n/a | n/a |
+| deconvolution | 161,709 DRAGEN hom CpG-SNVs | n/a | n/a | 94.3% | 95.7% |
+| consensus (duplex view) | 23.9M (cov>=1) | 0.756 (0.892 cov>=3) | 85.7% (90.1% cov>=3) | n/a | n/a |
+
+Mean CpG methylation ours 64.7% vs DRAGEN 65.1% (cov>=1). The core reproduces DRAGEN on a
+second individual (r 0.988 → 0.996), the deconvolution actually **exceeds** the NA12878
+numbers (94.3% / 95.7% vs 90.3% / 93.4%), and the consensus shows the same depth-limited
+per-CpG r (0.76 sparse → 0.89 at cov>=3) — the expected per-molecule-view behaviour, not a
+regression. (Chrom-naming note: HG002 was aligned against an Ensembl-named genome ('1' not
+'chr1'); the `concordance.py deconv` parser now strips a leading `chr` on both sides so
+DRAGEN's `chr1` VCF and our `1` output match — earlier this silently scored 0% precision.)
+
+This is not required for the core/deconvolution GA contract — the NA12878 full-depth results
+plus the reproducible lambda/pUC19 CI gates already establish it — but it is strong
+independent cross-sample corroboration.
