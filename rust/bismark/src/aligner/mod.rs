@@ -125,7 +125,15 @@ pub fn run_main() -> std::process::ExitCode {
 /// `bismark align` passes `argv[2..]` (subcommand token stripped) — both yield a
 /// byte-identical `@PG CL`. Keeps `run_main`'s `--version` short-circuit.
 pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::ExitCode {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
+    // A bare `bismark align` (no genome/reads) is never a valid run: show the
+    // aligner help (exit 2) rather than the terse "No genome folder" error.
+    // (Bare `bismark` with no args is intercepted earlier by the multicall
+    // dispatcher, which prints the composed suite help.)
+    if let Some(code) = crate::cli::help_if_no_args(argv.len(), crate::aligner::cli::Cli::command())
+    {
+        return code;
+    }
     let cli = crate::aligner::cli::Cli::parse_from(&argv);
     if cli.version {
         println!("{}", version_string());
