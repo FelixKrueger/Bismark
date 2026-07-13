@@ -1,6 +1,13 @@
 # Bismark Changelog
 
 
+## Unreleased (on `dev`)
+
+### bismark (aligner)
+
+- **`--rammap` now defaults to the bundled in-process backend, and auto-threads.** The pure-Rust in-process `rammap-core` backend is compiled into the conda, Docker and release builds, so `--rammap` now works with no extra install and no extra flag — and its alignment auto-threads to the available cores (capped at 8) unless you pass `--multicore N`, so the default is faster and much lighter than spawning the external `rammap` binary (−54 % peak RSS, independent of thread count), rather than single-threaded. The peak speedup (~1.8×) is at `--multicore 16`; the cap-8 default is faster than the subprocess but below that peak. Pass `--rammap_subprocess` to opt out to the external binary (exact rammap-CLI parity, or a build without the in-process backend). `--rammap_inprocess` is now a deprecated, inert, hidden alias. rammap remains experimental and concordance-gated (NOT byte-identical to minimap2); the divergence versus the subprocess is read-length dependent — none on short reads, ~1–2 in 10,000 on long ONT reads. The faithful Bowtie 2 / HISAT2 / minimap2 paths and the global `--multicore` default are unchanged.
+- **`--combined_index --non_directional` now defaults to the sequential low-memory model (#1018).** Non-directional combined-index alignment now runs the two both-strands passes **one at a time** by default instead of concurrently — about **half the peak RAM** (one combined index resident instead of two; ~11 GB vs ~19 GB on human) and, on large/bandwidth-bound genomes, faster. The BAM output is **byte-identical to the previous (concurrent) model**, so aligned results do not change; only the `*_report.txt` mode-marker line and the stderr banner name the model that ran. Pass the new `--combined_index_parallel` to opt back into the concurrent model (~2× peak RAM; can be faster on a small index with many cores). Directional/pbat combined (already single-pass) and `--combined_index_single_pass` are unchanged. rammap/minimap2 combined and `--multicore` + combined remain rejected.
+
 ## Bismark 3.0.0 (released 2026-07-07) — the Rust suite
 
 Bismark is now a single Rust binary; the Perl scripts are archived as tagged legacy. Highlights:

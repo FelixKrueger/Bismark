@@ -736,9 +736,10 @@ ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
     }
 
     /// #995 V2+V3 (hermetic — `from_seqs`, no `.mmi`/oxy): the parallel chunked refill is
-    /// (V3) thread-count-invariant — `--multicore 4` == `--multicore 1` records — and (V2)
-    /// yields every read in INPUT ORDER across MULTIPLE chunk boundaries (5000 reads > the
-    /// 2048 `CHUNK`). Drains to comparable (qname, flag, rname, pos, cigar) tuples.
+    /// (V3) thread-count-invariant — every pool size in `1..=8` yields identical records
+    /// (rev2 Alt-1: 8 is the auto default cap) — and (V2) yields every read in INPUT ORDER
+    /// across MULTIPLE chunk boundaries (5000 reads > the 2048 `CHUNK`). Drains to comparable
+    /// (qname, flag, rname, pos, cigar) tuples.
     #[cfg(feature = "rammap-inprocess")]
     #[test]
     fn parallel_refill_is_thread_invariant_across_chunks() {
@@ -780,7 +781,6 @@ ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
             v
         };
         let serial = drain(1);
-        let parallel = drain(4);
         assert_eq!(
             serial.len(),
             5000,
@@ -788,9 +788,15 @@ ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
         );
         assert_eq!(serial[0].0, "read0", "input order preserved (first)");
         assert_eq!(serial[4999].0, "read4999", "input order preserved (last)");
-        assert_eq!(
-            serial, parallel,
-            "V3: --multicore 4 == --multicore 1 (thread-invariant)"
-        );
+        // V3 (rev2 Alt-1): thread-count-invariant across the WHOLE default range 1..=8
+        // (8 = `RAMMAP_INPROCESS_THREAD_CAP`, the auto default N — so the machine-independence
+        // claim covers every pool size a default run can pick, not just n=4).
+        for n in 1..=8 {
+            assert_eq!(
+                drain(n),
+                serial,
+                "V3: --multicore {n} == --multicore 1 (thread-invariant)"
+            );
+        }
     }
 }

@@ -142,24 +142,28 @@ faster at every core budget (10M and full scale) and uses about **22–28 % less
 reads). At full scale (real WGBS paired-end, 8-core budget) directional combined runs **5298 s versus
 7373 s** for the standard two-instance path (−28 %), at 43,200 versus 59,600 core-seconds.
 
-**Non-directional — `--combined_index_sequential` is the pick.** There are several concordance-gated
-execution models; measured at equal core budgets they rank cleanly:
+**Non-directional — the sequential model is the default, and the pick.** There are several
+concordance-gated execution models; measured at equal core budgets they rank cleanly:
 
 | Non-directional, full-scale PE, 16-core budget | Wall | Peak RSS |
 |---|---|---|
 | standard (four per-strand instances) | 7810 s | 16.5 GB |
-| `--combined_index` parallel (current default; two concurrent passes) | 6114 s | 19.3 GB |
+| `--combined_index_parallel` (concurrent, opt-in; two passes at once) | 6114 s | 19.3 GB |
 | `--combined_index_single_pass` (one conversion-tagged pass) | 5371 s | 11.3 GB |
-| **`--combined_index_sequential`** (two passes, one at a time) | **5043 s** | **11.3 GB** |
+| **`--combined_index` non-dir default** (sequential; two passes, one at a time) | **5043 s** | **11.3 GB** |
 
-Running the two both-strands passes **one at a time** (`--combined_index_sequential`) is the **fastest
-and leanest** non-directional mode: each pass gets the full core budget with a single ~11 GB index
-resident, which avoids the memory-bandwidth contention of two concurrent passes (the parallel default
-keeps two indexes co-resident at ~19 GB and is the slowest combined mode here). It is **byte-identical to
-the parallel default**, so it adds no correctness caveat beyond the combined index's concordance-gating,
-and at full scale it even edges out the single-pass mode — which is faster than standard but **not
-decision-equivalent** (it perturbs Bowtie 2's read-name-seeded RNG, so about 1 read in 10,000 gets a
-different, equally-valid placement). **Prefer `--combined_index_sequential` for non-directional data**;
+Running the two both-strands passes **one at a time** is the **fastest and leanest** non-directional
+mode on this large mammalian genome, and is now the **default** for `--combined_index --non_directional`:
+each pass gets the full core budget with a single ~11 GB index resident, which avoids the
+memory-bandwidth contention of two concurrent passes (the opt-in `--combined_index_parallel` model keeps
+two indexes co-resident at ~19 GB and is the slowest combined mode here). Its **BAM is byte-identical to
+the concurrent model (a)**, so it adds no correctness caveat beyond the combined index's concordance-gating
+(the `*_report.txt` marker and stderr banner name whichever model ran). On a **small index with many
+cores**, where index-load rather than bandwidth dominates, the concurrent `--combined_index_parallel` model
+can overlap the passes and be faster — the RAM win is unconditional, the wall win is for large genomes.
+At full scale the sequential default even edges out the single-pass mode — which is faster than standard
+but **not decision-equivalent** (it perturbs Bowtie 2's read-name-seeded RNG, so about 1 read in 10,000
+gets a different, equally-valid placement). **The sequential default is the pick for non-directional data**;
 reach for `--combined_index_single_pass` only for its marginal extra speed at small scale, when the
 non-decision-equivalence is acceptable.
 
@@ -240,17 +244,21 @@ On 1M EM-seq Nanopore reads (GRCh38, through the Bismark wrapper), rammap and mi
 fate of 98.3 % of reads, with unique-versus-ambiguous classification differing for 0.011 % of reads,
 and on 99.8 % of per-CpG methylation calls at depth ≥ 1.
 
-Run in-process (`--rammap_inprocess`) rather than as a subprocess, the
-converted index is loaded once and shared across the strand instances, which makes it both faster and
-lighter. On 1M non-directional reads:
+`--rammap` runs the in-process backend **by default**: the converted index is loaded once and shared
+across the strand instances, which makes it both faster and lighter than spawning the external `rammap`
+binary. Pass `--rammap_subprocess` to opt out to that external binary. On 1M non-directional reads:
 
-| Metric | Subprocess `--rammap` | In-process `--rammap_inprocess` |
+| Metric | Subprocess (`--rammap_subprocess`) | In-process (`--rammap --multicore 16`) |
 |---|---|---|
 | Wall time | 2451 s | 1382 s (~1.8× faster) |
 | Peak memory | 70.9 GB | 32.3 GB (−54 %) |
 
-The in-process backend is worker-invariant (identical output regardless of thread count), and peak
-memory stays flat because all threads share one in-memory index. A `--multicore` sweep on a 50k-read
+The peak-memory win (−54 %) is **independent of thread count** — all threads share one in-memory index,
+so it holds for any `--multicore`, including the default. The **speed** figure above is at `--multicore
+16`; by default the alignment auto-threads to the available cores **capped at 8** (a conservative
+balance — pass a higher `--multicore N` for the full speedup, honoured verbatim), so the default is
+faster and much lighter than the subprocess but does not reach the 16-thread peak. The in-process backend
+is worker-invariant (identical output regardless of thread count). A `--multicore` sweep on a 50k-read
 subset shows the shape:
 
 ![rammap in-process --multicore scaling, 50k EM-seq Nanopore reads: wall, CPU and peak memory vs workers](../../../assets/rammap_inprocess_scaling.png)
@@ -259,7 +267,8 @@ The index loads once (~80–90 s, single-threaded) and the per-read alignment th
 memory is flat at ~30 GB across all thread counts. On this 50k sweep wall time falls 4.6× (~490 s →
 ~106 s, 1→16 threads); the one-off index load is a large share of the wall at 50k, so at the production
 1M scale — where alignment dominates — the speedup over the single-threaded path is larger (~11×, the
-figure behind the 1.8× win over the subprocess above). Plain `--rammap` still runs the subprocess.
+figure behind the 1.8× win over the subprocess above). Running `--rammap --multicore 1` forces the
+single-threaded path; `--rammap_subprocess` runs the external binary.
 
 ## Profiling the Perl pipeline
 

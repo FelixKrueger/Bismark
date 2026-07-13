@@ -57,8 +57,11 @@ fn no_args_and_help_show_composed_help() {
             .assert()
             .success()
             .stdout(predicate::str::contains("SUBCOMMANDS"))
-            .stdout(predicate::str::contains("dedup"))
-            .stdout(predicate::str::contains("deduplicate_bismark"));
+            // the aligner is listed as a subcommand with its classic name `bismark`
+            .stdout(predicate::str::contains("align"))
+            .stdout(predicate::str::contains("(bismark)"))
+            // classic names are parenthesized (matches the "(classic name in parentheses)" header)
+            .stdout(predicate::str::contains("(deduplicate_bismark)"));
     }
 }
 

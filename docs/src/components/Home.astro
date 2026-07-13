@@ -30,6 +30,7 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
       <span><i class="d"></i><b>single &amp; paired-end</b></span>
       <span><i class="d"></i><b>WGBS · RRBS · PBAT</b></span>
       <span><i class="d"></i><b>Rust · byte-identical to Perl v0.25.1</b></span>
+      <span><i class="d"></i><b>+ rammap: pure-Rust long-read aligner (experimental)</b></span>
     </div>
   </section>
 
@@ -90,7 +91,7 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
     <p class="lede">Everything a bisulfite workflow needs, exposed as flags you can read.</p>
     <div class="feat-list">
       <div class="feat"><div class="k">reads</div><div class="v"><b>Single- and paired-end</b>, directional and non-directional libraries. FastQ or FastA, gzipped input read directly.</div></div>
-      <div class="feat"><div class="k">aligners</div><div class="v"><b>Bowtie2, HISAT2 or minimap2</b> under the hood; BAM/SAM/CRAM I/O is pure-Rust (no Samtools needed). Pick the backend that fits your genome and read length.</div></div>
+      <div class="feat"><div class="k">aligners</div><div class="v"><b>Bowtie2, HISAT2 or minimap2</b> under the hood; BAM/SAM/CRAM I/O is pure-Rust (no Samtools needed). Pick the backend that fits your genome and read length. Plus <b>rammap</b>, an experimental pure-Rust long-read aligner (EM-seq Nanopore/PacBio) <b>bundled in the conda, Docker and release builds</b> — no extra install, opt-in via <span class="mono">--rammap</span>, concordance-gated (not byte-identical).</div></div>
       <div class="feat"><div class="k">methylation</div><div class="v"><b>Per-cytosine calls in every context</b>, kept separate so you never conflate them.<span class="ctx"><span class="chip m">CpG</span><span class="chip">CHG</span><span class="chip">CHH</span></span></div></div>
       <div class="feat"><div class="k">protocols</div><div class="v">First-class support for <b>WGBS, RRBS and PBAT</b> BS-Seq, with the conversion handling each protocol expects.</div></div>
       <div class="feat"><div class="k">reports</div><div class="v"><b>HTML reports out of the box</b> via <span class="mono">bismark report</span> and <span class="mono">bismark summary</span>: alignment rates, M-bias, context coverage, the lot.</div></div>
@@ -104,8 +105,8 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
     <div class="steps">
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>1</div>
-        <div class="body"><h4>Install</h4><p>One command via crates.io, or grab a release from GitHub.</p>
-          <div class="code"><pre><span class="ps">cargo install bismark</span></pre></div></div>
+        <div class="body"><h4>Install</h4><p>One command via bioconda — installs the aligners too.</p>
+          <div class="code"><pre><span class="ps">mamba install -c bioconda bismark</span></pre></div></div>
       </div>
       <div class="step">
         <div class="idx"><span class="sl" aria-hidden="true"></span>2</div>
@@ -136,8 +137,8 @@ const gh = 'https://github.com/FelixKrueger/Bismark';
   const term = document.getElementById('home-term');
   if (term) {
     const lines = [
-      { prompt: true, type: true, toks: [{ t: 'cargo install bismark', c: '' }] },
-      { out: true, toks: [{ t: '  ✓ bismark  bowtie2  installed', c: 'ok' }] },
+      { prompt: true, type: true, toks: [{ t: 'mamba install -c bioconda bismark', c: '' }] },
+      { out: true, toks: [{ t: '  ✓ bismark  bowtie2  hisat2  minimap2  installed', c: 'ok' }] },
       { blank: true },
       { prompt: true, type: true, toks: [{ t: 'bismark prepare ', c: '' }, { t: '/ref/GRCh38/', c: 'out' }] },
       { out: true, toks: [{ t: '  building C→T and G→A indices ', c: 'out' }, { t: 'done', c: 'ok' }] },

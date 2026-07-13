@@ -128,7 +128,7 @@ It is **opt-in, never-silent, and concordance-gated — NOT byte-identical** to 
 
 Combined mode trades byte-identity for speed (and, for non-directional libraries, memory):
 
-- **Non-directional — yes, a clear win.** `--combined_index_sequential` is both faster *and* uses about a third less memory than the faithful default (~11 vs 16 GB).
+- **Non-directional — yes, a clear win, and now the default.** Non-directional combined runs the sequential low-memory model by default — about a third less memory than the faithful default (~11 vs 16 GB), and faster on large/bandwidth-bound genomes. (On a small index with many cores the concurrent `--combined_index_parallel` model can be faster; the memory win holds regardless.)
 - **Directional / pbat — a speed-only win.** Roughly 1.3× faster, but a single combined index is slightly *larger* than the two per-strand indices it replaces, so it is not a memory saving.
 - **If you need byte-identical output to Perl** (reproducing published results, or a strict validated pipeline) — stay on the faithful per-strand default. Combined mode is never byte-identical (benign churn ~0.1%, almost entirely unique↔ambiguous flips; actual mis-placement ~0.005%).
 
@@ -144,16 +144,18 @@ bismark prepare --combined_genome /path/to/genome/   # add --hisat2 for a HISAT2
 
 | Flag | What it does | Scope |
 |------|--------------|-------|
-| `--combined_index` | One both-strands pass per read-conversion. Non-directional uses the default parallel model (two concurrent passes). | SE+PE · Bowtie 2+HISAT2 · dir/non-dir/pbat |
-| `--combined_index_sequential` | Faithful low-memory variant for non-directional: the two both-strands passes run **one at a time** (one index resident → ~½ the peak memory). **Byte-identical** to the default parallel combined run. | non-dir · SE+PE · Bowtie 2+HISAT2 |
+| `--combined_index` | One both-strands pass per read-conversion. **Non-directional now defaults to the sequential low-memory model** (below) — one index resident, ~½ the peak memory. | SE+PE · Bowtie 2+HISAT2 · dir/non-dir/pbat |
+| `--combined_index_sequential` | The non-directional default (since v3.x): the two both-strands passes run **one at a time** (one index resident → ~½ the peak memory). **BAM byte-identical** to the concurrent model (a). The flag is retained as an explicit selector — you no longer need to pass it. | non-dir · SE+PE · Bowtie 2+HISAT2 |
+| `--combined_index_parallel` | Opt into the **concurrent** model (a): the two both-strands passes run at once (two indexes co-resident, ~2× peak RAM). BAM byte-identical to the sequential default; can be faster on a small index with many cores. | non-dir · SE+PE · Bowtie 2+HISAT2 |
 | `--combined_index_single_pass` | One pass over conversion-tagged interleaved reads (one index load). **Not byte-identical / not decision-equivalent** to the parallel run (the read-name tag perturbs Bowtie 2's RNG) — ground-truth-validated, never the default. | non-dir · SE+PE · Bowtie 2 only |
 
 ```bash
 # directional, combined index, one both-strands pass:
 bismark --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
 
-# non-directional, faithful low-memory (one index resident at a time):
-bismark --combined_index --non_directional --combined_index_sequential --genome /path/to/genome/ -p 16 reads.fq.gz
+# non-directional: the sequential low-memory model is now the DEFAULT (no extra flag):
+bismark --combined_index --non_directional --genome /path/to/genome/ -p 16 reads.fq.gz
+# ...pass --combined_index_parallel to opt into the concurrent (2× RAM) model instead.
 ```
 
 ### Which mode to choose
@@ -165,11 +167,11 @@ Figures are a real 10M-read WGBS GRCh38 run (single-end, 16-core budget); the fu
 | Mode | Wall | Peak RAM | Byte-identical? |
 |---|---|---|---|
 | Faithful 4-instance (default) | 477 s | 16 GB | — (it is the oracle) |
-| `--combined_index` (parallel) | 434 s | 19 GB | no (benign churn) |
-| **`--combined_index_sequential`** | 400 s | **11 GB** | **yes** (== parallel combined) |
+| **`--combined_index` non-dir default** (sequential) | 400 s | **11 GB** | no vs Perl (benign churn); **BAM == concurrent model (a)** |
+| `--combined_index_parallel` (concurrent) | 434 s | 19 GB | no vs Perl (benign churn); BAM == sequential |
 | `--combined_index_single_pass` | **377 s** | 11 GB | no (read-name-tag RNG) |
 
-**Recommended: `--combined_index_sequential`.** It is the only mode that is both **lower memory (~11 GB vs 16 GB, about a third less)** and **faster** than the faithful default, while staying **byte-identical**. Use `--combined_index_single_pass` only when you want the fastest wall time and can accept a non-byte-identical (still ground-truth-validated) result.
+**The non-directional combined default is now the sequential model** — the only mode that is both **lower memory (~11 GB vs 16 GB, about a third less)** and **faster** than the faithful default on this run, while its **BAM stays byte-identical to the concurrent model (a)**. Pass `--combined_index_parallel` to force the concurrent model (~2× RAM; can win on a small index with many cores), or `--combined_index_single_pass` for the fastest wall time if you can accept a non-byte-identical (still ground-truth-validated) result. (The `*_report.txt` line and stderr banner name whichever model ran.)
 
 **Directional / pbat:** plain `--combined_index` is fastest (one index load — e.g. directional 176 s vs 229 s faithful) but is **not** a memory saving: one large combined index is about the size of the two per-strand indices it replaces.
 
