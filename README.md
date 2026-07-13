@@ -46,6 +46,9 @@ docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, 
 
 # 4. Prebuilt binaries — download from the Releases page and put on your PATH
 #    https://github.com/FelixKrueger/Bismark/releases
+
+# 5. Homebrew (macOS/Linux) — prebuilt bottle; pulls in bowtie2 + minimap2 (not hisat2)
+brew install bismark
 ```
 
 **External tools on your `PATH`:** an aligner — [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) (default), or optionally [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) or [minimap2](https://lh3.github.io/minimap2/minimap2.html). **No Samtools needed** — all BAM/SAM/CRAM I/O is pure-Rust. The container bundles the aligners for you. See [`rust/README.md`](rust/README.md#installing) for details and per-tool installs.

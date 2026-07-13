@@ -7,7 +7,7 @@ Bismark is the Rust bisulfite aligner and methylation suite, executed from the c
 
 ## The Bismark Rust suite
 
-There are four ways to install the Rust suite.
+There are five ways to install the Rust suite.
 
 ### Install with `conda` / `mamba` (bioconda)
 
@@ -20,6 +20,16 @@ mamba install -c bioconda -c conda-forge bismark
 ```
 
 You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
+
+### Install with Homebrew (macOS / Linux)
+
+Bismark is in [Homebrew core](https://formulae.brew.sh/formula/bismark), with a pre-built bottle so there is nothing to compile:
+
+```bash
+brew install bismark
+```
+
+Homebrew pulls in **Bowtie 2** and **minimap2** automatically, and the formula tracks new releases (so `brew install bismark` stays current). Unlike the bioconda package it does **not** install HISAT2 — that formula isn't in homebrew-core — so if you use the `--hisat2` aligner, install it separately (e.g. `brew install brewsci/bio/hisat2`).
 
 ### Install from source with `cargo`
 
