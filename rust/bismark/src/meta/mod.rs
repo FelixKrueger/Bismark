@@ -6,6 +6,11 @@
 //! [`version_line`] — distinct from each crate's internal Cargo version (which is
 //! reserved for the eventual crates.io publish at GA).
 
+/// Pure `.cargo_vcs_info.json` parser — shared with `build.rs` via `include!` so
+/// the hash-resolution logic has one home and is unit-tested here (build scripts
+/// aren't in the `cargo test` harness).
+mod vcs_info;
+
 /// The suite version, e.g. `2.0.0-beta.1` (the user-facing version).
 pub const SUITE_VERSION: &str = env!("BISMARK_SUITE_VERSION");
 /// Git short-hash of the build commit (or `unknown` when neither a `.git`

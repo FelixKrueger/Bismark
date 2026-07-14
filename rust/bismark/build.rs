@@ -17,6 +17,11 @@ use std::env;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// The pure `.cargo_vcs_info.json` parser lives in `src/meta/vcs_info.rs` so it is
+// covered by the `cargo test` harness (build scripts are not). We `include!` it
+// here to share the exact logic — `parse_cargo_vcs_short_hash` is defined by this.
+include!("src/meta/vcs_info.rs");
+
 /// Git short-hash resolution, most-authoritative first:
 ///  1. `$BISMARK_GIT_HASH` — an explicit override for CI/Docker builds whose
 ///     context has no `.git` (e.g. a `git archive` tarball).
@@ -54,27 +59,13 @@ fn git_short_hash(manifest_dir: &str) -> String {
     "unknown".to_string()
 }
 
-/// Extract the short (7-char) commit hash from a `.cargo_vcs_info.json` embedded
-/// in a packaged crate. The file (at the crate root) looks like
-/// `{"git":{"sha1":"<40-hex>"},"path_in_vcs":"rust/bismark"}`; we do a minimal
-/// hand-parse (no serde in the build graph) tolerant of whitespace.
+/// Read a `.cargo_vcs_info.json` embedded in a packaged crate (at the crate root)
+/// and extract the short commit hash via the shared
+/// [`parse_cargo_vcs_short_hash`] parser (unit-tested in `src/meta/vcs_info.rs`).
 fn cargo_vcs_short_hash(manifest_dir: &str) -> Option<String> {
     let path = std::path::Path::new(manifest_dir).join(".cargo_vcs_info.json");
     let content = std::fs::read_to_string(path).ok()?;
-    let after_key = content.split("\"sha1\"").nth(1)?;
-    let after_colon = after_key.split(':').nth(1)?;
-    let sha = after_colon
-        .trim()
-        .trim_start_matches('"')
-        .split('"')
-        .next()?
-        .trim();
-    let short: String = sha.chars().take(7).collect();
-    if short.len() == 7 && short.chars().all(|c| c.is_ascii_hexdigit()) {
-        Some(short)
-    } else {
-        None
-    }
+    parse_cargo_vcs_short_hash(&content)
 }
 
 fn build_epoch() -> u64 {
@@ -205,6 +196,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../VERSION");
     println!("cargo:rerun-if-changed=VERSION"); // crate-local vendored copy (registry-build fallback)
     println!("cargo:rerun-if-changed=.cargo_vcs_info.json"); // packaged-crate hash fallback
+    println!("cargo:rerun-if-changed=src/meta/vcs_info.rs"); // include!d shared parser
     println!("cargo:rerun-if-env-changed=BISMARK_SUITE_VERSION");
     println!("cargo:rerun-if-env-changed=BISMARK_GIT_HASH");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
