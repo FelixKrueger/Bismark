@@ -61,6 +61,19 @@ fn missing_output_fails_with_clear_message() {
         .stderr(predicates::str::contains("output"));
 }
 
+#[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation renders the tool's help
+    // (exit 2) via `cli::help_if_no_args` instead of a terse one-line error.
+    Command::cargo_bin("coverage2cytosine")
+        .unwrap()
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "Generate a genome-wide cytosine methylation report",
+        ));
+}
+
 // (The Phase-A `unsupported_v1x_flag_is_rejected` probe was removed in Phase 3:
 // all v1.x niche flags — --gc/--nome-seq, --drach/--m6A, --ffs — are now
 // supported, so no v1.x flag is rejected. `missing_output_fails_with_clear_message`

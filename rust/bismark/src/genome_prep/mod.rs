@@ -64,6 +64,12 @@ where
     I::Item: Into<std::ffi::OsString> + Clone,
 {
     use clap::{CommandFactory, Parser};
+    let argv: Vec<std::ffi::OsString> = argv.into_iter().map(Into::into).collect();
+    if let Some(code) =
+        crate::cli::help_if_no_args(argv.len(), crate::genome_prep::cli::Cli::command())
+    {
+        return code;
+    }
     let cli = crate::genome_prep::cli::Cli::parse_from(argv);
 
     // `--version` / `-V` handled manually (clap auto-version disabled) so we

@@ -6,21 +6,44 @@
 //! [`version_line`] — distinct from each crate's internal Cargo version (which is
 //! reserved for the eventual crates.io publish at GA).
 
+/// Pure `.cargo_vcs_info.json` parser — shared with `build.rs` via `include!` so
+/// the hash-resolution logic has one home and is unit-tested here (build scripts
+/// aren't in the `cargo test` harness).
+mod vcs_info;
+
 /// The suite version, e.g. `2.0.0-beta.1` (the user-facing version).
 pub const SUITE_VERSION: &str = env!("BISMARK_SUITE_VERSION");
-/// Git short-hash of the build commit (or `unknown`).
+/// Git short-hash of the build commit (or `unknown` when neither a `.git`
+/// checkout, an embedded `.cargo_vcs_info.json`, nor `$BISMARK_GIT_HASH` was
+/// available at build time — e.g. a bare `cargo install` from a source tree).
 pub const GIT_SHORT_HASH: &str = env!("GIT_SHORT_HASH");
 /// ISO-8601 UTC build timestamp (`SOURCE_DATE_EPOCH`-reproducible).
 pub const BUILD_TIMESTAMP: &str = env!("BUILD_TIMESTAMP");
-/// `<hash> — <os>/<arch> — built <timestamp>` provenance body.
-pub const VERSION_BODY: &str = env!("VERSION_BODY");
+/// Build target, `"<os>/<arch>"` (e.g. `macos/aarch64`).
+pub const BUILD_TARGET: &str = env!("BUILD_TARGET");
+
+/// Compose the parenthesised provenance body, e.g.
+/// `abc1234 — macos/aarch64 — built 2026-…Z`. When the git hash is unavailable
+/// (a release/`cargo install` build with no VCS info) the `<hash> — ` prefix is
+/// dropped so the line reads cleanly (`macos/aarch64 — built …`) instead of the
+/// stray literal `unknown — …` a user reported on `-V`.
+fn version_body(hash: &str, target: &str, timestamp: &str) -> String {
+    if hash.is_empty() || hash == "unknown" {
+        format!("{target} — built {timestamp}")
+    } else {
+        format!("{hash} — {target} — built {timestamp}")
+    }
+}
 
 /// A one-line `--version` string for a suite tool, e.g.
 /// `bismark (Bismark Rust suite) v3.0.0 (abc1234 — linux/x86_64 — built 2026-…Z)`.
 /// Every suite binary's `--version` is this exact shape (pass the CANONICAL tool
 /// name — no `_rs` suffix).
 pub fn version_line(tool: &str) -> String {
-    format!("{tool} (Bismark Rust suite) v{SUITE_VERSION} ({VERSION_BODY})")
+    format!(
+        "{tool} (Bismark Rust suite) v{SUITE_VERSION} ({})",
+        version_body(GIT_SHORT_HASH, BUILD_TARGET, BUILD_TIMESTAMP)
+    )
 }
 
 #[cfg(test)]
@@ -37,9 +60,32 @@ mod tests {
         let l = version_line("bismark");
         assert!(l.starts_with("bismark (Bismark Rust suite) v"));
         assert!(l.contains(SUITE_VERSION));
-        assert!(l.contains(GIT_SHORT_HASH));
+        // The hash only appears when it was resolvable at build time; in a git
+        // checkout (dev/CI) it always is, but a hashless release build must not
+        // surface a literal `unknown` — see `version_body_*` below.
+        if GIT_SHORT_HASH != "unknown" {
+            assert!(l.contains(GIT_SHORT_HASH));
+        }
+        assert!(!l.contains("(unknown "));
         // Canonical name only — the `_rs` dev suffix is retired at GA.
         assert!(!l.contains("_rs"));
+    }
+
+    #[test]
+    fn version_body_includes_hash_when_known() {
+        let b = version_body("abc1234", "macos/aarch64", "2026-07-13T13:12:41Z");
+        assert_eq!(b, "abc1234 — macos/aarch64 — built 2026-07-13T13:12:41Z");
+    }
+
+    #[test]
+    fn version_body_drops_unknown_hash() {
+        // The reported `-V` bug: a hashless build must NOT print `unknown — …`.
+        for missing in ["unknown", ""] {
+            let b = version_body(missing, "macos/aarch64", "2026-07-13T13:12:41Z");
+            assert_eq!(b, "macos/aarch64 — built 2026-07-13T13:12:41Z");
+            assert!(!b.contains("unknown"));
+            assert!(!b.starts_with(" — "));
+        }
     }
 
     /// Drift guard: the crate-local vendored `VERSION` (build.rs's registry-build

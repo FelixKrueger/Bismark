@@ -51,7 +51,11 @@ where
     I: IntoIterator,
     I::Item: Into<std::ffi::OsString> + Clone,
 {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
+    let argv: Vec<std::ffi::OsString> = argv.into_iter().map(Into::into).collect();
+    if let Some(code) = crate::cli::help_if_no_args(argv.len(), Cli::command()) {
+        return code;
+    }
     let cli = Cli::parse_from(argv);
     if cli.version {
         println!("{}", version_string());

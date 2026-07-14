@@ -106,12 +106,29 @@ fn no_args_shows_multicall_help() {
 #[test]
 fn align_no_genome_errors() {
     // The aligner's no-genome error, via the explicit `bismark align` subcommand.
+    // Reads are supplied (so it is NOT a bare no-args run — that shows help, see
+    // `align_no_args_shows_help`) but no genome folder, so resolution errors.
     bin()
-        .arg("align")
+        .args(["align", "-1", "r1.fq", "-2", "r2.fq"])
         .assert()
         .failure()
         .code(1)
         .stderr(predicate::str::contains("No genome folder specified"));
+}
+
+#[test]
+fn align_no_args_shows_help() {
+    // `bismark align` with no further args is never a valid run, so
+    // `cli::help_if_no_args` renders the aligner help (exit 2) instead of the
+    // terse "No genome folder specified" error. This is done manually at the
+    // runtime entry, NOT via clap's `arg_required_else_help`: the empty-argv
+    // unit tests depend on `Cli::parse_from([])` still yielding a defaults `Cli`
+    // (see the `help_if_no_args` docstring in `src/cli.rs`).
+    bin()
+        .arg("align")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("Bisulfite read aligner"));
 }
 
 #[test]

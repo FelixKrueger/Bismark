@@ -125,6 +125,19 @@ fn run(dir: &TempDir, args: &[&str]) -> assert_cmd::assert::Assert {
     cmd.assert()
 }
 
+#[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation renders the tool's help
+    // (exit 2) via `cli::help_if_no_args` instead of a terse one-line error.
+    Command::cargo_bin("methylation_consistency")
+        .unwrap()
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "Split a Bismark BAM into three BAMs",
+        ));
+}
+
 // ── Phase A: single-end ─────────────────────────────────────────────────────
 
 #[test]

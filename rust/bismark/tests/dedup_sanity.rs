@@ -36,10 +36,24 @@ fn short_version_flag_works_too() {
 
 #[test]
 fn invocation_with_no_input_files_errors_with_clear_message() {
+    // A flag but no input file still reaches the validation error (exit 1). A
+    // bare no-args run instead shows the tool's help (exit 2) — see
+    // `no_args_shows_help`.
     let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
-    cmd.assert()
+    cmd.arg("--paired")
+        .assert()
         .failure()
         .stderr(predicates::str::contains("no input file"));
+}
+
+#[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation prints the tool's help
+    // (exit 2) instead of the terse one-line error it used to.
+    let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
+    cmd.assert()
+        .code(2)
+        .stderr(predicates::str::contains("Remove PCR duplicate alignments"));
 }
 
 #[test]
