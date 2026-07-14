@@ -183,6 +183,19 @@ fn binary_no_fasta_dir_errors() {
         .failure();
 }
 
+#[test]
+fn no_args_shows_help() {
+    // No genome folder is never a valid run, so a bare invocation renders the
+    // tool's help (exit 2) via `cli::help_if_no_args` instead of a terse error.
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "Prepare bisulfite-converted genome references",
+        ));
+}
+
 /// Run the Perl script and the Rust binary on copies of the same genome and
 /// assert the converted CT + GA FASTA are byte-identical. Auto-skips if `perl`
 /// is unavailable. Uses a fake `bowtie2-build` on PATH so both complete Step III.

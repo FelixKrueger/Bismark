@@ -120,6 +120,15 @@ fn bin() -> Command {
 
 // ─────────────────────────────── tests ─────────────────────────────────
 
+#[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation renders the tool's help
+    // (exit 2) via `cli::help_if_no_args` instead of a terse one-line error.
+    bin().assert().code(2).stderr(predicates::str::contains(
+        "Filter reads/read-pairs with apparent incomplete",
+    ));
+}
+
 /// C2: PE input with an odd record count (lone trailing R1). Perl dies after
 /// writing the complete preceding pairs, leaving a 0-byte report; the Rust
 /// port must match (exit nonzero, valid partial BAMs, 0-byte report).

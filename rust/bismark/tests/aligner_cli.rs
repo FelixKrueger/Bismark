@@ -118,9 +118,12 @@ fn align_no_genome_errors() {
 
 #[test]
 fn align_no_args_shows_help() {
-    // `bismark align` with no further args is never a valid run, so clap's
-    // `arg_required_else_help` prints the aligner help (exit 2) instead of the
-    // terse "No genome folder specified" error.
+    // `bismark align` with no further args is never a valid run, so
+    // `cli::help_if_no_args` renders the aligner help (exit 2) instead of the
+    // terse "No genome folder specified" error. This is done manually at the
+    // runtime entry, NOT via clap's `arg_required_else_help`: the empty-argv
+    // unit tests depend on `Cli::parse_from([])` still yielding a defaults `Cli`
+    // (see the `help_if_no_args` docstring in `src/cli.rs`).
     bin()
         .arg("align")
         .assert()
