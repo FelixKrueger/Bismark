@@ -308,7 +308,9 @@ pub struct Cli {
     /// Threads per aligner instance (≥ 2): Bowtie 2 / HISAT2 `-p`, and (#1074)
     /// minimap2 / rammap `-t`. minimap2 `-t` is thread-invariant, so this stays
     /// output-neutral; omitted ⇒ the faithful default (`-t 2` for minimap2/rammap).
-    #[arg(short = 'p', value_name = "int")]
+    /// `--threads` long alias (matches bowtie2's own; nf-core long-name convention,
+    /// requested on nf-core/modules#12385) — `-p` stays valid.
+    #[arg(short = 'p', long = "threads", value_name = "int")]
     pub bowtie_threads: Option<u32>,
     /// `--dovetail` (paired-end; kept for backwards compatibility, no effect here).
     #[arg(long)]
