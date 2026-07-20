@@ -1142,9 +1142,29 @@ fn five_base_aligner_options(config: &RunConfig) -> String {
         Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n}"),
         Aligner::Hisat2 => format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n}"),
         // minimap2 (default 5-Base engine): reuse the resolved options but lift the
-        // faithful `-t 2` to `-t {n}` (all cores) for this non-byte-identical path.
-        _ => config.aligner_options.replace("-t 2", &format!("-t {n}")),
+        // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
+        // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
+        // base string carries a resolved `-t {p}` (#1074 C2).
+        _ => replace_minimap2_threads(&config.aligner_options, n),
     }
+}
+
+/// Set the value token after `-t` in a whitespace-separated minimap2 option string,
+/// token-safely. A `str::replace("-t 2", …)` is a SUBSTRING replace: once the base
+/// carries `-t 20`/`-t 25`/… it corrupts them to `-t 200`/`-t 255` (#1074 C2). This
+/// rewrites only the whole value token that immediately follows `-t`.
+///
+/// NB: coupled to `options::minimap2_options`, which renders the `-t <N>` token this
+/// finds; if that flag ever changes, this literal `"-t"` match must change with it.
+fn replace_minimap2_threads(opts: &str, n: usize) -> String {
+    let mut toks: Vec<String> = opts.split_whitespace().map(String::from).collect();
+    for i in 0..toks.len() {
+        if toks[i] == "-t" && i + 1 < toks.len() {
+            toks[i + 1] = n.to_string();
+            break;
+        }
+    }
+    toks.join(" ")
 }
 
 /// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
@@ -6969,5 +6989,27 @@ mod tests {
             "base/2__CT\t147\tchr1_CT_converted\t1\t40\t6M\t=\t1\t-6\tACGTAC\tFFFFFF\tAS:i:0\tMD:Z:6",
         );
         assert!(broken.is_err(), "tag-after-suffix must fail to pair");
+    }
+
+    /// #1074 C2: the 5-Base `-t` lift must be token-safe. A `str::replace("-t 2", …)`
+    /// corrupts `-t 20`→`-t {n}0` once the base carries a resolved `-t {p}`; the
+    /// token-wise rewrite must set only the whole value after `-t`.
+    #[test]
+    fn replace_minimap2_threads_is_token_safe() {
+        // the C2 regression: -t 20 must stay -t 20 (old bug: -t 200)
+        assert_eq!(
+            replace_minimap2_threads("-a --MD --secondary=no -t 20 -x sr -K 250K", 20),
+            "-a --MD --secondary=no -t 20 -x sr -K 250K"
+        );
+        // faithful base -t 2 lifted to the 5-Base auto-scale
+        assert_eq!(
+            replace_minimap2_threads("-a -t 2 -x sr", 128),
+            "-a -t 128 -x sr"
+        );
+        // -t 25 (also has "-t 2" as a substring) rewritten cleanly
+        assert_eq!(
+            replace_minimap2_threads("-a -t 25 -x sr", 8),
+            "-a -t 8 -x sr"
+        );
     }
 }

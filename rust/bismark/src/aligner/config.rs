@@ -178,8 +178,9 @@ pub struct RunConfig {
     pub rammap_subprocess: bool,
     /// Thread count for the in-process rammap pool (rev2 single-source-of-truth). Computed
     /// ONCE in `resolve` (where `cli.multicore: Option` still distinguishes explicit from
-    /// default) by [`inprocess_rammap_threads`]: an explicit `--multicore N` verbatim, else
-    /// a capped `available_parallelism()`. Read by BOTH the backend notice (`lib.rs`) and
+    /// default) by [`inprocess_rammap_threads`]: `-p N` (`bowtie_threads`) first (#1074),
+    /// else an explicit `--multicore N` verbatim, else a capped `available_parallelism()`.
+    /// Read by BOTH the backend notice (`lib.rs`) and
     /// the pool builder (`build_se_inprocess_streams`) so the printed count and the built
     /// pool can never disagree. Separate from `multicore` (never mutated) so auto-scaling
     /// does NOT leak into the fork dispatch for FastA/other paths. Always ≥ 1.
@@ -268,9 +269,12 @@ pub struct RunConfig {
     /// For HISAT2 this is forced to `1` when `--multicore N` is remapped to `-p N`
     /// (see `hisat2_multicore_remap`) — the fork model is not faithful for HISAT2.
     pub multicore: u32,
-    /// `-p` (threads passed to the aligner instance, Perl Bismark `-p`). Used by the
-    /// 5-Base path to set minimap2 `-t` / bowtie2,hisat2 `-p` (precedence over
-    /// `--multicore`, then all logical CPUs). `None` ⇒ aligner default / all cores.
+    /// `-p` (threads-to-aligner knob, Perl Bismark `-p`): the per-instance thread count.
+    /// Applied as bowtie2/hisat2 `-p` and, since #1074, minimap2/rammap `-t` (subprocess)
+    /// / the rammap in-process pool size — not just the 5-Base path. minimap2 `-t` is
+    /// thread-invariant (spike), so a bare `--minimap2`/`--rammap` keeps the faithful
+    /// `-t 2`; `-p N` lifts it. Precedence over `--multicore`, then all logical CPUs.
+    /// `None` ⇒ aligner default / all cores.
     pub bowtie_threads: Option<u32>,
     /// HISAT2 Approach B-faithful (`--hisat2 --multicore N`): when set, `--multicore N`
     /// was interpreted as a single HISAT2 instance with `-p N --reorder` (NOT the fork
@@ -326,16 +330,27 @@ fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Opt
 const RAMMAP_INPROCESS_THREAD_CAP: usize = 8;
 
 /// Thread count for the in-process rammap pool (rev2, Alt-1 — the single source of truth
-/// read by both the backend notice and the pool builder). An explicit `--multicore N` is
-/// honored verbatim; otherwise the default auto-scales to `min(avail, CAP)` so the default
+/// read by both the backend notice and the pool builder). Precedence (#1074): `-p N`
+/// (`bowtie_threads`, the per-aligner thread knob) first when set; else an explicit
+/// `--multicore N` verbatim; else the default auto-scales to `min(avail, CAP)` so the default
 /// `--rammap` run is multi-threaded (not the ~6× single-threaded regression Alt-1 exists to
 /// prevent). Pure (no I/O — `avail` is passed in) so it is unit-testable fixture-free.
 /// ALWAYS returns ≥ 1: `rayon`'s `num_threads(0)` means "all cores", which we must never
 /// select by accident, so both branches clamp with `.max(1)`.
-fn inprocess_rammap_threads(cli_multicore: Option<u32>, avail: usize) -> usize {
-    let n = match cli_multicore {
-        Some(n) => n as usize,
-        None => avail.min(RAMMAP_INPROCESS_THREAD_CAP),
+fn inprocess_rammap_threads(
+    cli_bowtie_threads: Option<u32>,
+    cli_multicore: Option<u32>,
+    avail: usize,
+) -> usize {
+    // #1074: `-p` (bowtie_threads) is the per-aligner thread knob and takes precedence
+    // when set (>0); otherwise the existing behaviour — explicit `--multicore` verbatim,
+    // else a capped `available_parallelism()`.
+    let n = match cli_bowtie_threads.filter(|&p| p > 0) {
+        Some(p) => p as usize,
+        None => match cli_multicore {
+            Some(n) => n as usize,
+            None => avail.min(RAMMAP_INPROCESS_THREAD_CAP),
+        },
     }
     .max(1);
     debug_assert!(n >= 1, "rammap pool thread count must be >= 1 (never 0)");
@@ -643,6 +658,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // mutates `multicore` — auto-scaling must not leak into the fork dispatch (a FastA
         // `--rammap` run would otherwise fork N index-reloading workers).
         rammap_inprocess_threads: inprocess_rammap_threads(
+            cli.bowtie_threads,
             cli.multicore,
             // On the rare platform where `available_parallelism()` fails, fall back to 2
             // (not 1) so the default does not silently revert to the single-threaded path
@@ -1610,25 +1626,29 @@ mod tests {
         );
     }
 
-    /// rev2 (Alt-1): the in-process rammap pool thread count. Explicit `--multicore N` is
-    /// honored verbatim; the default auto-scales to `min(avail, CAP)`; never returns 0.
+    /// rev2 (Alt-1) + #1074: the in-process rammap pool thread count.
+    /// Args are `(bowtie_threads /* -p */, multicore, avail)`. `-p` takes precedence
+    /// when set; else explicit `--multicore N` verbatim; else auto-scale `min(avail, CAP)`.
     #[test]
     fn inprocess_rammap_threads_derivation() {
-        // explicit --multicore honored verbatim (even above the cap).
-        assert_eq!(inprocess_rammap_threads(Some(4), 32), 4);
-        assert_eq!(inprocess_rammap_threads(Some(16), 32), 16);
-        assert_eq!(inprocess_rammap_threads(Some(1), 32), 1);
-        // default (no --multicore) → capped available_parallelism.
+        // explicit --multicore (no -p) honored verbatim (even above the cap).
+        assert_eq!(inprocess_rammap_threads(None, Some(4), 32), 4);
+        assert_eq!(inprocess_rammap_threads(None, Some(16), 32), 16);
+        assert_eq!(inprocess_rammap_threads(None, Some(1), 32), 1);
+        // default (no -p, no --multicore) → capped available_parallelism.
         assert_eq!(
-            inprocess_rammap_threads(None, 32),
+            inprocess_rammap_threads(None, None, 32),
             RAMMAP_INPROCESS_THREAD_CAP
         );
         // default on a small host → the (uncapped) core count.
-        assert_eq!(inprocess_rammap_threads(None, 2), 2);
-        // never 0: a degenerate explicit 0 clamps to 1 (validate_multicore also rejects 0
-        // upstream), and avail is always ≥ 1.
-        assert_eq!(inprocess_rammap_threads(Some(0), 8), 1);
-        assert_eq!(inprocess_rammap_threads(None, 1), 1);
+        assert_eq!(inprocess_rammap_threads(None, None, 2), 2);
+        // never 0: a degenerate explicit --multicore 0 clamps to 1, avail always ≥ 1.
+        assert_eq!(inprocess_rammap_threads(None, Some(0), 8), 1);
+        assert_eq!(inprocess_rammap_threads(None, None, 1), 1);
+        // #1074: -p sizes the pool and wins over --multicore + the avail cap.
+        assert_eq!(inprocess_rammap_threads(Some(8), None, 64), 8);
+        assert_eq!(inprocess_rammap_threads(Some(8), Some(4), 64), 8);
+        assert_eq!(inprocess_rammap_threads(Some(8), None, 4), 8);
     }
 
     // ---- #787 Illumina 5-Base mode guards ----------------------------------
