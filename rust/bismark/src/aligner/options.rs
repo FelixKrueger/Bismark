@@ -236,10 +236,13 @@ pub fn build_aligner_options(
 }
 
 /// Assemble the minimap2 `aligner_options` from a clean slate (Perl 8358-8413).
-/// Push order: `-a` → `--MD` → `--secondary=no` → `-t 2` → `-x <preset>` →
-/// `-K 250K`. The `-t 2` is hardcoded by Bismark (8372) — independent of any
-/// `--multicore`/`-p` choice (`-p`/`--reorder` were pushed to the Bowtie 2 base,
-/// which this discards). Preset (Perl 8374-8408):
+/// Push order: `-a` → `--MD` → `--secondary=no` → `-t <N>` → `-x <preset>` →
+/// `-K 250K`. `-t` follows Bismark's `-p` thread knob (`cli.bowtie_threads`),
+/// defaulting to the Perl-faithful `-t 2` when `-p` is absent (#1074). minimap2
+/// `-t` is thread-invariant (byte-identical + input-order-preserving across N —
+/// spike `SPIKE_minimap2_thread_invariance.md`), so this is output-neutral: a bare
+/// `--minimap2` still emits `-t 2` (unchanged vs Perl). `--reorder` is Bowtie-2-only
+/// (pushed to the base string this clean slate discards). Preset (Perl 8374-8408):
 /// - `--mm2_short_reads` → `sr`,
 /// - `--mm2_pacbio` → `map-pb`,
 /// - default **or** an explicit `--mm2_nanopore` → `map-ont` (the `else` serves
@@ -277,7 +280,11 @@ fn minimap2_options(cli: &Cli) -> Result<String> {
         // Default OR explicit `--mm2_nanopore` → ONT (Perl 8404-8408).
         "map-ont"
     };
-    Ok(format!("-a --MD --secondary=no -t 2 -x {preset} -K 250K"))
+    // `-t` = Bismark `-p` (threads-to-aligner) knob, default the Perl-faithful 2 when
+    // absent (#1074; minimap2 `-t` is thread-invariant per the spike, so output-neutral).
+    // `bowtie_threads` is ≥ 2 when set (guarded upstream). rammap-subprocess shares this.
+    let t = cli.bowtie_threads.unwrap_or(2);
+    Ok(format!("-a --MD --secondary=no -t {t} -x {preset} -K 250K"))
 }
 
 /// Append the HISAT2-specific option tail (Perl `process_command_line` 8286-8326,
@@ -786,13 +793,37 @@ mod tests {
     // ---- minimap2 clean-slate option assembly (Phase 4) --------------------
 
     /// V2 (hard literal): the default minimap2 string — clean-slate, `-x map-ont`
-    /// (NOT `-ax sr`), `-t 2` hardcoded (Perl 8358-8413; spike Q2).
+    /// (NOT `-ax sr`), faithful `-t 2` when no `-p` is given (Perl 8358-8413; #1074).
     #[test]
     fn minimap2_default_option_string() {
         let cli = cli_from(&[]);
         let (opts, _) =
             build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
+    }
+
+    /// #1074: `-p N` lifts minimap2 `-t` to N (spike-confirmed thread-invariant, so
+    /// output-neutral); a bare `--minimap2` stays `-t 2` (covered above).
+    #[test]
+    fn minimap2_p_lifts_t() {
+        let cli = cli_from(&["--minimap2", "-p", "8"]);
+        let (opts, _) =
+            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None).unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 8 -x map-ont -K 250K");
+    }
+
+    /// #1074: rammap-subprocess shares the minimap2 clean-slate path → same `-p`→`-t`.
+    #[test]
+    fn rammap_subprocess_p_lifts_t() {
+        let (opts, _) = build_aligner_options(
+            &cli_from(&["--rammap", "--rammap_subprocess", "-p", "8"]),
+            Aligner::Rammap,
+            ReadFormat::FastQ,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(opts, "-a --MD --secondary=no -t 8 -x map-ont -K 250K");
     }
 
     /// Phase 3 (T3, design#2): rammap is minimap-like — it reuses the IDENTICAL

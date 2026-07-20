@@ -305,8 +305,12 @@ pub struct Cli {
     /// Allow a non-bisulfite mismatch.
     #[arg(long = "non_bs_mm")]
     pub non_bs_mm: bool,
-    /// Threads *per Bowtie 2 instance* (Bowtie 2 -p; ≥ 2).
-    #[arg(short = 'p', value_name = "int")]
+    /// Threads per aligner instance (≥ 2): Bowtie 2 / HISAT2 `-p`, and (#1074)
+    /// minimap2 / rammap `-t`. minimap2 `-t` is thread-invariant, so this stays
+    /// output-neutral; omitted ⇒ the faithful default (`-t 2` for minimap2/rammap).
+    /// `--threads` long alias (matches bowtie2's own; nf-core long-name convention,
+    /// requested on nf-core/modules#12385) — `-p` stays valid.
+    #[arg(short = 'p', long = "threads", value_name = "int")]
     pub bowtie_threads: Option<u32>,
     /// `--dovetail` (paired-end; kept for backwards compatibility, no effect here).
     #[arg(long)]
