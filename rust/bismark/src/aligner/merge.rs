@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use crate::aligner::align::{PairedSamStream, SamRecord, SamStream};
-use crate::aligner::config::Aligner;
+use crate::aligner::config::{Aligner, ScoreModel};
 use crate::aligner::error::{AlignerError, Result};
 use crate::aligner::mapq::calc_mapq;
 
@@ -187,15 +187,12 @@ struct Stored {
 
 /// Run the merge for one read across the instances; advances the matching
 /// streams past this read. `sequence` is the original (uc) read (for MAPQ length).
-#[allow(clippy::too_many_arguments)]
 pub fn check_results_single_end<S: SamStream>(
     identifier: &str,
     sequence: &str,
     streams: &mut [S],
     directional: bool,
-    score_min_intercept: f64,
-    score_min_slope: f64,
-    score_min_local: bool,
+    score_model: ScoreModel,
     want_ambig: bool,
     counters: &mut Counters,
 ) -> Result<Decision> {
@@ -372,9 +369,7 @@ pub fn check_results_single_end<S: SamStream>(
         None,
         best.alignment_score,
         second_for_mapq,
-        score_min_intercept,
-        score_min_slope,
-        score_min_local,
+        score_model,
     );
 
     Ok(Decision::UniqueBest(BestAlignment {
@@ -523,9 +518,7 @@ pub fn check_results_paired_end<S: PairedSamStream>(
     sequence_2: &str,
     streams: &mut [Option<S>],
     directional: bool,
-    score_min_intercept: f64,
-    score_min_slope: f64,
-    score_min_local: bool,
+    score_model: ScoreModel,
     want_ambig: bool,
     aligner: Aligner,
     counters: &mut Counters,
@@ -749,9 +742,7 @@ pub fn check_results_paired_end<S: PairedSamStream>(
         Some(sequence_2.len()),
         best.sum,
         second_for_mapq,
-        score_min_intercept,
-        score_min_slope,
-        score_min_local,
+        score_model,
     );
 
     Ok(DecisionPaired::UniqueBest(BestAlignmentPaired {
@@ -881,9 +872,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             directional,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             want_ambig,
             &mut c,
         )
@@ -1054,9 +1043,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             true,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             &mut c,
         );
@@ -1079,9 +1066,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             true,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             &mut c,
         );
@@ -1103,9 +1088,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             true,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             &mut c,
         )
@@ -1128,9 +1111,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             false,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             &mut c,
         )
@@ -1159,9 +1140,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             false,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             &mut c,
         )
@@ -1193,9 +1172,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             false,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             &mut c,
         );
@@ -1386,9 +1363,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             directional,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             want_ambig,
             aligner,
             &mut c,
@@ -1768,9 +1743,7 @@ mod tests {
             "ACGTACGTAC",
             &mut streams,
             false,
-            0.0,
-            -0.2,
-            false,
+            ScoreModel::end_to_end(0.0, -0.2),
             false,
             Aligner::Bowtie2,
             &mut c,

@@ -78,7 +78,7 @@ use crate::aligner::align::{
     PairedSamStream, SamRecord, SamStream,
 };
 use crate::aligner::aux_out::AuxKind;
-use crate::aligner::config::{Aligner, LibraryType, ReadFormat, ReadLayout};
+use crate::aligner::config::{Aligner, LibraryType, ReadFormat, ReadLayout, ScoreModel};
 use crate::aligner::genome::{Genome, read_genome_into_memory};
 use crate::aligner::merge::{
     BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired,
@@ -2604,9 +2604,7 @@ fn drive_merge<S: SamStream>(
             &sequence,
             streams,
             directional,
-            config.score_min_intercept,
-            config.score_min_slope,
-            config.score_min_local,
+            config.score_model,
             config.ambig_bam,
             counters,
         )?;
@@ -2756,14 +2754,8 @@ fn combined_aligner_options(config: &RunConfig) -> String {
 /// from the classifier). Threaded into the shared `process_se_chunk_combined` /
 /// `drive_merge_combined` so the (identical) gather loop isn't triplicated across
 /// the directional + pbat paths (the dual-driver back-port trap).
-type SelectFn = fn(
-    &[crate::aligner::align::SamRecord],
-    &str,
-    f64,
-    f64,
-    bool,
-    &mut Counters,
-) -> Result<Decision>;
+type SelectFn =
+    fn(&[crate::aligner::align::SamRecord], &str, ScoreModel, &mut Counters) -> Result<Decision>;
 
 /// The single-pass per-PAIR combined selector — `combined::select_pe` (directional,
 /// C→T pass → OT/OB) or `combined::select_pe_pbat` (pbat, G→A pass → CTOT/CTOB); both
@@ -2776,9 +2768,7 @@ type SelectFnPe = fn(
     &[crate::aligner::align::SamPair],
     &str,
     &str,
-    f64,
-    f64,
-    bool,
+    ScoreModel,
     &mut Counters,
 ) -> Result<DecisionPaired>;
 
@@ -3148,14 +3138,7 @@ fn drive_merge_combined<S: SamStream>(
             stream.advance()?;
         }
 
-        let decision = select_fn(
-            &records,
-            &sequence,
-            config.score_min_intercept,
-            config.score_min_slope,
-            config.score_min_local,
-            counters,
-        )?;
+        let decision = select_fn(&records, &sequence, config.score_model, counters)?;
         route_se_decision(
             decision,
             &identifier,
@@ -3533,9 +3516,7 @@ fn select_and_route_se_nondir(
         ct_records,
         ga_records,
         sequence,
-        config.score_min_intercept,
-        config.score_min_slope,
-        config.score_min_local,
+        config.score_model,
         counters,
     )?;
     route_se_decision(
@@ -4652,9 +4633,7 @@ fn drive_merge_pe(
             &s2,
             streams,
             directional,
-            config.score_min_intercept,
-            config.score_min_slope,
-            config.score_min_local,
+            config.score_model,
             config.ambig_bam,
             config.aligner,
             counters,
@@ -5256,15 +5235,7 @@ fn drive_merge_combined_pe<S: PairedSamStream>(
             stream.advance_pair()?;
         }
 
-        let decision = select_fn(
-            &pairs,
-            &s1,
-            &s2,
-            config.score_min_intercept,
-            config.score_min_slope,
-            config.score_min_local,
-            counters,
-        )?;
+        let decision = select_fn(&pairs, &s1, &s2, config.score_model, counters)?;
         route_pe_decision(
             decision,
             &identifier,
@@ -5705,16 +5676,8 @@ fn select_and_route_pe_nondir(
     sinks: &mut PeSinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let decision = combined::select_pe_nondir(
-        ct_pairs,
-        ga_pairs,
-        s1,
-        s2,
-        config.score_min_intercept,
-        config.score_min_slope,
-        config.score_min_local,
-        counters,
-    )?;
+    let decision =
+        combined::select_pe_nondir(ct_pairs, ga_pairs, s1, s2, config.score_model, counters)?;
     route_pe_decision(
         decision,
         identifier,

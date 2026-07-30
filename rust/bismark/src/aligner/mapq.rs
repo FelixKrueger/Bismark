@@ -7,46 +7,34 @@
 //! **bit-identical `f64`** for this arithmetic, so the exact `==`/`>=` float
 //! comparisons are intentional (an epsilon comparison would break parity).
 
+use crate::aligner::config::ScoreModel;
+
 /// Bismark MAPQ. `read2_len` is `Some` only for paired-end; single-end passes
-/// `None`. `intercept`/`slope` are the `--score_min` parameters (end-to-end
-/// default `0.0`/`-0.2`; local default `20.0`/`8.0`). `local` selects the
-/// `--local` branch: `scMin = intercept + slope·ln(readLen)` (vs the linear
-/// end-to-end form) and the separate local MAPQ ladder (Perl `4082-4178`).
-/// **`local` is bit-safe** — the Phase-0 spike (`plans/06132026_aligner-local-mode/
+/// `None`. `model` carries the `--score_min` parameters, the `scMin` function
+/// form and the ladder choice (see [`ScoreModel`]).
+/// **The `ln()` form is bit-safe** — the Phase-0 spike (`plans/06132026_aligner-local-mode/
 /// spikes/`) proved Perl `log` ≡ Rust `f64::ln()` bit-identical on the gate arch,
 /// so the exact `==`/`>=` `f64` comparisons hold for both branches.
-#[allow(clippy::float_cmp)] // exact f64 equality matches Perl `$bestOver == $diff` (verified bit-identical)
 pub fn calc_mapq(
     read1_len: usize,
     read2_len: Option<usize>,
     as_best: i64,
     as_second: Option<i64>,
-    intercept: f64,
-    slope: f64,
-    local: bool,
+    model: ScoreModel,
 ) -> u8 {
-    // scMin (Perl 3932-36): local uses ln(readLen), end-to-end uses readLen; add
-    // read 2 for PE. The `else` arithmetic is byte-identical to the pre-`--local`
-    // code (when `local == false`, `local` adds nothing) — end-to-end frozen.
-    let mut sc_min = if local {
-        intercept + slope * (read1_len as f64).ln()
+    let (best_over, diff) = model.normalize(read1_len, read2_len, as_best);
+
+    if model.local_ladder() {
+        calc_mapq_local(best_over, diff, as_best, as_second)
     } else {
-        intercept + slope * read1_len as f64
-    };
-    if let Some(l2) = read2_len {
-        sc_min += if local {
-            intercept + slope * (l2 as f64).ln()
-        } else {
-            intercept + slope * l2 as f64
-        };
+        calc_mapq_end_to_end(best_over, diff, as_best, as_second)
     }
-    let diff = sc_min.abs(); // scores vary by up to this much (max AS = 0)
-    let best_over = as_best as f64 - sc_min;
+}
 
-    if local {
-        return calc_mapq_local(best_over, diff, as_best, as_second);
-    }
-
+/// End-to-end MAPQ ladder — a verbatim port of Perl `calc_mapq`'s default branch
+/// (`bismark:3947-4076`). Split out to mirror [`calc_mapq_local`].
+#[allow(clippy::float_cmp)] // exact f64 equality matches Perl `$bestOver == $diff` (verified bit-identical)
+fn calc_mapq_end_to_end(best_over: f64, diff: f64, as_best: i64, as_second: Option<i64>) -> u8 {
     let Some(sec) = as_second else {
         // No second-best hit (3947–54).
         return if best_over >= diff * 0.8 {
@@ -230,35 +218,77 @@ mod tests {
     #[test]
     fn no_second_best_ladder() {
         // bestOver = as_best - scMin = as_best + 10.
-        assert_eq!(calc_mapq(50, None, 0, None, I, S, false), 42); // bestOver 10 = diff (>=0.8)
-        assert_eq!(calc_mapq(50, None, -3, None, I, S, false), 40); // 7 = 0.7·diff
-        assert_eq!(calc_mapq(50, None, -4, None, I, S, false), 24); // 6 = 0.6·diff
-        assert_eq!(calc_mapq(50, None, -5, None, I, S, false), 23); // 5 = 0.5·diff
-        assert_eq!(calc_mapq(50, None, -6, None, I, S, false), 8); // 4 = 0.4·diff
-        assert_eq!(calc_mapq(50, None, -7, None, I, S, false), 3); // 3 = 0.3·diff
-        assert_eq!(calc_mapq(50, None, -10, None, I, S, false), 0); // 0
+        assert_eq!(
+            calc_mapq(50, None, 0, None, ScoreModel::end_to_end(I, S)),
+            42
+        ); // bestOver 10 = diff (>=0.8)
+        assert_eq!(
+            calc_mapq(50, None, -3, None, ScoreModel::end_to_end(I, S)),
+            40
+        ); // 7 = 0.7·diff
+        assert_eq!(
+            calc_mapq(50, None, -4, None, ScoreModel::end_to_end(I, S)),
+            24
+        ); // 6 = 0.6·diff
+        assert_eq!(
+            calc_mapq(50, None, -5, None, ScoreModel::end_to_end(I, S)),
+            23
+        ); // 5 = 0.5·diff
+        assert_eq!(
+            calc_mapq(50, None, -6, None, ScoreModel::end_to_end(I, S)),
+            8
+        ); // 4 = 0.4·diff
+        assert_eq!(
+            calc_mapq(50, None, -7, None, ScoreModel::end_to_end(I, S)),
+            3
+        ); // 3 = 0.3·diff
+        assert_eq!(
+            calc_mapq(50, None, -10, None, ScoreModel::end_to_end(I, S)),
+            0
+        ); // 0
     }
 
     #[test]
     fn with_second_best_top_buckets() {
         // as_best 0 (bestOver 10 == diff), vary second-best.
-        assert_eq!(calc_mapq(50, None, 0, Some(-10), I, S, false), 39); // bestDiff 10 (>=0.9), ==diff
-        assert_eq!(calc_mapq(50, None, 0, Some(-8), I, S, false), 38); // bestDiff 8 (>=0.8), ==diff
-        assert_eq!(calc_mapq(50, None, 0, Some(-5), I, S, false), 35); // bestDiff 5 (>=0.5), ==diff
+        assert_eq!(
+            calc_mapq(50, None, 0, Some(-10), ScoreModel::end_to_end(I, S)),
+            39
+        ); // bestDiff 10 (>=0.9), ==diff
+        assert_eq!(
+            calc_mapq(50, None, 0, Some(-8), ScoreModel::end_to_end(I, S)),
+            38
+        ); // bestDiff 8 (>=0.8), ==diff
+        assert_eq!(
+            calc_mapq(50, None, 0, Some(-5), ScoreModel::end_to_end(I, S)),
+            35
+        ); // bestDiff 5 (>=0.5), ==diff
     }
 
     #[test]
     fn with_second_best_not_at_diff() {
         // as_best -3 (bestOver 7, not == diff 10), second-best near.
-        assert_eq!(calc_mapq(50, None, -3, Some(-3), I, S, false), 1); // bestDiff 0 → else; 7>=6.7
-        assert_eq!(calc_mapq(50, None, -3, Some(-10), I, S, false), 26); // bestDiff 7 = 0.7·diff, not ==diff
-        assert_eq!(calc_mapq(50, None, -3, Some(-13), I, S, false), 33); // bestDiff 10 ≥ 0.9·diff, not ==diff
+        assert_eq!(
+            calc_mapq(50, None, -3, Some(-3), ScoreModel::end_to_end(I, S)),
+            1
+        ); // bestDiff 0 → else; 7>=6.7
+        assert_eq!(
+            calc_mapq(50, None, -3, Some(-10), ScoreModel::end_to_end(I, S)),
+            26
+        ); // bestDiff 7 = 0.7·diff, not ==diff
+        assert_eq!(
+            calc_mapq(50, None, -3, Some(-13), ScoreModel::end_to_end(I, S)),
+            33
+        ); // bestDiff 10 ≥ 0.9·diff, not ==diff
     }
 
     #[test]
     fn non_integer_scmin() {
         // readLen 51 → scMin -10.2, diff 10.2; as_best 0 → bestOver 10.2 >= 8.16 → 42.
-        assert_eq!(calc_mapq(51, None, 0, None, I, S, false), 42);
+        assert_eq!(
+            calc_mapq(51, None, 0, None, ScoreModel::end_to_end(I, S)),
+            42
+        );
     }
 
     #[test]
@@ -311,7 +341,7 @@ mod tests {
             (50, -4, -4, 0),
         ];
         for &(len, ab, asb, want) in cases {
-            let got = calc_mapq(len, None, ab, Some(asb), I, S, false);
+            let got = calc_mapq(len, None, ab, Some(asb), ScoreModel::end_to_end(I, S));
             assert_eq!(got, want, "calc_mapq(len={len}, best={ab}, 2nd={asb})");
         }
     }
@@ -319,8 +349,14 @@ mod tests {
     #[test]
     fn user_score_min_slope() {
         // --score_min L,0,-0.4 on readLen 50 → scMin -20, diff 20.
-        assert_eq!(calc_mapq(50, None, 0, None, 0.0, -0.4, false), 42); // bestOver 20 = diff
-        assert_eq!(calc_mapq(50, None, -6, None, 0.0, -0.4, false), 40); // bestOver 14 = 0.7·20
+        assert_eq!(
+            calc_mapq(50, None, 0, None, ScoreModel::end_to_end(0.0, -0.4)),
+            42
+        ); // bestOver 20 = diff
+        assert_eq!(
+            calc_mapq(50, None, -6, None, ScoreModel::end_to_end(0.0, -0.4)),
+            40
+        ); // bestOver 14 = 0.7·20
     }
 
     // ── --local ladder (Perl 4082-4178) ── values cross-checked against the
@@ -374,12 +410,21 @@ mod tests {
         for as_best in [120_i64, 100, 80, 70, 60, 55] {
             // calc_mapq(local=true) must equal the local ladder fed the ln scMin.
             let expect = calc_mapq_local(as_best as f64 - sc, sc.abs(), as_best, None);
-            assert_eq!(calc_mapq(50, None, as_best, None, 20.0, 8.0, true), expect);
+            assert_eq!(
+                calc_mapq(
+                    50,
+                    None,
+                    as_best,
+                    None,
+                    ScoreModel::bowtie2_local(20.0, 8.0)
+                ),
+                expect
+            );
         }
         // The local branch genuinely diverges from end-to-end for the same args.
         assert_ne!(
-            calc_mapq(50, None, 100, None, 20.0, 8.0, true),
-            calc_mapq(50, None, 100, None, 20.0, 8.0, false)
+            calc_mapq(50, None, 100, None, ScoreModel::bowtie2_local(20.0, 8.0)),
+            calc_mapq(50, None, 100, None, ScoreModel::end_to_end(20.0, 8.0))
         );
     }
 
@@ -393,13 +438,28 @@ mod tests {
         // No-second-best @50bp (diff 0.7824): best_over = as_best + diff. as_best 0 → best_over==diff
         // (≥0.8·diff) → 44; as_best -1 → best_over ≈ -0.218 (< 0.3·diff) → 22. (Sub-unity diff ⇒ ONLY
         // 44/22 reachable in the no-secBest ladder — the interior buckets need diff ≥ ~1; B1's finding.)
-        assert_eq!(calc_mapq(50, None, 0, None, i, s, true), 44);
-        assert_eq!(calc_mapq(50, None, -1, None, i, s, true), 22);
-        assert_eq!(calc_mapq(150, None, 0, None, i, s, true), 44); // readLen-invariant for as_best 0
+        assert_eq!(
+            calc_mapq(50, None, 0, None, ScoreModel::hisat2_local(i, s)),
+            44
+        );
+        assert_eq!(
+            calc_mapq(50, None, -1, None, ScoreModel::hisat2_local(i, s)),
+            22
+        );
+        assert_eq!(
+            calc_mapq(150, None, 0, None, ScoreModel::hisat2_local(i, s)),
+            44
+        ); // readLen-invariant for as_best 0
         // Second-best, as_best 0 @50bp (best_over==diff): best_diff = |second| = 1 ≥ 0.9·diff (0.704)
         // → flat top bucket 40.
-        assert_eq!(calc_mapq(50, None, 0, Some(-1), i, s, true), 40);
-        assert_eq!(calc_mapq(50, None, -1, Some(-1), i, s, true), 0); // best_over<0, best_diff 0
+        assert_eq!(
+            calc_mapq(50, None, 0, Some(-1), ScoreModel::hisat2_local(i, s)),
+            40
+        );
+        assert_eq!(
+            calc_mapq(50, None, -1, Some(-1), ScoreModel::hisat2_local(i, s)),
+            0
+        ); // best_over<0, best_diff 0
         // 🔴 PE summed-ln interior `==diff` leaf — the ln()-DERIVED bucket boundary: readLen
         // 150+150 → scMin = -0.4·ln(150) = -2.004254…, diff = 2.004254…; diff·0.5 = 1.002127, so
         // best_diff 1 falls in the 0.4 bucket (NOT 0.5) and best_over==diff → 34. The bucket is
@@ -407,12 +467,15 @@ mod tests {
         // drop diff·0.5 below 1 → 35), so it pins the local ladder against the real ln() scMin — the
         // regime the (20,8) tests (diff=10/integer boundaries) never reach. (Margin to the boundary
         // here is ~0.002, not 1 ULP — the value is robust across platforms.)
-        assert_eq!(calc_mapq(150, Some(150), 0, Some(-1), i, s, true), 34);
+        assert_eq!(
+            calc_mapq(150, Some(150), 0, Some(-1), ScoreModel::hisat2_local(i, s)),
+            34
+        );
         // Routing: calc_mapq(local=true) delegates to the local ladder fed the ln() scMin, for (0,-0.2).
         for len in [40usize, 50, 75, 100, 150] {
             let sc = i + s * (len as f64).ln();
             assert_eq!(
-                calc_mapq(len, None, 0, Some(-1), i, s, true),
+                calc_mapq(len, None, 0, Some(-1), ScoreModel::hisat2_local(i, s)),
                 calc_mapq_local(0.0 - sc, sc.abs(), 0, Some(-1))
             );
         }
