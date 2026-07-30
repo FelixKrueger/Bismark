@@ -65,6 +65,97 @@ impl Aligner {
     }
 }
 
+/// Which `--score-min` function form the aligner was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreMinForm {
+    /// `L,<i>,<s>` — `scMin = i + s·len`.
+    Linear,
+    /// `G,<i>,<s>` — `scMin = i + s·ln(len)`.
+    Log,
+}
+
+/// How alignment scores are normalized for MAPQ. Replaces the former
+/// `(intercept, slope, local)` trio that rode through every merge/select
+/// signature. Built once in [`resolve`], the only place `--local` and the
+/// resolved aligner are both known. Fields are private so the score model can
+/// only be set as a consistent whole.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScoreModel {
+    intercept: f64,
+    slope: f64,
+    form: ScoreMinForm,
+    local_ladder: bool,
+}
+
+impl ScoreModel {
+    /// The general constructor, used by [`resolve`].
+    pub fn from_mode(intercept: f64, slope: f64, local: bool, _aligner: Aligner) -> Self {
+        // The `ln()` scMin follows `--local` alone, for every aligner — including HISAT2,
+        // which is emitted the linear `L` form. Preserved verbatim here; see #1079.
+        Self {
+            intercept,
+            slope,
+            form: if local {
+                ScoreMinForm::Log
+            } else {
+                ScoreMinForm::Linear
+            },
+            local_ladder: local,
+        }
+    }
+
+    /// End-to-end (any aligner).
+    pub fn end_to_end(intercept: f64, slope: f64) -> Self {
+        Self::from_mode(intercept, slope, false, Aligner::Bowtie2)
+    }
+
+    /// Bowtie 2 `--local`.
+    pub fn bowtie2_local(intercept: f64, slope: f64) -> Self {
+        Self::from_mode(intercept, slope, true, Aligner::Bowtie2)
+    }
+
+    /// HISAT2 `--local`.
+    pub fn hisat2_local(intercept: f64, slope: f64) -> Self {
+        Self::from_mode(intercept, slope, true, Aligner::Hisat2)
+    }
+
+    /// Use the `--local` MAPQ ladder (Perl 4082-4178) rather than the end-to-end one.
+    pub(crate) fn local_ladder(&self) -> bool {
+        self.local_ladder
+    }
+
+    /// Minimum valid alignment score, summed over mates (Perl 3932-36).
+    fn score_min(&self, read1_len: usize, read2_len: Option<usize>) -> f64 {
+        let term = |len: usize| {
+            self.intercept
+                + self.slope
+                    * match self.form {
+                        ScoreMinForm::Log => (len as f64).ln(),
+                        ScoreMinForm::Linear => len as f64,
+                    }
+        };
+        let mut sc_min = term(read1_len);
+        if let Some(l2) = read2_len {
+            sc_min += term(l2);
+        }
+        sc_min
+    }
+
+    /// `(bestOver, diff)` — the two MAPQ ladder inputs, derived together so a
+    /// caller cannot combine a `scMin` and a `diff` computed from different reads.
+    pub(crate) fn normalize(
+        &self,
+        read1_len: usize,
+        read2_len: Option<usize>,
+        as_best: i64,
+    ) -> (f64, f64) {
+        let sc_min = self.score_min(read1_len, read2_len);
+        // scores vary by up to this much (max AS = 0)
+        let diff = sc_min.abs();
+        (as_best as f64 - sc_min, diff)
+    }
+}
+
 /// Bisulfite library type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryType {
@@ -228,14 +319,11 @@ pub struct RunConfig {
     pub aligner_options: String,
     /// Gap penalties (for later MAPQ).
     pub gap_penalties: GapPenalties,
-    /// `--score_min` intercept (default `0.0`) — for `calc_mapq`.
-    pub score_min_intercept: f64,
-    /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
-    pub score_min_slope: f64,
-    /// `--local` mode (= `cli.local`): `calc_mapq` uses `ln(readLen)` scMin + the local
-    /// MAPQ ladder. The `--score_min` defaults are aligner-dependent: Bowtie 2-local =
-    /// `(20.0, 8.0)` (G-form); HISAT2-local = `(0.0, -0.2)` (L-form) — see `score_min_params`.
-    pub score_min_local: bool,
+    /// Score normalization for `calc_mapq`: the `--score_min` parameters, the
+    /// `scMin` function form and the ladder choice. The `--score_min` defaults are
+    /// aligner-dependent: Bowtie 2-local = `(20.0, 8.0)` (G-form); HISAT2-local and
+    /// end-to-end = `(0.0, -0.2)` (L-form) — see `score_min_params`.
+    pub score_model: ScoreModel,
     /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
     /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
     /// pushed to the *aligner options*, NOT this variable). Consumed by the PE
@@ -635,7 +723,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         hisat2_multicore_remap,
     )?;
     let (score_min_intercept, score_min_slope) = options::score_min_params(cli, aligner)?;
-    let score_min_local = cli.local; // --local: ln() scMin + the local MAPQ ladder
+    // The only place `--local` and the resolved aligner are both known.
+    let score_model =
+        ScoreModel::from_mode(score_min_intercept, score_min_slope, cli.local, aligner);
     reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {
@@ -685,9 +775,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         detected_aligner,
         aligner_options,
         gap_penalties,
-        score_min_intercept,
-        score_min_slope,
-        score_min_local,
+        score_model,
         // Perl 8047: `$dovetail = 1 unless $no_dovetail` — independent of the aligner.
         dovetail: !cli.no_dovetail,
         phred64: cli.phred64,
