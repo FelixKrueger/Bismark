@@ -74,49 +74,85 @@ pub enum ScoreMinForm {
     Log,
 }
 
+/// Bowtie 2's `--ma` default — the per-base perfect-alignment score in `--local`
+/// mode (documented in Bismark's own `--local` help text). Not settable in
+/// Bismark; a future `--ma` passthrough would have to feed this instead.
+pub const BOWTIE2_LOCAL_MATCH_BONUS: f64 = 2.0;
+
 /// How alignment scores are normalized for MAPQ. Replaces the former
 /// `(intercept, slope, local)` trio that rode through every merge/select
 /// signature. Built once in [`resolve`], the only place `--local` and the
-/// resolved aligner are both known. Fields are private so the score model can
-/// only be set as a consistent whole.
+/// resolved aligner are both known.
+///
+/// Fields are private and there is a single general constructor, so `match_bonus` and
+/// `form` can only be set together — outside this module they cannot be set at all.
+/// Within it, keeping them consistent is [`from_emitted`](Self::from_emitted)'s job:
+/// only Bowtie 2-local has a nonzero perfect score, and only Bowtie 2-local is emitted
+/// the `G` form.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScoreModel {
     intercept: f64,
     slope: f64,
     form: ScoreMinForm,
     local_ladder: bool,
+    /// Perfect-alignment score per base; nonzero only for Bowtie 2 `--local`.
+    match_bonus: f64,
 }
 
 impl ScoreModel {
-    /// The general constructor, used by [`resolve`].
-    pub fn from_mode(intercept: f64, slope: f64, local: bool, _aligner: Aligner) -> Self {
-        // The `ln()` scMin follows `--local` alone, for every aligner — including HISAT2,
-        // which is emitted the linear `L` form. Preserved verbatim here; see #1079.
+    /// The general constructor, used by [`resolve`]. `form` is the form actually
+    /// emitted to the aligner (from `options::score_min_params`) — never re-derived
+    /// here, so the `--score-min` option and the MAPQ `scMin` stay one fact (#1079 D2).
+    pub fn from_emitted(
+        intercept: f64,
+        slope: f64,
+        form: ScoreMinForm,
+        local: bool,
+        aligner: Aligner,
+    ) -> Self {
         Self {
             intercept,
             slope,
-            form: if local {
-                ScoreMinForm::Log
-            } else {
-                ScoreMinForm::Linear
-            },
+            form,
             local_ladder: local,
+            // Only Bowtie 2 --local scores matches positively; every other mode's
+            // best possible score is 0. HISAT2-local is deliberately 0 pending #1079.
+            match_bonus: if local && aligner == Aligner::Bowtie2 {
+                BOWTIE2_LOCAL_MATCH_BONUS
+            } else {
+                0.0
+            },
         }
     }
 
-    /// End-to-end (any aligner).
+    /// End-to-end (any aligner) — linear `L` form. The aligner argument is irrelevant with
+    /// `local = false` (no aligner earns a perfect score end-to-end), which
+    /// `score_model_construction_matrix` pins for all four. Revisit if the minimap2/rammap
+    /// follow-up gives a non-local aligner a nonzero match bonus.
     pub fn end_to_end(intercept: f64, slope: f64) -> Self {
-        Self::from_mode(intercept, slope, false, Aligner::Bowtie2)
+        Self::from_emitted(
+            intercept,
+            slope,
+            ScoreMinForm::Linear,
+            false,
+            Aligner::Bowtie2,
+        )
     }
 
-    /// Bowtie 2 `--local`.
+    /// Bowtie 2 `--local` — logarithmic `G` form, perfect score `2·len`.
     pub fn bowtie2_local(intercept: f64, slope: f64) -> Self {
-        Self::from_mode(intercept, slope, true, Aligner::Bowtie2)
+        Self::from_emitted(intercept, slope, ScoreMinForm::Log, true, Aligner::Bowtie2)
     }
 
-    /// HISAT2 `--local`.
+    /// HISAT2 `--local` — emitted the linear `L` form, so `scMin` is linear too.
     pub fn hisat2_local(intercept: f64, slope: f64) -> Self {
-        Self::from_mode(intercept, slope, true, Aligner::Hisat2)
+        Self::from_emitted(
+            intercept,
+            slope,
+            ScoreMinForm::Linear,
+            true,
+            Aligner::Hisat2,
+        )
     }
 
     /// Use the `--local` MAPQ ladder (Perl 4082-4178) rather than the end-to-end one.
@@ -141,8 +177,22 @@ impl ScoreModel {
         sc_min
     }
 
+    /// Best possible alignment score, summed over mates (Bowtie 2 `unique.h:207-209`).
+    fn perfect(&self, read1_len: usize, read2_len: Option<usize>) -> f64 {
+        self.match_bonus * (read1_len + read2_len.unwrap_or(0)) as f64
+    }
+
     /// `(bestOver, diff)` — the two MAPQ ladder inputs, derived together so a
     /// caller cannot combine a `scMin` and a `diff` computed from different reads.
+    ///
+    /// `diff` is the score range a valid alignment can span. Bowtie 2 computes it as
+    /// `max(1, perfectScore - scMin)` (`unique.h:218`); modes whose perfect score is 0
+    /// keep the historical `abs(scMin)`, which is byte-frozen and NOT equivalent in
+    /// general — `abs(scMin) == -scMin` only for `scMin <= -1` (#1079).
+    ///
+    /// A NaN `scMin` (only reachable from a NaN `--score_min`, which the shape-only validation
+    /// would accept) propagates through `abs()` but is swallowed to `1.0` by `max()`; neither
+    /// yields a meaningful MAPQ, and no caller can produce it today.
     pub(crate) fn normalize(
         &self,
         read1_len: usize,
@@ -150,8 +200,11 @@ impl ScoreModel {
         as_best: i64,
     ) -> (f64, f64) {
         let sc_min = self.score_min(read1_len, read2_len);
-        // scores vary by up to this much (max AS = 0)
-        let diff = sc_min.abs();
+        let diff = if self.match_bonus > 0.0 {
+            (self.perfect(read1_len, read2_len) - sc_min).max(1.0)
+        } else {
+            sc_min.abs()
+        };
         (as_best as f64 - sc_min, diff)
     }
 }
@@ -722,10 +775,16 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         layout.is_paired(),
         hisat2_multicore_remap,
     )?;
-    let (score_min_intercept, score_min_slope) = options::score_min_params(cli, aligner)?;
+    let (score_min_intercept, score_min_slope, score_min_form) =
+        options::score_min_params(cli, aligner)?;
     // The only place `--local` and the resolved aligner are both known.
-    let score_model =
-        ScoreModel::from_mode(score_min_intercept, score_min_slope, cli.local, aligner);
+    let score_model = ScoreModel::from_emitted(
+        score_min_intercept,
+        score_min_slope,
+        score_min_form,
+        cli.local,
+        aligner,
+    );
     reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {

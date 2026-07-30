@@ -191,7 +191,7 @@ jobs:
           command -v samtools >/dev/null || { echo "samtools missing"; exit 1; }
           perl -v
           samtools --version >/dev/null
-      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 12 ran)
+      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 13 ran)
         env:
           BISMARK_REQUIRE_PERL: "1"
         run: |
