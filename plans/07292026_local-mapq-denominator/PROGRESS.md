@@ -18,8 +18,10 @@
 | 6b | Apply all review findings | ✅ Done | **All** findings applied (1 High, 6 Medium, ~12 Low) + all 6 coverage gaps closed. fmt clean, 0 clippy, **2109 pass / 0 fail**. Three fault injections re-verified. See PLAN §12b |
 | 7 | File deferred issues | ✅ Done | **[#1080](https://github.com/FelixKrueger/Bismark/issues/1080)** HISAT2 perfect score · **[#1081](https://github.com/FelixKrueger/Bismark/issues/1081)** minimap2/rammap positive-AS. Both cited in CHANGELOG + code |
 | 8 | CHANGELOG | ✅ Done | Under `## Unreleased`. **Version bump deferred to the release cut** (Felix, 2026-07-29) — all three literals stay at 3.1.0 |
-| 9 | Commit + PRs | ✅ Done | Two stacked PRs off `dev`: **[#1082](https://github.com/FelixKrueger/Bismark/pull/1082)** refactor (`rust/local-mapq-refactor`, `ede8899`) → **[#1083](https://github.com/FelixKrueger/Bismark/pull/1083)** fix (`rust/local-mapq-denominator`, `d1fbc85`). PR links posted on #1079 |
-| 10 | CI green + review | ⏸ Awaiting | Watch both PRs; #1083 must merge after #1082 |
+| 9 | Commit + PRs | ✅ Done | Two stacked PRs off `dev`: **[#1082](https://github.com/FelixKrueger/Bismark/pull/1082)** refactor → **[#1083](https://github.com/FelixKrueger/Bismark/pull/1083)** fix. PR links posted on #1079 |
+| 10 | **#1082 MERGED** | ✅ Done | Squash-merged to `dev` as `6129d4d` (14/14 green). ⚠️ Squash orphaned #1083's base → rebased `rust/local-mapq-denominator` with `git rebase --onto origin/dev ede8899`, verified tree byte-identical to the tested state, re-ran gates (2109 pass), force-pushed, retargeted #1083 to `dev`, deleted the merged branch |
+| 11 | #1083 CI after rebase | ✅ Green | 15 pass / 1 skip (`deploy`, merge-only). `perl-oracle byte-identity` passes — independent confirmation the end-to-end path is untouched |
+| 12 | #1083 review + merge | ⏸ Awaiting | Needs a human approving review |
 | 11 | Version bump | 📋 Release cut | All three literals stay at 3.1.0; CHANGELOG entry sits under `## Unreleased` |
 
 ## Key decisions
