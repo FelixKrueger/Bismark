@@ -2262,6 +2262,15 @@ fn hisat2_local_softclip_roundtrip_and_options() {
         has_softclip,
         "the --local soft-clipped CIGAR (2S4M) must round-trip into the BAM"
     );
+    // HISAT2-local MAPQ, read back out of the BAM — the only assertion that would catch the
+    // ladder regressing to Bowtie 2's local one (#1080). 6 bp, AS:i:0, no second-best:
+    // scMin = -0.2·6 = -1.2, diff = 1.2, bestOver = 1.2 == diff → the end-to-end top rung.
+    assert_eq!(
+        u8::from(r.mapping_quality().unwrap()),
+        42,
+        "HISAT2 --local must use the END-TO-END ladder; 44 means the local ladder is still \
+         selected (its ceiling)"
+    );
 }
 
 /// PE fake HISAT2 for the `--local` soft-clip path — a soft-clipped (`2S4M`) proper pair
@@ -2347,6 +2356,17 @@ fn hisat2_local_pe_softclip_roundtrip() {
         assert!(
             has_softclip,
             "each PE --local mate's 2S4M CIGAR must round-trip"
+        );
+        // PE HISAT2-local MAPQ out of the BAM — the ladder gate for the paired path (#1080).
+        // Read 1's `ZS` is masked on the HISAT2 PE path, so sum_second = as1(0) + zs2(-2)
+        // = -2, NOT -4 (same rule the end-to-end masked-path test below pins).
+        // scMin = 2·(-0.2·6) = -2.4, diff = 2.4, bestOver = 2.4 == diff, bestDiff = 2, and
+        // 0.8·diff = 1.92 <= 2 < 2.16 = 0.9·diff → the 0.8 bucket with bestOver == diff → 38.
+        // The local ladder's 0.8 rung is flat at 39, so this cell distinguishes them.
+        assert_eq!(
+            u8::from(r.inner().mapping_quality().unwrap()),
+            38,
+            "HISAT2 --local PE must use the END-TO-END ladder; 39 means the local one"
         );
     }
 }

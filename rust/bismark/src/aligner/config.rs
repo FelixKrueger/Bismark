@@ -116,7 +116,10 @@ impl ScoreModel {
             form,
             // Only Bowtie 2 --local scores matches positively; every other mode's best
             // possible score is 0 — including HISAT2, which forces its match bonus to 0
-            // (hisat2.cpp:3916) and has no --local of its own.
+            // (hisat2.cpp:3916) and exposes no --local option of its own.
+            // Assumes Bismark never passes --ma or --bwa-sw-like through; if that changes,
+            // guard at the CLI (--ma >= 0, --bwa-sw-like unsupported) rather than loosening
+            // the `> 0.0` tests below, which would desynchronise the ladder from `normalize`.
             match_bonus: if local && aligner == Aligner::Bowtie2 {
                 BOWTIE2_LOCAL_MATCH_BONUS
             } else {
@@ -162,9 +165,12 @@ impl ScoreModel {
     /// go down, which is the end-to-end regime. This is why HISAT2 `--local` uses the
     /// end-to-end ladder — its match bonus is always 0 (#1080).
     ///
-    /// NB this couples the two deliberately: if #1081 gives minimap2/rammap a nonzero
-    /// match bonus they would also pick up the local ladder, which is what Bowtie 2's
-    /// own logic implies for a non-monotone aligner and is the decision #1081 must make.
+    /// NB this couples the two deliberately: if #1081 gives minimap2/rammap a nonzero match
+    /// bonus they would also pick up the local ladder. That is a default that forces the
+    /// question rather than an implication — minimap2 derives MAPQ from chain scores, not a
+    /// Bowtie-family ladder. It is enforced, not just documented: `score_model_construction_
+    /// matrix` asserts `!local_ladder()` for all four aligners end-to-end, so #1081 cannot
+    /// add a bonus without failing a test.
     pub(crate) fn local_ladder(&self) -> bool {
         self.match_bonus > 0.0
     }

@@ -7,11 +7,16 @@
 //! **bit-identical `f64`** for this arithmetic, so the exact `==`/`>=` float
 //! comparisons are intentional (an epsilon comparison would break parity).
 //!
-//! Two `--local` paths deviate from Perl deliberately (#1079): Bowtie 2-local's denominator
-//! (Perl normalized by `abs(scMin)`, which assumes a perfect score of 0 — true only
-//! end-to-end), and HISAT2-local's `scMin` form (Perl evaluated it logarithmically while
-//! HISAT2 is emitted the linear `L` form). **End-to-end, for every aligner, remains
-//! byte-identical to Perl.** See [`ScoreModel`] for the per-mode score model.
+//! Three `--local` behaviours deviate from Perl deliberately:
+//!  - Bowtie 2-local's **denominator** — Perl normalized by `abs(scMin)`, which assumes a
+//!    perfect score of 0, true only end-to-end (#1079).
+//!  - HISAT2-local's **`scMin` form** — Perl evaluated it logarithmically while HISAT2 is
+//!    emitted the linear `L` form (#1079).
+//!  - HISAT2-local's **ladder** — Perl keyed it off `--local`; both Bowtie 2 and HISAT2 key it
+//!    off monotone scoring, and HISAT2's always is, so it takes the end-to-end ladder (#1080).
+//!
+//! So the local ladder is now reached by **Bowtie 2 `--local` only**. **End-to-end, for every
+//! aligner, remains byte-identical to Perl.** See [`ScoreModel`] for the per-mode score model.
 
 use crate::aligner::config::ScoreModel;
 
@@ -132,8 +137,8 @@ fn calc_mapq_end_to_end(best_over: f64, diff: f64, as_best: i64, as_second: Opti
 /// Local-mode MAPQ ladder — a verbatim port of Perl `calc_mapq`'s `--local`
 /// branch (`bismark:4082-4178`). Distinct return values AND a uniform `diff*0.5`
 /// sub-threshold (NOT the end-to-end `0.84/0.68/0.88/0.67`). `best_over`/`diff`
-/// come from [`ScoreModel::normalize`] — the `scMin` form and the denominator are
-/// both aligner-dependent in local mode.
+/// come from [`ScoreModel::normalize`]. Reached by **Bowtie 2 `--local` only**: the ladder
+/// follows the match bonus, and Bowtie 2-local is the sole mode with a nonzero one (#1080).
 #[allow(clippy::float_cmp)] // exact f64 equality matches Perl `$bestOver == $diff` (ln() bit-safe per spike)
 fn calc_mapq_local(best_over: f64, diff: f64, as_best: i64, as_second: Option<i64>) -> u8 {
     let Some(sec) = as_second else {
@@ -564,6 +569,20 @@ mod tests {
             calc_mapq(150, None, 0, None, ScoreModel::hisat2_local(i, s)),
             42
         );
+        // A mid rung and the FLOOR — the consequential end of this change. The local ladder's
+        // no-second-best floor was 22; the end-to-end one is 0, so a UNIQUELY aligned
+        // HISAT2-local read can now be MAPQ 0, which it never could before. Downstream `-q`
+        // filters treat 0 as discard, so this is the rung users will notice.
+        // as_best -5 → best_over 5 = 0.5·diff → 23  (local ladder gave 36)
+        assert_eq!(
+            calc_mapq(50, None, -5, None, ScoreModel::hisat2_local(i, s)),
+            23
+        );
+        // as_best -8 → best_over 2 = 0.2·diff, below every rung → 0  (local ladder gave 22)
+        assert_eq!(
+            calc_mapq(50, None, -8, None, ScoreModel::hisat2_local(i, s)),
+            0
+        );
         // Second-best @50bp, as_best 0: best_diff = |0| - |-1| = 1, and 1 ≥ diff·0.1 = 1 exactly
         // → the 0.1 bucket, where best_over == diff → 30  (was 31). (`10.0 * 0.1 == 1.0` is exact
         // in IEEE-754 and Perl computes the same double, so this is deterministic — but the
@@ -656,6 +675,9 @@ mod tests {
         assert!(!m.local_ladder());
         let (_, diff) = m.normalize(100, None, 0);
         assert_eq!(diff, 20.0); // abs(-0.2·100), NOT max(1, 0 - scMin)
+        // NB after #1080 this model is *equal* to end_to_end(0.0, -0.2) — same fields, and the
+        // same MAPQ for every input — so this equality is weaker than it reads. The
+        // `local_ladder()` and `diff` assertions above are what actually pin the mode.
         assert_eq!(m, ScoreModel::hisat2_local(0.0, -0.2));
 
         // End-to-end, every aligner: linear, perfect 0, end-to-end ladder — byte-frozen.
@@ -715,7 +737,7 @@ mod tests {
 
     /// HISAT2-local's denominator stays `abs(scMin)` (its perfect score is deliberately 0),
     /// now over the **linear** `scMin` it is actually emitted. Only the shape is frozen — the
-    /// values moved with D2, which is what `local_hisat2_uses_the_linear_form_it_was_emitted`
+    /// values moved with D2, which is what `local_hisat2_uses_the_linear_form_and_end_to_end_ladder`
     /// pins. The `--score_min` axis matters here too: `abs()` must not become `max(1, -scMin)`.
     #[test]
     fn hisat2_local_denominator_is_abs_of_the_linear_scmin() {

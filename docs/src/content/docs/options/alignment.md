@@ -108,7 +108,7 @@ If system resources are plentiful this is a viable option to speed up the alignm
 
 In this mode, it is not required that the entire read aligns from one end to the other. Rather, some characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible alignment score. For Bowtie 2, the match bonus `--ma` (default: 2) is used in this mode, and the best possible alignment score is equal to the match bonus (`--ma`) times the length of the read. This is mutually exclusive with end-to-end alignments. DEFAULT: OFF.
 
-  Reported MAPQ values are normalised against that best possible score, so local-mode MAPQ differs from end-to-end MAPQ for the same alignment. This applies to Bowtie 2 only: HISAT2 has no local mode of its own and always scores matches as 0, so with `--hisat2 --local` the best possible score is 0 and MAPQ is reported on the same scale as end-to-end.
+  Reported MAPQ values are normalised against that best possible score, so local-mode MAPQ differs from end-to-end MAPQ for the same alignment. This applies to Bowtie 2 only: HISAT2 exposes no `--local` option of its own and always scores matches as 0, so with `--hisat2 --local` the best possible score is 0 and MAPQ is reported on the same scale as end-to-end. `--local` still enables soft-clipping for HISAT2 (Bismark drops `--no-softclip`); only the MAPQ scale is shared with end-to-end.
 
 ##### Output:
 

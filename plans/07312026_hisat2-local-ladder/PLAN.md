@@ -98,7 +98,7 @@ Keeping both would leave them redundant today and re-open the "constructible in 
 ## 4. Implementation outline
 
 1. **`config.rs`** — delete the `local_ladder` field; construct without it; make `local_ladder()` return `self.match_bonus > 0.0` with the `unique.h:236` rationale and the #1081 note. Update `ScoreModel`'s doc comment (it currently describes `local_ladder` as a stored flag).
-2. **`mapq.rs`** — recompute the HISAT2 expectations in `local_hisat2_uses_the_linear_form_it_was_emitted` (hand-derived, see §6), and rename it to say what it now pins. Update `score_model_construction_matrix`: HISAT2-local must assert `!local_ladder()`.
+2. **`mapq.rs`** — recompute the HISAT2 expectations in `local_hisat2_uses_the_linear_form_and_end_to_end_ladder` (hand-derived, see §6), and rename it to say what it now pins. Update `score_model_construction_matrix`: HISAT2-local must assert `!local_ladder()`.
 3. **Docs** — retire "for HISAT2, it is currently not exactly known how the best alignment is calculated" in the Perl `--local` help and in `docs/.../options/alignment.md`; replace with the confirmed value and its consequence.
 4. **CHANGELOG** — under the existing `## Unreleased`, fold into the HISAT2 bullet added by #1083 rather than adding a competing one, so the release reads as one HISAT2-local change.
 5. **No version bump** — release cut, as with #1083.
@@ -163,3 +163,44 @@ Full suite + `cargo fmt --check` + `cargo clippy --all-targets` clean.
 - **Efficiency:** removes a field (32 → 24 bytes plus padding) and one branch's worth of state. No runtime cost.
 - **Edge cases:** the `50, None, -1, Some(-1)` cell returns `1` under *both* ladders, so it is kept as a control that the test is exercising the right cells rather than merely re-baselining everything.
 - **Risk:** a second consecutive MAPQ change to HISAT2-local. Mitigated by bundling into the same unreleased cycle as #1083 so users see one re-baseline, and by folding into that CHANGELOG bullet rather than adding a second.
+
+---
+
+## 9. Post-review fixes (2026-07-31)
+
+Dual code review (`CODE_REVIEW_A.md` / `CODE_REVIEW_B.md`) — both verdicts **correct, ship it**, no Critical findings. All findings applied. No contradictions between reviewers; each caught something the other missed.
+
+### A closed the concern this plan raised
+
+Reducing upstream's `monotone = matchType == COST_MODEL_CONSTANT && matchConst == 0` to `match_bonus > 0.0` looked like dropping a conjunct. It isn't: `scoring.h:163` and `:197` **hard-code** `matchType = COST_MODEL_CONSTANT` and `:227` asserts `matchConst >= 0`, so `monotone ⟺ !(match_bonus > 0)` is **exact** and no caller can construct a counterexample. A also checked a path this plan missed — `-P/--preset` *is* live, but presets only emit policy tokens, so even `-P sensitive-local` leaves `localAlign == false`.
+
+### The finding that mattered most (A HIGH-1) — the floor, not the ceiling
+
+The local ladder's no-second-best floor is `22`; the end-to-end one is `0`. So a **uniquely aligned** HISAT2-local read with `bestOver/diff < 0.3` now returns **0**, which it previously never could — and MAPQ 0 is treated as discard by `samtools view -q 1` and methylseq's filters. Worse, nothing tested it: all three no-second-best cells sat on the top rung, leaving the entire changed sub-ladder (`40/24/23/8/3/0` for `42/41/36/28/24/22`) unexercised.
+
+**A5 in this plan is why it was missed** — it named "the 44 ceiling" as the risk, and the ceiling is what then got tested and documented. Enumerating one instance of a class licensed ignoring the rest of it. Fixed: two cells added (`AS -5 → 23`, `AS -8 → 0`, both hand-derived) and the CHANGELOG now states the floor move as the consequential one.
+
+### B H1 — the change was invisible at BAM level
+
+Two `--hisat2 --local` integration tests already read the output BAM and both of their MAPQ values move with this commit, but neither asserted MAPQ — so the ladder flip passed through unexercised end-to-end, the exact standard #1079 established. Assertions added to both.
+
+**B's predicted PE value was wrong and re-deriving caught it.** B expected 40→39 by summing `ZS:i:-2` from both mates. Bismark **masks read 1's `ZS`** on the HISAT2 PE path, so `sum_second = as1(0) + zs2(-2) = -2`, giving `bestDiff = 2` against `diff = 2.4` → the 0.8 bucket → **38** (local ladder: flat 39). The assertion is 38 with that derivation in the comment; had the observed value simply been pasted in, the reasoning would have been wrong even though the number was right.
+
+### Agreed by both — the CHANGELOG overclaimed
+
+The headline asserted HISAT2-local "now matches what HISAT2 itself would compute", contradicting A1 in this plan. Between them the reviewers listed four divergences from HISAT2's own `mapq()`: integer `scMin` truncation; no `max(1, …)` clamp on `diff`; a **60** early return for a unique alignment where no second-best was sought (Bismark never returns 60, so the claim was false for the commonest case); and cross-instance aggregation of best/second-best. Retitled to "uses the MAPQ ladder HISAT2 itself would select", with the limitation stated inline.
+
+### Also applied
+
+| Finding | Fix |
+|---|---|
+| B M1 | `mapq.rs` header now lists **three** deliberate `--local` deviations and notes the local ladder is Bowtie 2-only |
+| B M2 | `calc_mapq_local`'s doc no longer says the form/denominator are "aligner-dependent" — it is Bowtie 2-only |
+| B M3 | stale references to the renamed test (`mapq.rs`, this plan) |
+| B M4 | docs + Perl help: `--local` still enables soft-clipping for HISAT2; "exposes no `--local` **option**" (HISAT2 does have local DP via `--bwa-sw-like`) |
+| B L1 | note that `hisat2_local(i,s) == end_to_end(i,s)` now holds, so that equality assertion is weaker than it reads |
+| B L2 | pre-existing error in the #1079 CHANGELOG bullet: `39` is the unconditional 0.8 rung, not a `best_over == diff` rung |
+| B L3 | `from_emitted` records the `--ma`/`--bwa-sw-like` assumption and where to guard it |
+| B L4 | **A2 is enforced, not just documented** — `score_model_construction_matrix` asserts `!local_ladder()` for all four aligners end-to-end, so #1081 cannot add a match bonus without failing a test. Corrects this plan's weaker claim. |
+
+**Not applied:** B L5 (a `monotone()` reading helper) — explicitly optional, and B warned against folding the two `> 0.0` predicates since they encode different decisions that merely coincide. B L6 was checked and dismissed by B itself.
