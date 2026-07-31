@@ -82,6 +82,169 @@ esac
     write_exec(&dir.join("bowtie2"), script);
 }
 
+/// Like [`make_fake_bowtie2_mapped`] but reports `AS:i:6` instead of `AS:i:0`, so the
+/// alignment sits partway between `scMin` and the perfect local score. That is what makes the
+/// local score model observable end-to-end: with `--score_min G,1,1` on this 6 bp read the
+/// three states give three different MAPQs — **24** correct, **22** if the `scMin` form is
+/// wrong, **44** if the match bonus never arrived. (`AS:i:0` — the value the sibling fixture
+/// uses — yields 22 under all of them, which is why it cannot detect anything.)
+///
+/// The AS is decoupled from the 6M CIGAR on purpose: MAPQ reads the `AS:i:` tag, and this
+/// fixture exists to prove the resolved score model reaches the BAM, not to model Bowtie 2's
+/// scoring of a specific CIGAR.
+#[cfg(unix)]
+fn make_fake_bowtie2_local_partial_score(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:6\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Bowtie 2 `--local` MAPQ, read back out of the BAM — the wiring gate for #1079.
+///
+/// Every other test of the local denominator is a unit test on `calc_mapq`. This one drives
+/// `config::resolve` → merge → BAM, so it is the only thing that would catch the resolved
+/// `ScoreModel` losing its Bowtie 2-local match bonus (which would silently turn the fix
+/// into a no-op while every unit test still passed).
+#[cfg(unix)]
+#[test]
+fn bowtie2_local_mapq_uses_the_perfect_score_denominator_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_local_partial_score(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap(); // 6 bp read
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--local")
+        // A legal always-positive G function with a NONZERO slope. The slope must be nonzero
+        // for the test to see the `scMin` FORM: with `G,1,0` both `1 + 0·ln(len)` and
+        // `1 + 0·len` are exactly 1.0, so a linear/logarithmic mix-up would be invisible.
+        .arg("--score_min")
+        .arg("G,1,1")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let mapq = u8::from(recs[0].inner().mapping_quality().unwrap());
+    // G,1,1 on a 6 bp read: scMin = 1 + ln(6) = 2.7918, perfect = 2·6 = 12,
+    // diff = max(1, 12 - 2.7918) = 9.2082, bestOver = 6 - 2.7918 = 3.2082,
+    // ratio 0.3484 → the 0.3 rung → 24.
+    //
+    // The two ways the wiring can break give distinct values, so the MAPQ names the fault:
+    //   44 → match bonus lost (diff fell back to abs(scMin) = 2.7918, ratio 1.15, top rung)
+    //   22 → wrong scMin form (linear: scMin = 7, bestOver = -1, every rung fails)
+    assert_eq!(
+        mapq, 24,
+        "Bowtie 2-local MAPQ must use max(1, perfect - scMin) over the logarithmic scMin; \
+         44 means the match bonus never reached the resolved ScoreModel, 22 means the \
+         score-min form did not"
+    );
+}
+
+/// A fake `bowtie2` for the **default** `--local` parameters: a 25 bp read at chr1:1 with
+/// `AS:i:48` (just under the perfect local score of 50), so `perfect - scMin` is small and
+/// positive. Needs a 25 bp read because `G,20,8` gives `scMin > perfect` below ~23 bp —
+/// real Bowtie 2 cannot report such an alignment at all, and the denominators stop differing.
+#[cfg(unix)]
+fn make_fake_bowtie2_local_25bp(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t25M\t*\t0\t0\tACGTACGTACGTACGTACGTACGTA\tFFFFFFFFFFFFFFFFFFFFFFFFF\tAS:i:48\tMD:Z:25" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// V10 cell (a): Bowtie 2 `--local` MAPQ out of a BAM at the **default** `G,20,8`, i.e. the
+/// configuration real users run. The sibling test proves the same wiring under a hand-picked
+/// `--score_min` on a 6 bp read Bowtie 2 could never report; this one uses no `--score_min`
+/// at all, so nothing about the score model is supplied by the test.
+#[cfg(unix)]
+#[test]
+fn bowtie2_local_mapq_at_default_score_min_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    // 27 bp chr1 so the 25 bp alignment plus the +2 context window fits.
+    make_genome_chr1(genome.path(), b"ACGTACGTACGTACGTACGTACGTACG");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_local_25bp(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(
+        &read,
+        b"@r1\nACGTACGTACGTACGTACGTACGTA\n+\nFFFFFFFFFFFFFFFFFFFFFFFFF\n",
+    )
+    .unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--local")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let mapq = u8::from(recs[0].inner().mapping_quality().unwrap());
+    // Default G,20,8 at len 25: scMin = 20 + 8·ln(25) = 45.7510066, perfect = 50,
+    // diff = 4.2489934, bestOver = 48 - 45.7510066 = 2.2489934, ratio 0.52930 → rung 36.
+    // Either wiring fault collapses to 22: a lost match bonus makes diff = 45.751 (ratio
+    // 0.049), and a linear scMin makes bestOver negative.
+    assert_eq!(
+        mapq, 36,
+        "Bowtie 2-local MAPQ at the DEFAULT --score_min must use max(1, perfect - scMin) \
+         over the logarithmic scMin; 22 means either the match bonus or the score-min form \
+         did not reach the resolved ScoreModel"
+    );
+}
+
 #[test]
 fn version_flag_prints_uniform_suite_line() {
     // Uniform suite one-liner: `bismark (Bismark Rust suite) v<version> (…)`.

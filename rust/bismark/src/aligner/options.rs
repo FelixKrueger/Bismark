@@ -9,7 +9,7 @@
 //! `--maxins`/`--maxins 500` → `--quiet`.
 
 use crate::aligner::cli::Cli;
-use crate::aligner::config::{Aligner, GapPenalties, ReadFormat};
+use crate::aligner::config::{Aligner, GapPenalties, ReadFormat, ScoreMinForm};
 use crate::aligner::error::{AlignerError, Result};
 
 /// Build the `aligner_options` string + the (read,ref) gap penalties used later
@@ -78,7 +78,8 @@ pub fn build_aligner_options(
     //  - HISAT2 --local OR end-to-end (any aligner): L-form `--score-min L,<i>,<s>` (default
     //    L,0,-0.2), NO `--local`. HISAT2-local uses the SAME L-form as end-to-end (Perl
     //    7912/7947) — its local-ness is the dropped `--no-softclip` in the HISAT2 tail + the
-    //    ln() MAPQ scMin, NOT this option. minimap2-local is rejected in `config::resolve`.
+    //    local MAPQ ladder, NOT this option. Its MAPQ scMin is linear, matching this L-form
+    //    (#1079 D2). minimap2-local is rejected in `config::resolve`.
     if cli.local && aligner == Aligner::Bowtie2 {
         opts.push("--local".into());
         let score_min = match &cli.score_min {
@@ -364,18 +365,22 @@ fn require_fastq(format: ReadFormat) -> Result<()> {
 /// - end-to-end (any aligner): `L,<i>,<s>`, default `(0.0, -0.2)`.
 /// - **Bowtie 2 `--local`**: `G,<i>,<s>`, default `(20.0, 8.0)` (Perl 7942).
 /// - **HISAT2 `--local`**: `L,<i>,<s>`, default `(0.0, -0.2)` (Perl 7912/7947 — HISAT2 uses
-///   the L-form even in local mode; the local-ness is the `ln()` scMin, not the form).
+///   the L-form even in local mode; the local-ness is the MAPQ ladder, not the form).
 ///
 /// Splits on the LAST comma (Perl's greedy `^[LG],(.+),(.+)$`). The form is `G` iff
 /// `cli.local && aligner == Bowtie2`.
-pub fn score_min_params(cli: &Cli, aligner: Aligner) -> Result<(f64, f64)> {
-    let (prefix, default) = if cli.local && aligner == Aligner::Bowtie2 {
-        ("G,", (20.0, 8.0))
+///
+/// Returns the emitted **form** alongside the coefficients: `calc_mapq` must evaluate
+/// the same function the aligner was given, so both read it from here rather than
+/// each re-deriving it from `--local` (#1079 D2).
+pub fn score_min_params(cli: &Cli, aligner: Aligner) -> Result<(f64, f64, ScoreMinForm)> {
+    let (prefix, default, form) = if cli.local && aligner == Aligner::Bowtie2 {
+        ("G,", (20.0, 8.0), ScoreMinForm::Log)
     } else {
-        ("L,", (0.0, -0.2))
+        ("L,", (0.0, -0.2), ScoreMinForm::Linear)
     };
     match &cli.score_min {
-        None => Ok(default),
+        None => Ok((default.0, default.1, form)),
         Some(s) => {
             let rest = s.strip_prefix(prefix).ok_or_else(|| {
                 AlignerError::Validation(format!(
@@ -393,7 +398,7 @@ pub fn score_min_params(cli: &Cli, aligner: Aligner) -> Result<(f64, f64)> {
             let slope = sl
                 .parse::<f64>()
                 .map_err(|_| AlignerError::Validation(format!("bad --score_min slope '{sl}'")))?;
-            Ok((intercept, slope))
+            Ok((intercept, slope, form))
         }
     }
 }
@@ -566,30 +571,33 @@ mod tests {
         );
     }
 
+    /// Also pins the returned `ScoreMinForm`: `calc_mapq` evaluates whichever form is
+    /// reported here, so `G`↔`Log` / `L`↔`Linear` must track the emitted option (#1079 D2).
     #[test]
     fn score_min_params_aligner_and_mode_defaults() {
         // Bowtie 2 --local: G-form default (20, 8); custom G parses.
         let cli = cli_from(&["--local"]);
         assert_eq!(
             score_min_params(&cli, Aligner::Bowtie2).unwrap(),
-            (20.0, 8.0)
+            (20.0, 8.0, ScoreMinForm::Log)
         );
         let cli = cli_from(&["--local", "--score_min", "G,10,5"]);
         assert_eq!(
             score_min_params(&cli, Aligner::Bowtie2).unwrap(),
-            (10.0, 5.0)
+            (10.0, 5.0, ScoreMinForm::Log)
         );
         // HISAT2 --local: L-form default (0, -0.2) — NOT the Bowtie 2 (20,8) (Perl 7947);
-        // accepts an L-form override, REJECTS a G-form.
+        // accepts an L-form override, REJECTS a G-form. The form is Linear, so its scMin
+        // is linear too (it was logarithmic before #1079 D2 — the emitted-vs-used mismatch).
         let cli = cli_from(&["--local"]);
         assert_eq!(
             score_min_params(&cli, Aligner::Hisat2).unwrap(),
-            (0.0, -0.2)
+            (0.0, -0.2, ScoreMinForm::Linear)
         );
         let cli = cli_from(&["--local", "--score_min", "L,0,-0.6"]);
         assert_eq!(
             score_min_params(&cli, Aligner::Hisat2).unwrap(),
-            (0.0, -0.6)
+            (0.0, -0.6, ScoreMinForm::Linear)
         );
         let cli = cli_from(&["--local", "--score_min", "G,20,8"]);
         assert!(score_min_params(&cli, Aligner::Hisat2).is_err());
@@ -597,11 +605,17 @@ mod tests {
         let cli = cli_from(&[]);
         assert_eq!(
             score_min_params(&cli, Aligner::Bowtie2).unwrap(),
-            (0.0, -0.2)
+            (0.0, -0.2, ScoreMinForm::Linear)
         );
         assert_eq!(
             score_min_params(&cli, Aligner::Hisat2).unwrap(),
-            (0.0, -0.2)
+            (0.0, -0.2, ScoreMinForm::Linear)
+        );
+        // minimap2/rammap never reach --local (rejected in config::resolve), so they are
+        // always the linear end-to-end form.
+        assert_eq!(
+            score_min_params(&cli, Aligner::Minimap2).unwrap(),
+            (0.0, -0.2, ScoreMinForm::Linear)
         );
     }
 
