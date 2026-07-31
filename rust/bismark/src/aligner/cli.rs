@@ -268,10 +268,13 @@ pub struct Cli {
 
     // ---- Bowtie 2 alignment parameters ------------------------------------
     /// Multiseed mismatches, 0 or 1 (Bowtie 2 -N).
-    #[arg(short = 'n', long = "seedmms", value_name = "int")]
+    // Perl declared `n|seedmms` but Getopt::Long ignores case, so -N (as the help documents,
+    // -n being retired Bowtie 1's flag) worked too. Accept both (#1084).
+    #[arg(short = 'n', short_alias = 'N', long = "seedmms", value_name = "int")]
     pub seedmms: Option<i64>,
     /// Seed length (Bowtie 2 -L).
-    #[arg(short = 'l', long = "seedlen", value_name = "int")]
+    // As for -N/-n above: Perl documented -L, declared `l|seedlen`, accepted both (#1084).
+    #[arg(short = 'l', short_alias = 'L', long = "seedlen", value_name = "int")]
     pub seedlen: Option<u32>,
     /// Consecutive seed-extension fails (Bowtie 2 -D).
     #[arg(short = 'D', value_name = "int")]
@@ -431,6 +434,7 @@ pub struct Cli {
     /// Print version information and exit.
     #[arg(
         short = 'V',
+        short_alias = 'v',
         long = "version",
         help = "Print version information and exit"
     )]
