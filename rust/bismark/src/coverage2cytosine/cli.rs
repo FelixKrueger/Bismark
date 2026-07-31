@@ -89,7 +89,7 @@ pub struct Cli {
     pub gzip: bool,
 
     /// Print version information and exit.
-    #[arg(short = 'V', long = "version")]
+    #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
 
     /// GpC-context report (`{stem}.GpC_report.txt` + `.GpC.cov`), emitted in

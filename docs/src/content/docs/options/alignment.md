@@ -74,6 +74,9 @@ The full path `</../../>` to the HISAT2 installation on your system. If not spec
 
 ##### Alignment:
 
+The Bowtie 2 seed options below may be given in either letter case (`-N`/`-n`, `-L`/`-l`) — both are
+accepted, as they were in Perl Bismark.
+
 - `-N <int>`
 
   Sets the number of mismatches to be allowed in a seed alignment during multiseed alignment. Can be set to 0 or 1. Setting this higher makes alignment slower (often _much_ slower) but increases sensitivity. Default: 0.
