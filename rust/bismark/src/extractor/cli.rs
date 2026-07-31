@@ -247,7 +247,7 @@ pub struct Cli {
 
     // ─── Version (SPEC §3 row 11, Perl 967) ───
     /// Print version information and exit.
-    #[arg(short = 'V', long = "version")]
+    #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
 }
 

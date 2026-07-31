@@ -1,6 +1,12 @@
 # Bismark Changelog
 
 
+## Unreleased
+
+### All tools
+
+- **Short options are accepted in either letter case again, matching Perl Bismark ([#1084](https://github.com/FelixKrueger/Bismark/issues/1084)).** Perl's `Getopt::Long` is case-insensitive by default, so Perl Bismark accepted `-N`/`-L` *and* `-n`/`-l` for the Bowtie 2 seed settings — and its own help documents the uppercase spellings (`-n`/`-l` are described there as retired Bowtie 1's flags). The Rust CLI copied Perl's lowercase declarations verbatim, but clap is case-sensitive, so `bismark -N 1 -L 20` — the form the documentation shows — was rejected. Both spellings now work, so existing command lines and scripts port unchanged. Likewise `-v` is accepted alongside `-V` for `--version` across the suite, as Perl accepted it via single-dash abbreviation. Reported by @alexg9010.
+
 ## Bismark 3.1.0 (released 2026-07-13)
 
 ### bismark (aligner)

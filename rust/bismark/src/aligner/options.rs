@@ -443,6 +443,36 @@ mod tests {
         Cli::parse_from(v)
     }
 
+    /// Perl's `Getopt::Long` is case-insensitive by default, so `'n|seedmms=i'` /
+    /// `'l|seedlen=i'` accepted `-N`/`-L` as well — and Perl's own help documents the
+    /// UPPERCASE spellings (`-n`/`-l` are described there as retired Bowtie 1's flags).
+    /// clap is case-sensitive, so both spellings need declaring explicitly (#1084).
+    ///
+    /// Asserted on the emitted option string, not the parsed field, so the aliases are
+    /// pinned to behaviour: swapping them for the other case must remain a no-op.
+    #[test]
+    fn seed_options_accept_both_letter_cases_like_perl() {
+        let build = |args: &[&str]| {
+            let cli = cli_from(args);
+            build_aligner_options(&cli, Aligner::Bowtie2, ReadFormat::FastQ, false, None)
+                .unwrap()
+                .0
+        };
+        let upper = build(&["-N", "1", "-L", "20"]); // as Perl's help documents them
+        let lower = build(&["-n", "1", "-l", "20"]); // as Perl declared them
+        assert_eq!(upper, lower);
+        assert!(
+            upper.contains("-N 1"),
+            "seedmms must reach Bowtie 2 as -N: {upper}"
+        );
+        assert!(
+            upper.contains("-L 20"),
+            "seedlen must reach Bowtie 2 as -L: {upper}"
+        );
+        // Mixed casing works too — Getopt::Long imposed no consistency requirement.
+        assert_eq!(build(&["-N", "1", "-l", "20"]), upper);
+    }
+
     #[test]
     fn default_se_options_match_phase0_spike() {
         let cli = cli_from(&[]);
