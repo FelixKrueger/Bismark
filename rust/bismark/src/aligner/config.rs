@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::aligner::aligner::{self, DetectedAligner};
+use crate::aligner::autodetect::{self, AutoDecision};
 use crate::aligner::cli::Cli;
 use crate::aligner::discovery::{self, GenomeIndexes};
 use crate::aligner::error::{AlignerError, Result};
@@ -34,6 +35,17 @@ pub enum Aligner {
     /// `--combined_index` rejects. Opt-in `--rammap`, never-silent — NOT
     /// byte-identical to minimap2 (validated by concordance, not the gate).
     Rammap,
+    /// bwa-mem4 (v2; concordance-gated) — the pure-Rust bwa-mem2 reimplementation
+    /// (`IPNP-BIPN/bwa-mem4`), spawned as an external binary. The SHORT-READ lane
+    /// (the minimap family covers long reads): `bwa-mem4 mem <index> <reads>` over a
+    /// five-file bwa-mem2-format index. Like the minimap family it has NO per-strand
+    /// flag (`--norc`/`--nofw`), so each instance searches both strands and the merge
+    /// classifies by instance slot; unlike it, the index is a bare prefix (no suffix
+    /// append) and the subcommand `mem` leads the argv. Single-end only in v2.x.
+    /// Opt-in `--bwamem4`, never-silent — Perl Bismark has NO bwa backend, so this
+    /// is validated by concordance (vs bwa-mem2 through the same pipeline), never by
+    /// the byte-identity gate.
+    BwaMem4,
 }
 
 impl Aligner {
@@ -48,6 +60,9 @@ impl Aligner {
             // Design#7: the full word `rammap` (NOT abbreviated like `mm2`) →
             // `_bismark_rammap.bam` / `_rammap_SE_report.txt`.
             Aligner::Rammap => "rammap",
+            // Same rule as rammap: the engine's own name, hyphen-free so it is a
+            // clean filename token → `_bismark_bwamem4.bam` / `_bwamem4_SE_report.txt`.
+            Aligner::BwaMem4 => "bwamem4",
         }
     }
 
@@ -61,6 +76,22 @@ impl Aligner {
             Aligner::Minimap2 => "minimap2",
             // The report "Bismark was run with rammap against …" line.
             Aligner::Rammap => "rammap",
+            // The binary's own name (hyphenated) — the report line + diagnostics.
+            Aligner::BwaMem4 => "bwa-mem4",
+        }
+    }
+
+    /// The selection flag that picks this backend. Distinct from [`Aligner::name`]
+    /// because bwa-mem4's engine name is hyphenated (`bwa-mem4`) while its flag is
+    /// not (`--bwamem4`) — a reject message must name a flag the user can actually
+    /// type.
+    pub fn flag(self) -> &'static str {
+        match self {
+            Aligner::Bowtie2 => "--bowtie2",
+            Aligner::Hisat2 => "--hisat2",
+            Aligner::Minimap2 => "--minimap2",
+            Aligner::Rammap => "--rammap",
+            Aligner::BwaMem4 => "--bwamem4",
         }
     }
 }
@@ -169,6 +200,11 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
+    /// `[v2/experimental]` The `--auto_aligner` decision that produced `aligner`,
+    /// or `None` when the backend came from an explicit flag. Carried so `lib::run`
+    /// can print WHAT was sampled and WHY that backend was picked before any read is
+    /// aligned — an automatic choice that is not announced is a silent one.
+    pub auto_decision: Option<AutoDecision>,
     /// `[v2/experimental]` `--rammap_subprocess`: OPT OUT to the subprocess rammap
     /// backend (external `rammap` binary on `PATH`). `--rammap` now DEFAULTS to the
     /// in-process `rammap-core` backend (auto-threaded); this flag forces the subprocess
@@ -359,6 +395,19 @@ fn inprocess_rammap_threads(cli_multicore: Option<u32>, avail: usize) -> usize {
 /// between the two entry points — a positional paired uBAM is rejected for
 /// minimap2/rammap exactly as `-1/-2` would be.
 pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) -> Result<()> {
+    // bwa-mem4 PE is rejected for a DIFFERENT reason than the minimap family's
+    // missing oracle: bwa has no per-strand flag (`--norc`/`--nofw`), so the PE
+    // instance model cannot restrict a mate pair to one strand. Named separately so
+    // the message never claims a reason that does not apply.
+    if aligner == Aligner::BwaMem4 && layout.is_paired() {
+        return Err(AlignerError::Unsupported(
+            "paired-end alignment with --bwamem4 is not supported in v2.x: bwa has no \
+             per-strand flag, so a paired-end run cannot restrict each instance to one \
+             bisulfite strand the way the Bowtie 2 / HISAT2 model does. Use --bwamem4 for \
+             single-end reads, or --bowtie2/--hisat2 for paired-end."
+                .into(),
+        ));
+    }
     if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
         return Err(AlignerError::Unsupported(format!(
             "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
@@ -371,7 +420,15 @@ pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) 
 }
 
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
-    let aligner = resolve_aligner(cli)?;
+    // `--auto_aligner` picks between the two v2 lanes (short reads -> bwa-mem4,
+    // long reads -> rammap) by sampling the input; otherwise the flags decide.
+    // The decision is carried into `RunConfig` so `lib::run` can print it BEFORE
+    // any alignment starts (never-silent), the `--rammap` notice precedent.
+    let auto_decision = resolve_auto_aligner(cli)?;
+    let aligner = match auto_decision {
+        Some(d) => d.aligner,
+        None => resolve_aligner(cli)?,
+    };
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
     // with `--rammap` — fail loud otherwise (never-silent; mirrors the rammap conflict
     // that dies in `resolve_aligner`).
@@ -503,6 +560,14 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // minimap2 AND rammap (minimap-like) are both rejected: both perform local
         // (soft-clipping) alignment by design. The error names the actual engine
         // (`aligner.name()`) so a `--rammap` run reads "--rammap", not "--minimap2".
+        if aligner == Aligner::BwaMem4 {
+            return Err(AlignerError::Unsupported(
+                "--local is not supported with --bwamem4: bwa-mem performs local \
+                 (soft-clipping) alignment by design — there is no end-to-end vs local \
+                 distinction to toggle. Use --bowtie2 or --hisat2 for --local."
+                    .into(),
+            ));
+        }
         if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
             return Err(AlignerError::Unsupported(format!(
                 "--local is not supported with --{0}: {0} performs local \
@@ -610,6 +675,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
         Aligner::Minimap2 => cli.path_to_minimap2.as_deref(),
         Aligner::Rammap => cli.path_to_rammap.as_deref(),
+        Aligner::BwaMem4 => cli.path_to_bwamem4.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
     let (aligner_options, gap_penalties) = options::build_aligner_options(
@@ -634,6 +700,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     Ok(RunConfig {
         command_line,
         aligner,
+        auto_decision,
         // rev2: opt-OUT to the subprocess rammap backend (guarded above: requires --rammap).
         rammap_subprocess: cli.rammap_subprocess,
         // rev2 SINGLE SOURCE OF TRUTH for the in-process rammap pool size: explicit
@@ -863,6 +930,15 @@ fn reject_combined_index_unsupported(
     // minimap2 AND rammap (minimap-like) are both rejected: a single both-strands
     // minimap-family pass cannot reproduce Bismark's per-strand model. The error
     // names the actual engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
+    if aligner == Aligner::BwaMem4 {
+        return Err(AlignerError::Unsupported(
+            "--combined_index is not supported with --bwamem4: a single both-strands bwa-mem \
+             pass cannot reproduce Bismark's per-strand model (bwa has no per-strand flag). \
+             Use Bowtie 2 or HISAT2 (both build a combined index via \
+             `bismark_genome_preparation --combined_genome`)."
+                .into(),
+        ));
+    }
     if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
         return Err(AlignerError::Unsupported(format!(
             "--combined_index is not supported with --{0}: a single both-strands {0} \
@@ -981,6 +1057,39 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
             "You may not select both --rammap and --minimap2. Make your pick!".into(),
         ));
     }
+    // bwa-mem4 conflicts (same rule as rammap's, ordered BEFORE every `Ok` below so a
+    // double selection fails loud rather than resolving by precedence).
+    if cli.bwamem4 && cli.bowtie2 {
+        return Err(AlignerError::Validation(
+            "You may not select both --bwamem4 and --bowtie2. Make your pick! [default is \
+             Bowtie 2]"
+                .into(),
+        ));
+    }
+    if cli.bwamem4 && cli.hisat2 {
+        return Err(AlignerError::Validation(
+            "You may not select both --bwamem4 and --hisat2. Make your pick!".into(),
+        ));
+    }
+    if cli.bwamem4 && cli.minimap2 {
+        return Err(AlignerError::Validation(
+            "You may not select both --bwamem4 and --minimap2. Make your pick!".into(),
+        ));
+    }
+    if cli.bwamem4 && cli.rammap {
+        return Err(AlignerError::Validation(
+            "You may not select both --bwamem4 and --rammap. Make your pick! (or use \
+             --auto_aligner to pick between them from the read lengths)"
+                .into(),
+        ));
+    }
+    if cli.bwamem4 && cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--illumina_5base is not supported with --bwamem4. Use --bowtie2/--hisat2 (with \
+             --five_base_index) or the default minimap2 (genome FASTA)."
+                .into(),
+        ));
+    }
     // --illumina_5base (5-Base, #787) aligns to the UNCONVERTED genome with minimap2
     // (v1). It is mutually exclusive with the bisulfite engines that have no
     // unconverted-index path yet; `--minimap2` may co-occur (5-Base IS a minimap2
@@ -1035,7 +1144,84 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
     if cli.rammap {
         return Ok(Aligner::Rammap);
     }
+    if cli.bwamem4 {
+        return Ok(Aligner::BwaMem4);
+    }
     Ok(Aligner::Bowtie2)
+}
+
+/// `--auto_aligner` (v2): choose the backend from the reads instead of from a flag.
+///
+/// Returns `None` when the flag is absent (the caller then uses [`resolve_aligner`]),
+/// `Some(decision)` when it is present. The decision itself lives in
+/// [`crate::aligner::autodetect`]; this function owns the guards around it:
+///
+/// - `--auto_length_threshold` without `--auto_aligner` dies (never a silent no-op);
+/// - `--auto_aligner` together with an explicit engine flag dies — the point of the
+///   flag is that nothing else has already decided;
+/// - the threshold must be inside [`AUTO_LENGTH_THRESHOLD_RANGE`];
+/// - paired-end input dies: BOTH auto-selectable backends are single-end only in
+///   v2.x, so there is nothing to choose between. Silently falling back to Bowtie 2
+///   would answer a question the user did not ask.
+fn resolve_auto_aligner(cli: &Cli) -> Result<Option<AutoDecision>> {
+    if !cli.auto_aligner {
+        if cli.auto_length_threshold.is_some() {
+            return Err(AlignerError::Validation(
+                "--auto_length_threshold requires --auto_aligner: it only tunes the automatic \
+                 backend choice."
+                    .into(),
+            ));
+        }
+        return Ok(None);
+    }
+    if cli.bowtie2 || cli.hisat2 || cli.minimap2 || cli.rammap || cli.bwamem4 {
+        return Err(AlignerError::Validation(
+            "--auto_aligner cannot be combined with an explicit aligner flag (--bowtie2 / \
+             --hisat2 / --minimap2 / --rammap / --bwamem4): pick the backend yourself OR let \
+             the read lengths pick it, not both."
+                .into(),
+        ));
+    }
+    if cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--auto_aligner is not supported with --illumina_5base: the 5-Base path selects \
+             its own aligner (minimap2 against the unconverted genome, or bowtie2/hisat2 with \
+             --five_base_index)."
+                .into(),
+        ));
+    }
+    let threshold = cli
+        .auto_length_threshold
+        .unwrap_or(autodetect::DEFAULT_AUTO_LENGTH_THRESHOLD);
+    if !autodetect::AUTO_LENGTH_THRESHOLD_RANGE.contains(&threshold) {
+        return Err(AlignerError::Validation(format!(
+            "--auto_length_threshold must be between {} and {} bp (got {threshold}).",
+            autodetect::AUTO_LENGTH_THRESHOLD_RANGE.start(),
+            autodetect::AUTO_LENGTH_THRESHOLD_RANGE.end(),
+        )));
+    }
+
+    let format = resolve_format(cli)?;
+    let (_, reads_positional) = resolve_genome_and_positional(cli)?;
+    let layout = resolve_layout(cli, &reads_positional)?;
+    let first_read = match &layout {
+        ReadLayout::SingleEnd { reads } => reads.first().cloned(),
+        ReadLayout::PairedEnd { .. } => {
+            return Err(AlignerError::Unsupported(
+                "--auto_aligner is single-end only: both backends it chooses between \
+                 (--bwamem4 and --rammap) reject paired-end input in v2.x, so there is nothing \
+                 to choose. Use --bowtie2 or --hisat2 for paired-end."
+                    .into(),
+            ));
+        }
+    };
+    let first_read = first_read.ok_or_else(|| {
+        AlignerError::Validation(
+            "--auto_aligner needs at least one read file to sample the backend choice from.".into(),
+        )
+    })?;
+    let mut lengths = autodetect::sample_read_lengths(Path::new(&first_read), format)?;
+    Ok(Some(autodetect::decide(&mut lengths, threshold)?))
 }
 
 /// Validate the minimap2-only preset/length flags and resolve the maximum-length
@@ -1502,6 +1688,160 @@ mod tests {
         // minimap2/rammap + SE → allowed (SE is their supported mode).
         assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &se).is_ok());
         assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &se).is_ok());
+    }
+
+    /// `--bwamem4` selects the backend, and its identity strings: the report/name is
+    /// the hyphenated binary name, the filename token is hyphen-free, and the flag is
+    /// the one a user can actually type.
+    #[test]
+    fn bwamem4_selection_token_name_flag() {
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--bwamem4"])).unwrap(),
+            Aligner::BwaMem4
+        );
+        assert_eq!(Aligner::BwaMem4.token(), "bwamem4");
+        assert_eq!(Aligner::BwaMem4.name(), "bwa-mem4");
+        assert_eq!(Aligner::BwaMem4.flag(), "--bwamem4");
+    }
+
+    /// Double engine selection fails loud rather than resolving by precedence.
+    #[test]
+    fn bwamem4_conflicts_with_every_other_engine() {
+        for other in ["--bowtie2", "--hisat2", "--minimap2", "--rammap"] {
+            assert!(
+                resolve_aligner(&cli_from(&["--bwamem4", other])).is_err(),
+                "--bwamem4 + {other} should fail"
+            );
+        }
+        assert!(resolve_aligner(&cli_from(&["--bwamem4", "--illumina_5base"])).is_err());
+    }
+
+    /// bwa-mem4 is single-end only in v2.x (no per-strand flag for the PE instance
+    /// model), so PE is rejected by the SHARED guard the uBAM SE→PE switch re-runs.
+    #[test]
+    fn bwamem4_paired_end_is_rejected() {
+        let pe = ReadLayout::PairedEnd {
+            mates1: vec!["a_1.fq".into()],
+            mates2: vec!["a_2.fq".into()],
+        };
+        let se = ReadLayout::SingleEnd {
+            reads: vec!["a.fq".into()],
+        };
+        let err = reject_unsupported_paired_aligner(Aligner::BwaMem4, &pe).unwrap_err();
+        assert!(format!("{err}").contains("--bwamem4"), "{err}");
+        assert!(reject_unsupported_paired_aligner(Aligner::BwaMem4, &se).is_ok());
+    }
+
+    /// `--auto_aligner` guards: the threshold flag is inert without it, an explicit
+    /// engine flag contradicts it, and the threshold is range-checked. (The sniff
+    /// itself is covered in `aligner::autodetect`.)
+    #[test]
+    fn auto_aligner_guards() {
+        // --auto_length_threshold alone is never a silent no-op.
+        let err = resolve_auto_aligner(&cli_from(&["--auto_length_threshold", "500"])).unwrap_err();
+        assert!(
+            format!("{err}").contains("requires --auto_aligner"),
+            "{err}"
+        );
+        // absent flag → no decision (the caller falls back to the flag-based pick).
+        assert!(resolve_auto_aligner(&cli_from(&[])).unwrap().is_none());
+        // explicit engine + auto = contradiction.
+        for other in [
+            "--bowtie2",
+            "--hisat2",
+            "--minimap2",
+            "--rammap",
+            "--bwamem4",
+        ] {
+            assert!(
+                resolve_auto_aligner(&cli_from(&["--auto_aligner", other])).is_err(),
+                "--auto_aligner + {other} should fail"
+            );
+        }
+        assert!(resolve_auto_aligner(&cli_from(&["--auto_aligner", "--illumina_5base"])).is_err());
+        // out-of-range threshold dies before any file is read.
+        let err = resolve_auto_aligner(&cli_from(&[
+            "--auto_aligner",
+            "--auto_length_threshold",
+            "10",
+        ]))
+        .unwrap_err();
+        assert!(format!("{err}").contains("must be between"), "{err}");
+    }
+
+    /// `--auto_aligner` on paired-end input fails loud: both auto-selectable backends
+    /// are SE-only, so there is nothing to choose — and silently falling back to
+    /// Bowtie 2 would answer a question the user did not ask.
+    #[test]
+    fn auto_aligner_rejects_paired_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let (m1, m2) = (dir.path().join("a_1.fq"), dir.path().join("a_2.fq"));
+        for p in [&m1, &m2] {
+            std::fs::write(p, "@r\nACGT\n+\nIIII\n").unwrap();
+        }
+        let err = resolve_auto_aligner(&cli_from(&[
+            "--auto_aligner",
+            "-1",
+            m1.to_str().unwrap(),
+            "-2",
+            m2.to_str().unwrap(),
+            "genome",
+        ]))
+        .unwrap_err();
+        assert!(format!("{err}").contains("single-end only"), "{err}");
+    }
+
+    /// `--auto_aligner` end-to-end over a real short-read FastQ: the decision is the
+    /// short-read backend, and it is carried out of the resolver for the notice.
+    #[test]
+    fn auto_aligner_picks_short_read_backend_from_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let reads = dir.path().join("r.fastq");
+        let mut body = String::new();
+        for i in 0..10 {
+            body.push_str(&format!(
+                "@r{i}\n{}\n+\n{}\n",
+                "A".repeat(100),
+                "I".repeat(100)
+            ));
+        }
+        std::fs::write(&reads, body).unwrap();
+        let d = resolve_auto_aligner(&cli_from(&[
+            "--auto_aligner",
+            "genome",
+            reads.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .expect("a decision");
+        assert_eq!(d.aligner, Aligner::BwaMem4);
+        assert_eq!(d.median_len, 100);
+        assert_eq!(d.sampled, 10);
+    }
+
+    /// The same input with kilobase reads picks the long-read backend instead — the
+    /// two lanes are decided by the data, not by flag order.
+    #[test]
+    fn auto_aligner_picks_long_read_backend_from_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let reads = dir.path().join("ont.fastq");
+        let mut body = String::new();
+        for i in 0..5 {
+            body.push_str(&format!(
+                "@r{i}\n{}\n+\n{}\n",
+                "A".repeat(5000),
+                "I".repeat(5000)
+            ));
+        }
+        std::fs::write(&reads, body).unwrap();
+        let d = resolve_auto_aligner(&cli_from(&[
+            "--auto_aligner",
+            "genome",
+            reads.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .expect("a decision");
+        assert_eq!(d.aligner, Aligner::Rammap);
+        assert_eq!(d.median_len, 5000);
     }
 
     /// Phase 3 (T2): `--rammap` selects [`Aligner::Rammap`].

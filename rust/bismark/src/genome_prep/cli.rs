@@ -21,6 +21,8 @@ pub enum Aligner {
     Hisat2,
     /// `minimap2 -d` (`-k 20`).
     Minimap2,
+    /// `bwa-mem4 index -p <basename>` (v2) — bwa-mem2's five side files.
+    BwaMem4,
 }
 
 impl Aligner {
@@ -30,6 +32,7 @@ impl Aligner {
             Aligner::Bowtie2 => "bowtie2-build",
             Aligner::Hisat2 => "hisat2-build",
             Aligner::Minimap2 => "minimap2",
+            Aligner::BwaMem4 => "bwa-mem4",
         }
     }
 }
@@ -60,6 +63,11 @@ pub struct Cli {
     /// Build minimap2 indices.
     #[arg(long = "minimap2", alias = "mm2")]
     pub minimap2: bool,
+
+    /// `[v2/experimental]` Build bwa-mem4 (bwa-mem2-format) indices for the
+    /// `bismark --bwamem4` backend. Requires the `bwa-mem4` binary.
+    #[arg(long = "bwamem4", alias = "bwa")]
+    pub bwamem4: bool,
 
     /// Folder containing the indexer binary (not the executable itself).
     #[arg(long = "path_to_aligner")]
@@ -142,12 +150,12 @@ impl Cli {
             )
         })?;
 
-        // Aligner selection: at most one of bowtie2/hisat2/minimap2.
-        let n = self.bowtie2 as u8 + self.hisat2 as u8 + self.minimap2 as u8;
+        // Aligner selection: at most one of bowtie2/hisat2/minimap2/bwamem4.
+        let n = self.bowtie2 as u8 + self.hisat2 as u8 + self.minimap2 as u8 + self.bwamem4 as u8;
         if n > 1 {
             return Err(GenomePrepError::Validation(
                 "you may not select more than one aligner — pick one of --bowtie2 / --hisat2 / \
-                 --minimap2 (default is Bowtie 2)"
+                 --minimap2 / --bwamem4 (default is Bowtie 2)"
                     .to_string(),
             ));
         }
@@ -155,6 +163,8 @@ impl Cli {
             Aligner::Hisat2
         } else if self.minimap2 {
             Aligner::Minimap2
+        } else if self.bwamem4 {
+            Aligner::BwaMem4
         } else {
             Aligner::Bowtie2
         };
@@ -176,6 +186,33 @@ impl Cli {
             if self.large_index {
                 return Err(GenomePrepError::Validation(
                     "minimap2 mode does not work in conjunction with --large-index — please respecify"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // bwa-mem4 exclusions — the same shape as minimap2's, for the same reasons:
+        // `bwa-mem4 index` takes ONE FASTA (so the per-chromosome `--single_fasta`
+        // layout has nothing to index), and there is no large-index variant (the five
+        // side files are the only form). `--slam` is a Bowtie-2-path preparation.
+        if aligner == Aligner::BwaMem4 {
+            if self.single_fasta {
+                return Err(GenomePrepError::Validation(
+                    "bwa-mem4 mode does not work in conjunction with --single_fasta — please \
+                     respecify"
+                        .to_string(),
+                ));
+            }
+            if self.slam {
+                return Err(GenomePrepError::Validation(
+                    "bwa-mem4 mode does not work in conjunction with --slam — please respecify"
+                        .to_string(),
+                ));
+            }
+            if self.large_index {
+                return Err(GenomePrepError::Validation(
+                    "bwa-mem4 mode does not work in conjunction with --large-index (bwa-mem2 \
+                     indices have no large variant) — please respecify"
                         .to_string(),
                 ));
             }
@@ -242,6 +279,38 @@ mod tests {
         let d = tempdir().unwrap();
         let c = cli(&["--bowtie2", "--hisat2", d.path().to_str().unwrap()]);
         assert!(matches!(c.validate(), Err(GenomePrepError::Validation(_))));
+    }
+
+    /// `--bwamem4` (and its `--bwa` alias) selects the bwa-mem4 indexer.
+    #[test]
+    fn bwamem4_alias_selects_bwamem4() {
+        let d = tempfile::tempdir().unwrap();
+        for flag in ["--bwamem4", "--bwa"] {
+            let c = cli(&[flag, d.path().to_str().unwrap()]);
+            let r = c.validate().unwrap();
+            assert_eq!(r.aligner, Aligner::BwaMem4);
+            assert_eq!(r.aligner.binary_name(), "bwa-mem4");
+        }
+    }
+
+    /// bwa-mem4 excludes the same three flags minimap2 does, for its own reasons
+    /// (one-FASTA indexer; no large-index variant).
+    #[test]
+    fn bwamem4_excludes_single_fasta_slam_large_index() {
+        let d = tempfile::tempdir().unwrap();
+        for extra in ["--single_fasta", "--slam", "--large-index"] {
+            let c = cli(&["--bwamem4", extra, d.path().to_str().unwrap()]);
+            assert!(c.validate().is_err(), "--bwamem4 + {extra} should fail");
+        }
+    }
+
+    /// Two engine flags is a fail-loud state, and the message lists every choice.
+    #[test]
+    fn bwamem4_conflicts_with_another_aligner() {
+        let d = tempfile::tempdir().unwrap();
+        let c = cli(&["--bwamem4", "--hisat2", d.path().to_str().unwrap()]);
+        let err = c.validate().unwrap_err();
+        assert!(format!("{err}").contains("--bwamem4"), "{err}");
     }
 
     #[test]

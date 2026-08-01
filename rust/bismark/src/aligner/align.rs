@@ -252,6 +252,16 @@ fn build_se_argv(
             args.push(mmi);
             args.push(input.as_os_str().to_owned());
         }
+        // bwa-mem4: `mem <opts…> <index-prefix> <input>`. The `mem` subcommand is
+        // already the first token of the option string (`options::bwamem4_options`),
+        // and the index is the BARE prefix — bwa derives its five side files from it,
+        // so nothing is appended (unlike minimap2's `.mmi`). No strand flag exists,
+        // as for the minimap family: each instance searches both strands and the
+        // merge classifies by instance slot.
+        Aligner::BwaMem4 => {
+            args.push(index.as_os_str().to_owned());
+            args.push(input.as_os_str().to_owned());
+        }
     }
     args
 }
@@ -291,7 +301,34 @@ fn build_pe_argv(
             "minimap2 paired-end (and the minimap-like rammap) is rejected at resolve \
              (no trustworthy oracle); build_pe_argv must not be reached for minimap2/rammap"
         ),
+        // bwa-mem4 paired-end is rejected at resolve for a different reason: bwa has
+        // no per-strand flag, so a PE run cannot restrict each instance to one strand
+        // the way the Bowtie 2 / HISAT2 PE model does. SE-only in v2.x.
+        Aligner::BwaMem4 => unreachable!(
+            "bwa-mem4 paired-end is rejected at resolve (no per-strand flag for the PE \
+             instance model); build_pe_argv must not be reached for bwa-mem4"
+        ),
     }
+}
+
+/// Parse one SAM line for `aligner`, applying the ONE backend-specific tag
+/// normalization this port needs.
+///
+/// **bwa-mem4 (and bwa-mem2) always emit `XS:i:`**, writing `XS:i:0` when no
+/// suboptimal alignment was found — where Bowtie 2 simply OMITS the tag. The merge
+/// reads `second_best` as "a competing alignment exists" (it feeds the MAPQ ladder
+/// and the same-thread ambiguity boot), so passing a zero-initialised `XS` through
+/// verbatim would make every uniquely-mapping bwa read look like it had a
+/// competitor scoring 0. `XS:i:0` is therefore mapped to `None` — the Bowtie 2
+/// "no second best" shape — while every non-zero `XS` flows through unchanged.
+/// This is a v2 concordance-model decision, not a byte-identity one: no Perl bwa
+/// oracle exists. Every other backend parses verbatim.
+fn parse_record_for(aligner: Aligner, line: &str) -> Result<SamRecord> {
+    let mut rec = SamRecord::parse(line)?;
+    if aligner == Aligner::BwaMem4 && rec.second_best == Some(0) {
+        rec.second_best = None;
+    }
+    Ok(rec)
 }
 
 impl AlignerStream {
@@ -335,7 +372,7 @@ impl AlignerStream {
             if line.starts_with('@') {
                 continue;
             }
-            break Some(SamRecord::parse(&line)?);
+            break Some(parse_record_for(aligner, &line)?);
         };
 
         Ok(AlignerStream {
@@ -360,7 +397,7 @@ impl AlignerStream {
         self.current = if n == 0 {
             None
         } else {
-            Some(SamRecord::parse(&self.line_buf)?)
+            Some(parse_record_for(self.aligner, &self.line_buf)?)
         };
         Ok(())
     }
@@ -1225,6 +1262,72 @@ mod tests {
             Path::new("/idx/BS_combined"),
             Path::new("/tmp/r1.fastq"),
             Path::new("/tmp/r2.fastq"),
+        );
+    }
+
+    /// bwa-mem4 SE argv: `mem …` from the option string, then the BARE index prefix
+    /// (no `.mmi`-style suffix append, no `-x`/`-U`) and the reads. No strand flag —
+    /// bwa has none, exactly like the minimap family.
+    #[test]
+    fn se_argv_bwamem4_bare_prefix_and_subcommand() {
+        let argv = build_se_argv(
+            Aligner::BwaMem4,
+            "mem -t 2 -K 20000000",
+            Orientation::Norc, // ignored for bwa-mem4 (no per-strand flag exists)
+            Path::new("/g/BS_CT"),
+            Path::new("/r/reads.fq"),
+        );
+        let s = argv_strings(&argv);
+        assert_eq!(s[0], "mem");
+        assert_eq!(s[s.len() - 2], "/g/BS_CT");
+        assert_eq!(s[s.len() - 1], "/r/reads.fq");
+        assert!(!s.iter().any(|a| a == "--norc" || a == "-U" || a == "-x"));
+        assert!(!s.iter().any(|a| a.ends_with(".mmi")));
+    }
+
+    /// bwa-mem4 paired-end is rejected at resolve, so `build_pe_argv` is unreachable.
+    #[test]
+    #[should_panic(expected = "bwa-mem4")]
+    fn pe_argv_bwamem4_is_unreachable() {
+        let _ = build_pe_argv(
+            Aligner::BwaMem4,
+            "mem -t 2",
+            Orientation::Both,
+            Path::new("/idx/BS_CT"),
+            Path::new("/tmp/r1.fastq"),
+            Path::new("/tmp/r2.fastq"),
+        );
+    }
+
+    /// bwa writes `XS:i:0` when it found NO suboptimal alignment, where Bowtie 2
+    /// omits the tag entirely. Read verbatim, that zero would look like a competing
+    /// alignment to the merge (MAPQ ladder + ambiguity boot), so it is normalized to
+    /// `None` for bwa-mem4 only; a non-zero XS flows through, and other backends are
+    /// untouched.
+    #[test]
+    fn bwamem4_zero_xs_is_no_second_best() {
+        let line =
+            "r1\t0\tchr1\t100\t60\t39M\t*\t0\t0\tACGT\tIIII\tNM:i:0\tMD:Z:39\tAS:i:39\tXS:i:0";
+        assert_eq!(
+            parse_record_for(Aligner::BwaMem4, line)
+                .unwrap()
+                .second_best,
+            None
+        );
+        // Bowtie 2 keeps the verbatim parse — the normalization is bwa-only.
+        assert_eq!(
+            parse_record_for(Aligner::Bowtie2, line)
+                .unwrap()
+                .second_best,
+            Some(0)
+        );
+        // A real bwa competitor survives.
+        let comp = line.replace("XS:i:0", "XS:i:31");
+        assert_eq!(
+            parse_record_for(Aligner::BwaMem4, &comp)
+                .unwrap()
+                .second_best,
+            Some(31)
         );
     }
 

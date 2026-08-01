@@ -26,6 +26,7 @@
 pub mod align;
 #[allow(clippy::module_inception)] // core logic module; named `aligner` as a crate, kept on fold
 pub mod aligner;
+pub mod autodetect;
 pub mod aux_out;
 pub mod binseq_decode;
 pub mod cli;
@@ -237,6 +238,37 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
                  run uses the subprocess rammap backend."
             );
         }
+    }
+    // Never-silent opt-in notice: --bwamem4 is the pure-Rust bwa-mem2
+    // reimplementation. Perl Bismark has NO bwa backend, so there is no byte-identity
+    // oracle for this path — it is a v2 concordance-model backend, like --rammap.
+    if config.aligner == Aligner::BwaMem4 {
+        eprintln!(
+            "Note: --bwamem4 uses the bwa-mem4 pure-Rust bwa-mem2 reimplementation \
+             (subprocess `bwa-mem4 mem`, single-end only). Perl Bismark has no bwa backend, \
+             so these alignments are concordance-validated, NOT byte-identical to any Perl \
+             Bismark run. bwa always emits XS:i:, and XS:i:0 (no suboptimal alignment) is \
+             read as \"no second best\"."
+        );
+    }
+    // Never-silent notice: the backend was chosen from the DATA, not from a flag —
+    // print what was sampled, the median, the threshold, and the winner, so the
+    // choice is auditable from the run log alone.
+    if let Some(d) = config.auto_decision {
+        eprintln!(
+            "Note: --auto_aligner sampled {} read(s) from the first input: median length {} bp \
+             vs threshold {} bp -> {} ({} lane). Override with an explicit aligner flag, or \
+             move the boundary with --auto_length_threshold.",
+            d.sampled,
+            d.median_len,
+            d.threshold,
+            d.aligner.flag(),
+            if d.median_len >= d.threshold {
+                "long-read"
+            } else {
+                "short-read"
+            }
+        );
     }
     eprintln!("{}", config.summary());
     let result = pipeline(&config);

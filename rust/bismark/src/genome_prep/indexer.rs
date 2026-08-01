@@ -123,6 +123,24 @@ fn build_command(
                 .arg(format!("{basename}.mmi"))
                 .arg(&file_list);
         }
+        // `bwa-mem4 index <fasta> -p <basename>`: unlike every other indexer here,
+        // bwa takes exactly ONE FASTA (no comma list) and is single-threaded, so
+        // `threads` does not apply — the CT and GA builds still run concurrently in
+        // `run_both`. `--single_fasta` is rejected for this aligner (cli::validate),
+        // so the conversion directory holds exactly one MFA; more than one is a
+        // fail-loud state, never a silent "index the first file only".
+        Aligner::BwaMem4 => {
+            if fa.len() != 1 {
+                return Err(GenomePrepError::Validation(format!(
+                    "bwa-mem4 indexing expects exactly ONE converted FASTA in {}, found {} \
+                     ({file_list}). `bwa-mem4 index` takes a single FASTA; re-run \
+                     bismark_genome_preparation without --single_fasta.",
+                    dir.display(),
+                    fa.len(),
+                )));
+            }
+            cmd.arg("index").arg(&fa[0]).arg("-p").arg(basename);
+        }
         Aligner::Bowtie2 | Aligner::Hisat2 => {
             cmd.arg("--threads").arg(threads.to_string());
             if large_index {
@@ -252,6 +270,61 @@ mod tests {
         assert!(args.contains(&"--large-index".to_string()));
         assert_eq!(args[0], "--threads");
         assert_eq!(args[1], "4");
+    }
+
+    /// `bwa-mem4 index <fasta> -p <basename>`: the subcommand leads, the ONE
+    /// converted MFA is the positional, and `-p` names the index prefix the aligner
+    /// will later be given. No `--threads` (bwa-mem4 index is single-threaded; the
+    /// CT and GA builds still run concurrently).
+    #[test]
+    fn bwamem4_command_indexes_single_fasta_with_prefix() {
+        let d = tempdir().unwrap();
+        fs::write(d.path().join("genome_mfa.CT_conversion.fa"), b">x\nACGT\n").unwrap();
+        let cmd = build_command(
+            Path::new("bwa-mem4"),
+            Aligner::BwaMem4,
+            d.path(),
+            "BS_CT",
+            4,
+            false,
+        )
+        .unwrap();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "index".to_string(),
+                "genome_mfa.CT_conversion.fa".to_string(),
+                "-p".to_string(),
+                "BS_CT".to_string(),
+            ]
+        );
+    }
+
+    /// More than one converted FASTA is a fail-loud state — `bwa-mem4 index` takes a
+    /// single FASTA, and silently indexing the first would produce an index missing
+    /// most of the genome.
+    #[test]
+    fn bwamem4_command_rejects_multiple_fastas() {
+        let d = tempdir().unwrap();
+        fs::write(d.path().join("chr1.CT_conversion.fa"), b">1\nACGT\n").unwrap();
+        fs::write(d.path().join("chr2.CT_conversion.fa"), b">2\nACGT\n").unwrap();
+        let err = build_command(
+            Path::new("bwa-mem4"),
+            Aligner::BwaMem4,
+            d.path(),
+            "BS_CT",
+            1,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err}").contains("exactly ONE converted FASTA"),
+            "{err}"
+        );
     }
 
     #[test]

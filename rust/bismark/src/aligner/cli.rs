@@ -65,6 +65,26 @@ pub struct Cli {
     /// concordance-validated — NOT byte-identical to minimap2.
     #[arg(long = "rammap", visible_alias = "ram")]
     pub rammap: bool,
+    /// `[v2/experimental]` Align with bwa-mem4, the pure-Rust bwa-mem2
+    /// reimplementation (single-end only in v2.x; paired-end is rejected).
+    /// Short-read lane: `mem` over a bwa-mem2-format index built by
+    /// `bismark_genome_preparation --bwamem4`. Opt-in, never-silent,
+    /// concordance-gated — Perl Bismark has no bwa backend, so there is no
+    /// byte-identity oracle.
+    #[arg(long = "bwamem4", visible_alias = "bwa")]
+    pub bwamem4: bool,
+    /// `[v2/experimental]` Pick the backend from the reads themselves: sample the
+    /// first reads of the input and select `--bwamem4` for short reads or
+    /// `--rammap` for long reads (median length vs `--auto_length_threshold`).
+    /// Never-silent — the sampled count, the median length and the chosen backend
+    /// are printed. Conflicts with an explicit aligner flag.
+    #[arg(long = "auto_aligner", visible_alias = "auto")]
+    pub auto_aligner: bool,
+    /// Median read length (bp) at or above which `--auto_aligner` picks the
+    /// long-read backend (`--rammap`); below it picks `--bwamem4` [300].
+    /// Requires `--auto_aligner`; accepted range `50..=100000`.
+    #[arg(long = "auto_length_threshold", value_name = "INT")]
+    pub auto_length_threshold: Option<u32>,
     /// Folder containing the `bowtie2` executable (not the executable itself).
     #[arg(long = "path_to_bowtie2", value_name = "PATH")]
     pub path_to_bowtie2: Option<PathBuf>,
@@ -77,6 +97,9 @@ pub struct Cli {
     /// Folder containing `rammap`.
     #[arg(long = "path_to_rammap", value_name = "PATH")]
     pub path_to_rammap: Option<PathBuf>,
+    /// Folder containing `bwa-mem4`.
+    #[arg(long = "path_to_bwamem4", value_name = "PATH")]
+    pub path_to_bwamem4: Option<PathBuf>,
     /// `[v2/experimental]` Force the SUBPROCESS rammap backend: spawn the external
     /// `rammap` binary on `PATH` (exactly like `--minimap2`). `--rammap` now DEFAULTS to
     /// the compiled-in in-process backend (auto-threaded, lower RAM, faster under

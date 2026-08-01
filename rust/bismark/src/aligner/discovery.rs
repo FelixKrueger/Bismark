@@ -115,6 +115,14 @@ fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
         }
         // rammap is minimap-like — the same single `<stem>.mmi` (no large variant).
         Aligner::Minimap2 | Aligner::Rammap => vec![format!("{stem}.mmi")],
+        // bwa-mem4 writes bwa-mem2's FIVE side files off a bare prefix — the stem
+        // itself is what `mem` is given (no suffix append, unlike the `.mmi`).
+        // No large-index variant, so `large` is ignored (the small/large fallback in
+        // `discover_genome` probes the same five files twice — a harmless no-op).
+        Aligner::BwaMem4 => ["0123", "amb", "ann", "bwt.2bit.64", "pac"]
+            .iter()
+            .map(|s| format!("{stem}.{s}"))
+            .collect(),
     }
 }
 
@@ -485,6 +493,44 @@ mod tests {
         assert_eq!(s, vec!["BS_CT.mmi".to_string()]);
         // large flag has no effect for minimap2 (no large-index variant).
         assert_eq!(index_suffixes(Aligner::Minimap2, "BS_CT", true), s);
+    }
+
+    /// bwa-mem4 = bwa-mem2's FIVE side files off a bare stem (no large variant, so
+    /// `large` is ignored). NOT the single-file minimap shape.
+    #[test]
+    fn bwamem4_suffixes_are_the_five_bwa_files() {
+        let s = index_suffixes(Aligner::BwaMem4, "BS_CT", false);
+        assert_eq!(
+            s,
+            vec![
+                "BS_CT.0123",
+                "BS_CT.amb",
+                "BS_CT.ann",
+                "BS_CT.bwt.2bit.64",
+                "BS_CT.pac"
+            ]
+        );
+        assert_eq!(index_suffixes(Aligner::BwaMem4, "BS_CT", true), s);
+    }
+
+    /// An incomplete bwa index is rejected — proves the 5-file arity is enforced
+    /// rather than "the prefix looks present".
+    #[test]
+    fn incomplete_bwamem4_index_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ct = tmp.path().join("Bisulfite_Genome/CT_conversion");
+        let ga = tmp.path().join("Bisulfite_Genome/GA_conversion");
+        std::fs::create_dir_all(&ct).unwrap();
+        std::fs::create_dir_all(&ga).unwrap();
+        std::fs::write(tmp.path().join("genome.fa"), ">c\nACGT\n").unwrap();
+        for (dir, stem) in [(&ct, "BS_CT"), (&ga, "BS_GA")] {
+            // every file EXCEPT `.pac`
+            for ext in ["0123", "amb", "ann", "bwt.2bit.64"] {
+                std::fs::write(dir.join(format!("{stem}.{ext}")), b"x").unwrap();
+            }
+        }
+        let err = discover_genome(Aligner::BwaMem4, tmp.path()).unwrap_err();
+        assert!(format!("{err}").contains("BS_CT.pac"), "{err}");
     }
 
     /// Phase 3 (T1): rammap is minimap-like — the SAME single `.mmi` suffix;

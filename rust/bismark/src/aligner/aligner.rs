@@ -27,6 +27,12 @@ pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
 /// reports `rammap 1.1.1` (a `rammap ` banner prefix, unlike minimap2's bare number).
 pub const PINNED_RAMMAP_VERSION: &str = "1.1.1";
 
+/// The bwa-mem4 version this port pins (concordance gate, NOT byte-identity).
+/// `bwa-mem4 --version` prints clap's `bwa-mem4 4.2.0` banner (the bare number is
+/// the `version` SUBCOMMAND, kept for `bwa-mem2 version` compatibility), so the
+/// parse takes the last whitespace token exactly like rammap's.
+pub const PINNED_BWAMEM4_VERSION: &str = "4.2.0";
+
 /// A located, working aligner.
 #[derive(Debug, Clone)]
 pub struct DetectedAligner {
@@ -44,6 +50,7 @@ fn binary_name(kind: Aligner) -> &'static str {
         Aligner::Hisat2 => "hisat2",
         Aligner::Minimap2 => "minimap2",
         Aligner::Rammap => "rammap",
+        Aligner::BwaMem4 => "bwa-mem4",
     }
 }
 
@@ -54,6 +61,7 @@ fn pinned_version(kind: Aligner) -> &'static str {
         Aligner::Hisat2 => PINNED_HISAT2_VERSION,
         Aligner::Minimap2 => PINNED_MINIMAP2_VERSION,
         Aligner::Rammap => PINNED_RAMMAP_VERSION,
+        Aligner::BwaMem4 => PINNED_BWAMEM4_VERSION,
     }
 }
 
@@ -64,6 +72,7 @@ fn path_flag(kind: Aligner) -> &'static str {
         Aligner::Hisat2 => "--path_to_hisat2",
         Aligner::Minimap2 => "--path_to_minimap2",
         Aligner::Rammap => "--path_to_rammap",
+        Aligner::BwaMem4 => "--path_to_bwamem4",
     }
 }
 
@@ -118,7 +127,8 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     let parsed = match kind {
         Aligner::Minimap2 => parse_minimap2_version(&stdout),
         // rammap prints `rammap 1.1.1` (a banner prefix) — take the last token.
-        Aligner::Rammap => parse_rammap_version(&stdout),
+        // bwa-mem4 prints clap's `bwa-mem4 4.2.0` — the same last-token shape.
+        Aligner::Rammap | Aligner::BwaMem4 => parse_rammap_version(&stdout),
         Aligner::Bowtie2 | Aligner::Hisat2 => parse_bowtie2_version(&stdout),
     };
     let version = parsed.unwrap_or_else(|| {
@@ -264,6 +274,27 @@ mod tests {
         assert_eq!(binary_name(Aligner::Rammap), "rammap");
         assert_eq!(pinned_version(Aligner::Rammap), "1.1.1");
         assert_eq!(path_flag(Aligner::Rammap), "--path_to_rammap");
+    }
+
+    /// bwa-mem4 detection metadata (binary / pin / path flag). The binary name is
+    /// hyphenated (`bwa-mem4`) while the selection flag is not (`--bwamem4`).
+    #[test]
+    fn bwamem4_detection_metadata() {
+        assert_eq!(binary_name(Aligner::BwaMem4), "bwa-mem4");
+        assert_eq!(pinned_version(Aligner::BwaMem4), "4.2.0");
+        assert_eq!(path_flag(Aligner::BwaMem4), "--path_to_bwamem4");
+    }
+
+    /// `bwa-mem4 --version` prints clap's `bwa-mem4 4.2.0` banner → the rammap
+    /// last-token parse applies (the bare-number `minimap2` parse would keep the
+    /// whole line, and the Bowtie 2 `… version x.y.z` parse would find nothing).
+    #[test]
+    fn parses_bwamem4_banner_version() {
+        assert_eq!(
+            parse_rammap_version("bwa-mem4 4.2.0\n").as_deref(),
+            Some("4.2.0")
+        );
+        assert_eq!(parse_bowtie2_version("bwa-mem4 4.2.0\n"), None);
     }
 
     /// Phase 3 (T1, design#4): `rammap --version` prints `rammap 1.1.1` (a banner

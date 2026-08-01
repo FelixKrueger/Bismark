@@ -14,6 +14,7 @@ fn aligner_label(a: Aligner) -> &'static str {
         Aligner::Bowtie2 => "Bowtie 2",
         Aligner::Hisat2 => "HISAT2",
         Aligner::Minimap2 => "Minimap2",
+        Aligner::BwaMem4 => "bwa-mem4",
     }
 }
 

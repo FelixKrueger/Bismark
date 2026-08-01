@@ -341,6 +341,22 @@ The folder containing the `rammap` executable (used by `--rammap_subprocess`; no
 
 **Deprecated (hidden).** The in-process backend is now the `--rammap` default, so this flag is inert — accepted for backward compatibility and removed in a later release. Use `--rammap_subprocess` to opt out to the external binary.
 
+- `--bwamem4/--bwa`
+
+Uses [bwa-mem4](https://github.com/IPNP-BIPN/bwa-mem4), a pure-Rust reimplementation of bwa-mem2, as the underlying read aligner. Intended for **short-read** bisulfite data (WGBS, EM-seq) — the short-read counterpart to `--rammap`'s long-read lane. Single-end only; paired-end, `--local` and `--combined_index` are rejected, because bwa has no per-strand flag for Bismark's per-strand instance model. Needs the `bwa-mem4` binary on your `PATH` (or `--path_to_bwamem4`) and indices built with `bismark_genome_preparation --bwamem4`. **Experimental and concordance-gated — Perl Bismark has no bwa backend, so there is no byte-identity oracle for this path.** Default: OFF.
+
+- `--path_to_bwamem4 <path>`
+
+The folder containing the `bwa-mem4` executable (not the executable itself).
+
+- `--auto_aligner/--auto`
+
+Choose the backend from the reads instead of from a flag: Bismark samples the first 1000 reads of the input, takes the **median** read length, and selects `--bwamem4` below the threshold or `--rammap` at or above it. The sampled count, the median, the threshold and the chosen backend are printed before any read is aligned. Single-end only (both backends it chooses between are single-end), and it may not be combined with an explicit aligner flag. An input that cannot be sampled is an error, never a silent fallback to a default backend. Default: OFF.
+
+- `--auto_length_threshold <int>`
+
+The median read length (bp) at or above which `--auto_aligner` picks the long-read backend. Accepted range 50–100000. Requires `--auto_aligner`. Default: 300.
+
 #### OUTPUT:
 
 The output is a BAM file by default, as well as a aligment report text file.

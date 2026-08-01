@@ -232,7 +232,34 @@ pub fn build_aligner_options(
     if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
         return Ok((minimap2_options(cli)?, gp));
     }
+    // 18. bwa-mem4 — CLEAN SLATE, same build-then-wipe order as minimap2 above (so
+    // `-N 2 --bwamem4` still dies on the Bowtie 2 range check). bwa takes a wholly
+    // different option set and, unlike every other backend, a SUBCOMMAND.
+    if aligner == Aligner::BwaMem4 {
+        return Ok((bwamem4_options(), gp));
+    }
     Ok((options, gp))
+}
+
+/// Assemble the bwa-mem4 `aligner_options` from a clean slate.
+///
+/// `mem` leads: it is a subcommand, not a flag, so it MUST be argv[0] of the
+/// option string (`build_se_argv` splits this string verbatim before appending
+/// the index prefix + reads).
+///
+/// - `-t 2` — the same hardcoded per-instance thread count Bismark gives minimap2
+///   (Perl 8372). Bismark runs 2 (directional/pbat) or 4 (non-directional)
+///   instances concurrently, so the per-instance count stays small; `--multicore N`
+///   forks whole pipelines and is unaffected.
+/// - `-K 20000000` — the batch size in input BASES, pinned explicitly rather than
+///   left to bwa's `10M * -t` default. bwa estimates the insert-size distribution
+///   once per batch, so a moving batch boundary is observable in the output;
+///   pinning it makes a run reproducible independently of the binary's default.
+///
+/// No preset knobs: bwa-mem has no `-x` presets (the `--mm2_*` family stays
+/// minimap-only and dies outside it, `config::resolve_mm2_max_length`).
+fn bwamem4_options() -> String {
+    "mem -t 2 -K 20000000".to_string()
 }
 
 /// Assemble the minimap2 `aligner_options` from a clean slate (Perl 8358-8413).
@@ -808,6 +835,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
+    }
+
+    /// bwa-mem4's clean-slate option string. `mem` MUST lead (it is a subcommand,
+    /// not a flag) and the Bowtie 2 base must be gone entirely.
+    #[test]
+    fn bwamem4_default_option_string() {
+        let (opts, _) = build_aligner_options(
+            &cli_from(&["--bwamem4"]),
+            Aligner::BwaMem4,
+            ReadFormat::FastQ,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(opts, "mem -t 2 -K 20000000");
+        assert!(opts.starts_with("mem "));
+    }
+
+    /// The build-then-wipe order still validates the Bowtie 2 base: a single-end
+    /// `-X/--maxins` dies even though the assembled base is then discarded for
+    /// bwa-mem4 (the same property the minimap2 clean slate has).
+    #[test]
+    fn bwamem4_still_validates_the_shared_base() {
+        assert!(
+            build_aligner_options(
+                &cli_from(&["--bwamem4", "-X", "500"]),
+                Aligner::BwaMem4,
+                ReadFormat::FastQ,
+                false, // single-end → -X is an error
+                None,
+            )
+            .is_err()
+        );
     }
 
     /// V3: preset selection — `--mm2_short_reads`→`sr`, `--mm2_pacbio`→`map-pb`,

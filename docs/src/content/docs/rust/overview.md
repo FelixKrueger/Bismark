@@ -79,24 +79,40 @@ end of this section.
    `--rammap_subprocess` to opt out to that external binary (exact rammap-CLI parity, or a build
    without the in-process backend). It is opt-in, concordance-gated, and not byte-identical to
    minimap2; see the [benchmarks page](/Bismark/rust/benchmarks/#rammap-experimental).
-3. **In-process post-alignment streaming.** The Rust methylation extractor drives bedGraph generation
+3. **bwa-mem4, an experimental fifth aligner, and automatic backend choice.** `--bwamem4` adds
+   [bwa-mem4](https://github.com/IPNP-BIPN/bwa-mem4), a pure-Rust reimplementation of bwa-mem2, for
+   **short-read** bisulfite data (WGBS, EM-seq). It is the short-read counterpart to `--rammap`'s
+   long-read lane: `bwa-mem4 mem` runs as a subprocess over bwa-mem2-format indices built by
+   `bismark_genome_preparation --bwamem4`, and it needs the `bwa-mem4` binary on `PATH` (or
+   `--path_to_bwamem4`). Single-end only; paired-end, `--local` and `--combined_index` are rejected,
+   because bwa has no per-strand flag for Bismark's per-strand instance model. Perl Bismark has no bwa
+   backend at all, so this path has no byte-identity oracle: it is opt-in, never-silent and
+   concordance-gated, exactly like `--rammap`.
+
+   `--auto_aligner` picks between the two experimental lanes from the reads themselves: it samples the
+   first 1000 reads of the input, takes the **median** read length, and selects `--bwamem4` below
+   300 bp or `--rammap` at or above it (move the boundary with `--auto_length_threshold`). The sample
+   size, the median, the threshold and the chosen backend are printed before anything is aligned. It is
+   single-end only (both backends it chooses between are), refuses to run alongside an explicit aligner
+   flag, and errors rather than falling back to a default backend if the input cannot be sampled.
+4. **In-process post-alignment streaming.** The Rust methylation extractor drives bedGraph generation
    and coverage2cytosine in memory, in the same process, instead of launching separate Perl
    subprocesses and re-reading intermediate files. This is part of why the post-alignment stage is
    faster; see the [extractor benchmarks](/Bismark/rust/benchmarks/#methylation-extractor).
-4. **Worker-invariant `--multicore`.** The output is independent of the worker count: the same input
+5. **Worker-invariant `--multicore`.** The output is independent of the worker count: the same input
    produces the same bytes whether it is run on one worker or many. Perl's fork-and-modulo scheme does
    not have this property.
-5. **Graceful handling of empty input.** A sample where nothing aligned (a header-only BAM) flows
+6. **Graceful handling of empty input.** A sample where nothing aligned (a header-only BAM) flows
    through deduplication, methylation extraction and coverage2cytosine without crashing: each tool
    emits valid empty or all-zero output and exits cleanly. This is a deliberate, documented divergence
    from Perl `v0.25.1`, where deduplication and coverage2cytosine instead exit with an error on empty
    input. It keeps a no-alignment sample from aborting an automated pipeline such as nf-core/methylseq.
    Non-empty runs remain byte-identical.
-6. **Pure-Rust BAM/SAM/CRAM I/O.** The suite reads and writes alignment files directly (via its
+7. **Pure-Rust BAM/SAM/CRAM I/O.** The suite reads and writes alignment files directly (via its
    `bismark::io` module), so the tools no longer depend on an external `samtools` for file I/O.
 
 :::note[Byte-identical versus concordance-gated]
-The combined-index modes and rammap are **opt-in and concordance-gated**: they trade byte-identity for
+The combined-index modes, rammap and bwa-mem4 are **opt-in and concordance-gated**: they trade byte-identity for
 speed or memory and are never selected by default. The faithful per-strand alignment path, and every
 other tool in the suite, remain **byte-identical to Perl `v0.25.1`**. That is the path to use when
 reproducing published results or feeding a strictly validated pipeline.

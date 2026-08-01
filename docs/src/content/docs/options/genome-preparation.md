@@ -39,6 +39,10 @@ A full list of options can also be viewed by typing: `bismark prepare --help`
 
 This will create bisulfite indexes for use with minimap2 (https://github.com/lh3/minimap2). This is recommended only for specialist applications such as EM-seq with ONT (Oxford Nanopore Technologies) or PacBio reads. (Default: OFF).
 
+- `--bwamem4/--bwa`
+
+This will create bisulfite indexes for use with [bwa-mem4](https://github.com/IPNP-BIPN/bwa-mem4), the pure-Rust bwa-mem2 reimplementation, for the `bismark --bwamem4` short-read backend. Writes the five bwa-mem2 side files (`.0123`, `.amb`, `.ann`, `.bwt.2bit.64`, `.pac`) per converted genome. Does not work in conjunction with `--single_fasta`, `--slam` or `--large-index`. (Default: OFF).
+
 - `--parallel INT`
 
 Use several threads for each indexing process to speed up the genome preparation step. Remember that the indexing is run twice in parallel already (for the top and bottom strand separately), so e.g. `--parallel 4` will use 8 threads in total. Please also see `--large-index` for parallel processing of VERY LARGE genomes (e.g. the axolotl)
