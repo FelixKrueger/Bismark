@@ -88,13 +88,13 @@ pub const BOWTIE2_LOCAL_MATCH_BONUS: f64 = 2.0;
 /// `form` can only be set together — outside this module they cannot be set at all.
 /// Within it, keeping them consistent is [`from_emitted`](Self::from_emitted)'s job:
 /// only Bowtie 2-local has a nonzero perfect score, and only Bowtie 2-local is emitted
-/// the `G` form.
+/// the `G` form. The MAPQ ladder is *derived* from the match bonus rather than stored —
+/// see [`local_ladder`](Self::local_ladder).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScoreModel {
     intercept: f64,
     slope: f64,
     form: ScoreMinForm,
-    local_ladder: bool,
     /// Perfect-alignment score per base; nonzero only for Bowtie 2 `--local`.
     match_bonus: f64,
 }
@@ -114,9 +114,12 @@ impl ScoreModel {
             intercept,
             slope,
             form,
-            local_ladder: local,
-            // Only Bowtie 2 --local scores matches positively; every other mode's
-            // best possible score is 0. HISAT2-local is deliberately 0 pending #1079.
+            // Only Bowtie 2 --local scores matches positively; every other mode's best
+            // possible score is 0 — including HISAT2, which forces its match bonus to 0
+            // (hisat2.cpp:3916) and exposes no --local option of its own.
+            // Assumes Bismark never passes --ma or --bwa-sw-like through; if that changes,
+            // guard at the CLI (--ma >= 0, --bwa-sw-like unsupported) rather than loosening
+            // the `> 0.0` tests below, which would desynchronise the ladder from `normalize`.
             match_bonus: if local && aligner == Aligner::Bowtie2 {
                 BOWTIE2_LOCAL_MATCH_BONUS
             } else {
@@ -156,8 +159,20 @@ impl ScoreModel {
     }
 
     /// Use the `--local` MAPQ ladder (Perl 4082-4178) rather than the end-to-end one.
+    ///
+    /// Derived from the match bonus, exactly as Bowtie 2 and HISAT2 both do
+    /// (`unique.h:236`, `if(sc_.monotone)`): a zero perfect score means scores only ever
+    /// go down, which is the end-to-end regime. This is why HISAT2 `--local` uses the
+    /// end-to-end ladder — its match bonus is always 0 (#1080).
+    ///
+    /// NB this couples the two deliberately: if #1081 gives minimap2/rammap a nonzero match
+    /// bonus they would also pick up the local ladder. That is a default that forces the
+    /// question rather than an implication — minimap2 derives MAPQ from chain scores, not a
+    /// Bowtie-family ladder. It is enforced, not just documented: `score_model_construction_
+    /// matrix` asserts `!local_ladder()` for all four aligners end-to-end, so #1081 cannot
+    /// add a bonus without failing a test.
     pub(crate) fn local_ladder(&self) -> bool {
-        self.local_ladder
+        self.match_bonus > 0.0
     }
 
     /// Minimum valid alignment score, summed over mates (Perl 3932-36).

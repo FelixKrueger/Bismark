@@ -9728,7 +9728,9 @@ Alignment:
                          characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible
                          alignment score. For Bowtie 2, the match bonus --ma (default: 2) is used in this mode, and the best possible
                          alignment score is equal to the match bonus (--ma) times the length of the read. This is mutually exclusive with
-                         end-to-end alignments. For HISAT2, it is currently not exactly known how the best alignment is calculated.
+                         end-to-end alignments. HISAT2 exposes no --local option of its own and always scores matches as 0,
+                         so its best possible alignment score is 0 and MAPQ stays on the end-to-end
+                         scale; --local still enables soft-clipping for HISAT2.
                          DEFAULT: OFF.
 
 
