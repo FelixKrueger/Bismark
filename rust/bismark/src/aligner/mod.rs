@@ -1025,7 +1025,10 @@ fn build_se_inprocess_streams(
         };
         // The converted temp the subprocess CLI would have read (`.gz` when `--gzip`).
         let path = &converted[file_idx].path;
-        let reader: Box<dyn BufRead + Send> = crate::io::gzread::open_read(path)?;
+        // Deliberately narrowed to `Box<dyn BufRead>`: `InProcessAlignerStream` is
+        // generic over the reader type and this function's return type pins it, so
+        // keeping `+ Send` here would change the returned `Vec`'s type parameter.
+        let reader: Box<dyn BufRead> = crate::io::gzread::open_read(path)?;
         streams.push(crate::aligner::inprocess::InProcessAlignerStream::new(
             aligner,
             reader,
