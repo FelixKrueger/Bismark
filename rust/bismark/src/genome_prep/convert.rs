@@ -11,10 +11,8 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
-
-use flate2::read::MultiGzDecoder;
 
 use crate::genome_prep::discovery::extract_chromosome_name;
 use crate::genome_prep::error::GenomePrepError;
@@ -108,18 +106,8 @@ fn header_line(name: &[u8], side: Side, out: &mut Vec<u8>) {
 /// Open a FASTA file for reading, transparently decompressing `.gz`
 /// (multi-member safe). Returns a buffered byte reader. Shared with the
 /// `--genomic_composition` read path ([`crate::genome_prep::composition`]).
-pub(crate) fn open_fasta(path: &Path) -> Result<Box<dyn BufRead>, GenomePrepError> {
-    let f = File::open(path)?;
-    let is_gz = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.ends_with(".gz"))
-        .unwrap_or(false);
-    if is_gz {
-        Ok(Box::new(BufReader::new(MultiGzDecoder::new(f))))
-    } else {
-        Ok(Box::new(BufReader::new(f)))
-    }
+pub(crate) fn open_fasta(path: &Path) -> Result<Box<dyn BufRead + Send>, GenomePrepError> {
+    Ok(crate::io::gzread::open_read(path)?)
 }
 
 /// Build the per-chromosome output path `<dir>/<name>.{CT|GA}_conversion.fa`

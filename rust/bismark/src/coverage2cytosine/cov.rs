@@ -7,8 +7,7 @@
 //! typed `MalformedCovLine` (accepted divergence from Perl's lenient coercion;
 //! cannot occur on real `bismark2bedGraph` output).
 
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::Path;
 
 use crate::coverage2cytosine::error::BismarkC2cError;
@@ -19,19 +18,8 @@ pub type CovRecord = (Vec<u8>, u32, u32, u32);
 
 /// Open the coverage file, transparently decompressing `.gz` (plain gzip via
 /// `MultiGzDecoder`, matching Perl's `gunzip -c`).
-pub fn open_cov(path: &Path) -> Result<Box<dyn BufRead>, BismarkC2cError> {
-    let file = File::open(path)?;
-    let is_gz = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".gz"));
-    if is_gz {
-        Ok(Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(
-            file,
-        ))))
-    } else {
-        Ok(Box::new(BufReader::new(file)))
-    }
+pub fn open_cov(path: &Path) -> Result<Box<dyn BufRead + Send>, BismarkC2cError> {
+    Ok(crate::io::gzread::open_read(path)?)
 }
 
 /// Parse one coverage line into `(chr, start, meth, nonmeth)`.

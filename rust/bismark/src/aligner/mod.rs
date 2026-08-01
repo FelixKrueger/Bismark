@@ -574,6 +574,23 @@ fn pipeline(config: &RunConfig) -> Result<()> {
     // contiguous-chunk fan-out; N == 1 (the default) takes the proven single-core
     // direct path — byte-identical by construction (PLAN §3.1).
     let n = config.multicore;
+    // Install the process-global gzip-decoder budget ONCE, here, because this is
+    // the single funnel where both the worker count and the layout are known and
+    // no read stream has been opened yet. `--parallel N` runs N in-process
+    // workers, each holding open 1 (SE) or 2 (PE) `.gz` read streams, so the
+    // per-stream budget is the machine budget divided by the streams that can be
+    // live at once. Without this, `rapidgzip`'s own per-reader default
+    // (`available_parallelism()`) would ask for `N * streams * cores` decoder
+    // threads and starve the aligner subprocess it is feeding. This changes
+    // throughput ONLY: the decoded bytes are budget-invariant, so `--parallel`
+    // worker-invariance and byte-identity are untouched.
+    crate::io::gzread::set_stream_budget(crate::io::gzread::per_stream_threads(
+        n as usize,
+        match &config.layout {
+            ReadLayout::SingleEnd { .. } => 1,
+            ReadLayout::PairedEnd { .. } => 2,
+        },
+    ));
     // #787 Illumina 5-Base: a distinct path that aligns to the UNCONVERTED genome
     // (no C->T read conversion) and inverts the methylation call. Guarded at resolve()
     // to directional + minimap2 + single-instance, so it short-circuits here (PE only).
@@ -1008,12 +1025,7 @@ fn build_se_inprocess_streams(
         };
         // The converted temp the subprocess CLI would have read (`.gz` when `--gzip`).
         let path = &converted[file_idx].path;
-        let f = File::open(path)?;
-        let reader: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(f)))
-        } else {
-            Box::new(BufReader::new(f))
-        };
+        let reader: Box<dyn BufRead + Send> = crate::io::gzread::open_read(path)?;
         streams.push(crate::aligner::inprocess::InProcessAlignerStream::new(
             aligner,
             reader,
@@ -1199,12 +1211,7 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
         .join(".bismark_5base_concat_ref.fa");
     let mut out = BufWriter::new(File::create(&tmp)?);
     for f in fastas {
-        let file = File::open(f)?;
-        let mut r: Box<dyn BufRead> = if f.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(file)))
-        } else {
-            Box::new(BufReader::new(file))
-        };
+        let mut r: Box<dyn BufRead + Send> = crate::io::gzread::open_read(f)?;
         std::io::copy(&mut r, &mut out)?;
         out.write_all(b"\n")?; // guard against a missing trailing newline between files
     }
@@ -2505,12 +2512,7 @@ fn drive_merge<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
-    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader: Box<dyn BufRead + Send> = crate::io::gzread::open_read(read_file)?;
     let directional = matches!(config.library, LibraryType::Directional);
     let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
@@ -3039,12 +3041,7 @@ fn drive_merge_combined<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
-    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader: Box<dyn BufRead + Send> = crate::io::gzread::open_read(read_file)?;
     let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
         config.read_processing.skip,
@@ -3356,12 +3353,7 @@ fn drive_merge_combined_nondir<C: SamStream, G: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
-    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader: Box<dyn BufRead + Send> = crate::io::gzread::open_read(read_file)?;
     let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
         config.read_processing.skip,
@@ -3994,12 +3986,7 @@ fn drive_merge_combined_nondir_tagged<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
-    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader: Box<dyn BufRead + Send> = crate::io::gzread::open_read(read_file)?;
     let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
         config.read_processing.skip,

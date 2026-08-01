@@ -29,6 +29,11 @@ which = "=7.0.3"
 libc = "=0.2.186"
 crossbeam-channel = "=0.5.15"
 flate2 = { version = "=1.1.9", default-features = false, features = ["zlib-rs"] }
+# Parallel gzip/BGZF *decode* for every `.gz` input (`io::gzread`). Pure Rust:
+# pulls only `crossbeam-deque` + `libz-rs-sys`, i.e. the same zlib-rs inflate
+# backend flate2 already uses here, so no new system dependency. flate2 stays
+# for compression and for the sequential fallback on non-seekable input.
+rapidgzip-core = "=0.1.0"
 gzp = { version = "=0.11.3", default-features = false, features = ["deflate_rust"] }
 noodles-sam = "=0.85.0"
 noodles-bam = "=0.89.0"

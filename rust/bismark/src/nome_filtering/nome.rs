@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::Path;
 
 use crate::io::genome::Genome;
@@ -319,21 +319,7 @@ pub fn write_report(
     let mut enc = GzEncoder::new(BufWriter::new(out), Compression::default());
     enc.write_all(HEADER)?; // header BEFORE the read loop (D4)
 
-    let infile = File::open(input_path)?;
-    let is_gz = input_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".gz"));
-
-    let result = if is_gz {
-        per_read_filtering(
-            BufReader::new(flate2::read::MultiGzDecoder::new(infile)),
-            genome,
-            &mut enc,
-        )
-    } else {
-        per_read_filtering(BufReader::new(infile), genome, &mut enc)
-    };
+    let result = per_read_filtering(crate::io::gzread::open_read(input_path)?, genome, &mut enc);
 
     enc.finish()?; // finish so the (possibly header-only) .gz is valid on disk
     result // propagate EmptyInput AFTER finish

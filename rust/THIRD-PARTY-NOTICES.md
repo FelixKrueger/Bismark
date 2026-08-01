@@ -28,5 +28,20 @@ Built from crates.io. The dependency tree is predominantly **MIT** and/or
 `cargo-about`. No dependency imposes terms incompatible with GPL-3.0-only
 distribution of the suite.
 
+Two dependencies carry terms not covered by the MIT / Apache-2.0 summary above
+and are therefore called out individually:
+
+| Crate | Pinned version | License | Upstream |
+|-------|----------------|---------|----------|
+| `rapidgzip-core` | 0.1.0 | BSD-3-Clause AND MIT | https://github.com/COMBINE-lab/rapidgzip-rust |
+
+`rapidgzip-core` provides the parallel gzip/BGZF **decoder** used for every `.gz`
+input (`bismark::io::gzread`). It is statically linked, not bundled as a binary.
+BSD-3-Clause is a permissive licence compatible with GPL-3.0-only distribution;
+its attribution and no-endorsement clauses are satisfied by this notice together
+with the upstream `LICENSE` files reproduced in the crate source. The crate is
+pure Rust (its own dependencies are `crossbeam-deque` and `libz-rs-sys`), so it
+adds no C toolchain or system-library requirement.
+
 > A machine-generated, exhaustive dependency-license manifest (via `cargo-about`)
 > will accompany the GA release; this notice covers the beta track.

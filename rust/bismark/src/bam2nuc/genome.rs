@@ -20,8 +20,7 @@
 //! chromosome boundaries), so iteration order is irrelevant here.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use crate::bam2nuc::error::BismarkBam2nucError;
@@ -140,21 +139,8 @@ fn discover_fasta_files(dir: &Path) -> Result<Vec<PathBuf>, BismarkBam2nucError>
 /// A present file that yields zero records is treated as malformed (Perl's
 /// `extract_chromosome_name` dies on a non-`>` / empty first line).
 fn read_one_fasta(path: &Path) -> Result<FastaRecords, BismarkBam2nucError> {
-    let file = File::open(path)?;
-    let is_gz = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".gz"));
-
     // MultiGzDecoder decodes plain gzip (Perl `gunzip -c`) AND gzip-framed BGZF.
-    let records = if is_gz {
-        collect_records(
-            BufReader::new(flate2::read::MultiGzDecoder::new(file)),
-            path,
-        )?
-    } else {
-        collect_records(BufReader::new(file), path)?
-    };
+    let records = collect_records(crate::io::gzread::open_read(path)?, path)?;
 
     if records.is_empty() {
         return Err(BismarkBam2nucError::MalformedFastaHeader {

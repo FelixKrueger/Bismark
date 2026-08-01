@@ -26,8 +26,7 @@
 //! `HashMap`'s iteration order. Do NOT add an `iter()`/`keys()` passthrough.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 /// `(chromosome name, uppercased sequence)` pairs read from one FASTA file.
@@ -203,22 +202,9 @@ fn discover_fasta_files(dir: &Path, tiers: &[&str]) -> Result<Vec<PathBuf>, Geno
 /// A present file that yields zero records is treated as malformed (Perl's
 /// `extract_chromosome_name` dies on a non-`>` / empty first line).
 fn read_one_fasta(path: &Path) -> Result<FastaRecords, GenomeError> {
-    let file = File::open(path)?;
-    let is_gz = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".gz"));
-
     // MultiGzDecoder decodes plain gzip (Perl `gunzip -c`) AND gzip-framed
     // BGZF; noodles' build_from_path is BGZF-only, so we decompress ourselves.
-    let records = if is_gz {
-        collect_records(
-            BufReader::new(flate2::read::MultiGzDecoder::new(file)),
-            path,
-        )?
-    } else {
-        collect_records(BufReader::new(file), path)?
-    };
+    let records = collect_records(crate::io::gzread::open_read(path)?, path)?;
 
     if records.is_empty() {
         return Err(GenomeError::MalformedFastaHeader {

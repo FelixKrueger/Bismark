@@ -11,10 +11,8 @@
 //! emits as the `@SQ` block.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
-
-use flate2::read::MultiGzDecoder;
 
 use crate::aligner::error::{AlignerError, Result};
 
@@ -76,13 +74,7 @@ fn read_one_fasta(
     chromosomes: &mut HashMap<String, Vec<u8>>,
     sq_order: &mut Vec<String>,
 ) -> Result<()> {
-    let file = std::fs::File::open(path)?;
-    let reader: Box<dyn Read> = if path.extension().is_some_and(|e| e == "gz") {
-        Box::new(MultiGzDecoder::new(file))
-    } else {
-        Box::new(file)
-    };
-    let mut reader = BufReader::new(reader);
+    let mut reader = crate::io::gzread::open_read(path)?;
 
     // First line must be a FASTA header (Perl 5064–5071).
     let mut buf = Vec::new();

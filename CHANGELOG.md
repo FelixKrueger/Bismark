@@ -1,6 +1,13 @@
 # Bismark Changelog
 
 
+## Unreleased
+
+### Suite-wide
+
+- **Gzipped input is now decompressed in parallel.** Every `.gz` **input** in the suite (FastQ/FastA reads, genome FastA, `.cov.gz`) is decoded through [`rapidgzip-core`](https://github.com/COMBINE-lab/rapidgzip-rust), a pure-Rust implementation of the rapidgzip marker/window algorithm, instead of a single-threaded `MultiGzDecoder`. Reading a gzipped FastQ is no longer a serial bottleneck in front of the aligner. The decoded bytes are unchanged, so this is **byte-identical**: it is a throughput change only. Non-seekable input (a FIFO, a process substitution such as `<(zcat reads.gz)`, `/dev/stdin`) transparently falls back to the previous sequential decoder, as does any input the parallel decoder declines. Gzip **output** (`--gzip`, `.cov.gz`, `.bedGraph.gz`) is untouched.
+- **`BISMARK_GUNZIP_THREADS`** caps the per-stream gzip decoder budget suite-wide. Unset, the budget is `min(8, cores)` divided by the number of read streams `--parallel` can hold open at once, so the decoders never oversubscribe the machine against the aligner they are feeding. A budget below 4 selects the sequential decoder, which is measurably faster at that size, so `BISMARK_GUNZIP_THREADS=1` restores a fully sequential decode without a rebuild.
+
 ## Bismark 3.1.0 (released 2026-07-13)
 
 ### bismark (aligner)

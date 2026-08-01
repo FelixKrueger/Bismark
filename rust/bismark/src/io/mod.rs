@@ -18,6 +18,7 @@ pub mod cigar;
 pub mod cram_ref;
 pub mod error;
 pub mod genome;
+pub mod gzread;
 pub mod pair;
 pub mod read;
 pub mod record;
