@@ -78,7 +78,7 @@ use crate::aligner::align::{
     PairedSamStream, SamRecord, SamStream,
 };
 use crate::aligner::aux_out::AuxKind;
-use crate::aligner::config::{Aligner, LibraryType, ReadFormat, ReadLayout, ScoreModel};
+use crate::aligner::config::{Aligner, LibraryType, Mm2Preset, ReadFormat, ReadLayout, ScoreModel};
 use crate::aligner::genome::{Genome, read_genome_into_memory};
 use crate::aligner::merge::{
     BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired,
@@ -230,8 +230,19 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         };
         eprintln!(
             "Note: --rammap uses the rammap pure-Rust minimap2 reimplementation \
-             ({backend}). Alignments are concordance-validated, NOT byte-identical to minimap2."
+             ({backend}), preset -x {}. Alignments are concordance-validated, NOT \
+             byte-identical to minimap2.",
+            config.mm2_preset.as_option_str()
         );
+        // Never-silent: `--mm2_pacbio`'s distinguishing parameters are index-build ones a
+        // pre-built `.mmi` overrides, leaving one k-derived chaining coefficient (#1092 §3.5).
+        if config.mm2_preset == Mm2Preset::MapPb {
+            eprintln!(
+                "Note: --mm2_pacbio differs from the default in index-build parameters, which \
+                 the pre-built index overrides, plus one k-derived chaining coefficient — expect \
+                 map-ont-equivalent alignments."
+            );
+        }
         // Never-silent FastA explanation: `--rammap` DEFAULTS to the in-process backend, but
         // the in-process stream is FastQ-only, so a FastA run uses the subprocess path
         // instead. Fires when the user did NOT opt out (`--rammap_subprocess`) yet still got
@@ -929,6 +940,17 @@ fn inprocess_rammap_selected(
         && matches!(format, ReadFormat::FastQ)
 }
 
+/// Bridge Bismark's resolved preset to rammap's enum. **Exhaustive on purpose**: a fourth
+/// Bismark preset must be mapped here rather than silently defaulting (#1092).
+#[cfg(feature = "rammap-inprocess")]
+fn rammap_preset(p: Mm2Preset) -> ::rammap::Preset {
+    match p {
+        Mm2Preset::MapOnt => ::rammap::Preset::MapOnt,
+        Mm2Preset::MapPb => ::rammap::Preset::MapPb,
+        Mm2Preset::Sr => ::rammap::Preset::Sr,
+    }
+}
+
 /// Build the SE in-process rammap streams (epic 06152026 Phase 2): load each converted
 /// `.mmi` the per-mode [`se_instance_plan`] references EXACTLY ONCE into an
 /// `Arc<rammap::Aligner>` and `Arc::clone` it into one [`InProcessAlignerStream`] per
@@ -952,6 +974,9 @@ fn build_se_inprocess_streams(
 
     let plan = se_instance_plan(config.library);
 
+    // Captured by `load` below, so a hard-coded preset literal cannot reappear there (#1092).
+    let preset = rammap_preset(config.mm2_preset);
+
     // Load each `.mmi` the plan references, exactly once. `from_index` takes a `&str`
     // path (cf. the Phase-1 cross-check); map non-UTF-8 / load failure to a validation
     // error (fail-loud, never-silent).
@@ -964,10 +989,9 @@ fn build_se_inprocess_streams(
                 Path::new(&mmi).display()
             ))
         })?;
-        let aligner =
-            ::rammap::Aligner::from_index(mmi_str, ::rammap::Preset::MapOnt).map_err(|e| {
-                AlignerError::Validation(format!("failed to load rammap index {mmi_str}: {e}"))
-            })?;
+        let aligner = ::rammap::Aligner::from_index(mmi_str, preset).map_err(|e| {
+            AlignerError::Validation(format!("failed to load rammap index {mmi_str}: {e}"))
+        })?;
         Ok(Arc::new(aligner))
     };
 
@@ -6441,6 +6465,185 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- #1092 in-process rammap preset wiring (feature-gated, hermetic) ----
+
+    /// Bismark's presets map to rammap's, exhaustively.
+    #[cfg(feature = "rammap-inprocess")]
+    #[test]
+    fn rammap_preset_bridge_maps_every_variant() {
+        assert_eq!(rammap_preset(Mm2Preset::MapOnt), ::rammap::Preset::MapOnt);
+        assert_eq!(rammap_preset(Mm2Preset::MapPb), ::rammap::Preset::MapPb);
+        assert_eq!(rammap_preset(Mm2Preset::Sr), ::rammap::Preset::Sr);
+    }
+
+    /// Deterministic pseudo-random ACGT reference (fixed LCG → stable across platforms).
+    #[cfg(feature = "rammap-inprocess")]
+    fn preset_gate_reference() -> Vec<u8> {
+        let bases = [b'A', b'C', b'G', b'T'];
+        let mut x: u64 = 0x1092_1092_5EED_5EED;
+        (0..20_000)
+            .map(|_| {
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                bases[((x >> 33) % 4) as usize]
+            })
+            .collect()
+    }
+
+    /// 🔑 **The #1092 wiring gate.** Drives the PRODUCTION path — a real `.mmi` written by
+    /// `rammap::Aligner::save_index`, a `RunConfig`, then `build_se_inprocess_streams` itself,
+    /// so the assertion sees whatever preset actually reached `from_index`.
+    ///
+    /// A test that built its own aligner from the resolved preset would gate the *bridge* and
+    /// pass even with the call site hard-coding a literal — the fault this exists to catch.
+    ///
+    /// The scores are pinned by running, not copied from the #1092 spike (whose index was
+    /// `from_seqs` at k=15/w=10 rather than a saved one). Derivation for a 150 bp read with 3
+    /// mismatches: `map-ont` = 2·150 − 3·(2+4) = 282; `sr` = 2·150 − 3·(2+8) = 270, the
+    /// mismatch-penalty delta. `sr`'s `end_bonus = 10` does NOT appear in this cell — if a
+    /// rammap bump moves these numbers, check which parameter changed before re-baselining.
+    ///
+    /// Covers `Sr` only: `map-pb` sets index parameters that `from_index` discards, so it is
+    /// near-inert and not behaviourally distinguishable here (#1092 §3.5).
+    #[cfg(feature = "rammap-inprocess")]
+    #[test]
+    fn inprocess_rammap_honours_the_resolved_preset() {
+        use crate::aligner::config::run_config_stub;
+        use std::io::Write;
+
+        let reference = preset_gate_reference();
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        // A real index, written by rammap itself — no external binary, no fixture placeholder.
+        let ct_base = tmp.path().join("BS_CT");
+        let ga_base = tmp.path().join("BS_GA");
+        for (base, chr) in [
+            (&ct_base, "chr1_CT_converted"),
+            (&ga_base, "chr1_GA_converted"),
+        ] {
+            let a = ::rammap::Aligner::from_seqs(
+                vec![(chr.to_string(), reference.clone())],
+                ::rammap::Preset::MapOnt,
+            );
+            a.save_index(&format!("{}.mmi", base.display())).unwrap();
+        }
+
+        // A 150 bp read with 3 mismatches — both presets map it comfortably with the same
+        // CIGAR, so the score gap is pure parameter arithmetic and not threshold-adjacent.
+        let mut read = reference[5_000..5_150].to_vec();
+        for i in [37usize, 75, 112] {
+            read[i] = match read[i] {
+                b'A' => b'C',
+                b'C' => b'A',
+                b'G' => b'T',
+                _ => b'G',
+            };
+        }
+        let fq_path = tmp.path().join("conv_C_to_T.fastq");
+        let mut fq = std::fs::File::create(&fq_path).unwrap();
+        writeln!(fq, "@r1").unwrap();
+        fq.write_all(&read).unwrap();
+        writeln!(fq, "\n+\n{}", "I".repeat(read.len())).unwrap();
+        drop(fq);
+
+        let converted = vec![convert::ConvertedReads {
+            name: "conv_C_to_T.fastq".into(),
+            path: fq_path,
+            count: 1,
+            seqid_tab_count: 0,
+        }];
+
+        let score_for = |preset: Mm2Preset| -> i64 {
+            let config = run_config_stub(
+                Aligner::Rammap,
+                preset,
+                ct_base.clone(),
+                ga_base.clone(),
+                LibraryType::Directional,
+                ReadLayout::SingleEnd {
+                    reads: vec!["conv.fastq".into()],
+                },
+            );
+            let streams = build_se_inprocess_streams(&config, &converted).unwrap();
+            // EVERY stream, not just the first: directional SE loads BOTH indexes (CT for
+            // the OT instance, GA for CTOB), so a preset reaching only one of them would
+            // bias the merge's best-instance choice while a `streams[0]`-only assertion
+            // stayed green (#1092).
+            assert_eq!(
+                streams.len(),
+                2,
+                "directional SE loads the CT and GA indexes"
+            );
+            let mut scores = Vec::new();
+            for (i, stream) in streams.iter().enumerate() {
+                let rec = stream.current().expect("a record");
+                // The methylation length guard SILENTLY skips a record whose CIGAR does not
+                // consume the whole read, so pin that too — `sr`'s local extension is a newly
+                // reachable source of clipped CIGARs (#1092).
+                assert_eq!(
+                    crate::aligner::inprocess::consumed_read_len(&rec.cigar),
+                    Some(read.len()),
+                    "{preset:?} stream {i}: CIGAR {} does not consume the full read — it \
+                     would be skipped",
+                    rec.cigar
+                );
+                scores.push(rec.alignment_score.expect("AS"));
+            }
+            assert_eq!(
+                scores[0], scores[1],
+                "{preset:?}: the CT and GA index loads disagree — one of them did not get \
+                 the resolved preset"
+            );
+            scores[0]
+        };
+
+        let ont = score_for(Mm2Preset::MapOnt);
+        let sr = score_for(Mm2Preset::Sr);
+        assert_eq!(ont, 282, "map-ont: 2*150 - 3*(2+4)");
+        assert_eq!(
+            sr, 270,
+            "sr: 2*150 - 3*(2+8). Getting 282 means the resolved preset never reached \
+             from_index — check that build_se_inprocess_streams passes config.mm2_preset"
+        );
+    }
+
+    /// rammap under `sr` honours #1081's `AS <= 2 * read_length` bound, which the MAPQ
+    /// denominator depends on. #1081's live gate (`tests/aligner_minimap2_as_bound.rs`) runs
+    /// **minimap2 only**; nothing covered rammap, whose `sr` preset sets `end_bonus = 10` —
+    /// and this fix is what makes that path reachable.
+    #[cfg(feature = "rammap-inprocess")]
+    #[test]
+    fn rammap_sr_respects_the_as_upper_bound() {
+        let reference = preset_gate_reference();
+        let perfect = &reference[5_000..5_150];
+        for preset in [::rammap::Preset::MapOnt, ::rammap::Preset::Sr] {
+            let a = ::rammap::Aligner::from_seqs(
+                vec![("chr1_CT_converted".to_string(), reference.clone())],
+                preset,
+            );
+            let res = a.map_seq_with(
+                "perfect",
+                perfect,
+                ::rammap::MapOpts {
+                    cs: None,
+                    md: Some(true),
+                },
+            );
+            let m = res
+                .mappings
+                .iter()
+                .find(|m| m.is_primary && !m.is_supplementary)
+                .expect("mapped");
+            assert_eq!(
+                m.score, 300,
+                "{preset:?}: a perfect 150 bp read must score exactly 2*len; a higher value \
+                 means an additive bonus (sr's end_bonus = 10) reached the reported score, \
+                 which would break #1081's MAPQ denominator"
+            );
+        }
+    }
 
     // ---- #787 Illumina 5-Base per-record emission (hermetic, no minimap2) ----
 

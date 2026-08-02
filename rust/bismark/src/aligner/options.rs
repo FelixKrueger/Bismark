@@ -9,7 +9,7 @@
 //! `--maxins`/`--maxins 500` → `--quiet`.
 
 use crate::aligner::cli::Cli;
-use crate::aligner::config::{Aligner, GapPenalties, ReadFormat, ScoreMinForm};
+use crate::aligner::config::{Aligner, GapPenalties, Mm2Preset, ReadFormat, ScoreMinForm};
 use crate::aligner::error::{AlignerError, Result};
 
 /// Build the `aligner_options` string + the (read,ref) gap penalties used later
@@ -245,18 +245,37 @@ pub fn build_aligner_options(
 /// `-t` is thread-invariant (byte-identical + input-order-preserving across N —
 /// spike `SPIKE_minimap2_thread_invariance.md`), so this is output-neutral: a bare
 /// `--minimap2` still emits `-t 2` (unchanged vs Perl). `--reorder` is Bowtie-2-only
-/// (pushed to the base string this clean slate discards). Preset (Perl 8374-8408):
-/// - `--mm2_short_reads` → `sr`,
-/// - `--mm2_pacbio` → `map-pb`,
-/// - default **or** an explicit `--mm2_nanopore` → `map-ont` (the `else` serves
-///   both — Perl sets `$mm2_nanopore=1` in the default case, 8405).
-///
-/// Preset-conflict dies (8375/8378/8391): short⊕nanopore, short⊕pacbio,
-/// pacbio⊕nanopore. (The `--mm2_*`-without-`--minimap2` dies + the max-length
-/// range/default live in `config::resolve_mm2_max_length`, mirroring Perl's
-/// separate `unless($mm2)` / `if($mm2)` blocks.)
+/// (pushed to the base string this clean slate discards). Preset selection (Perl 8374-8408)
+/// and its conflict dies live in [`resolve_mm2_preset`]; the `--mm2_*`-without-`--minimap2`
+/// dies + the max-length range/default live in `config::resolve_mm2_max_length`, mirroring
+/// Perl's separate `unless($mm2)` / `if($mm2)` blocks.
 fn minimap2_options(cli: &Cli) -> Result<String> {
-    let preset = if cli.mm2_short_read {
+    // The preset comes from `resolve_mm2_preset` — the SAME call `config::resolve` makes for
+    // the in-process rammap backend, so the emitted `-x` and the backend's preset cannot
+    // drift (#1092). Do not re-derive it here.
+    let preset = resolve_mm2_preset(cli)?;
+    // `-t` = Bismark `-p` (threads-to-aligner) knob, default the Perl-faithful 2 when
+    // absent (#1074; minimap2 `-t` is thread-invariant per the spike, so output-neutral).
+    // `bowtie_threads` is ≥ 2 when set (guarded upstream). rammap-subprocess shares this.
+    let t = cli.bowtie_threads.unwrap_or(2);
+    Ok(format!(
+        "-a --MD --secondary=no -t {t} -x {} -K 250K",
+        preset.as_option_str()
+    ))
+}
+
+/// Resolve the `--mm2_*` selectors to a typed preset, carrying the three preset-conflict
+/// dies (Perl 8375/8378/8391).
+///
+/// The **check order is behaviour**: short⊕nanopore, then short⊕pacbio, then pacbio⊕nanopore
+/// — it decides which message a triple conflict produces, pinned by
+/// `minimap2_preset_conflicts_die`. The message strings are Perl-faithful; do not reword them.
+///
+/// Called for every aligner, but only minimap2/rammap read the result. It must stay
+/// downstream of `config::resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a
+/// non-minimap aligner — see `resolve`'s call site (#1092).
+pub fn resolve_mm2_preset(cli: &Cli) -> Result<Mm2Preset> {
+    if cli.mm2_short_read {
         if cli.mm2_nanopore {
             return Err(AlignerError::Validation(
                 "Please select minimap2 in Short Read or Nanopore mode, but not both...".into(),
@@ -267,27 +286,22 @@ fn minimap2_options(cli: &Cli) -> Result<String> {
                 "Please select minimap2 in Short Read or PacBio mode, but not both...".into(),
             ));
         }
-        "sr"
+        Ok(Mm2Preset::Sr)
     } else if cli.mm2_pacbio {
         if cli.mm2_nanopore {
             return Err(AlignerError::Validation(
                 "Please select minimap2 in PacBio or Nanopore mode, but not both...".into(),
             ));
         }
-        "map-pb"
+        Ok(Mm2Preset::MapPb)
     } else if cli.illumina_5base {
         // #787: Illumina 5-Base is short-read Illumina data → the `sr` preset by
         // default (no explicit `--mm2_*` given). An explicit preset above still wins.
-        "sr"
+        Ok(Mm2Preset::Sr)
     } else {
         // Default OR explicit `--mm2_nanopore` → ONT (Perl 8404-8408).
-        "map-ont"
-    };
-    // `-t` = Bismark `-p` (threads-to-aligner) knob, default the Perl-faithful 2 when
-    // absent (#1074; minimap2 `-t` is thread-invariant per the spike, so output-neutral).
-    // `bowtie_threads` is ≥ 2 when set (guarded upstream). rammap-subprocess shares this.
-    let t = cli.bowtie_threads.unwrap_or(2);
-    Ok(format!("-a --MD --secondary=no -t {t} -x {preset} -K 250K"))
+        Ok(Mm2Preset::MapOnt)
+    }
 }
 
 /// Append the HISAT2-specific option tail (Perl `process_command_line` 8286-8326,
@@ -911,20 +925,84 @@ mod tests {
         assert_eq!(opts, "-a --MD --secondary=no -t 2 -x map-ont -K 250K");
     }
 
-    /// V3: preset-conflict dies (Perl 8375/8378/8391).
+    /// Every `--mm2_*` selector maps to the right typed preset (#1092).
+    #[test]
+    fn resolve_mm2_preset_maps_every_selector() {
+        let cases: [(&[&str], Mm2Preset); 6] = [
+            (&[], Mm2Preset::MapOnt),
+            (&["--mm2_nanopore"], Mm2Preset::MapOnt),
+            (&["--mm2_pacbio"], Mm2Preset::MapPb),
+            (&["--mm2_short_reads"], Mm2Preset::Sr),
+            // #787: 5-Base defaults to short-read data.
+            (&["--illumina_5base"], Mm2Preset::Sr),
+            // An explicit preset still beats the 5-Base default.
+            (&["--illumina_5base", "--mm2_pacbio"], Mm2Preset::MapPb),
+        ];
+        for (flags, want) in cases {
+            assert_eq!(
+                resolve_mm2_preset(&cli_from(flags)).unwrap(),
+                want,
+                "{flags:?}"
+            );
+        }
+    }
+
+    /// The emitted `-x` and the typed preset are ONE fact, not two lists that happen to agree.
+    ///
+    /// This is the assertion #1092 exists to make: the bug was that the in-process backend
+    /// derived its preset separately from the emitted option string. An implementation that
+    /// adds `resolve_mm2_preset` but leaves `minimap2_options` deriving its own preset passes
+    /// every other test in this file while re-creating exactly that drift.
+    #[test]
+    fn emitted_preset_is_the_resolved_preset() {
+        for flags in [
+            vec![],
+            vec!["--mm2_nanopore"],
+            vec!["--mm2_pacbio"],
+            vec!["--mm2_short_reads"],
+            vec!["--illumina_5base"],
+        ] {
+            let cli = cli_from(&flags);
+            let want = format!("-x {}", resolve_mm2_preset(&cli).unwrap().as_option_str());
+            let opts = minimap2_options(&cli).unwrap();
+            assert!(opts.contains(&want), "{flags:?}: {opts:?} lacks {want:?}");
+        }
+    }
+
+    /// V3: preset-conflict dies (Perl 8375/8378/8391) — the **exact** Perl-faithful message
+    /// per pair, and the triple case that pins which check runs first.
+    ///
+    /// Asserting `is_err()` alone (as this test did until #1092) has no teeth: the messages
+    /// could be rewritten or merged, and reordering the checks is invisible over *pairs*,
+    /// because every order errors on every pair. Only a triple observes the order.
     #[test]
     fn minimap2_preset_conflicts_die() {
-        for conflict in [
-            ["--mm2_short_reads", "--mm2_nanopore"],
-            ["--mm2_short_reads", "--mm2_pacbio"],
-            ["--mm2_pacbio", "--mm2_nanopore"],
-        ] {
-            let cli = cli_from(&conflict);
-            assert!(
+        let cases: [(&[&str], &str); 4] = [
+            (
+                &["--mm2_short_reads", "--mm2_nanopore"],
+                "Please select minimap2 in Short Read or Nanopore mode, but not both...",
+            ),
+            (
+                &["--mm2_short_reads", "--mm2_pacbio"],
+                "Please select minimap2 in Short Read or PacBio mode, but not both...",
+            ),
+            (
+                &["--mm2_pacbio", "--mm2_nanopore"],
+                "Please select minimap2 in PacBio or Nanopore mode, but not both...",
+            ),
+            // All three: short⊕nanopore is checked first, so its message wins. This is the
+            // ONLY case that observes the check order.
+            (
+                &["--mm2_short_reads", "--mm2_pacbio", "--mm2_nanopore"],
+                "Please select minimap2 in Short Read or Nanopore mode, but not both...",
+            ),
+        ];
+        for (flags, want) in cases {
+            let cli = cli_from(flags);
+            let err =
                 build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, false, None)
-                    .is_err(),
-                "{conflict:?} should die"
-            );
+                    .expect_err(&format!("{flags:?} should die"));
+            assert_eq!(err.to_string(), want, "{flags:?}");
         }
     }
 
