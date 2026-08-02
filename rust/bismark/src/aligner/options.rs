@@ -77,9 +77,11 @@ pub fn build_aligner_options(
     //  - Bowtie 2 --local: push `--local` + G-form `--score-min G,<i>,<s>` (default G,20,8).
     //  - HISAT2 --local OR end-to-end (any aligner): L-form `--score-min L,<i>,<s>` (default
     //    L,0,-0.2), NO `--local`. HISAT2-local uses the SAME L-form as end-to-end (Perl
-    //    7912/7947) — its local-ness is the dropped `--no-softclip` in the HISAT2 tail + the
-    //    local MAPQ ladder, NOT this option. Its MAPQ scMin is linear, matching this L-form
-    //    (#1079 D2). minimap2-local is rejected in `config::resolve`.
+    //    7912/7947) — its local-ness is the dropped `--no-softclip` in the HISAT2 tail, NOT
+    //    this option and NOT the MAPQ ladder (it takes the end-to-end one, #1080). Its MAPQ
+    //    scMin is linear, matching this L-form (#1079 D2). minimap2-local is rejected in
+    //    `config::resolve`; the minimap2 clean slate discards this option entirely, though
+    //    `score_min_params` still feeds its coefficients to MAPQ (#1081).
     if cli.local && aligner == Aligner::Bowtie2 {
         opts.push("--local".into());
         let score_min = match &cli.score_min {
@@ -369,6 +371,10 @@ fn require_fastq(format: ReadFormat) -> Result<()> {
 ///
 /// Splits on the LAST comma (Perl's greedy `^[LG],(.+),(.+)$`). The form is `G` iff
 /// `cli.local && aligner == Bowtie2`.
+///
+/// For minimap2/rammap the option is **never emitted** (the clean slate in
+/// `build_aligner_options` discards it) but these coefficients still feed MAPQ, so a
+/// non-default `--score_min` moves their MAPQ without moving a single alignment (#1081 A6).
 ///
 /// Returns the emitted **form** alongside the coefficients: `calc_mapq` must evaluate
 /// the same function the aligner was given, so both read it from here rather than

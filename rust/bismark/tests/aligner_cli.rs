@@ -2687,6 +2687,211 @@ esac
     write_exec(&dir.join("minimap2"), script);
 }
 
+/// Like [`make_fake_minimap2_mapped`] but with a caller-chosen `AS:i:`, so a BAM-level test
+/// can land on a chosen MAPQ rung (#1081). Maps on the CT index only; UNMAPPED on GA, so the
+/// merge yields a unique best with NO second best.
+#[cfg(unix)]
+fn make_fake_minimap2_with_score(dir: &Path, as_value: i64) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+inp=""; mmi=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) inp="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:{as_value}\tAS:i:{as_value}\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }}' "$inp" ;;
+  *)       awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" ;;
+esac
+"#
+    );
+    write_exec(&dir.join("minimap2"), &script);
+}
+
+/// Maps on BOTH instances so the merge records a cross-instance runner-up (#1081 cell d).
+///
+/// 🔑 The score ORDER is load-bearing and counter-intuitive: `alignments` only ever receives
+/// the running maxima in slot order (`merge.rs` `overwrite` is set only when
+/// `alignment_score >= best_as_so_far`), so the **later** slot must score **strictly higher**
+/// or its record is never stored and no second best exists. Directional SE slot order is
+/// `[CT, GA]`, hence CT (slot 0) carries the LOWER score here.
+///
+/// Two more constraints: the two records need different POS (the merge keys on
+/// `chromosome:pos`, and CT/GA de-convert to the same chromosome name), and the slot-1 winner
+/// needs POS >= 3 because index 1 prepends two genomic bases and bails when `pos < 2` — at
+/// POS 3 the extracted window is `chr[0..2] + chr[2..8]` = 8 = read_len + 2.
+#[cfg(unix)]
+fn make_fake_minimap2_two_instance(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+inp=""; mmi=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) inp="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:11\tAS:i:11\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_GA_converted\t3\t60\t6M\t*\t0\t0\tACATAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("minimap2"), script);
+}
+
+/// Run `bismark --minimap2` on the 6 bp fixture read and return the single record's MAPQ.
+#[cfg(unix)]
+fn minimap2_bam_mapq(genome: &Path, bins: &Path) -> u8 {
+    let read = genome.join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome)
+        .arg("--minimap2")
+        .arg("--path_to_minimap2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+    let bam = outdir.path().join("reads_bismark_mm2.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1, "expected exactly one written record");
+    u8::from(recs[0].inner().mapping_quality().unwrap())
+}
+
+/// #1081 wiring gate, minimap2 — MAPQ read back out of the BAM.
+///
+/// Every other test of the minimap-like denominator is a unit test on `calc_mapq`. This one
+/// drives `config::resolve` → merge → BAM, so it is the only thing that would catch the
+/// resolved `ScoreModel` losing its match bonus (silently turning the fix into a no-op while
+/// every unit test still passed) — the failure shape that let #1079 ship.
+///
+/// 6 bp read at the default `--score_min L,0,-0.2`: scMin = -1.2, perfect = 2·6 = 12,
+/// diff = max(1, 12 + 1.2) = 13.2. Before #1081 every one of these cells returned **42**.
+#[cfg(unix)]
+#[test]
+fn minimap2_mapq_uses_the_perfect_score_denominator_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path()); // chr1 = ACGTACGT (8 bp)
+
+    // (a) AS 12 = perfect: bestOver 13.2, ratio 1.000 → the 0.8 rung → 44.
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_with_score(bins.path(), 12);
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        44,
+        "a perfect minimap2 alignment must reach the local ladder's top rung"
+    );
+
+    // (b) AS 7: bestOver 8.2, ratio 0.6212 → the 0.6 rung → 41. This cell is deliberately
+    // FORM-SENSITIVE — it is the one that distinguishes all the wiring faults, which is why
+    // it is not a rounder AS (#1079's code review H1: `AS:i:5` returns 28 under BOTH a linear
+    // and a logarithmic scMin, so it cannot see a wrong form).
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_with_score(bins.path(), 7);
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        41,
+        "minimap2 MAPQ must use max(1, 2·len - scMin) over the LINEAR scMin; \
+         36 means the score-min form is logarithmic, 42 means the match bonus never reached \
+         the resolved ScoreModel, 44 means the match bonus is wrong (1.0), \
+         24 means the end-to-end ladder was selected"
+    );
+
+    // (c) AS 2: bestOver 3.2, ratio 0.2424 → below every rung → 22, the FLOOR. The floor is
+    // the consequential end of a MAPQ change (#1080's code review): under the rejected
+    // end-to-end ladder this same read would be **0**, i.e. dropped by `samtools view -q 1`.
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_with_score(bins.path(), 2);
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        22,
+        "the local ladder's floor is 22 (the end-to-end ladder's would be 0)"
+    );
+}
+
+/// #1081 wiring gate, minimap2 — the cross-instance second-best branch, end to end.
+///
+/// This is the only end-to-end coverage of the with-second-best half of #1081, which is the
+/// half that moves in both directions and the half the issue text does not describe.
+///
+/// CT (slot 0) AS 11, GA (slot 1) AS 12 ⇒ best 12, runner-up 11, bestDiff 1. With diff 13.2,
+/// `1 < 0.1·13.2` so the ladder falls to its `bestDiff > 0` leaf and `bestOver 13.2 >= 0.5·13.2`
+/// gives **11**. Before #1081 diff was 1.2, so `1 >= 0.8·1.2` took the 0.8 rung → **27**.
+#[cfg(unix)]
+#[test]
+fn minimap2_mapq_second_best_branch_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_two_instance(bins.path());
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        11,
+        "a near-tie across strand instances must now score LOW (11); 27 is the pre-#1081 \
+         value, and 44 means the runner-up never reached calc_mapq at all — check the slot \
+         order, the later slot must score strictly higher"
+    );
+}
+
+/// #1081 wiring gate, **rammap** — the same arm must cover `Aligner::Rammap`.
+///
+/// Without this an `Aligner::Minimap2`-only match arm ships entirely green: rammap has no
+/// other MAPQ assertion anywhere in the suite. Same fixture scores as the minimap2 fake
+/// (`AS:i:12` on a 6 bp read), so the expected value is the top rung, 44 (was 42).
+#[cfg(unix)]
+#[test]
+fn rammap_mapq_uses_the_perfect_score_denominator_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        // The score model is resolved from `Aligner::Rammap`, so either backend proves the
+        // arm — but `--rammap` DEFAULTS to in-process on a `--features rammap-inprocess`
+        // build, which would load the fake 1-byte `.mmi` and fail. Pin the subprocess.
+        .arg("--rammap_subprocess")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+    let bam = outdir.path().join("reads_bismark_rammap.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    assert_eq!(
+        u8::from(recs[0].inner().mapping_quality().unwrap()),
+        44,
+        "rammap must get the same minimap-like score model as minimap2; 42 means the \
+         match_bonus arm covers Minimap2 but not Rammap"
+    );
+}
+
 /// V8: `--minimap2` SE end-to-end — the output BAM + report carry the `mm2`
 /// naming token (not `bt2`/`hisat2`), the report says "Bismark was run with
 /// minimap2" (lowercase, Perl 1725) and echoes the clean-slate minimap2 option

@@ -108,7 +108,9 @@ If system resources are plentiful this is a viable option to speed up the alignm
 
 In this mode, it is not required that the entire read aligns from one end to the other. Rather, some characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible alignment score. For Bowtie 2, the match bonus `--ma` (default: 2) is used in this mode, and the best possible alignment score is equal to the match bonus (`--ma`) times the length of the read. This is mutually exclusive with end-to-end alignments. DEFAULT: OFF.
 
-  Reported MAPQ values are normalised against that best possible score, so local-mode MAPQ differs from end-to-end MAPQ for the same alignment. This applies to Bowtie 2 only: HISAT2 exposes no `--local` option of its own and always scores matches as 0, so with `--hisat2 --local` the best possible score is 0 and MAPQ is reported on the same scale as end-to-end. `--local` still enables soft-clipping for HISAT2 (Bismark drops `--no-softclip`); only the MAPQ scale is shared with end-to-end.
+  Reported MAPQ values are normalised against that best possible score, so local-mode MAPQ differs from end-to-end MAPQ for the same alignment. Among the modes `--local` selects, this applies to Bowtie 2 only: HISAT2 exposes no `--local` option of its own and always scores matches as 0, so with `--hisat2 --local` the best possible score is 0 and MAPQ is reported on the same scale as end-to-end. `--local` still enables soft-clipping for HISAT2 (Bismark drops `--no-softclip`); only the MAPQ scale is shared with end-to-end.
+
+  Note that a positive best possible score is not exclusive to `--local`: minimap2 and rammap align locally by design (they reject `--local`) and also score matches positively, so their MAPQ is normalised the same way — see `--minimap2` below.
 
 ##### Output:
 
@@ -308,6 +310,15 @@ For reads that have multiple alignments a random alignment is written out to a s
 - `--minimap2/--mm2`
 
 Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that things may change in the near future. The default mapping mode is `--nanopore` (preset `-x map-ont` (Nanopore reads)). Internally, minimap2 is run with the options `-a --MD`. More information here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
+
+  **MAPQ:** minimap2 reports *positive* alignment scores (every preset Bismark can select awards 2 per matching base), so the best possible score is `2 × read_length` and Bismark normalises MAPQ against it, exactly as it does for Bowtie 2 `--local`. MAPQ is **22–44 for a uniquely-aligned read**, and can be **lower — down to 2 — when another strand instance produced a competing score** for the same read. This is **Bismark's own scale, not minimap2's**: minimap2 derives its own MAPQ from chain scores on a 0–60 scale, and Bismark discards it because it recomputes MAPQ across the 2–4 strand instances it runs. The same applies to `--rammap`.
+
+  Four consequences worth knowing:
+
+  - Because the score is compared against the *full* read length, a soft-clipped alignment scores below perfect and earns a lower MAPQ.
+  - `--score_min` is **not passed to minimap2** — minimap2 gets a fixed option string — yet its value still enters this normalisation, so setting an unusually steep `--score_min` raises minimap2 MAPQ without changing a single alignment.
+  - The competing-score branch is entered only when a **later** strand instance strictly out-scores every earlier one. Two reads with the same pair of scores can therefore end up with different MAPQ depending on which strand won — a pre-existing asymmetry that this normalisation widens. Reads on that branch can fall below a typical `-q` cut, so MAPQ-filtered read counts differ from Bismark 3.1.0.
+  - `--ambig_bam` copies MAPQ straight from the aligner's own output rather than recomputing it, so a `--minimap2 --ambig_bam` run legitimately writes **two different MAPQ scales**: Bismark's 22–44 in the main BAM and minimap2's 0–60 in the ambiguous-alignments BAM.
 
 - `--mm2_nanopore`
 
