@@ -62,7 +62,7 @@ By default, Bismark generates SAM output for all alignment modes. Please note th
 2. `FLAG` (this flag tries to take the strand a bisulfite read originated from into account (this is different from ordinary DNA alignment flags!))
 3. `RNAME` (chromosome)
 4. `POS` (start position)
-5. `MAPQ` (calculated for Bowtie 2 and HISAT2)
+5. `MAPQ` (calculated by Bismark across the strand instances, for every aligner)
 6. `CIGAR`
 7. `RNEXT`
 8. `PNEXT`

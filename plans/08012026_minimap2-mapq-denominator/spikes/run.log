@@ -1,0 +1,153 @@
+
+=== A. SOURCE FACTS (minimap2) ===
+  [PASS] A1 default match score a = 2
+  [PASS] A1 default end_bonus = -1 (disabled, not 0)
+  [PASS] A1 default sc_ambi = 1 (N scores <= 0)
+  [PASS] A2 preset map-ont: a = 2  -- end_bonus = -1
+  [PASS] A2 preset map-pb: a = 2  -- end_bonus = -1
+  [PASS] A2 preset sr: a = 2  -- end_bonus = 10  <-- nonzero
+  [PASS] A3 AS:i: prints r->p->dp_score (ms:i: prints dp_max0)  -- mm_sprintf_lite(s, "\tNM:i:%d\tms:i:%d\tAS:i:%d\tnn:i:%d", r->blen - r->mlen + r->p->n_ambi, r->p->dp_max0, r->p->dp_score, r->p->n_ambi);
+  [PASS] A4 dp_score is only ever fed ez->max / ez->score - never + end_bonus  -- 5 writes: ['ez->max', 'ez->score']
+  [PASS] A5 opt->end_bonus is passed only by the left/right EXTENSIONS (gap fill passes -1)  -- 2 call sites, both KSW_EZ_EXTZ_ONLY
+  [PASS] A6 in ksw2, end_bonus appears ONLY in the traceback-start decision  -- } else if (!ez->zdropped && (flag&KSW_EZ_EXTZ_ONLY) && ez->mqe + end_bonus > (int)ez->max) {
+  [PASS] A7 junc_bonus (the only additive bonus in a DP kernel) is splice-only => unreachable  -- Bismark never selects a splice preset
+
+=== A'. SOURCE FACTS (rammap - the pure-Rust minimap2 reimplementation) ===
+  [PASS] A'1 rammap sr preset: match_score = 2 AND end_bonus = 10 (mirrors minimap2)
+  [PASS] A'2 rammap dp_score is only ever fed ez.max / ez.score  -- 4 writes: ['ez.max', 'ez.score']
+  [PASS] A'3 rammap uses end_bonus only in the traceback-start decision
+
+=== B. EMPIRICAL (real minimap2, Bismark's exact option string) ===
+  minimap2 version: 2.31-r1302
+
+  preset    case                     len     AS  2*len  AS/2len CIGAR              mm2_MAPQ
+  map-ont   perfect_50                50    100    100    1.000 50M                4
+  map-ont   lastbase_mm_50            50     98    100    0.980 49M1S              4
+  map-ont   bothends_mm_50            50     96    100    0.960 1S48M1S            4
+  map-ont   interior_1mm_50           50      -      (unmapped)
+  map-ont   interior_3mm_50           50      -      (unmapped)
+  map-ont   perfect_100              100    200    200    1.000 100M               60
+  map-ont   lastbase_mm_100          100    198    200    0.990 99M1S              60
+  map-ont   bothends_mm_100          100    196    200    0.980 1S98M1S            60
+  map-ont   interior_1mm_100         100    194    200    0.970 100M               60
+  map-ont   interior_3mm_100         100    182    200    0.910 100M               60
+  map-ont   perfect_150              150    300    300    1.000 150M               60
+  map-ont   lastbase_mm_150          150    298    300    0.993 149M1S             60
+  map-ont   bothends_mm_150          150    296    300    0.987 1S148M1S           60
+  map-ont   interior_1mm_150         150    294    300    0.980 150M               60
+  map-ont   interior_3mm_150         150    282    300    0.940 150M               60
+  map-ont   perfect_250              250    500    500    1.000 250M               60
+  map-ont   lastbase_mm_250          250    498    500    0.996 249M1S             60
+  map-ont   bothends_mm_250          250    496    500    0.992 1S248M1S           60
+  map-ont   interior_1mm_250         250    494    500    0.988 250M               60
+  map-ont   interior_3mm_250         250    482    500    0.964 250M               60
+  map-ont   perfect_1000            1000   2000   2000    1.000 1000M              60
+  map-ont   lastbase_mm_1000        1000   1998   2000    0.999 999M1S             60
+  map-ont   bothends_mm_1000        1000   1996   2000    0.998 1S998M1S           60
+  map-ont   interior_1mm_1000       1000   1994   2000    0.997 1000M              60
+  map-ont   interior_3mm_1000       1000   1982   2000    0.991 1000M              60
+  map-pb    perfect_50                50      -      (unmapped)
+  map-pb    lastbase_mm_50            50      -      (unmapped)
+  map-pb    bothends_mm_50            50      -      (unmapped)
+  map-pb    interior_1mm_50           50      -      (unmapped)
+  map-pb    interior_3mm_50           50      -      (unmapped)
+  map-pb    perfect_100              100    200    200    1.000 100M               60
+  map-pb    lastbase_mm_100          100    198    200    0.990 99M1S              60
+  map-pb    bothends_mm_100          100    196    200    0.980 1S98M1S            60
+  map-pb    interior_1mm_100         100    194    200    0.970 100M               56
+  map-pb    interior_3mm_100         100      -      (unmapped)
+  map-pb    perfect_150              150    300    300    1.000 150M               60
+  map-pb    lastbase_mm_150          150    298    300    0.993 149M1S             60
+  map-pb    bothends_mm_150          150    296    300    0.987 1S148M1S           60
+  map-pb    interior_1mm_150         150    294    300    0.980 150M               60
+  map-pb    interior_3mm_150         150    282    300    0.940 150M               59
+  map-pb    perfect_250              250    500    500    1.000 250M               60
+  map-pb    lastbase_mm_250          250    498    500    0.996 249M1S             60
+  map-pb    bothends_mm_250          250    496    500    0.992 1S248M1S           60
+  map-pb    interior_1mm_250         250    494    500    0.988 250M               60
+  map-pb    interior_3mm_250         250    482    500    0.964 250M               60
+  map-pb    perfect_1000            1000   2000   2000    1.000 1000M              60
+  map-pb    lastbase_mm_1000        1000   1998   2000    0.999 999M1S             60
+  map-pb    bothends_mm_1000        1000   1996   2000    0.998 1S998M1S           60
+  map-pb    interior_1mm_1000       1000   1994   2000    0.997 1000M              60
+  map-pb    interior_3mm_1000       1000   1982   2000    0.991 1000M              60
+  sr        perfect_50                50    100    100    1.000 50M                18
+  sr        lastbase_mm_50            50     98    100    0.980 50M                18
+  sr        bothends_mm_50            50     96    100    0.960 50M                17
+  sr        interior_1mm_50           50      -      (unmapped)
+  sr        interior_3mm_50           50      -      (unmapped)
+  sr        perfect_100              100    200    200    1.000 100M               60
+  sr        lastbase_mm_100          100    198    200    0.990 100M               60
+  sr        bothends_mm_100          100    196    200    0.980 100M               60
+  sr        interior_1mm_100         100    190    200    0.950 100M               60
+  sr        interior_3mm_100         100      -      (unmapped)
+  sr        perfect_150              150    300    300    1.000 150M               60
+  sr        lastbase_mm_150          150    298    300    0.993 150M               60
+  sr        bothends_mm_150          150    296    300    0.987 150M               60
+  sr        interior_1mm_150         150    290    300    0.967 150M               60
+  sr        interior_3mm_150         150    270    300    0.900 150M               60
+  sr        perfect_250              250    500    500    1.000 250M               60
+  sr        lastbase_mm_250          250    498    500    0.996 250M               60
+  sr        bothends_mm_250          250    496    500    0.992 250M               60
+  sr        interior_1mm_250         250    490    500    0.980 250M               60
+  sr        interior_3mm_250         250    470    500    0.940 250M               60
+  sr        perfect_1000            1000   2000   2000    1.000 1000M              60
+  sr        lastbase_mm_1000        1000   1998   2000    0.999 1000M              60
+  sr        bothends_mm_1000        1000   1996   2000    0.998 1000M              60
+  sr        interior_1mm_1000       1000   1990   2000    0.995 1000M              60
+  sr        interior_3mm_1000       1000   1970   2000    0.985 1000M              60
+
+  [PASS] B1 AS <= 2*len in EVERY observed cell, for every reachable preset  -- 64 alignments, 0 violations
+  [PASS] B2 a perfect read under -x sr scores EXACTLY 2*len (end_bonus does not leak)  -- 5 perfect-score cells under sr; +10/+20 would show here
+
+=== C. MAPQ under perfect = 2*len - BOTH ladders, no second best ===
+     len      AS   %perf  bestOver     diff   ratio   old  new/local  new/e2e
+      50     100    100%     110.0    110.0   1.000    42         44       42
+      50      80     80%      90.0    110.0   0.818    42         44       42
+      50      60     60%      70.0    110.0   0.636    42         41       24
+      50      40     40%      50.0    110.0   0.455    42         28        8
+      50      20     20%      30.0    110.0   0.273    42         22        0
+     100     200    100%     220.0    220.0   1.000    42         44       42
+     100     160     80%     180.0    220.0   0.818    42         44       42
+     100     120     60%     140.0    220.0   0.636    42         41       24
+     100      80     40%     100.0    220.0   0.455    42         28        8
+     100      40     20%      60.0    220.0   0.273    42         22        0
+     150     300    100%     330.0    330.0   1.000    42         44       42
+     150     240     80%     270.0    330.0   0.818    42         44       42
+     150     180     60%     210.0    330.0   0.636    42         41       24
+     150     120     40%     150.0    330.0   0.455    42         28        8
+     150      60     20%      90.0    330.0   0.273    42         22        0
+     250     500    100%     550.0    550.0   1.000    42         44       42
+     250     400     80%     450.0    550.0   0.818    42         44       42
+     250     300     60%     350.0    550.0   0.636    42         41       24
+     250     200     40%     250.0    550.0   0.455    42         28        8
+     250     100     20%     150.0    550.0   0.273    42         22        0
+    1000    2000    100%    2200.0   2200.0   1.000    42         44       42
+    1000    1600     80%    1800.0   2200.0   0.818    42         44       42
+    1000    1200     60%    1400.0   2200.0   0.636    42         41       24
+    1000     800     40%    1000.0   2200.0   0.455    42         28        8
+    1000     400     20%     600.0   2200.0   0.273    42         22        0
+
+  Rung-by-rung, no second best (what a UNIQUE read gets):
+      ratio   local     e2e
+       1.00      44      42
+       0.85      44      42
+       0.75      42      40
+       0.65      41      24
+       0.55      36      23
+       0.45      28       8
+       0.35      24       3
+       0.25      22       0
+       0.10      22       0
+    floor:  local = 22, end-to-end = 0  <== 0 is 'discard' to samtools -q 1
+
+=== D. WITH a cross-instance second best (len 100, perfect = 200) ===
+     AS   AS2   old  new/local  new/e2e
+    200   190    25         11        6
+    200   100    33         34       34
+    200    20    33         39       38
+    120   110    25         11        2
+    120    40    33         18        3
+
+=== SUMMARY ===
+  16/16 checks passed

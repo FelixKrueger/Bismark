@@ -79,6 +79,16 @@ pub enum ScoreMinForm {
 /// Bismark; a future `--ma` passthrough would have to feed this instead.
 pub const BOWTIE2_LOCAL_MATCH_BONUS: f64 = 2.0;
 
+/// minimap2's match score (`-A`; `options.c:47` `opt->a = 2`). Every preset Bismark can
+/// select keeps it at 2 — `map-ont` is "the same as the default" (`options.c:96`), `map-pb`
+/// overrides index options only (`:103`), `sr` sets it explicitly (`:155`) — and there is no
+/// `-A` passthrough (`options::minimap2_options` emits a closed string). rammap mirrors it
+/// (`rammap-core align/map.rs:215`). So the perfect score is `2 × read_length` (#1081).
+///
+/// Deliberately separate from [`BOWTIE2_LOCAL_MATCH_BONUS`] despite the equal value: the two
+/// record unrelated upstream facts and can drift independently.
+pub const MINIMAP2_MATCH_BONUS: f64 = 2.0;
+
 /// How alignment scores are normalized for MAPQ. Replaces the former
 /// `(intercept, slope, local)` trio that rode through every merge/select
 /// signature. Built once in [`resolve`], the only place `--local` and the
@@ -87,15 +97,16 @@ pub const BOWTIE2_LOCAL_MATCH_BONUS: f64 = 2.0;
 /// Fields are private and there is a single general constructor, so `match_bonus` and
 /// `form` can only be set together — outside this module they cannot be set at all.
 /// Within it, keeping them consistent is [`from_emitted`](Self::from_emitted)'s job:
-/// only Bowtie 2-local has a nonzero perfect score, and only Bowtie 2-local is emitted
-/// the `G` form. The MAPQ ladder is *derived* from the match bonus rather than stored —
-/// see [`local_ladder`](Self::local_ladder).
+/// Bowtie 2-local and the minimap-like aligners have a nonzero perfect score, and only
+/// Bowtie 2-local is emitted the `G` form. The MAPQ ladder is *derived* from the match
+/// bonus rather than stored — see [`local_ladder`](Self::local_ladder).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScoreModel {
     intercept: f64,
     slope: f64,
     form: ScoreMinForm,
-    /// Perfect-alignment score per base; nonzero only for Bowtie 2 `--local`.
+    /// Perfect-alignment score per base: nonzero for Bowtie 2 `--local` and for
+    /// minimap2/rammap, zero for every end-to-end Bowtie 2/HISAT2 mode.
     match_bonus: f64,
 }
 
@@ -114,24 +125,29 @@ impl ScoreModel {
             intercept,
             slope,
             form,
-            // Only Bowtie 2 --local scores matches positively; every other mode's best
-            // possible score is 0 — including HISAT2, which forces its match bonus to 0
-            // (hisat2.cpp:3916) and exposes no --local option of its own.
+            // Which modes score matches positively. HISAT2 never does — it forces its match
+            // bonus to 0 (hisat2.cpp:3916) and exposes no --local option of its own.
             // Assumes Bismark never passes --ma or --bwa-sw-like through; if that changes,
             // guard at the CLI (--ma >= 0, --bwa-sw-like unsupported) rather than loosening
             // the `> 0.0` tests below, which would desynchronise the ladder from `normalize`.
-            match_bonus: if local && aligner == Aligner::Bowtie2 {
-                BOWTIE2_LOCAL_MATCH_BONUS
-            } else {
-                0.0
+            match_bonus: match aligner {
+                Aligner::Bowtie2 if local => BOWTIE2_LOCAL_MATCH_BONUS,
+                // NOT gated on `local`: minimap2/rammap align locally by design and their
+                // `--local` is rejected, so there is no zero-bonus variant to fall back to.
+                Aligner::Minimap2 | Aligner::Rammap => MINIMAP2_MATCH_BONUS,
+                _ => 0.0,
             },
         }
     }
 
-    /// End-to-end (any aligner) — linear `L` form. The aligner argument is irrelevant with
-    /// `local = false` (no aligner earns a perfect score end-to-end), which
-    /// `score_model_construction_matrix` pins for all four. Revisit if the minimap2/rammap
-    /// follow-up gives a non-local aligner a nonzero match bonus.
+    /// The **monotone** model: linear `L` form, perfect score 0. Bowtie 2 and HISAT2
+    /// end-to-end — NOT minimap2/rammap, which earn `2·len` even without `--local`
+    /// (#1081); use [`minimap_like`](Self::minimap_like) for those. The name is kept for
+    /// its ~47 call sites; `score_model_construction_matrix` pins
+    /// `end_to_end != minimap_like` so the two cannot be confused silently.
+    ///
+    /// `merge.rs`/`combined.rs` selection tests use this deliberately as an
+    /// aligner-agnostic model — none of them asserts a MAPQ value, so they stay as they are.
     pub fn end_to_end(intercept: f64, slope: f64) -> Self {
         Self::from_emitted(
             intercept,
@@ -145,6 +161,20 @@ impl ScoreModel {
     /// Bowtie 2 `--local` — logarithmic `G` form, perfect score `2·len`.
     pub fn bowtie2_local(intercept: f64, slope: f64) -> Self {
         Self::from_emitted(intercept, slope, ScoreMinForm::Log, true, Aligner::Bowtie2)
+    }
+
+    /// minimap2 / rammap — linear `L` form, perfect score `2·len` (#1081). The `--score-min`
+    /// the coefficients come from is never given to the aligner (`options.rs` throws the base
+    /// string away for the minimap2 clean slate), so `scMin` here is Bismark's own; the
+    /// perfect score is real. `--local` is rejected for both, so there is no second variant.
+    pub fn minimap_like(intercept: f64, slope: f64) -> Self {
+        Self::from_emitted(
+            intercept,
+            slope,
+            ScoreMinForm::Linear,
+            false,
+            Aligner::Minimap2,
+        )
     }
 
     /// HISAT2 `--local` — emitted the linear `L` form, so `scMin` is linear too.
@@ -165,12 +195,19 @@ impl ScoreModel {
     /// go down, which is the end-to-end regime. This is why HISAT2 `--local` uses the
     /// end-to-end ladder — its match bonus is always 0 (#1080).
     ///
-    /// NB this couples the two deliberately: if #1081 gives minimap2/rammap a nonzero match
-    /// bonus they would also pick up the local ladder. That is a default that forces the
-    /// question rather than an implication — minimap2 derives MAPQ from chain scores, not a
-    /// Bowtie-family ladder. It is enforced, not just documented: `score_model_construction_
-    /// matrix` asserts `!local_ladder()` for all four aligners end-to-end, so #1081 cannot
-    /// add a bonus without failing a test.
+    /// The coupling this derivation created was #1081's decision to make, and it was
+    /// answered **yes**: minimap2/rammap now have a nonzero match bonus and therefore take
+    /// the local ladder, so `--local` no longer implies it and the local ladder is no longer
+    /// Bowtie-2-only. The reasoning is consistency with the score regime — the positive-score
+    /// (non-monotone) regime Bowtie 2's local ladder is calibrated for — and it is an analogy,
+    /// not a correspondence: minimap2 derives MAPQ from chain scores on a 0-60 scale and uses
+    /// no ladder at all. The end-to-end ladder was rejected because it needs a second,
+    /// non-derived predicate and because for a **uniquely-aligned** read its floor is 0 rather
+    /// than 22, i.e. it would newly drop such reads from `-q 1` filters in a default path.
+    /// (Both ladders' second-best sub-rungs go lower than 22 — that is not what separates them.)
+    ///
+    /// `score_model_construction_matrix` classifies every aligner in an exhaustive `match`, so a
+    /// fifth backend fails to compile there until it is classified.
     pub(crate) fn local_ladder(&self) -> bool {
         self.match_bonus > 0.0
     }
@@ -193,6 +230,9 @@ impl ScoreModel {
     }
 
     /// Best possible alignment score, summed over mates (Bowtie 2 `unique.h:207-209`).
+    /// Uses the FULL read length even when the alignment soft-clips, as Bowtie 2 does
+    /// (`scoring.h:310-316`) — a clipped alignment scores below perfect and earns a lower
+    /// MAPQ, which is the conservative direction.
     fn perfect(&self, read1_len: usize, read2_len: Option<usize>) -> f64 {
         self.match_bonus * (read1_len + read2_len.unwrap_or(0)) as f64
     }
@@ -204,6 +244,11 @@ impl ScoreModel {
     /// `max(1, perfectScore - scMin)` (`unique.h:218`); modes whose perfect score is 0
     /// keep the historical `abs(scMin)`, which is byte-frozen and NOT equivalent in
     /// general — `abs(scMin) == -scMin` only for `scMin <= -1` (#1079).
+    ///
+    /// For the minimap-like aligners `scMin` is Bismark's own number (the aligner never
+    /// receives `--score-min`) while `perfect` is real, so a steep `--score_min` inflates
+    /// both terms and compresses MAPQ toward the ceiling — documented in the `--score_min`
+    /// help and pinned by `minimap_like_non_default_score_min_compresses_upward` (#1081).
     ///
     /// A NaN `scMin` (only reachable from a NaN `--score_min`, which the shape-only validation
     /// would accept) propagates through `abs()` but is swallowed to `1.0` by `max()`; neither
@@ -1547,6 +1592,43 @@ mod tests {
     #[test]
     fn resolve_aligner_defaults_to_bowtie2() {
         assert_eq!(resolve_aligner(&cli_from(&[])).unwrap(), Aligner::Bowtie2);
+    }
+
+    /// The premise `perfect = 2 × read_length` rests on is `AS <= 2 × read_length` for every
+    /// preset Bismark can select. Asserted here through the `pub(crate)` seam (`bestOver <= diff`
+    /// is equivalent to `AS <= perfect`, since both subtract the same `scMin`) over the
+    /// `(len, AS)` pairs a real minimap2 2.31-r1302 actually produced — see
+    /// `plans/08012026_minimap2-mapq-denominator/SPIKE.md` §F2/§F3.
+    ///
+    /// NB this pins the arithmetic, not the aligner: it cannot detect a future minimap2 that
+    /// starts reporting `AS > 2·len`. `minimap2_reports_at_most_two_per_base` in
+    /// `tests/aligner_minimap2_as_bound.rs` is the live gate for that.
+    #[test]
+    fn minimap_like_perfect_score_bounds_observed_alignment_scores() {
+        // (read length, AS) observed across map-ont / map-pb / sr, perfect and mismatched.
+        let observed = [
+            (50usize, 100i64),
+            (50, 98),
+            (50, 96),
+            (100, 200),
+            (100, 198),
+            (100, 190),
+            (150, 300),
+            (150, 270),
+            (250, 500),
+            (250, 470),
+            (1000, 2000),
+            (1000, 1970),
+        ];
+        let model = ScoreModel::minimap_like(0.0, -0.2);
+        for (len, as_best) in observed {
+            let (best_over, diff) = model.normalize(len, None, as_best);
+            assert!(
+                best_over <= diff,
+                "len={len} AS={as_best}: AS exceeds the perfect score, so the MAPQ ratio \
+                 would exceed 1 and the ladder would saturate again (#1081)"
+            );
+        }
     }
 
     #[test]
