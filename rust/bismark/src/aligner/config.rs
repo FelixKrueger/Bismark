@@ -74,6 +74,35 @@ pub enum ScoreMinForm {
     Log,
 }
 
+/// Which minimap-family preset the `--mm2_*` selectors chose. Bismark can reach exactly
+/// these three (`options::resolve_mm2_preset`); `rammap::Preset` has 13 more that stay
+/// unreachable.
+///
+/// Resolved once so the emitted `-x` option and the in-process rammap backend are the same
+/// fact rather than two derivations that can drift — the bug in #1092 was exactly that drift,
+/// and #1079 fixed the same class for [`ScoreMinForm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mm2Preset {
+    /// `-x map-ont` — the default, and `--mm2_nanopore`.
+    MapOnt,
+    /// `-x map-pb` — `--mm2_pacbio`. NB near-inert against a pre-built index: its preset
+    /// body sets only `k`/HPC, which `from_index` discards (#1092).
+    MapPb,
+    /// `-x sr` — `--mm2_short_reads`, and `--illumina_5base` by default.
+    Sr,
+}
+
+impl Mm2Preset {
+    /// The `-x` argument text — the single source of truth for the emitted option.
+    pub fn as_option_str(self) -> &'static str {
+        match self {
+            Mm2Preset::MapOnt => "map-ont",
+            Mm2Preset::MapPb => "map-pb",
+            Mm2Preset::Sr => "sr",
+        }
+    }
+}
+
 /// Bowtie 2's `--ma` default — the per-base perfect-alignment score in `--local`
 /// mode (documented in Bismark's own `--local` help text). Not settable in
 /// Bismark; a future `--ma` passthrough would have to feed this instead.
@@ -437,6 +466,11 @@ pub struct RunConfig {
     /// aligner-dependent: Bowtie 2-local = `(20.0, 8.0)` (G-form); HISAT2-local and
     /// end-to-end = `(0.0, -0.2)` (L-form) — see `score_min_params`.
     pub score_model: ScoreModel,
+    /// The `--mm2_*` selectors' answer, resolved once — **regardless of aligner**. Only the
+    /// minimap-family backends read it. NB it is NOT always `MapOnt` for other aligners:
+    /// `--illumina_5base --bowtie2 --five_base_index X` resolves to `Aligner::Bowtie2` with
+    /// `illumina_5base = true`, hence `Sr`. Inert there, but not a dummy (#1092).
+    pub mm2_preset: Mm2Preset,
     /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
     /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
     /// pushed to the *aligner options*, NOT this variable). Consumed by the PE
@@ -835,6 +869,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         layout.is_paired(),
         hisat2_multicore_remap,
     )?;
+    // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
+    // and the in-process rammap backend cannot drift (#1092). Must stay after
+    // `resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a non-minimap aligner.
+    let mm2_preset = options::resolve_mm2_preset(cli)?;
     let (score_min_intercept, score_min_slope, score_min_form) =
         options::score_min_params(cli, aligner)?;
     // The only place `--local` and the resolved aligner are both known.
@@ -895,6 +933,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         aligner_options,
         gap_penalties,
         score_model,
+        mm2_preset,
         // Perl 8047: `$dovetail = 1 unless $no_dovetail` — independent of the aligner.
         dovetail: !cli.no_dovetail,
         phred64: cli.phred64,
@@ -1272,7 +1311,7 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
 ///   must be in `100..=100_000` (else die), and defaults to `10000` when absent.
 ///   Returns `Some(value)`.
 ///
-/// (Preset *selection* + the preset-conflict dies live in `options::minimap2_options`,
+/// (Preset *selection* + the preset-conflict dies live in `options::resolve_mm2_preset`,
 /// mirroring Perl's `if($mm2)` option-assembly block 8358-8413.)
 fn resolve_mm2_max_length(cli: &Cli, aligner: Aligner) -> Result<Option<u32>> {
     // rammap is minimap-like — it honors the SAME `--mm2_*` knobs + length cutoff
@@ -1577,6 +1616,98 @@ impl RunConfig {
     }
 }
 
+/// Minimal `RunConfig` for tests that must drive a production function taking one.
+///
+/// `build_se_inprocess_streams` — its only caller today — reads exactly `library`,
+/// `genome.{ct,ga}_index_basename`, `mm2_preset` and `rammap_inprocess_threads`. Everything
+/// else is inert **for that path**; a test asserting something else (MAPQ, PE) must not assume
+/// the remaining 32 defaults are meaningful.
+///
+/// Exists because `resolve` cannot be used: it execs `<aligner> --version`
+/// (`aligner::detect_aligner`), and the `rammap-inprocess` CI job installs minimap2, not
+/// rammap. Only the fields a caller varies are parameters; everything else is an inert
+/// default. A new `RunConfig` field breaks this loudly, which is the intended behaviour —
+/// the alternative is a `..Default::default()` that silently absorbs it (#1092).
+#[cfg(test)]
+pub fn run_config_stub(
+    aligner: Aligner,
+    mm2_preset: Mm2Preset,
+    ct_index_basename: PathBuf,
+    ga_index_basename: PathBuf,
+    library: LibraryType,
+    layout: ReadLayout,
+) -> RunConfig {
+    use crate::aligner::aligner::DetectedAligner;
+    use crate::aligner::discovery::{FastaKind, GenomeIndexes};
+    RunConfig {
+        command_line: "bismark (test stub)".into(),
+        aligner,
+        rammap_subprocess: false,
+        rammap_inprocess_threads: 1,
+        five_base: false,
+        five_base_deconvolution: false,
+        five_base_index: None,
+        five_base_umi_len: 0,
+        five_base_baseq: 0,
+        five_base_min_mapq: 0,
+        five_base_duplex: false,
+        five_base_consensus: false,
+        five_base_umi_qname: false,
+        library,
+        layout,
+        format: ReadFormat::FastQ,
+        genome: GenomeIndexes {
+            genome_dir: PathBuf::from("."),
+            ct_index_basename,
+            ga_index_basename,
+            large_index: false,
+            combined_index_basename: None,
+            fastas: Vec::new(),
+            fasta_kind: FastaKind::Fa,
+        },
+        detected_aligner: DetectedAligner {
+            path: PathBuf::from("rammap"),
+            version: "1.1.1".into(),
+        },
+        aligner_options: String::new(),
+        gap_penalties: GapPenalties {
+            deletion_open: 5,
+            deletion_extend: 3,
+            insertion_open: 5,
+            insertion_extend: 3,
+        },
+        score_model: ScoreModel::minimap_like(0.0, -0.2),
+        mm2_preset,
+        dovetail: false,
+        phred64: false,
+        unmapped: false,
+        ambiguous: false,
+        ambig_bam: false,
+        add_barcode: false,
+        add_umi: false,
+        output: OutputTarget {
+            output_dir: PathBuf::from("."),
+            temp_dir: PathBuf::from("."),
+            basename: None,
+            prefix: None,
+            format: OutputFormat::Bam,
+            gzip: false,
+        },
+        read_processing: ReadProcessing {
+            skip: None,
+            upto: None,
+            icpc: false,
+            maximum_length_cutoff: None,
+        },
+        multicore: 1,
+        bowtie_threads: None,
+        hisat2_multicore_remap: None,
+        combined_index: false,
+        combined_index_single_pass: false,
+        combined_index_parallel: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1592,6 +1723,32 @@ mod tests {
     #[test]
     fn resolve_aligner_defaults_to_bowtie2() {
         assert_eq!(resolve_aligner(&cli_from(&[])).unwrap(), Aligner::Bowtie2);
+    }
+
+    /// A `--mm2_*` flag on a non-minimap aligner must still report "unless you also use
+    /// --minimap2", NOT a preset-conflict message.
+    ///
+    /// This pins the **placement** of `resolve_mm2_preset` in `resolve` (#1092). A single
+    /// selector cannot discriminate — the resolver never errors on one — so the case has to
+    /// carry a conflicting PAIR: if the resolver were called before `resolve_mm2_max_length`,
+    /// the user would see the short⊕nanopore text instead. No other test covers this.
+    #[test]
+    fn mm2_flags_on_bowtie2_report_the_wrong_aligner_not_a_preset_conflict() {
+        let err = resolve(
+            &cli_from(&["--mm2_short_reads", "--mm2_nanopore"]),
+            "cmd".into(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("unless you also use --minimap2"),
+            "expected the wrong-aligner die, got: {err}"
+        );
+        assert!(
+            !err.contains("but not both"),
+            "the preset-conflict die must not win here — resolve_mm2_preset is placed too \
+             early: {err}"
+        );
     }
 
     /// The premise `perfect = 2 × read_length` rests on is `AS <= 2 × read_length` for every

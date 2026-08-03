@@ -3117,6 +3117,67 @@ fn rammap_se_mapped_names_report_and_notice() {
     assert_eq!(reader.records().count(), 2);
 }
 
+/// #1092: the backend notice names the preset `resolve` actually stored on `RunConfig`, and
+/// the emitted option string agrees with it.
+///
+/// The only observation of `RunConfig::mm2_preset` as populated by `resolve` — the in-process
+/// wiring gate hand-builds its `RunConfig` (it must; `resolve` execs `<aligner> --version`),
+/// so without this a `resolve` that stored a `MapOnt` literal while still calling the resolver
+/// is caught only by `unused variable` under `-D warnings`. Also the only gate on the
+/// `--mm2_pacbio` near-inertness note. `--rammap_subprocess` pins the backend on both builds.
+#[cfg(unix)]
+#[test]
+fn rammap_notice_names_the_resolved_preset() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+
+    let run = |preset_flag: &str| {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--rammap")
+            .arg("--rammap_subprocess")
+            .arg(preset_flag)
+            .arg("--path_to_rammap")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .assert()
+            .success();
+        let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+        let report =
+            fs::read_to_string(outdir.path().join("reads_bismark_rammap_SE_report.txt")).unwrap();
+        (stderr, report)
+    };
+
+    let (stderr, report) = run("--mm2_short_reads");
+    assert!(
+        stderr.contains("preset -x sr"),
+        "the notice must name the resolved preset, not the default: {stderr}"
+    );
+    assert!(!stderr.contains("preset -x map-ont"));
+    assert!(report.contains("-x sr -K 250K"), "{report}");
+    // The near-inertness note is specific to map-pb.
+    assert!(!stderr.contains("--mm2_pacbio differs from the default"));
+
+    let (stderr, report) = run("--mm2_pacbio");
+    assert!(stderr.contains("preset -x map-pb"), "{stderr}");
+    assert!(
+        stderr.contains("--mm2_pacbio differs from the default"),
+        "map-pb must carry the never-silent near-inertness note: {stderr}"
+    );
+    assert!(report.contains("-x map-pb -K 250K"), "{report}");
+}
+
 /// Phase 3 (T3): paired-end `--rammap` is rejected loudly (SE-only, minimap-like) —
 /// mirrors `minimap2_paired_end_is_rejected`, swapping `--minimap2` → `--rammap`. The
 /// real temp `-1`/`-2` files take the layout past `check_exists` so the PE reject fires.

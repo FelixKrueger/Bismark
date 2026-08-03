@@ -60,6 +60,7 @@ fn subprocess_sam_by_qname(
     bin: &PathBuf,
     mmi: &PathBuf,
     reads: &PathBuf,
+    preset_name: &str,
 ) -> HashMap<String, SamRecord> {
     // The same invocation shape the Rust subprocess backend uses (Perl 7022/7025):
     // `<opts> <index>.mmi <input>`, with `--secondary=no` so the primary is first.
@@ -71,7 +72,7 @@ fn subprocess_sam_by_qname(
             "-t",
             "1",
             "-x",
-            "map-ont",
+            preset_name,
             "-K",
             "250K",
         ])
@@ -143,8 +144,18 @@ fn inprocess_matches_subprocess_record_for_record() {
 
     // --- in-process: drive the production stream over the converted reads. ---
     let mmi_str = mmi.to_str().expect("RAMMAP_MMI must be UTF-8");
+    // ONE preset for both arms, from `RAMMAP_PRESET` (default `map-ont`). Threading it into
+    // both is the point: a preset set on only one side would surface as backend divergence
+    // rather than as the configuration error it is (#1092). Also the hook for a per-preset run.
+    let preset_name = std::env::var("RAMMAP_PRESET").unwrap_or_else(|_| "map-ont".to_string());
+    let preset = match preset_name.as_str() {
+        "map-ont" => rammap::Preset::MapOnt,
+        "map-pb" => rammap::Preset::MapPb,
+        "sr" => rammap::Preset::Sr,
+        other => panic!("RAMMAP_PRESET must be map-ont, map-pb or sr; got {other:?}"),
+    };
     let aligner = Arc::new(
-        rammap::Aligner::from_index(mmi_str, rammap::Preset::MapOnt)
+        rammap::Aligner::from_index(mmi_str, preset)
             .expect("load .mmi via rammap::Aligner::from_index"),
     );
     // Read the whole converted file into memory so the in-process stream consumes
@@ -163,7 +174,7 @@ fn inprocess_matches_subprocess_record_for_record() {
         .expect("build in-process stream");
 
     let read_lens = read_lengths_by_qname(&reads);
-    let sub = subprocess_sam_by_qname(&bin, &mmi, &reads);
+    let sub = subprocess_sam_by_qname(&bin, &mmi, &reads, &preset_name);
 
     let mut total = 0usize;
     let mut inproc_mapped = 0usize;

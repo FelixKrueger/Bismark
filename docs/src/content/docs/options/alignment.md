@@ -322,16 +322,20 @@ Uses minimap2 as the underlying read aligner. This mode is very new and currentl
 
 - `--mm2_nanopore`
 
-Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x map-ont`). Only works in conjuntion with `--minimap2`. Default mode when `--minimap2` is specified without additional qualifiers.
+Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x map-ont`). Only works in conjuntion with `--minimap2` or `--rammap`. Default mode when `--minimap2` is specified without additional qualifiers.
 
 - `--mm2_pacbio`
 
-Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2`. Default: OFF.
+Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2` or `--rammap`. Default: OFF.
+
+  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr. (The exception is `--illumina_5base`, which reads the genome FASTA directly, so the preset's index parameters do apply.)
 
 - `--mm2_short_reads`
 
 This option invokes the minmap2 preset setting `-x sr` and is intended for genomic short-read mapping with accurate reads (probably Illumina 150bp+ ?). For spliced short-reads, please use `--hisat2` instead. The `sr` preset mode (short single-end reads without splicing) uses the following options:
 `-k21 -w11 --sr --frag=yes -A2 -B8 -O12,32 -E2,1 -r50 -p.5 -N20 -f1000,5000 -n2 -m20 -s40 -g200 -2K50m --heap-sort=yes --secondary=no`. Default: OFF.
+
+  Works with `--rammap` as well as `--minimap2`. Because `sr` changes the chain and DP thresholds as well as the mismatch and gap penalties, it changes **which** reads map, not only their alignment scores — expect mapping-efficiency percentages to differ from a `map-ont` run. Against a pre-built bisulfite index the `-k21 -w11` part has no effect (the index supplies its own), so `sr` there means the scoring and filtering options rather than the seeding ones.
 
 - `--mm2_maximum_length <int>`
 
@@ -343,7 +347,7 @@ Maximum length cutoff for very long sequences (currently allowed 100-100,000 bp)
 
 - `--rammap/--ram`
 
-Uses [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, as the underlying read aligner. Intended for long-read bisulfite data (EM-seq Nanopore/PacBio). Single-end only, and like `--minimap2` uses the `map-ont` preset. **Experimental and concordance-gated — NOT byte-identical to minimap2.** rammap is compiled into the conda, Docker and release builds, so this works with no extra install. By default it runs the **in-process** backend (the converted index is loaded once and shared across strand instances; auto-threaded to the available cores, capped), which uses less memory and is faster than spawning the external binary. Default: OFF.
+Uses [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, as the underlying read aligner. Intended for long-read bisulfite data (EM-seq Nanopore/PacBio). Single-end only, and like `--minimap2` defaults to the `map-ont` preset and honours the `--mm2_*` selectors above. **Experimental and concordance-gated — NOT byte-identical to minimap2.** rammap is compiled into the conda, Docker and release builds, so this works with no extra install. By default it runs the **in-process** backend (the converted index is loaded once and shared across strand instances; auto-threaded to the available cores, capped), which uses less memory and is faster than spawning the external binary. Default: OFF.
 
 - `--rammap_subprocess`
 
