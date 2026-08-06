@@ -14,10 +14,11 @@
 | Spike | ⏭️ Skipped | Not needed — the three load-bearing properties were confirmed by reading `methylation.rs` / `record.rs` / `output.rs` directly (PLAN §3.1) |
 | Design decisions | ✅ Done | Converter over `.pat`; aligner flag over subcommand; all cytosine contexts. Recorded in #1095 |
 | Reporter input | ✅ Done | Answered 2026-08-03 — will re-run through Bismark, so the XM-driven design stands (PLAN §8.7-9) |
-| **Plan written** | ✅ Done | `PLAN.md`, rev 0 |
-| **Manual review** | ⏳ **NEXT** | Awaiting Felix. No agent reviewers until this passes |
-| Agent plan review | ⬜ Not started | Dual independent reviewers, after manual approval |
-| Implementation | ⬜ Not started | Requires the explicit "implement" trigger |
+| Plan written | ✅ Done | `PLAN.md` rev 0 |
+| Manual review | ✅ Done | Felix approved proceeding to agent review |
+| Agent plan review | ✅ Done | Dual independent reviewers — `PLAN_REVIEW_A.md` (242 ln), `PLAN_REVIEW_B.md` (320 ln). Both verified the algorithm across all 4 SE indices + 8 PE combinations; **2 Critical each**, 3 contradictions resolved by re-checking against source |
+| **Plan rev 1** | ✅ Done | 19 changes (`PLAN.md` §0). Algorithm unchanged; all fixes in validation, I/O plumbing, and the §3.6 masking hole |
+| **Implementation** | ⏳ **NEXT** | Requires the explicit "implement" trigger. ⚠️ Blocked on generating a **soft-clip fixture** first (§9.1) — none exists in the repo |
 | Code review | ⬜ Not started | Dual reviewers + coverage audit |
 | PR → `dev` | ⬜ Not started | |
 
