@@ -1,6 +1,8 @@
 # Session Handoff — 2026-08-05
 
-**Next session's job:** check [#787](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5164331510) for @Danielsm8's reply. **The plan for [#1095](https://github.com/FelixKrueger/Bismark/issues/1095) is deliberately unwritten and blocked on his answer to question 1** (which BAM he starts from) — that answer decides whether we build the small XM-driven converter already specced in #1095 or a considerably larger genome-driven tool. Everything else is done.
+**Next session's job:** write the plan for [#1095](https://github.com/FelixKrueger/Bismark/issues/1095). **It is UNBLOCKED** — @Danielsm8 answered on 2026-08-03 ([comment `5167178704`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5167178704)): his existing BAMs are from DRAGEN but he is **happy to re-run through Bismark**, so the XM-driven converter specced in #1095 is the right build and no genome-driven variant is needed. He uses `bam2pat` defaults plus `--clip`, hg38 via `wgbstools init_genome hg38`, paired-end, and does not need variant deconvolution at his 10X coverage.
+
+> ⚠️ An earlier revision of this document claimed the plan was "blocked on his answer" for three days after he had already answered. #1095's body has been corrected too. Check the issue thread before trusting a "blocked" claim in any handoff.
 
 `dev` is at **`fab3e27`** — unchanged. **No commits, no source edits, zero diff this session.** All output was GitHub-side.
 
@@ -26,8 +28,10 @@ No code. The session's product is a decision, a posted reply, and a specced trac
 
 | Item | State |
 |---|---|
-| **#1095 plan** | **Blocked on Mike.** Do not write it until question 1 is answered — XM-driven vs genome-driven changes its whole shape |
-| **#1081 / #1092 still OPEN** | Carried over, not a mistake — see G10 |
+| **#1095 plan** | **Unblocked, not yet written.** Design confirmed correct by the reporter's answer; write it, then manual review before any implementation |
+| **Reply to @Danielsm8** | Owed. He answered on 2026-08-03 and has had no response since. Offer him the `patter` two-constant workaround (G17) — it works on the DRAGEN BAMs he already has |
+| **Upstream `nloyfer/wgbs_tools` PR** | Not started. A `--five_base`/inverted-polarity flag on `patter` (G17). Their tool, so needs their buy-in + real-data validation |
+| **#1081 / #1092** | **CLOSED** 2026-08-06 at Felix's instruction, each with a note that the fix is on `dev` but not in a tagged release. Supersedes the old "leave them open" guidance in G10 |
 | Release cut | `## Unreleased` in `CHANGELOG.md` has **four** aligner entries (#1079, #1080, #1081, #1092). All three version literals still `3.1.0`. Magnitude: **minor → 3.2.0** |
 | Real-data rammap concordance | Optional. `RAMMAP_PRESET=sr` on the env-gated crosscheck with oxy data |
 | PR #1091 (rapidgzip) | Open, not ours, untouched |
@@ -90,6 +94,14 @@ Scratchpad (session-local, will be wiped): `787_reply_draft.md`, `787_comment_fi
 **G6 — consumer requirements (from `bam2pat.py`).** Coordinate-sorted **and** indexed (`is_bam_sorted`), `-q 10` (`MAPQ = 10`), `-F 1796` (`FLAGS_FILTER`), `-f 3` for PE. FLAG vocabulary `{99,147}`/`{83,163}` (PE) or `{0}`/`{16}` (SE); `is_bottom` (`patter_utils.cpp:163-168`) agrees with Bismark's `XG` on every one. **`samtools sort` + `index` is the only gap.**
 
 **G7 — the converter is lossy at cytosines.** It replaces observed bases with called ones. 5-Base cannot separate a genuine `C>T` from 5mC without the opposite strand, so real variants get written as methylation — precisely the sites `--five_base_deconvolution` exists to find. Harmless for UXM (fragment-level CpG patterns); **the converted file must never be used for variant calling, and never be the primary BAM.**
+
+**G17 — 🔑 `patter` can be made natively 5-Base-correct by swapping two constants.** `ref_chr`/`unmeth_seq_chr` are read in **exactly two places** (`patter.cpp:153`, `:159`) and nowhere else, so `OT{'C','T',0,0}` → `OT{'T','C',0,0}` and `OB{'G','A',1,1}` → `OB{'A','G',1,1}` inverts the call polarity completely. It survives `is_cpg()`, which accepts `C|T` (OT) / `G|A` (OB) and whose required context bases (`seq[j+1]=='G'`, `seq[j-1]=='C'`) are guanines on the read's own strand in 5-Base chemistry and therefore never converted. **Works on any 5-Base BAM including DRAGEN's** — no re-alignment, no Bismark. Candidate upstream PR; does not replace #1095, which serves Bismark users without a patched third-party binary.
+
+**G18 — `MM`/`ML` modification tags are ruled out, and it's not obvious why.** `patter` already auto-detects standard SAM `MM`/`ML` (`patter.cpp:334-338`) and has a modification-aware path — which would have avoided falsifying `SEQ` at all. But `patter.cpp:341-343` throws `"Unrecognized bam format: paired end and nanopore"`, and 5-Base is PE-only. Do not re-propose this without checking whether upstream has lifted that restriction.
+
+**G19 — chromosome naming must match wgbstools.** The reporter's genome is `wgbstools init_genome hg38`, so the Bismark genome must use the same naming (`chr1`-style). `locus2CpGIndex` throws `std::logic_error` on an unknown locus — loud, but only at the end of a long run.
+
+**G20 — `patter` is not entirely `XM`-blind.** Its *call* path never reads `XM`, but `is_pass_ds_test` (`patter_utils.cpp:357-362`) parses `XM:Z:` for the opt-in `--ds_test` filter. Does not affect the diagnosis; just don't repeat "never reads XM" as an absolute.
 
 ### Tooling / environment
 
