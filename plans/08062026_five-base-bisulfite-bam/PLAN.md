@@ -2,13 +2,33 @@
 
 **Issue:** [#1095](https://github.com/FelixKrueger/Bismark/issues/1095) · **Origin:** [#787](https://github.com/FelixKrueger/Bismark/issues/787) (@Danielsm8) · **Branch:** to be cut from `dev` (`bfdf207`)
 
-**Rev 1** — folds in `PLAN_REVIEW_A.md` and `PLAN_REVIEW_B.md`. Awaiting manual review. Not implemented.
+**Rev 2** — fixes a units bug in rev 1's §3.6. Awaiting manual review. Not implemented.
 
 ---
 
 ## 0. Revision history
 
-Rev 0 → rev 1. The **algorithm survived both reviews intact**; every change below is in validation, I/O plumbing, or one genuine design hole.
+### Rev 1 → rev 2
+
+§3.6 was the only part of rev 1 that was new design rather than a correction, and it had a bug.
+
+**§3.6's mechanism was replaced outright.** Rev 1 identified the masked set from `QUAL` against a threshold auto-detected out of the input's `@PG CL:`. That had a data-destroying units bug, and needed a CLI flag, a header parser, a conflict rule and a fail-loud fallback to work at all. It is replaced by a rule keyed on the reference base the converter **already reconstructs** — provably exactly the leak set, provably empty without masking, and needing none of that machinery.
+
+| # | Change | Source |
+|---|---|---|
+| **T1** | **🔑 Mechanism replaced.** Mask iff `XM[i] == '.'` **and** `ref_seq[i] == ref_base` **and** `SEQ[i] ∈ {meth, unmeth}`. Deletes the new CLI flag, the `@PG` parser, rev 1's §3.6.4/§3.6.5, two `@PG`-related rows of §9.6, and rev 1's "remaining risk 3". Makes **§9.1 the regression test** for this path (property 2), which rev 1's mechanism could not be. §3.6 | `PLAN_REVIEW_36` F1 |
+| T2 | **🔑 Flip counter moved into the letter arms.** At loop level it also counts masks, so `flipped/letters > 1` and §3.5's fail-loud aborts **every correctly-masked 5-Base run** — a false failure on the exact input the feature targets. `flipped` and `masked` are disjoint. §3.2, §9.7.5 | `PLAN_REVIEW_36` F4 |
+| T3 | **`QUAL` units bug** — rev 1 masked where `QUAL[i] < offset + n`, but a BAM stores 0-based phred scores (`output.rs:437-440`), so that masked *every* `.` position. Found in self-review, confirmed independently as the review's C1. Moot under T1, which reads no `QUAL` at all | self-review + `PLAN_REVIEW_36` C1 |
+| T4 | **§9.7 rewritten with negative controls.** Rev 1 asserted only that a maskable position gets masked — which an implementation that masks *everything* also satisfies. Now: exact counts, non-cytosine `.` untouched, gaps untouched, `is_cpg` neighbour preserved, disjointness, `NM` bookkeeping, and `masked == 0` on every bisulfite fixture. §9.7 | `PLAN_REVIEW_36` C2 |
+| T5 | **PE call site cited.** Rev 1 pointed at the **SE** helper, whose only caller passes `baseq = 0`; the leak users actually hit is `mod.rs:1695-1697` in `five_base_emit_pe_record`. §3.6.6 | `PLAN_REVIEW_36` F9 |
+| T6 | **Appended `@PG` gets a distinct ID** (`ID:bismark-five-base-bisulfite`, `PP:Bismark`). A second `ID:Bismark` violates SAM's unique-ID rule. §5.6 | `PLAN_REVIEW_36` F10 |
+| T7 | **"B's proposal was rejected" reframed to "composed with".** B's conjunct is necessary and is clause 3 of T1's rule; what it lacked was a positional test. Rev 1's "roughly half of every read" corrected to ≈30% (5-Base) / ≈40% (bisulfite). §3.6 | `PLAN_REVIEW_36` F5 |
+| T8 | **`N` is `patter`'s own idiom** — `clean_CIGAR` pads `D`/`N` ops with `'N'` (`patter_utils.cpp:237-239`), so the filler choice is a verified property of the consumer rather than an inference. Also: non-CpG cytosines are masked too, harmlessly. §3.6 | `PLAN_REVIEW_36` O2/O4 |
+| T9 | **Consensus BAM restated.** No leak exists there (`mod.rs:2306` passes `0`; its other `N`s are already `N` in `SEQ`), and under T1 `masked == 0` follows from property 2 rather than from a coincidence in the synthesised header. §3.6.6 | self-review + `PLAN_REVIEW_36` F8 |
+
+### Rev 0 → rev 1
+
+The **algorithm survived both reviews intact**; every change below is in validation, I/O plumbing, or one genuine design hole.
 
 | # | Change | Source |
 |---|---|---|
@@ -124,15 +144,20 @@ These are exactly `patter`'s `ref_chr` / `unmeth_seq_chr`.
 meth, unmeth, ref_base  =  XG == "CT" ? ('C','T','C') : ('G','A','G')
 
 seq_new = seq.clone()
-flipped = 0 ; letters = 0
+flipped = 0 ; letters = 0 ; masked = 0
 for i in 0 .. seq.len():                      # len(xm) == len(seq), asserted
     match xm[i]:
-        b'Z' | b'X' | b'H' | b'U'  =>  { letters += 1; seq_new[i] = meth   }
-        b'z' | b'x' | b'h' | b'u'  =>  { letters += 1; seq_new[i] = unmeth }
-        b'.'                       =>  ()                     # but see §3.6
+        b'Z' | b'X' | b'H' | b'U'  =>  { letters += 1; seq_new[i] = meth
+                                         if meth   != seq[i] { flipped += 1 } }
+        b'z' | b'x' | b'h' | b'u'  =>  { letters += 1; seq_new[i] = unmeth
+                                         if unmeth != seq[i] { flipped += 1 } }
+        b'.'                       =>  { if ref_seq[i] == ref_base            # §3.6
+                                            && seq[i] in {meth, unmeth}
+                                         { seq_new[i] = b'N'; masked += 1 } }
         other                      =>  return Err(InvalidXmByte)
-    if seq_new[i] != seq[i] { flipped += 1 }
 ```
+
+⚠️ **The flip comparison must live inside the two letter arms, not at loop level (T2).** A loop-level `if seq_new[i] != seq[i] { flipped += 1 }` also counts every §3.6 mask, so `flipped/letters` exceeds 1 and §3.5's fail-loud fires on **every correctly-masked 5-Base file** — a false abort that reads like a data problem, on exactly the input this feature was written for. `flipped` is a letter-position statistic and `masked` a gap-position statistic; they are **disjoint by construction**, and `masked` is never part of the flip-rate denominator.
 
 All eight letters are rewritten, **including `U`/`u`** — see §3.9.
 
@@ -197,17 +222,49 @@ This is a hard runtime discriminator on the **file**, where `--illumina_5base` i
 
 That is the precise bug this feature exists to remove, surviving in the output, silently. B enumerated every other route to `XM == '.'` and confirmed masking is the **only** leak: soft clips and insertions are deleted by `clean_CIGAR` (`patter_utils.cpp:240-241`), genuine mismatches fail `is_cpg`, deletions have no `SEQ` position, and edge-guard records are never written.
 
-**Why B's proposed fix is rejected.** B suggested writing `N` at any `XM == '.'` position whose `SEQ[i]` ∈ {meth, unmeth}. That set includes **every genomic non-cytosine whose read base happens to be `C` or `T`** — roughly half of every read. It would destroy the file and break §9.1 outright.
+**The fix — key on the reference base the converter already reconstructs (T1).**
 
-**The fix used instead — identify the masked set via `QUAL`, which is exactly what Bismark used:**
+§3.4 step 1 already rebuilds `ref_seq` for every record, one byte per read position, and step 2 proves it byte-exact before anything is emitted. §3.1.2 fixes the reference base at any scoreable cytosine. So the converter already knows — for free, per position — whether a position *is* a cytosine on the read's strand:
 
-1. New option `--five_base_bisulfite_baseq <PHRED>`. Default: **auto-detect** from the input header.
-2. **Auto-detect** parses the `@PG` line with `ID:Bismark` for `--five_base_baseq <n>`. ⚠️ Select on `ID:Bismark`, **not** the last `@PG` — Bismark BAMs carry a second `@PG` (`ID:samtools`, `PP:Bismark`), and "last `@PG` wins" is a trap this repo has already hit.
-3. If the resolved threshold `n > 0`: at every position with `XM == '.'` **and** `QUAL[i] < offset + n`, write `b'N'`. `is_cpg` then fails and `patter` returns `UNKNOWN` — the correct verdict for a base Bismark chose not to trust. Count these separately from `flipped`.
-4. If auto-detect finds a value and the user passed a *different* one ⇒ **fail loud**.
-5. If auto-detect cannot find a Bismark `@PG` **and** the user passed nothing ⇒ **fail loud**, requiring an explicit value (`0` asserts no masking). Harsh, but the alternative is silently emitting inverted calls; the escape hatch is one flag.
+> **Mask `b'N'` iff `XM[i] == '.'` **and** `ref_seq[i] == ref_base` **and** `SEQ[i] ∈ {meth, unmeth}`.**
 
-`N` at a `.` position is a mismatch against the reference, so `NM`/`MD` must be recomputed **after** this step — §3.4 already handles it, since it operates on the final `seq_new`.
+Three properties, each verified against source:
+
+1. **It is exactly the leak set.** `patter` scores a position only when the reference locus is a dictionary CpG (`patter.cpp:141`) *and* `is_cpg` passes, which requires `seq[j] ∈ {C,T}` (OT) / `{G,A}` (OB) (`patter.cpp:96-103`). A leak therefore requires `SEQ[i] ∈ {meth, unmeth}` at a reference cytosine carrying no Bismark call. Nothing outside the set can leak, and nothing inside it is ever scored correctly.
+2. **It is provably empty when no masking was applied.** At a genomic `C` the CT branch emits a letter when the call base is `C` (`methylation.rs:587-591`) or `T` (`:594-596`) — unconditionally, no further guard. So `XM == '.'` at a genomic `C` proves `call_seq[i] ∉ {C,T}`; and with no masking `call_seq == SEQ`, so `SEQ[i] ∉ {C,T}`. Contrapositive: the three conjuncts together **prove** masking fired. GA branch symmetric (`:607-614`). **There is no threshold to know and nothing to detect.**
+3. **It costs nothing.** No genome, no `QUAL`, no new flag, no header parsing. `MD` is already mandatory (§3.7) and already validated per record. At `I`/`S` positions `ref_seq[i] == b'X' != ref_base`, so clipped and inserted bases are structurally excluded — the converter never writes into a gap.
+
+`N` is the right filler, and it is `patter`'s own idiom: `clean_CIGAR` pads `D`/`N` CIGAR ops with `'N'` (`patter_utils.cpp:237-239`), so `N` is exactly how `patter` represents "no information", and `is_cpg` fails there.
+
+**What this replaces.** Rev 1 identified the masked set via `QUAL` against a threshold auto-detected from the input's `@PG CL:`. That required a new CLI flag, a header parser, a conflict rule, and a fail-loud fallback — and it reached *outside* the record for information the record already contains. It also over-captured in two ways that the rule above avoids for free: it masked the `is_cpg` **neighbour** base (`seq[j+1]`/`seq[j-1]`), destroying good high-quality calls, and it masked the inline UMI inside the soft-clipped prefix under `--five_base_umi_len` — invisibly, since `ref_seq` carries `X` there so neither `NM` nor `MD` changes.
+
+**On B's original proposal.** B suggested masking any `XM == '.'` position whose `SEQ[i]` ∈ {meth, unmeth}. Rev 1 recorded that as *rejected*; that overstated the disagreement. B's conjunct is the **third** clause above and is necessary — what it lacked was a positional test proving the position is a reference cytosine. The two proposals compose rather than compete. (Rev 1 also put the cost of B's rule alone at "roughly half of every read"; the real figure is ≈30% of a 5-Base read and ≈40% of a bisulfite one. The conclusion stands, but the number was wrong.)
+
+**Ordering and interactions.** `N` at a `.` position is a new mismatch, so `NM`/`MD` must be computed **after** masking — §3.4 already does, operating on the final `seq_new`. Both are handled normally: `hemming_dist` counts it (`output.rs:150-157`) and `make_mismatch_string` emits the reference base at a mismatch (`output.rs:196-200`).
+
+Masking does not disturb the other invariants. `N` is written only at `.` positions, so §3.3.2 and §3.5's flip rate — both letter-position statistics — are untouched; `masked` and `flipped` are **disjoint by construction** (§3.2). And by property 2, **§9.1 is now the regression test for this path**: `masked` must be exactly 0 on any non-masked input, which every bisulfite fixture is. Rev 1's mechanism could not be covered by §9.1 at all.
+
+**Reporting.** The fix is silent by design, so surface it: report `masked` in `<stem>.bisulfite_report.txt` and print a one-line `Note:` when non-zero — *"N no-call cytosines masked to N; this input appears to have been produced with `--five_base_baseq`."* That is strictly more informative than rev 1's design, which announced a threshold it had guessed rather than the positions it actually found.
+
+Non-CpG cytosines are masked too, which `patter` never reads. Harmless and it keeps the rule uniform; noted so a later reader does not mistake it for a bug.
+
+### 3.6.6 Where the leak actually lives, and the consensus BAM
+
+⚠️ **Rev 1 cited the wrong call site (T5).** It pointed at `mod.rs:1352-1360`, inside `five_base_emit_record` — the **SE** helper, whose only production caller is the consensus path, which passes `baseq = 0`. 5-Base is paired-end only (`cli.rs:99-100`), so the call site that real users hit is `five_base_emit_pe_record`:
+
+```rust
+// mod.rs:1695-1697
+let off = if phred64 { 64 } else { 33 };
+let call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
+let call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
+// ... paired_end_sam_output(identifier, seq1_uc, seq2_uc, ...)  ← unmasked
+```
+
+Same leak, both mates. Cite this and `output.rs:645-708` (`build_pe_mate`) — an implementer sent to verify "is `SEQ` really unmasked?" at the SE line finds the consensus caller passing `0` and could reasonably conclude the leak is unreachable.
+
+**The consensus BAM carries no leak.** `run_five_base_consensus` passes literal `0` (`mod.rs:2306`), and the consensus `SEQ` is built from the collapsed consensus rather than from masked reads. Its *other* `N` bases — uncovered, tie, or C>T-variant positions (`five_base_duplex.rs:332`, `:338`, `:358`, `:361`) — are already `N` in `SEQ`, so `is_cpg` fails and `patter` returns `UNKNOWN`; `revcomp` preserves `N` (`output.rs:170`), so the reverse record is fine too. §7's claim that it is a valid input holds, and under the rule above `masked == 0` follows from property 2 rather than from luck.
+
+*(Rev 1 relied on the consensus header resolving to threshold 0. It does — `run_five_base_consensus_standalone` synthesises a fresh header at `mod.rs:533` describing the consensus command — but only by coincidence, and it could resolve to the **wrong** value: `--five_base_baseq` is accepted on the consensus path, since `mod.rs:167-169` short-circuits before `resolve()`, so it lands verbatim in the synthesised `CL:` while being entirely inert. The rule above makes the whole question moot.)*
 
 ### 3.7 Reader, writer, and record classes (R5, R13)
 
@@ -264,17 +321,18 @@ pub struct Reencoded {
 ///
 /// `XM` is NOT modified — it is already correct and stays the source of truth.
 ///
-/// `baseq > 0` additionally masks no-call positions whose QUAL is below the threshold
-/// to `N`, closing the inversion leak in PLAN §3.6.
+/// No-call positions that sit at a reference cytosine and still carry a scoreable base
+/// are masked to `N`, closing the inversion leak in PLAN §3.6. This needs no threshold,
+/// no `QUAL`, and no knowledge of the quality encoding — the reconstructed reference
+/// identifies the set exactly (§3.6, property 2). There is deliberately **no** `qual`,
+/// `baseq` or `phred64` parameter.
 ///
 /// # Errors
 /// `InvalidXmByte`, `LengthMismatch`, `SeqNotInPair` (§3.3.2), `CallInGap` (§3.3.3),
 /// `RoundTripFailed` (§3.4 step 2), `MalformedMd`, `UnsupportedCigarOp`.
-#[allow(clippy::too_many_arguments)]
 pub fn reencode(
-    seq: &[u8], qual: &[u8], xm: &[u8], xg: XgStrand,
+    seq: &[u8], xm: &[u8], xg: XgStrand,
     cigar: &Cigar, md_old: &str, nm_old: i64,
-    baseq: u8, phred64: bool,
     qname: &str,          // error messages only
 ) -> Result<Reencoded, FiveBaseBisulfiteError>;
 ```
@@ -283,13 +341,15 @@ pub fn reencode(
 
 ## 5. Implementation outline
 
-1. **`cli.rs`** — add `five_base_bisulfite_bam: Vec<PathBuf>` and `five_base_bisulfite_baseq: Option<u8>`, doc-commented in the `[#787]` style of their neighbours. Keep `///` continuation lines free of leading `+ `/`- `/`* ` (clippy `doc_lazy_continuation`).
+1. **`cli.rs`** — add `five_base_bisulfite_bam: Vec<PathBuf>`, doc-commented in the `[#787]` style of its neighbours. Keep `///` continuation lines free of leading `+ `/`- `/`* ` (clippy `doc_lazy_continuation`). **One new flag only** — §3.6's rule needs no threshold, so rev 1's `--five_base_bisulfite_baseq` is gone (§10 Open-6).
 2. **Dispatch (R14)** — put the **mutual-exclusion check before** the existing `mod.rs:165-168` block, which already `return`s; then the new guard. Ordering matters or the check never fires.
 3. **Validation** — require `--illumina_5base`; explicitly **do not** require `--genome`.
-4. **New module** — `XgStrand`, `FiveBaseBisulfiteError`, `reencode()`, `reconstruct_ref()`, `parse_baseq_from_pg()`. Write `reconstruct_ref` first and test it against §3.4 step 2 in isolation.
+4. **New module** — `XgStrand`, `FiveBaseBisulfiteError`, `reencode()`, `reconstruct_ref()`. Write `reconstruct_ref` first and test it against §3.4 step 2 in isolation: everything else depends on it, including §3.6's masking rule. **No `@PG` parser** — rev 1 needed one, §3.6's rule does not.
 5. **Record mutation (R16)** — `BismarkRecord` has no `inner_mut()`; and this path uses raw noodles anyway. Clone the record into a `RecordBuf`, then `sequence_mut()` and `data_mut().insert(NM/MD)`. `Data::insert` **replaces in place and preserves field order** (noodles-sam `record_buf/data.rs:222-232`), so the tag block cannot be reordered — which is what makes §9.1's SAM-text comparison safe.
-6. **Driver** — per input BAM: open, copy header + append `@PG`, resolve the baseq threshold (§3.6), stream records, write `<output_dir>/<input-stem>.bisulfite.bam`.
-7. **Counters + report** — records read / re-encoded / passed through, `letters`, `flipped`, **flip rate**, `masked`. Fail loud if the flip rate is neither 0 nor 1. Write `<stem>.bisulfite_report.txt`.
+6. **Driver** — per input BAM: open, copy header, append a `@PG`, stream records, write `<output_dir>/<input-stem>.bisulfite.bam`.
+
+   ⚠️ **The appended `@PG` needs a distinct ID (T6)** — `ID:bismark-five-base-bisulfite`, `PP:Bismark`. Appending a second `ID:Bismark` violates SAM's unique-`@PG`-ID rule. Note also that the output *retains* the input's `@PG ID:Bismark`, so the converter is safely idempotent on its own output (already-`N` stays `N`; letters are no longer `.`) — a stated property, not a coincidence.
+7. **Counters + report** — records read / re-encoded / passed through, `letters`, `flipped`, **flip rate**, `masked`. Fail loud if the flip rate is neither 0 nor 1; print the §3.6 `Note:` when `masked > 0`. Write `<stem>.bisulfite_report.txt`.
 8. **Closing `Note:`** — following the `ubam.rs:214/239` precedent of instructing rather than shelling out:
    ```
    samtools sort -o <out>.sorted.bam <out> && samtools index <out>.sorted.bam
@@ -339,7 +399,7 @@ pub fn reencode(
 
 **From the reporter** ([#787](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5167178704)): will re-run through `bismark --illumina_5base`; `bam2pat` defaults plus `--clip`; hg38 via `wgbstools init_genome hg38`; paired-end; deconvolution not needed at 10X.
 
-**Configurable:** input BAM list, `--output_dir`, `--five_base_bisulfite_baseq`. Nothing about the encoding itself.
+**Configurable:** input BAM list and `--output_dir`. **Nothing else** — the encoding, and now the §3.6 masking rule, are both fully determined by the record. Rev 1 needed a threshold flag; rev 2 has no tunable behaviour at all.
 
 ---
 
@@ -397,15 +457,25 @@ Expected: exact agreement, including insertions **and soft clips** counted as mi
 
 ### 9.6 Fail-loud matrix
 
-Missing `XM` / `XR` / `XG` / `MD` / `NM`; length mismatch; bad `XM` byte; `H`/`=`/`X`/`P` in CIGAR; letter at an `I`/`S` position; round-trip failure; flip rate strictly between 0 and 1; both `--five_base_*_from_bam`-family flags together; missing `--illumina_5base`; unresolvable baseq (§3.6.5); baseq flag disagreeing with the header (§3.6.4). Assert on **message content**, not just `is_err()`.
+Missing `XM` / `XR` / `XG` / `MD` / `NM`; length mismatch; bad `XM` byte; `H`/`=`/`X`/`P` in CIGAR; letter at an `I`/`S` position; round-trip failure (§3.4 step 2); flip rate strictly between 0 and 1; both `--five_base_*_from_bam`-family flags together; missing `--illumina_5base`. Assert on **message content**, not just `is_err()`.
+
+(Rev 1 also needed rows for an unresolvable baseq threshold and for the flag disagreeing with the header. §3.6's rule has no trigger condition, so both are gone — as is the ambiguity rev 1 carried about which of those two cases its fail-loud actually covered.)
 
 Plus (R17): assert the output contains **no `MM:Z:`**. `detect_nanopore` (`bam2pat.py:243-259`) silently switches to `--nanopore` mode — reading `MM`/`ML` instead of `SEQ`, with `-q 0 -F 3844` — if the header has `\tPL:ONT` or any of the first 200 records has `\tMM:Z:`. Bismark writes neither today, and `\tXM:Z:` does not match `\tMM:Z:`, so this is cheap insurance against a future tag-preserving input path silently defeating the whole feature.
 
-### 9.7 The masking leak (R1)
+### 9.7 The masking rule (R1, T1)
 
-A record with `XM == '.'` at a position whose `SEQ` base is in {meth, unmeth} and whose `QUAL` is below the threshold must be `N`-masked (or the input refused). Assert that `is_cpg` would then fail — i.e. the emitted base is `N`, not `C`/`T`/`G`/`A`.
+Every assertion here is on the **emitted byte**, not on `is_cpg` — a Rust test cannot call `patter`'s C++.
 
-Nothing in rev 0's §9 caught this; it is a silent-wrong-answer mode.
+1. **Positive.** A `.` position at a reference cytosine whose `SEQ` base is in {meth, unmeth} becomes `N`, and `masked` counts it. Build one such position in a record and assert `masked == 1` **exactly** — not `>= 1`.
+2. **🔑 Negative — the assertion rev 1 lacked.** In the *same* record, a `.` position at a reference **non**-cytosine whose `SEQ` base happens to be `C`/`T` must be **byte-identical to the input**. This is what fails if the positional conjunct is dropped, which is exactly the over-masking that both rev 1's `QUAL` rule and B's original proposal would have caused.
+3. **Gaps are never written.** A soft-clipped and an inserted position, both with `SEQ ∈ {meth, unmeth}`, stay untouched — `ref_seq[i] == b'X' != ref_base`. Guards the inline-UMI corruption case under `--five_base_umi_len`.
+4. **The `is_cpg` neighbour survives.** On an OT record, the `G` at `j+1` (reference `G`, so `XM == '.'`) must be unchanged, so the call at `j` stays scoreable. Symmetric for `C` at `j-1` on OB. This is the good-call destruction that rev 1's `QUAL` rule caused.
+5. **Disjointness (T2).** No letter position is ever masked, and `masked` is never in the flip-rate denominator: assert `flipped <= letters` and `flipped/letters ∈ {0.0, 1.0}` on a record that *also* has masked positions. A loop-level flip counter fails this — and would otherwise abort every real masked run.
+6. **`NM` bookkeeping.** A 100 bp record with two masked positions must give `NM_new == NM_old + 2`. A whole-read mask fails this loudly.
+7. **Provable emptiness (property 2).** On every §9.1 bisulfite fixture, `masked == 0`. **This is what makes §9.1 the regression test for the masking path** — rev 1's threshold-based mechanism could not be reached by §9.1 at all, which is why its bug would have shipped.
+
+Nothing in rev 0's §9 caught any of this, and rev 1's §9.7 tested only direction 1 — the direction in which over-masking is invisible.
 
 ### 9.8 `XG` ⟺ FLAG (R8)
 
@@ -429,7 +499,8 @@ Run **two arms: `--five_base_baseq 0` and `> 0`.** Under §3.6 the masked run is
 | Open-2 | Open | Output naming | `<stem>.bisulfite.bam` — 1:1 transform, so a fixed name would collide |
 | Open-3 | Open | Mask `--five_base_deconvolution` variant sites to `N`? | **Deferred.** Not needed at 10X. Note `five_base_deconv.rs` writes only a report and never touches `XM`, so there is no existing masking to reuse; a real `C>T` het at a CpG *already* reads as methylated in Bismark's own `XM` and cytosine report, so the converter propagates a pre-existing limitation rather than adding one — though it additionally erases the variant from `SEQ` |
 | Open-4 | Open | Also pursue the upstream `patter` patch? | **Yes, in parallel** (`DRAFT_upstream_wgbs_tools_PR.md`). One note for it: `is_cpg` hardcodes `{C,T}`/`{G,A}` independently of `ReadOrient` (`patter.cpp:96-103`); those happen to be the right sets for 5-Base, so no change is needed there — but a *generality* claim would be wrong |
-| Open-5 | Open | Drop `MD`/`NM` instead of maintaining them? | **Rejected, but priced (R19).** Nothing in this repository reads either tag — `tags::md`/`tags::nm` have no call sites outside their own unit tests — and `patter` reads only `SEQ`. But a BAM carrying an `MD` that disagrees with its `SEQ` is worse than one carrying none, and generic consumers (IGV, `samtools stats`, variant callers) do read it. §3.4's reuse makes exact `MD` nearly free, so keep it |
+| Open-5 | Open | Drop `MD`/`NM` instead of maintaining them? | **Rejected, but priced (R19).** Nothing in this repository reads either tag — `tags::md`/`tags::nm` have no call sites outside their own unit tests — and `patter` reads only `SEQ`. But a BAM carrying an `MD` that disagrees with its `SEQ` is worse than one carrying none, and generic consumers (IGV, `samtools stats`, variant callers) do read it. §3.4's reuse makes exact `MD` nearly free, so keep it. **Note this is now doubly load-bearing:** §3.6's masking rule depends on the reconstructed `ref_seq`, which comes from `MD`. Dropping `MD` would take the leak fix with it |
+| Open-6 | Open | Keep a `--five_base_bisulfite_baseq` flag as an *assertion* (`0` ⇒ require `masked == 0`)? | **Dropped (T1).** It has no role in identifying the masked set any more, and `masked` plus the `Note:` already surface what happened — more informatively than a threshold the user has to remember. Cheap to add later if someone wants a scriptable "this file should have no masking" check; not worth a permanent public flag on speculation |
 
 ---
 
@@ -444,11 +515,19 @@ Run **two arms: `--five_base_baseq 0` and `> 0`.** Under §3.6 the masked run is
 
 **The design hole neither I nor Reviewer A found:** §3.6. Reviewer B traced the `--five_base_baseq` masking path into `patter` and found the inversion surviving in the output. I rejected B's proposed remedy — it would have `N`-masked roughly half of every read — and used `QUAL` to identify the actually-masked set instead.
 
+**Rev 2, first: rev 1's own remedy had the same defect it rejected.** Rev 1's §3.6 masked where `QUAL[i] < offset + n`, lifted straight from the align-time comparison in `mask_low_quality`. But a BAM stores 0-based phred scores, not ASCII (`output.rs:437-440`), so that would have masked *every* `XM == '.'` position — the exact "destroys the file" outcome I had just rejected B's proposal for, arrived at from the other direction. Reusing a comparison across a serialisation boundary silently changes its units.
+
+**Rev 2, second: the whole mechanism was wrong, not just its arithmetic.** The targeted review's F1 observed that §3.4 step 1 *already* reconstructs the reference base at every position, and that `{XM == '.'} ∩ {ref == ref_base} ∩ {SEQ ∈ {meth, unmeth}}` is provably exactly the leak set and provably empty without masking (verified: at a genomic `C` the CT branch emits a letter for both `C` and `T` with no further guard, `methylation.rs:587-596`). Rev 1 had been reaching outside the record — to a header, a threshold, an encoding offset — for information the record already contained. Adopting it deleted a CLI flag, a header parser, a conflict rule, a fail-loud fallback, two test rows, and one "remaining risk".
+
+**Three separate attempts at the same twelve lines, and the first two failed the same way.** B's rule over-masked because it had no positional test; rev 1's over-masked because of a units error. That is the argument for §9.7's negative controls (T4): rev 1's §9.7 asserted only that a maskable position gets masked, which an implementation that masks *everything* satisfies perfectly. The test suite could not distinguish the fix from the disaster.
+
+**And one false-abort that no amount of arithmetic care would have caught (T2):** rev 1's §3.2 put the flip counter at loop level, so every mask would have incremented `flipped`, pushing the rate above 1 and tripping §3.5's fail-loud on every correctly-masked run.
+
 **Where the reviewers disagreed**, resolved by checking myself: §9.2 was vacuous (A right, B too generous); the fixtures *do* contain indels (A right, B's CIGAR census wrong); `nondir_pe_1030.bam` exists at both cited paths (neither wrong). B's soft-clip gap survives its own bad census — zero `S` records anywhere — and that is now §9.1's required new fixture.
 
 **Remaining risks.**
 
 1. **The soft-clip fixture does not exist yet** and must be generated from a live oracle. Until it does, the dominant real-world 5-Base CIGAR shape is untested — and §3.4's corrected `NM` is precisely where it bites.
 2. **§9.9 needs real 5-Base data** and cannot run in CI. Everything else is hermetic — and R6/R7 mean the *sign* is now covered hermetically, which it was not in rev 0.
-3. **§3.6's `@PG` parsing is the one fragile mechanism** in the plan. Mitigated by failing loud rather than guessing when the header is unparseable, but a re-headered or merged BAM will require the explicit flag.
+3. **`reconstruct_ref` is now doubly load-bearing.** It was already the input to `NM`/`MD` (§3.4); under T1 it is also what identifies §3.6's masking set. A bug there is no longer just a wrong tag — it silently changes which bases get masked. Mitigated by §3.4 step 2 proving the reconstruction byte-exact **per record** before anything is emitted, which is a stronger guard than rev 1 had anywhere. (Rev 1's risk 3 was "`@PG` parsing is the one fragile mechanism in the plan"; T1 deleted that mechanism.)
 4. **The output is inherently misleading if mishandled** — `SEQ` disagrees with the sequencer. Mitigations are naming, a distinct report, docs, and never making it the primary BAM; none stop a user feeding it to a variant caller.

@@ -17,7 +17,9 @@
 | Plan written | ✅ Done | `PLAN.md` rev 0 |
 | Manual review | ✅ Done | Felix approved proceeding to agent review |
 | Agent plan review | ✅ Done | Dual independent reviewers — `PLAN_REVIEW_A.md` (242 ln), `PLAN_REVIEW_B.md` (320 ln). Both verified the algorithm across all 4 SE indices + 8 PE combinations; **2 Critical each**, 3 contradictions resolved by re-checking against source |
-| **Plan rev 1** | ✅ Done | 19 changes (`PLAN.md` §0). Algorithm unchanged; all fixes in validation, I/O plumbing, and the §3.6 masking hole |
+| Plan rev 1 | ✅ Done | 19 changes (`PLAN.md` §0). Algorithm unchanged; all fixes in validation, I/O plumbing, and the §3.6 masking hole |
+| Targeted §3.6 review | ✅ Done | `PLAN_REVIEW_36.md` (272 ln) — §3.6 was rev 1's only new design and so its only unreviewed part. 2 Critical + 11 Important |
+| **Plan rev 2** | ✅ Done | 9 changes (T1–T9). **§3.6's mechanism replaced outright**: keys on the reference base `reconstruct_ref` already provides, so the CLI flag, `@PG` parser, conflict rule and fail-loud fallback are all deleted. Now has **no tunable behaviour at all** |
 | **Implementation** | ⏳ **NEXT** | Requires the explicit "implement" trigger. ⚠️ Blocked on generating a **soft-clip fixture** first (§9.1) — none exists in the repo |
 | Code review | ⬜ Not started | Dual reviewers + coverage audit |
 | PR → `dev` | ⬜ Not started | |
