@@ -422,7 +422,25 @@ The gate must pass `--illumina_5base` even on bisulfite input (R11): §5.3's gua
 | `tests/data/filter_nonconversion/{se_default,pe_default}/` | SE + PE coverage |
 | `tests/data/filter_nonconversion/se_unmapped/in.bam` | Contains unmapped records — gates §3.7's pass-through |
 
-⚠️ **A soft-clip fixture must be generated — no existing fixture has a single `S`** (verified: 0 of 12974 and 0 of 20). Bowtie 2 end-to-end never soft-clips, so no `bismark_bt2` fixture ever will. But minimap2 `-x sr` is the default 5-Base engine (`mod.rs:1173-1180`) and `--five_base_umi_len` *depends* on soft-clipping the UMI prefix (`cli.rs:125-128`) — so with `--five_base_umi_len 8` essentially every real read carries an `8S` prefix. **The dominant real-world CIGAR shape has zero fixture coverage, and it is exactly where the corrected `NM` (§3.4) bites.** Generate one via the live Perl/minimap2 oracle so the `MD`/`NM` are authentic, carrying at least one leading `S`, one `I` and one `D`.
+✅ **The soft-clip fixture now exists** — `tests/data/five_base_bisulfite/softclip_indel_se.bam` (see that directory's `README.md`). It was the last gate on implementation.
+
+No pre-existing fixture had a single `S` op (verified: 0 of 12974 and 0 of 20). Bowtie 2 end-to-end never emits one, so no `bismark_bt2` fixture ever will — but minimap2 `-x sr` is the default 5-Base engine (`mod.rs:1173-1180`) and `--five_base_umi_len` *depends* on soft-clipping the UMI prefix (`cli.rs:125-128`), which makes `nS`-prefixed reads the dominant real 5-Base shape and exactly where the corrected `NM` (§3.4) bites.
+
+8 SE records over pUC19 (2686 bp), Bowtie 2 2.5.5 `--local`, **byte-identical between the Rust aligner and live Perl `bismark` v0.25.1** — all fields including MAPQ, so `MD`/`NM`/`XM` are oracle-authentic:
+
+| QNAME | FLAG | CIGAR | `XG` | Covers |
+|---|---|---|---|---|
+| `ot_plain` / `ob_plain` | 0 / 16 | `80M` | `CT` / `GA` | controls |
+| **`ot_softclip`** | 0 | **`9S81M`** | `CT` | leading clip |
+| **`ob_softclip`** | 16 | **`81M9S`** | `GA` | trailing clip |
+| `ot_ins` / `ob_ins` | 0 / 16 | `40M1I40M` | `CT` / `GA` | insertion |
+| `ot_del` / `ob_del` | 0 / 16 | `40M2D40M` / `35M4D45M` | `CT` / `GA` | deletion (`MD` `^` path) |
+
+The two `*_softclip` records are a deliberately **asymmetric pair** — the foreign prefix sits at each read's 5′ end, and the output revcomp moves it to the opposite end of `SEQ` for the reverse record. That is §9.3's `read_pos_5p` guard available as real data rather than a hand-built record.
+
+**Four of this plan's invariants were confirmed on it at generation time**, which is worth more than the fixture itself: `len(XM) == len(SEQ)` on clipped and inserted records; `NM == mismatches + inserted + soft-clipped + deleted` (e.g. `ot_softclip` `20 == 11 + 0 + 9 + 0` — the empirical proof of §3.4's corrected identity); `XM == '.'` at every `S`/`I` position; and `SEQ[i] ∈ {meth, unmeth}` at every letter position across both strands with clips and indels present (§3.3.2).
+
+`pUC19.fa` ships alongside it so §9.5's oracle can build its reference **independently of `MD`**.
 
 Assert the CIGAR census in test setup so a future fixture swap cannot silently drop coverage.
 
