@@ -226,3 +226,19 @@ seconds. No fixture is added; repository size unchanged. CI: one extra apt packa
   honestly — a finding, not a test bug; (2) the feature jobs may hide a *second* missing
   dependency behind the samtools panic — assumption 7 addresses this (their minimap2-dependent
   gates already pass), and the PR run will settle it.
+
+## 12. Implementation notes (2026-08-07)
+
+Implemented exactly per §5 — **no deviations**. Single pass, no failed iterations.
+
+- The two feature-job install steps were textually identical, so one `replace_all` edit
+  mirrored samtools into both (`rust_ci.yml`).
+- `assert_xg_iff_flag` returns `(QNAME, FLAG, XG)` triples (QNAME needed by the pair census).
+- **11/11 gates green first time**, as both plan reviewers' pre-runs predicted.
+- **Falsifiability observed (G19), then reverted:** inverted biconditional → both Gate 1 tests
+  FAIL; pair order flipped to `(99,147)` → nondir test fails on the pair census with the
+  intended message; `expected_records` off by one → `real_pe` test fails on "fixture record
+  count drifted". `grep -c 'TEMP falsifiability'` = 0 after reverts, full suite re-run green.
+- Hygiene: `cargo fmt -p bismark -- --check` clean; `clippy --all-targets -- -D warnings` clean
+  on default **and** `rammap-inprocess` (G26/G27).
+- §9's "all six CI jobs green" row pends the PR run (the only validation not executable locally).

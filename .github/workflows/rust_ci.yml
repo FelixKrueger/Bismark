@@ -93,14 +93,16 @@ jobs:
         run: cargo build -p bismark --all-targets --features rammap-inprocess
       - name: cargo clippy -p bismark --features rammap-inprocess -D warnings
         run: cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings
-      - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # `cargo test -p bismark` runs the 5-Base real-aligner gates, which panic
-        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
-        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+      - name: Install minimap2 + samtools (5-Base #787 / #1095 gates)
+        # `cargo test -p bismark` runs the 5-Base real-aligner gates (minimap2) and the
+        # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
+        # the tool is missing (they must not pass vacuously). This feature job runs
+        # them too, so it needs both like the main `cargo test` job.
         run: |
           sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2
+          sudo apt-get install -y --no-install-recommends minimap2 samtools
           minimap2 --version
+          samtools --version | head -1
       - name: cargo test -p bismark --features rammap-inprocess
         run: cargo test -p bismark --features rammap-inprocess
 
@@ -131,14 +133,16 @@ jobs:
         run: cargo build -p bismark --all-targets --features binseq-input
       - name: cargo clippy -p bismark --features binseq-input -D warnings
         run: cargo clippy -p bismark --all-targets --features binseq-input -- -D warnings
-      - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # `cargo test -p bismark` runs the 5-Base real-aligner gates, which panic
-        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
-        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+      - name: Install minimap2 + samtools (5-Base #787 / #1095 gates)
+        # `cargo test -p bismark` runs the 5-Base real-aligner gates (minimap2) and the
+        # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
+        # the tool is missing (they must not pass vacuously). This feature job runs
+        # them too, so it needs both like the main `cargo test` job.
         run: |
           sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2
+          sudo apt-get install -y --no-install-recommends minimap2 samtools
           minimap2 --version
+          samtools --version | head -1
       - name: cargo test -p bismark --features binseq-input
         run: cargo test -p bismark --features binseq-input
 
