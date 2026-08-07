@@ -1,11 +1,19 @@
 > **Draft — not submitted.** Proposed PR to [`nloyfer/wgbs_tools`](https://github.com/nloyfer/wgbs_tools).
 >
-> ⚠️ **Do not submit before §Validation below passes on real 5-Base data.** Sending an
-> unvalidated behavioural change to someone else's tool is worse than sending nothing.
+> ✅ **Validation checks 1 and 4 now PASS** — measured 2026-08-07, see `EXPERIMENT_patter_swap.md`.
+> Unpatched `patter` calls 0.0 % methylation on a fully-CpG-methylated 5-Base dataset; patched
+> calls 100.0 %, matching Bismark's own `XM` exactly. **Both strands verified independently**
+> (OT 0→100 %, OB 0→100 %), which rules out a one-sided patch.
 >
-> ⚠️ The code change below is a **sketch**: the two-constant swap is verified, but the CLI
-> plumbing (`--five_base` through `patter`'s argument parsing and `bam2pat.py`'s
-> pass-through) has not been read yet and must be before this is a real patch.
+> ⚠️ Still outstanding before submission: **check 2** (default path byte-identical on EM-seq
+> data — the "we broke nothing" evidence a maintainer will want most) and **check 3** (paired
+> 5-Base/EM-seq through UXM, which needs real data). Also still true: the code change below is a
+> **sketch** — the CLI plumbing (`--five_base` through `patter`'s argument parsing and
+> `bam2pat.py`'s pass-through) has not been read yet and must be before this is a real patch.
+>
+> Note the reporter's field attempt at the same patch produced *no* change, which is very likely
+> a silent build failure on his side (`setup.py`'s `raise` is commented out) rather than evidence
+> against the patch. Do not cite his result either way in the PR.
 
 ---
 

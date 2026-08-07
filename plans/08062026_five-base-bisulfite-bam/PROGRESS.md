@@ -29,8 +29,11 @@
 
 | Item | State | Notes |
 |---|---|---|
-| Reply to reporter | ✅ **Posted 2026-08-06** ([comment `5203512462`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5203512462)) | Gave him the `patter` two-constant workaround — works on the DRAGEN BAMs he already has, no re-alignment. **Awaiting his result** |
-| Upstream `nloyfer/wgbs_tools` PR | ⏳ Drafted, unsent | `--five_base` / inverted-polarity flag on `patter`. **Blocked on** the reporter's result above (validation check 1) + reading the CLI plumbing |
+| Reply to reporter (r1) | ✅ Posted 2026-08-06 ([`5203512462`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5203512462)) | Gave him the `patter` two-constant workaround |
+| Reporter's result | ⚠️ **Negative, but confounded** ([`5210728023`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5210728023), 2026-08-07) | No change after the patch; 50 % atlas-marker capture, reference-independent. Two candidates: a **silent build failure** (`setup.py`'s `raise` is commented out) or **DRAGEN's `SEQ` not being the raw read**. He will re-run through Bismark and is reacquiring the FASTQs |
+| **`patter` swap experiment** | ✅ **Done 2026-08-07 — swap CONFIRMED** | `EXPERIMENT_patter_swap.md`. Unpatched 0.0 % vs patched 100.0 % methylation against a 100 %-methylated ground truth; **both strands independently** (OT 68 calls, OB 84). So the hypothesis is sound and the reporter's negative result is a local problem |
+| Reply to reporter (r2) | ✅ **Posted 2026-08-07** ([`5216492876`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5216492876)) | The experiment result, the byte-identical-`.pat` check, the DRAGEN-`SEQ` question, and confirmation that Bismark→converter is the path. **Awaiting his two answers** — neither blocks #1095 |
+| Upstream `nloyfer/wgbs_tools` PR | ⏳ Drafted, unsent | Validation **1 and 4 now pass**. Outstanding: check 2 (EM-seq default path byte-identical) + check 3 (real paired data) + reading the CLI plumbing |
 
 ## Open questions (none critical)
 
