@@ -1,12 +1,16 @@
 # Session Handoff — 2026-08-07
 
-**Next session's job:** land [#1095](https://github.com/FelixKrueger/Bismark/issues/1095). **It is implemented, dual-code-reviewed, and pushed to `dev`** — what remains is process, not engineering:
+**[#1095](https://github.com/FelixKrueger/Bismark/issues/1095) is implemented, dual-code-reviewed and pushed to `dev`.** It stays OPEN and unreleased on purpose.
 
-1. **Open the PR / merge to `master`.** #1095 is still OPEN and the work is unreleased. `dev`→`master` is the release signal.
-2. **Cut 3.2.0.** `## Unreleased` now carries **five** aligner entries and all three version literals still read `3.1.0`. Minor bump (behaviour changes in default paths).
-3. **The upstream `nloyfer/wgbs_tools` PR** (`DRAFT_upstream_wgbs_tools_PR.md`) now has *both* a synthetic control and real-sample confirmation. Only validation **check 2** remains — EM-seq `.pat` byte-identical with the patch present but not enabled — which is doable locally with the machinery in `EXPERIMENT_patter_swap.md`.
+> 🚫 **DO NOT CUT A RELEASE.** Felix's decision (2026-08-07): work is still settling and new issues keep arriving, so the release must be a deliberate cut at a chosen point, not a by-product of landing a feature. A `dev`→`master` merge **is** the release signal in this repo. PR [#1096](https://github.com/FelixKrueger/Bismark/pull/1096) was opened for that and **closed as premature** — reopening it restores the full body verbatim when a 3.2.0 cut is actually wanted. The five version literals still reading `3.1.0` are **correct for now**; leave them.
 
-`dev` is at **`7be9dde`**, clean, pushed, in sync.
+**Next session's job — pick from these, none of which needs a release:**
+
+1. **Upstream `nloyfer/wgbs_tools` PR** (`DRAFT_upstream_wgbs_tools_PR.md`) — now has *both* a synthetic control and real-sample confirmation from the reporter. Only validation **check 2** remains: EM-seq `.pat` byte-identical with the patch present but not enabled. An hour with the machinery in `EXPERIMENT_patter_swap.md`. Also still needs `patter`'s CLI plumbing read before it's a real patch.
+2. **Two worthwhile #1095 validation gaps** (§5 G9) — the `XG` ⟺ FLAG assertion over `nondir_pe_1030.bam` (load-bearing and invisible to the idempotence gate) and PE / four-strand committed coverage. Both codify properties already verified in review.
+3. **@Danielsm8's contig-intersection result** on #787 — awaiting; not a blocker.
+
+`dev` is at **`29face8`**, clean, pushed, in sync.
 
 ---
 
@@ -41,7 +45,8 @@ Ground truth 100 %; Bismark's own `XM` agrees (`Z=168, z=0`). Flip rate exactly 
 
 | Item | State |
 |---|---|
-| **#1095 PR / merge + 3.2.0 cut** | The only thing between this and shipped |
+| **Release (3.2.0)** | **Deliberately deferred** — see the banner at the top. `dev` is 22 commits / ~13 issues ahead of `master`; the cut happens when Felix chooses it, not when a feature lands. Reopen PR [#1096](https://github.com/FelixKrueger/Bismark/pull/1096) then, and bump the five literals |
+| **#1095** | Stays OPEN by design (a `dev` merge does not close issues — G25). Its work is complete on `dev` |
 | Upstream `wgbs_tools` PR | Drafted, unsent. Checks 1 + 4 pass (synthetic) and check 3 is effectively satisfied by the reporter's figure. **Check 2 outstanding** + reading `patter`'s CLI plumbing |
 | @Danielsm8 | His ~80 % vs usual ~98 % marker recovery is very likely the **partial contig intersection** (G15); diagnostic sent, awaiting his result. Not a blocker |
 | **Known #1095 gaps — documented, not closed** | See §5 G9. None is in behaviour |
@@ -138,19 +143,27 @@ Ground truth 100 %; Bismark's own `XM` agrees (`Z=168, z=0`). Flip rate exactly 
 
 **G22 — `gh project` needs the `project` scope and an interactive TTY to grant it** (`gh auth refresh` backgrounded fails with `context deadline exceeded`). Quote `gh api` URLs containing `?` — zsh globs it. `$TMPDIR` differs between sandboxed and `dangerouslyDisableSandbox` calls. `gh`/`git fetch,push`/`curl` need the sandbox flag. A `Bash` call containing `rm -rf` was denied by the permission layer.
 
-**G23 — `git add -A plans/` over-stages.** Dozens of unrelated pre-existing untracked plan files from other features live under `plans/`; stage this feature's paths explicitly.
+**G23 — 🔑 BRANCH FIRST. Feature work must not go straight onto `dev`.** The convention is: feature branch → PR into `dev`; `dev`→`master` = release. #1095 was committed directly to `dev` across seven commits, and that had three consequences worth avoiding next time:
 
-**G24 — merging to `dev` does not close linked issues** (only the default branch does).
+1. **It removed the normal review-and-merge step.** #1095 never got a feature PR, so its diff was never reviewed in GitHub's UI — the dual reviewers read the commit instead. Equivalent in rigour, but it leaves no PR trail and nothing to point a collaborator at.
+2. **It made `dev`→`master` the only PR that could be opened**, which is why "open the PR" produced a *release* proposal (#1096, closed as premature).
+3. **`dev` now accumulates unreleased work with no staging boundary** — 22 commits ahead of `master` across ~13 issues — which is exactly the "release at an arbitrary point" pressure Felix pushed back on.
+
+So: `git switch -c <feature>` before the first commit of any new feature, PR it into `dev`, and keep `dev`→`master` reserved for a deliberate cut. That also restores the option of holding a change back when a release isn't wanted.
+
+**G24 — `git add -A plans/` over-stages.** Dozens of unrelated pre-existing untracked plan files from other features live under `plans/`; stage this feature's paths explicitly.
+
+**G25 — merging to `dev` does not close linked issues** (only the default branch does).
 
 ### Carried forward
 
-**G25 — 🔑 the feature-build gate.** `.github/workflows/rust_ci.yml:15` sets `RUSTFLAGS: "-D warnings"` at **workflow** scope, so a warning in `#[cfg(feature = "rammap-inprocess")]` code fails CI while both obvious local gates stay green:
+**G26 — 🔑 the feature-build gate.** `.github/workflows/rust_ci.yml:15` sets `RUSTFLAGS: "-D warnings"` at **workflow** scope, so a warning in `#[cfg(feature = "rammap-inprocess")]` code fails CI while both obvious local gates stay green:
 ```
 RUSTFLAGS="-D warnings" cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings
 ```
 
-**G26 — `cargo fmt --check` is its own CI job**, and `cargo fmt` will reformat error attributes and closure params. Run `cargo fmt -p bismark -- --check` before pushing.
+**G27 — `cargo fmt --check` is its own CI job**, and `cargo fmt` will reformat error attributes and closure params. Run `cargo fmt -p bismark -- --check` before pushing.
 
-**G27 — `gh pr merge --delete-branch` aborts its LOCAL step if the tree is dirty**, printing `failed to run git`, which reads like the merge failed. Check `git status` first; then `gh pr view --json state` before retrying.
+**G28 — `gh pr merge --delete-branch` aborts its LOCAL step if the tree is dirty**, printing `failed to run git`, which reads like the merge failed. Check `git status` first; then `gh pr view --json state` before retrying.
 
-**G28 — squash-merge hides merge status.** Verify with `git diff <commit> origin/dev` (expect 0 lines) + `gh pr list --head <branch> --state merged`. Never infer from ancestry.
+**G29 — squash-merge hides merge status.** Verify with `git diff <commit> origin/dev` (expect 0 lines) + `gh pr list --head <branch> --state merged`. Never infer from ancestry.
