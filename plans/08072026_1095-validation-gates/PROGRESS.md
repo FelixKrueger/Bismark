@@ -15,6 +15,7 @@
 
 ## History
 
+- 2026-08-07: PR #1097 opened into dev; CI 6/6 green on both runs (incl. rammap-inprocess + binseq-input, red on dev since 7be9dde) — §9's last validation row satisfied; awaiting Felix's merge
 - 2026-08-07: Implementation → ✅ Complete (2 files: rust_ci.yml samtools mirror + 4 new gates; 11/11 green first time)
 - 2026-08-07: Plan → rev 1 (CI repair in scope; bit-gloss deleted; pair-structure + SE censuses added; CB:Z:/uniqueness/wording corrections)
 - 2026-08-07: Plan Review → ✅ Complete (dual reviewers; agreed Criticals: base CI red in feature jobs, Gate 1 bit-gloss wrong; all contested claims re-verified at source)
